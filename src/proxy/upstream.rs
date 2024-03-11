@@ -6,14 +6,18 @@ use pingora::lb::health_check::{HealthCheck, HttpHealthCheck, TcpHealthCheck};
 use pingora::lb::selection::{Consistent, RoundRobin};
 use pingora::lb::{discovery, Backend, Backends, LoadBalancer};
 use pingora::protocols::l4::socket::SocketAddr;
+use pingora::upstreams::peer::HttpPeer;
 use std::collections::BTreeSet;
+use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
 
 #[derive(Debug, Default)]
 pub struct UpstreamConf {
+    pub name: String,
     pub addrs: Vec<String>,
     pub lb_method: String,
+    pub sni: String,
     pub health_check: String,
 }
 
@@ -34,11 +38,14 @@ impl UpstreamConf {
 }
 
 enum SelectionLb {
-    RoundRobinLb(LoadBalancer<RoundRobin>),
-    ConsistentLb(LoadBalancer<Consistent>),
+    RoundRobinLb(Arc<LoadBalancer<RoundRobin>>),
+    ConsistentLb(Arc<LoadBalancer<Consistent>>),
 }
 
-pub struct LbUpstream {
+pub struct Upstream {
+    pub name: String,
+    tls: bool,
+    sni: String,
     lb: SelectionLb,
 }
 
@@ -137,7 +144,7 @@ fn new_http_health_check(conf: &HealthCheckConf) -> HttpHealthCheck {
     check
 }
 
-impl LbUpstream {
+impl Upstream {
     pub fn new(conf: &UpstreamConf) -> Result<Self> {
         let mut upstreams = BTreeSet::new();
         let mut backends = vec![];
@@ -180,7 +187,7 @@ impl LbUpstream {
                     .expect("static should not error");
                 lb.set_health_check(hc);
                 lb.health_check_frequency = Some(health_check_frequency);
-                SelectionLb::ConsistentLb(lb)
+                SelectionLb::ConsistentLb(Arc::new(lb))
             }
             _ => {
                 let mut lb = LoadBalancer::<RoundRobin>::from_backends(backends);
@@ -191,15 +198,33 @@ impl LbUpstream {
                     .expect("static should not error");
                 lb.set_health_check(hc);
                 lb.health_check_frequency = Some(health_check_frequency);
-                SelectionLb::RoundRobinLb(lb)
+                SelectionLb::RoundRobinLb(Arc::new(lb))
             }
         };
-        Ok(Self { lb })
+        Ok(Self {
+            name: conf.name.clone(),
+            tls: !conf.sni.is_empty(),
+            sni: conf.sni.clone(),
+            lb,
+        })
     }
-    pub fn select(&self, key: &[u8]) -> Option<Backend> {
-        match &self.lb {
+    pub fn new_http_peer(&self, key: &[u8]) -> Option<HttpPeer> {
+        let upstream = match &self.lb {
             SelectionLb::RoundRobinLb(lb) => lb.select(key, 256),
             SelectionLb::ConsistentLb(lb) => lb.select(key, 256),
+        };
+        upstream.map(|upstream| HttpPeer::new(upstream, self.tls, self.sni.clone()))
+    }
+    pub fn get_round_robind(&self) -> Option<Arc<LoadBalancer<RoundRobin>>> {
+        match &self.lb {
+            SelectionLb::RoundRobinLb(lb) => Some(lb.clone()),
+            SelectionLb::ConsistentLb(_) => None,
+        }
+    }
+    pub fn get_consistent(&self) -> Option<Arc<LoadBalancer<Consistent>>> {
+        match &self.lb {
+            SelectionLb::RoundRobinLb(_) => None,
+            SelectionLb::ConsistentLb(lb) => Some(lb.clone()),
         }
     }
 }

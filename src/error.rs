@@ -6,6 +6,8 @@ pub enum Error {
     AddrParse { source: std::net::AddrParseError },
     #[snafu(display("Url parse error {source}"))]
     UrlParse { source: url::ParseError },
+    #[snafu(display("Invalid error {category} {message}"))]
+    Invalid { category: String, message: String },
 }
 
 impl From<std::net::AddrParseError> for Error {
@@ -17,6 +19,13 @@ impl From<std::net::AddrParseError> for Error {
 impl From<url::ParseError> for Error {
     fn from(err: url::ParseError) -> Self {
         Error::UrlParse { source: err }
+    }
+}
+
+impl From<Error> for pingora::BError {
+    fn from(_value: Error) -> Self {
+        // TODO convert error
+        pingora::Error::new_str("server upstream error")
     }
 }
 
