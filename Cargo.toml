@@ -7,10 +7,17 @@ edition = "2021"
 
 [dependencies]
 async-trait = "0.1.77"
+clap = { version = "4.5.2", features = ["derive"] }
+dirs = "5.0.1"
 env_logger = "0.11.3"
 futures-util = "0.3.30"
+glob = "0.3.1"
 humantime = "2.1.0"
 log = "0.4.21"
-pingora = {version = "0.1.0", features = ["lb"]}
-snafu = "0.8.1"
+path-absolutize = "3.1.1"
+pingora = { version = "0.1.0", features = ["lb"] }
+serde = "1.0.197"
+snafu = "0.8.2"
+substring = "1.4.5"
+toml = "0.8.11"
 url = "2.5.0"

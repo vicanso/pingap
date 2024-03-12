@@ -1,0 +1,3 @@
+[locations.lo]
+upstream = "charts"
+path = "/"

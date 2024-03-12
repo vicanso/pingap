@@ -1,4 +1,4 @@
-use crate::error::{Error, Result};
+use super::{Error, Result};
 use futures_util::FutureExt;
 use humantime::parse_duration;
 use pingora::http::RequestHeader;
@@ -7,18 +7,19 @@ use pingora::lb::selection::{Consistent, RoundRobin};
 use pingora::lb::{discovery, Backend, Backends, LoadBalancer};
 use pingora::protocols::l4::socket::SocketAddr;
 use pingora::upstreams::peer::HttpPeer;
+use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize, Clone)]
 pub struct UpstreamConf {
     pub name: String,
     pub addrs: Vec<String>,
-    pub lb_method: String,
-    pub sni: String,
-    pub health_check: String,
+    pub lb: Option<String>,
+    pub sni: Option<String>,
+    pub health_check: Option<String>,
 }
 
 impl UpstreamConf {
@@ -29,8 +30,9 @@ impl UpstreamConf {
             let _ = arr[0].parse::<std::net::SocketAddr>()?;
         }
         // validate health check
-        if !self.health_check.is_empty() {
-            let _ = Url::parse(&self.health_check)?;
+        let health_check = self.health_check.clone().unwrap_or_default();
+        if !health_check.is_empty() {
+            let _ = Url::parse(&health_check)?;
         }
 
         Ok(())
@@ -44,6 +46,7 @@ enum SelectionLb {
 
 pub struct Upstream {
     pub name: String,
+    hash: String,
     tls: bool,
     sni: String,
     lb: SelectionLb,
@@ -167,19 +170,26 @@ impl Upstream {
         let backends = Backends::new(discovery);
 
         let mut health_check_frequency = Duration::from_secs(5);
-        let hc: Box<dyn HealthCheck + Send + Sync + 'static> = if conf.health_check.is_empty() {
+        let health_check = conf.health_check.clone().unwrap_or_default();
+        let hc: Box<dyn HealthCheck + Send + Sync + 'static> = if health_check.is_empty() {
             TcpHealthCheck::new()
         } else {
-            let health_check_conf: HealthCheckConf = conf.health_check.as_str().try_into()?;
+            let health_check_conf: HealthCheckConf = health_check.as_str().try_into()?;
             health_check_frequency = health_check_conf.check_frequency;
             match health_check_conf.schema.as_str() {
                 "http" | "https" => Box::new(new_http_health_check(&health_check_conf)),
                 _ => Box::new(new_tcp_health_check(&health_check_conf)),
             }
         };
-        let lb = match conf.lb_method.as_str() {
-            "consistent" => {
+        let lb_method = conf.lb.clone().unwrap_or_default();
+        let lb_params: Vec<&str> = lb_method.split(':').collect();
+        let mut hash = "".to_string();
+        let lb = match lb_params[0] {
+            "hash" => {
                 let mut lb = LoadBalancer::<Consistent>::from_backends(backends);
+                if lb_params.len() > 1 {
+                    hash = lb_params[1].to_string();
+                }
 
                 lb.update()
                     .now_or_never()
@@ -201,17 +211,26 @@ impl Upstream {
                 SelectionLb::RoundRobinLb(Arc::new(lb))
             }
         };
+        let sni = conf.sni.clone().unwrap_or_default();
         Ok(Self {
             name: conf.name.clone(),
-            tls: !conf.sni.is_empty(),
-            sni: conf.sni.clone(),
+            tls: !sni.is_empty(),
+            sni: sni.clone(),
+            hash,
             lb,
         })
     }
-    pub fn new_http_peer(&self, key: &[u8]) -> Option<HttpPeer> {
+    pub fn new_http_peer(&self, header: &RequestHeader) -> Option<HttpPeer> {
         let upstream = match &self.lb {
-            SelectionLb::RoundRobinLb(lb) => lb.select(key, 256),
-            SelectionLb::ConsistentLb(lb) => lb.select(key, 256),
+            SelectionLb::RoundRobinLb(lb) => lb.select(b"", 256),
+            SelectionLb::ConsistentLb(lb) => {
+                let key = if let Some(value) = header.headers.get(&self.hash) {
+                    value.as_bytes()
+                } else {
+                    b""
+                };
+                lb.select(key, 256)
+            }
         };
         upstream.map(|upstream| HttpPeer::new(upstream, self.tls, self.sni.clone()))
     }

@@ -8,6 +8,8 @@ pub enum Error {
     UrlParse { source: url::ParseError },
     #[snafu(display("Invalid error {category} {message}"))]
     Invalid { category: String, message: String },
+    #[snafu(display("Toml de error {source}"))]
+    TomlDe { source: toml::de::Error },
 }
 
 impl From<std::net::AddrParseError> for Error {
@@ -26,6 +28,11 @@ impl From<Error> for pingora::BError {
     fn from(_value: Error) -> Self {
         // TODO convert error
         pingora::Error::new_str("server upstream error")
+    }
+}
+impl From<toml::de::Error> for Error {
+    fn from(err: toml::de::Error) -> Self {
+        Error::TomlDe { source: err }
     }
 }
 

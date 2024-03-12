@@ -1,0 +1,6 @@
+[upstreams.charts]
+addrs = ["127.0.0.1:5000"]
+lb = "hash:cookie"
+
+[upstreams.diving]
+addrs = ["127.0.0.1:5001"]

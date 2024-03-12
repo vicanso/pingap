@@ -1,0 +1,3 @@
+[servers.test]
+addr = "0.0.0.0:6188"
+locations = ["lo"]

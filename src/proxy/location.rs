@@ -1,25 +1,25 @@
 use super::Upstream;
-use crate::error::{Error, Result};
+use super::{Error, Result};
+use serde::Deserialize;
 use std::sync::Arc;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Deserialize, Clone)]
 pub struct LocationConf {
     pub name: String,
     pub path: String,
-    pub host: String,
+    pub host: Option<String>,
     pub upstream: String,
-    // TODO: location filter by host
 }
 
 pub struct Location {
-    name: String,
+    // name: String,
     path: String,
     host: String,
     pub upstream: Arc<Upstream>,
 }
 
 impl Location {
-    pub fn new(conf: LocationConf, upstreams: Vec<Arc<Upstream>>) -> Result<Location> {
+    pub fn new(conf: &LocationConf, upstreams: Vec<Arc<Upstream>>) -> Result<Location> {
         let up = upstreams
             .iter()
             .find(|item| item.name == conf.upstream)
@@ -28,9 +28,9 @@ impl Location {
                 message: "Upstream not found".to_string(),
             })?;
         Ok(Location {
-            name: conf.name.clone(),
+            // name: conf.name.clone(),
             path: conf.path.clone(),
-            host: conf.host.clone(),
+            host: conf.host.clone().unwrap_or_default(),
             upstream: up.clone(),
         })
     }
