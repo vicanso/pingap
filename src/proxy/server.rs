@@ -1,4 +1,3 @@
-use super::{Error, Result};
 use super::{Location, LocationConf, Upstream, UpstreamConf};
 use crate::config::Config;
 use async_trait::async_trait;
@@ -13,7 +12,20 @@ use pingora::{
     upstreams::peer::HttpPeer,
 };
 use serde::Deserialize;
+use snafu::{ResultExt, Snafu};
 use std::sync::Arc;
+
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("Toml de error {}, {content}", source.to_string()))]
+    TomlDe {
+        source: toml::de::Error,
+        content: String,
+    },
+    #[snafu(display("Error {category} {message}"))]
+    Common { category: String, message: String },
+}
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(Debug, Default)]
 pub struct ServerConf {
@@ -35,30 +47,46 @@ impl TryFrom<Config> for Vec<ServerConf> {
     fn try_from(conf: Config) -> Result<Self> {
         let mut upstreams = vec![];
         for item in conf.upstreams.iter() {
-            let up: UpstreamConf = toml::from_str(item)?;
+            let up: UpstreamConf = toml::from_str(item).context(TomlDeSnafu {
+                content: item.clone(),
+            })?;
             upstreams.push(up);
         }
         let mut locations = vec![];
+        // TODO sort location
         for item in conf.locations.iter() {
-            let lo: LocationConf = toml::from_str(item)?;
+            let lo: LocationConf = toml::from_str(item).context(TomlDeSnafu {
+                content: item.clone(),
+            })?;
             locations.push(lo);
         }
         let mut servers = vec![];
         for item in conf.servers.iter() {
-            let se: ServerTomlConf = toml::from_str(item)?;
+            let se: ServerTomlConf = toml::from_str(item).context(TomlDeSnafu {
+                content: item.clone(),
+            })?;
+            let valid_locations = se.locations.unwrap_or_default();
+            let mut valid_upstreams = vec![];
             // filter location of server
             let mut filter_locations = vec![];
-            if let Some(items) = se.locations {
-                for item in locations.iter() {
-                    if items.contains(&item.name) {
-                        filter_locations.push(item.clone())
-                    }
+            for item in locations.iter() {
+                if valid_locations.contains(&item.name) {
+                    valid_upstreams.push(item.upstream.clone());
+                    filter_locations.push(item.clone())
                 }
             }
+            // filter upstream of server locations
+            let mut filter_upstreams = vec![];
+            for item in upstreams.iter() {
+                if valid_upstreams.contains(&item.name) {
+                    filter_upstreams.push(item.clone())
+                }
+            }
+
             servers.push(ServerConf {
                 name: se.name,
                 addr: se.addr,
-                upstreams: upstreams.clone(),
+                upstreams: filter_upstreams,
                 locations: filter_locations,
             });
         }
@@ -97,12 +125,20 @@ impl Server {
             if !in_used_upstreams.contains(&item.name) {
                 continue;
             }
-            let up = Upstream::new(item)?;
+            let up = Upstream::new(item).map_err(|err| Error::Common {
+                category: "upstream".to_string(),
+                message: err.to_string(),
+            })?;
             upstreams.push(Arc::new(up));
         }
         let mut locations = vec![];
         for item in conf.locations.iter() {
-            locations.push(Location::new(item, upstreams.clone())?);
+            locations.push(Location::new(item, upstreams.clone()).map_err(|err| {
+                Error::Common {
+                    category: "location".to_string(),
+                    message: err.to_string(),
+                }
+            })?);
         }
 
         Ok(Server {
@@ -140,7 +176,7 @@ impl ProxyHttp for Server {
         session: &mut Session,
         _ctx: &mut (),
     ) -> pingora::Result<Box<HttpPeer>> {
-        let header = session.req_header();
+        let header = session.req_header_mut();
         let path = header.uri.path();
         let host = header.uri.host().unwrap_or_default();
 
@@ -148,15 +184,20 @@ impl ProxyHttp for Server {
             .locations
             .iter()
             .find(|item| item.matched(path, host))
-            .ok_or(Error::Invalid {
-                category: "server".to_string(),
-                message: "Location not found".to_string(),
-            })?;
-        // TODO add key generate
-        let peer = lo.upstream.new_http_peer(header).ok_or(Error::Invalid {
-            category: "server".to_string(),
-            message: "Location not found".to_string(),
-        })?;
+            .ok_or(pingora::Error::new_str("Location not found"))?;
+        if let Some(mut new_path) = lo.rewrite(path) {
+            if let Some(query) = header.uri.query() {
+                new_path = format!("{new_path}?{query}");
+            }
+            // TODO parse error
+            if let Ok(uri) = new_path.parse::<http::Uri>() {
+                header.set_uri(uri);
+            }
+        }
+        let peer = lo
+            .upstream
+            .new_http_peer(header)
+            .ok_or(pingora::Error::new_str("Upstream not found"))?;
         Ok(Box::new(peer))
     }
 }

@@ -1,4 +1,3 @@
-use super::{Error, Result};
 use futures_util::FutureExt;
 use humantime::parse_duration;
 use pingora::http::RequestHeader;
@@ -8,10 +7,32 @@ use pingora::lb::{discovery, Backend, Backends, LoadBalancer};
 use pingora::protocols::l4::socket::SocketAddr;
 use pingora::upstreams::peer::HttpPeer;
 use serde::Deserialize;
+use snafu::{ResultExt, Snafu};
 use std::collections::BTreeSet;
+use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
+
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("Addr parse error {source}, {addr}"))]
+    AddrParse {
+        source: std::net::AddrParseError,
+        addr: String,
+    },
+    #[snafu(display("Url parse error {source}, {url}"))]
+    UrlParse {
+        source: url::ParseError,
+        url: String,
+    },
+    #[snafu(display("Io error {source}, {content}"))]
+    Io {
+        source: std::io::Error,
+        content: String,
+    },
+}
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(Debug, Default, Deserialize, Clone)]
 pub struct UpstreamConf {
@@ -27,12 +48,16 @@ impl UpstreamConf {
         // validate upstream addr
         for addr in self.addrs.iter() {
             let arr: Vec<_> = addr.split(' ').collect();
-            let _ = arr[0].parse::<std::net::SocketAddr>()?;
+            let _ = arr[0]
+                .parse::<std::net::SocketAddr>()
+                .context(AddrParseSnafu {
+                    addr: arr[0].to_string(),
+                });
         }
         // validate health check
         let health_check = self.health_check.clone().unwrap_or_default();
         if !health_check.is_empty() {
-            let _ = Url::parse(&health_check)?;
+            let _ = Url::parse(&health_check).context(UrlParseSnafu { url: health_check })?;
         }
 
         Ok(())
@@ -66,7 +91,9 @@ pub struct HealthCheckConf {
 impl TryFrom<&str> for HealthCheckConf {
     type Error = Error;
     fn try_from(value: &str) -> Result<Self> {
-        let value = Url::parse(value)?;
+        let value = Url::parse(value).context(UrlParseSnafu {
+            url: value.to_string(),
+        })?;
 
         let mut connection_timeout = Duration::from_secs(3);
         let mut read_timeout = Duration::from_secs(3);
@@ -158,12 +185,18 @@ impl Upstream {
             } else {
                 1
             };
-            let addr = arr[0].parse::<std::net::SocketAddr>()?;
-            let backend = Backend {
-                addr: SocketAddr::Inet(addr),
-                weight,
-            };
-            backends.push(backend);
+            let mut addr = arr[0].to_string();
+            if !addr.contains(':') {
+                addr = format!("{addr}:80");
+            }
+
+            for item in addr.to_socket_addrs().context(IoSnafu { content: addr })? {
+                let backend = Backend {
+                    addr: SocketAddr::Inet(item),
+                    weight,
+                };
+                backends.push(backend)
+            }
         }
         upstreams.extend(backends);
         let discovery = discovery::Static::new(upstreams);
@@ -227,7 +260,7 @@ impl Upstream {
                 let key = if let Some(value) = header.headers.get(&self.hash) {
                     value.as_bytes()
                 } else {
-                    b""
+                    header.uri.path().as_bytes()
                 };
                 lb.select(key, 256)
             }

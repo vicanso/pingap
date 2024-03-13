@@ -1,7 +1,9 @@
 use crate::proxy::{Server, ServerConf};
 use clap::Parser;
+use log::{error, info};
 use pingora::server;
 use pingora::server::configuration::Opt;
+use std::error::Error;
 
 mod config;
 mod proxy;
@@ -15,10 +17,10 @@ struct Args {
     conf: String,
 }
 
-fn main() {
+fn run() -> Result<(), Box<dyn Error>> {
     env_logger::init();
     let args = Args::parse();
-    let conf = config::load_config(&args.conf).unwrap();
+    let conf = config::load_config(&args.conf)?;
 
     let opt = Opt {
         upgrade: false,
@@ -27,18 +29,23 @@ fn main() {
         test: false,
         conf: None,
     };
-    println!("{opt:?}");
-    // opt.daemon = true;
-    let mut my_server = server::Server::new(Some(opt)).unwrap();
+    let mut my_server = server::Server::new(Some(opt))?;
     my_server.bootstrap();
 
-    let server_conf_list: Vec<ServerConf> = conf.try_into().unwrap();
+    let server_conf_list: Vec<ServerConf> = conf.try_into()?;
     for server_conf in server_conf_list {
-        let ps = Server::new(server_conf).unwrap();
+        let ps = Server::new(server_conf)?;
         let services = ps.run(&my_server.configuration);
         my_server.add_services(services.bg_services);
         my_server.add_service(services.lb);
     }
-    println!("{}", std::process::id());
+    info!("server is running");
     my_server.run_forever();
+    Ok(())
+}
+
+fn main() {
+    if let Err(err) = run() {
+        error!("{}", err.to_string());
+    }
 }

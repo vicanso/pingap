@@ -1,9 +1,7 @@
-mod error;
 mod location;
 mod server;
 mod upstream;
 
-pub use error::*;
-pub use location::*;
+pub use location::{Location, LocationConf};
 pub use server::*;
-pub use upstream::*;
+pub use upstream::{Upstream, UpstreamConf};

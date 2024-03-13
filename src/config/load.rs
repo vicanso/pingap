@@ -10,12 +10,18 @@ use toml::{map::Map, Value};
 pub enum Error {
     #[snafu(display("Invalid error {message}"))]
     Invalid { message: String },
-    #[snafu(display("Glob pattern error {source}"))]
-    Pattern { source: glob::PatternError },
+    #[snafu(display("Glob pattern error {source}, {path}"))]
+    Pattern {
+        source: glob::PatternError,
+        path: String,
+    },
     #[snafu(display("Glob error {source}"))]
     Glob { source: glob::GlobError },
-    #[snafu(display("Io error {source}"))]
-    Io { source: std::io::Error },
+    #[snafu(display("Io error {source}, {file}"))]
+    Io {
+        source: std::io::Error,
+        file: String,
+    },
     #[snafu(display("Toml de error {source}"))]
     De { source: toml::de::Error },
 }
@@ -72,14 +78,18 @@ pub fn load_config(path: &str) -> Result<Config> {
     );
     let mut data = vec![];
     if Path::new(&filepath).is_dir() {
-        for entry in glob(&format!("{filepath}/**/*.toml")).context(PatternSnafu)? {
+        for entry in
+            glob(&format!("{filepath}/**/*.toml")).context(PatternSnafu { path: filepath })?
+        {
             let f = entry.context(GlobSnafu)?;
-            let mut buf = std::fs::read(&f).context(IoSnafu)?;
+            let mut buf = std::fs::read(&f).context(IoSnafu {
+                file: f.to_string_lossy().to_string(),
+            })?;
             data.append(&mut buf);
             data.push(0x0a);
         }
     } else {
-        let mut buf = std::fs::read(&filepath).context(IoSnafu)?;
+        let mut buf = std::fs::read(&filepath).context(IoSnafu { file: filepath })?;
         data.append(&mut buf);
     }
     let data: TomlConfig = toml::from_str(
