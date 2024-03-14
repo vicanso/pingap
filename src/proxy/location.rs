@@ -1,35 +1,59 @@
 use super::Upstream;
+use crate::config::LocationConf;
+use bytes::Bytes;
+use http::HeaderValue;
 use regex::Regex;
-use serde::Deserialize;
-use snafu::Snafu;
+use snafu::{ResultExt, Snafu};
 use std::sync::Arc;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("Invalid error {message}"))]
     Invalid { message: String },
+    #[snafu(display("Invalid header value {source}, {value}"))]
+    InvalidHeaderValue {
+        value: String,
+        source: http::header::InvalidHeaderValue,
+    },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
-
-#[derive(Debug, Default, Deserialize, Clone)]
-pub struct LocationConf {
-    pub name: String,
-    pub path: Option<String>,
-    pub host: Option<String>,
-    pub rewrite: Option<String>,
-    pub upstream: String,
-}
 
 pub struct Location {
     // name: String,
     path: String,
     host: String,
     reg_rewrite: Option<(Regex, String)>,
+    proxy_headers: Option<Vec<(Bytes, Bytes)>>,
     pub upstream: Arc<Upstream>,
 }
 
+fn convert_headers(values: &Option<Vec<String>>) -> Result<Option<Vec<(Bytes, Bytes)>>> {
+    if let Some(header_values) = values {
+        let mut arr = vec![];
+        for item in header_values {
+            let values: Vec<&str> = item.split(':').collect();
+            if values.len() < 2 {
+                continue;
+            }
+            let k = Bytes::from(values[0].to_string());
+            let _ = HeaderValue::from_str(values[1]).context(InvalidHeaderValueSnafu {
+                value: values[1].to_string(),
+            })?;
+            let v = Bytes::from(values[1].to_string());
+            arr.push((k, v))
+        }
+        Ok(Some(arr))
+    } else {
+        Ok(None)
+    }
+}
+
 impl Location {
-    pub fn new(conf: &LocationConf, upstreams: Vec<Arc<Upstream>>) -> Result<Location> {
+    pub fn new(
+        _name: &str,
+        conf: &LocationConf,
+        upstreams: Vec<Arc<Upstream>>,
+    ) -> Result<Location> {
         let up = upstreams
             .iter()
             .find(|item| item.name == conf.upstream)
@@ -44,12 +68,14 @@ impl Location {
                 reg_rewrite = Some((re, value.to_string()));
             }
         }
+        let proxy_headers = convert_headers(&conf.proxy_headers)?;
         Ok(Location {
             // name: conf.name.clone(),
             path: conf.path.clone().unwrap_or_default(),
             host: conf.host.clone().unwrap_or_default(),
             upstream: up.clone(),
             reg_rewrite,
+            proxy_headers,
         })
     }
     #[inline]
@@ -68,5 +94,8 @@ impl Location {
             return Some(re.replace(path, value).to_string());
         }
         None
+    }
+    pub fn get_proxy_headers(&self) -> Option<Vec<(Bytes, Bytes)>> {
+        self.proxy_headers.clone()
     }
 }

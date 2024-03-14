@@ -4,6 +4,7 @@ use log::{error, info};
 use pingora::server;
 use pingora::server::configuration::Opt;
 use std::error::Error;
+use std::sync::Arc;
 
 mod config;
 mod proxy;
@@ -15,6 +16,23 @@ struct Args {
     /// The config file or directory
     #[arg(short, long)]
     conf: String,
+    /// Whether should run this server in the background
+    #[arg(short, long)]
+    daemon: bool,
+    /// Whether this server should try to upgrade from an running old server
+    #[arg(short, long)]
+    upgrade: bool,
+    /// Test the configuration and exit
+    ///
+    /// When this flag is set, calling `server.bootstrap()` will exit the process without errors
+    ///
+    /// This flag is useful for upgrading service where the user wants to make sure the new
+    /// service can start before shutting down the old server process.
+    #[arg(short, long)]
+    test: Option<bool>,
+    /// Log file path
+    #[arg(long)]
+    log: Option<String>,
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
@@ -23,16 +41,22 @@ fn run() -> Result<(), Box<dyn Error>> {
     let conf = config::load_config(&args.conf)?;
 
     let opt = Opt {
-        upgrade: false,
-        daemon: false,
+        upgrade: args.upgrade,
+        daemon: args.daemon,
         nocapture: false,
         test: false,
         conf: None,
     };
     let mut my_server = server::Server::new(Some(opt))?;
+    {
+        let mut conf = server::configuration::ServerConf::default();
+        conf.daemon = args.daemon;
+        conf.error_log = args.log;
+        my_server.configuration = Arc::new(conf);
+    }
     my_server.bootstrap();
 
-    let server_conf_list: Vec<ServerConf> = conf.try_into()?;
+    let server_conf_list: Vec<ServerConf> = conf.into();
     for server_conf in server_conf_list {
         let ps = Server::new(server_conf)?;
         let services = ps.run(&my_server.configuration);

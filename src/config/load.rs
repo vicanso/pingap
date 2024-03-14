@@ -2,9 +2,11 @@ use glob::glob;
 use path_absolutize::*;
 use serde::Deserialize;
 use snafu::{ensure, ResultExt, Snafu};
+use std::collections::HashMap;
 use std::path::Path;
 use substring::Substring;
 use toml::{map::Map, Value};
+use url::Url;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -24,21 +26,76 @@ pub enum Error {
     },
     #[snafu(display("Toml de error {source}"))]
     De { source: toml::de::Error },
+    #[snafu(display("Url parse error {source}, {url}"))]
+    UrlParse {
+        source: url::ParseError,
+        url: String,
+    },
+    #[snafu(display("Addr parse error {source}, {addr}"))]
+    AddrParse {
+        source: std::net::AddrParseError,
+        addr: String,
+    },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
+
+impl UpstreamConf {
+    pub fn validate(&self) -> Result<()> {
+        // validate upstream addr
+        for addr in self.addrs.iter() {
+            let arr: Vec<_> = addr.split(' ').collect();
+            let _ = arr[0]
+                .parse::<std::net::SocketAddr>()
+                .context(AddrParseSnafu {
+                    addr: arr[0].to_string(),
+                });
+        }
+        // validate health check
+        let health_check = self.health_check.clone().unwrap_or_default();
+        if !health_check.is_empty() {
+            let _ = Url::parse(&health_check).context(UrlParseSnafu { url: health_check })?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+pub struct UpstreamConf {
+    pub addrs: Vec<String>,
+    pub lb: Option<String>,
+    pub sni: Option<String>,
+    pub health_check: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+pub struct LocationConf {
+    pub path: Option<String>,
+    pub host: Option<String>,
+    pub proxy_headers: Option<Vec<String>>,
+    pub rewrite: Option<String>,
+    pub upstream: String,
+}
+
+#[derive(Debug, Default, Deserialize, Clone)]
+
+pub struct ServerConf {
+    pub addr: String,
+    pub locations: Option<Vec<String>>,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct PingapConf {
+    pub upstreams: HashMap<String, UpstreamConf>,
+    pub locations: HashMap<String, LocationConf>,
+    pub servers: HashMap<String, ServerConf>,
+}
 
 #[derive(Deserialize, Debug)]
 struct TomlConfig {
     servers: Map<String, Value>,
     upstreams: Map<String, Value>,
     locations: Map<String, Value>,
-}
-
-#[derive(Default, Debug)]
-pub struct Config {
-    pub servers: Vec<String>,
-    pub upstreams: Vec<String>,
-    pub locations: Vec<String>,
 }
 
 fn resolve_path(path: &str) -> String {
@@ -58,17 +115,15 @@ fn resolve_path(path: &str) -> String {
     }
 }
 
-fn format_toml(name: &str, value: &Value) -> String {
+fn format_toml(value: &Value) -> String {
     if let Some(value) = value.as_table() {
-        let mut data = value.clone();
-        data.insert("name".to_string(), Value::String(name.to_string()));
-        data.to_string()
+        value.to_string()
     } else {
         "".to_string()
     }
 }
 
-pub fn load_config(path: &str) -> Result<Config> {
+pub fn load_config(path: &str) -> Result<PingapConf> {
     let filepath = resolve_path(path);
     ensure!(
         !filepath.is_empty(),
@@ -98,15 +153,20 @@ pub fn load_config(path: &str) -> Result<Config> {
             .as_str(),
     )
     .context(DeSnafu)?;
-    let mut conf = Config::default();
-    for (name, value) in data.upstreams.iter() {
-        conf.upstreams.push(format_toml(name, value));
+    let mut conf = PingapConf::default();
+    for (name, value) in data.upstreams {
+        let upstream: UpstreamConf =
+            toml::from_str(format_toml(&value).as_str()).context(DeSnafu)?;
+        conf.upstreams.insert(name, upstream);
     }
-    for (name, value) in data.locations.iter() {
-        conf.locations.push(format_toml(name, value));
+    for (name, value) in data.locations {
+        let location: LocationConf =
+            toml::from_str(format_toml(&value).as_str()).context(DeSnafu)?;
+        conf.locations.insert(name, location);
     }
-    for (name, value) in data.servers.iter() {
-        conf.servers.push(format_toml(name, value));
+    for (name, value) in data.servers {
+        let server: ServerConf = toml::from_str(format_toml(&value).as_str()).context(DeSnafu)?;
+        conf.servers.insert(name, server);
     }
 
     Ok(conf)

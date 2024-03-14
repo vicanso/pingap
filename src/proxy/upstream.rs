@@ -1,3 +1,4 @@
+use crate::config::UpstreamConf;
 use futures_util::FutureExt;
 use humantime::parse_duration;
 use pingora::http::RequestHeader;
@@ -6,7 +7,6 @@ use pingora::lb::selection::{Consistent, RoundRobin};
 use pingora::lb::{discovery, Backend, Backends, LoadBalancer};
 use pingora::protocols::l4::socket::SocketAddr;
 use pingora::upstreams::peer::HttpPeer;
-use serde::Deserialize;
 use snafu::{ResultExt, Snafu};
 use std::collections::BTreeSet;
 use std::net::ToSocketAddrs;
@@ -16,11 +16,6 @@ use url::Url;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Addr parse error {source}, {addr}"))]
-    AddrParse {
-        source: std::net::AddrParseError,
-        addr: String,
-    },
     #[snafu(display("Url parse error {source}, {url}"))]
     UrlParse {
         source: url::ParseError,
@@ -33,36 +28,6 @@ pub enum Error {
     },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
-
-#[derive(Debug, Default, Deserialize, Clone)]
-pub struct UpstreamConf {
-    pub name: String,
-    pub addrs: Vec<String>,
-    pub lb: Option<String>,
-    pub sni: Option<String>,
-    pub health_check: Option<String>,
-}
-
-impl UpstreamConf {
-    pub fn validate(&self) -> Result<()> {
-        // validate upstream addr
-        for addr in self.addrs.iter() {
-            let arr: Vec<_> = addr.split(' ').collect();
-            let _ = arr[0]
-                .parse::<std::net::SocketAddr>()
-                .context(AddrParseSnafu {
-                    addr: arr[0].to_string(),
-                });
-        }
-        // validate health check
-        let health_check = self.health_check.clone().unwrap_or_default();
-        if !health_check.is_empty() {
-            let _ = Url::parse(&health_check).context(UrlParseSnafu { url: health_check })?;
-        }
-
-        Ok(())
-    }
-}
 
 enum SelectionLb {
     RoundRobinLb(Arc<LoadBalancer<RoundRobin>>),
@@ -175,7 +140,7 @@ fn new_http_health_check(conf: &HealthCheckConf) -> HttpHealthCheck {
 }
 
 impl Upstream {
-    pub fn new(conf: &UpstreamConf) -> Result<Self> {
+    pub fn new(name: &str, conf: &UpstreamConf) -> Result<Self> {
         let mut upstreams = BTreeSet::new();
         let mut backends = vec![];
         for addr in conf.addrs.iter() {
@@ -246,7 +211,7 @@ impl Upstream {
         };
         let sni = conf.sni.clone().unwrap_or_default();
         Ok(Self {
-            name: conf.name.clone(),
+            name: name.to_string(),
             tls: !sni.is_empty(),
             sni: sni.clone(),
             hash,

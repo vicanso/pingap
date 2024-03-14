@@ -1,5 +1,5 @@
-use super::{Location, LocationConf, Upstream, UpstreamConf};
-use crate::config::Config;
+use super::{Location, Upstream};
+use crate::config::{LocationConf, PingapConf, UpstreamConf};
 use async_trait::async_trait;
 use log::info;
 use pingora::proxy::{http_proxy_service, HttpProxy};
@@ -11,8 +11,7 @@ use pingora::{
     proxy::{ProxyHttp, Session},
     upstreams::peer::HttpPeer,
 };
-use serde::Deserialize;
-use snafu::{ResultExt, Snafu};
+use snafu::Snafu;
 use std::sync::Arc;
 
 #[derive(Debug, Snafu)]
@@ -31,67 +30,51 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 pub struct ServerConf {
     pub name: String,
     pub addr: String,
-    pub upstreams: Vec<UpstreamConf>,
-    pub locations: Vec<LocationConf>,
+    pub upstreams: Vec<(String, UpstreamConf)>,
+    pub locations: Vec<(String, LocationConf)>,
 }
 
-#[derive(Deserialize, Debug)]
-struct ServerTomlConf {
-    name: String,
-    addr: String,
-    locations: Option<Vec<String>>,
-}
-
-impl TryFrom<Config> for Vec<ServerConf> {
-    type Error = Error;
-    fn try_from(conf: Config) -> Result<Self> {
+impl From<PingapConf> for Vec<ServerConf> {
+    fn from(conf: PingapConf) -> Self {
         let mut upstreams = vec![];
-        for item in conf.upstreams.iter() {
-            let up: UpstreamConf = toml::from_str(item).context(TomlDeSnafu {
-                content: item.clone(),
-            })?;
-            upstreams.push(up);
+        for (name, item) in conf.upstreams {
+            upstreams.push((name, item));
         }
         let mut locations = vec![];
-        // TODO sort location
-        for item in conf.locations.iter() {
-            let lo: LocationConf = toml::from_str(item).context(TomlDeSnafu {
-                content: item.clone(),
-            })?;
-            locations.push(lo);
+        for (name, item) in conf.locations {
+            locations.push((name, item));
         }
+        // sort location by weight
+        locations.sort_by_key(|b| std::cmp::Reverse(get_weight(&b.1)));
         let mut servers = vec![];
-        for item in conf.servers.iter() {
-            let se: ServerTomlConf = toml::from_str(item).context(TomlDeSnafu {
-                content: item.clone(),
-            })?;
-            let valid_locations = se.locations.unwrap_or_default();
+        for (name, item) in conf.servers {
+            let valid_locations = item.locations.unwrap_or_default();
             let mut valid_upstreams = vec![];
             // filter location of server
             let mut filter_locations = vec![];
             for item in locations.iter() {
-                if valid_locations.contains(&item.name) {
-                    valid_upstreams.push(item.upstream.clone());
+                if valid_locations.contains(&item.0) {
+                    valid_upstreams.push(item.1.upstream.clone());
                     filter_locations.push(item.clone())
                 }
             }
             // filter upstream of server locations
             let mut filter_upstreams = vec![];
             for item in upstreams.iter() {
-                if valid_upstreams.contains(&item.name) {
+                if valid_upstreams.contains(&item.0) {
                     filter_upstreams.push(item.clone())
                 }
             }
 
             servers.push(ServerConf {
-                name: se.name,
-                addr: se.addr,
+                name,
+                addr: item.addr,
                 upstreams: filter_upstreams,
                 locations: filter_locations,
             });
         }
 
-        Ok(servers)
+        servers
     }
 }
 
@@ -112,20 +95,42 @@ pub struct ServerServices {
     pub bg_services: Vec<Box<dyn IService>>,
 }
 
+pub fn get_weight(conf: &LocationConf) -> u8 {
+    // path starts with
+    // = 8
+    // prefix(default) 4
+    // ~ 2
+    // host exist 1
+    let mut weighted: u8 = 0;
+    if let Some(path) = &conf.path {
+        if path.starts_with('=') {
+            weighted += 8;
+        } else if path.starts_with('~') {
+            weighted += 2;
+        } else {
+            weighted += 4;
+        }
+    };
+    if conf.host.is_some() {
+        weighted += 1;
+    }
+    weighted
+}
+
 impl Server {
     pub fn new(conf: ServerConf) -> Result<Self> {
         let mut upstreams = vec![];
         let in_used_upstreams: Vec<_> = conf
             .locations
             .iter()
-            .map(|item| item.upstream.clone())
+            .map(|item| item.1.upstream.clone())
             .collect();
         for item in conf.upstreams.iter() {
             // ignore not in used
-            if !in_used_upstreams.contains(&item.name) {
+            if !in_used_upstreams.contains(&item.0) {
                 continue;
             }
-            let up = Upstream::new(item).map_err(|err| Error::Common {
+            let up = Upstream::new(&item.0, &item.1).map_err(|err| Error::Common {
                 category: "upstream".to_string(),
                 message: err.to_string(),
             })?;
@@ -133,12 +138,14 @@ impl Server {
         }
         let mut locations = vec![];
         for item in conf.locations.iter() {
-            locations.push(Location::new(item, upstreams.clone()).map_err(|err| {
-                Error::Common {
-                    category: "location".to_string(),
-                    message: err.to_string(),
-                }
-            })?);
+            locations.push(
+                Location::new(&item.0, &item.1, upstreams.clone()).map_err(|err| {
+                    Error::Common {
+                        category: "location".to_string(),
+                        message: err.to_string(),
+                    }
+                })?,
+            );
         }
 
         Ok(Server {
@@ -192,6 +199,12 @@ impl ProxyHttp for Server {
             // TODO parse error
             if let Ok(uri) = new_path.parse::<http::Uri>() {
                 header.set_uri(uri);
+            }
+        }
+        if let Some(arr) = lo.get_proxy_headers() {
+            for (k, v) in arr {
+                // v validate for HeaderValue, so always no error
+                let _ = header.insert_header(k, v.to_vec());
             }
         }
         let peer = lo

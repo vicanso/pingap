@@ -2,6 +2,6 @@ mod location;
 mod server;
 mod upstream;
 
-pub use location::{Location, LocationConf};
+pub use location::Location;
 pub use server::*;
-pub use upstream::{Upstream, UpstreamConf};
+pub use upstream::Upstream;
