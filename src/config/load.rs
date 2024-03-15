@@ -66,6 +66,7 @@ pub struct UpstreamConf {
     pub lb: Option<String>,
     pub sni: Option<String>,
     pub health_check: Option<String>,
+    pub ipv4_only: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]
@@ -89,6 +90,13 @@ pub struct PingapConf {
     pub upstreams: HashMap<String, UpstreamConf>,
     pub locations: HashMap<String, LocationConf>,
     pub servers: HashMap<String, ServerConf>,
+}
+
+impl PingapConf {
+    pub fn validate(&self) -> Result<()> {
+        // TODO validate
+        Ok(())
+    }
 }
 
 #[derive(Deserialize, Debug)]

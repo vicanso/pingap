@@ -154,8 +154,11 @@ impl Upstream {
             if !addr.contains(':') {
                 addr = format!("{addr}:80");
             }
-
+            let ipv4_only = conf.ipv4_only.unwrap_or_default();
             for item in addr.to_socket_addrs().context(IoSnafu { content: addr })? {
+                if ipv4_only && item.is_ipv6() {
+                    continue;
+                }
                 let backend = Backend {
                     addr: SocketAddr::Inet(item),
                     weight,

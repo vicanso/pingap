@@ -13,6 +13,7 @@ use pingora::{
 };
 use snafu::Snafu;
 use std::sync::Arc;
+use std::time::Instant;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -172,16 +173,22 @@ impl Server {
     }
 }
 
+pub struct State {
+    created_at: Instant,
+}
+
 #[async_trait]
 impl ProxyHttp for Server {
-    type CTX = ();
+    type CTX = State;
     fn new_ctx(&self) -> Self::CTX {
-        info!("new ctx");
+        State {
+            created_at: Instant::now(),
+        }
     }
     async fn upstream_peer(
         &self,
         session: &mut Session,
-        _ctx: &mut (),
+        _ctx: &mut State,
     ) -> pingora::Result<Box<HttpPeer>> {
         let header = session.req_header_mut();
         let path = header.uri.path();
@@ -212,5 +219,16 @@ impl ProxyHttp for Server {
             .new_http_peer(header)
             .ok_or(pingora::Error::new_str("Upstream not found"))?;
         Ok(Box::new(peer))
+    }
+    async fn logging(&self, session: &mut Session, _e: Option<&pingora::Error>, ctx: &mut Self::CTX)
+    where
+        Self::CTX: Send + Sync,
+    {
+        // https://github.com/nginx/nginx/blob/master/src/http/ngx_http_variables.c#L166
+        info!(
+            "{:?} {:?}",
+            session.req_header().uri,
+            Instant::now().duration_since(ctx.created_at)
+        )
     }
 }
