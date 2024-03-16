@@ -1,3 +1,5 @@
+use super::logger::Parser;
+use super::state::State;
 use super::{Location, Upstream};
 use crate::config::{LocationConf, PingapConf, UpstreamConf};
 use async_trait::async_trait;
@@ -13,7 +15,6 @@ use pingora::{
 };
 use snafu::Snafu;
 use std::sync::Arc;
-use std::time::Instant;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -31,6 +32,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 pub struct ServerConf {
     pub name: String,
     pub addr: String,
+    pub access_log: Option<String>,
     pub upstreams: Vec<(String, UpstreamConf)>,
     pub locations: Vec<(String, LocationConf)>,
 }
@@ -70,6 +72,7 @@ impl From<PingapConf> for Vec<ServerConf> {
             servers.push(ServerConf {
                 name,
                 addr: item.addr,
+                access_log: item.access_log,
                 upstreams: filter_upstreams,
                 locations: filter_locations,
             });
@@ -89,6 +92,7 @@ impl ServerConf {
 pub struct Server {
     addr: String,
     locations: Vec<Location>,
+    log_parser: Option<Parser>,
 }
 
 pub struct ServerServices {
@@ -148,9 +152,14 @@ impl Server {
                 })?,
             );
         }
+        let mut p = None;
+        if let Some(access_log) = conf.access_log {
+            p = Some(Parser::from(access_log.as_str()));
+        }
 
         Ok(Server {
             addr: conf.addr,
+            log_parser: p,
             locations,
         })
     }
@@ -173,17 +182,11 @@ impl Server {
     }
 }
 
-pub struct State {
-    created_at: Instant,
-}
-
 #[async_trait]
 impl ProxyHttp for Server {
     type CTX = State;
     fn new_ctx(&self) -> Self::CTX {
-        State {
-            created_at: Instant::now(),
-        }
+        State::default()
     }
     async fn upstream_peer(
         &self,
@@ -224,11 +227,9 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        // https://github.com/nginx/nginx/blob/master/src/http/ngx_http_variables.c#L166
-        info!(
-            "{:?} {:?}",
-            session.req_header().uri,
-            Instant::now().duration_since(ctx.created_at)
-        )
+        if let Some(p) = &self.log_parser {
+            info!("{}", p.format(session, ctx));
+        }
+        // Instant::now().duration_since(ctx.created_at)
     }
 }

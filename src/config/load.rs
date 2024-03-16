@@ -82,6 +82,7 @@ pub struct LocationConf {
 
 pub struct ServerConf {
     pub addr: String,
+    pub access_log: Option<String>,
     pub locations: Option<Vec<String>>,
 }
 
