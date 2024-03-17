@@ -4,6 +4,7 @@ use super::{Location, Upstream};
 use crate::config::{LocationConf, PingapConf, UpstreamConf};
 use async_trait::async_trait;
 use log::info;
+use pingora::http::ResponseHeader;
 use pingora::proxy::{http_proxy_service, HttpProxy};
 use pingora::server::configuration;
 use pingora::services::background::GenBackgroundService;
@@ -223,6 +224,17 @@ impl ProxyHttp for Server {
             .ok_or(pingora::Error::new_str("Upstream not found"))?;
         Ok(Box::new(peer))
     }
+    fn upstream_response_filter(
+        &self,
+        _session: &mut Session,
+        upstream_response: &mut ResponseHeader,
+        ctx: &mut Self::CTX,
+    ) {
+        if ctx.status.is_none() {
+            ctx.status = Some(upstream_response.status);
+        }
+    }
+
     async fn logging(&self, session: &mut Session, _e: Option<&pingora::Error>, ctx: &mut Self::CTX)
     where
         Self::CTX: Send + Sync,
@@ -230,6 +242,5 @@ impl ProxyHttp for Server {
         if let Some(p) = &self.log_parser {
             info!("{}", p.format(session, ctx));
         }
-        // Instant::now().duration_since(ctx.created_at)
     }
 }

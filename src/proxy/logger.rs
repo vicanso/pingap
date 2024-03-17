@@ -21,11 +21,8 @@ pub enum TagCategory {
     Referer,
     UserAgent,
     When,
-    WhenIso,
-    WhenIsoMs,
     WhenUtcIso,
     WhenUnix,
-    WhenUtcIsoMs,
     Size,
     SizeHuman,
     Status,
@@ -116,24 +113,12 @@ impl From<&str> for Parser {
                     category: TagCategory::When,
                     data: None,
                 }),
-                "{when-iso}" => tags.push(Tag {
-                    category: TagCategory::WhenIso,
-                    data: None,
-                }),
                 "{when-utc-iso}" => tags.push(Tag {
                     category: TagCategory::WhenUtcIso,
                     data: None,
                 }),
                 "{when-unix}" => tags.push(Tag {
                     category: TagCategory::WhenUnix,
-                    data: None,
-                }),
-                "{when-iso-ms}" => tags.push(Tag {
-                    category: TagCategory::WhenIsoMs,
-                    data: None,
-                }),
-                "{when-utc-iso-ms}" => tags.push(Tag {
-                    category: TagCategory::WhenUtcIsoMs,
                     data: None,
                 }),
                 "{size}" => tags.push(Tag {
@@ -186,7 +171,7 @@ impl From<&str> for Parser {
 }
 
 impl Parser {
-    pub fn format(&self, session: &Session, state: &State) -> String {
+    pub fn format(&self, session: &Session, ctx: &State) -> String {
         let mut buf = BytesMut::with_capacity(1024);
         for tag in self.tags.iter() {
             match tag.category {
@@ -218,22 +203,68 @@ impl Parser {
                         buf.put(query.as_bytes());
                     }
                 }
+                TagCategory::Remote => {
+                    // TODO
+                }
+                TagCategory::RealIp => {
+                    // TODO
+                }
+                TagCategory::ClientIp => {
+                    // TODO
+                }
+                TagCategory::Scheme => {
+                    // TODO
+                }
                 TagCategory::Uri => {
                     buf.put(session.req_header().raw_path());
                 }
-                TagCategory::WhenIso => {
+                TagCategory::Referer => {
+                    if let Some(value) = session.get_header("Referer") {
+                        buf.put(value.as_bytes());
+                    }
+                }
+                TagCategory::UserAgent => {
+                    if let Some(value) = session.get_header("User-Agent") {
+                        buf.put(value.as_bytes());
+                    }
+                }
+                TagCategory::When => {
+                    buf.put(chrono::Utc::now().to_string().as_bytes());
+                }
+                TagCategory::WhenUtcIso => {
                     buf.put(chrono::Utc::now().to_rfc3339().as_bytes());
                 }
+                TagCategory::WhenUnix => {
+                    buf.put(chrono::Utc::now().timestamp_millis().to_string().as_bytes());
+                }
+                TagCategory::Size => {
+                    // TODO
+                }
+                TagCategory::SizeHuman => {
+                    // TODO
+                }
+                TagCategory::Status => {
+                    if let Some(status) = ctx.status {
+                        buf.put(status.as_str().as_bytes());
+                    }
+                }
                 TagCategory::Latency => {
-                    let d = Instant::now().duration_since(state.created_at);
+                    let d = Instant::now().duration_since(ctx.created_at);
                     buf.put(d.as_millis().to_string().as_bytes())
                 }
                 TagCategory::LatencyHuman => {
-                    let d = Instant::now().duration_since(state.created_at);
-                    // d.to_string();
+                    let d = Instant::now().duration_since(ctx.created_at);
                     buf.put(format!("{d:?}").as_bytes());
                 }
-                _ => {}
+                TagCategory::Cookie => {
+                    // TODO
+                }
+                TagCategory::PayloadSize => {
+                    // TODO
+                }
+                TagCategory::PayloadSizeHuman => {
+                    // TODO
+                }
             };
         }
 
