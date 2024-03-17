@@ -1,4 +1,4 @@
 [servers.test]
-access_log = '{when} "{method} {uri} {proto}" {status} {size-human} "{referer}" "{user-agent}" {latency-human}'
+access_log = '{when} "{method} {uri} {proto}" {status} {size-human} "{referer}" "{>Accept-Encoding}" {~jt} "{user-agent}" {latency-human}'
 addr = "0.0.0.0:6188"
 locations = ["lo"]

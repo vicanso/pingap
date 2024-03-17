@@ -28,6 +28,8 @@ pub enum TagCategory {
     Latency,
     LatencyHuman,
     Cookie,
+    RequestHeader,
+    ResponseHeader,
     PayloadSize,
     PayloadSizeHuman,
 }
@@ -45,7 +47,7 @@ pub struct Parser {
 
 impl From<&str> for Parser {
     fn from(value: &str) -> Self {
-        let reg = Regex::new(r"(\{[a-zA-Z_-]+*\})").unwrap();
+        let reg = Regex::new(r"(\{[a-zA-Z_<>\-~]+*\})").unwrap();
         let mut current = 0;
         let mut end = 0;
         let mut tags = vec![];
@@ -146,11 +148,20 @@ impl From<&str> for Parser {
                 }),
                 // 	cookie           = "cookie"
                 _ => {
+                    let key = key.substring(1, key.len() - 1);
                     let ch = key.substring(0, 1);
                     let value = key.substring(1, key.len());
                     match ch {
                         "~" => tags.push(Tag {
                             category: TagCategory::Cookie,
+                            data: Some(value.to_string()),
+                        }),
+                        ">" => tags.push(Tag {
+                            category: TagCategory::RequestHeader,
+                            data: Some(value.to_string()),
+                        }),
+                        "<" => tags.push(Tag {
+                            category: TagCategory::ResponseHeader,
                             data: Some(value.to_string()),
                         }),
                         _ => {}
@@ -249,7 +260,11 @@ impl Parser {
                     buf.push_str(&ctx.response_body_size.to_string());
                 }
                 TagCategory::SizeHuman => {
-                    buf.push_str(&ByteSize(ctx.response_body_size as u64).to_string());
+                    buf.push_str(
+                        &ByteSize(ctx.response_body_size as u64)
+                            .to_string()
+                            .replace(' ', ""),
+                    );
                 }
                 TagCategory::Status => {
                     if let Some(status) = ctx.status {
@@ -265,6 +280,26 @@ impl Parser {
                     buf.push_str(&format!("{d:?}"));
                 }
                 TagCategory::Cookie => {
+                    let cookie_name = tag.data.clone().unwrap_or_default();
+                    let cookie_value = get_header_value(session, "Cookie").unwrap_or_default();
+                    for item in cookie_value.split(';') {
+                        let arr: Vec<&str> = item.split('=').collect();
+                        if arr.len() != 2 {
+                            continue;
+                        }
+                        if arr[0] == cookie_name {
+                            buf.push_str(arr[1]);
+                        }
+                    }
+                }
+                TagCategory::RequestHeader => {
+                    if let Some(key) = &tag.data {
+                        if let Some(value) = get_header_value(session, key) {
+                            buf.push_str(value);
+                        }
+                    }
+                }
+                TagCategory::ResponseHeader => {
                     // TODO
                 }
                 TagCategory::PayloadSize => {
