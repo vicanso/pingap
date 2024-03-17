@@ -234,6 +234,17 @@ impl ProxyHttp for Server {
             ctx.status = Some(upstream_response.status);
         }
     }
+    fn upstream_response_body_filter(
+        &self,
+        _session: &mut Session,
+        body: &Option<bytes::Bytes>,
+        _end_of_stream: bool,
+        ctx: &mut Self::CTX,
+    ) {
+        if let Some(body) = body {
+            ctx.response_body_size += body.len();
+        }
+    }
 
     async fn logging(&self, session: &mut Session, _e: Option<&pingora::Error>, ctx: &mut Self::CTX)
     where
