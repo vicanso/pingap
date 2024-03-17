@@ -5,16 +5,19 @@ use crate::config::{LocationConf, PingapConf, UpstreamConf};
 use async_trait::async_trait;
 use log::info;
 use pingora::http::ResponseHeader;
+use pingora::protocols::Digest;
 use pingora::proxy::{http_proxy_service, HttpProxy};
 use pingora::server::configuration;
 use pingora::services::background::GenBackgroundService;
 use pingora::services::listening::Service;
 use pingora::services::Service as IService;
+use pingora::upstreams::peer::Peer;
 use pingora::{
     proxy::{ProxyHttp, Session},
     upstreams::peer::HttpPeer,
 };
 use snafu::Snafu;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 
 #[derive(Debug, Snafu)]
@@ -92,6 +95,7 @@ impl ServerConf {
 
 pub struct Server {
     addr: String,
+    processing: AtomicI32,
     locations: Vec<Location>,
     log_parser: Option<Parser>,
 }
@@ -159,6 +163,7 @@ impl Server {
         }
 
         Ok(Server {
+            processing: AtomicI32::new(0),
             addr: conf.addr,
             log_parser: p,
             locations,
@@ -188,6 +193,17 @@ impl ProxyHttp for Server {
     type CTX = State;
     fn new_ctx(&self) -> Self::CTX {
         State::default()
+    }
+    async fn request_filter(
+        &self,
+        _session: &mut Session,
+        _ctx: &mut Self::CTX,
+    ) -> pingora::Result<bool>
+    where
+        Self::CTX: Send + Sync,
+    {
+        self.processing.fetch_add(1, Ordering::Relaxed);
+        Ok(false)
     }
     async fn upstream_peer(
         &self,
@@ -245,12 +261,30 @@ impl ProxyHttp for Server {
             ctx.response_body_size += body.len();
         }
     }
+    async fn connected_to_upstream(
+        &self,
+        _session: &mut Session,
+        reused: bool,
+        peer: &HttpPeer,
+        _fd: std::os::unix::io::RawFd,
+        _digest: Option<&Digest>,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<()>
+    where
+        Self::CTX: Send + Sync,
+    {
+        ctx.reused = reused;
+        ctx.upstream_address = peer.address().to_string();
+        Ok(())
+    }
 
     async fn logging(&self, session: &mut Session, _e: Option<&pingora::Error>, ctx: &mut Self::CTX)
     where
         Self::CTX: Send + Sync,
     {
+        self.processing.fetch_add(-1, Ordering::Relaxed);
         if let Some(p) = &self.log_parser {
+            ctx.response_size = session.body_bytes_sent();
             info!("{}", p.format(session, ctx));
         }
     }
