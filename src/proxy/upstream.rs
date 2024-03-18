@@ -64,7 +64,7 @@ impl TryFrom<&str> for HealthCheckConf {
         let mut read_timeout = Duration::from_secs(3);
         let mut check_frequency = Duration::from_secs(10);
         let mut consecutive_success = 1;
-        let mut consecutive_failure = 1;
+        let mut consecutive_failure = 2;
         // HttpHealthCheck
         for (key, value) in value.query_pairs().into_iter() {
             match key.as_ref() {
@@ -173,7 +173,9 @@ impl Upstream {
         let mut health_check_frequency = Duration::from_secs(5);
         let health_check = conf.health_check.clone().unwrap_or_default();
         let hc: Box<dyn HealthCheck + Send + Sync + 'static> = if health_check.is_empty() {
-            TcpHealthCheck::new()
+            let mut check = TcpHealthCheck::new();
+            check.peer_template.options.connection_timeout = Some(Duration::from_secs(3));
+            check
         } else {
             let health_check_conf: HealthCheckConf = health_check.as_str().try_into()?;
             health_check_frequency = health_check_conf.check_frequency;

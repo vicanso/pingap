@@ -74,6 +74,7 @@ pub struct LocationConf {
     pub path: Option<String>,
     pub host: Option<String>,
     pub proxy_headers: Option<Vec<String>>,
+    pub headers: Option<Vec<String>>,
     pub rewrite: Option<String>,
     pub upstream: String,
 }
@@ -86,11 +87,14 @@ pub struct ServerConf {
     pub locations: Option<Vec<String>>,
 }
 
+static ERROR_TEMPLATE: &str = include_str!("../../error.html");
+
 #[derive(Debug, Default, Clone)]
 pub struct PingapConf {
     pub upstreams: HashMap<String, UpstreamConf>,
     pub locations: HashMap<String, LocationConf>,
     pub servers: HashMap<String, ServerConf>,
+    pub error_template: String,
 }
 
 impl PingapConf {
@@ -105,6 +109,7 @@ struct TomlConfig {
     servers: Map<String, Value>,
     upstreams: Map<String, Value>,
     locations: Map<String, Value>,
+    error_template: Option<String>,
 }
 
 fn resolve_path(path: &str) -> String {
@@ -162,7 +167,10 @@ pub fn load_config(path: &str) -> Result<PingapConf> {
             .as_str(),
     )
     .context(DeSnafu)?;
-    let mut conf = PingapConf::default();
+    let mut conf = PingapConf {
+        error_template: data.error_template.unwrap_or_default(),
+        ..Default::default()
+    };
     for (name, value) in data.upstreams {
         let upstream: UpstreamConf =
             toml::from_str(format_toml(&value).as_str()).context(DeSnafu)?;
@@ -176,6 +184,9 @@ pub fn load_config(path: &str) -> Result<PingapConf> {
     for (name, value) in data.servers {
         let server: ServerConf = toml::from_str(format_toml(&value).as_str()).context(DeSnafu)?;
         conf.servers.insert(name, server);
+    }
+    if conf.error_template.is_empty() {
+        conf.error_template = ERROR_TEMPLATE.to_string();
     }
 
     Ok(conf)

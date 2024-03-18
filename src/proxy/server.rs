@@ -3,8 +3,11 @@ use super::state::State;
 use super::{Location, Upstream};
 use crate::config::{LocationConf, PingapConf, UpstreamConf};
 use async_trait::async_trait;
-use log::info;
+use bytes::Bytes;
+use http::StatusCode;
+use log::{error, info};
 use pingora::http::ResponseHeader;
+use pingora::protocols::http::error_resp;
 use pingora::protocols::Digest;
 use pingora::proxy::{http_proxy_service, HttpProxy};
 use pingora::server::configuration;
@@ -17,7 +20,7 @@ use pingora::{
     upstreams::peer::HttpPeer,
 };
 use snafu::Snafu;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 #[derive(Debug, Snafu)]
@@ -39,6 +42,7 @@ pub struct ServerConf {
     pub access_log: Option<String>,
     pub upstreams: Vec<(String, UpstreamConf)>,
     pub locations: Vec<(String, LocationConf)>,
+    error_template: String,
 }
 
 impl From<PingapConf> for Vec<ServerConf> {
@@ -79,6 +83,7 @@ impl From<PingapConf> for Vec<ServerConf> {
                 access_log: item.access_log,
                 upstreams: filter_upstreams,
                 locations: filter_locations,
+                error_template: conf.error_template.clone(),
             });
         }
 
@@ -95,9 +100,11 @@ impl ServerConf {
 
 pub struct Server {
     addr: String,
+    accepted: AtomicU64,
     processing: AtomicI32,
     locations: Vec<Location>,
     log_parser: Option<Parser>,
+    error_template: String,
 }
 
 pub struct ServerServices {
@@ -163,10 +170,12 @@ impl Server {
         }
 
         Ok(Server {
+            accepted: AtomicU64::new(0),
             processing: AtomicI32::new(0),
             addr: conf.addr,
             log_parser: p,
             locations,
+            error_template: conf.error_template,
         })
     }
     pub fn run(self, conf: &Arc<configuration::ServerConf>) -> ServerServices {
@@ -203,6 +212,7 @@ impl ProxyHttp for Server {
         Self::CTX: Send + Sync,
     {
         self.processing.fetch_add(1, Ordering::Relaxed);
+        self.accepted.fetch_add(1, Ordering::Relaxed);
         Ok(false)
     }
     async fn upstream_peer(
@@ -228,6 +238,7 @@ impl ProxyHttp for Server {
                 header.set_uri(uri);
             }
         }
+        // TODO
         if let Some(arr) = lo.get_proxy_headers() {
             for (k, v) in arr {
                 // v validate for HeaderValue, so always no error
@@ -278,6 +289,73 @@ impl ProxyHttp for Server {
         Ok(())
     }
 
+    async fn fail_to_proxy(
+        &self,
+        session: &mut Session,
+        e: &pingora::Error,
+        ctx: &mut Self::CTX,
+    ) -> u16
+    where
+        Self::CTX: Send + Sync,
+    {
+        let code = match e.etype() {
+            pingora::HTTPStatus(code) => *code,
+            _ => {
+                match e.esource() {
+                    pingora::ErrorSource::Upstream => 502,
+                    pingora::ErrorSource::Downstream => {
+                        match e.etype() {
+                            pingora::ErrorType::WriteError
+                            | pingora::ErrorType::ReadError
+                            | pingora::ErrorType::ConnectionClosed => {
+                                /* conn already dead */
+                                0
+                            }
+                            _ => 400,
+                        }
+                    }
+                    pingora::ErrorSource::Internal | pingora::ErrorSource::Unset => 500,
+                }
+            }
+        };
+        if code > 0 {
+            // TODO better error handler
+
+            let mut resp = match code {
+                502 => error_resp::HTTP_502_RESPONSE.clone(),
+                400 => error_resp::HTTP_400_RESPONSE.clone(),
+                _ => error_resp::gen_error_response(code),
+            };
+
+            let content = self.error_template.replace("{{content}}", &e.to_string());
+            let buf = Bytes::from(content);
+            ctx.response_body_size = buf.len();
+            let _ = resp.insert_header(http::header::CONTENT_LENGTH, buf.len().to_string());
+
+            // TODO: we shouldn't be closing downstream connections on internally generated errors
+            // and possibly other upstream connect() errors (connection refused, timeout, etc)
+            //
+            // This change is only here because we DO NOT re-use downstream connections
+            // today on these errors and we should signal to the client that pingora is dropping it
+            // rather than a misleading the client with 'keep-alive'
+            session.set_keepalive(None);
+
+            session
+                .write_response_header(Box::new(resp))
+                .await
+                .unwrap_or_else(|e| {
+                    error!("failed to send error response to downstream: {e}");
+                });
+
+            let _ = session.write_response_body(buf).await;
+        }
+        if ctx.status.is_none() {
+            if let Ok(status) = StatusCode::from_u16(code) {
+                ctx.status = Some(status);
+            }
+        }
+        code
+    }
     async fn logging(&self, session: &mut Session, _e: Option<&pingora::Error>, ctx: &mut Self::CTX)
     where
         Self::CTX: Send + Sync,

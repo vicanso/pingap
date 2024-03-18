@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+    </head>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+        }
+        .pingap-header {
+            background-color: rgba(255, 255, 255, 0.6);
+            border-bottom: 1px solid rgba(228, 228, 231, 0.4);
+            padding: 15px;
+            line-height: 24px;
+        }
+        .pingap-header-content {
+            max-width: 1000px;
+            margin: auto;
+        }
+        .pingap-logo {
+            color: rgb(9, 9, 11);
+            font-weight: bolder;
+        }
+        .pingap-error {
+            margin-top: 15px;
+            text-align: center;
+        }
+    </style>
+    <body>
+        <header class="pingap-header">
+            <div class="pingap-header-content">
+                <span class="pingap-logo">Pingap</span>
+            </div>
+        </header>
+        <p class="pingap-error">{{content}}</p>
+    </body>
+</html>

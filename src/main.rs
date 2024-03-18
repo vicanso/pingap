@@ -4,6 +4,7 @@ use log::{error, info};
 use pingora::server;
 use pingora::server::configuration::Opt;
 use std::error::Error;
+use std::io::Write;
 use std::sync::Arc;
 
 mod config;
@@ -36,7 +37,18 @@ struct Args {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default())
+        .format(|buf, record| {
+            writeln!(
+                buf,
+                "{} {} {}",
+                record.level(),
+                chrono::Local::now().to_rfc3339(),
+                record.args()
+            )
+        })
+        .try_init()?;
+
     let args = Args::parse();
     let conf = config::load_config(&args.conf)?;
 

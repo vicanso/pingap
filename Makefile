@@ -11,7 +11,7 @@ build-web:
 	&& cp -rf dist ../
 
 dev:
-	cargo watch -w src -x 'run -- -c ~/github/pingap/conf'
+	RUST_LOG=INFO cargo watch -w src -x 'run -- -c ~/github/pingap/conf'
 
 udeps:
 	cargo +nightly udeps
