@@ -40,6 +40,11 @@ pub struct Upstream {
     tls: bool,
     sni: String,
     lb: SelectionLb,
+    connection_timeout: Option<Duration>,
+    total_connection_timeout: Option<Duration>,
+    read_timeout: Option<Duration>,
+    idle_timeout: Option<Duration>,
+    write_timeout: Option<Duration>,
 }
 
 pub struct HealthCheckConf {
@@ -59,7 +64,6 @@ impl TryFrom<&str> for HealthCheckConf {
         let value = Url::parse(value).context(UrlParseSnafu {
             url: value.to_string(),
         })?;
-
         let mut connection_timeout = Duration::from_secs(3);
         let mut read_timeout = Duration::from_secs(3);
         let mut check_frequency = Duration::from_secs(10);
@@ -177,7 +181,10 @@ impl Upstream {
             check.peer_template.options.connection_timeout = Some(Duration::from_secs(3));
             check
         } else {
-            let health_check_conf: HealthCheckConf = health_check.as_str().try_into()?;
+            let mut health_check_conf: HealthCheckConf = health_check.as_str().try_into()?;
+            if health_check_conf.host == name {
+                health_check_conf.host = "".to_string();
+            }
             health_check_frequency = health_check_conf.check_frequency;
             match health_check_conf.schema.as_str() {
                 "http" | "https" => Box::new(new_http_health_check(&health_check_conf)),
@@ -221,6 +228,11 @@ impl Upstream {
             sni: sni.clone(),
             hash,
             lb,
+            connection_timeout: conf.connection_timeout,
+            total_connection_timeout: conf.total_connection_timeout,
+            read_timeout: conf.read_timeout,
+            idle_timeout: conf.idle_timeout,
+            write_timeout: conf.write_timeout,
         })
     }
     pub fn new_http_peer(&self, header: &RequestHeader) -> Option<HttpPeer> {
@@ -235,7 +247,15 @@ impl Upstream {
                 lb.select(key, 256)
             }
         };
-        upstream.map(|upstream| HttpPeer::new(upstream, self.tls, self.sni.clone()))
+        upstream.map(|upstream| {
+            let mut p = HttpPeer::new(upstream, self.tls, self.sni.clone());
+            p.options.connection_timeout = self.connection_timeout;
+            p.options.total_connection_timeout = self.total_connection_timeout;
+            p.options.read_timeout = self.read_timeout;
+            p.options.idle_timeout = self.idle_timeout;
+            p.options.write_timeout = self.write_timeout;
+            p
+        })
     }
     pub fn get_round_robind(&self) -> Option<Arc<LoadBalancer<RoundRobin>>> {
         match &self.lb {

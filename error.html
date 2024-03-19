@@ -21,16 +21,41 @@
         .pingap-logo {
             color: rgb(9, 9, 11);
             font-weight: bolder;
+            font-size: 24px;
+        }
+        .pingap-version {
+            font-size: 16px;
         }
         .pingap-error {
             margin-top: 15px;
             text-align: center;
+            font-size: 18px;
+            line-height: 24px;
+        }
+        @media (prefers-color-scheme: dark) {
+            html,
+            body {
+                background-color: rgb(9, 9, 11);
+            }
+            .pingap-header {
+                background-color: rgba(9, 9, 11, 0.6);
+                border-bottom-color: rgba(39, 39, 42, 0.4);
+            }
+            .pingap-logo {
+                color: rgb(250, 250, 250);
+            }
+            .pingap-error {
+                color: rgb(250, 250, 250);
+            }
         }
     </style>
     <body>
         <header class="pingap-header">
             <div class="pingap-header-content">
-                <span class="pingap-logo">Pingap</span>
+                <span class="pingap-logo"
+                    >Pingap
+                    <span class="pingap-version">{{version}}</span></span
+                >
             </div>
         </header>
         <p class="pingap-error">{{content}}</p>

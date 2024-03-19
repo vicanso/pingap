@@ -1,6 +1,13 @@
 [upstreams.charts]
 addrs = ["127.0.0.1:5000"]
 lb = "hash:cookie"
+health_check = "tcp://charts/?connection_timeout=10s"
+connection_timeout = "10s"
+total_connection_timeout = "30s"
+read_timeout = "10s"
+write_timeout = "10s"
+idle_timeout = "120s"
+
 
 [upstreams.diving]
 addrs = ["127.0.0.1:5001"]

@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 mod config;
 mod proxy;
+mod utils;
 
 /// A reverse proxy like nginx.
 #[derive(Parser, Debug, Default)]

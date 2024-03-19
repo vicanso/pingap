@@ -1,5 +1,5 @@
 use super::Upstream;
-use crate::config::LocationConf;
+use crate::{config::LocationConf, utils};
 use bytes::Bytes;
 use http::HeaderValue;
 use regex::Regex;
@@ -23,6 +23,8 @@ pub struct Location {
     path: String,
     host: String,
     reg_rewrite: Option<(Regex, String)>,
+    // TODO better performance for http header
+    headers: Option<Vec<(Bytes, Bytes)>>,
     proxy_headers: Option<Vec<(Bytes, Bytes)>>,
     pub upstream: Arc<Upstream>,
 }
@@ -31,16 +33,11 @@ fn convert_headers(values: &Option<Vec<String>>) -> Result<Option<Vec<(Bytes, By
     if let Some(header_values) = values {
         let mut arr = vec![];
         for item in header_values {
-            let values: Vec<&str> = item.split(':').collect();
-            if values.len() < 2 {
-                continue;
+            if let Some([k, v]) = utils::split_to_two(item, ":") {
+                let _ =
+                    HeaderValue::from_str(&v).context(InvalidHeaderValueSnafu { value: v.clone() });
+                arr.push((Bytes::from(k), Bytes::from(v)));
             }
-            let k = Bytes::from(values[0].to_string());
-            let _ = HeaderValue::from_str(values[1]).context(InvalidHeaderValueSnafu {
-                value: values[1].to_string(),
-            })?;
-            let v = Bytes::from(values[1].to_string());
-            arr.push((k, v))
         }
         Ok(Some(arr))
     } else {
@@ -68,14 +65,14 @@ impl Location {
                 reg_rewrite = Some((re, value.to_string()));
             }
         }
-        let proxy_headers = convert_headers(&conf.proxy_headers)?;
         Ok(Location {
             // name: conf.name.clone(),
             path: conf.path.clone().unwrap_or_default(),
             host: conf.host.clone().unwrap_or_default(),
             upstream: up.clone(),
             reg_rewrite,
-            proxy_headers,
+            headers: convert_headers(&conf.headers)?,
+            proxy_headers: convert_headers(&conf.proxy_headers)?,
         })
     }
     #[inline]
@@ -97,5 +94,8 @@ impl Location {
     }
     pub fn get_proxy_headers(&self) -> Option<Vec<(Bytes, Bytes)>> {
         self.proxy_headers.clone()
+    }
+    pub fn get_header(&self) -> Option<Vec<(Bytes, Bytes)>> {
+        self.headers.clone()
     }
 }

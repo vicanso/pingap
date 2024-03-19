@@ -1,4 +1,5 @@
 use http::StatusCode;
+use std::collections::HashMap;
 use std::time::Instant;
 
 pub struct State {
@@ -8,6 +9,8 @@ pub struct State {
     pub response_size: usize,
     pub reused: bool,
     pub upstream_address: String,
+    pub location_index: Option<usize>,
+    pub response_headers: Option<HashMap<String, String>>,
 }
 
 impl Default for State {
@@ -19,6 +22,8 @@ impl Default for State {
             response_size: 0,
             reused: false,
             upstream_address: "".to_string(),
+            location_index: None,
+            response_headers: None,
         }
     }
 }

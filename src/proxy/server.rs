@@ -20,8 +20,11 @@ use pingora::{
     upstreams::peer::HttpPeer,
 };
 use snafu::Snafu;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -218,17 +221,18 @@ impl ProxyHttp for Server {
     async fn upstream_peer(
         &self,
         session: &mut Session,
-        _ctx: &mut State,
+        ctx: &mut State,
     ) -> pingora::Result<Box<HttpPeer>> {
         let header = session.req_header_mut();
         let path = header.uri.path();
         let host = header.uri.host().unwrap_or_default();
-
-        let lo = self
+        let (location_index, lo) = self
             .locations
             .iter()
-            .find(|item| item.matched(path, host))
+            .enumerate()
+            .find(|(_, item)| item.matched(path, host))
             .ok_or(pingora::Error::new_str("Location not found"))?;
+        ctx.location_index = Some(location_index);
         if let Some(mut new_path) = lo.rewrite(path) {
             if let Some(query) = header.uri.query() {
                 new_path = format!("{new_path}?{query}");
@@ -238,7 +242,6 @@ impl ProxyHttp for Server {
                 header.set_uri(uri);
             }
         }
-        // TODO
         if let Some(arr) = lo.get_proxy_headers() {
             for (k, v) in arr {
                 // v validate for HeaderValue, so always no error
@@ -259,6 +262,28 @@ impl ProxyHttp for Server {
     ) {
         if ctx.status.is_none() {
             ctx.status = Some(upstream_response.status);
+        }
+        if let Some(index) = ctx.location_index {
+            if let Some(lo) = self.locations.get(index) {
+                if let Some(arr) = lo.get_header() {
+                    for (k, v) in arr {
+                        // v validate for HeaderValue, so always no error
+                        let _ = upstream_response.insert_header(k, v.to_vec());
+                    }
+                }
+            }
+        }
+        if let Some(p) = &self.log_parser {
+            let mut m = HashMap::new();
+            for key in p.response_headers.iter() {
+                if let Some(value) = upstream_response.headers.get(key) {
+                    m.insert(
+                        key.to_string(),
+                        value.to_str().unwrap_or_default().to_string(),
+                    );
+                }
+            }
+            ctx.response_headers = Some(m);
         }
     }
     fn upstream_response_body_filter(
@@ -327,7 +352,10 @@ impl ProxyHttp for Server {
                 _ => error_resp::gen_error_response(code),
             };
 
-            let content = self.error_template.replace("{{content}}", &e.to_string());
+            let content = self
+                .error_template
+                .replace("{{version}}", VERSION)
+                .replace("{{content}}", &e.to_string());
             let buf = Bytes::from(content);
             ctx.response_body_size = buf.len();
             let _ = resp.insert_header(http::header::CONTENT_LENGTH, buf.len().to_string());

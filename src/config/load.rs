@@ -1,9 +1,10 @@
 use glob::glob;
 use path_absolutize::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use snafu::{ensure, ResultExt, Snafu};
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
 use substring::Substring;
 use toml::{map::Map, Value};
 use url::Url;
@@ -60,13 +61,28 @@ impl UpstreamConf {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Clone, Serialize)]
 pub struct UpstreamConf {
     pub addrs: Vec<String>,
     pub lb: Option<String>,
     pub sni: Option<String>,
     pub health_check: Option<String>,
     pub ipv4_only: Option<bool>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub connection_timeout: Option<Duration>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub total_connection_timeout: Option<Duration>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub read_timeout: Option<Duration>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub idle_timeout: Option<Duration>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub write_timeout: Option<Duration>,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]

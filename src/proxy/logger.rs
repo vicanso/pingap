@@ -1,11 +1,13 @@
+use crate::utils;
+
 use super::state::State;
 use bytesize::ByteSize;
 use pingora::proxy::Session;
 use regex::Regex;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use substring::Substring;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TagCategory {
     Fill,
     Host,
@@ -30,6 +32,7 @@ pub enum TagCategory {
     Cookie,
     RequestHeader,
     ResponseHeader,
+    Context,
     PayloadSize,
     PayloadSizeHuman,
 }
@@ -43,6 +46,39 @@ pub struct Tag {
 
 pub struct Parser {
     pub tags: Vec<Tag>,
+    pub response_headers: Vec<String>,
+}
+
+fn format_extra_tag(key: &str) -> Option<Tag> {
+    if key.len() < 2 {
+        return None;
+    }
+    let key = key.substring(1, key.len() - 1);
+    let ch = key.substring(0, 1);
+    let value = key.substring(1, key.len());
+    match ch {
+        "~" => Some(Tag {
+            category: TagCategory::Cookie,
+            data: Some(value.to_string()),
+        }),
+        ">" => Some(Tag {
+            category: TagCategory::RequestHeader,
+            data: Some(value.to_string()),
+        }),
+        "<" => Some(Tag {
+            category: TagCategory::ResponseHeader,
+            data: Some(value.to_string()),
+        }),
+        ":" => Some(Tag {
+            category: TagCategory::Context,
+            data: Some(value.to_string()),
+        }),
+        "$" => Some(Tag {
+            category: TagCategory::Fill,
+            data: Some(std::env::var(value).unwrap_or_default()),
+        }),
+        _ => None,
+    }
 }
 
 impl From<&str> for Parser {
@@ -51,6 +87,7 @@ impl From<&str> for Parser {
         let mut current = 0;
         let mut end = 0;
         let mut tags = vec![];
+        let mut response_headers = vec![];
 
         while let Some(result) = reg.find_at(value, current) {
             if end < result.start() {
@@ -146,25 +183,9 @@ impl From<&str> for Parser {
                     category: TagCategory::PayloadSizeHuman,
                     data: None,
                 }),
-                // 	cookie           = "cookie"
                 _ => {
-                    let key = key.substring(1, key.len() - 1);
-                    let ch = key.substring(0, 1);
-                    let value = key.substring(1, key.len());
-                    match ch {
-                        "~" => tags.push(Tag {
-                            category: TagCategory::Cookie,
-                            data: Some(value.to_string()),
-                        }),
-                        ">" => tags.push(Tag {
-                            category: TagCategory::RequestHeader,
-                            data: Some(value.to_string()),
-                        }),
-                        "<" => tags.push(Tag {
-                            category: TagCategory::ResponseHeader,
-                            data: Some(value.to_string()),
-                        }),
-                        _ => {}
+                    if let Some(tag) = format_extra_tag(key) {
+                        tags.push(tag);
                     }
                 }
             }
@@ -172,7 +193,18 @@ impl From<&str> for Parser {
             end = result.end();
             current = result.start() + 1;
         }
-        Parser { tags }
+        for tag in tags.iter() {
+            if tag.category == TagCategory::ResponseHeader {
+                let value = tag.data.clone().unwrap_or_default();
+                if !response_headers.contains(&value) {
+                    response_headers.push(value);
+                }
+            }
+        }
+        Parser {
+            tags,
+            response_headers,
+        }
     }
 }
 
@@ -276,19 +308,17 @@ impl Parser {
                     buf.push_str(&d.as_millis().to_string())
                 }
                 TagCategory::LatencyHuman => {
-                    let d = Instant::now().duration_since(ctx.created_at);
-                    buf.push_str(&format!("{d:?}"));
+                    let ms = Instant::now().duration_since(ctx.created_at).as_millis();
+                    buf.push_str(&format!("{:?}", Duration::from_millis(ms as u64)));
                 }
                 TagCategory::Cookie => {
                     let cookie_name = tag.data.clone().unwrap_or_default();
                     let cookie_value = get_header_value(session, "Cookie").unwrap_or_default();
                     for item in cookie_value.split(';') {
-                        let arr: Vec<&str> = item.split('=').collect();
-                        if arr.len() != 2 {
-                            continue;
-                        }
-                        if arr[0] == cookie_name {
-                            buf.push_str(arr[1]);
+                        if let Some([k, v]) = utils::split_to_two(item, "=") {
+                            if k == cookie_name {
+                                buf.push_str(&v);
+                            }
                         }
                     }
                 }
@@ -300,12 +330,21 @@ impl Parser {
                     }
                 }
                 TagCategory::ResponseHeader => {
-                    // TODO
+                    if let Some(m) = &ctx.response_headers {
+                        if let Some(key) = &tag.data {
+                            if let Some(value) = m.get(key) {
+                                buf.push_str(value);
+                            }
+                        }
+                    }
                 }
                 TagCategory::PayloadSize => {
                     // TODO
                 }
                 TagCategory::PayloadSizeHuman => {
+                    // TODO
+                }
+                TagCategory::Context => {
                     // TODO
                 }
             };
