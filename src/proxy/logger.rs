@@ -83,7 +83,7 @@ fn format_extra_tag(key: &str) -> Option<Tag> {
 
 impl From<&str> for Parser {
     fn from(value: &str) -> Self {
-        let reg = Regex::new(r"(\{[a-zA-Z_<>\-~]+*\})").unwrap();
+        let reg = Regex::new(r"(\{[a-zA-Z_<>\-~:$]+*\})").unwrap();
         let mut current = 0;
         let mut end = 0;
         let mut tags = vec![];
@@ -192,6 +192,12 @@ impl From<&str> for Parser {
 
             end = result.end();
             current = result.start() + 1;
+        }
+        if end < value.len() {
+            tags.push(Tag {
+                category: TagCategory::Fill,
+                data: Some(value.substring(end, value.len()).to_string()),
+            });
         }
         for tag in tags.iter() {
             if tag.category == TagCategory::ResponseHeader {
@@ -315,7 +321,7 @@ impl Parser {
                     let cookie_name = tag.data.clone().unwrap_or_default();
                     let cookie_value = get_header_value(session, "Cookie").unwrap_or_default();
                     for item in cookie_value.split(';') {
-                        if let Some([k, v]) = utils::split_to_two(item, "=") {
+                        if let Some([k, v]) = utils::split_to_two_trim(item, "=") {
                             if k == cookie_name {
                                 buf.push_str(&v);
                             }
@@ -345,7 +351,14 @@ impl Parser {
                     // TODO
                 }
                 TagCategory::Context => {
-                    // TODO
+                    if let Some(key) = &tag.data {
+                        match key.as_str() {
+                            "reused" => buf.push_str(&ctx.reused.to_string()),
+                            "upstream-address" => buf.push_str(&ctx.upstream_address),
+                            "processing" => buf.push_str(&ctx.processing.to_string()),
+                            _ => {}
+                        }
+                    }
                 }
             };
         }

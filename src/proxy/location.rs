@@ -33,7 +33,7 @@ fn convert_headers(values: &Option<Vec<String>>) -> Result<Option<Vec<(Bytes, By
     if let Some(header_values) = values {
         let mut arr = vec![];
         for item in header_values {
-            if let Some([k, v]) = utils::split_to_two(item, ":") {
+            if let Some([k, v]) = utils::split_to_two_trim(item, ":") {
                 let _ =
                     HeaderValue::from_str(&v).context(InvalidHeaderValueSnafu { value: v.clone() });
                 arr.push((Bytes::from(k), Bytes::from(v)));

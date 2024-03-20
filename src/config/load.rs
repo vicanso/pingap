@@ -1,4 +1,5 @@
 use glob::glob;
+use http::HeaderValue;
 use path_absolutize::*;
 use serde::{Deserialize, Serialize};
 use snafu::{ensure, ResultExt, Snafu};
@@ -9,9 +10,11 @@ use substring::Substring;
 use toml::{map::Map, Value};
 use url::Url;
 
+use crate::utils;
+
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Invalid error {message}"))]
+    #[snafu(display("{message}"))]
     Invalid { message: String },
     #[snafu(display("Glob pattern error {source}, {path}"))]
     Pattern {
@@ -40,27 +43,6 @@ pub enum Error {
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-impl UpstreamConf {
-    pub fn validate(&self) -> Result<()> {
-        // validate upstream addr
-        for addr in self.addrs.iter() {
-            let arr: Vec<_> = addr.split(' ').collect();
-            let _ = arr[0]
-                .parse::<std::net::SocketAddr>()
-                .context(AddrParseSnafu {
-                    addr: arr[0].to_string(),
-                });
-        }
-        // validate health check
-        let health_check = self.health_check.clone().unwrap_or_default();
-        if !health_check.is_empty() {
-            let _ = Url::parse(&health_check).context(UrlParseSnafu { url: health_check })?;
-        }
-
-        Ok(())
-    }
-}
-
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
 pub struct UpstreamConf {
     pub addrs: Vec<String>,
@@ -84,15 +66,64 @@ pub struct UpstreamConf {
     #[serde(with = "humantime_serde")]
     pub write_timeout: Option<Duration>,
 }
+impl UpstreamConf {
+    pub fn validate(&self, name: &str) -> Result<()> {
+        // validate upstream addr
+        for addr in self.addrs.iter() {
+            let arr: Vec<_> = addr.split(' ').collect();
+            let _ = arr[0]
+                .parse::<std::net::SocketAddr>()
+                .context(AddrParseSnafu {
+                    addr: format!("{}(upstream:{name})", arr[0]),
+                });
+        }
+        // validate health check
+        let health_check = self.health_check.clone().unwrap_or_default();
+        if !health_check.is_empty() {
+            let _ = Url::parse(&health_check).context(UrlParseSnafu { url: health_check })?;
+        }
+
+        Ok(())
+    }
+}
 
 #[derive(Debug, Default, Deserialize, Clone)]
 pub struct LocationConf {
+    pub upstream: String,
     pub path: Option<String>,
     pub host: Option<String>,
     pub proxy_headers: Option<Vec<String>>,
     pub headers: Option<Vec<String>>,
     pub rewrite: Option<String>,
-    pub upstream: String,
+}
+
+impl LocationConf {
+    fn validate(&self, name: &str, upstream_names: &[String]) -> Result<()> {
+        let validate = |headers: &Option<Vec<String>>| -> Result<()> {
+            if let Some(headers) = headers {
+                for header in headers.iter() {
+                    let arr = utils::split_to_two_trim(header, ":");
+                    if arr.is_none() {
+                        return Err(Error::Invalid {
+                            message: format!("{header} is invalid header(location:{name})"),
+                        });
+                    }
+                    HeaderValue::from_str(&arr.unwrap()[1]).map_err(|err| Error::Invalid {
+                        message: format!("{}(location:{name})", err),
+                    })?;
+                }
+            }
+            Ok(())
+        };
+        validate(&self.proxy_headers)?;
+        validate(&self.headers)?;
+        if !upstream_names.contains(&self.upstream) {
+            return Err(Error::Invalid {
+                message: format!("{} upstream is not found(location:{name})", self.upstream),
+            });
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]
@@ -103,6 +134,22 @@ pub struct ServerConf {
     pub locations: Option<Vec<String>>,
 }
 
+impl ServerConf {
+    fn validate(&self, name: &str, location_names: &[String]) -> Result<()> {
+        if let Some(locations) = &self.locations {
+            for item in locations {
+                if !location_names.contains(item) {
+                    return Err(Error::Invalid {
+                        message: format!("{item} location is not found(server:{name})"),
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 static ERROR_TEMPLATE: &str = include_str!("../../error.html");
 
 #[derive(Debug, Default, Clone)]
@@ -111,11 +158,29 @@ pub struct PingapConf {
     pub locations: HashMap<String, LocationConf>,
     pub servers: HashMap<String, ServerConf>,
     pub error_template: String,
+    pub pid_file: Option<String>,
+    pub upgrade_sock: Option<String>,
+    pub user: Option<String>,
+    pub group: Option<String>,
+    pub threads: Option<usize>,
+    pub work_stealing: Option<bool>,
 }
 
 impl PingapConf {
     pub fn validate(&self) -> Result<()> {
-        // TODO validate
+        let mut upstream_names = vec![];
+        for (name, upstream) in self.upstreams.iter() {
+            upstream.validate(name)?;
+            upstream_names.push(name.to_string());
+        }
+        let mut location_names = vec![];
+        for (name, location) in self.locations.iter() {
+            location.validate(name, &upstream_names)?;
+            location_names.push(name.to_string());
+        }
+        for (name, server) in self.servers.iter() {
+            server.validate(name, &location_names)?;
+        }
         Ok(())
     }
 }
@@ -126,6 +191,12 @@ struct TomlConfig {
     upstreams: Map<String, Value>,
     locations: Map<String, Value>,
     error_template: Option<String>,
+    pid_file: Option<String>,
+    upgrade_sock: Option<String>,
+    user: Option<String>,
+    group: Option<String>,
+    threads: Option<usize>,
+    work_stealing: Option<bool>,
 }
 
 fn resolve_path(path: &str) -> String {
@@ -183,8 +254,23 @@ pub fn load_config(path: &str) -> Result<PingapConf> {
             .as_str(),
     )
     .context(DeSnafu)?;
+    let threads = if let Some(threads) = data.threads {
+        if threads > 0 {
+            Some(threads)
+        } else {
+            Some(num_cpus::get())
+        }
+    } else {
+        None
+    };
     let mut conf = PingapConf {
         error_template: data.error_template.unwrap_or_default(),
+        pid_file: data.pid_file,
+        upgrade_sock: data.upgrade_sock,
+        user: data.user,
+        group: data.group,
+        threads,
+        work_stealing: data.work_stealing,
         ..Default::default()
     };
     for (name, value) in data.upstreams {

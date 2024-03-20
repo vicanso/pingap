@@ -1,0 +1,89 @@
+# error page html template
+error_template = ""
+
+# The pid file of this server. Default `/tmp/pingap.pid`
+# pid_file = ""
+
+# The path to the upgrade socket. Default `/tmp/pingap.sock`
+# upgrade_sock = ""
+
+
+# If configured, after daemonization, this process will switch to
+# the given user before starting to serve traffic. Default `None`
+# user = ""
+
+# Similar to `user`, the group this process should switch to. Default `None`
+# group = ""
+
+# How many threads **each** service should get.
+# The threads are not shared across services. If the value is <= 0,
+# it will use cpus of system. Default `1`.
+# threads = 2
+
+# Allow work stealing between threads of the same service. Default `true`.
+# work_stealing = true
+
+
+# Upsteam config list, it will defined as [upstreams.name]
+[upstreams.charts]
+addrs = ["127.0.0.1:5000"]
+
+# Load balancer select algorithm, supports `hash` and `round_robin`. Default `round_robin`
+lb = "hash:cookie"
+
+# Upstream health check, supports `tcp`, `http` and `https`. Default `tcp`
+# Tcp: tcp://upstreamname?connection_timeout=3s&success=2&failure=1&check_frequency=10s
+# Http(s): http://upstreamname/ping?connection_timeout=3s&read_timeout=1s&success=2&failure=1&check_frequency=10s
+health_check = "http://charts/ping?connection_timeout=3s&pingap"
+
+# How long to wait before giving up *establishing* a TCP connection. Default `None`
+connection_timeout = "10s"
+
+# How long to wait before giving up *establishing* a connection including TLS handshake time.
+# Default `None`
+total_connection_timeout = "30s"
+
+# How long to wait before each individual `read()` from upstream.
+# The timer is reset after each `read()`. Default `None`
+read_timeout = "10s"
+
+# How long to wait before a `write()` to upstream finishes. Default `None`
+write_timeout = "10s"
+
+# How long to wait before closing a idle connection waiting for connection reuse.
+# Set to `0s` will disable connection pooling. Default `None`
+idle_timeout = "120s"
+
+
+# Anther upstream using all default config.
+[upstreams.diving]
+addrs = ["127.0.0.1:5001"]
+
+
+# Location config list, it will defined as [locations.name]
+[locations.lo]
+# The upstream for location, it will be the name of one upstream.
+upstream = "charts"
+# How to match the location, it returns true if `host` of http request header
+# equal the config. Default `None` means all match.
+host = ""
+# How to match the location, it returns true if the `url` starts with `path`.
+# Default `None` means all match
+path = "/"
+# Insert header to proxy request. Default `None`
+proxy_headers = ["name:value"]
+# Insert header to response. Default `None`
+headers = ["name:value"]
+# Rewrite the http url for proxy request, `^/api/ /` means replace the prefix `/api/` as `/`.
+# Default `None`
+rewrite = ""
+
+# Server config list, it will be defined as [servers.name]
+[servers.test]
+# TCP listening address
+addr = "0.0.0.0:6188"
+# Access log format layout for the server. Default `None`
+access_log = '{when} "{method} {uri} {proto}" {status} {size-human} "{referer}" "{user-agent}" {latency-human}'
+# Location list for the server, item should be the name of location.
+# The locations should be served by the server.
+locations = ["lo"]

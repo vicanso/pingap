@@ -2,6 +2,7 @@ use super::logger::Parser;
 use super::state::State;
 use super::{Location, Upstream};
 use crate::config::{LocationConf, PingapConf, UpstreamConf};
+use crate::utils;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
@@ -23,8 +24,6 @@ use snafu::Snafu;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
-
-const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -209,12 +208,12 @@ impl ProxyHttp for Server {
     async fn request_filter(
         &self,
         _session: &mut Session,
-        _ctx: &mut Self::CTX,
+        ctx: &mut Self::CTX,
     ) -> pingora::Result<bool>
     where
         Self::CTX: Send + Sync,
     {
-        self.processing.fetch_add(1, Ordering::Relaxed);
+        ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed);
         self.accepted.fetch_add(1, Ordering::Relaxed);
         Ok(false)
     }
@@ -354,7 +353,7 @@ impl ProxyHttp for Server {
 
             let content = self
                 .error_template
-                .replace("{{version}}", VERSION)
+                .replace("{{version}}", utils::get_pkg_version())
                 .replace("{{content}}", &e.to_string());
             let buf = Bytes::from(content);
             ctx.response_body_size = buf.len();

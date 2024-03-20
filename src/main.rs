@@ -1,5 +1,6 @@
 use crate::proxy::{Server, ServerConf};
 use clap::Parser;
+use config::PingapConf;
 use log::{error, info};
 use pingora::server;
 use pingora::server::configuration::Opt;
@@ -16,7 +17,7 @@ mod utils;
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// The config file or directory
-    #[arg(short, long)]
+    #[arg(short, long, default_value = ".")]
     conf: String,
     /// Whether should run this server in the background
     #[arg(short, long)]
@@ -26,15 +27,37 @@ struct Args {
     upgrade: bool,
     /// Test the configuration and exit
     ///
-    /// When this flag is set, calling `server.bootstrap()` will exit the process without errors
-    ///
     /// This flag is useful for upgrading service where the user wants to make sure the new
     /// service can start before shutting down the old server process.
     #[arg(short, long)]
-    test: Option<bool>,
+    test: bool,
     /// Log file path
     #[arg(long)]
     log: Option<String>,
+}
+
+fn new_server_conf(args: &Args, conf: &PingapConf) -> server::configuration::ServerConf {
+    let mut server_conf = server::configuration::ServerConf::default();
+    server_conf.pid_file = format!("/tmp/{}.pid", utils::get_pkg_name());
+    server_conf.upgrade_sock = format!("/tmp/{}.sock", utils::get_pkg_name());
+    if let Some(pid_file) = &conf.pid_file {
+        server_conf.pid_file = pid_file.to_string();
+    }
+    if let Some(upgrade_sock) = &conf.upgrade_sock {
+        server_conf.upgrade_sock = upgrade_sock.to_string();
+    }
+    if let Some(threads) = conf.threads {
+        server_conf.threads = threads;
+    }
+    if let Some(work_stealing) = conf.work_stealing {
+        server_conf.work_stealing = work_stealing
+    }
+    server_conf.user = conf.user.clone();
+    server_conf.group = conf.group.clone();
+    server_conf.daemon = args.daemon;
+    server_conf.error_log = args.log.clone();
+
+    server_conf
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
@@ -52,6 +75,12 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let args = Args::parse();
     let conf = config::load_config(&args.conf)?;
+    conf.validate()?;
+    // return if test mode
+    if args.test {
+        info!("validate config success");
+        return Ok(());
+    }
 
     let opt = Opt {
         upgrade: args.upgrade,
@@ -61,12 +90,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         conf: None,
     };
     let mut my_server = server::Server::new(Some(opt))?;
-    {
-        let mut conf = server::configuration::ServerConf::default();
-        conf.daemon = args.daemon;
-        conf.error_log = args.log;
-        my_server.configuration = Arc::new(conf);
-    }
+    my_server.configuration = Arc::new(new_server_conf(&args, &conf));
     my_server.bootstrap();
 
     let server_conf_list: Vec<ServerConf> = conf.into();

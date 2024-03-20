@@ -19,6 +19,7 @@ http = "1.1.0"
 humantime = "2.1.0"
 humantime-serde = "1.1.1"
 log = "0.4.21"
+num_cpus = "1.16.0"
 path-absolutize = "3.1.1"
 pingora = { version = "0.1.0", features = ["lb"] }
 regex = "1.10.3"

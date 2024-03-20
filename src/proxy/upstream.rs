@@ -69,6 +69,7 @@ impl TryFrom<&str> for HealthCheckConf {
         let mut check_frequency = Duration::from_secs(10);
         let mut consecutive_success = 1;
         let mut consecutive_failure = 2;
+        let mut query_list = vec![];
         // HttpHealthCheck
         for (key, value) in value.query_pairs().into_iter() {
             match key.as_ref() {
@@ -97,7 +98,13 @@ impl TryFrom<&str> for HealthCheckConf {
                         consecutive_failure = v;
                     }
                 }
-                _ => {}
+                _ => {
+                    if value.is_empty() {
+                        query_list.push(key.to_string());
+                    } else {
+                        query_list.push(format!("{key}={value}"));
+                    }
+                }
             };
         }
         let host = if let Some(host) = value.host() {
@@ -105,10 +112,14 @@ impl TryFrom<&str> for HealthCheckConf {
         } else {
             "".to_string()
         };
+        let mut path = value.path().to_string();
+        if !query_list.is_empty() {
+            path += &format!("?{}", query_list.join("&"));
+        }
         Ok(HealthCheckConf {
             schema: value.scheme().to_string(),
             host,
-            path: value.path().to_string(),
+            path,
             read_timeout,
             connection_timeout,
             check_frequency,

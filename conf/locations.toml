@@ -1,4 +1,0 @@
-[locations.lo]
-upstream = "charts"
-path = "/"
-headers = ["X-Req-Id:123"]
