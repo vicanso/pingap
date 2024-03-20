@@ -1,0 +1,22 @@
+name: "publish"
+on:
+  push:
+    # tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+    branches: [main]
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: release
+        uses: addnab/docker-run-action@v3
+        with:
+          image: messense/rust-musl-cross:x86_64-musl
+          options: -v ${{ github.workspace }}:/home/rust/src
+          run: |
+            make release

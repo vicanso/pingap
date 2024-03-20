@@ -7,4 +7,4 @@
 - [x] access log
 - [ ] support format for env logger(or tokio tracing)
 - [ ] better error handler
-- [ ] config validate
+- [x] config validate
