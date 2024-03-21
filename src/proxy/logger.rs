@@ -307,6 +307,8 @@ impl Parser {
                 TagCategory::Status => {
                     if let Some(status) = ctx.status {
                         buf.push_str(status.as_str());
+                    } else {
+                        buf.push('0');
                     }
                 }
                 TagCategory::Latency => {

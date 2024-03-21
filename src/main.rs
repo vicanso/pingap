@@ -96,7 +96,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let server_conf_list: Vec<ServerConf> = conf.into();
     for server_conf in server_conf_list {
         let ps = Server::new(server_conf)?;
-        let services = ps.run(&my_server.configuration);
+        let services = ps.run(&my_server.configuration)?;
         my_server.add_services(services.bg_services);
         my_server.add_service(services.lb);
     }

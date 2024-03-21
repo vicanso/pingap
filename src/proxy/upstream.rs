@@ -202,14 +202,14 @@ impl Upstream {
                 _ => Box::new(new_tcp_health_check(&health_check_conf)),
             }
         };
-        let lb_method = conf.lb.clone().unwrap_or_default();
-        let lb_params: Vec<&str> = lb_method.split(':').collect();
+        let algo_method = conf.algo.clone().unwrap_or_default();
+        let algo_params: Vec<&str> = algo_method.split(':').collect();
         let mut hash = "".to_string();
-        let lb = match lb_params[0] {
+        let lb = match algo_params[0] {
             "hash" => {
                 let mut lb = LoadBalancer::<Consistent>::from_backends(backends);
-                if lb_params.len() > 1 {
-                    hash = lb_params[1].to_string();
+                if algo_params.len() > 1 {
+                    hash = algo_params[1].to_string();
                 }
 
                 lb.update()

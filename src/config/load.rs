@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::STANDARD, Engine};
 use glob::glob;
 use http::HeaderValue;
 use path_absolutize::*;
@@ -40,13 +41,15 @@ pub enum Error {
         source: std::net::AddrParseError,
         addr: String,
     },
+    #[snafu(display("base64 decode error {source}"))]
+    Base64Decode { source: base64::DecodeError },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
 pub struct UpstreamConf {
     pub addrs: Vec<String>,
-    pub lb: Option<String>,
+    pub algo: Option<String>,
     pub sni: Option<String>,
     pub health_check: Option<String>,
     pub ipv4_only: Option<bool>,
@@ -132,6 +135,8 @@ pub struct ServerConf {
     pub addr: String,
     pub access_log: Option<String>,
     pub locations: Option<Vec<String>>,
+    pub tls_cert: Option<String>,
+    pub tls_key: Option<String>,
 }
 
 impl ServerConf {
@@ -144,6 +149,12 @@ impl ServerConf {
                     });
                 }
             }
+        }
+        if let Some(value) = &self.tls_key {
+            let _ = STANDARD.decode(value).context(Base64DecodeSnafu)?;
+        }
+        if let Some(value) = &self.tls_cert {
+            let _ = STANDARD.decode(value).context(Base64DecodeSnafu)?;
         }
 
         Ok(())

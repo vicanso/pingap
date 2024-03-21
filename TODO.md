@@ -5,6 +5,8 @@
 - [x] error page
 - [x] http peer option
 - [x] access log
-- [ ] support format for env logger(or tokio tracing)
+- [x] support format for env logger(or tokio tracing)
 - [ ] better error handler
 - [x] config validate
+- [ ] support add tls
+- [ ] log rotate

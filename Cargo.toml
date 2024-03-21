@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 async-trait = "0.1.78"
+base64 = "0.22.0"
 bytes = "1.5.0"
 bytesize = "1.3.0"
 chrono = "0.4.35"
@@ -21,11 +22,12 @@ humantime-serde = "1.1.1"
 log = "0.4.21"
 num_cpus = "1.16.0"
 path-absolutize = "3.1.1"
-pingora = { version = "0.1.0", features = ["lb"] }
+pingora = { version = "0.1.0", default-features = false, features = ["lb"] }
 regex = "1.10.3"
 serde = "1.0.197"
 snafu = "0.8.2"
 substring = "1.4.5"
+tempfile = "3.10.1"
 toml = "0.8.12"
 url = "2.5.0"
 

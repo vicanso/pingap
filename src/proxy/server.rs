@@ -4,10 +4,12 @@ use super::{Location, Upstream};
 use crate::config::{LocationConf, PingapConf, UpstreamConf};
 use crate::utils;
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::Bytes;
 use http::StatusCode;
 use log::{error, info};
 use pingora::http::ResponseHeader;
+use pingora::listeners::TlsSettings;
 use pingora::protocols::http::error_resp;
 use pingora::protocols::Digest;
 use pingora::proxy::{http_proxy_service, HttpProxy};
@@ -20,8 +22,9 @@ use pingora::{
     proxy::{ProxyHttp, Session},
     upstreams::peer::HttpPeer,
 };
-use snafu::Snafu;
+use snafu::{ResultExt, Snafu};
 use std::collections::HashMap;
+use std::fs;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -34,6 +37,8 @@ pub enum Error {
     },
     #[snafu(display("Error {category} {message}"))]
     Common { category: String, message: String },
+    #[snafu(display("Io {source}"))]
+    Io { source: std::io::Error },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -44,6 +49,8 @@ pub struct ServerConf {
     pub access_log: Option<String>,
     pub upstreams: Vec<(String, UpstreamConf)>,
     pub locations: Vec<(String, LocationConf)>,
+    pub tls_cert: Option<Vec<u8>>,
+    pub tls_key: Option<Vec<u8>>,
     error_template: String,
 }
 
@@ -78,9 +85,23 @@ impl From<PingapConf> for Vec<ServerConf> {
                     filter_upstreams.push(item.clone())
                 }
             }
+            let mut tls_cert = None;
+            let mut tls_key = None;
+            // load config validate base64
+            // so ignore error
+            if let Some(value) = &item.tls_cert {
+                let buf = STANDARD.decode(value).unwrap_or_default();
+                tls_cert = Some(buf);
+            }
+            if let Some(value) = &item.tls_key {
+                let buf = STANDARD.decode(value).unwrap_or_default();
+                tls_key = Some(buf);
+            }
 
             servers.push(ServerConf {
                 name,
+                tls_cert,
+                tls_key,
                 addr: item.addr,
                 access_log: item.access_log,
                 upstreams: filter_upstreams,
@@ -107,6 +128,8 @@ pub struct Server {
     locations: Vec<Location>,
     log_parser: Option<Parser>,
     error_template: String,
+    tls_cert: Option<Vec<u8>>,
+    tls_key: Option<Vec<u8>>,
 }
 
 pub struct ServerServices {
@@ -170,6 +193,7 @@ impl Server {
         if let Some(access_log) = conf.access_log {
             p = Some(Parser::from(access_log.as_str()));
         }
+        // if let Some(tls_cert) = conf.
 
         Ok(Server {
             accepted: AtomicU64::new(0),
@@ -178,9 +202,11 @@ impl Server {
             log_parser: p,
             locations,
             error_template: conf.error_template,
+            tls_key: conf.tls_key,
+            tls_cert: conf.tls_cert,
         })
     }
-    pub fn run(self, conf: &Arc<configuration::ServerConf>) -> ServerServices {
+    pub fn run(self, conf: &Arc<configuration::ServerConf>) -> Result<ServerServices> {
         let addr = self.addr.clone();
         let mut bg_services: Vec<Box<dyn IService>> = vec![];
         for item in self.locations.iter() {
@@ -192,10 +218,38 @@ impl Server {
                 bg_services.push(Box::new(GenBackgroundService::new(name, up)));
             }
         }
+        // tls
+        let tls_cert = self.tls_cert.clone();
+        let tls_key = self.tls_key.clone();
 
         let mut lb = http_proxy_service(conf, self);
-        lb.add_tcp(&addr);
-        ServerServices { lb, bg_services }
+        // add tls
+        if tls_cert.is_some() {
+            let dir = tempfile::tempdir().context(IoSnafu)?;
+            let cert_path = dir.path().join("tls-cert");
+            let key_path = dir.path().join("tls-key");
+            fs::write(cert_path.clone(), tls_cert.unwrap_or_default()).context(IoSnafu)?;
+            fs::write(key_path.clone(), tls_key.unwrap_or_default()).context(IoSnafu)?;
+            let mut tls_settings = TlsSettings::intermediate(
+                cert_path.to_str().ok_or(Error::Common {
+                    category: "tmpdir".to_string(),
+                    message: cert_path.to_string_lossy().to_string(),
+                })?,
+                key_path.to_str().ok_or(Error::Common {
+                    category: "tmpdir".to_string(),
+                    message: key_path.to_string_lossy().to_string(),
+                })?,
+            )
+            .map_err(|err| Error::Common {
+                category: "tls".to_string(),
+                message: err.to_string(),
+            })?;
+            tls_settings.enable_h2();
+            lb.add_tls_with_settings(&addr, None, tls_settings);
+        } else {
+            lb.add_tcp(&addr);
+        }
+        Ok(ServerServices { lb, bg_services })
     }
 }
 
@@ -322,6 +376,8 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
+        let server_session = session.as_mut();
+
         let code = match e.etype() {
             pingora::HTTPStatus(code) => *code,
             _ => {
@@ -357,6 +413,7 @@ impl ProxyHttp for Server {
                 .replace("{{content}}", &e.to_string());
             let buf = Bytes::from(content);
             ctx.response_body_size = buf.len();
+            let _ = resp.insert_header(http::header::CONTENT_TYPE, "text/html; charset=utf-8");
             let _ = resp.insert_header(http::header::CONTENT_LENGTH, buf.len().to_string());
 
             // TODO: we shouldn't be closing downstream connections on internally generated errors
@@ -365,16 +422,16 @@ impl ProxyHttp for Server {
             // This change is only here because we DO NOT re-use downstream connections
             // today on these errors and we should signal to the client that pingora is dropping it
             // rather than a misleading the client with 'keep-alive'
-            session.set_keepalive(None);
+            server_session.set_keepalive(None);
 
-            session
+            server_session
                 .write_response_header(Box::new(resp))
                 .await
                 .unwrap_or_else(|e| {
                     error!("failed to send error response to downstream: {e}");
                 });
 
-            let _ = session.write_response_body(buf).await;
+            let _ = server_session.write_response_body(buf).await;
         }
         if ctx.status.is_none() {
             if let Ok(status) = StatusCode::from_u16(code) {

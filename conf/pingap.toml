@@ -28,7 +28,7 @@ work_stealing = true
 addrs = ["127.0.0.1:5000"]
 
 # Load balancer select algorithm, supports `hash` and `round_robin`. Default `round_robin`
-lb = "hash:cookie"
+algo = "hash:cookie"
 
 # Upstream health check, supports `tcp`, `http` and `https`. Default `tcp`
 # Tcp: tcp://upstreamname?connection_timeout=3s&success=2&failure=1&check_frequency=10s
@@ -81,8 +81,12 @@ rewrite = ""
 [servers.test]
 # TCP listening address
 addr = "0.0.0.0:6188"
+# tls cert and key, it should be base64
+# tls_cert = ""
+# tls_key = ""
+
 # Access log format layout for the server. Default `None`
-access_log = '{when} "{method} {uri} {proto}" {status} {size-human} "{referer}" "{user-agent}" {latency-human}'
+access_log = '"{method} {uri} {proto}" {status} {size-human} "{referer}" "{user-agent}" {latency-human}'
 # Location list for the server, item should be the name of location.
 # The locations should be served by the server.
 locations = ["lo"]

@@ -5,6 +5,7 @@ use http::HeaderValue;
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
 use std::sync::Arc;
+use substring::Substring;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -15,12 +16,52 @@ pub enum Error {
         value: String,
         source: http::header::InvalidHeaderValue,
     },
+    #[snafu(display("Regex {source}, {value}"))]
+    Regex { value: String, source: regex::Error },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
+
+struct RegexPath {
+    value: Regex,
+}
+struct PrefixPath {
+    value: String,
+}
+struct EqualPath {
+    value: String,
+}
+
+enum PathSelector {
+    RegexPath(RegexPath),
+    PrefixPath(PrefixPath),
+    EqualPath(EqualPath),
+    Empty,
+}
+fn new_path_selector(path: &str) -> Result<PathSelector> {
+    if path.is_empty() {
+        return Ok(PathSelector::Empty);
+    }
+    let se = if path.starts_with('~') {
+        let re = Regex::new(path.substring(1, path.len())).context(RegexSnafu {
+            value: path.to_string(),
+        })?;
+        PathSelector::RegexPath(RegexPath { value: re })
+    } else if path.starts_with('=') {
+        PathSelector::EqualPath(EqualPath {
+            value: path.substring(1, path.len()).to_string(),
+        })
+    } else {
+        PathSelector::PrefixPath(PrefixPath {
+            value: path.to_string(),
+        })
+    };
+    Ok(se)
+}
 
 pub struct Location {
     // name: String,
     path: String,
+    path_selector: PathSelector,
     host: String,
     reg_rewrite: Option<(Regex, String)>,
     // TODO better performance for http header
@@ -65,9 +106,12 @@ impl Location {
                 reg_rewrite = Some((re, value.to_string()));
             }
         }
+
+        let path = conf.path.clone().unwrap_or_default();
         Ok(Location {
             // name: conf.name.clone(),
-            path: conf.path.clone().unwrap_or_default(),
+            path_selector: new_path_selector(&path)?,
+            path,
             host: conf.host.clone().unwrap_or_default(),
             upstream: up.clone(),
             reg_rewrite,
@@ -77,9 +121,18 @@ impl Location {
     }
     #[inline]
     pub fn matched(&self, path: &str, host: &str) -> bool {
-        if !self.path.is_empty() && !path.starts_with(&self.path) {
-            return false;
+        if !self.path.is_empty() {
+            let matched = match &self.path_selector {
+                PathSelector::EqualPath(EqualPath { value }) => value == path,
+                PathSelector::RegexPath(RegexPath { value }) => value.is_match(path),
+                PathSelector::PrefixPath(PrefixPath { value }) => path.starts_with(value),
+                PathSelector::Empty => true,
+            };
+            if !matched {
+                return false;
+            }
         }
+
         if !self.host.is_empty() && host != self.host {
             return false;
         }
@@ -92,9 +145,11 @@ impl Location {
         }
         None
     }
+    #[inline]
     pub fn get_proxy_headers(&self) -> Option<Vec<(Bytes, Bytes)>> {
         self.proxy_headers.clone()
     }
+    #[inline]
     pub fn get_header(&self) -> Option<Vec<(Bytes, Bytes)>> {
         self.headers.clone()
     }
