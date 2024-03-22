@@ -1,3 +1,4 @@
+use crate::utils;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use glob::glob;
 use http::HeaderValue;
@@ -10,8 +11,6 @@ use std::time::Duration;
 use substring::Substring;
 use toml::{map::Map, Value};
 use url::Url;
-
-use crate::utils;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -137,6 +136,7 @@ pub struct ServerConf {
     pub locations: Option<Vec<String>>,
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
+    pub stats_path: Option<String>,
 }
 
 impl ServerConf {

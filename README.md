@@ -6,9 +6,10 @@ A reverse proxy like nginx, built on [pingora](https://github.com/cloudflare/pin
 
 ## Feature
 
-- Filter location by host and path prefix
+- Filter location by host and path
 - HTTP 1/2 end to end proxy
 - Graceful reload
+- Template for http access log
 - TOML base configuration
 
 ## Start
@@ -24,8 +25,14 @@ RUST_LOG=INFO pingap --conf=/opt/proxy -d --log=/opt/proxy/pingap.log
 Validate the configurations, send quit signal to pingap, then start a new process to handle all requests.
 
 ```bash
-RUST_LOG=INFO pingap --conf=/opt/proxy -t && pkill -SIGQUIT pingap && RUST_LOG=INFO pingap --conf=/opt/proxy -d -u --log=/opt/proxy/pingap.log
+RUST_LOG=INFO pingap --conf=/opt/proxy -t \
+  && pkill -SIGQUIT pingap \
+  && RUST_LOG=INFO pingap --conf=/opt/proxy -d -u --log=/opt/proxy/pingap.log
 ```
+
+## Config
+
+All toml configurations are as follows [pingap.toml](./conf/pingap.toml).
 
 # License
 

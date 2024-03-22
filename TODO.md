@@ -8,5 +8,6 @@
 - [x] support format for env logger(or tokio tracing)
 - [ ] better error handler
 - [x] config validate
-- [ ] support add tls
+- [x] support add tls
 - [ ] log rotate
+- [x] stats of server

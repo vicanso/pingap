@@ -10,6 +10,9 @@ build-web:
 	&& yarn install --network-timeout 600000 && yarn build \
 	&& cp -rf dist ../
 
+bench:
+	cargo bench
+
 dev:
 	RUST_LOG=INFO cargo watch -w src -x 'run -- -c ~/github/pingap/conf'
 

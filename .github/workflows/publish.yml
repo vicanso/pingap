@@ -12,11 +12,7 @@ jobs:
   linux:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - name: setup node
-        uses: actions/setup-node@v3
-      - name: build-web
-        run: make build-web
+      - uses: actions/checkout@v4
       - name: release
         uses: addnab/docker-run-action@v3
         with:
@@ -32,11 +28,7 @@ jobs:
   linux-aarch64:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - name: setup node
-        uses: actions/setup-node@v3
-      - name: build-web
-        run: make build-web
+      - uses: actions/checkout@v4
       - name: release
         uses: addnab/docker-run-action@v3
         with:
@@ -48,64 +40,3 @@ jobs:
       - name: Upload Assets
         run: |
           ./.github/workflows/upload_asset.sh ./pingap-linux-aarch64 $GITHUB_TOKEN
-  docker:
-    runs-on: ubuntu-latest
-    timeout-minutes: 3600
-    steps:
-      - name: Change Swap Space
-        run: |
-          swapon --show=NAME | tail -n 1
-          df -lh
-          du -sh /usr/share/dotnet
-          sudo rm -rf /usr/share/dotnet
-          du -sh /usr/local/lib/android
-          sudo rm -rf /usr/local/lib/android
-          export SWAP_FILE=$(swapon --show=NAME | tail -n 1)
-          sudo swapoff $SWAP_FILE
-          sudo rm $SWAP_FILE
-          export SWAP_FILE=/swapfile
-          sudo fallocate -l 16G $SWAP_FILE
-          sudo chmod 600 $SWAP_FILE
-          sudo mkswap $SWAP_FILE
-          sudo swapon $SWAP_FILE
-      - name: Swap space report after modification
-        shell: bash
-        run: |
-          echo "Memory and swap:"
-          free -h
-          echo
-          swapon --show
-          df -lh
-          echo
-      - name: Checkout
-        uses: actions/checkout@v3
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v4
-        with:
-          images: |
-            vicanso/pingap
-          tags: |
-            type=semver,pattern={{version}}
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v2
-      - name: Available platforms
-        run: echo ${{ steps.buildx.outputs.platforms }}
-      - name: Login to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
-      - name: Build and push
-        id: docker_build
-        uses: docker/build-push-action@v4
-        with:
-          platforms: linux/amd64, linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-      - name: Image digest
-        run: |
-          echo ${{ steps.docker_build.outputs.digest }}

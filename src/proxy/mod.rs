@@ -1,5 +1,6 @@
 mod location;
 mod logger;
+mod response_data;
 mod server;
 mod state;
 mod upstream;

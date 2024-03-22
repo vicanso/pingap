@@ -87,6 +87,10 @@ addr = "0.0.0.0:6188"
 
 # Access log format layout for the server. Default `None`
 access_log = '"{method} {uri} {proto}" {status} {size-human} "{referer}" "{user-agent}" {latency-human}'
+
 # Location list for the server, item should be the name of location.
 # The locations should be served by the server.
 locations = ["lo"]
+
+# Stats path for get the stats of server. Default `None`
+stats_path = "/stats"
