@@ -1,8 +1,16 @@
 [package]
 name = "pingap"
 version = "0.1.0"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
 edition = "2021"
-
+categories = ["http-server"]
+keywords = ["proxy", "http", "gateway"]
+description = "A reverse proxy like nginx"
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/pingap"
+repository = "https://github.com/vicanso/pingap"
+exclude = ["asset/*", "test/*", "Cargo.lock"]
+readme = "./README.md"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
