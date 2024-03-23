@@ -1,7 +1,6 @@
 use super::Upstream;
 use crate::{config::LocationConf, utils};
-use bytes::Bytes;
-use http::HeaderValue;
+use http::{HeaderName, HeaderValue};
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
 use std::sync::Arc;
@@ -11,11 +10,6 @@ use substring::Substring;
 pub enum Error {
     #[snafu(display("Invalid error {message}"))]
     Invalid { message: String },
-    #[snafu(display("Invalid header value {source}, {value}"))]
-    InvalidHeaderValue {
-        value: String,
-        source: http::header::InvalidHeaderValue,
-    },
     #[snafu(display("Regex {source}, {value}"))]
     Regex { value: String, source: regex::Error },
 }
@@ -64,22 +58,16 @@ pub struct Location {
     path_selector: PathSelector,
     host: String,
     reg_rewrite: Option<(Regex, String)>,
-    // TODO better performance for http header
-    headers: Option<Vec<(Bytes, Bytes)>>,
-    proxy_headers: Option<Vec<(Bytes, Bytes)>>,
+    headers: Option<Vec<(HeaderName, HeaderValue)>>,
+    proxy_headers: Option<Vec<(HeaderName, HeaderValue)>>,
     pub upstream: Arc<Upstream>,
 }
 
-fn convert_headers(values: &Option<Vec<String>>) -> Result<Option<Vec<(Bytes, Bytes)>>> {
+fn convert_headers(values: &Option<Vec<String>>) -> Result<Option<Vec<(HeaderName, HeaderValue)>>> {
     if let Some(header_values) = values {
-        let mut arr = vec![];
-        for item in header_values {
-            if let Some([k, v]) = utils::split_to_two_trim(item, ":") {
-                let _ =
-                    HeaderValue::from_str(&v).context(InvalidHeaderValueSnafu { value: v.clone() });
-                arr.push((Bytes::from(k), Bytes::from(v)));
-            }
-        }
+        let arr = utils::convert_headers(header_values).map_err(|err| Error::Invalid {
+            message: err.to_string(),
+        })?;
         Ok(Some(arr))
     } else {
         Ok(None)
@@ -146,11 +134,11 @@ impl Location {
         None
     }
     #[inline]
-    pub fn get_proxy_headers(&self) -> Option<Vec<(Bytes, Bytes)>> {
+    pub fn get_proxy_headers(&self) -> Option<Vec<(HeaderName, HeaderValue)>> {
         self.proxy_headers.clone()
     }
     #[inline]
-    pub fn get_header(&self) -> Option<Vec<(Bytes, Bytes)>> {
+    pub fn get_header(&self) -> Option<Vec<(HeaderName, HeaderValue)>> {
         self.headers.clone()
     }
 }

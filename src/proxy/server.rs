@@ -279,20 +279,16 @@ impl Server {
             hostname: HOST_NAME.to_string(),
         })
         .unwrap_or_default();
+        let headers = utils::convert_headers(&[
+            "Content-Type: application/json; charset=utf-8".to_string(),
+            "Cache-Control: private, no-store".to_string(),
+        ])
+        .unwrap_or_default();
 
         ResponseData {
             status: StatusCode::OK,
             body: Bytes::from(buf),
-            headers: Some(vec![
-                (
-                    Bytes::from("Content-Type"),
-                    Bytes::from("application/json; charset=utf-8"),
-                ),
-                (
-                    Bytes::from("Cache-Control"),
-                    Bytes::from("private, no-store"),
-                ),
-            ]),
+            headers: Some(headers),
             ..Default::default()
         }
     }
@@ -359,7 +355,7 @@ impl ProxyHttp for Server {
         if let Some(arr) = lo.get_proxy_headers() {
             for (k, v) in arr {
                 // v validate for HeaderValue, so always no error
-                let _ = header.insert_header(k, v.to_vec());
+                let _ = header.insert_header(k, v);
             }
         }
         let peer = lo
@@ -398,7 +394,7 @@ impl ProxyHttp for Server {
                 if let Some(arr) = lo.get_header() {
                     for (k, v) in arr {
                         // v validate for HeaderValue, so always no error
-                        let _ = upstream_response.insert_header(k, v.to_vec());
+                        let _ = upstream_response.insert_header(k, v);
                     }
                 }
             }
