@@ -1,7 +1,7 @@
 use super::logger::Parser;
 use super::state::State;
 use super::{Location, Upstream};
-use crate::cache::{convert_headers, HttpResponse};
+use crate::cache;
 use crate::config::{LocationConf, PingapConf, UpstreamConf};
 use crate::utils;
 use async_trait::async_trait;
@@ -272,23 +272,18 @@ impl Server {
         }
         Ok(ServerServices { lb, bg_services })
     }
-    fn get_stats_response(&self) -> HttpResponse {
+    fn get_stats_response(&self) -> cache::HttpResponse {
         let buf = serde_json::to_vec(&ServerStats {
             accepted: self.accepted.load(Ordering::Relaxed),
             processing: self.processing.load(Ordering::Relaxed),
             hostname: HOST_NAME.to_string(),
         })
         .unwrap_or_default();
-        let headers = convert_headers(&[
-            "Content-Type: application/json; charset=utf-8".to_string(),
-            "Cache-Control: private, no-store".to_string(),
-        ])
-        .unwrap_or_default();
 
-        HttpResponse {
+        cache::HttpResponse {
             status: StatusCode::OK,
             body: Bytes::from(buf),
-            headers: Some(headers),
+            headers: Some(vec![cache::HTTP_HEADER_CONTENT_JSON.clone()]),
             ..Default::default()
         }
     }

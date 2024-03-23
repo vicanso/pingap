@@ -1,5 +1,7 @@
 use crate::utils::split_to_two_trim;
+use http::header;
 use http::{HeaderName, HeaderValue};
+use once_cell::sync::Lazy;
 use snafu::{ResultExt, Snafu};
 use std::str::FromStr;
 
@@ -32,3 +34,17 @@ pub fn convert_headers(header_values: &[String]) -> Result<Vec<HttpHeader>> {
     }
     Ok(arr)
 }
+
+pub static HTTP_HEADER_NO_STORE: Lazy<HttpHeader> = Lazy::new(|| {
+    (
+        header::CACHE_CONTROL,
+        HeaderValue::from_str("private, no-store").unwrap(),
+    )
+});
+
+pub static HTTP_HEADER_CONTENT_JSON: Lazy<HttpHeader> = Lazy::new(|| {
+    (
+        header::CONTENT_TYPE,
+        HeaderValue::from_str("application/json; charset=utf-8").unwrap(),
+    )
+});
