@@ -28,3 +28,37 @@ graph TD;
 
     logging("记录请求的相关日志") --> endreq("请求结束")
 ```
+
+## Location
+
+Location支持配置对应的host与path规则，path支持以下的规则，权重由高至低：
+
+- 全等模式，配置以`=`开始，如`=/api`表示匹配path等于`/api`的请求
+- 正则模式，配置以`~`开始，如`~^/(api|rest)`表示匹配path以`/api`或`/rest`开始请求
+- 前缀模式，如`/api`表示匹配path为`/api`开始的请求
+
+在server中会根据所添加的所有location列表，计算对应的权重重新排序，location的计算权限逻辑如下：
+
+```rust
+pub fn get_weight(conf: &LocationConf) -> u8 {
+    // path starts with
+    // = 8
+    // prefix(default) 4
+    // ~ 2
+    // host exist 1
+    let mut weighted: u8 = 0;
+    if let Some(path) = &conf.path {
+        if path.starts_with('=') {
+            weighted += 8;
+        } else if path.starts_with('~') {
+            weighted += 2;
+        } else {
+            weighted += 4;
+        }
+    };
+    if conf.host.is_some() {
+        weighted += 1;
+    }
+    weighted
+}
+```

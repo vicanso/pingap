@@ -340,7 +340,7 @@ impl ProxyHttp for Server {
             .locations
             .iter()
             .enumerate()
-            .find(|(_, item)| item.matched(path, host))
+            .find(|(_, item)| item.matched(host, path))
             .ok_or(pingora::Error::new_str("Location not found"))?;
         ctx.location_index = Some(location_index);
         if let Some(mut new_path) = lo.rewrite(path) {

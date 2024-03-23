@@ -14,7 +14,7 @@ bench:
 	cargo bench
 
 dev:
-	RUST_LOG=INFO cargo watch -w src -x 'run -- -c ~/github/pingap/conf'
+	RUST_LOG=INFO cargo watch -w src -x 'run -- -c ~/github/pingap/conf/pingap.toml'
 
 udeps:
 	cargo +nightly udeps

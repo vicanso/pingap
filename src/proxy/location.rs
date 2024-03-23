@@ -108,7 +108,7 @@ impl Location {
         })
     }
     #[inline]
-    pub fn matched(&self, path: &str, host: &str) -> bool {
+    pub fn matched(&self, host: &str, path: &str) -> bool {
         if !self.path.is_empty() {
             let matched = match &self.path_selector {
                 PathSelector::EqualPath(EqualPath { value }) => value == path,
