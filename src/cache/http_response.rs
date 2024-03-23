@@ -5,7 +5,7 @@ use http::StatusCode;
 use pingora::{http::ResponseHeader, proxy::Session};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct HttpResponse {
     pub status: StatusCode,
     pub body: Bytes,
@@ -16,7 +16,7 @@ pub struct HttpResponse {
 }
 
 impl HttpResponse {
-    pub async fn send(&self, session: &mut Session) -> pingora::Result<usize> {
+    fn get_response_header(&self) -> pingora::Result<ResponseHeader> {
         let fix_size = 3;
         let size = self
             .headers
@@ -58,11 +58,55 @@ impl HttpResponse {
                 resp.insert_header(name.to_owned(), value)?;
             }
         }
-
-        let buf = self.body.clone();
-        let size = buf.len();
-        session.write_response_header(Box::new(resp)).await?;
-        session.write_response_body(buf).await?;
+        Ok(resp)
+    }
+    pub async fn send(self, session: &mut Session) -> pingora::Result<usize> {
+        let header = self.get_response_header()?;
+        let size = self.body.len();
+        session.write_response_header(Box::new(header)).await?;
+        session.write_response_body(self.body).await?;
         Ok(size)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HttpResponse;
+    use crate::cache::convert_headers;
+    use bytes::Bytes;
+    use http::StatusCode;
+    use pretty_assertions::assert_eq;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    #[test]
+    fn test_http_response() {
+        let resp = HttpResponse {
+            status: StatusCode::OK,
+            body: Bytes::from("Hello world!"),
+            max_age: Some(3600),
+            created_at: Some(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+                    - 10,
+            ),
+            private: Some(true),
+            headers: Some(
+                convert_headers(&[
+                    "Contont-Type: application/json".to_string(),
+                    "Content-Encoding: gzip".to_string(),
+                ])
+                .unwrap(),
+            ),
+        };
+
+        let mut header = resp.get_response_header().unwrap();
+        assert_eq!(true, !header.headers.get("Age").unwrap().is_empty());
+        header.remove_header("Age").unwrap();
+
+        assert_eq!(
+            r###"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"content-length": "12", "cache-control": "private, max-age=3600", "content-encoding": "gzip", "contont-type": "application/json"} }, header_name_map: Some({"content-length": CaseHeaderName(b"Content-Length"), "cache-control": CaseHeaderName(b"Cache-Control"), "content-encoding": CaseHeaderName(b"Content-Encoding"), "contont-type": CaseHeaderName(b"contont-type")}) }"###,
+            format!("{header:?}")
+        );
     }
 }

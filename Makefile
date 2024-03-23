@@ -25,6 +25,9 @@ bloat:
 outdated:
 	cargo outdated
 
+test:
+	cargo test
+
 release:
 	cargo build --release
 	ls -lh target/release

@@ -13,6 +13,8 @@ mod config;
 mod proxy;
 mod utils;
 
+pub use cache::HttpResponse;
+
 /// A reverse proxy like nginx.
 #[derive(Parser, Debug, Default)]
 #[command(author, version, about, long_about = None)]

@@ -60,5 +60,5 @@ fn insert_header_name(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, insert_bytes_header, insert_header_name);
+criterion_group!(benches, insert_bytes_header, insert_header_name,);
 criterion_main!(benches);

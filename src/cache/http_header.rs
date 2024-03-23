@@ -48,3 +48,17 @@ pub static HTTP_HEADER_CONTENT_JSON: Lazy<HttpHeader> = Lazy::new(|| {
         HeaderValue::from_str("application/json; charset=utf-8").unwrap(),
     )
 });
+
+#[cfg(test)]
+mod tests {
+    use super::convert_headers;
+    use pretty_assertions::assert_eq;
+    #[test]
+    fn test_convert_headers() {
+        let headers =
+            convert_headers(&["Content-Type: application/octet-stream".to_string()]).unwrap();
+        assert_eq!(1, headers.len());
+        assert_eq!("content-type", headers[0].0.to_string());
+        assert_eq!("application/octet-stream", headers[0].1.to_str().unwrap());
+    }
+}
