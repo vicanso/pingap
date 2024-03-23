@@ -1,6 +1,6 @@
 use super::Upstream;
-use crate::{config::LocationConf, utils};
-use http::{HeaderName, HeaderValue};
+use crate::cache::{convert_headers, HttpHeader};
+use crate::config::LocationConf;
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
 use std::sync::Arc;
@@ -58,14 +58,14 @@ pub struct Location {
     path_selector: PathSelector,
     host: String,
     reg_rewrite: Option<(Regex, String)>,
-    headers: Option<Vec<(HeaderName, HeaderValue)>>,
-    proxy_headers: Option<Vec<(HeaderName, HeaderValue)>>,
+    headers: Option<Vec<HttpHeader>>,
+    proxy_headers: Option<Vec<HttpHeader>>,
     pub upstream: Arc<Upstream>,
 }
 
-fn convert_headers(values: &Option<Vec<String>>) -> Result<Option<Vec<(HeaderName, HeaderValue)>>> {
+fn format_headers(values: &Option<Vec<String>>) -> Result<Option<Vec<HttpHeader>>> {
     if let Some(header_values) = values {
-        let arr = utils::convert_headers(header_values).map_err(|err| Error::Invalid {
+        let arr = convert_headers(header_values).map_err(|err| Error::Invalid {
             message: err.to_string(),
         })?;
         Ok(Some(arr))
@@ -103,8 +103,8 @@ impl Location {
             host: conf.host.clone().unwrap_or_default(),
             upstream: up.clone(),
             reg_rewrite,
-            headers: convert_headers(&conf.headers)?,
-            proxy_headers: convert_headers(&conf.proxy_headers)?,
+            headers: format_headers(&conf.headers)?,
+            proxy_headers: format_headers(&conf.proxy_headers)?,
         })
     }
     #[inline]
@@ -134,11 +134,11 @@ impl Location {
         None
     }
     #[inline]
-    pub fn get_proxy_headers(&self) -> Option<Vec<(HeaderName, HeaderValue)>> {
+    pub fn get_proxy_headers(&self) -> Option<Vec<HttpHeader>> {
         self.proxy_headers.clone()
     }
     #[inline]
-    pub fn get_header(&self) -> Option<Vec<(HeaderName, HeaderValue)>> {
+    pub fn get_header(&self) -> Option<Vec<HttpHeader>> {
         self.headers.clone()
     }
 }

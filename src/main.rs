@@ -8,6 +8,7 @@ use std::error::Error;
 use std::io::Write;
 use std::sync::Arc;
 
+mod cache;
 mod config;
 mod proxy;
 mod utils;
