@@ -17,7 +17,7 @@ A reverse proxy like nginx, built on [pingora](https://github.com/cloudflare/pin
 Loads all configurations from `/opt/proxy` and run in the background. Log appends to `/opt/proxy/pingap.log`.
 
 ```bash
-RUST_LOG=INFO pingap --conf=/opt/proxy -d --log=/opt/proxy/pingap.log
+RUST_LOG=INFO pingap -c=/opt/proxy -d --log=/opt/proxy/pingap.log
 ```
 
 ## Graceful restart
@@ -25,14 +25,33 @@ RUST_LOG=INFO pingap --conf=/opt/proxy -d --log=/opt/proxy/pingap.log
 Validate the configurations, send quit signal to pingap, then start a new process to handle all requests.
 
 ```bash
-RUST_LOG=INFO pingap --conf=/opt/proxy -t \
+RUST_LOG=INFO pingap -c=/opt/proxy -t \
   && pkill -SIGQUIT pingap \
-  && RUST_LOG=INFO pingap --conf=/opt/proxy -d -u --log=/opt/proxy/pingap.log
+  && RUST_LOG=INFO pingap -c=/opt/proxy -d -u --log=/opt/proxy/pingap.log
 ```
 
 ## Config
 
 All toml configurations are as follows [pingap.toml](./conf/pingap.toml).
+
+## Proxy step
+
+```mermaid
+graph TD;
+    start("New Request")-->server;
+
+    server -- "host:HostA, Path:/api/*" --> locationA
+
+    server -- "Path:/rest/*"--> locationB
+
+    locationA -- "10.0.0.1:8001" --> upstreamA1
+
+    locationA -- "10.0.0.2:8001" --> upstreamA2
+
+    locationB -- "10.0.0.1:8002" --> upstreamB1
+
+    locationB -- "10.0.0.2:8002" --> upstreamB2
+```
 
 # License
 
