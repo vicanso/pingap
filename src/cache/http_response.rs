@@ -7,15 +7,22 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Default, Debug, Clone)]
 pub struct HttpResponse {
+    // http response status
     pub status: StatusCode,
+    // http response body
     pub body: Bytes,
+    // max age of http response
     pub max_age: Option<u32>,
+    // created time of http response
     pub created_at: Option<u64>,
+    // private for cache control
     pub private: Option<bool>,
+    // headers for http response
     pub headers: Option<Vec<HttpHeader>>,
 }
 
 impl HttpResponse {
+    /// Gets the response header from http response
     pub fn get_response_header(&self) -> pingora::Result<ResponseHeader> {
         let fix_size = 3;
         let size = self
@@ -60,6 +67,7 @@ impl HttpResponse {
         }
         Ok(resp)
     }
+    /// Sends http response to client
     pub async fn send(self, session: &mut Session) -> pingora::Result<usize> {
         let header = self.get_response_header()?;
         let size = self.body.len();

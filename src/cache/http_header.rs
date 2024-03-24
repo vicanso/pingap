@@ -21,6 +21,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub type HttpHeader = (HeaderName, HeaderValue);
 
+/// Converts string slice to http headers
 pub fn convert_headers(header_values: &[String]) -> Result<Vec<HttpHeader>> {
     let mut arr = vec![];
     for item in header_values {

@@ -86,7 +86,8 @@ addr = "0.0.0.0:6188"
 # tls_key = ""
 
 # Access log format layout for the server. Default `None`
-access_log = '"{method} {uri} {proto}" {status} {size-human} "{referer}" "{user-agent}" {latency-human}'
+# access_log = '"{method} {uri} {proto}" {status} {size-human} "{referer}" "{user-agent}" {latency-human}'
+access_log = "tiny"
 
 # Location list for the server, item should be the name of location.
 # The locations should be served by the server.

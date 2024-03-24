@@ -320,7 +320,6 @@ impl ProxyHttp for Server {
                 return Ok(true);
             }
         }
-
         Ok(false)
     }
     async fn upstream_peer(

@@ -81,8 +81,21 @@ fn format_extra_tag(key: &str) -> Option<Tag> {
     }
 }
 
+static COMBINED: &str =
+    r###"{remote} "{method} {uri} {proto}" {status} {size-human} "{referer}" "{userAgent}""###;
+static COMMON: &str = r###"{remote} "{method} {uri} {proto}" {status} {size-human}""###;
+static SHORT: &str = r###"{remote} {method} {uri} {proto} {status} {size-human} - {latency}ms"###;
+static TINY: &str = r###"{method} {uri} {status} {size-human} - {latency}ms"###;
+
 impl From<&str> for Parser {
     fn from(value: &str) -> Self {
+        let value = match value {
+            "combined" => COMBINED,
+            "common" => COMMON,
+            "short" => SHORT,
+            "tiny" => TINY,
+            _ => value,
+        };
         let reg = Regex::new(r"(\{[a-zA-Z_<>\-~:$]+*\})").unwrap();
         let mut current = 0;
         let mut end = 0;
