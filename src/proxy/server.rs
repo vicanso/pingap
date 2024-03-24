@@ -305,6 +305,9 @@ impl ProxyHttp for Server {
     {
         ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed);
         self.accepted.fetch_add(1, Ordering::Relaxed);
+        if session.is_http2() {
+            ctx.http_version = 2;
+        }
         if let Some(stats_path) = &self.stats_path {
             if stats_path == session.req_header().uri.path() {
                 let size = self
@@ -497,9 +500,10 @@ impl ProxyHttp for Server {
         Self::CTX: Send + Sync,
     {
         self.processing.fetch_add(-1, Ordering::Relaxed);
+
         if let Some(p) = &self.log_parser {
             ctx.response_size = session.body_bytes_sent();
-            info!("{}", p.format(session, ctx));
+            info!("{}", p.format(session.req_header(), ctx));
         }
     }
 }

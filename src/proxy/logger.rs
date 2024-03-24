@@ -2,7 +2,7 @@ use crate::utils;
 
 use super::state::State;
 use bytesize::ByteSize;
-use pingora::proxy::Session;
+use pingora::http::RequestHeader;
 use regex::Regex;
 use std::time::{Duration, Instant};
 use substring::Substring;
@@ -227,8 +227,8 @@ impl From<&str> for Parser {
     }
 }
 
-fn get_header_value<'a>(session: &'a Session, key: &str) -> Option<&'a str> {
-    if let Some(value) = session.get_header(key) {
+fn get_header_value<'a>(req_header: &'a RequestHeader, key: &str) -> Option<&'a str> {
+    if let Some(value) = req_header.headers.get(key) {
         if let Ok(value) = value.to_str() {
             return Some(value);
         }
@@ -237,7 +237,7 @@ fn get_header_value<'a>(session: &'a Session, key: &str) -> Option<&'a str> {
 }
 
 impl Parser {
-    pub fn format(&self, session: &Session, ctx: &State) -> String {
+    pub fn format(&self, req_header: &RequestHeader, ctx: &State) -> String {
         let mut buf = String::with_capacity(1024);
         for tag in self.tags.iter() {
             match tag.category {
@@ -247,25 +247,25 @@ impl Parser {
                     }
                 }
                 TagCategory::Host => {
-                    if let Some(host) = session.req_header().uri.host() {
+                    if let Some(host) = get_header_value(req_header, "Host") {
                         buf.push_str(host);
                     }
                 }
                 TagCategory::Method => {
-                    buf.push_str(session.req_header().method.as_str());
+                    buf.push_str(req_header.method.as_str());
                 }
                 TagCategory::Path => {
-                    buf.push_str(session.req_header().uri.path());
+                    buf.push_str(req_header.uri.path());
                 }
                 TagCategory::Proto => {
-                    if session.is_http2() {
+                    if ctx.http_version == 2 {
                         buf.push_str("HTTP/2.0");
                     } else {
                         buf.push_str("HTTP/1.1");
                     }
                 }
                 TagCategory::Query => {
-                    if let Some(query) = session.req_header().uri.query() {
+                    if let Some(query) = req_header.uri.query() {
                         buf.push_str(query);
                     }
                 }
@@ -273,12 +273,12 @@ impl Parser {
                     // TODO
                 }
                 TagCategory::ClientIp => {
-                    if let Some(value) = get_header_value(session, "X-Forwarded-For") {
+                    if let Some(value) = get_header_value(req_header, "X-Forwarded-For") {
                         let arr: Vec<&str> = value.split(',').collect();
                         if !arr.is_empty() {
                             buf.push_str(arr[0].trim());
                         }
-                    } else if let Some(value) = get_header_value(session, "X-Real-Ip") {
+                    } else if let Some(value) = get_header_value(req_header, "X-Real-Ip") {
                         buf.push_str(value);
                     }
                 }
@@ -286,15 +286,15 @@ impl Parser {
                     // TODO
                 }
                 TagCategory::Uri => {
-                    buf.push_str(&session.req_header().uri.to_string());
+                    buf.push_str(&req_header.uri.to_string());
                 }
                 TagCategory::Referer => {
-                    if let Some(value) = get_header_value(session, "Referer") {
+                    if let Some(value) = get_header_value(req_header, "Referer") {
                         buf.push_str(value);
                     }
                 }
                 TagCategory::UserAgent => {
-                    if let Some(value) = get_header_value(session, "User-Agent") {
+                    if let Some(value) = get_header_value(req_header, "User-Agent") {
                         buf.push_str(value);
                     }
                 }
@@ -334,7 +334,7 @@ impl Parser {
                 }
                 TagCategory::Cookie => {
                     let cookie_name = tag.data.clone().unwrap_or_default();
-                    let cookie_value = get_header_value(session, "Cookie").unwrap_or_default();
+                    let cookie_value = get_header_value(req_header, "Cookie").unwrap_or_default();
                     for item in cookie_value.split(';') {
                         if let Some([k, v]) = utils::split_to_two_trim(item, "=") {
                             if k == cookie_name {
@@ -345,7 +345,7 @@ impl Parser {
                 }
                 TagCategory::RequestHeader => {
                     if let Some(key) = &tag.data {
-                        if let Some(value) = get_header_value(session, key) {
+                        if let Some(value) = get_header_value(req_header, key) {
                             buf.push_str(value);
                         }
                     }
@@ -379,5 +379,50 @@ impl Parser {
         }
 
         buf
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Parser;
+    use crate::proxy::state::State;
+    use pingora::http::RequestHeader;
+    use pretty_assertions::assert_eq;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_logger() {
+        let p: Parser = "{host} {method} {path} {proto} {query} {remote} {client-ip} \
+{scheme} {uri} {referer} {user-agent} {size} \
+{size-human} {status} {latency} {latency-human} {payload-size} {payload-size-human} \
+{~deviceId} {>accept} {<content-type} {:reused}"
+            .into();
+        let mut req_header =
+            RequestHeader::build_no_case("GET", b"/vicanso/pingap?size=1", Some(4)).unwrap();
+        req_header.insert_header("Host", "github.com").unwrap();
+        req_header
+            .insert_header("Referer", "https://github.com/")
+            .unwrap();
+        req_header
+            .insert_header("User-Agent", "pingap/0.1.1")
+            .unwrap();
+        req_header.insert_header("Cookie", "deviceId=abc").unwrap();
+        req_header
+            .insert_header("Accept", "application/json")
+            .unwrap();
+        let mut m = HashMap::new();
+        m.insert("content-type".to_string(), "json".to_string());
+        let ctx = State {
+            response_body_size: 1024,
+            reused: true,
+            response_headers: Some(m),
+            ..Default::default()
+        };
+        let log = p.format(&req_header, &ctx);
+        assert_eq!(
+            "github.com GET /vicanso/pingap HTTP/1.1 size=1    /vicanso/pingap?size=1 \
+https://github.com/ pingap/0.1.1 1024 1.0KB 0 0 0ns   abc application/json json true",
+            log
+        );
     }
 }

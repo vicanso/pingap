@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 pub struct State {
+    pub http_version: u8,
     pub processing: i32,
     pub created_at: Instant,
     pub status: Option<StatusCode>,
@@ -17,6 +18,7 @@ pub struct State {
 impl Default for State {
     fn default() -> Self {
         State {
+            http_version: 1,
             processing: 0,
             status: None,
             created_at: Instant::now(),
