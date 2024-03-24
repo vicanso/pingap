@@ -5,7 +5,7 @@ use http::StatusCode;
 use pingora::{http::ResponseHeader, proxy::Session};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct HttpResponse {
     pub status: StatusCode,
     pub body: Bytes,
@@ -16,7 +16,7 @@ pub struct HttpResponse {
 }
 
 impl HttpResponse {
-    fn get_response_header(&self) -> pingora::Result<ResponseHeader> {
+    pub fn get_response_header(&self) -> pingora::Result<ResponseHeader> {
         let fix_size = 3;
         let size = self
             .headers

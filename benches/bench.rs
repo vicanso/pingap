@@ -1,7 +1,9 @@
 use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion};
-use http::{HeaderName, HeaderValue};
+use http::{HeaderName, HeaderValue, StatusCode};
+use pingap::cache::{convert_headers, HttpResponse};
 use pingora::http::ResponseHeader;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn insert_bytes_header(c: &mut Criterion) {
     c.bench_function("bytes header", |b| {
@@ -60,5 +62,40 @@ fn insert_header_name(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, insert_bytes_header, insert_header_name,);
+fn get_response_header(c: &mut Criterion) {
+    c.bench_function("get response header for http response", |b| {
+        let resp = HttpResponse {
+            status: StatusCode::OK,
+            body: Bytes::from("Hello world!"),
+            max_age: Some(3600),
+            created_at: Some(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+                    - 10,
+            ),
+            private: Some(true),
+            headers: Some(
+                convert_headers(&[
+                    "Contont-Type: application/json".to_string(),
+                    "Content-Encoding: gzip".to_string(),
+                ])
+                .unwrap(),
+            ),
+        };
+
+        b.iter(|| {
+            let value = resp.clone();
+            value.get_response_header().unwrap();
+        });
+    });
+}
+
+criterion_group!(
+    benches,
+    insert_bytes_header,
+    insert_header_name,
+    get_response_header
+);
 criterion_main!(benches);
