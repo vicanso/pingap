@@ -2,7 +2,10 @@ use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion};
 use http::{HeaderName, HeaderValue, StatusCode};
 use pingap::cache::{convert_headers, HttpResponse};
+use pingap::config::{LocationConf, UpstreamConf};
+use pingap::proxy::{Location, Upstream};
 use pingora::http::ResponseHeader;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn insert_bytes_header(c: &mut Criterion) {
@@ -92,10 +95,77 @@ fn get_response_header(c: &mut Criterion) {
     });
 }
 
+fn location_filter(c: &mut Criterion) {
+    let mut group = c.benchmark_group("location filter");
+    let upstream_name = "charts";
+    let upstream = Arc::new(
+        Upstream::new(
+            upstream_name,
+            &UpstreamConf {
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+
+    group.bench_function("prefix", |b| {
+        let lo = Location::new(
+            "",
+            &LocationConf {
+                upstream: upstream_name.to_string(),
+                path: Some("/api".to_string()),
+                ..Default::default()
+            },
+            vec![upstream.clone()],
+        )
+        .unwrap();
+        b.iter(|| {
+            lo.matched("", "/api/users/me");
+            lo.matched("", "/rest");
+        });
+    });
+
+    group.bench_function("regex", |b| {
+        let lo = Location::new(
+            "",
+            &LocationConf {
+                upstream: upstream_name.to_string(),
+                path: Some("~/api".to_string()),
+                ..Default::default()
+            },
+            vec![upstream.clone()],
+        )
+        .unwrap();
+        b.iter(|| {
+            lo.matched("", "/rest/api/users/me");
+            lo.matched("", "/rest");
+        });
+    });
+    group.bench_function("equal", |b| {
+        let lo = Location::new(
+            "",
+            &LocationConf {
+                upstream: upstream_name.to_string(),
+                path: Some("=/api".to_string()),
+                ..Default::default()
+            },
+            vec![upstream.clone()],
+        )
+        .unwrap();
+        b.iter(|| {
+            lo.matched("", "/api/users/me");
+            lo.matched("", "/api");
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     insert_bytes_header,
     insert_header_name,
-    get_response_header
+    get_response_header,
+    location_filter,
 );
 criterion_main!(benches);
