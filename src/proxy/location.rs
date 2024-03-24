@@ -142,3 +142,164 @@ impl Location {
         self.headers.clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{format_headers, new_path_selector, Location, PathSelector};
+    use crate::config::{LocationConf, UpstreamConf};
+    use crate::proxy::Upstream;
+    use pretty_assertions::assert_eq;
+    use std::sync::Arc;
+    #[test]
+    fn test_format_headers() {
+        let headers = format_headers(&Some(vec!["Content-Type: application/json".to_string()]))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            r###"[("content-type", "application/json")]"###,
+            format!("{headers:?}")
+        );
+    }
+    #[test]
+    fn test_new_path_selector() {
+        let selector = new_path_selector("").unwrap();
+        assert_eq!(true, matches!(selector, PathSelector::Empty));
+
+        let selector = new_path_selector("~/api").unwrap();
+        assert_eq!(true, matches!(selector, PathSelector::RegexPath(_)));
+
+        let selector = new_path_selector("=/api").unwrap();
+        assert_eq!(true, matches!(selector, PathSelector::EqualPath(_)));
+
+        let selector = new_path_selector("/api").unwrap();
+        assert_eq!(true, matches!(selector, PathSelector::PrefixPath(_)));
+    }
+    #[test]
+    fn test_path_host_select_location() {
+        let upstream_name = "charts";
+        let upstream = Arc::new(
+            Upstream::new(
+                upstream_name,
+                &UpstreamConf {
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        );
+
+        // no path, no host
+        let lo = Location::new(
+            "",
+            &LocationConf {
+                upstream: upstream_name.to_string(),
+                ..Default::default()
+            },
+            vec![upstream.clone()],
+        )
+        .unwrap();
+        assert_eq!(true, lo.matched("pingap", "/api"));
+        assert_eq!(true, lo.matched("", ""));
+
+        // host
+        let lo = Location::new(
+            "",
+            &LocationConf {
+                upstream: upstream_name.to_string(),
+                host: Some("pingap".to_string()),
+                ..Default::default()
+            },
+            vec![upstream.clone()],
+        )
+        .unwrap();
+        assert_eq!(true, lo.matched("pingap", "/api"));
+        assert_eq!(true, lo.matched("pingap", ""));
+        assert_eq!(false, lo.matched("", "/api"));
+
+        // regex
+        let lo = Location::new(
+            "",
+            &LocationConf {
+                upstream: upstream_name.to_string(),
+                path: Some("~/users".to_string()),
+                ..Default::default()
+            },
+            vec![upstream.clone()],
+        )
+        .unwrap();
+        assert_eq!(true, lo.matched("", "/api/users"));
+        assert_eq!(true, lo.matched("", "/users"));
+        assert_eq!(false, lo.matched("", "/api"));
+
+        // regex ^/api
+        let lo = Location::new(
+            "",
+            &LocationConf {
+                upstream: upstream_name.to_string(),
+                path: Some("~^/api".to_string()),
+                ..Default::default()
+            },
+            vec![upstream.clone()],
+        )
+        .unwrap();
+        assert_eq!(true, lo.matched("", "/api/users"));
+        assert_eq!(false, lo.matched("", "/users"));
+        assert_eq!(true, lo.matched("", "/api"));
+
+        // prefix
+        let lo = Location::new(
+            "",
+            &LocationConf {
+                upstream: upstream_name.to_string(),
+                path: Some("/api".to_string()),
+                ..Default::default()
+            },
+            vec![upstream.clone()],
+        )
+        .unwrap();
+        assert_eq!(true, lo.matched("", "/api/users"));
+        assert_eq!(false, lo.matched("", "/users"));
+        assert_eq!(true, lo.matched("", "/api"));
+
+        // equal
+        let lo = Location::new(
+            "",
+            &LocationConf {
+                upstream: upstream_name.to_string(),
+                path: Some("=/api".to_string()),
+                ..Default::default()
+            },
+            vec![upstream.clone()],
+        )
+        .unwrap();
+        assert_eq!(false, lo.matched("", "/api/users"));
+        assert_eq!(false, lo.matched("", "/users"));
+        assert_eq!(true, lo.matched("", "/api"));
+    }
+
+    #[test]
+    fn test_rewrite_path() {
+        let upstream_name = "charts";
+        let upstream = Arc::new(
+            Upstream::new(
+                upstream_name,
+                &UpstreamConf {
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        );
+
+        let lo = Location::new(
+            "",
+            &LocationConf {
+                upstream: upstream_name.to_string(),
+                rewrite: Some("^/users/(.*)$ /$1".to_string()),
+                ..Default::default()
+            },
+            vec![upstream.clone()],
+        )
+        .unwrap();
+        assert_eq!("/me?abc=1", lo.rewrite("/users/me?abc=1").unwrap());
+        assert_eq!("/api/me", lo.rewrite("/api/me").unwrap());
+    }
+}

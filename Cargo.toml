@@ -49,6 +49,8 @@ pretty_assertions = "1.4.0"
 [profile.release]
 codegen-units = 1
 lto = true
+strip = "debuginfo"
+
 
 [[bench]]
 name = "bench"
