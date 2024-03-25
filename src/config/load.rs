@@ -89,7 +89,7 @@ impl UpstreamConf {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Clone, Serialize)]
 pub struct LocationConf {
     pub upstream: String,
     pub path: Option<String>,
@@ -126,9 +126,32 @@ impl LocationConf {
         }
         Ok(())
     }
+
+    pub fn get_weight(&self) -> u32 {
+        // path starts with
+        // = 65536
+        // prefix(default) 32768
+        // ~ 16384
+        // host exist 8192
+        let mut weighted: u32 = 0;
+        if let Some(path) = &self.path {
+            if path.starts_with('=') {
+                weighted += 65536;
+            } else if path.starts_with('~') {
+                weighted += 16384;
+            } else {
+                weighted += 32768;
+            }
+            weighted += path.len() as u32;
+        };
+        if self.host.is_some() {
+            weighted += 8192;
+        }
+        weighted
+    }
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Clone, Serialize)]
 
 pub struct ServerConf {
     pub addr: String,
@@ -161,9 +184,7 @@ impl ServerConf {
     }
 }
 
-static ERROR_TEMPLATE: &str = include_str!("../../error.html");
-
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct PingapConf {
     pub upstreams: HashMap<String, UpstreamConf>,
     pub locations: HashMap<String, LocationConf>,
@@ -235,7 +256,7 @@ fn format_toml(value: &Value) -> String {
     }
 }
 
-pub fn load_config(path: &str) -> Result<PingapConf> {
+pub fn load_config(path: &str, admin: bool) -> Result<PingapConf> {
     let filepath = resolve_path(path);
     ensure!(
         !filepath.is_empty(),
@@ -243,6 +264,11 @@ pub fn load_config(path: &str) -> Result<PingapConf> {
             message: "Config path is empty".to_string()
         }
     );
+
+    if admin && !Path::new(&filepath).exists() {
+        return Ok(PingapConf::default());
+    }
+
     let mut data = vec![];
     if Path::new(&filepath).is_dir() {
         for entry in
@@ -297,9 +323,6 @@ pub fn load_config(path: &str) -> Result<PingapConf> {
     for (name, value) in data.servers {
         let server: ServerConf = toml::from_str(format_toml(&value).as_str()).context(DeSnafu)?;
         conf.servers.insert(name, server);
-    }
-    if conf.error_template.is_empty() {
-        conf.error_template = ERROR_TEMPLATE.to_string();
     }
 
     Ok(conf)

@@ -1,7 +1,6 @@
 mod location;
 mod logger;
 mod server;
-mod state;
 mod upstream;
 
 pub use location::Location;

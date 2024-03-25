@@ -11,3 +11,5 @@
 - [x] support add tls
 - [ ] log rotate
 - [x] stats of server
+- [ ] start without config
+- [ ] static serve for admin

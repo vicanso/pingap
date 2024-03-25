@@ -1,6 +1,5 @@
+use crate::state::State;
 use crate::utils;
-
-use super::state::State;
 use bytesize::ByteSize;
 use pingora::http::RequestHeader;
 use regex::Regex;

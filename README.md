@@ -38,7 +38,7 @@ All toml configurations are as follows [pingap.toml](./conf/pingap.toml).
 
 ```mermaid
 graph TD;
-    start("New Request")-->server;
+    start("new request")-->server;
 
     server -- "host:HostA, Path:/api/*" --> locationA
 

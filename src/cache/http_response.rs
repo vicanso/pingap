@@ -2,7 +2,8 @@ use super::{HttpHeader, HTTP_HEADER_NO_STORE};
 use bytes::Bytes;
 use http::header;
 use http::StatusCode;
-use pingora::{http::ResponseHeader, proxy::Session};
+use pingora::http::ResponseHeader;
+use pingora::proxy::Session;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Default, Debug, Clone)]

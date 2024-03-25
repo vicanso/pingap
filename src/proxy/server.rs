@@ -1,8 +1,10 @@
 use super::logger::Parser;
-use super::state::State;
 use super::{Location, Upstream};
 use crate::cache;
 use crate::config::{LocationConf, PingapConf, UpstreamConf};
+use crate::serve::Serve;
+use crate::serve::ADMIN_SERVE;
+use crate::state::State;
 use crate::utils;
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -31,6 +33,8 @@ use std::fs;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 
+static ERROR_TEMPLATE: &str = include_str!("../../error.html");
+
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("Toml de error {}, {content}", source.to_string()))]
@@ -49,13 +53,14 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 pub struct ServerConf {
     pub name: String,
     pub addr: String,
+    pub admin: bool,
     pub stats_path: Option<String>,
     pub access_log: Option<String>,
     pub upstreams: Vec<(String, UpstreamConf)>,
     pub locations: Vec<(String, LocationConf)>,
     pub tls_cert: Option<Vec<u8>>,
     pub tls_key: Option<Vec<u8>>,
-    error_template: String,
+    pub error_template: String,
 }
 
 impl From<PingapConf> for Vec<ServerConf> {
@@ -69,7 +74,7 @@ impl From<PingapConf> for Vec<ServerConf> {
             locations.push((name, item));
         }
         // sort location by weight
-        locations.sort_by_key(|b| std::cmp::Reverse(get_weight(&b.1)));
+        locations.sort_by_key(|b| std::cmp::Reverse(b.1.get_weight()));
         let mut servers = vec![];
         for (name, item) in conf.servers {
             let valid_locations = item.locations.unwrap_or_default();
@@ -102,16 +107,23 @@ impl From<PingapConf> for Vec<ServerConf> {
                 tls_key = Some(buf);
             }
 
+            let error_template = if conf.error_template.is_empty() {
+                ERROR_TEMPLATE.to_string()
+            } else {
+                conf.error_template.clone()
+            };
+
             servers.push(ServerConf {
                 name,
                 tls_cert,
                 tls_key,
+                admin: false,
                 stats_path: item.stats_path,
                 addr: item.addr,
                 access_log: item.access_log,
                 upstreams: filter_upstreams,
                 locations: filter_locations,
-                error_template: conf.error_template.clone(),
+                error_template,
             });
         }
 
@@ -127,6 +139,7 @@ impl ServerConf {
 }
 
 pub struct Server {
+    admin: bool,
     addr: String,
     accepted: AtomicU64,
     processing: AtomicI32,
@@ -156,28 +169,6 @@ struct ServerStats {
 pub struct ServerServices {
     pub lb: Service<HttpProxy<Server>>,
     pub bg_services: Vec<Box<dyn IService>>,
-}
-
-pub fn get_weight(conf: &LocationConf) -> u8 {
-    // path starts with
-    // = 8
-    // prefix(default) 4
-    // ~ 2
-    // host exist 1
-    let mut weighted: u8 = 0;
-    if let Some(path) = &conf.path {
-        if path.starts_with('=') {
-            weighted += 8;
-        } else if path.starts_with('~') {
-            weighted += 2;
-        } else {
-            weighted += 4;
-        }
-    };
-    if conf.host.is_some() {
-        weighted += 1;
-    }
-    weighted
 }
 
 impl Server {
@@ -216,6 +207,7 @@ impl Server {
         }
 
         Ok(Server {
+            admin: conf.admin,
             accepted: AtomicU64::new(0),
             processing: AtomicI32::new(0),
             stats_path: conf.stats_path,
@@ -308,6 +300,11 @@ impl ProxyHttp for Server {
         if session.is_http2() {
             ctx.http_version = 2;
         }
+        if self.admin {
+            let result = ADMIN_SERVE.handle(session, ctx).await?;
+            return Ok(result);
+        }
+
         if let Some(stats_path) = &self.stats_path {
             if stats_path == session.req_header().uri.path() {
                 let size = self
@@ -357,7 +354,7 @@ impl ProxyHttp for Server {
         }
         let peer = lo
             .upstream
-            .new_http_peer(header)
+            .new_http_peer(ctx, header)
             .ok_or(pingora::Error::new_str("Upstream not found"))?;
         Ok(Box::new(peer))
     }

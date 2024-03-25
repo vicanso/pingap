@@ -11,9 +11,9 @@ use std::sync::Arc;
 mod cache;
 mod config;
 mod proxy;
+mod serve;
+mod state;
 mod utils;
-
-pub use cache::HttpResponse;
 
 /// A reverse proxy like nginx.
 #[derive(Parser, Debug, Default)]
@@ -37,6 +37,9 @@ struct Args {
     /// Log file path
     #[arg(long)]
     log: Option<String>,
+    /// Admin server adddr
+    #[arg(long)]
+    admin: Option<String>,
 }
 
 fn new_server_conf(args: &Args, conf: &PingapConf) -> server::configuration::ServerConf {
@@ -77,13 +80,14 @@ fn run() -> Result<(), Box<dyn Error>> {
         .try_init()?;
 
     let args = Args::parse();
-    let conf = config::load_config(&args.conf)?;
+    let conf = config::load_config(&args.conf, args.admin.is_some())?;
     conf.validate()?;
     // return if test mode
     if args.test {
         info!("validate config success");
         return Ok(());
     }
+    config::set_config_path(&args.conf);
 
     let opt = Opt {
         upgrade: args.upgrade,
@@ -96,7 +100,15 @@ fn run() -> Result<(), Box<dyn Error>> {
     my_server.configuration = Arc::new(new_server_conf(&args, &conf));
     my_server.bootstrap();
 
-    let server_conf_list: Vec<ServerConf> = conf.into();
+    let mut server_conf_list: Vec<ServerConf> = conf.into();
+    if let Some(addr) = args.admin {
+        server_conf_list.push(ServerConf {
+            name: "admin".to_string(),
+            admin: true,
+            addr,
+            ..Default::default()
+        });
+    }
     for server_conf in server_conf_list {
         let ps = Server::new(server_conf)?;
         let services = ps.run(&my_server.configuration)?;

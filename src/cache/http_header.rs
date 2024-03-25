@@ -26,10 +26,8 @@ pub fn convert_headers(header_values: &[String]) -> Result<Vec<HttpHeader>> {
     let mut arr = vec![];
     for item in header_values {
         if let Some([k, v]) = split_to_two_trim(item, ":") {
-            let name =
-                HeaderName::from_str(&k).context(InvalidHeaderNameSnafu { value: k.clone() })?;
-            let value =
-                HeaderValue::from_str(&v).context(InvalidHeaderValueSnafu { value: v.clone() })?;
+            let name = HeaderName::from_str(&k).context(InvalidHeaderNameSnafu { value: k })?;
+            let value = HeaderValue::from_str(&v).context(InvalidHeaderValueSnafu { value: v })?;
             arr.push((name, value));
         }
     }

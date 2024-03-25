@@ -1,4 +1,5 @@
 use crate::config::UpstreamConf;
+use crate::state::State;
 use futures_util::FutureExt;
 use humantime::parse_duration;
 use pingora::http::RequestHeader;
@@ -162,54 +163,66 @@ fn new_http_health_check(conf: &HealthCheckConf) -> HttpHealthCheck {
     check
 }
 
+fn new_healtch_check(
+    name: &str,
+    health_check: &str,
+) -> Result<(Box<dyn HealthCheck + Send + Sync + 'static>, Duration)> {
+    let mut health_check_frequency = Duration::from_secs(5);
+    let hc: Box<dyn HealthCheck + Send + Sync + 'static> = if health_check.is_empty() {
+        let mut check = TcpHealthCheck::new();
+        check.peer_template.options.connection_timeout = Some(Duration::from_secs(3));
+        check
+    } else {
+        let mut health_check_conf: HealthCheckConf = health_check.try_into()?;
+        if health_check_conf.host == name {
+            health_check_conf.host = "".to_string();
+        }
+        health_check_frequency = health_check_conf.check_frequency;
+        match health_check_conf.schema.as_str() {
+            "http" | "https" => Box::new(new_http_health_check(&health_check_conf)),
+            _ => Box::new(new_tcp_health_check(&health_check_conf)),
+        }
+    };
+    Ok((hc, health_check_frequency))
+}
+
+fn new_backends(addrs: &[String], ipv4_only: bool) -> Result<Backends> {
+    let mut upstreams = BTreeSet::new();
+    let mut backends = vec![];
+    for addr in addrs.iter() {
+        let arr: Vec<_> = addr.split(' ').collect();
+        let weight = if arr.len() == 2 {
+            arr[1].parse::<usize>().unwrap_or(1)
+        } else {
+            1
+        };
+        let mut addr = arr[0].to_string();
+        if !addr.contains(':') {
+            addr = format!("{addr}:80");
+        }
+        for item in addr.to_socket_addrs().context(IoSnafu { content: addr })? {
+            if ipv4_only && item.is_ipv6() {
+                continue;
+            }
+            let backend = Backend {
+                addr: SocketAddr::Inet(item),
+                weight,
+            };
+            backends.push(backend)
+        }
+    }
+    upstreams.extend(backends);
+    let discovery = discovery::Static::new(upstreams);
+    let backends = Backends::new(discovery);
+    Ok(backends)
+}
+
 impl Upstream {
     pub fn new(name: &str, conf: &UpstreamConf) -> Result<Self> {
-        let mut upstreams = BTreeSet::new();
-        let mut backends = vec![];
-        for addr in conf.addrs.iter() {
-            let arr: Vec<_> = addr.split(' ').collect();
-            let weight = if arr.len() == 2 {
-                arr[1].parse::<usize>().unwrap_or(1)
-            } else {
-                1
-            };
-            let mut addr = arr[0].to_string();
-            if !addr.contains(':') {
-                addr = format!("{addr}:80");
-            }
-            let ipv4_only = conf.ipv4_only.unwrap_or_default();
-            for item in addr.to_socket_addrs().context(IoSnafu { content: addr })? {
-                if ipv4_only && item.is_ipv6() {
-                    continue;
-                }
-                let backend = Backend {
-                    addr: SocketAddr::Inet(item),
-                    weight,
-                };
-                backends.push(backend)
-            }
-        }
-        upstreams.extend(backends);
-        let discovery = discovery::Static::new(upstreams);
-        let backends = Backends::new(discovery);
+        let backends = new_backends(&conf.addrs, conf.ipv4_only.unwrap_or_default())?;
 
-        let mut health_check_frequency = Duration::from_secs(5);
-        let health_check = conf.health_check.clone().unwrap_or_default();
-        let hc: Box<dyn HealthCheck + Send + Sync + 'static> = if health_check.is_empty() {
-            let mut check = TcpHealthCheck::new();
-            check.peer_template.options.connection_timeout = Some(Duration::from_secs(3));
-            check
-        } else {
-            let mut health_check_conf: HealthCheckConf = health_check.as_str().try_into()?;
-            if health_check_conf.host == name {
-                health_check_conf.host = "".to_string();
-            }
-            health_check_frequency = health_check_conf.check_frequency;
-            match health_check_conf.schema.as_str() {
-                "http" | "https" => Box::new(new_http_health_check(&health_check_conf)),
-                _ => Box::new(new_tcp_health_check(&health_check_conf)),
-            }
-        };
+        let (hc, health_check_frequency) =
+            new_healtch_check(name, &conf.health_check.clone().unwrap_or_default())?;
         let algo_method = conf.algo.clone().unwrap_or_default();
         let algo_params: Vec<&str> = algo_method.split(':').collect();
         let mut hash = "".to_string();
@@ -230,7 +243,6 @@ impl Upstream {
             }
             _ => {
                 let mut lb = LoadBalancer::<RoundRobin>::from_backends(backends);
-
                 lb.update()
                     .now_or_never()
                     .expect("static should not block")
@@ -254,7 +266,7 @@ impl Upstream {
             write_timeout: conf.write_timeout,
         })
     }
-    pub fn new_http_peer(&self, header: &RequestHeader) -> Option<HttpPeer> {
+    pub fn new_http_peer(&self, _ctx: &State, header: &RequestHeader) -> Option<HttpPeer> {
         let upstream = match &self.lb {
             SelectionLb::RoundRobinLb(lb) => lb.select(b"", 256),
             SelectionLb::ConsistentLb(lb) => {
@@ -292,12 +304,14 @@ impl Upstream {
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        new_backends, new_healtch_check, new_http_health_check, new_tcp_health_check,
+        HealthCheckConf, State, Upstream, UpstreamConf,
+    };
+    use pingora::http::RequestHeader;
+    use pingora::upstreams::peer::Peer;
     use std::time::Duration;
 
-    use crate::proxy::upstream::new_http_health_check;
-
-    use super::{new_tcp_health_check, HealthCheckConf};
-    use pingora::upstreams::peer::Peer;
     use pretty_assertions::assert_eq;
     #[test]
     fn test_health_check_conf() {
@@ -334,5 +348,38 @@ mod tests {
             Duration::from_secs(1),
             http_check.peer_template.options.read_timeout.unwrap()
         );
+    }
+    #[test]
+    fn test_new_healtch_check() {
+        let (_, frequency) = new_healtch_check("upstreamname", "https://upstreamname/ping?connection_timeout=3s&read_timeout=1s&success=2&failure=1&check_frequency=10s&from=nginx&reuse").unwrap();
+        assert_eq!(Duration::from_secs(10), frequency);
+    }
+    #[test]
+    fn test_new_backends() {
+        let _ = new_backends(
+            &[
+                "192.168.1.1:8001".to_string(),
+                "192.168.1.2:8001".to_string(),
+            ],
+            true,
+        )
+        .unwrap();
+    }
+    #[test]
+    fn test_upstream() {
+        let up = Upstream::new(
+            "upstreamname",
+            &UpstreamConf {
+                addrs: vec!["192.168.1.1:8001".to_string()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let req_header = RequestHeader::build("GET", b"/", None).unwrap();
+        assert_eq!(
+            true,
+            up.new_http_peer(&State::default(), &req_header).is_some()
+        );
+        assert_eq!(true, up.get_round_robind().is_some());
     }
 }
