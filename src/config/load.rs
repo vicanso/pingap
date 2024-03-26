@@ -30,6 +30,8 @@ pub enum Error {
     },
     #[snafu(display("Toml de error {source}"))]
     De { source: toml::de::Error },
+    #[snafu(display("Toml ser error {source}"))]
+    Ser { source: toml::ser::Error },
     #[snafu(display("Url parse error {source}, {url}"))]
     UrlParse {
         source: url::ParseError,
@@ -254,6 +256,15 @@ fn format_toml(value: &Value) -> String {
     } else {
         "".to_string()
     }
+}
+
+pub fn save_config(path: &str, conf: &PingapConf) -> Result<()> {
+    conf.validate()?;
+    let filepath = resolve_path(path);
+    let buf = toml::to_string_pretty(conf).context(SerSnafu)?;
+    std::fs::write(&filepath, buf).context(IoSnafu { file: filepath })?;
+
+    Ok(())
 }
 
 pub fn load_config(path: &str, admin: bool) -> Result<PingapConf> {

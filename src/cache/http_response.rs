@@ -1,9 +1,11 @@
-use super::{HttpHeader, HTTP_HEADER_NO_STORE};
+use super::{HttpHeader, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_NO_STORE};
 use bytes::Bytes;
 use http::header;
 use http::StatusCode;
+use log::error;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
+use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Default, Debug, Clone)]
@@ -23,6 +25,41 @@ pub struct HttpResponse {
 }
 
 impl HttpResponse {
+    pub fn no_content() -> HttpResponse {
+        HttpResponse {
+            status: StatusCode::NO_CONTENT,
+            ..Default::default()
+        }
+    }
+    pub fn not_found() -> HttpResponse {
+        HttpResponse {
+            status: StatusCode::NOT_FOUND,
+            body: Bytes::from("Not Found"),
+            ..Default::default()
+        }
+    }
+    pub fn unknown_error() -> HttpResponse {
+        HttpResponse {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            body: Bytes::from("Unknown error"),
+            ..Default::default()
+        }
+    }
+    pub fn try_from_json<T>(value: &T) -> pingora::Result<HttpResponse>
+    where
+        T: ?Sized + Serialize,
+    {
+        let buf = serde_json::to_vec(value).map_err(|e| {
+            error!("To json fail: {e}");
+            pingora::Error::new_str("To json fail")
+        })?;
+        Ok(HttpResponse {
+            status: StatusCode::OK,
+            body: Bytes::from(buf),
+            headers: Some(vec![HTTP_HEADER_CONTENT_JSON.clone()]),
+            ..Default::default()
+        })
+    }
     /// Gets the response header from http response
     pub fn get_response_header(&self) -> pingora::Result<ResponseHeader> {
         let fix_size = 3;

@@ -2,7 +2,7 @@ use once_cell::sync::OnceCell;
 
 mod load;
 
-pub use load::{load_config, LocationConf, PingapConf, UpstreamConf};
+pub use load::{load_config, save_config, LocationConf, PingapConf, ServerConf, UpstreamConf};
 
 static CONFIG_PATH: OnceCell<String> = OnceCell::new();
 pub fn set_config_path(conf_path: &str) {
