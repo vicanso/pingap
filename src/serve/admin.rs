@@ -8,6 +8,7 @@ use log::error;
 use once_cell::sync::Lazy;
 use pingora::proxy::Session;
 use serde::{Deserialize, Serialize};
+use substring::Substring;
 
 pub struct AdminServe {}
 
@@ -140,7 +141,11 @@ fn get_method_path(session: &Session) -> (Method, String) {
 #[async_trait]
 impl Serve for AdminServe {
     async fn handle(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<bool> {
-        let (method, path) = get_method_path(session);
+        let (method, mut path) = get_method_path(session);
+        let api_prefix = "/api";
+        if path.starts_with(api_prefix) {
+            path = path.substring(api_prefix.len(), path.len()).to_string();
+        }
         let params: Vec<&str> = path.split('/').collect();
         let mut category = "";
         if params.len() >= 3 {

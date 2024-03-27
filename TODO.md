@@ -13,3 +13,4 @@
 - [x] stats of server
 - [ ] start without config
 - [ ] static serve for admin
+- [ ] status:499 for client abort
