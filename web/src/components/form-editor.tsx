@@ -1,5 +1,4 @@
 import * as React from "react";
-import CardActions from "@mui/material/CardActions";
 import CardContent from "@mui/material/CardContent";
 import Button from "@mui/material/Button";
 import Typography from "@mui/material/Typography";
@@ -10,11 +9,28 @@ import FormControlLabel from "@mui/material/FormControlLabel";
 import RadioGroup from "@mui/material/RadioGroup";
 import FormLabel from "@mui/material/FormLabel";
 import Radio from "@mui/material/Radio";
+import Snackbar from "@mui/material/Snackbar";
+import InputLabel from "@mui/material/InputLabel";
+import MenuItem from "@mui/material/MenuItem";
+import Select from "@mui/material/Select";
+import OutlinedInput from "@mui/material/OutlinedInput";
+import PlaylistRemoveIcon from "@mui/icons-material/PlaylistRemove";
+import IconButton from "@mui/material/IconButton";
+import AddRoadIcon from "@mui/icons-material/AddRoad";
+import Alert from "@mui/material/Alert";
+import CheckIcon from "@mui/icons-material/Check";
+
+import Paper from "@mui/material/Paper";
+import { Theme, useTheme } from "@mui/material/styles";
+import { formatError } from "../helpers/util";
 
 export enum FormItemCategory {
   TEXT = "text",
   NUMBER = "number",
   TEXTAREA = "textarea",
+  LOCATION = "location",
+  UPSTREAM = "upstream",
+  ADDRS = "addrs",
   CHECKBOX = "checkbox",
 }
 
@@ -24,22 +40,79 @@ export interface FormItem {
   defaultValue: unknown;
   span: number;
   category: FormItemCategory;
+  minRows?: number;
+  options?: string[];
+}
+
+function getDefaultValues(items: FormItem[]) {
+  const data: Record<string, unknown> = {};
+  items.forEach((item) => {
+    data[item.id] = item.defaultValue;
+  });
+  return data;
+}
+
+function getStyles(name: string, selectItems: string[], theme: Theme) {
+  return {
+    fontWeight:
+      selectItems.indexOf(name) === -1
+        ? theme.typography.fontWeightRegular
+        : theme.typography.fontWeightMedium,
+  };
 }
 
 export default function FormEditor({
   title,
   description,
   items,
-  onUpdate,
+  onUpsert,
 }: {
   title: string;
   description: string;
   items: FormItem[];
-  onUpdate: (data: Record<string, unknown>) => void;
+  onUpsert: (name: string, data: Record<string, unknown>) => Promise<void>;
 }) {
-  const data: Record<string, unknown> = {};
+  const theme = useTheme();
+  const [data, setData] = React.useState(getDefaultValues(items));
+  const defaultLocations: string[] = [];
+  const defaultAddrs: string[] = [];
+  let defaultUpstream = "";
+  items.forEach((item) => {
+    switch (item.category) {
+      case FormItemCategory.LOCATION: {
+        const arr = item.defaultValue as string[];
+        arr.forEach((lo) => {
+          defaultLocations.push(lo);
+        });
+        break;
+      }
+      case FormItemCategory.UPSTREAM: {
+        defaultUpstream = item.defaultValue as string;
+        break;
+      }
+      case FormItemCategory.ADDRS: {
+        const arr = item.defaultValue as string[];
+        arr.forEach((addr) => {
+          defaultAddrs.push(addr);
+        });
+        break;
+      }
+    }
+  });
+
+  const [locations, setLocations] = React.useState<string[]>(defaultLocations);
+  const [upstream, setUpstream] = React.useState(defaultUpstream);
+  const [addrs, setAddrs] = React.useState(defaultAddrs);
+
+  const [updated, setUpdated] = React.useState(false);
+  const [processing, setProcessing] = React.useState(false);
+  const [showSuccess, setShowSuccess] = React.useState(false);
+
+  const [showError, setShowError] = React.useState({
+    open: false,
+    message: "",
+  });
   const list = items.map((item) => {
-    data[item.id] = item.defaultValue;
     let formItem: JSX.Element = <></>;
     switch (item.category) {
       case FormItemCategory.CHECKBOX: {
@@ -76,7 +149,7 @@ export default function FormEditor({
                     break;
                   }
                 }
-                data[item.id] = checked;
+                updateValue(item.id, checked);
               }}
             >
               <FormControlLabel value={1} control={<Radio />} label="Yes" />
@@ -87,17 +160,141 @@ export default function FormEditor({
         );
         break;
       }
+      case FormItemCategory.LOCATION: {
+        const options = item.options || [];
+        formItem = (
+          <React.Fragment>
+            <InputLabel id={`{item.id}-label`}>{item.label}</InputLabel>
+            <Select
+              labelId={`{item.id}-label`}
+              id={item.label}
+              multiple
+              value={locations}
+              onChange={(e) => {
+                const values = e.target.value as string[];
+                setLocations(values);
+                updateValue(item.id, values);
+              }}
+              input={<OutlinedInput label={item.label} />}
+            >
+              {options.map((name) => (
+                <MenuItem
+                  key={name}
+                  value={name}
+                  style={getStyles(name, locations, theme)}
+                >
+                  {name}
+                </MenuItem>
+              ))}
+            </Select>
+          </React.Fragment>
+        );
+        break;
+      }
+      case FormItemCategory.UPSTREAM: {
+        const options = item.options || [];
+        formItem = (
+          <React.Fragment>
+            <InputLabel id={`{item.id}-label`}>{item.label}</InputLabel>
+            <Select
+              labelId={`{item.id}-label`}
+              id={item.label}
+              value={upstream}
+              onChange={(e) => {
+                const { value } = e.target;
+                setUpstream(value);
+                updateValue(item.id, value);
+              }}
+              input={<OutlinedInput label={item.label} />}
+            >
+              {options.map((name) => (
+                <MenuItem key={name} value={name}>
+                  {name}
+                </MenuItem>
+              ))}
+            </Select>
+          </React.Fragment>
+        );
+        break;
+      }
+      case FormItemCategory.ADDRS: {
+        const list = addrs.map((addr, index) => {
+          return (
+            <Paper
+              key={`${item.id}-${index}`}
+              sx={{
+                display: "flex",
+                marginBottom: "15px",
+                alignItems: "center",
+                width: "100%",
+              }}
+            >
+              <TextField
+                id={`${item.id}-${index}`}
+                label={item.label}
+                variant="outlined"
+                defaultValue={addr}
+                sx={{ ml: 1, flex: 1 }}
+                style={{
+                  marginLeft: "0px",
+                }}
+                onChange={(e) => {
+                  const value = e.target.value.trim();
+                  const values = addrs.slice(0);
+                  values[index] = value;
+                  setAddrs(values);
+                  updateValue(item.id, values);
+                }}
+              />
+              <IconButton
+                color="primary"
+                sx={{ p: "10px" }}
+                aria-label="directions"
+                onClick={() => {
+                  const values = addrs.slice(0);
+                  values.splice(index, 1);
+                  setAddrs(values);
+                  updateValue(item.id, values);
+                }}
+              >
+                <PlaylistRemoveIcon />
+              </IconButton>
+            </Paper>
+          );
+        });
+        list.push(
+          <Button
+            key="addAddr"
+            variant="contained"
+            endIcon={<AddRoadIcon />}
+            onClick={() => {
+              const values = addrs.slice(0);
+              values.push("");
+              setAddrs(values);
+              updateValue(item.id, values);
+            }}
+          >
+            Add
+          </Button>,
+        );
+        formItem = <React.Fragment>{list}</React.Fragment>;
+        break;
+      }
       case FormItemCategory.TEXTAREA: {
+        let minRows = 4;
+        if (item.minRows) {
+          minRows = item.minRows;
+        }
         formItem = (
           <TextField
             id={item.id}
             label={item.label}
             multiline
-            minRows={4}
+            minRows={minRows}
             variant="outlined"
             defaultValue={item.defaultValue}
             onChange={(e) => {
-              data[item.id] = e.target.value.trim();
+              updateValue(item.id, e.target.value.trim());
             }}
           />
         );
@@ -115,14 +312,14 @@ export default function FormEditor({
               switch (item.category) {
                 case FormItemCategory.NUMBER: {
                   if (value) {
-                    data[item.id] = Number(value);
+                    updateValue(item.id, Number(value));
                   } else {
-                    data[item.id] = null;
+                    updateValue(item.id, null);
                   }
                   break;
                 }
                 default: {
-                  data[item.id] = value;
+                  updateValue(item.id, value);
                   break;
                 }
               }
@@ -138,6 +335,33 @@ export default function FormEditor({
       </Grid>
     );
   });
+  const updateValue = (key: string, value: unknown) => {
+    setShowSuccess(false);
+    const values = Object.assign({}, data);
+    if (!value && typeof value == "string") {
+      value = null;
+    }
+    values[key] = value;
+    setUpdated(true);
+    setData(values);
+  };
+  const doUpsert = async () => {
+    if (processing) {
+      return;
+    }
+    setProcessing(true);
+    try {
+      await onUpsert("", data);
+      setShowSuccess(true);
+    } catch (err) {
+      setShowError({
+        open: true,
+        message: formatError(err),
+      });
+    } finally {
+      setProcessing(false);
+    }
+  };
   return (
     <React.Fragment>
       <CardContent>
@@ -154,12 +378,38 @@ export default function FormEditor({
         <form noValidate autoComplete="off">
           <Grid container spacing={2}>
             {list}
+            <Grid item xs={12}>
+              <Button
+                disabled={!updated}
+                fullWidth
+                variant="outlined"
+                size="large"
+                onClick={() => {
+                  doUpsert();
+                }}
+              >
+                {processing ? "Submitting" : "Submit"}
+              </Button>
+            </Grid>
           </Grid>
         </form>
       </CardContent>
-      <CardActions>
-        <Button size="small">Learn More</Button>
-      </CardActions>
+      {showSuccess && (
+        <Alert icon={<CheckIcon fontSize="inherit" />} severity="success">
+          Update success!
+        </Alert>
+      )}
+      <Snackbar
+        open={showError.open}
+        autoHideDuration={6000}
+        onClose={() => {
+          setShowError({
+            open: false,
+            message: "",
+          });
+        }}
+        message={showError.message}
+      />
     </React.Fragment>
   );
 }

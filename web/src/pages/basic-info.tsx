@@ -6,9 +6,10 @@ import FormEditor, {
 } from "../components/form-editor";
 
 export default function BasicInfo() {
-  const [initialized, config] = useConfigStore((state) => [
+  const [initialized, config, update] = useConfigStore((state) => [
     state.initialized,
     state.data,
+    state.update,
   ]);
   if (!initialized) {
     return <Loading />;
@@ -61,17 +62,19 @@ export default function BasicInfo() {
       label: "Error Template",
       defaultValue: config.error_template,
       span: 12,
+      minRows: 8,
       category: FormItemCategory.TEXTAREA,
     },
   ];
+  const onUpsert = async (name: string, data: Record<string, unknown>) => {
+    return update("pingap", "basic", data);
+  };
   return (
     <FormEditor
       title="Modify the basic configurations"
       description="The basic configuration of pingap mainly includes various configurations such as logs, graceful restart, threads, etc."
       items={arr}
-      onUpdate={(data) => {
-        console.dir(data);
-      }}
+      onUpsert={onUpsert}
     />
   );
 }

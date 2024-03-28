@@ -182,6 +182,12 @@ export default function MainNav() {
       <Snackbar
         open={showError.open}
         autoHideDuration={6000}
+        onClose={() => {
+          setShowError({
+            open: false,
+            message: "",
+          });
+        }}
         message={showError.message}
       />
     </React.Fragment>

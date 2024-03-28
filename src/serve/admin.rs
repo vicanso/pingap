@@ -1,17 +1,22 @@
+use super::static_file::StaticFile;
 use super::Serve;
 use crate::config::{self, save_config, LocationConf, ServerConf, UpstreamConf};
 use crate::state::State;
 use crate::{cache::HttpResponse, config::PingapConf};
 use async_trait::async_trait;
-use http::Method;
+use http::{Method, StatusCode};
 use log::error;
 use once_cell::sync::Lazy;
 use pingora::proxy::Session;
+use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use substring::Substring;
 
-pub struct AdminServe {}
+#[derive(RustEmbed)]
+#[folder = "dist/"]
+struct AdminAsset;
 
+pub struct AdminServe {}
 pub static ADMIN_SERVE: Lazy<&AdminServe> = Lazy::new(|| &AdminServe {});
 
 #[derive(Serialize, Deserialize)]
@@ -170,13 +175,20 @@ impl Serve for AdminServe {
                 _ => self.get_config(category).await,
             }
             .unwrap_or_else(|err| {
-                HttpResponse::try_from_json(&ErrorResponse {
+                println!("{err:?}");
+                let mut resp = HttpResponse::try_from_json(&ErrorResponse {
                     message: err.to_string(),
                 })
-                .unwrap_or(HttpResponse::unknown_error())
+                .unwrap_or(HttpResponse::unknown_error());
+                resp.status = StatusCode::INTERNAL_SERVER_ERROR;
+                resp
             })
         } else {
-            HttpResponse::not_found()
+            let mut file = path.substring(1, path.len());
+            if file.is_empty() {
+                file = "index.html";
+            }
+            StaticFile(AdminAsset::get(file)).into()
         };
         ctx.response_body_size = resp.send(session).await?;
         Ok(true)

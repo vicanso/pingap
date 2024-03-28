@@ -1,5 +1,70 @@
-import Container from "@mui/material/Container";
+import useConfigStore from "../states/config";
+import { useParams } from "react-router-dom";
+
+import Loading from "../components/loading";
+import FormEditor, {
+  FormItem,
+  FormItemCategory,
+} from "../components/form-editor";
 
 export default function LocationInfo() {
-  return <Container maxWidth="sm">LocationInfo</Container>;
+  const [initialized, config, update] = useConfigStore((state) => [
+    state.initialized,
+    state.data,
+    state.update,
+  ]);
+  const { name } = useParams();
+  if (!initialized) {
+    return <Loading />;
+  }
+  const locations = config.locations || {};
+  const location = locations[name || ""];
+  const upstreams = Object.keys(config.upstreams || {});
+
+  const arr: FormItem[] = [
+    {
+      id: "host",
+      label: "Host",
+      defaultValue: location.host,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
+      id: "path",
+      label: "Path",
+      defaultValue: location.path,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
+      id: "upstream",
+      label: "Upstream",
+      defaultValue: location.upstream,
+      span: 6,
+      category: FormItemCategory.UPSTREAM,
+      options: upstreams,
+    },
+    // proxy header
+    // header
+    {
+      id: "rewrite",
+      label: "Rewrite",
+      defaultValue: location.rewrite,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+  ];
+
+  const onUpsert = async (_: string, data: Record<string, unknown>) => {
+    return update("location", name || "", data);
+  };
+  return (
+    <FormEditor
+      key={name}
+      title="Modify location configuration"
+      description="Change the location configuration"
+      items={arr}
+      onUpsert={onUpsert}
+    />
+  );
 }

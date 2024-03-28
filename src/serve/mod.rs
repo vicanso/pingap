@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use pingora::proxy::Session;
 
 mod admin;
+mod static_file;
 
 #[async_trait]
 pub trait Serve {

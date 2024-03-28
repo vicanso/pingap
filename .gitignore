@@ -18,3 +18,4 @@ target/
 /target
 .vscode
 node_moudles
+dist

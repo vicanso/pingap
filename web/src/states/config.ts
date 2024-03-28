@@ -49,6 +49,11 @@ interface ConfigState {
   data: Config;
   initialized: boolean;
   fetch: () => Promise<Config>;
+  update: (
+    category: string,
+    name: string,
+    data: Record<string, unknown>,
+  ) => Promise<void>;
 }
 
 const useConfigStore = create<ConfigState>()((set, get) => ({
@@ -61,6 +66,17 @@ const useConfigStore = create<ConfigState>()((set, get) => ({
       data,
     });
     return data;
+  },
+  update: async (
+    category: string,
+    name: string,
+    updateData: Record<string, unknown>,
+  ) => {
+    await request.post(`/configs/${category}/${name}`, updateData);
+    const { data } = await request.get<Config>("/configs");
+    set({
+      data,
+    });
   },
 }));
 
