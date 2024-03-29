@@ -17,8 +17,15 @@ export default function ServerInfo() {
   if (!initialized) {
     return <Loading />;
   }
+  let created = false;
+  let serverName = name;
+  if (name == "*") {
+    created = true;
+    serverName = "";
+  }
   const servers = config.servers || {};
-  const server = servers[name || ""];
+  const currentNames = Object.keys(servers);
+  const server = servers[serverName || ""] || {};
   const locations = Object.keys(config.locations || {});
 
   const arr: FormItem[] = [
@@ -45,6 +52,13 @@ export default function ServerInfo() {
       category: FormItemCategory.TEXT,
     },
     {
+      id: "admin_path",
+      label: "Admin Path",
+      defaultValue: server.admin_path,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
       id: "access_log",
       label: "Access Log",
       defaultValue: server.access_log,
@@ -67,8 +81,12 @@ export default function ServerInfo() {
     },
   ];
 
-  const onUpsert = async (_: string, data: Record<string, unknown>) => {
-    return update("server", name || "", data);
+  const onUpsert = async (newName: string, data: Record<string, unknown>) => {
+    let serverName = name || "";
+    if (created) {
+      serverName = newName;
+    }
+    return update("server", serverName, data);
   };
   return (
     <FormEditor
@@ -77,6 +95,8 @@ export default function ServerInfo() {
       description="Change the server configuration"
       items={arr}
       onUpsert={onUpsert}
+      created={created}
+      currentNames={currentNames}
     />
   );
 }

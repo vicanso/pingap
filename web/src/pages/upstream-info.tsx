@@ -17,8 +17,15 @@ export default function UpstreamInfo() {
   if (!initialized) {
     return <Loading />;
   }
+  let created = false;
+  let upstreamName = name;
+  if (name == "*") {
+    created = true;
+    upstreamName = "";
+  }
   const upstreams = config.upstreams || {};
-  const upstream = upstreams[name || ""];
+  const upstream = upstreams[upstreamName || ""] || {};
+  const currentNames = Object.keys(upstreams);
 
   const arr: FormItem[] = [
     {
@@ -79,8 +86,12 @@ export default function UpstreamInfo() {
     },
   ];
 
-  const onUpsert = async (_: string, data: Record<string, unknown>) => {
-    return update("upstream", name || "", data);
+  const onUpsert = async (newName: string, data: Record<string, unknown>) => {
+    let upstreamName = name || "";
+    if (created) {
+      upstreamName = newName;
+    }
+    return update("upstream", upstreamName, data);
   };
   return (
     <FormEditor
@@ -89,6 +100,8 @@ export default function UpstreamInfo() {
       description="Change the upstream configuration"
       items={arr}
       onUpsert={onUpsert}
+      created={created}
+      currentNames={currentNames}
     />
   );
 }

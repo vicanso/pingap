@@ -17,9 +17,16 @@ export default function LocationInfo() {
   if (!initialized) {
     return <Loading />;
   }
+  let created = false;
+  let locationName = name;
+  if (name == "*") {
+    created = true;
+    locationName = "";
+  }
   const locations = config.locations || {};
-  const location = locations[name || ""];
+  const location = locations[locationName || ""] || {};
   const upstreams = Object.keys(config.upstreams || {});
+  const currentNames = Object.keys(locations);
 
   const arr: FormItem[] = [
     {
@@ -55,8 +62,12 @@ export default function LocationInfo() {
     },
   ];
 
-  const onUpsert = async (_: string, data: Record<string, unknown>) => {
-    return update("location", name || "", data);
+  const onUpsert = async (newName: string, data: Record<string, unknown>) => {
+    let locationName = name || "";
+    if (created) {
+      locationName = newName;
+    }
+    return update("location", locationName, data);
   };
   return (
     <FormEditor
@@ -65,6 +76,8 @@ export default function LocationInfo() {
       description="Change the location configuration"
       items={arr}
       onUpsert={onUpsert}
+      created={created}
+      currentNames={currentNames}
     />
   );
 }

@@ -30,6 +30,7 @@ interface Server {
   tls_cert?: string;
   tls_key?: string;
   stats_path?: string;
+  admin_path?: string;
 }
 
 interface Config {
@@ -48,6 +49,7 @@ interface Config {
 interface ConfigState {
   data: Config;
   initialized: boolean;
+  version: string;
   fetch: () => Promise<Config>;
   update: (
     category: string,
@@ -56,8 +58,22 @@ interface ConfigState {
   ) => Promise<void>;
 }
 
+const random = (length = 8) => {
+  // Declare all characters
+  let chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+  // Pick characers randomly
+  let str = "";
+  for (let i = 0; i < length; i++) {
+    str += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+
+  return str;
+};
+
 const useConfigStore = create<ConfigState>()((set, get) => ({
   data: {},
+  version: random(),
   initialized: false,
   fetch: async () => {
     const { data } = await request.get<Config>("/configs");
@@ -73,10 +89,10 @@ const useConfigStore = create<ConfigState>()((set, get) => ({
     updateData: Record<string, unknown>,
   ) => {
     await request.post(`/configs/${category}/${name}`, updateData);
-    const { data } = await request.get<Config>("/configs");
     set({
-      data,
+      version: random(),
     });
+    await get().fetch();
   },
 }));
 

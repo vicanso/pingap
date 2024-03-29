@@ -1,7 +1,8 @@
 use super::static_file::StaticFile;
 use super::Serve;
-use crate::config::{self, save_config, LocationConf, ServerConf, UpstreamConf};
+use crate::config::{self, get_start_time, save_config, LocationConf, ServerConf, UpstreamConf};
 use crate::state::State;
+use crate::utils::get_pkg_version;
 use crate::{cache::HttpResponse, config::PingapConf};
 use async_trait::async_trait;
 use http::{Method, StatusCode};
@@ -26,13 +27,19 @@ struct ErrorResponse {
 
 #[derive(Serialize, Deserialize)]
 struct BasicConfParams {
-    error_template: String,
+    error_template: Option<String>,
     pid_file: Option<String>,
     upgrade_sock: Option<String>,
     user: Option<String>,
     group: Option<String>,
     threads: Option<usize>,
     work_stealing: Option<bool>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct BasicInfo {
+    start_time: u64,
+    version: String,
 }
 
 const CATEGORY_UPSTREAM: &str = "upstream";
@@ -119,7 +126,7 @@ impl AdminServe {
                     error!("failed to basic info: {e}");
                     pingora::Error::new_str("Basic config invalid")
                 })?;
-                conf.error_template = basic_conf.error_template;
+                conf.error_template = basic_conf.error_template.unwrap_or_default();
                 conf.pid_file = basic_conf.pid_file;
                 conf.upgrade_sock = basic_conf.upgrade_sock;
                 conf.user = basic_conf.user;
@@ -175,7 +182,6 @@ impl Serve for AdminServe {
                 _ => self.get_config(category).await,
             }
             .unwrap_or_else(|err| {
-                println!("{err:?}");
                 let mut resp = HttpResponse::try_from_json(&ErrorResponse {
                     message: err.to_string(),
                 })
@@ -183,6 +189,12 @@ impl Serve for AdminServe {
                 resp.status = StatusCode::INTERNAL_SERVER_ERROR;
                 resp
             })
+        } else if path == "/basic" {
+            HttpResponse::try_from_json(&BasicInfo {
+                start_time: get_start_time(),
+                version: get_pkg_version().to_string(),
+            })
+            .unwrap_or(HttpResponse::unknown_error())
         } else {
             let mut file = path.substring(1, path.len());
             if file.is_empty() {

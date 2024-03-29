@@ -45,3 +45,4 @@ Pingap使用toml来配置相关参数，具体参数说明如下：
 - `access_log`: 可选，默认为不输出访问日志。请求日志格式化，指定输出访问日志的形式。
 - `locations`: location的列表，指定该server使用的所有location。
 - `stats_path`: 可选，默认无。指定返回server的stats的路由。
+- `admin_path`: 可选，默认无。指定用于转发至admin管理后台的路由。

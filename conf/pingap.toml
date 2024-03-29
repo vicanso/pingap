@@ -95,3 +95,6 @@ locations = ["lo"]
 
 # Stats path for get the stats of server. Default `None`
 stats_path = "/stats"
+
+# Admin path for admin server. Default `None`
+admin_path = "/admin"

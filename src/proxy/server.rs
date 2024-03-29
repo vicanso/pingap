@@ -32,6 +32,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
+use substring::Substring;
 
 static ERROR_TEMPLATE: &str = include_str!("../../error.html");
 
@@ -55,6 +56,7 @@ pub struct ServerConf {
     pub addr: String,
     pub admin: bool,
     pub stats_path: Option<String>,
+    pub admin_path: Option<String>,
     pub access_log: Option<String>,
     pub upstreams: Vec<(String, UpstreamConf)>,
     pub locations: Vec<(String, LocationConf)>,
@@ -119,6 +121,7 @@ impl From<PingapConf> for Vec<ServerConf> {
                 tls_key,
                 admin: false,
                 stats_path: item.stats_path,
+                admin_path: item.admin_path,
                 addr: item.addr,
                 access_log: item.access_log,
                 upstreams: filter_upstreams,
@@ -147,6 +150,7 @@ pub struct Server {
     log_parser: Option<Parser>,
     error_template: String,
     stats_path: Option<String>,
+    admin_path: Option<String>,
     tls_cert: Option<Vec<u8>>,
     tls_key: Option<Vec<u8>>,
 }
@@ -211,6 +215,7 @@ impl Server {
             accepted: AtomicU64::new(0),
             processing: AtomicI32::new(0),
             stats_path: conf.stats_path,
+            admin_path: conf.admin_path,
             addr: conf.addr,
             log_parser: p,
             locations,
@@ -281,6 +286,8 @@ impl Server {
     }
 }
 
+static LOCATION_NOT_FOUND: &str = "Location not found";
+
 #[async_trait]
 impl ProxyHttp for Server {
     type CTX = State;
@@ -300,13 +307,13 @@ impl ProxyHttp for Server {
         if session.is_http2() {
             ctx.http_version = 2;
         }
-        if self.admin {
-            let result = ADMIN_SERVE.handle(session, ctx).await?;
-            return Ok(result);
-        }
+
+        let header = session.req_header_mut();
+        let path = header.uri.path();
+        let host = header.uri.host().unwrap_or_default();
 
         if let Some(stats_path) = &self.stats_path {
-            if stats_path == session.req_header().uri.path() {
+            if stats_path == path {
                 let size = self
                     .get_stats_response()
                     .send(session)
@@ -320,6 +327,39 @@ impl ProxyHttp for Server {
                 return Ok(true);
             }
         }
+
+        // admin server
+        if self.admin {
+            let result = ADMIN_SERVE.handle(session, ctx).await?;
+            return Ok(result);
+        }
+
+        // admin path
+        if let Some(admin_path) = &self.admin_path {
+            if path.starts_with(admin_path) {
+                let mut new_path = path.substring(admin_path.len(), path.len()).to_string();
+                if let Some(query) = header.uri.query() {
+                    new_path = format!("{new_path}?{query}");
+                }
+                // TODO parse error
+                if let Ok(uri) = new_path.parse::<http::Uri>() {
+                    header.set_uri(uri);
+                }
+                let result = ADMIN_SERVE.handle(session, ctx).await?;
+                return Ok(result);
+            }
+        }
+
+        let (location_index, _) = self
+            .locations
+            .iter()
+            .enumerate()
+            .find(|(_, item)| item.matched(host, path))
+            .ok_or_else(|| pingora::Error::new_str(LOCATION_NOT_FOUND))?;
+        ctx.location_index = Some(location_index);
+        // TODO get response from cache
+        // check location support cache
+
         Ok(false)
     }
     async fn upstream_peer(
@@ -329,14 +369,14 @@ impl ProxyHttp for Server {
     ) -> pingora::Result<Box<HttpPeer>> {
         let header = session.req_header_mut();
         let path = header.uri.path();
-        let host = header.uri.host().unwrap_or_default();
-        let (location_index, lo) = self
+        let location_index = ctx
+            .location_index
+            .ok_or_else(|| pingora::Error::new_str(LOCATION_NOT_FOUND))?;
+        let lo = self
             .locations
-            .iter()
-            .enumerate()
-            .find(|(_, item)| item.matched(host, path))
-            .ok_or(pingora::Error::new_str("Location not found"))?;
-        ctx.location_index = Some(location_index);
+            .get(location_index)
+            .ok_or_else(|| pingora::Error::new_str(LOCATION_NOT_FOUND))?;
+
         if let Some(mut new_path) = lo.rewrite(path) {
             if let Some(query) = header.uri.query() {
                 new_path = format!("{new_path}?{query}");
@@ -429,30 +469,19 @@ impl ProxyHttp for Server {
     {
         let server_session = session.as_mut();
 
-        let mut code = match e.etype() {
+        let code = match e.etype() {
             pingora::HTTPStatus(code) => *code,
-            _ => {
-                match e.esource() {
-                    pingora::ErrorSource::Upstream => 502,
-                    pingora::ErrorSource::Downstream => {
-                        match e.etype() {
-                            pingora::ErrorType::WriteError
-                            | pingora::ErrorType::ReadError
-                            | pingora::ErrorType::ConnectionClosed => {
-                                /* conn already dead */
-                                0
-                            }
-                            _ => 400,
-                        }
-                    }
-                    pingora::ErrorSource::Internal | pingora::ErrorSource::Unset => 500,
-                }
-            }
+            _ => match e.esource() {
+                pingora::ErrorSource::Upstream => 502,
+                pingora::ErrorSource::Downstream => match e.etype() {
+                    pingora::ErrorType::WriteError | pingora::ErrorType::ReadError => 500,
+                    // client close the connection
+                    pingora::ErrorType::ConnectionClosed => 499,
+                    _ => 400,
+                },
+                pingora::ErrorSource::Internal | pingora::ErrorSource::Unset => 500,
+            },
         };
-        // convert code to 500
-        if code == 0 {
-            code = 500;
-        }
         // TODO better error handler
         let mut resp = match code {
             502 => error_resp::HTTP_502_RESPONSE.clone(),

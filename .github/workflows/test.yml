@@ -13,6 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: setup node
+        uses: actions/setup-node@v4
+      - name: build-web
+        run: make build-web
       - name: release
         uses: addnab/docker-run-action@v3
         with:

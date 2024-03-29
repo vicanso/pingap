@@ -11,7 +11,8 @@
 - [x] support add tls
 - [ ] log rotate
 - [x] stats of server
-- [ ] start without config
-- [ ] static serve for admin
+- [x] start without config
+- [x] static serve for admin
 - [ ] status:499 for client abort
-- [ ] support get pingap start time
+- [x] support get pingap start time
+- [ ] custom error for pingora error

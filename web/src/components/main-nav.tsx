@@ -1,5 +1,4 @@
 import * as React from "react";
-import ListSubheader from "@mui/material/ListSubheader";
 import List from "@mui/material/List";
 import ListItemButton from "@mui/material/ListItemButton";
 import ListItemIcon from "@mui/material/ListItemIcon";
@@ -12,6 +11,7 @@ import GpsFixedIcon from "@mui/icons-material/GpsFixed";
 import DnsIcon from "@mui/icons-material/Dns";
 import DashboardIcon from "@mui/icons-material/Dashboard";
 import Snackbar from "@mui/material/Snackbar";
+import AddRoadIcon from "@mui/icons-material/AddRoad";
 import { useAsync } from "react-async-hook";
 import useConfigStore from "../states/config";
 import {
@@ -39,38 +39,51 @@ interface NavItem {
 export default function MainNav() {
   const [opens, setOpens] = React.useState([] as Number[]);
   const [navItems, setNavItems] = React.useState([] as NavItem[]);
-  const [fetch] = useConfigStore((state) => [state.fetch]);
+  const [mainSelectedIndex, setMainSelectedIndex] = React.useState(-1);
+  const [subSelectedIndex, setSubSelectedIndex] = React.useState(-1);
+  const [fetch, configVersion] = useConfigStore((state) => [
+    state.fetch,
+    state.version,
+  ]);
   const [showError, setShowError] = React.useState({
     open: false,
     message: "",
   });
+  const addTag = "*";
 
   useAsync(async () => {
     try {
       const config = await fetch();
+      console.dir(configVersion);
       const items: NavItem[] = [];
       items.push({
-        name: "Pingap",
+        name: "Basic",
         icon: <DashboardIcon />,
         children: [],
         category: NavCategory.BasicInfo,
       });
+      const servers = Object.keys(config.servers || {}).sort();
+      servers.push(addTag);
       items.push({
         name: "Server",
         icon: <DnsIcon />,
-        children: Object.keys(config.servers || {}),
+        children: servers,
         category: NavCategory.ServerInfo,
       });
+      const locations = Object.keys(config.locations || {}).sort();
+      locations.push(addTag);
       items.push({
         name: "Location",
         icon: <GpsFixedIcon />,
-        children: Object.keys(config.locations || {}),
+        children: locations,
         category: NavCategory.LocationInfo,
       });
+      const upstreams = Object.keys(config.upstreams || {}).sort();
+      upstreams.push(addTag);
       items.push({
         name: "Upstream",
         icon: <NetworkPingIcon />,
-        children: Object.keys(config.upstreams || {}),
+        children: upstreams,
         category: NavCategory.UpstreamInfo,
       });
       setNavItems(items);
@@ -79,10 +92,8 @@ export default function MainNav() {
         open: true,
         message: formatError(err),
       });
-      // TODO error handle
-    } finally {
     }
-  }, []);
+  }, [configVersion]);
 
   const toggleCollapse = (index: number) => {
     const values = opens.slice(0);
@@ -111,6 +122,8 @@ export default function MainNav() {
       <ListItemButton
         key={item.name}
         onClick={() => {
+          setMainSelectedIndex(index);
+          setSubSelectedIndex(-1);
           if (item.category == NavCategory.BasicInfo) {
             goToBasicInfo();
             return;
@@ -124,12 +137,25 @@ export default function MainNav() {
       </ListItemButton>,
     );
     if (exits_children) {
-      const subItems = item.children.map((name) => {
+      const subItems = item.children.map((name, subIndex) => {
+        let itemText = <ListItemText primary={name} />;
+        if (name == addTag) {
+          itemText = (
+            <ListItemText>
+              <AddRoadIcon />
+            </ListItemText>
+          );
+        }
         return (
           <ListItemButton
+            selected={
+              mainSelectedIndex == index && subSelectedIndex == subIndex
+            }
             sx={{ pl: 4 }}
             key={`${item.name}-sub-${name}`}
             onClick={() => {
+              setMainSelectedIndex(index);
+              setSubSelectedIndex(subIndex);
               switch (item.category) {
                 case NavCategory.ServerInfo: {
                   goToServerInfo(name);
@@ -146,7 +172,7 @@ export default function MainNav() {
               }
             }}
           >
-            <ListItemText primary={name} />
+            {itemText}
           </ListItemButton>
         );
       });
@@ -171,11 +197,6 @@ export default function MainNav() {
         sx={{ width: 260, bgcolor: "background.paper" }}
         component="nav"
         aria-labelledby="nested-list-subheader"
-        subheader={
-          <ListSubheader component="div" id="nested-list-subheader">
-            Pingap
-          </ListSubheader>
-        }
       >
         {list}
       </List>

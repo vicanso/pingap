@@ -66,11 +66,15 @@ export default function FormEditor({
   description,
   items,
   onUpsert,
+  created,
+  currentNames,
 }: {
   title: string;
   description: string;
   items: FormItem[];
   onUpsert: (name: string, data: Record<string, unknown>) => Promise<void>;
+  created?: boolean;
+  currentNames?: string[];
 }) {
   const theme = useTheme();
   const [data, setData] = React.useState(getDefaultValues(items));
@@ -80,7 +84,7 @@ export default function FormEditor({
   items.forEach((item) => {
     switch (item.category) {
       case FormItemCategory.LOCATION: {
-        const arr = item.defaultValue as string[];
+        const arr = (item.defaultValue as string[]) || [];
         arr.forEach((lo) => {
           defaultLocations.push(lo);
         });
@@ -91,7 +95,7 @@ export default function FormEditor({
         break;
       }
       case FormItemCategory.ADDRS: {
-        const arr = item.defaultValue as string[];
+        const arr = (item.defaultValue as string[]) || [];
         arr.forEach((addr) => {
           defaultAddrs.push(addr);
         });
@@ -107,6 +111,7 @@ export default function FormEditor({
   const [updated, setUpdated] = React.useState(false);
   const [processing, setProcessing] = React.useState(false);
   const [showSuccess, setShowSuccess] = React.useState(false);
+  const [newName, setNewName] = React.useState("");
 
   const [showError, setShowError] = React.useState({
     open: false,
@@ -274,7 +279,7 @@ export default function FormEditor({
               updateValue(item.id, values);
             }}
           >
-            Add
+            Add Address
           </Button>,
         );
         formItem = <React.Fragment>{list}</React.Fragment>;
@@ -351,7 +356,15 @@ export default function FormEditor({
     }
     setProcessing(true);
     try {
-      await onUpsert("", data);
+      if (created) {
+        if (!newName) {
+          throw new Error("Name is required");
+        }
+        if ((currentNames || []).includes(newName)) {
+          throw new Error("Name is exists");
+        }
+      }
+      await onUpsert(newName, data);
       setShowSuccess(true);
     } catch (err) {
       setShowError({
@@ -362,6 +375,23 @@ export default function FormEditor({
       setProcessing(false);
     }
   };
+  let createNewItem = <></>;
+  if (created) {
+    createNewItem = (
+      <Grid item xs={12}>
+        <FormControl fullWidth={true}>
+          <TextField
+            id={"new-item-name"}
+            label={"Name"}
+            variant="outlined"
+            onChange={(e) => {
+              setNewName(e.target.value.trim());
+            }}
+          />
+        </FormControl>
+      </Grid>
+    );
+  }
   return (
     <React.Fragment>
       <CardContent>
@@ -377,6 +407,7 @@ export default function FormEditor({
         </Typography>
         <form noValidate autoComplete="off">
           <Grid container spacing={2}>
+            {createNewItem}
             {list}
             <Grid item xs={12}>
               <Button

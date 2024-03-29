@@ -1,3 +1,4 @@
+use crate::config::get_start_time;
 use crate::proxy::{Server, ServerConf};
 use clap::Parser;
 use config::PingapConf;
@@ -116,6 +117,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         my_server.add_service(services.lb);
     }
     info!("server is running");
+    let _ = get_start_time();
     my_server.run_forever();
     Ok(())
 }
