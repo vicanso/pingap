@@ -384,7 +384,7 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::Parser;
-    use crate::proxy::state::State;
+    use crate::state::State;
     use pingora::http::RequestHeader;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;

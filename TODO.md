@@ -16,3 +16,4 @@
 - [ ] status:499 for client abort
 - [x] support get pingap start time
 - [ ] custom error for pingora error
+- [ ] authentication for admin page

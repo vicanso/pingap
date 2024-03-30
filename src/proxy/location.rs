@@ -1,6 +1,7 @@
 use super::Upstream;
 use crate::cache::{convert_headers, HttpHeader};
 use crate::config::LocationConf;
+use pingora::http::{RequestHeader, ResponseHeader};
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
 use std::sync::Arc;
@@ -134,12 +135,22 @@ impl Location {
         None
     }
     #[inline]
-    pub fn get_proxy_headers(&self) -> Option<Vec<HttpHeader>> {
-        self.proxy_headers.clone()
+    pub fn insert_proxy_headers(&self, header: &mut RequestHeader) {
+        if let Some(arr) = &self.proxy_headers {
+            for (k, v) in arr {
+                // v validate for HeaderValue, so always no error
+                let _ = header.insert_header(k, v);
+            }
+        }
     }
     #[inline]
-    pub fn get_header(&self) -> Option<Vec<HttpHeader>> {
-        self.headers.clone()
+    pub fn insert_headers(&self, header: &mut ResponseHeader) {
+        if let Some(arr) = &self.headers {
+            for (k, v) in arr {
+                // v validate for HeaderValue, so always no error
+                let _ = header.insert_header(k, v);
+            }
+        }
     }
 }
 

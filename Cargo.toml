@@ -1,9 +1,9 @@
 [package]
 name = "pingap"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 edition = "2021"
-categories = ["http-server"]
+categories = ["network-programming", "web-programming::http-server"]
 keywords = ["proxy", "http", "gateway"]
 description = "A reverse proxy like nginx"
 license = "Apache-2.0"

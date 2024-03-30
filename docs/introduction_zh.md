@@ -40,24 +40,25 @@ Location支持配置对应的host与path规则，path支持以下的规则，权
 在server中会根据所添加的所有location列表，计算对应的权重重新排序，location的计算权限逻辑如下：
 
 ```rust
-pub fn get_weight(conf: &LocationConf) -> u8 {
+pub fn get_weight(&self) -> u32 {
     // path starts with
-    // = 8
-    // prefix(default) 4
-    // ~ 2
-    // host exist 1
-    let mut weighted: u8 = 0;
-    if let Some(path) = &conf.path {
+    // = 65536
+    // prefix(default) 32768
+    // ~ 16384
+    // host exist 8192
+    let mut weighted: u32 = 0;
+    if let Some(path) = &self.path {
         if path.starts_with('=') {
-            weighted += 8;
+            weighted += 65536;
         } else if path.starts_with('~') {
-            weighted += 2;
+            weighted += 16384;
         } else {
-            weighted += 4;
+            weighted += 32768;
         }
+        weighted += path.len() as u32;
     };
-    if conf.host.is_some() {
-        weighted += 1;
+    if self.host.is_some() {
+        weighted += 8192;
     }
     weighted
 }

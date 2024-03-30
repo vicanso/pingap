@@ -382,16 +382,9 @@ impl ProxyHttp for Server {
                 new_path = format!("{new_path}?{query}");
             }
             // TODO parse error
-            if let Ok(uri) = new_path.parse::<http::Uri>() {
-                header.set_uri(uri);
-            }
+            let _ = new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri));
         }
-        if let Some(arr) = lo.get_proxy_headers() {
-            for (k, v) in arr {
-                // v validate for HeaderValue, so always no error
-                let _ = header.insert_header(k, v);
-            }
-        }
+        lo.insert_proxy_headers(header);
         let peer = lo
             .upstream
             .new_http_peer(ctx, header)
@@ -425,23 +418,18 @@ impl ProxyHttp for Server {
         }
         if let Some(index) = ctx.location_index {
             if let Some(lo) = self.locations.get(index) {
-                if let Some(arr) = lo.get_header() {
-                    for (k, v) in arr {
-                        // v validate for HeaderValue, so always no error
-                        let _ = upstream_response.insert_header(k, v);
-                    }
-                }
+                lo.insert_headers(upstream_response)
             }
         }
         if let Some(p) = &self.log_parser {
             let mut m = HashMap::new();
             for key in p.response_headers.iter() {
-                if let Some(value) = upstream_response.headers.get(key) {
+                upstream_response.headers.get(key).map(|value| {
                     m.insert(
                         key.to_string(),
                         value.to_str().unwrap_or_default().to_string(),
-                    );
-                }
+                    )
+                });
             }
             ctx.response_headers = Some(m);
         }
