@@ -13,7 +13,7 @@
 - [x] stats of server
 - [x] start without config
 - [x] static serve for admin
-- [ ] status:499 for client abort
+- [x] status:499 for client abort
 - [x] support get pingap start time
 - [ ] custom error for pingora error
 - [ ] authentication for admin page

@@ -1,7 +1,7 @@
 use crate::state::State;
 use crate::utils;
 use bytesize::ByteSize;
-use pingora::http::RequestHeader;
+use pingora::http::{RequestHeader, ResponseHeader};
 use regex::Regex;
 use std::time::{Duration, Instant};
 use substring::Substring;
@@ -45,7 +45,6 @@ pub struct Tag {
 
 pub struct Parser {
     pub tags: Vec<Tag>,
-    pub response_headers: Vec<String>,
 }
 
 fn format_extra_tag(key: &str) -> Option<Tag> {
@@ -99,7 +98,6 @@ impl From<&str> for Parser {
         let mut current = 0;
         let mut end = 0;
         let mut tags = vec![];
-        let mut response_headers = vec![];
 
         while let Some(result) = reg.find_at(value, current) {
             if end < result.start() {
@@ -211,23 +209,20 @@ impl From<&str> for Parser {
                 data: Some(value.substring(end, value.len()).to_string()),
             });
         }
-        for tag in tags.iter() {
-            if tag.category == TagCategory::ResponseHeader {
-                let value = tag.data.clone().unwrap_or_default();
-                if !response_headers.contains(&value) {
-                    response_headers.push(value);
-                }
-            }
-        }
-        Parser {
-            tags,
-            response_headers,
-        }
+        Parser { tags }
     }
 }
 
-fn get_header_value<'a>(req_header: &'a RequestHeader, key: &str) -> Option<&'a str> {
+fn get_req_header_value<'a>(req_header: &'a RequestHeader, key: &str) -> Option<&'a str> {
     if let Some(value) = req_header.headers.get(key) {
+        if let Ok(value) = value.to_str() {
+            return Some(value);
+        }
+    }
+    None
+}
+fn get_resp_header_value<'a>(resp_header: &'a ResponseHeader, key: &str) -> Option<&'a str> {
+    if let Some(value) = resp_header.headers.get(key) {
         if let Ok(value) = value.to_str() {
             return Some(value);
         }
@@ -236,7 +231,12 @@ fn get_header_value<'a>(req_header: &'a RequestHeader, key: &str) -> Option<&'a 
 }
 
 impl Parser {
-    pub fn format(&self, req_header: &RequestHeader, ctx: &State) -> String {
+    pub fn format(
+        &self,
+        req_header: &RequestHeader,
+        ctx: &State,
+        resp_header: Option<&ResponseHeader>,
+    ) -> String {
         let mut buf = String::with_capacity(1024);
         for tag in self.tags.iter() {
             match tag.category {
@@ -246,7 +246,7 @@ impl Parser {
                     }
                 }
                 TagCategory::Host => {
-                    if let Some(host) = get_header_value(req_header, "Host") {
+                    if let Some(host) = get_req_header_value(req_header, "Host") {
                         buf.push_str(host);
                     }
                 }
@@ -272,12 +272,12 @@ impl Parser {
                     // TODO
                 }
                 TagCategory::ClientIp => {
-                    if let Some(value) = get_header_value(req_header, "X-Forwarded-For") {
+                    if let Some(value) = get_req_header_value(req_header, "X-Forwarded-For") {
                         let arr: Vec<&str> = value.split(',').collect();
                         if !arr.is_empty() {
                             buf.push_str(arr[0].trim());
                         }
-                    } else if let Some(value) = get_header_value(req_header, "X-Real-Ip") {
+                    } else if let Some(value) = get_req_header_value(req_header, "X-Real-Ip") {
                         buf.push_str(value);
                     }
                 }
@@ -288,12 +288,12 @@ impl Parser {
                     buf.push_str(&req_header.uri.to_string());
                 }
                 TagCategory::Referer => {
-                    if let Some(value) = get_header_value(req_header, "Referer") {
+                    if let Some(value) = get_req_header_value(req_header, "Referer") {
                         buf.push_str(value);
                     }
                 }
                 TagCategory::UserAgent => {
-                    if let Some(value) = get_header_value(req_header, "User-Agent") {
+                    if let Some(value) = get_req_header_value(req_header, "User-Agent") {
                         buf.push_str(value);
                     }
                 }
@@ -333,7 +333,8 @@ impl Parser {
                 }
                 TagCategory::Cookie => {
                     let cookie_name = tag.data.clone().unwrap_or_default();
-                    let cookie_value = get_header_value(req_header, "Cookie").unwrap_or_default();
+                    let cookie_value =
+                        get_req_header_value(req_header, "Cookie").unwrap_or_default();
                     for item in cookie_value.split(';') {
                         if let Some([k, v]) = utils::split_to_two_trim(item, "=") {
                             if k == cookie_name {
@@ -344,15 +345,15 @@ impl Parser {
                 }
                 TagCategory::RequestHeader => {
                     if let Some(key) = &tag.data {
-                        if let Some(value) = get_header_value(req_header, key) {
+                        if let Some(value) = get_req_header_value(req_header, key) {
                             buf.push_str(value);
                         }
                     }
                 }
                 TagCategory::ResponseHeader => {
-                    if let Some(m) = &ctx.response_headers {
+                    if let Some(resp_header) = resp_header {
                         if let Some(key) = &tag.data {
-                            if let Some(value) = m.get(key) {
+                            if let Some(value) = get_resp_header_value(resp_header, key) {
                                 buf.push_str(value);
                             }
                         }
@@ -385,9 +386,9 @@ impl Parser {
 mod tests {
     use super::Parser;
     use crate::state::State;
-    use pingora::http::RequestHeader;
+    use http::StatusCode;
+    use pingora::http::{RequestHeader, ResponseHeader};
     use pretty_assertions::assert_eq;
-    use std::collections::HashMap;
 
     #[test]
     fn test_logger() {
@@ -409,15 +410,14 @@ mod tests {
         req_header
             .insert_header("Accept", "application/json")
             .unwrap();
-        let mut m = HashMap::new();
-        m.insert("content-type".to_string(), "json".to_string());
+        let mut resp_header = ResponseHeader::build_no_case(StatusCode::OK, None).unwrap();
+        resp_header.insert_header("Content-Type", "json").unwrap();
         let ctx = State {
             response_body_size: 1024,
             reused: true,
-            response_headers: Some(m),
             ..Default::default()
         };
-        let log = p.format(&req_header, &ctx);
+        let log = p.format(&req_header, &ctx, Some(&resp_header));
         assert_eq!(
             "github.com GET /vicanso/pingap HTTP/1.1 size=1    /vicanso/pingap?size=1 \
 https://github.com/ pingap/0.1.1 1024 1.0KB 0 0 0ns   abc application/json json true",

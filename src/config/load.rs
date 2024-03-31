@@ -102,7 +102,9 @@ pub struct LocationConf {
 }
 
 impl LocationConf {
+    /// Validate the options of location config.
     fn validate(&self, name: &str, upstream_names: &[String]) -> Result<()> {
+        // validate header for http
         let validate = |headers: &Option<Vec<String>>| -> Result<()> {
             if let Some(headers) = headers {
                 for header in headers.iter() {
@@ -166,6 +168,7 @@ pub struct ServerConf {
 }
 
 impl ServerConf {
+    /// Validate the options of server config.
     fn validate(&self, name: &str, location_names: &[String]) -> Result<()> {
         if let Some(locations) = &self.locations {
             for item in locations {
@@ -202,6 +205,7 @@ pub struct PingapConf {
 }
 
 impl PingapConf {
+    /// Validate the options of pinggap config.
     pub fn validate(&self) -> Result<()> {
         let mut upstream_names = vec![];
         for (name, upstream) in self.upstreams.iter() {
@@ -259,6 +263,9 @@ fn format_toml(value: &Value) -> String {
     }
 }
 
+/// Save the confog to path.
+///
+/// Validate the config before save.
 pub fn save_config(path: &str, conf: &PingapConf) -> Result<()> {
     conf.validate()?;
     let filepath = resolve_path(path);
@@ -268,6 +275,7 @@ pub fn save_config(path: &str, conf: &PingapConf) -> Result<()> {
     Ok(())
 }
 
+/// Load the config from path.
 pub fn load_config(path: &str, admin: bool) -> Result<PingapConf> {
     let filepath = resolve_path(path);
     ensure!(

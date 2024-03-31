@@ -28,7 +28,6 @@ use pingora::{
 };
 use serde::Serialize;
 use snafu::{ResultExt, Snafu};
-use std::collections::HashMap;
 use std::fs;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -269,7 +268,7 @@ impl Server {
         }
         Ok(ServerServices { lb, bg_services })
     }
-    fn get_stats_response(&self) -> cache::HttpResponse {
+    async fn send_stats_response(&self, session: &mut Session, ctx: &mut State) {
         let buf = serde_json::to_vec(&ServerStats {
             accepted: self.accepted.load(Ordering::Relaxed),
             processing: self.processing.load(Ordering::Relaxed),
@@ -277,12 +276,39 @@ impl Server {
         })
         .unwrap_or_default();
 
-        cache::HttpResponse {
+        let size = cache::HttpResponse {
             status: StatusCode::OK,
             body: Bytes::from(buf),
             headers: Some(vec![cache::HTTP_HEADER_CONTENT_JSON.clone()]),
             ..Default::default()
         }
+        .send(session)
+        .await
+        .unwrap_or_else(|e| {
+            // ingore error for stats
+            error!("failed to send error response to downstream: {e}");
+            0
+        });
+        ctx.status = Some(StatusCode::OK);
+        ctx.response_body_size = size;
+    }
+    async fn serve_admin(
+        &self,
+        admin_path: &str,
+        session: &mut Session,
+        ctx: &mut State,
+    ) -> pingora::Result<bool> {
+        let header = session.req_header_mut();
+        let path = header.uri.path();
+        let mut new_path = path.substring(admin_path.len(), path.len()).to_string();
+        if let Some(query) = header.uri.query() {
+            new_path = format!("{new_path}?{query}");
+        }
+        // TODO parse error
+        if let Ok(uri) = new_path.parse::<http::Uri>() {
+            header.set_uri(uri);
+        }
+        ADMIN_SERVE.handle(session, ctx).await
     }
 }
 
@@ -312,18 +338,10 @@ impl ProxyHttp for Server {
         let path = header.uri.path();
         let host = header.uri.host().unwrap_or_default();
 
+        // stats path
         if let Some(stats_path) = &self.stats_path {
             if stats_path == path {
-                let size = self
-                    .get_stats_response()
-                    .send(session)
-                    .await
-                    .unwrap_or_else(|e| {
-                        error!("failed to send error response to downstream: {e}");
-                        0
-                    });
-                ctx.status = Some(StatusCode::OK);
-                ctx.response_body_size = size;
+                self.send_stats_response(session, ctx).await;
                 return Ok(true);
             }
         }
@@ -337,15 +355,7 @@ impl ProxyHttp for Server {
         // admin path
         if let Some(admin_path) = &self.admin_path {
             if path.starts_with(admin_path) {
-                let mut new_path = path.substring(admin_path.len(), path.len()).to_string();
-                if let Some(query) = header.uri.query() {
-                    new_path = format!("{new_path}?{query}");
-                }
-                // TODO parse error
-                if let Ok(uri) = new_path.parse::<http::Uri>() {
-                    header.set_uri(uri);
-                }
-                let result = ADMIN_SERVE.handle(session, ctx).await?;
+                let result = self.serve_admin(admin_path, session, ctx).await?;
                 return Ok(result);
             }
         }
@@ -420,18 +430,6 @@ impl ProxyHttp for Server {
             if let Some(lo) = self.locations.get(index) {
                 lo.insert_headers(upstream_response)
             }
-        }
-        if let Some(p) = &self.log_parser {
-            let mut m = HashMap::new();
-            for key in p.response_headers.iter() {
-                upstream_response.headers.get(key).map(|value| {
-                    m.insert(
-                        key.to_string(),
-                        value.to_str().unwrap_or_default().to_string(),
-                    )
-                });
-            }
-            ctx.response_headers = Some(m);
         }
     }
     fn upstream_response_body_filter(
@@ -516,8 +514,12 @@ impl ProxyHttp for Server {
         self.processing.fetch_add(-1, Ordering::Relaxed);
 
         if let Some(p) = &self.log_parser {
+            println!("{:?}", session.response_written());
             ctx.response_size = session.body_bytes_sent();
-            info!("{}", p.format(session.req_header(), ctx));
+            info!(
+                "{}",
+                p.format(session.req_header(), ctx, session.response_written())
+            );
         }
     }
 }

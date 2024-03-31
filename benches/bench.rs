@@ -161,11 +161,41 @@ fn location_filter(c: &mut Criterion) {
     group.finish();
 }
 
+fn location_rewrite_path(c: &mut Criterion) {
+    let upstream_name = "charts";
+    let upstream = Arc::new(
+        Upstream::new(
+            upstream_name,
+            &UpstreamConf {
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let lo = Location::new(
+        "",
+        &LocationConf {
+            upstream: upstream_name.to_string(),
+            rewrite: Some("^/users/(.*)$ /$1".to_string()),
+            ..Default::default()
+        },
+        vec![upstream.clone()],
+    )
+    .unwrap();
+
+    c.bench_function("rewrite path", |b| {
+        b.iter(|| {
+            let _ = lo.rewrite("/users/v1/me");
+        })
+    });
+}
+
 criterion_group!(
     benches,
     insert_bytes_header,
     insert_header_name,
     get_response_header,
     location_filter,
+    location_rewrite_path
 );
 criterion_main!(benches);

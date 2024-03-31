@@ -76,6 +76,7 @@ fn format_headers(values: &Option<Vec<String>>) -> Result<Option<Vec<HttpHeader>
 }
 
 impl Location {
+    /// Create a location from config.
     pub fn new(
         _name: &str,
         conf: &LocationConf,
@@ -159,8 +160,11 @@ mod tests {
     use super::{format_headers, new_path_selector, Location, PathSelector};
     use crate::config::{LocationConf, UpstreamConf};
     use crate::proxy::Upstream;
+    use http::{Method, StatusCode};
+    use pingora::http::{RequestHeader, ResponseHeader};
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
+
     #[test]
     fn test_format_headers() {
         let headers = format_headers(&Some(vec!["Content-Type: application/json".to_string()]))
@@ -312,5 +316,46 @@ mod tests {
         .unwrap();
         assert_eq!("/me?abc=1", lo.rewrite("/users/me?abc=1").unwrap());
         assert_eq!("/api/me", lo.rewrite("/api/me").unwrap());
+    }
+
+    #[test]
+    fn test_insert_header() {
+        let upstream_name = "charts";
+        let upstream = Arc::new(
+            Upstream::new(
+                upstream_name,
+                &UpstreamConf {
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        );
+
+        let lo = Location::new(
+            "",
+            &LocationConf {
+                upstream: upstream_name.to_string(),
+                rewrite: Some("^/users/(.*)$ /$1".to_string()),
+                proxy_headers: Some(vec!["Cache-Control: no-store".to_string()]),
+                headers: Some(vec!["X-Response-Id: pig".to_string()]),
+                ..Default::default()
+            },
+            vec![upstream.clone()],
+        )
+        .unwrap();
+
+        let mut req_header = RequestHeader::build_no_case(Method::GET, b"", None).unwrap();
+        lo.insert_proxy_headers(&mut req_header);
+        assert_eq!(
+            r###"RequestHeader { base: Parts { method: GET, uri: , version: HTTP/1.1, headers: {"cache-control": "no-store"} }, header_name_map: None, raw_path_fallback: [] }"###,
+            format!("{req_header:?}")
+        );
+
+        let mut resp_header = ResponseHeader::build_no_case(StatusCode::OK, None).unwrap();
+        lo.insert_headers(&mut resp_header);
+        assert_eq!(
+            r###"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"x-response-id": "pig"} }, header_name_map: None }"###,
+            format!("{resp_header:?}")
+        );
     }
 }
