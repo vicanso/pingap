@@ -1,9 +1,10 @@
-use super::static_file::StaticFile;
+use super::embedded_file::EmbeddedStaticFile;
 use super::Serve;
+use crate::config::PingapConf;
 use crate::config::{self, get_start_time, save_config, LocationConf, ServerConf, UpstreamConf};
+use crate::http_extra::HttpResponse;
 use crate::state::State;
 use crate::utils::get_pkg_version;
-use crate::{cache::HttpResponse, config::PingapConf};
 use async_trait::async_trait;
 use http::{Method, StatusCode};
 use log::error;
@@ -200,7 +201,7 @@ impl Serve for AdminServe {
             if file.is_empty() {
                 file = "index.html";
             }
-            StaticFile(AdminAsset::get(file)).into()
+            EmbeddedStaticFile(AdminAsset::get(file), 365 * 24 * 3600).into()
         };
         ctx.response_body_size = resp.send(session).await?;
         Ok(true)

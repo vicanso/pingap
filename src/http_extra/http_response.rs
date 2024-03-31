@@ -118,7 +118,7 @@ impl HttpResponse {
 #[cfg(test)]
 mod tests {
     use super::HttpResponse;
-    use crate::cache::convert_headers;
+    use crate::http_extra::convert_headers;
     use bytes::Bytes;
     use http::StatusCode;
     use pretty_assertions::assert_eq;

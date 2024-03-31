@@ -1,7 +1,7 @@
 use super::logger::Parser;
 use super::{Location, Upstream};
-use crate::cache;
 use crate::config::{LocationConf, PingapConf, UpstreamConf};
+use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON};
 use crate::serve::Serve;
 use crate::serve::ADMIN_SERVE;
 use crate::state::State;
@@ -276,10 +276,10 @@ impl Server {
         })
         .unwrap_or_default();
 
-        let size = cache::HttpResponse {
+        let size = HttpResponse {
             status: StatusCode::OK,
             body: Bytes::from(buf),
-            headers: Some(vec![cache::HTTP_HEADER_CONTENT_JSON.clone()]),
+            headers: Some(vec![HTTP_HEADER_CONTENT_JSON.clone()]),
             ..Default::default()
         }
         .send(session)

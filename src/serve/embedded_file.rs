@@ -1,14 +1,13 @@
+use crate::http_extra::HttpResponse;
 use bytes::Bytes;
 use hex::encode;
 use http::{header, HeaderValue, StatusCode};
 use rust_embed::EmbeddedFile;
 
-use crate::cache::HttpResponse;
+pub struct EmbeddedStaticFile(pub Option<EmbeddedFile>, pub u32);
 
-pub struct StaticFile(pub Option<EmbeddedFile>);
-
-impl From<StaticFile> for HttpResponse {
-    fn from(value: StaticFile) -> Self {
+impl From<EmbeddedStaticFile> for HttpResponse {
+    fn from(value: EmbeddedStaticFile) -> Self {
         if value.0.is_none() {
             return HttpResponse::not_found();
         }
@@ -25,7 +24,7 @@ impl From<StaticFile> for HttpResponse {
         let max_age = if mime_type.contains("text/html") {
             0
         } else {
-            24 * 3600
+            value.1
         };
 
         let mut headers = vec![];

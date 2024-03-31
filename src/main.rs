@@ -9,8 +9,8 @@ use std::error::Error;
 use std::io::Write;
 use std::sync::Arc;
 
-mod cache;
 mod config;
+mod http_extra;
 mod proxy;
 mod serve;
 mod state;

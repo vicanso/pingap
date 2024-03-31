@@ -1,6 +1,6 @@
 use super::Upstream;
-use crate::cache::{convert_headers, HttpHeader};
 use crate::config::LocationConf;
+use crate::http_extra::{convert_headers, HttpHeader};
 use pingora::http::{RequestHeader, ResponseHeader};
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
