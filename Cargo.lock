@@ -1550,7 +1550,7 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pingap"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "async-trait",
  "base64 0.22.0",
@@ -1569,6 +1569,7 @@ dependencies = [
  "humantime",
  "humantime-serde",
  "log",
+ "mime_guess",
  "num_cpus",
  "once_cell",
  "path-absolutize",
@@ -1581,8 +1582,11 @@ dependencies = [
  "snafu",
  "substring",
  "tempfile",
+ "tokio",
+ "tokio-test",
  "toml",
  "url",
+ "urlencoding",
 ]
 
 [[package]]
@@ -3009,6 +3013,12 @@ dependencies = [
  "percent-encoding",
  "serde",
 ]
+
+[[package]]
+name = "urlencoding"
+version = "2.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
 name = "utf8parse"

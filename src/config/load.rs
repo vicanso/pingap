@@ -2,13 +2,11 @@ use crate::utils;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use glob::glob;
 use http::HeaderValue;
-use path_absolutize::*;
 use serde::{Deserialize, Serialize};
 use snafu::{ensure, ResultExt, Snafu};
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
-use substring::Substring;
 use toml::{map::Map, Value};
 use url::Url;
 
@@ -238,23 +236,6 @@ struct TomlConfig {
     work_stealing: Option<bool>,
 }
 
-fn resolve_path(path: &str) -> String {
-    if path.is_empty() {
-        return "".to_string();
-    }
-    let mut p = path.to_string();
-    if p.starts_with('~') {
-        if let Some(home) = dirs::home_dir() {
-            p = home.to_string_lossy().to_string() + p.substring(1, p.len());
-        };
-    }
-    if let Ok(p) = Path::new(&p).absolutize() {
-        p.to_string_lossy().to_string()
-    } else {
-        p
-    }
-}
-
 fn format_toml(value: &Value) -> String {
     if let Some(value) = value.as_table() {
         value.to_string()
@@ -268,7 +249,7 @@ fn format_toml(value: &Value) -> String {
 /// Validate the config before save.
 pub fn save_config(path: &str, conf: &PingapConf) -> Result<()> {
     conf.validate()?;
-    let filepath = resolve_path(path);
+    let filepath = utils::resolve_path(path);
     let buf = toml::to_string_pretty(conf).context(SerSnafu)?;
     std::fs::write(&filepath, buf).context(IoSnafu { file: filepath })?;
 
@@ -277,7 +258,7 @@ pub fn save_config(path: &str, conf: &PingapConf) -> Result<()> {
 
 /// Load the config from path.
 pub fn load_config(path: &str, admin: bool) -> Result<PingapConf> {
-    let filepath = resolve_path(path);
+    let filepath = utils::resolve_path(path);
     ensure!(
         !filepath.is_empty(),
         InvalidSnafu {

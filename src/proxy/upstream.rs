@@ -1,4 +1,5 @@
 use crate::config::UpstreamConf;
+use crate::serve::{Directory, FILE_PROTOCOL};
 use crate::state::State;
 use futures_util::FutureExt;
 use humantime::parse_duration;
@@ -31,8 +32,9 @@ pub enum Error {
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 enum SelectionLb {
-    RoundRobinLb(Arc<LoadBalancer<RoundRobin>>),
-    ConsistentLb(Arc<LoadBalancer<Consistent>>),
+    RoundRobin(Arc<LoadBalancer<RoundRobin>>),
+    Consistent(Arc<LoadBalancer<Consistent>>),
+    Directory(Arc<Directory>),
 }
 
 pub struct Upstream {
@@ -219,6 +221,22 @@ fn new_backends(addrs: &[String], ipv4_only: bool) -> Result<Backends> {
 
 impl Upstream {
     pub fn new(name: &str, conf: &UpstreamConf) -> Result<Self> {
+        if !conf.addrs.is_empty() && conf.addrs[0].starts_with(FILE_PROTOCOL) {
+            let addr = conf.addrs[0].clone();
+
+            return Ok(Upstream {
+                name: name.to_string(),
+                lb: SelectionLb::Directory(Arc::new(Directory::new(&addr))),
+                hash: "".to_string(),
+                tls: false,
+                sni: "".to_string(),
+                connection_timeout: None,
+                total_connection_timeout: None,
+                read_timeout: None,
+                idle_timeout: None,
+                write_timeout: None,
+            });
+        }
         let backends = new_backends(&conf.addrs, conf.ipv4_only.unwrap_or_default())?;
 
         let (hc, health_check_frequency) =
@@ -239,7 +257,7 @@ impl Upstream {
                     .expect("static should not error");
                 lb.set_health_check(hc);
                 lb.health_check_frequency = Some(health_check_frequency);
-                SelectionLb::ConsistentLb(Arc::new(lb))
+                SelectionLb::Consistent(Arc::new(lb))
             }
             _ => {
                 let mut lb = LoadBalancer::<RoundRobin>::from_backends(backends);
@@ -249,7 +267,7 @@ impl Upstream {
                     .expect("static should not error");
                 lb.set_health_check(hc);
                 lb.health_check_frequency = Some(health_check_frequency);
-                SelectionLb::RoundRobinLb(Arc::new(lb))
+                SelectionLb::RoundRobin(Arc::new(lb))
             }
         };
         let sni = conf.sni.clone().unwrap_or_default();
@@ -268,8 +286,8 @@ impl Upstream {
     }
     pub fn new_http_peer(&self, _ctx: &State, header: &RequestHeader) -> Option<HttpPeer> {
         let upstream = match &self.lb {
-            SelectionLb::RoundRobinLb(lb) => lb.select(b"", 256),
-            SelectionLb::ConsistentLb(lb) => {
+            SelectionLb::RoundRobin(lb) => lb.select(b"", 256),
+            SelectionLb::Consistent(lb) => {
                 let key = if let Some(value) = header.headers.get(&self.hash) {
                     value.as_bytes()
                 } else {
@@ -277,6 +295,7 @@ impl Upstream {
                 };
                 lb.select(key, 256)
             }
+            SelectionLb::Directory(_) => None,
         };
         upstream.map(|upstream| {
             let mut p = HttpPeer::new(upstream, self.tls, self.sni.clone());
@@ -290,14 +309,20 @@ impl Upstream {
     }
     pub fn get_round_robind(&self) -> Option<Arc<LoadBalancer<RoundRobin>>> {
         match &self.lb {
-            SelectionLb::RoundRobinLb(lb) => Some(lb.clone()),
-            SelectionLb::ConsistentLb(_) => None,
+            SelectionLb::RoundRobin(lb) => Some(lb.clone()),
+            _ => None,
         }
     }
     pub fn get_consistent(&self) -> Option<Arc<LoadBalancer<Consistent>>> {
         match &self.lb {
-            SelectionLb::RoundRobinLb(_) => None,
-            SelectionLb::ConsistentLb(lb) => Some(lb.clone()),
+            SelectionLb::Consistent(lb) => Some(lb.clone()),
+            _ => None,
+        }
+    }
+    pub fn get_directory(&self) -> Option<Arc<Directory>> {
+        match &self.lb {
+            SelectionLb::Directory(lb) => Some(lb.clone()),
+            _ => None,
         }
     }
 }

@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use pingora::proxy::Session;
 
 mod admin;
+mod directory;
 mod embedded_file;
 
 #[async_trait]
@@ -13,3 +14,4 @@ pub trait Serve {
 }
 
 pub use admin::ADMIN_SERVE;
+pub use directory::{Directory, FILE_PROTOCOL};

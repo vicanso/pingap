@@ -183,12 +183,13 @@ impl Serve for AdminServe {
                 _ => self.get_config(category).await,
             }
             .unwrap_or_else(|err| {
-                let mut resp = HttpResponse::try_from_json(&ErrorResponse {
-                    message: err.to_string(),
-                })
-                .unwrap_or(HttpResponse::unknown_error());
-                resp.status = StatusCode::INTERNAL_SERVER_ERROR;
-                resp
+                HttpResponse::try_from_json_status(
+                    &ErrorResponse {
+                        message: err.to_string(),
+                    },
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                )
+                .unwrap_or(HttpResponse::unknown_error())
             })
         } else if path == "/basic" {
             HttpResponse::try_from_json(&BasicInfo {

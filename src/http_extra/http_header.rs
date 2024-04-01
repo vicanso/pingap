@@ -48,6 +48,13 @@ pub static HTTP_HEADER_CONTENT_JSON: Lazy<HttpHeader> = Lazy::new(|| {
     )
 });
 
+pub static HTTP_HEADER_TRANSFER_CHUNKED: Lazy<HttpHeader> = Lazy::new(|| {
+    (
+        header::TRANSFER_ENCODING,
+        HeaderValue::from_str("chunked").unwrap(),
+    )
+});
+
 #[cfg(test)]
 mod tests {
     use super::convert_headers;

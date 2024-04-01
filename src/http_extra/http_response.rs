@@ -1,3 +1,4 @@
+use super::HTTP_HEADER_TRANSFER_CHUNKED;
 use super::{HttpHeader, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_NO_STORE};
 use bytes::Bytes;
 use http::header;
@@ -6,9 +7,26 @@ use log::error;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use serde::Serialize;
+use std::pin::Pin;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::io::AsyncReadExt;
 
-#[derive(Default, Debug, Clone)]
+fn get_cache_control(max_age: Option<u32>, cache_private: Option<bool>) -> HttpHeader {
+    if let Some(max_age) = max_age {
+        let category = if cache_private.unwrap_or_default() {
+            "private"
+        } else {
+            "public"
+        };
+        if let Ok(value) = header::HeaderValue::from_str(&format!("{category}, max-age={max_age}"))
+        {
+            return (header::CACHE_CONTROL, value);
+        }
+    }
+    HTTP_HEADER_NO_STORE.clone()
+}
+
+#[derive(Default, Clone)]
 pub struct HttpResponse {
     // http response status
     pub status: StatusCode,
@@ -19,33 +37,44 @@ pub struct HttpResponse {
     // created time of http response
     pub created_at: Option<u64>,
     // private for cache control
-    pub private: Option<bool>,
+    pub cache_private: Option<bool>,
     // headers for http response
     pub headers: Option<Vec<HttpHeader>>,
 }
 
 impl HttpResponse {
-    pub fn no_content() -> HttpResponse {
+    pub fn no_content() -> Self {
         HttpResponse {
             status: StatusCode::NO_CONTENT,
+            headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
             ..Default::default()
         }
     }
-    pub fn not_found() -> HttpResponse {
+    pub fn not_found() -> Self {
         HttpResponse {
             status: StatusCode::NOT_FOUND,
+            headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
             body: Bytes::from("Not Found"),
             ..Default::default()
         }
     }
-    pub fn unknown_error() -> HttpResponse {
+    pub fn unknown_error() -> Self {
         HttpResponse {
             status: StatusCode::INTERNAL_SERVER_ERROR,
+            headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
             body: Bytes::from("Unknown error"),
             ..Default::default()
         }
     }
-    pub fn try_from_json<T>(value: &T) -> pingora::Result<HttpResponse>
+    pub fn try_from_json_status<T>(value: &T, status: StatusCode) -> pingora::Result<Self>
+    where
+        T: ?Sized + Serialize,
+    {
+        let mut resp = HttpResponse::try_from_json(value)?;
+        resp.status = status;
+        Ok(resp)
+    }
+    pub fn try_from_json<T>(value: &T) -> pingora::Result<Self>
     where
         T: ?Sized + Serialize,
     {
@@ -68,24 +97,11 @@ impl HttpResponse {
             .as_ref()
             .map_or_else(|| fix_size, |headers| headers.len() + fix_size);
         let mut resp = ResponseHeader::build(self.status, Some(size))?;
-        resp.insert_header(http::header::CONTENT_LENGTH, self.body.len().to_string())?;
+        resp.insert_header(header::CONTENT_LENGTH, self.body.len().to_string())?;
 
         // set cache control
-        if let Some(max_age) = self.max_age {
-            let category = if self.private.unwrap_or_default() {
-                "private"
-            } else {
-                "public"
-            };
-            if let Ok(value) =
-                header::HeaderValue::from_str(&format!("{category}, max-age={max_age}"))
-            {
-                resp.insert_header(header::CACHE_CONTROL, value)?;
-            }
-        } else {
-            let h = HTTP_HEADER_NO_STORE.clone();
-            resp.insert_header(h.0, h.1)?;
-        }
+        let cache_control = get_cache_control(self.max_age, self.cache_private);
+        resp.insert_header(cache_control.0, cache_control.1)?;
 
         if let Some(created_at) = self.created_at {
             let secs = SystemTime::now()
@@ -115,6 +131,67 @@ impl HttpResponse {
     }
 }
 
+pub struct HttpChunkResponse<'r, R> {
+    pub reader: Pin<&'r mut R>,
+    pub chunk_size: usize,
+    // max age of http response
+    pub max_age: Option<u32>,
+    // private for cache control
+    pub cache_private: Option<bool>,
+    // headers for http response
+    pub headers: Option<Vec<HttpHeader>>,
+}
+
+impl<'r, R> HttpChunkResponse<'r, R>
+where
+    R: tokio::io::AsyncRead + std::marker::Unpin,
+{
+    pub fn new(r: &'r mut R) -> Self {
+        Self {
+            reader: Pin::new(r),
+            chunk_size: 5 * 1024,
+            max_age: None,
+            headers: None,
+            cache_private: None,
+        }
+    }
+    pub async fn send(&mut self, session: &mut Session) -> pingora::Result<usize> {
+        let mut sent = 0;
+        let mut resp = ResponseHeader::build(StatusCode::OK, Some(4))?;
+        if let Some(headers) = &self.headers {
+            for (name, value) in headers {
+                resp.insert_header(name.to_owned(), value)?;
+            }
+        }
+
+        let chunked = HTTP_HEADER_TRANSFER_CHUNKED.clone();
+        resp.insert_header(chunked.0, chunked.1)?;
+
+        let cache_control = get_cache_control(self.max_age, self.cache_private);
+        resp.insert_header(cache_control.0, cache_control.1)?;
+
+        session.write_response_header(Box::new(resp)).await?;
+
+        let mut buffer = vec![0; self.chunk_size.max(512)];
+        loop {
+            let size = self.reader.read(&mut buffer).await.map_err(|e| {
+                error!("Read data fail: {e}");
+                pingora::Error::new_str("Read data fail")
+            })?;
+            if size == 0 {
+                break;
+            }
+            session
+                .write_response_body(Bytes::copy_from_slice(&buffer[..size]))
+                .await?;
+            sent += size
+        }
+        session.finish_body().await?;
+
+        Ok(sent)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::HttpResponse;
@@ -136,7 +213,7 @@ mod tests {
                     .as_secs()
                     - 10,
             ),
-            private: Some(true),
+            cache_private: Some(true),
             headers: Some(
                 convert_headers(&[
                     "Contont-Type: application/json".to_string(),

@@ -17,3 +17,5 @@
 - [x] support get pingap start time
 - [ ] custom error for pingora error
 - [ ] authentication for admin page
+- [x] static file serve
+- [ ] set priority for location

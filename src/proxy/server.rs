@@ -360,13 +360,25 @@ impl ProxyHttp for Server {
             }
         }
 
-        let (location_index, _) = self
+        let (location_index, lo) = self
             .locations
             .iter()
             .enumerate()
             .find(|(_, item)| item.matched(host, path))
             .ok_or_else(|| pingora::Error::new_str(LOCATION_NOT_FOUND))?;
+        if let Some(mut new_path) = lo.rewrite(path) {
+            if let Some(query) = header.uri.query() {
+                new_path = format!("{new_path}?{query}");
+            }
+            // TODO parse error
+            let _ = new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri));
+        }
+        lo.insert_proxy_headers(header);
         ctx.location_index = Some(location_index);
+        if let Some(dir) = lo.upstream.get_directory() {
+            let result = dir.handle(session, ctx).await?;
+            return Ok(result);
+        }
         // TODO get response from cache
         // check location support cache
 
@@ -377,8 +389,6 @@ impl ProxyHttp for Server {
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Box<HttpPeer>> {
-        let header = session.req_header_mut();
-        let path = header.uri.path();
         let location_index = ctx
             .location_index
             .ok_or_else(|| pingora::Error::new_str(LOCATION_NOT_FOUND))?;
@@ -387,17 +397,9 @@ impl ProxyHttp for Server {
             .get(location_index)
             .ok_or_else(|| pingora::Error::new_str(LOCATION_NOT_FOUND))?;
 
-        if let Some(mut new_path) = lo.rewrite(path) {
-            if let Some(query) = header.uri.query() {
-                new_path = format!("{new_path}?{query}");
-            }
-            // TODO parse error
-            let _ = new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri));
-        }
-        lo.insert_proxy_headers(header);
         let peer = lo
             .upstream
-            .new_http_peer(ctx, header)
+            .new_http_peer(ctx, session.req_header())
             .ok_or(pingora::Error::new_str("Upstream not found"))?;
         Ok(Box::new(peer))
     }
@@ -514,7 +516,6 @@ impl ProxyHttp for Server {
         self.processing.fetch_add(-1, Ordering::Relaxed);
 
         if let Some(p) = &self.log_parser {
-            println!("{:?}", session.response_written());
             ctx.response_size = session.body_bytes_sent();
             info!(
                 "{}",

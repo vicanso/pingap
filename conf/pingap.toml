@@ -56,7 +56,8 @@ idle_timeout = "120s"
 
 # Anther upstream using all default config.
 [upstreams.diving]
-addrs = ["127.0.0.1:5001"]
+# static file
+addrs = ["file://~/Downloads"]
 
 
 # Location config list, it will defined as [locations.name]

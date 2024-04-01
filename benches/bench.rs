@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion};
 use http::{HeaderName, HeaderValue, StatusCode};
-use pingap::cache::{convert_headers, HttpResponse};
 use pingap::config::{LocationConf, UpstreamConf};
+use pingap::http_extra::{convert_headers, HttpResponse};
 use pingap::proxy::{Location, Upstream};
 use pingora::http::ResponseHeader;
 use std::sync::Arc;
@@ -78,7 +78,7 @@ fn get_response_header(c: &mut Criterion) {
                     .as_secs()
                     - 10,
             ),
-            private: Some(true),
+            cache_private: Some(true),
             headers: Some(
                 convert_headers(&[
                     "Contont-Type: application/json".to_string(),
