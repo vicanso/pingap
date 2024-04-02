@@ -85,7 +85,7 @@ impl AdminServe {
             }
             _ => {}
         };
-        save_config(&config::get_config_path(), &conf).map_err(|e| {
+        save_config(&config::get_config_path(), &mut conf).map_err(|e| {
             error!("failed to save config: {e}");
             pingora::Error::new_str("Save config fail")
         })?;
@@ -136,7 +136,7 @@ impl AdminServe {
                 conf.work_stealing = basic_conf.work_stealing;
             }
         };
-        save_config(&config::get_config_path(), &conf).map_err(|e| {
+        save_config(&config::get_config_path(), &mut conf).map_err(|e| {
             error!("failed to save config: {e}");
             pingora::Error::new_str("Save config fail")
         })?;

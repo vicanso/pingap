@@ -209,6 +209,7 @@ pub struct PingapConf {
     pub group: Option<String>,
     pub threads: Option<usize>,
     pub work_stealing: Option<bool>,
+    pub created_at: Option<String>,
 }
 
 impl PingapConf {
@@ -243,6 +244,7 @@ struct TomlConfig {
     group: Option<String>,
     threads: Option<usize>,
     work_stealing: Option<bool>,
+    created_at: Option<String>,
 }
 
 fn format_toml(value: &Value) -> String {
@@ -256,10 +258,12 @@ fn format_toml(value: &Value) -> String {
 /// Save the confog to path.
 ///
 /// Validate the config before save.
-pub fn save_config(path: &str, conf: &PingapConf) -> Result<()> {
+pub fn save_config(path: &str, conf: &mut PingapConf) -> Result<()> {
     conf.validate()?;
+    conf.created_at = Some(chrono::Local::now().to_rfc3339());
+
     let filepath = utils::resolve_path(path);
-    let buf = toml::to_string_pretty(conf).context(SerSnafu)?;
+    let buf = toml::to_string_pretty(&conf).context(SerSnafu)?;
     std::fs::write(&filepath, buf).context(IoSnafu { file: filepath })?;
 
     Ok(())
@@ -318,6 +322,7 @@ pub fn load_config(path: &str, admin: bool) -> Result<PingapConf> {
         group: data.group,
         threads,
         work_stealing: data.work_stealing,
+        created_at: data.created_at,
         ..Default::default()
     };
     for (name, value) in data.upstreams {

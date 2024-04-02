@@ -248,6 +248,8 @@ impl Parser {
                 TagCategory::Host => {
                     if let Some(host) = get_req_header_value(req_header, "Host") {
                         buf.push_str(host);
+                    } else if let Some(host) = req_header.uri.host() {
+                        buf.push_str(host);
                     }
                 }
                 TagCategory::Method => {
