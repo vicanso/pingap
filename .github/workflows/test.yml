@@ -17,10 +17,5 @@ jobs:
         uses: actions/setup-node@v4
       - name: build-web
         run: make build-web
-      - name: release
-        uses: addnab/docker-run-action@v3
-        with:
-          image: messense/rust-musl-cross:x86_64-musl
-          options: -v ${{ github.workspace }}:/home/rust/src
-          run: |
-            make release
+      - name: Compile and release
+        uses: rust-build/rust-build.action@v1.4.5
