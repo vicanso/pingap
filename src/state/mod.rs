@@ -26,6 +26,7 @@ impl Default for State {
             reused: false,
             upstream_address: "".to_string(),
             location_index: None,
+            remote_ip : "".to_string(),
         }
     }
 }
