@@ -23,4 +23,8 @@ jobs:
           image: messense/rust-musl-cross:x86_64-musl
           options: -v ${{ github.workspace }}:/home/rust/src
           run: |
+            rustup install 1.74.1
+            rustup override set 1.74.1
+            rustc --version
+            cargo --version
             make release
