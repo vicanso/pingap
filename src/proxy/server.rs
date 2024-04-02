@@ -517,6 +517,13 @@ impl ProxyHttp for Server {
 
         if let Some(p) = &self.log_parser {
             ctx.response_size = session.body_bytes_sent();
+            ctx.remote_ip = match session.client_addr() {
+                Some(addr) => match addr.as_inet() {
+                    Some(ip) => ip.ip().to_string(),
+                    _ => "".to_string(),
+                },
+                _ => "".to_string(),
+            };
             info!(
                 "{}",
                 p.format(session.req_header(), ctx, session.response_written())
