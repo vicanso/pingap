@@ -34,7 +34,7 @@ mime_guess = "2.0.4"
 num_cpus = "1.16.0"
 once_cell = "1.19.0"
 path-absolutize = "3.1.1"
-pingora = { version = "0.1.0", default-features = false, features = ["lb"] }
+pingora = { version = "0.1.0", default-features = false, features = ["lb"] ,git = "https://github.com/cloudflare/pingora.git", rev = "20fd391f3e78c9349149f11fae94da9e4657478e"}
 regex = "1.10.4"
 rust-embed = { version = "8.3.0", features = ["mime-guess", "compression"] }
 serde = "1.0.197"
