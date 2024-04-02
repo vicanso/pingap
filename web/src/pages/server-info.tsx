@@ -79,6 +79,13 @@ export default function ServerInfo() {
       span: 6,
       category: FormItemCategory.TEXT,
     },
+    {
+      id: "remark",
+      label: "Remark",
+      defaultValue: server.remark,
+      span: 13,
+      category: FormItemCategory.TEXTAREA,
+    },
   ];
 
   const onUpsert = async (newName: string, data: Record<string, unknown>) => {

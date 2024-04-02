@@ -67,6 +67,13 @@ export default function LocationInfo() {
       span: 6,
       category: FormItemCategory.TEXT,
     },
+    {
+      id: "remark",
+      label: "Remark",
+      defaultValue: location.remark,
+      span: 13,
+      category: FormItemCategory.TEXTAREA,
+    },
   ];
 
   const onUpsert = async (newName: string, data: Record<string, unknown>) => {

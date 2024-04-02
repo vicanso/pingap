@@ -12,6 +12,7 @@ interface Upstream {
   read_timeout?: string;
   idle_timeout?: string;
   write_timeout?: string;
+  remark?: string;
 }
 
 interface Location {
@@ -22,6 +23,7 @@ interface Location {
   proxy_headers?: string[];
   headers?: string[];
   rewrite?: string;
+  remark?: string;
 }
 
 interface Server {
@@ -32,6 +34,7 @@ interface Server {
   tls_key?: string;
   stats_path?: string;
   admin_path?: string;
+  remark?: string;
 }
 
 interface Config {

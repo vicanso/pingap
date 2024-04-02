@@ -67,6 +67,7 @@ pub struct UpstreamConf {
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub write_timeout: Option<Duration>,
+    pub remark: Option<String>,
 }
 impl UpstreamConf {
     pub fn validate(&self, name: &str) -> Result<()> {
@@ -103,6 +104,7 @@ pub struct LocationConf {
     pub headers: Option<Vec<String>>,
     pub rewrite: Option<String>,
     pub weight: Option<u16>,
+    pub remark: Option<String>,
 }
 
 impl LocationConf {
@@ -172,6 +174,7 @@ pub struct ServerConf {
     pub tls_key: Option<String>,
     pub stats_path: Option<String>,
     pub admin_path: Option<String>,
+    pub remark: Option<String>,
 }
 
 impl ServerConf {

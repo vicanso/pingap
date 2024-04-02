@@ -84,6 +84,13 @@ export default function UpstreamInfo() {
       span: 6,
       category: FormItemCategory.TEXT,
     },
+    {
+      id: "remark",
+      label: "Remark",
+      defaultValue: upstream.remark,
+      span: 13,
+      category: FormItemCategory.TEXTAREA,
+    },
   ];
 
   const onUpsert = async (newName: string, data: Record<string, unknown>) => {
