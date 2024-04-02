@@ -20,5 +20,5 @@
 - [x] static file serve
 - [x] set priority for location
 - [x] mock response for upstream
-- [ ] add remark for config
+- [x] add remark for config
 - [ ] support multi host for location?

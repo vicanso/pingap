@@ -57,10 +57,10 @@ idle_timeout = "120s"
 # Anther upstream using all default config.
 [upstreams.diving]
 # static file
-# addrs = ["file://~/Downloads"]
-addrs = [
-    'mock://{"status":500,"headers":["Content-Type: application/json"],"data":"{\"message\":\"Mock Service Unavailable\"}"}',
-]
+addrs = ["file://~/Downloads"]
+# addrs = [
+#     'mock://{"status":500,"headers":["Content-Type: application/json"],"data":"{\"message\":\"Mock Service Unavailable\"}"}',
+# ]
 
 # Location config list, it will defined as [locations.name]
 [locations.lo]

@@ -16,6 +16,7 @@ use crate::http_extra::{HttpChunkResponse, HttpHeader, HttpResponse};
 #[derive(Default)]
 pub struct Directory {
     path: PathBuf,
+    index: String,
     chunk_size: Option<usize>,
     // max age of http response
     max_age: Option<u32>,
@@ -60,8 +61,9 @@ impl Directory {
         let mut chunk_size = None;
         let mut max_age = None;
         let mut cache_private = None;
+        let mut index_file = "index.html".to_string();
         if let Ok(url_info) = Url::parse(path) {
-            let query = url_info.query().unwrap();
+            let query = url_info.query().unwrap_or_default();
             if !query.is_empty() {
                 new_path = new_path.substring(0, new_path.len() - query.len() - 1);
             }
@@ -78,11 +80,13 @@ impl Directory {
                         }
                     }
                     "private" => cache_private = Some(false),
+                    "index" => index_file = value.to_string(),
                     _ => {}
                 }
             }
         };
         Directory {
+            index: format!("/{index_file}"),
             path: Path::new(&utils::resolve_path(new_path)).to_path_buf(),
             chunk_size,
             max_age,
@@ -90,12 +94,10 @@ impl Directory {
         }
     }
     pub async fn handle(&self, session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
-        let mut filename = session
-            .req_header()
-            .uri
-            .path()
-            .to_string()
-            .max("/".to_string());
+        let mut filename = session.req_header().uri.path().to_string();
+        if filename.len() <= 1 {
+            filename = self.index.clone();
+        }
         if let Ok(value) = decode(&filename) {
             filename = value.into_owned().clone();
         }
