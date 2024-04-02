@@ -11,6 +11,7 @@ pub struct State {
     pub reused: bool,
     pub upstream_address: String,
     pub location_index: Option<usize>,
+    pub remote_ip : String,
 }
 
 impl Default for State {
