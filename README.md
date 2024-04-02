@@ -53,6 +53,10 @@ graph TD;
     locationB -- "10.0.0.2:8002" --> upstreamB2
 ```
 
+## Rust version
+
+Our current MSRV is 1.74
+
 # License
 
 This project is Licensed under [Apache License, Version 2.0](./LICENSE).

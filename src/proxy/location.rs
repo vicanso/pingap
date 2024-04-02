@@ -196,6 +196,7 @@ mod tests {
             Upstream::new(
                 upstream_name,
                 &UpstreamConf {
+                    addrs: vec!["127.0.0.1".to_string()],
                     ..Default::default()
                 },
             )
@@ -298,6 +299,7 @@ mod tests {
             Upstream::new(
                 upstream_name,
                 &UpstreamConf {
+                    addrs: vec!["127.0.0.1".to_string()],
                     ..Default::default()
                 },
             )
@@ -325,6 +327,7 @@ mod tests {
             Upstream::new(
                 upstream_name,
                 &UpstreamConf {
+                    addrs: vec!["127.0.0.1".to_string()],
                     ..Default::default()
                 },
             )

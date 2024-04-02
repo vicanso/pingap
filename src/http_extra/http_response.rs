@@ -1,5 +1,5 @@
-use super::HTTP_HEADER_TRANSFER_CHUNKED;
 use super::{HttpHeader, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_NO_STORE};
+use super::{HTTP_HEADER_NO_CACHE, HTTP_HEADER_TRANSFER_CHUNKED};
 use bytes::Bytes;
 use http::header;
 use http::StatusCode;
@@ -23,7 +23,7 @@ fn get_cache_control(max_age: Option<u32>, cache_private: Option<bool>) -> HttpH
             return (header::CACHE_CONTROL, value);
         }
     }
-    HTTP_HEADER_NO_STORE.clone()
+    HTTP_HEADER_NO_CACHE.clone()
 }
 
 #[derive(Default, Clone)]
@@ -142,6 +142,9 @@ pub struct HttpChunkResponse<'r, R> {
     pub headers: Option<Vec<HttpHeader>>,
 }
 
+// https://github.com/rust-lang/rust/blob/master/library/std/src/sys_common/io.rs#L1
+const DEFAULT_BUF_SIZE: usize = 8 * 1024;
+
 impl<'r, R> HttpChunkResponse<'r, R>
 where
     R: tokio::io::AsyncRead + std::marker::Unpin,
@@ -149,14 +152,14 @@ where
     pub fn new(r: &'r mut R) -> Self {
         Self {
             reader: Pin::new(r),
-            chunk_size: 5 * 1024,
+            chunk_size: DEFAULT_BUF_SIZE,
             max_age: None,
             headers: None,
             cache_private: None,
         }
     }
-    pub async fn send(&mut self, session: &mut Session) -> pingora::Result<usize> {
-        let mut sent = 0;
+    /// Gets the response header from http chunk response
+    pub fn get_response_header(&self) -> pingora::Result<ResponseHeader> {
         let mut resp = ResponseHeader::build(StatusCode::OK, Some(4))?;
         if let Some(headers) = &self.headers {
             for (name, value) in headers {
@@ -169,9 +172,13 @@ where
 
         let cache_control = get_cache_control(self.max_age, self.cache_private);
         resp.insert_header(cache_control.0, cache_control.1)?;
+        Ok(resp)
+    }
+    pub async fn send(&mut self, session: &mut Session) -> pingora::Result<usize> {
+        let header = self.get_response_header()?;
+        session.write_response_header(Box::new(header)).await?;
 
-        session.write_response_header(Box::new(resp)).await?;
-
+        let mut sent = 0;
         let mut buffer = vec![0; self.chunk_size.max(512)];
         loop {
             let size = self.reader.read(&mut buffer).await.map_err(|e| {
@@ -194,12 +201,14 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::HttpResponse;
+    use super::{HttpChunkResponse, HttpResponse};
     use crate::http_extra::convert_headers;
+    use crate::utils::resolve_path;
     use bytes::Bytes;
     use http::StatusCode;
     use pretty_assertions::assert_eq;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::fs;
     #[test]
     fn test_http_response() {
         let resp = HttpResponse {
@@ -229,6 +238,20 @@ mod tests {
 
         assert_eq!(
             r###"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"content-length": "12", "cache-control": "private, max-age=3600", "content-encoding": "gzip", "contont-type": "application/json"} }, header_name_map: Some({"content-length": CaseHeaderName(b"Content-Length"), "cache-control": CaseHeaderName(b"Cache-Control"), "content-encoding": CaseHeaderName(b"Content-Encoding"), "contont-type": CaseHeaderName(b"contont-type")}) }"###,
+            format!("{header:?}")
+        );
+    }
+    #[tokio::test]
+    async fn test_http_chunk_response() {
+        let file = resolve_path("./error.html");
+        let mut f = fs::OpenOptions::new().read(true).open(file).await.unwrap();
+        let mut resp = HttpChunkResponse::new(&mut f);
+        resp.max_age = Some(3600);
+        resp.cache_private = Some(false);
+        resp.headers = Some(convert_headers(&["Contont-Type: text/html".to_string()]).unwrap());
+        let header = resp.get_response_header().unwrap();
+        assert_eq!(
+            r###"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"contont-type": "text/html", "transfer-encoding": "chunked", "cache-control": "public, max-age=3600"} }, header_name_map: Some({"contont-type": CaseHeaderName(b"contont-type"), "transfer-encoding": CaseHeaderName(b"Transfer-Encoding"), "cache-control": CaseHeaderName(b"Cache-Control")}) }"###,
             format!("{header:?}")
         );
     }

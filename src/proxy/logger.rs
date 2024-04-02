@@ -80,7 +80,7 @@ fn format_extra_tag(key: &str) -> Option<Tag> {
 }
 
 static COMBINED: &str =
-    r###"{remote} "{method} {uri} {proto}" {status} {size-human} "{referer}" "{userAgent}""###;
+    r###"{remote} "{method} {uri} {proto}" {status} {size-human} "{referer}" "{user-agent}""###;
 static COMMON: &str = r###"{remote} "{method} {uri} {proto}" {status} {size-human}""###;
 static SHORT: &str = r###"{remote} {method} {uri} {proto} {status} {size-human} - {latency}ms"###;
 static TINY: &str = r###"{method} {uri} {status} {size-human} - {latency}ms"###;
@@ -280,6 +280,7 @@ impl Parser {
                     } else if let Some(value) = get_req_header_value(req_header, "X-Real-Ip") {
                         buf.push_str(value);
                     }
+                    // TODO remote addr
                 }
                 TagCategory::Scheme => {
                     // TODO

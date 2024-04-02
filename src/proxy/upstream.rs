@@ -1,5 +1,5 @@
 use crate::config::UpstreamConf;
-use crate::serve::{Directory, FILE_PROTOCOL};
+use crate::serve::{Directory, MockResponse, FILE_PROTOCOL, MOCK_PROTOCOL};
 use crate::state::State;
 use futures_util::FutureExt;
 use humantime::parse_duration;
@@ -18,6 +18,8 @@ use url::Url;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
+    #[snafu(display("{message}"))]
+    Invalid { message: String },
     #[snafu(display("Url parse error {source}, {url}"))]
     UrlParse {
         source: url::ParseError,
@@ -35,6 +37,7 @@ enum SelectionLb {
     RoundRobin(Arc<LoadBalancer<RoundRobin>>),
     Consistent(Arc<LoadBalancer<Consistent>>),
     Directory(Arc<Directory>),
+    Mock(Arc<MockResponse>),
 }
 
 pub struct Upstream {
@@ -221,54 +224,54 @@ fn new_backends(addrs: &[String], ipv4_only: bool) -> Result<Backends> {
 
 impl Upstream {
     pub fn new(name: &str, conf: &UpstreamConf) -> Result<Self> {
-        if !conf.addrs.is_empty() && conf.addrs[0].starts_with(FILE_PROTOCOL) {
-            let addr = conf.addrs[0].clone();
-
-            return Ok(Upstream {
-                name: name.to_string(),
-                lb: SelectionLb::Directory(Arc::new(Directory::new(&addr))),
-                hash: "".to_string(),
-                tls: false,
-                sni: "".to_string(),
-                connection_timeout: None,
-                total_connection_timeout: None,
-                read_timeout: None,
-                idle_timeout: None,
-                write_timeout: None,
+        if conf.addrs.is_empty() {
+            return Err(Error::Invalid {
+                message: "Upstream addrs is empty".to_string(),
             });
         }
-        let backends = new_backends(&conf.addrs, conf.ipv4_only.unwrap_or_default())?;
-
-        let (hc, health_check_frequency) =
-            new_healtch_check(name, &conf.health_check.clone().unwrap_or_default())?;
-        let algo_method = conf.algo.clone().unwrap_or_default();
-        let algo_params: Vec<&str> = algo_method.split(':').collect();
         let mut hash = "".to_string();
-        let lb = match algo_params[0] {
-            "hash" => {
-                let mut lb = LoadBalancer::<Consistent>::from_backends(backends);
-                if algo_params.len() > 1 {
-                    hash = algo_params[1].to_string();
-                }
+        let first_addr = conf.addrs[0].clone();
+        let lb = if first_addr.starts_with(FILE_PROTOCOL) {
+            SelectionLb::Directory(Arc::new(Directory::new(&first_addr)))
+        } else if first_addr.starts_with(MOCK_PROTOCOL) {
+            let mock_resp = MockResponse::new(&first_addr).map_err(|err| Error::Invalid {
+                message: err.to_string(),
+            })?;
+            SelectionLb::Mock(Arc::new(mock_resp))
+        } else {
+            let backends = new_backends(&conf.addrs, conf.ipv4_only.unwrap_or_default())?;
 
-                lb.update()
-                    .now_or_never()
-                    .expect("static should not block")
-                    .expect("static should not error");
-                lb.set_health_check(hc);
-                lb.health_check_frequency = Some(health_check_frequency);
-                SelectionLb::Consistent(Arc::new(lb))
-            }
-            _ => {
-                let mut lb = LoadBalancer::<RoundRobin>::from_backends(backends);
-                lb.update()
-                    .now_or_never()
-                    .expect("static should not block")
-                    .expect("static should not error");
-                lb.set_health_check(hc);
-                lb.health_check_frequency = Some(health_check_frequency);
-                SelectionLb::RoundRobin(Arc::new(lb))
-            }
+            let (hc, health_check_frequency) =
+                new_healtch_check(name, &conf.health_check.clone().unwrap_or_default())?;
+            let algo_method = conf.algo.clone().unwrap_or_default();
+            let algo_params: Vec<&str> = algo_method.split(':').collect();
+            let lb = match algo_params[0] {
+                "hash" => {
+                    let mut lb = LoadBalancer::<Consistent>::from_backends(backends);
+                    if algo_params.len() > 1 {
+                        hash = algo_params[1].to_string();
+                    }
+
+                    lb.update()
+                        .now_or_never()
+                        .expect("static should not block")
+                        .expect("static should not error");
+                    lb.set_health_check(hc);
+                    lb.health_check_frequency = Some(health_check_frequency);
+                    SelectionLb::Consistent(Arc::new(lb))
+                }
+                _ => {
+                    let mut lb = LoadBalancer::<RoundRobin>::from_backends(backends);
+                    lb.update()
+                        .now_or_never()
+                        .expect("static should not block")
+                        .expect("static should not error");
+                    lb.set_health_check(hc);
+                    lb.health_check_frequency = Some(health_check_frequency);
+                    SelectionLb::RoundRobin(Arc::new(lb))
+                }
+            };
+            lb
         };
         let sni = conf.sni.clone().unwrap_or_default();
         Ok(Self {
@@ -283,19 +286,30 @@ impl Upstream {
             idle_timeout: conf.idle_timeout,
             write_timeout: conf.write_timeout,
         })
+        // Ok(upstream)
     }
     pub fn new_http_peer(&self, _ctx: &State, header: &RequestHeader) -> Option<HttpPeer> {
         let upstream = match &self.lb {
             SelectionLb::RoundRobin(lb) => lb.select(b"", 256),
             SelectionLb::Consistent(lb) => {
-                let key = if let Some(value) = header.headers.get(&self.hash) {
-                    value.as_bytes()
-                } else {
-                    header.uri.path().as_bytes()
+                let key = match self.hash.as_str() {
+                    "url" => header.uri.to_string(),
+                    "path" => header.uri.path().to_string(),
+                    "ip" => {
+                        // TODO
+                        todo!()
+                    }
+                    _ => {
+                        if let Some(value) = header.headers.get(&self.hash) {
+                            value.to_str().unwrap_or_default().to_string()
+                        } else {
+                            header.uri.path().to_string()
+                        }
+                    }
                 };
-                lb.select(key, 256)
+                lb.select(key.as_bytes(), 256)
             }
-            SelectionLb::Directory(_) => None,
+            _ => None,
         };
         upstream.map(|upstream| {
             let mut p = HttpPeer::new(upstream, self.tls, self.sni.clone());
@@ -307,21 +321,32 @@ impl Upstream {
             p
         })
     }
+
+    #[inline]
     pub fn get_round_robind(&self) -> Option<Arc<LoadBalancer<RoundRobin>>> {
         match &self.lb {
             SelectionLb::RoundRobin(lb) => Some(lb.clone()),
             _ => None,
         }
     }
+    #[inline]
     pub fn get_consistent(&self) -> Option<Arc<LoadBalancer<Consistent>>> {
         match &self.lb {
             SelectionLb::Consistent(lb) => Some(lb.clone()),
             _ => None,
         }
     }
+    #[inline]
     pub fn get_directory(&self) -> Option<Arc<Directory>> {
         match &self.lb {
             SelectionLb::Directory(lb) => Some(lb.clone()),
+            _ => None,
+        }
+    }
+    #[inline]
+    pub fn get_mock(&self) -> Option<Arc<MockResponse>> {
+        match &self.lb {
+            SelectionLb::Mock(lb) => Some(lb.clone()),
             _ => None,
         }
     }

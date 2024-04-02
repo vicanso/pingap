@@ -19,3 +19,6 @@
 - [ ] authentication for admin page
 - [x] static file serve
 - [ ] set priority for location
+- [ ] mock response for upstream
+- [ ] add remark for config
+- [ ] support multi host for location?

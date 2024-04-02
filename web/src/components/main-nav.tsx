@@ -4,14 +4,15 @@ import ListItemButton from "@mui/material/ListItemButton";
 import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import Collapse from "@mui/material/Collapse";
-import NetworkPingIcon from "@mui/icons-material/NetworkPing";
 import ExpandLess from "@mui/icons-material/ExpandLess";
 import ExpandMore from "@mui/icons-material/ExpandMore";
-import GpsFixedIcon from "@mui/icons-material/GpsFixed";
 import DnsIcon from "@mui/icons-material/Dns";
 import DashboardIcon from "@mui/icons-material/Dashboard";
 import Snackbar from "@mui/material/Snackbar";
 import AddRoadIcon from "@mui/icons-material/AddRoad";
+import AccountTreeIcon from "@mui/icons-material/AccountTree";
+import AltRouteIcon from "@mui/icons-material/AltRoute";
+import Button from "@mui/material/Button";
 import { useAsync } from "react-async-hook";
 import useConfigStore from "../states/config";
 import {
@@ -36,7 +37,13 @@ interface NavItem {
   category: NavCategory;
 }
 
-export default function MainNav() {
+export default function MainNav({
+  navWidth,
+  navTop,
+}: {
+  navWidth: string;
+  navTop: string;
+}) {
   const [opens, setOpens] = React.useState([] as Number[]);
   const [navItems, setNavItems] = React.useState([] as NavItem[]);
   const [mainSelectedIndex, setMainSelectedIndex] = React.useState(-1);
@@ -54,7 +61,6 @@ export default function MainNav() {
   useAsync(async () => {
     try {
       const config = await fetch();
-      console.dir(configVersion);
       const items: NavItem[] = [];
       items.push({
         name: "Basic",
@@ -74,7 +80,7 @@ export default function MainNav() {
       locations.push(addTag);
       items.push({
         name: "Location",
-        icon: <GpsFixedIcon />,
+        icon: <AccountTreeIcon />,
         children: locations,
         category: NavCategory.LocationInfo,
       });
@@ -82,7 +88,7 @@ export default function MainNav() {
       upstreams.push(addTag);
       items.push({
         name: "Upstream",
-        icon: <NetworkPingIcon />,
+        icon: <AltRouteIcon />,
         children: upstreams,
         category: NavCategory.UpstreamInfo,
       });
@@ -142,7 +148,9 @@ export default function MainNav() {
         if (name == addTag) {
           itemText = (
             <ListItemText>
-              <AddRoadIcon />
+              <Button fullWidth variant="outlined" endIcon={<AddRoadIcon />}>
+                Add {item.name}
+              </Button>
             </ListItemText>
           );
         }
@@ -192,9 +200,18 @@ export default function MainNav() {
   });
 
   return (
-    <React.Fragment>
+    <div
+      style={{
+        position: "fixed",
+        left: 0,
+        width: navWidth,
+        bottom: 0,
+        top: navTop,
+        overflowY: "scroll",
+      }}
+    >
       <List
-        sx={{ width: 260, bgcolor: "background.paper" }}
+        sx={{ width: navWidth, bgcolor: "background.paper" }}
         component="nav"
         aria-labelledby="nested-list-subheader"
       >
@@ -211,6 +228,6 @@ export default function MainNav() {
         }}
         message={showError.message}
       />
-    </React.Fragment>
+    </div>
   );
 }

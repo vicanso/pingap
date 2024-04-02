@@ -70,6 +70,11 @@ pub struct UpstreamConf {
 }
 impl UpstreamConf {
     pub fn validate(&self, name: &str) -> Result<()> {
+        if self.addrs.is_empty() {
+            return Err(Error::Invalid {
+                message: "Upstream addrs is empty".to_string(),
+            });
+        }
         // validate upstream addr
         for addr in self.addrs.iter() {
             let arr: Vec<_> = addr.split(' ').collect();
@@ -97,6 +102,7 @@ pub struct LocationConf {
     pub proxy_headers: Option<Vec<String>>,
     pub headers: Option<Vec<String>>,
     pub rewrite: Option<String>,
+    pub weight: Option<u16>,
 }
 
 impl LocationConf {
@@ -129,27 +135,30 @@ impl LocationConf {
         Ok(())
     }
 
-    pub fn get_weight(&self) -> u32 {
+    pub fn get_weight(&self) -> u16 {
+        if let Some(weight) = self.weight {
+            return weight;
+        }
         // path starts with
-        // = 65536
-        // prefix(default) 32768
-        // ~ 16384
-        // host exist 8192
-        let mut weighted: u32 = 0;
+        // = 1024
+        // prefix(default) 512
+        // ~ 256
+        // host exist 128
+        let mut weight: u16 = 0;
         if let Some(path) = &self.path {
             if path.starts_with('=') {
-                weighted += 65536;
+                weight += 1024;
             } else if path.starts_with('~') {
-                weighted += 16384;
+                weight += 256;
             } else {
-                weighted += 32768;
+                weight += 512;
             }
-            weighted += path.len() as u32;
+            weight += path.len().min(64) as u16;
         };
         if self.host.is_some() {
-            weighted += 8192;
+            weight += 128;
         }
-        weighted
+        weight
     }
 }
 

@@ -41,6 +41,13 @@ pub static HTTP_HEADER_NO_STORE: Lazy<HttpHeader> = Lazy::new(|| {
     )
 });
 
+pub static HTTP_HEADER_NO_CACHE: Lazy<HttpHeader> = Lazy::new(|| {
+    (
+        header::CACHE_CONTROL,
+        HeaderValue::from_str("private, no-cache").unwrap(),
+    )
+});
+
 pub static HTTP_HEADER_CONTENT_JSON: Lazy<HttpHeader> = Lazy::new(|| {
     (
         header::CONTENT_TYPE,

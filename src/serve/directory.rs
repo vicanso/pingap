@@ -2,6 +2,7 @@ use crate::state::State;
 use crate::utils;
 use http::{header, HeaderValue};
 use pingora::proxy::Session;
+use std::fs::Metadata;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -10,7 +11,7 @@ use tokio::fs;
 use url::Url;
 use urlencoding::decode;
 
-use crate::http_extra::{HttpChunkResponse, HttpResponse};
+use crate::http_extra::{HttpChunkResponse, HttpHeader, HttpResponse};
 
 #[derive(Default)]
 pub struct Directory {
@@ -34,6 +35,24 @@ async fn get_data(file: &PathBuf) -> std::io::Result<(std::fs::Metadata, fs::Fil
 }
 
 pub static FILE_PROTOCOL: &str = "file://";
+
+fn get_headers_from_meta(file: &PathBuf, meta: &Metadata) -> Vec<HttpHeader> {
+    let result = mime_guess::from_path(file);
+    let content_type = HeaderValue::from_str(result.first_or_octet_stream().as_ref()).unwrap();
+    let mut headers = vec![(header::CONTENT_TYPE, content_type)];
+
+    if let Ok(mod_time) = meta.modified() {
+        let value = mod_time
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if value > 0 {
+            let etag = format!(r###"W/"{:x}-{:x}""###, meta.size(), value);
+            headers.push((header::ETAG, HeaderValue::from_str(&etag).unwrap()));
+        }
+    }
+    headers
+}
 
 impl Directory {
     pub fn new(path: &str) -> Self {
@@ -85,21 +104,7 @@ impl Directory {
 
         match get_data(&file).await {
             Ok((meta, mut f)) => {
-                let result = mime_guess::from_path(&file);
-                let content_type =
-                    HeaderValue::from_str(result.first_or_octet_stream().as_ref()).unwrap();
-                let mut headers = vec![(header::CONTENT_TYPE, content_type)];
-
-                if let Ok(mod_time) = meta.modified() {
-                    let value = mod_time
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs();
-                    if value > 0 {
-                        let etag = format!(r###"W/"{:x}-{:x}""###, meta.size(), value);
-                        headers.push((header::ETAG, HeaderValue::from_str(&etag).unwrap()));
-                    }
-                }
+                let headers = get_headers_from_meta(&file, &meta);
                 let mut resp = HttpChunkResponse::new(&mut f);
                 if let Some(chunk_size) = self.chunk_size {
                     resp.chunk_size = chunk_size;

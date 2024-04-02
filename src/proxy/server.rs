@@ -379,6 +379,10 @@ impl ProxyHttp for Server {
             let result = dir.handle(session, ctx).await?;
             return Ok(result);
         }
+        if let Some(mock) = lo.upstream.get_mock() {
+            let result = mock.handle(session, ctx).await?;
+            return Ok(result);
+        }
         // TODO get response from cache
         // check location support cache
 

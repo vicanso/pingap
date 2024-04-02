@@ -117,6 +117,27 @@ export default function FormEditor({
     open: false,
     message: "",
   });
+
+  const updateAddrAndWeight = (
+    index: number,
+    id: string,
+    addr: string | undefined,
+    weight: string | undefined,
+  ) => {
+    const values = addrs.slice(0);
+    const arr = values[index].split(" ");
+    // 更新weight
+    if (addr === undefined) {
+      arr[1] = weight || "";
+    } else {
+      arr[0] = addr;
+    }
+    const value = arr.join(" ").trim();
+    values[index] = value;
+    setAddrs(values);
+    updateValue(id, values);
+  };
+
   const list = items.map((item) => {
     let formItem: JSX.Element = <></>;
     switch (item.category) {
@@ -223,7 +244,13 @@ export default function FormEditor({
         break;
       }
       case FormItemCategory.ADDRS: {
-        const list = addrs.map((addr, index) => {
+        const list = addrs.map((addrValue, index) => {
+          const addrArr = addrValue.split(" ");
+          const addr = addrArr[0];
+          let weight = "";
+          if (addrArr.length === 2) {
+            weight = addrArr[1];
+          }
           return (
             <Paper
               key={`${item.id}-${index}`}
@@ -245,10 +272,21 @@ export default function FormEditor({
                 }}
                 onChange={(e) => {
                   const value = e.target.value.trim();
-                  const values = addrs.slice(0);
-                  values[index] = value;
-                  setAddrs(values);
-                  updateValue(item.id, values);
+                  updateAddrAndWeight(index, item.id, value, undefined);
+                }}
+              />
+              <TextField
+                id={`${item.id}-${index}-weight`}
+                label={"Weight"}
+                variant="outlined"
+                defaultValue={weight}
+                style={{
+                  marginLeft: "10px",
+                  width: "100px",
+                }}
+                onChange={(e) => {
+                  const value = e.target.value.trim();
+                  updateAddrAndWeight(index, item.id, undefined, value);
                 }}
               />
               <IconButton

@@ -18,6 +18,7 @@ interface Location {
   upstream: string;
   path?: string;
   host?: string;
+  weight?: number;
   proxy_headers?: string[];
   headers?: string[];
   rewrite?: string;

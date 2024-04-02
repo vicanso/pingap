@@ -10,6 +10,9 @@ import MainHeader from "./components/main-header";
 
 import router from "./router";
 
+const navWidth = "260px";
+const navTop = "58px";
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ThemeProvider theme={theme}>
@@ -18,11 +21,17 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <Grid
         container
         style={{
-          marginTop: "58px",
+          marginTop: navTop,
         }}
       >
         <Grid item xs={"auto"}>
-          <MainNav />
+          <div
+            style={{
+              width: navWidth,
+            }}
+          >
+            <MainNav navWidth={navWidth} navTop={navTop} />
+          </div>
         </Grid>
         <Grid item xs={true}>
           <RouterProvider router={router} />

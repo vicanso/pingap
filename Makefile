@@ -19,6 +19,10 @@ dev:
 udeps:
 	cargo +nightly udeps
 
+msrv:
+	cargo msrv verify
+
+
 bloat:
 	cargo bloat --release --crates
 

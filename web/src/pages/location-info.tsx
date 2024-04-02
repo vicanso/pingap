@@ -51,6 +51,13 @@ export default function LocationInfo() {
       category: FormItemCategory.UPSTREAM,
       options: upstreams,
     },
+    {
+      id: "weight",
+      label: "Weight",
+      defaultValue: location.weight,
+      span: 6,
+      category: FormItemCategory.NUMBER,
+    },
     // proxy header
     // header
     {

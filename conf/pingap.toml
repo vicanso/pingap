@@ -57,8 +57,10 @@ idle_timeout = "120s"
 # Anther upstream using all default config.
 [upstreams.diving]
 # static file
-addrs = ["file://~/Downloads"]
-
+# addrs = ["file://~/Downloads"]
+addrs = [
+    'mock://{"status":500,"headers":["Content-Type: application/json"],"data":"{\"message\":\"Mock Service Unavailable\"}"}',
+]
 
 # Location config list, it will defined as [locations.name]
 [locations.lo]
@@ -77,6 +79,8 @@ headers = ["name:value"]
 # Rewrite the http url for proxy request, `^/api/ /` means replace the prefix `/api/` as `/`.
 # Default `None`
 rewrite = ""
+# The weight of locaton, max is prior, Default `None`
+# weight = 4096
 
 # Server config list, it will be defined as [servers.name]
 [servers.test]
