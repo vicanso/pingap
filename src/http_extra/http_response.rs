@@ -26,7 +26,7 @@ fn get_cache_control(max_age: Option<u32>, cache_private: Option<bool>) -> HttpH
     HTTP_HEADER_NO_CACHE.clone()
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct HttpResponse {
     // http response status
     pub status: StatusCode,
@@ -43,6 +43,7 @@ pub struct HttpResponse {
 }
 
 impl HttpResponse {
+    /// Returns the no content `204` response.
     pub fn no_content() -> Self {
         HttpResponse {
             status: StatusCode::NO_CONTENT,
@@ -50,6 +51,7 @@ impl HttpResponse {
             ..Default::default()
         }
     }
+    /// Returns the not found `404` response.
     pub fn not_found() -> Self {
         HttpResponse {
             status: StatusCode::NOT_FOUND,
@@ -58,14 +60,16 @@ impl HttpResponse {
             ..Default::default()
         }
     }
+    /// Returns the unknown error `500` response.
     pub fn unknown_error() -> Self {
         HttpResponse {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
-            body: Bytes::from("Unknown error"),
+            body: Bytes::from("Unknown Error"),
             ..Default::default()
         }
     }
+    /// Gets the response from serde json, and sets the status of response.
     pub fn try_from_json_status<T>(value: &T, status: StatusCode) -> pingora::Result<Self>
     where
         T: ?Sized + Serialize,
@@ -74,6 +78,7 @@ impl HttpResponse {
         resp.status = status;
         Ok(resp)
     }
+    /// Gets the response from serde json, the status sets to `200`.
     pub fn try_from_json<T>(value: &T) -> pingora::Result<Self>
     where
         T: ?Sized + Serialize,
@@ -89,7 +94,7 @@ impl HttpResponse {
             ..Default::default()
         })
     }
-    /// Gets the response header from http response
+    /// Gets the response header for http response.
     pub fn get_response_header(&self) -> pingora::Result<ResponseHeader> {
         let fix_size = 3;
         let size = self
@@ -121,7 +126,7 @@ impl HttpResponse {
         }
         Ok(resp)
     }
-    /// Sends http response to client
+    /// Sends http response to client, return how many bytes were sent.
     pub async fn send(self, session: &mut Session) -> pingora::Result<usize> {
         let header = self.get_response_header()?;
         let size = self.body.len();
@@ -149,6 +154,7 @@ impl<'r, R> HttpChunkResponse<'r, R>
 where
     R: tokio::io::AsyncRead + std::marker::Unpin,
 {
+    /// Creates a new http chunk response.
     pub fn new(r: &'r mut R) -> Self {
         Self {
             reader: Pin::new(r),
@@ -158,7 +164,7 @@ where
             cache_private: None,
         }
     }
-    /// Gets the response header from http chunk response
+    /// Gets the response header for http chunk response.
     pub fn get_response_header(&self) -> pingora::Result<ResponseHeader> {
         let mut resp = ResponseHeader::build(StatusCode::OK, Some(4))?;
         if let Some(headers) = &self.headers {
@@ -174,6 +180,7 @@ where
         resp.insert_header(cache_control.0, cache_control.1)?;
         Ok(resp)
     }
+    /// Sends the chunk data to client until the end of reader, return how many bytes were sent.
     pub async fn send(&mut self, session: &mut Session) -> pingora::Result<usize> {
         let header = self.get_response_header()?;
         session.write_response_header(Box::new(header)).await?;
@@ -201,16 +208,67 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{HttpChunkResponse, HttpResponse};
+    use super::{get_cache_control, HttpChunkResponse, HttpResponse};
     use crate::http_extra::convert_headers;
     use crate::utils::resolve_path;
     use bytes::Bytes;
     use http::StatusCode;
     use pretty_assertions::assert_eq;
+    use serde::Serialize;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::fs;
+
+    #[test]
+    fn test_get_cache_control() {
+        assert_eq!(
+            r###"("cache-control", "private, max-age=3600")"###,
+            format!("{:?}", get_cache_control(Some(3600), Some(true)))
+        );
+        assert_eq!(
+            r###"("cache-control", "public, max-age=3600")"###,
+            format!("{:?}", get_cache_control(Some(3600), None))
+        );
+    }
+
     #[test]
     fn test_http_response() {
+        assert_eq!(
+            r###"HttpResponse { status: 204, body: b"", max_age: None, created_at: None, cache_private: None, headers: Some([("cache-control", "private, no-store")]) }"###,
+            format!("{:?}", HttpResponse::no_content())
+        );
+        assert_eq!(
+            r###"HttpResponse { status: 404, body: b"Not Found", max_age: None, created_at: None, cache_private: None, headers: Some([("cache-control", "private, no-store")]) }"###,
+            format!("{:?}", HttpResponse::not_found())
+        );
+        assert_eq!(
+            r###"HttpResponse { status: 500, body: b"Unknown Error", max_age: None, created_at: None, cache_private: None, headers: Some([("cache-control", "private, no-store")]) }"###,
+            format!("{:?}", HttpResponse::unknown_error())
+        );
+
+        #[derive(Serialize)]
+        struct Data {
+            message: String,
+        }
+        let resp = HttpResponse::try_from_json_status(
+            &Data {
+                message: "Hello World!".to_string(),
+            },
+            StatusCode::BAD_REQUEST,
+        )
+        .unwrap();
+        assert_eq!(
+            r###"HttpResponse { status: 400, body: b"{\"message\":\"Hello World!\"}", max_age: None, created_at: None, cache_private: None, headers: Some([("content-type", "application/json; charset=utf-8")]) }"###,
+            format!("{resp:?}")
+        );
+        let resp = HttpResponse::try_from_json(&Data {
+            message: "Hello World!".to_string(),
+        })
+        .unwrap();
+        assert_eq!(
+            r###"HttpResponse { status: 200, body: b"{\"message\":\"Hello World!\"}", max_age: None, created_at: None, cache_private: None, headers: Some([("content-type", "application/json; charset=utf-8")]) }"###,
+            format!("{resp:?}")
+        );
+
         let resp = HttpResponse {
             status: StatusCode::OK,
             body: Bytes::from("Hello world!"),

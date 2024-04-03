@@ -37,9 +37,12 @@ async fn get_data(file: &PathBuf) -> std::io::Result<(std::fs::Metadata, fs::Fil
 
 pub static FILE_PROTOCOL: &str = "file://";
 
-fn get_headers_from_meta(file: &PathBuf, meta: &Metadata) -> Vec<HttpHeader> {
+fn get_cacheable_and_headers_from_meta(file: &PathBuf, meta: &Metadata) -> (bool, Vec<HttpHeader>) {
     let result = mime_guess::from_path(file);
-    let content_type = HeaderValue::from_str(result.first_or_octet_stream().as_ref()).unwrap();
+    let binding = result.first_or_octet_stream();
+    let value = binding.as_ref();
+    let cacheable = !value.contains("text/html");
+    let content_type = HeaderValue::from_str(value).unwrap();
     let mut headers = vec![(header::CONTENT_TYPE, content_type)];
 
     if let Ok(mod_time) = meta.modified() {
@@ -52,10 +55,11 @@ fn get_headers_from_meta(file: &PathBuf, meta: &Metadata) -> Vec<HttpHeader> {
             headers.push((header::ETAG, HeaderValue::from_str(&etag).unwrap()));
         }
     }
-    headers
+    (cacheable, headers)
 }
 
 impl Directory {
+    /// Creates a new directory upstream, which will serve static file of directory.
     pub fn new(path: &str) -> Self {
         let mut new_path = path.substring(FILE_PROTOCOL.len(), path.len());
         let mut chunk_size = None;
@@ -79,7 +83,7 @@ impl Directory {
                             max_age = Some(v);
                         }
                     }
-                    "private" => cache_private = Some(false),
+                    "private" => cache_private = Some(true),
                     "index" => index_file = value.to_string(),
                     _ => {}
                 }
@@ -93,6 +97,7 @@ impl Directory {
             cache_private,
         }
     }
+    /// Gets the file match request path, then sends the data as chunk.
     pub async fn handle(&self, session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
         let mut filename = session.req_header().uri.path().to_string();
         if filename.len() <= 1 {
@@ -106,12 +111,14 @@ impl Directory {
 
         match get_data(&file).await {
             Ok((meta, mut f)) => {
-                let headers = get_headers_from_meta(&file, &meta);
+                let (cacheable, headers) = get_cacheable_and_headers_from_meta(&file, &meta);
                 let mut resp = HttpChunkResponse::new(&mut f);
                 if let Some(chunk_size) = self.chunk_size {
                     resp.chunk_size = chunk_size;
                 }
-                resp.max_age = self.max_age;
+                if cacheable {
+                    resp.max_age = self.max_age;
+                }
                 resp.cache_private = self.cache_private;
                 resp.headers = Some(headers);
                 resp.send(session).await?
@@ -128,5 +135,38 @@ impl Directory {
         };
 
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{get_cacheable_and_headers_from_meta, get_data, Directory};
+    use pretty_assertions::{assert_eq, assert_ne};
+    use std::{os::unix::fs::MetadataExt, path::Path};
+
+    #[test]
+    fn test_new_directory() {
+        let dir = Directory::new(
+            "file://~/Downloads?chunk_size=1024&max_age=3600&private&index=pingap/index.html",
+        );
+        assert_eq!(1024, dir.chunk_size.unwrap_or_default());
+        assert_eq!(3600, dir.max_age.unwrap_or_default());
+        assert_eq!(true, dir.cache_private.unwrap_or_default());
+        assert_eq!("/pingap/index.html", dir.index);
+    }
+
+    #[tokio::test]
+    async fn test_get_data() {
+        let file = Path::new("./error.html").to_path_buf();
+        let (meta, _) = get_data(&file).await.unwrap();
+
+        assert_ne!(0, meta.size());
+
+        let (cacheable, headers) = get_cacheable_and_headers_from_meta(&file, &meta);
+        assert_eq!(false, cacheable);
+        assert_eq!(
+            r###"[("content-type", "text/html"), ("etag", "W/\"69d-65f91c99\"")]"###,
+            format!("{headers:?}")
+        );
     }
 }

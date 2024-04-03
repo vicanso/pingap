@@ -223,6 +223,7 @@ fn new_backends(addrs: &[String], ipv4_only: bool) -> Result<Backends> {
 }
 
 impl Upstream {
+    /// Creates a new upstream from config.
     pub fn new(name: &str, conf: &UpstreamConf) -> Result<Self> {
         if conf.addrs.is_empty() {
             return Err(Error::Invalid {
@@ -286,8 +287,8 @@ impl Upstream {
             idle_timeout: conf.idle_timeout,
             write_timeout: conf.write_timeout,
         })
-        // Ok(upstream)
     }
+    /// Returns a new http peer, if there is no healthy backend, it will return `None`.
     pub fn new_http_peer(&self, _ctx: &State, header: &RequestHeader) -> Option<HttpPeer> {
         let upstream = match &self.lb {
             SelectionLb::RoundRobin(lb) => lb.select(b"", 256),

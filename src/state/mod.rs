@@ -10,6 +10,7 @@ pub struct State {
     pub response_size: usize,
     pub reused: bool,
     pub upstream_address: String,
+    pub client_ip: String,
     pub location_index: Option<usize>,
 }
 
@@ -24,6 +25,7 @@ impl Default for State {
             response_size: 0,
             reused: false,
             upstream_address: "".to_string(),
+            client_ip: "".to_string(),
             location_index: None,
         }
     }

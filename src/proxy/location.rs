@@ -109,6 +109,7 @@ impl Location {
             proxy_headers: format_headers(&conf.proxy_headers)?,
         })
     }
+    /// Returns `true` if the host and path match location.
     #[inline]
     pub fn matched(&self, host: &str, path: &str) -> bool {
         if !self.path.is_empty() {
@@ -128,6 +129,8 @@ impl Location {
         }
         true
     }
+    /// Rewrites the path by the rule and returns the new path.
+    /// If the rule is not exists, returns `None`.
     #[inline]
     pub fn rewrite(&self, path: &str) -> Option<String> {
         if let Some((re, value)) = &self.reg_rewrite {
@@ -135,6 +138,7 @@ impl Location {
         }
         None
     }
+    /// Inserts the headers before proxy the request to upstream.
     #[inline]
     pub fn insert_proxy_headers(&self, header: &mut RequestHeader) {
         if let Some(arr) = &self.proxy_headers {
@@ -144,6 +148,7 @@ impl Location {
             }
         }
     }
+    /// Inserts the header to response before sends to downstream.
     #[inline]
     pub fn insert_headers(&self, header: &mut ResponseHeader) {
         if let Some(arr) = &self.headers {

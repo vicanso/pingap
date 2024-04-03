@@ -77,7 +77,7 @@ request.interceptors.response.use(
     const he = new HTTPError("Unknown error");
     if (timeoutErrorCodes.includes(err.code)) {
       he.category = "timeout";
-      he.message = "请求超时，请稍候再试";
+      he.message = "Request timeout";
     } else if (response) {
       if (response.data && response.data.message) {
         he.message = response.data.message;

@@ -25,10 +25,11 @@ pub struct MockInfo {
 }
 
 pub struct MockResponse {
-    resp: HttpResponse,
+    pub resp: HttpResponse,
 }
 
 impl MockResponse {
+    /// Creates a new mock response upstream, which will return a mock data.
     pub fn new(path: &str) -> Result<Self> {
         let new_data = path.substring(MOCK_PROTOCOL.len(), path.len());
         let info: MockInfo = serde_json::from_str(new_data).context(JsonSnafu)?;
@@ -49,8 +50,33 @@ impl MockResponse {
 
         Ok(MockResponse { resp })
     }
+    /// Sends the mock data to client.
     pub async fn handle(&self, session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
         let _ = self.resp.clone().send(session).await?;
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MockResponse;
+    use bytes::Bytes;
+    use http::StatusCode;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_mock_response() {
+        let resp = MockResponse::new(
+            r###"mock://{"status":500,"headers":["Content-Type: application/json"],"data":"{\"message\":\"Mock Service Unavailable\"}"}"###,
+        ).unwrap().resp;
+        assert_eq!(StatusCode::INTERNAL_SERVER_ERROR, resp.status);
+        assert_eq!(
+            r###"Some([("content-type", "application/json")])"###,
+            format!("{:?}", resp.headers)
+        );
+        assert_eq!(
+            Bytes::from_static(b"{\"message\":\"Mock Service Unavailable\"}"),
+            resp.body
+        );
     }
 }

@@ -22,3 +22,4 @@
 - [x] mock response for upstream
 - [x] add remark for config
 - [ ] support multi host for location?
+- [ ] support set upstream_keepalive_pool_size

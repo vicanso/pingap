@@ -274,15 +274,7 @@ impl Parser {
                     // TODO
                 }
                 TagCategory::ClientIp => {
-                    if let Some(value) = get_req_header_value(req_header, "X-Forwarded-For") {
-                        let arr: Vec<&str> = value.split(',').collect();
-                        if !arr.is_empty() {
-                            buf.push_str(arr[0].trim());
-                        }
-                    } else if let Some(value) = get_req_header_value(req_header, "X-Real-Ip") {
-                        buf.push_str(value);
-                    }
-                    // TODO remote addr
+                    buf.push_str(&ctx.client_ip);
                 }
                 TagCategory::Scheme => {
                     // TODO

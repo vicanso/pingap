@@ -58,8 +58,20 @@ export default function LocationInfo() {
       span: 6,
       category: FormItemCategory.NUMBER,
     },
-    // proxy header
-    // header
+    {
+      id: "headers",
+      label: "Headers",
+      defaultValue: location.headers,
+      span: 6,
+      category: FormItemCategory.HEADERS,
+    },
+    {
+      id: "proxy_headers",
+      label: "Proxy Headers",
+      defaultValue: location.proxy_headers,
+      span: 6,
+      category: FormItemCategory.PROXY_HEADERS,
+    },
     {
       id: "rewrite",
       label: "Rewrite",

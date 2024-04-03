@@ -32,6 +32,8 @@ export enum FormItemCategory {
   UPSTREAM = "upstream",
   ADDRS = "addrs",
   CHECKBOX = "checkbox",
+  HEADERS = "headers",
+  PROXY_HEADERS = "proxyHeaders",
 }
 
 export interface FormItem {
@@ -59,6 +61,126 @@ function getStyles(name: string, selectItems: string[], theme: Theme) {
         ? theme.typography.fontWeightRegular
         : theme.typography.fontWeightMedium,
   };
+}
+
+function FormTwoInputFields({
+  id,
+  divide,
+  values,
+  label,
+  valueLabel,
+  valueWidth,
+  addLabel,
+  onUpdate,
+}: {
+  id: string;
+  divide: string;
+  values: string[];
+  label: string;
+  valueWidth?: string;
+  valueLabel: string;
+  addLabel: string;
+  onUpdate: (data: string[]) => void;
+}) {
+  const [newValues, setNewValues] = React.useState(values || []);
+  const updateNameAndValue = (
+    index: number,
+    name: string | undefined,
+    value: string | undefined,
+  ) => {
+    const cloneValues = newValues.slice(0);
+    const arr = cloneValues[index].split(divide);
+    if (name === undefined) {
+      arr[1] = value || "";
+    } else {
+      arr[0] = name;
+    }
+    cloneValues[index] = arr.join(divide).trim();
+    setNewValues(cloneValues);
+    onUpdate(cloneValues);
+  };
+
+  const list = newValues.map((item, index) => {
+    const arr = item.split(divide);
+    const name = arr[0];
+    let value = "";
+    if (arr.length === 2) {
+      value = arr[1];
+    }
+    let flexValue: number | undefined = undefined;
+    if (!valueWidth) {
+      flexValue = 1;
+    }
+    return (
+      <Paper
+        key={`{id}-${index}`}
+        sx={{
+          display: "flex",
+          marginBottom: "15px",
+          alignItems: "center",
+          width: "100%",
+        }}
+      >
+        <TextField
+          id={`${id}-${index}-name`}
+          label={label}
+          variant="outlined"
+          defaultValue={name}
+          sx={{ ml: 1, flex: 1 }}
+          style={{
+            marginLeft: "0px",
+          }}
+          onChange={(e) => {
+            const value = e.target.value.trim();
+            updateNameAndValue(index, value, undefined);
+          }}
+        />
+        <TextField
+          id={`${id}-${index}value`}
+          label={valueLabel}
+          variant="outlined"
+          defaultValue={value}
+          sx={{ ml: flexValue, flex: flexValue }}
+          style={{
+            marginLeft: "10px",
+            width: valueWidth,
+          }}
+          onChange={(e) => {
+            const value = e.target.value.trim();
+            updateNameAndValue(index, undefined, value);
+          }}
+        />
+        <IconButton
+          color="primary"
+          sx={{ p: "10px" }}
+          aria-label="directions"
+          onClick={() => {
+            const values = newValues.slice(0);
+            values.splice(index, 1);
+            setNewValues(values);
+            onUpdate(values);
+          }}
+        >
+          <PlaylistRemoveIcon />
+        </IconButton>
+      </Paper>
+    );
+  });
+  list.push(
+    <Button
+      key="addAddr"
+      variant="contained"
+      endIcon={<AddRoadIcon />}
+      onClick={() => {
+        const values = newValues.slice(0);
+        values.push("");
+        setNewValues(values);
+      }}
+    >
+      {addLabel}
+    </Button>,
+  );
+  return <React.Fragment>{list}</React.Fragment>;
 }
 
 export default function FormEditor({
@@ -117,26 +239,6 @@ export default function FormEditor({
     open: false,
     message: "",
   });
-
-  const updateAddrAndWeight = (
-    index: number,
-    id: string,
-    addr: string | undefined,
-    weight: string | undefined,
-  ) => {
-    const values = addrs.slice(0);
-    const arr = values[index].split(" ");
-    // 更新weight
-    if (addr === undefined) {
-      arr[1] = weight || "";
-    } else {
-      arr[0] = addr;
-    }
-    const value = arr.join(" ").trim();
-    values[index] = value;
-    setAddrs(values);
-    updateValue(id, values);
-  };
 
   const list = items.map((item) => {
     let formItem: JSX.Element = <></>;
@@ -244,83 +346,52 @@ export default function FormEditor({
         break;
       }
       case FormItemCategory.ADDRS: {
-        const list = addrs.map((addrValue, index) => {
-          const addrArr = addrValue.split(" ");
-          const addr = addrArr[0];
-          let weight = "";
-          if (addrArr.length === 2) {
-            weight = addrArr[1];
-          }
-          return (
-            <Paper
-              key={`${item.id}-${index}`}
-              sx={{
-                display: "flex",
-                marginBottom: "15px",
-                alignItems: "center",
-                width: "100%",
-              }}
-            >
-              <TextField
-                id={`${item.id}-${index}`}
-                label={item.label}
-                variant="outlined"
-                defaultValue={addr}
-                sx={{ ml: 1, flex: 1 }}
-                style={{
-                  marginLeft: "0px",
-                }}
-                onChange={(e) => {
-                  const value = e.target.value.trim();
-                  updateAddrAndWeight(index, item.id, value, undefined);
-                }}
-              />
-              <TextField
-                id={`${item.id}-${index}-weight`}
-                label={"Weight"}
-                variant="outlined"
-                defaultValue={weight}
-                style={{
-                  marginLeft: "10px",
-                  width: "100px",
-                }}
-                onChange={(e) => {
-                  const value = e.target.value.trim();
-                  updateAddrAndWeight(index, item.id, undefined, value);
-                }}
-              />
-              <IconButton
-                color="primary"
-                sx={{ p: "10px" }}
-                aria-label="directions"
-                onClick={() => {
-                  const values = addrs.slice(0);
-                  values.splice(index, 1);
-                  setAddrs(values);
-                  updateValue(item.id, values);
-                }}
-              >
-                <PlaylistRemoveIcon />
-              </IconButton>
-            </Paper>
-          );
-        });
-        list.push(
-          <Button
-            key="addAddr"
-            variant="contained"
-            endIcon={<AddRoadIcon />}
-            onClick={() => {
-              const values = addrs.slice(0);
-              values.push("");
-              setAddrs(values);
-              updateValue(item.id, values);
+        formItem = (
+          <FormTwoInputFields
+            id={item.id}
+            divide={" "}
+            values={item.defaultValue as string[]}
+            label={"Addr"}
+            valueLabel={"Weight"}
+            valueWidth="100px"
+            onUpdate={(data) => {
+              updateValue(item.id, data);
             }}
-          >
-            Add Address
-          </Button>,
+            addLabel="Add Address"
+          />
         );
-        formItem = <React.Fragment>{list}</React.Fragment>;
+        break;
+      }
+      case FormItemCategory.HEADERS: {
+        formItem = (
+          <FormTwoInputFields
+            id={item.id}
+            divide={":"}
+            values={item.defaultValue as string[]}
+            label={"Header Name"}
+            valueLabel={"Header Value"}
+            onUpdate={(data) => {
+              updateValue(item.id, data);
+            }}
+            addLabel="Add Header"
+          />
+        );
+        break;
+      }
+      case FormItemCategory.PROXY_HEADERS: {
+        formItem = (
+          <FormTwoInputFields
+            id={item.id}
+            divide={":"}
+            values={item.defaultValue as string[]}
+            label={"Proxy Header Name"}
+            valueLabel={"Proxy Header Value"}
+            onUpdate={(data) => {
+              updateValue(item.id, data);
+            }}
+            addLabel="Add Proxy Header"
+          />
+        );
         break;
       }
       case FormItemCategory.TEXTAREA: {
