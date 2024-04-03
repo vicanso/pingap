@@ -9,8 +9,10 @@ use crate::utils;
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::Bytes;
+use bytesize::ByteSize;
 use http::StatusCode;
 use log::{error, info};
+use memory_stats::memory_stats;
 use once_cell::sync::Lazy;
 use pingora::http::ResponseHeader;
 use pingora::listeners::TlsSettings;
@@ -167,6 +169,8 @@ struct ServerStats {
     processing: i32,
     accepted: u64,
     hostname: String,
+    physical_mem_mb: usize,
+    physical_mem: String,
 }
 
 pub struct ServerServices {
@@ -269,10 +273,17 @@ impl Server {
         Ok(ServerServices { lb, bg_services })
     }
     async fn send_stats_response(&self, session: &mut Session, ctx: &mut State) {
+        let mut physical_mem = 0;
+        if let Some(value) = memory_stats() {
+            physical_mem = value.physical_mem;
+        }
+
         let buf = serde_json::to_vec(&ServerStats {
             accepted: self.accepted.load(Ordering::Relaxed),
             processing: self.processing.load(Ordering::Relaxed),
             hostname: HOST_NAME.to_string(),
+            physical_mem: ByteSize(physical_mem as u64).to_string_as(true),
+            physical_mem_mb: physical_mem / (1024 * 1024),
         })
         .unwrap_or_default();
 
