@@ -37,6 +37,13 @@ export default function BasicInfo() {
       category: FormItemCategory.NUMBER,
     },
     {
+      id: "work_stealing",
+      label: "Work Stealing",
+      defaultValue: config.work_stealing,
+      span: 6,
+      category: FormItemCategory.CHECKBOX,
+    },
+    {
       id: "user",
       label: "User",
       defaultValue: config.user,
@@ -49,13 +56,6 @@ export default function BasicInfo() {
       defaultValue: config.group,
       span: 6,
       category: FormItemCategory.TEXT,
-    },
-    {
-      id: "work_stealing",
-      label: "Work Stealing",
-      defaultValue: config.work_stealing,
-      span: 6,
-      category: FormItemCategory.CHECKBOX,
     },
     {
       id: "error_template",
