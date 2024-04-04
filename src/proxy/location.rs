@@ -96,14 +96,13 @@ impl Location {
                 reg_rewrite = Some((re, value.to_string()));
             }
         }
-
-        let hosts: Vec<String> = conf
-            .host
-            .clone()
-            .unwrap_or_default()
-            .split(',')
-            .map(|item| item.trim().to_string())
-            .collect();
+        let mut hosts = vec![];
+        for item in conf.host.clone().unwrap_or_default().split(',') {
+            let host = item.trim().to_string();
+            if !host.is_empty() {
+                hosts.push(host);
+            }
+        }
 
         let path = conf.path.clone().unwrap_or_default();
         Ok(Location {
@@ -132,10 +131,11 @@ impl Location {
             }
         }
 
-        if !self.hosts.is_empty() && !self.hosts.iter().any(|item| item == host) {
-            return false;
+        if self.hosts.is_empty() {
+            return true;
         }
-        true
+
+        self.hosts.iter().any(|item| item == host)
     }
     /// Rewrites the path by the rule and returns the new path.
     /// If the rule is not exists, returns `None`.
