@@ -57,7 +57,7 @@ pub struct Location {
     // name: String,
     path: String,
     path_selector: PathSelector,
-    host: String,
+    hosts: Vec<String>,
     reg_rewrite: Option<(Regex, String)>,
     headers: Option<Vec<HttpHeader>>,
     proxy_headers: Option<Vec<HttpHeader>>,
@@ -97,12 +97,20 @@ impl Location {
             }
         }
 
+        let hosts: Vec<String> = conf
+            .host
+            .clone()
+            .unwrap_or_default()
+            .split(',')
+            .map(|item| item.trim().to_string())
+            .collect();
+
         let path = conf.path.clone().unwrap_or_default();
         Ok(Location {
             // name: conf.name.clone(),
             path_selector: new_path_selector(&path)?,
             path,
-            host: conf.host.clone().unwrap_or_default(),
+            hosts,
             upstream: up.clone(),
             reg_rewrite,
             headers: format_headers(&conf.headers)?,
@@ -124,7 +132,7 @@ impl Location {
             }
         }
 
-        if !self.host.is_empty() && host != self.host {
+        if !self.hosts.is_empty() && !self.hosts.iter().any(|item| item == host) {
             return false;
         }
         true
