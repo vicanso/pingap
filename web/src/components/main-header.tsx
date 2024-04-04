@@ -9,6 +9,7 @@ import SettingsSuggestIcon from "@mui/icons-material/SettingsSuggest";
 import SwipeableDrawer from "@mui/material/SwipeableDrawer";
 import CardContent from "@mui/material/CardContent";
 import Divider from "@mui/material/Divider";
+import Card from "@mui/material/Card";
 
 import useBasicStore from "../states/basic";
 
@@ -49,20 +50,21 @@ export default function MainHeader() {
           setShowSetting(true);
         }}
       >
-        <CardContent>
-          <Typography gutterBottom variant="h5" component="div">
-            Informations
-          </Typography>
-          <Divider />
-          <Box pt={2}>
-            <Typography gutterBottom variant="body2">
-              Start time: {startAt}
+        <Card sx={{ minWidth: 275 }}>
+          <CardContent>
+            <Typography gutterBottom variant="h5" component="div">
+              Informations
             </Typography>
-            <Typography gutterBottom variant="body2">
-              Memory: {memory}
-            </Typography>
-          </Box>
-        </CardContent>
+            <Box pt={2}>
+              <Typography gutterBottom variant="body2">
+                Start Time: {startAt}
+              </Typography>
+              <Typography gutterBottom variant="body2">
+                Memory: {memory}
+              </Typography>
+            </Box>
+          </CardContent>
+        </Card>
       </SwipeableDrawer>
     </React.Fragment>
   );

@@ -14,7 +14,7 @@ use http::StatusCode;
 use log::{error, info};
 use memory_stats::memory_stats;
 use once_cell::sync::Lazy;
-use pingora::http::ResponseHeader;
+use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::listeners::TlsSettings;
 use pingora::protocols::http::error_resp;
 use pingora::protocols::Digest;
@@ -394,7 +394,6 @@ impl ProxyHttp for Server {
             // TODO parse error
             let _ = new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri));
         }
-        lo.insert_proxy_headers(header);
         ctx.location_index = Some(location_index);
         if let Some(dir) = lo.upstream.get_directory() {
             let result = dir.handle(session, ctx).await?;
@@ -427,20 +426,6 @@ impl ProxyHttp for Server {
             .new_http_peer(ctx, session)
             .ok_or(pingora::Error::new_str("Upstream not found"))?;
 
-        // add x-forwarded-for
-        if let Some(addr) = utils::get_remote_addr(session) {
-            let value = if let Some(value) =
-                session.get_header(utils::HTTP_HEADER_X_FORWARDED_FOR.clone())
-            {
-                format!("{}, {}", value.to_str().unwrap_or_default(), addr)
-            } else {
-                addr.to_string()
-            };
-            let _ = session
-                .req_header_mut()
-                .insert_header(utils::HTTP_HEADER_X_FORWARDED_FOR.clone(), value);
-        }
-
         Ok(Box::new(peer))
     }
     async fn connected_to_upstream(
@@ -457,6 +442,35 @@ impl ProxyHttp for Server {
     {
         ctx.reused = reused;
         ctx.upstream_address = peer.address().to_string();
+        Ok(())
+    }
+    async fn upstream_request_filter(
+        &self,
+        session: &mut Session,
+        header: &mut RequestHeader,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<()>
+    where
+        Self::CTX: Send + Sync,
+    {
+        // add x-forwarded-for
+        if let Some(addr) = utils::get_remote_addr(session) {
+            let value = if let Some(value) =
+                session.get_header(utils::HTTP_HEADER_X_FORWARDED_FOR.clone())
+            {
+                format!("{}, {}", value.to_str().unwrap_or_default(), addr)
+            } else {
+                addr.to_string()
+            };
+            let _ = header.insert_header(utils::HTTP_HEADER_X_FORWARDED_FOR.clone(), value);
+        }
+
+        if let Some(index) = ctx.location_index {
+            if let Some(lo) = self.locations.get(index) {
+                lo.insert_proxy_headers(header);
+            }
+        }
+
         Ok(())
     }
     fn upstream_response_filter(
