@@ -321,31 +321,12 @@ impl Server {
         }
         ADMIN_SERVE.handle(session, ctx).await
     }
-}
-
-static LOCATION_NOT_FOUND: &str = "Location not found";
-
-#[async_trait]
-impl ProxyHttp for Server {
-    type CTX = State;
-    fn new_ctx(&self) -> Self::CTX {
-        State::default()
-    }
-    async fn request_filter(
+    async fn serve_stats_admin(
         &self,
         session: &mut Session,
-        ctx: &mut Self::CTX,
-    ) -> pingora::Result<bool>
-    where
-        Self::CTX: Send + Sync,
-    {
-        ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed);
-        self.accepted.fetch_add(1, Ordering::Relaxed);
-
-        let header = session.req_header_mut();
-        let path = header.uri.path();
-        let host = header.uri.host().unwrap_or_default();
-
+        ctx: &mut State,
+    ) -> pingora::Result<bool> {
+        let path = session.req_header().uri.path();
         // stats path
         if let Some(stats_path) = &self.stats_path {
             if stats_path == path {
@@ -367,6 +348,38 @@ impl ProxyHttp for Server {
                 return Ok(result);
             }
         }
+        Ok(false)
+    }
+}
+
+static LOCATION_NOT_FOUND: &str = "Location not found";
+
+#[async_trait]
+impl ProxyHttp for Server {
+    type CTX = State;
+    fn new_ctx(&self) -> Self::CTX {
+        State::default()
+    }
+    async fn request_filter(
+        &self,
+        session: &mut Session,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<bool>
+    where
+        Self::CTX: Send + Sync,
+    {
+        ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed);
+        self.accepted.fetch_add(1, Ordering::Relaxed);
+
+        // serve stats or admin
+        let served = self.serve_stats_admin(session, ctx).await?;
+        if served {
+            return Ok(true);
+        }
+
+        let header = session.req_header_mut();
+        let path = header.uri.path();
+        let host = header.uri.host().unwrap_or_default();
 
         let (location_index, lo) = self
             .locations
