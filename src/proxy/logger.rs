@@ -1,7 +1,10 @@
 use crate::state::State;
 use crate::utils;
 use bytesize::ByteSize;
-use pingora::http::{RequestHeader, ResponseHeader};
+use pingora::{
+    http::{RequestHeader, ResponseHeader},
+    proxy::Session,
+};
 use regex::Regex;
 use std::time::{Duration, Instant};
 use substring::Substring;
@@ -231,13 +234,9 @@ fn get_resp_header_value<'a>(resp_header: &'a ResponseHeader, key: &str) -> Opti
 }
 
 impl Parser {
-    pub fn format(
-        &self,
-        req_header: &RequestHeader,
-        ctx: &State,
-        resp_header: Option<&ResponseHeader>,
-    ) -> String {
+    pub fn format(&self, session: &Session, ctx: &State) -> String {
         let mut buf = String::with_capacity(1024);
+        let req_header = session.req_header();
         for tag in self.tags.iter() {
             match tag.category {
                 TagCategory::Fill => {
@@ -259,7 +258,7 @@ impl Parser {
                     buf.push_str(req_header.uri.path());
                 }
                 TagCategory::Proto => {
-                    if ctx.http_version == 2 {
+                    if session.is_http2() {
                         buf.push_str("HTTP/2.0");
                     } else {
                         buf.push_str("HTTP/1.1");
@@ -274,7 +273,7 @@ impl Parser {
                     // TODO
                 }
                 TagCategory::ClientIp => {
-                    buf.push_str(&ctx.client_ip);
+                    buf.push_str(&utils::get_client_ip(session));
                 }
                 TagCategory::Scheme => {
                     // TODO
@@ -346,7 +345,7 @@ impl Parser {
                     }
                 }
                 TagCategory::ResponseHeader => {
-                    if let Some(resp_header) = resp_header {
+                    if let Some(resp_header) = session.response_written() {
                         if let Some(key) = &tag.data {
                             if let Some(value) = get_resp_header_value(resp_header, key) {
                                 buf.push_str(value);
@@ -381,41 +380,42 @@ impl Parser {
 mod tests {
     use super::Parser;
     use crate::state::State;
-    use http::StatusCode;
-    use pingora::http::{RequestHeader, ResponseHeader};
+    use http::Method;
+    use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
+    use tokio_test::io::Builder;
 
-    #[test]
-    fn test_logger() {
+    #[tokio::test]
+    async fn test_logger() {
         let p: Parser = "{host} {method} {path} {proto} {query} {remote} {client-ip} \
 {scheme} {uri} {referer} {user-agent} {size} \
 {size-human} {status} {latency} {latency-human} {payload-size} {payload-size-human} \
-{~deviceId} {>accept} {<content-type} {:reused}"
+{~deviceId} {>accept} {:reused}"
             .into();
-        let mut req_header =
-            RequestHeader::build_no_case("GET", b"/vicanso/pingap?size=1", Some(4)).unwrap();
-        req_header.insert_header("Host", "github.com").unwrap();
-        req_header
-            .insert_header("Referer", "https://github.com/")
-            .unwrap();
-        req_header
-            .insert_header("User-Agent", "pingap/0.1.1")
-            .unwrap();
-        req_header.insert_header("Cookie", "deviceId=abc").unwrap();
-        req_header
-            .insert_header("Accept", "application/json")
-            .unwrap();
-        let mut resp_header = ResponseHeader::build_no_case(StatusCode::OK, None).unwrap();
-        resp_header.insert_header("Content-Type", "json").unwrap();
+        let headers = vec![
+            "Host: github.com",
+            "Referer: https://github.com/",
+            "User-Agent: pingap/0.1.1",
+            "Cookie: deviceId=abc",
+            "Accept: application/json",
+        ]
+        .join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        assert_eq!(Method::GET, session.req_header().method);
+
         let ctx = State {
             response_body_size: 1024,
             reused: true,
             ..Default::default()
         };
-        let log = p.format(&req_header, &ctx, Some(&resp_header));
+        let log = p.format(&session, &ctx);
         assert_eq!(
             "github.com GET /vicanso/pingap HTTP/1.1 size=1    /vicanso/pingap?size=1 \
-https://github.com/ pingap/0.1.1 1024 1.0KB 0 0 0ns   abc application/json json true",
+https://github.com/ pingap/0.1.1 1024 1.0KB 0 0 0ns   abc application/json true",
             log
         );
     }
