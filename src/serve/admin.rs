@@ -6,8 +6,10 @@ use crate::http_extra::HttpResponse;
 use crate::state::State;
 use crate::utils::get_pkg_version;
 use async_trait::async_trait;
+use bytesize::ByteSize;
 use http::{Method, StatusCode};
 use log::error;
+use memory_stats::memory_stats;
 use once_cell::sync::Lazy;
 use pingora::proxy::Session;
 use rust_embed::RustEmbed;
@@ -41,6 +43,7 @@ struct BasicConfParams {
 struct BasicInfo {
     start_time: u64,
     version: String,
+    memory: String,
 }
 
 const CATEGORY_UPSTREAM: &str = "upstream";
@@ -192,9 +195,15 @@ impl Serve for AdminServe {
                 .unwrap_or(HttpResponse::unknown_error())
             })
         } else if path == "/basic" {
+            let mut memory = "".to_string();
+            if let Some(value) = memory_stats() {
+                memory = ByteSize(value.physical_mem as u64).to_string_as(true);
+            }
+
             HttpResponse::try_from_json(&BasicInfo {
                 start_time: get_start_time(),
                 version: get_pkg_version().to_string(),
+                memory,
             })
             .unwrap_or(HttpResponse::unknown_error())
         } else {

@@ -4,6 +4,7 @@ import { create } from "zustand";
 interface Basic {
   start_time: number;
   version: string;
+  memory: string;
 }
 
 interface ConfigState {
@@ -16,6 +17,7 @@ const useBasicStore = create<ConfigState>()((set, get) => ({
   data: {
     start_time: 0,
     version: "",
+    memory: "",
   },
   initialized: false,
   fetch: async () => {

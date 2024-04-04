@@ -416,12 +416,16 @@ impl ProxyHttp for Server {
 
         // add x-forwarded-for
         if let Some(addr) = session.client_addr() {
-            if let Some(value) = session.get_header(utils::HTTP_HEADER_X_FORWARDED_FOR.clone()) {
-                let value = format!("{}, {}", value.to_str().unwrap_or_default(), addr);
-                let _ = session
-                    .req_header_mut()
-                    .insert_header(utils::HTTP_HEADER_X_FORWARDED_FOR.clone(), value);
-            }
+            let value = if let Some(value) =
+                session.get_header(utils::HTTP_HEADER_X_FORWARDED_FOR.clone())
+            {
+                format!("{}, {}", value.to_str().unwrap_or_default(), addr)
+            } else {
+                addr.to_string()
+            };
+            let _ = session
+                .req_header_mut()
+                .insert_header(utils::HTTP_HEADER_X_FORWARDED_FOR.clone(), value);
         }
 
         Ok(Box::new(peer))
