@@ -234,7 +234,7 @@ mod tests {
             "",
             &LocationConf {
                 upstream: upstream_name.to_string(),
-                host: Some("pingap".to_string()),
+                host: Some("test.com,pingap".to_string()),
                 ..Default::default()
             },
             vec![upstream.clone()],
