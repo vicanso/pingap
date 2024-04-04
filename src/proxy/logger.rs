@@ -270,7 +270,7 @@ impl Parser {
                     }
                 }
                 TagCategory::Remote => {
-                    if let Some(addr) = utils::get_remote_addr(session) {
+                    if let Some(addr) = session.client_addr() {
                         buf.push_str(&addr.to_string());
                     }
                 }

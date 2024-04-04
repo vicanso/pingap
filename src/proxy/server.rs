@@ -415,7 +415,7 @@ impl ProxyHttp for Server {
             .ok_or(pingora::Error::new_str("Upstream not found"))?;
 
         // add x-forwarded-for
-        if let Some(addr) = utils::get_remote_addr(session) {
+        if let Some(addr) = session.client_addr() {
             if let Some(value) = session.get_header(utils::HTTP_HEADER_X_FORWARDED_FOR.clone()) {
                 let value = format!("{}, {}", value.to_str().unwrap_or_default(), addr);
                 let _ = session
