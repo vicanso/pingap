@@ -1,6 +1,7 @@
 use crate::config::UpstreamConf;
 use crate::serve::{Directory, MockResponse, FILE_PROTOCOL, MOCK_PROTOCOL};
 use crate::state::State;
+use crate::utils;
 use futures_util::FutureExt;
 use humantime::parse_duration;
 use pingora::http::RequestHeader;
@@ -8,6 +9,7 @@ use pingora::lb::health_check::{HealthCheck, HttpHealthCheck, TcpHealthCheck};
 use pingora::lb::selection::{Consistent, RoundRobin};
 use pingora::lb::{discovery, Backend, Backends, LoadBalancer};
 use pingora::protocols::l4::socket::SocketAddr;
+use pingora::proxy::Session;
 use pingora::upstreams::peer::HttpPeer;
 use snafu::{ResultExt, Snafu};
 use std::collections::BTreeSet;
@@ -289,18 +291,16 @@ impl Upstream {
         })
     }
     /// Returns a new http peer, if there is no healthy backend, it will return `None`.
-    pub fn new_http_peer(&self, _ctx: &State, header: &RequestHeader) -> Option<HttpPeer> {
+    pub fn new_http_peer(&self, _ctx: &State, session: &Session) -> Option<HttpPeer> {
         let upstream = match &self.lb {
             SelectionLb::RoundRobin(lb) => lb.select(b"", 256),
             SelectionLb::Consistent(lb) => {
                 let key = match self.hash.as_str() {
-                    "url" => header.uri.to_string(),
-                    "path" => header.uri.path().to_string(),
-                    "ip" => {
-                        // TODO
-                        todo!()
-                    }
+                    "url" => session.req_header().uri.to_string(),
+                    "path" => session.req_header().uri.path().to_string(),
+                    "ip" => utils::get_client_ip(session),
                     _ => {
+                        let header = session.req_header();
                         if let Some(value) = header.headers.get(&self.hash) {
                             value.to_str().unwrap_or_default().to_string()
                         } else {
@@ -359,9 +359,10 @@ mod tests {
         new_backends, new_healtch_check, new_http_health_check, new_tcp_health_check,
         HealthCheckConf, State, Upstream, UpstreamConf,
     };
-    use pingora::http::RequestHeader;
+    use pingora::proxy::Session;
     use pingora::upstreams::peer::Peer;
     use std::time::Duration;
+    use tokio_test::io::Builder;
 
     use pretty_assertions::assert_eq;
     #[test]
@@ -416,8 +417,21 @@ mod tests {
         )
         .unwrap();
     }
-    #[test]
-    fn test_upstream() {
+    #[tokio::test]
+    async fn test_upstream() {
+        let headers = vec![
+            "Host: github.com",
+            "Referer: https://github.com/",
+            "User-Agent: pingap/0.1.1",
+            "Cookie: deviceId=abc",
+            "Accept: application/json",
+        ]
+        .join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
         let up = Upstream::new(
             "upstreamname",
             &UpstreamConf {
@@ -426,10 +440,9 @@ mod tests {
             },
         )
         .unwrap();
-        let req_header = RequestHeader::build("GET", b"/", None).unwrap();
         assert_eq!(
             true,
-            up.new_http_peer(&State::default(), &req_header).is_some()
+            up.new_http_peer(&State::default(), &session).is_some()
         );
         assert_eq!(true, up.get_round_robind().is_some());
     }

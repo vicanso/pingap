@@ -411,8 +411,19 @@ impl ProxyHttp for Server {
 
         let peer = lo
             .upstream
-            .new_http_peer(ctx, session.req_header())
+            .new_http_peer(ctx, session)
             .ok_or(pingora::Error::new_str("Upstream not found"))?;
+
+        // add x-forwarded-for
+        if let Some(addr) = session.client_addr() {
+            if let Some(value) = session.get_header(utils::HTTP_HEADER_X_FORWARDED_FOR.clone()) {
+                let value = format!("{}, {}", value.to_str().unwrap_or_default(), addr);
+                let _ = session
+                    .req_header_mut()
+                    .insert_header(utils::HTTP_HEADER_X_FORWARDED_FOR.clone(), value);
+            }
+        }
+
         Ok(Box::new(peer))
     }
     async fn connected_to_upstream(

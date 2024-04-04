@@ -1,6 +1,8 @@
+use http::HeaderName;
+use once_cell::sync::Lazy;
 use path_absolutize::*;
 use pingora::proxy::Session;
-use std::path::Path;
+use std::{path::Path, str::FromStr};
 use substring::Substring;
 
 pub fn split_to_two_trim(value: &str, pat: &str) -> Option<[String; 2]> {
@@ -44,19 +46,27 @@ pub fn resolve_path(path: &str) -> String {
     }
 }
 
+pub static HTTP_HEADER_X_FORWARDED_FOR: Lazy<http::HeaderName> =
+    Lazy::new(|| HeaderName::from_str("X-Forwarded-For").unwrap());
+
+pub static HTTP_HEADER_X_REAL_IP: Lazy<http::HeaderName> =
+    Lazy::new(|| HeaderName::from_str("X-Real-Ip").unwrap());
+
 /// Gets client ip from X-Forwarded-For,
 /// If none, get from X-Real-Ip,
 /// If none, get remote addr
 pub fn get_client_ip(session: &Session) -> String {
-    if let Some(value) = session.get_header("X-Forwarded-For") {
+    if let Some(value) = session.get_header(HTTP_HEADER_X_FORWARDED_FOR.clone()) {
         let arr: Vec<&str> = value.to_str().unwrap_or_default().split(',').collect();
         if !arr.is_empty() {
             return arr[0].trim().to_string();
         }
     }
-    if let Some(value) = session.get_header("X-Real-Ip") {
+    if let Some(value) = session.get_header(HTTP_HEADER_X_REAL_IP.clone()) {
         return value.to_str().unwrap_or_default().to_string();
     }
-    // TODO get remote addr
+    if let Some(addr) = session.client_addr() {
+        return addr.to_string();
+    }
     "".to_string()
 }

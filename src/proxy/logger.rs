@@ -270,7 +270,9 @@ impl Parser {
                     }
                 }
                 TagCategory::Remote => {
-                    // TODO
+                    if let Some(addr) = session.client_addr() {
+                        buf.push_str(&addr.to_string());
+                    }
                 }
                 TagCategory::ClientIp => {
                     buf.push_str(&utils::get_client_ip(session));

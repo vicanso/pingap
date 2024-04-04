@@ -1,7 +1,7 @@
 # TODO
 
 - [x] support add header for location
-- [ ] support x-forwarded-for
+- [x] support x-forwarded-for
 - [x] error page
 - [x] http peer option
 - [x] access log
@@ -24,3 +24,4 @@
 - [ ] support multi host for location?
 - [ ] support set upstream_keepalive_pool_size
 - [ ] graceful restart for admin web
+- [ ] use stable pingora

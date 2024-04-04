@@ -83,13 +83,23 @@ function FormTwoInputFields({
   onUpdate: (data: string[]) => void;
 }) {
   const [newValues, setNewValues] = React.useState(values || []);
+  const divideToTwoValues = (value: string) => {
+    let arr = value.split(divide);
+    if (arr.length < 2) {
+      arr.push("");
+    }
+    if (arr.length > 2) {
+      arr = [arr[0], arr.slice(1).join(divide)];
+    }
+    return arr;
+  };
   const updateNameAndValue = (
     index: number,
     name: string | undefined,
     value: string | undefined,
   ) => {
     const cloneValues = newValues.slice(0);
-    const arr = cloneValues[index].split(divide);
+    const arr = divideToTwoValues(cloneValues[index]);
     if (name === undefined) {
       arr[1] = value || "";
     } else {
@@ -101,7 +111,7 @@ function FormTwoInputFields({
   };
 
   const list = newValues.map((item, index) => {
-    const arr = item.split(divide);
+    const arr = divideToTwoValues(item);
     const name = arr[0];
     let value = "";
     if (arr.length === 2) {
