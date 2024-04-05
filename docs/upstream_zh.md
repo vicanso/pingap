@@ -42,7 +42,7 @@ Mock响应的配置形式为`mock://{"status":500,"headers":["Content-Type: appl
 - `health_check`: 建议配置为health check的形式，根据服务的检测路径配置为`http://upstream名称/路径`，如对于upstream为charts的服务，其检测路径为`/ping`，即可设置为`http://charts/ping`
 
 - `TCP`: tcp://upstreamname?connection_timeout=3s&success=2&failure=1&check_frequency=10s
-- `HTTP`: http(s): http://upstreamname/ping?connection_timeout=3s&read_timeout=1s&success=2&failure=1&check_frequency=10s
+- `HTTP(S)`: http://upstreamname/ping?connection_timeout=3s&read_timeout=1s&success=2&failure=1&check_frequency=10s
 
 健康检测参数说明：
 

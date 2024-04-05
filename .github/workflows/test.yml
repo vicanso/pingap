@@ -28,3 +28,9 @@ jobs:
             make test
             make bench
             make release
+            ls target/x86_64-unknown-linux-musl/release
+      - name: Compress binaries
+        uses: svenstaro/upx-action@v2
+        with:
+          files: |
+            target/x86_64-unknown-linux-musl/release/pingap
