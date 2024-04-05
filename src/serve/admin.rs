@@ -44,6 +44,7 @@ struct BasicInfo {
     start_time: u64,
     version: String,
     memory: String,
+    arch: String,
 }
 
 const CATEGORY_UPSTREAM: &str = "upstream";
@@ -199,10 +200,16 @@ impl Serve for AdminServe {
             if let Some(value) = memory_stats() {
                 memory = ByteSize(value.physical_mem as u64).to_string_as(true);
             }
+            let arch = if cfg!(any(target_arch = "arm", target_arch = "aarch64")) {
+                "arm64"
+            } else {
+                "x86"
+            };
 
             HttpResponse::try_from_json(&BasicInfo {
                 start_time: get_start_time(),
                 version: get_pkg_version().to_string(),
+                arch: arch.to_string(),
                 memory,
             })
             .unwrap_or(HttpResponse::unknown_error())

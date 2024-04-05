@@ -18,20 +18,48 @@ import DialogTitle from "@mui/material/DialogTitle";
 import useBasicStore from "../states/basic";
 import request from "../helpers/request";
 
+function formatDuraion(ts: number) {
+  const seconds = Math.floor(Date.now() / 1000) - ts;
+  if (seconds < 60) {
+    return `${seconds} seconds ago`;
+  }
+  if (seconds < 3600) {
+    const minutes = Math.floor(seconds / 60);
+    if (minutes === 1) {
+      return "1 minute ago";
+    }
+    return `${minutes} minutes ago`;
+  }
+  if (seconds < 24 * 3600) {
+    const hours = Math.floor(seconds / 3600);
+    if (hours === 1) {
+      return "1 hour ago";
+    }
+    return `${hours} hours ago`;
+  }
+  const date = new Date(ts * 1000);
+  let month = `${date.getMonth()}`;
+  let day = `${date.getDay()}`;
+  if (month.length === 1) {
+    month = `0${month}`;
+  }
+  if (day.length === 1) {
+    day = `0${day}`;
+  }
+  return `${month}-${day}`;
+}
+
 export default function MainHeader() {
-  const [fetch] = useBasicStore((state) => [state.fetch]);
-  const [startAt, setStartAt] = React.useState("");
-  const [version, setVersion] = React.useState("");
-  const [memory, setMemory] = React.useState("");
+  const [fetch, basicInfo] = useBasicStore((state) => [
+    state.fetch,
+    state.data,
+  ]);
   const [showSetting, setShowSetting] = React.useState(false);
   const [showRestartDialog, setShowRestartDialog] = React.useState(false);
 
   useAsync(async () => {
     try {
-      const basicInfo = await fetch();
-      setStartAt(new Date(basicInfo.start_time * 1000).toLocaleString());
-      setVersion(basicInfo.version);
-      setMemory(basicInfo.memory);
+      await fetch();
     } catch (err) {
       console.error(err);
     }
@@ -66,21 +94,24 @@ export default function MainHeader() {
           setShowSetting(true);
         }}
       >
-        <Card sx={{ minWidth: 275 }}>
+        <Card sx={{ minWidth: 275, height: "100vh" }}>
           <CardContent>
             <Typography gutterBottom variant="h5" component="div">
               Informations
             </Typography>
             <Box pt={2}>
               <Typography gutterBottom variant="body2">
-                Start Time: {startAt}
+                Start Time: {formatDuraion(basicInfo.start_time)}
               </Typography>
               <Typography gutterBottom variant="body2">
-                Memory: {memory}
+                Memory: {basicInfo.memory}
+              </Typography>
+              <Typography gutterBottom variant="body2">
+                Architecture: {basicInfo.arch}
               </Typography>
               <Button
                 style={{
-                  marginTop: "10px",
+                  marginTop: "15px",
                 }}
                 fullWidth
                 variant="outlined"
@@ -135,7 +166,7 @@ export default function MainHeader() {
         >
           Pingap
           <Typography variant="overline" ml={1}>
-            {version}
+            {basicInfo.version}
           </Typography>
         </Typography>
         {box}

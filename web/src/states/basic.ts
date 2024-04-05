@@ -5,6 +5,7 @@ interface Basic {
   start_time: number;
   version: string;
   memory: string;
+  arch: string;
 }
 
 interface ConfigState {
@@ -18,6 +19,7 @@ const useBasicStore = create<ConfigState>()((set, get) => ({
     start_time: 0,
     version: "",
     memory: "",
+    arch: "",
   },
   initialized: false,
   fetch: async () => {
