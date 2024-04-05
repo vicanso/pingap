@@ -49,3 +49,13 @@ let (location_index, lo) = self
 ```
 
 [Location的详细说明](./location_zh.md)
+
+## Upstream的处理逻辑
+
+Upstream现支持三种类型，包括`静态目录`，`Mock响应`以及常规的`反向代理节点`。upstream的处理比较简单，大概如下：
+
+- `静态目录`: 读取对应的静态文件响应，需要注意静态文件是以chunked的形式返回
+- `Mock响应`: 用于针对部分响应临时mock处理，主要用于临时的应急处理或测试
+- `反向代理节点`: 根据各节点的健康情况以及选择算法，选择对应的节点转发请求
+
+[Upstream的详细说明](./upstream_zh.md)
