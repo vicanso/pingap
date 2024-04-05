@@ -67,7 +67,7 @@ addrs = ["file://~/Downloads"]
 # The upstream for location, it will be the name of one upstream.
 upstream = "charts"
 # How to match the location, it returns true if `host` of http request header
-# equal the config. Default `None` means all match.
+# equal the config, multiple hosts are separated by ",". Default `None` means all match.
 host = ""
 # How to match the location, it returns true if the `url` starts with `path`.
 # Default `None` means all match

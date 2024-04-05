@@ -2,7 +2,7 @@
 description: Pingap 简述
 ---
 
-Pingap是基于[pingora](https://github.com/cloudflare/pingora)开发的，pingora提供了各类模块便于rust开发者使用，但并不方便非rust开发者使用，因此pingap提供了以toml的形式配置简单易用的反向代理，在以下流程中接入调整，实现支持多location代理转发。特性如下：
+Pingap是基于[pingora](https://github.com/cloudflare/pingora)开发的，pingora提供了各类模块便于rust开发者使用，但并不方便非rust开发者使用，因此pingap提供了以toml的形式配置简单易用的反向代理，实现支持多location代理转发。特性如下：
 
 - 可通过请求的路径与域名筛选对应的location
 - 支持静态文件目录处理
@@ -15,37 +15,37 @@ TODO 接入http缓存的逻辑
 
 [Pingap处理流程](./phase_chart_zh.md)
 
-## Location
+## 根据请求的路径选择对应的服务
 
-Location支持配置对应的host与path规则，path支持以下的规则，权重由高至低：
+Pingap支持两种特别的服务类型，以及常规的反向代理服务，具体如下：
 
-- 全等模式，配置以`=`开始，如`=/api`表示匹配path等于`/api`的请求
-- 正则模式，配置以`~`开始，如`~^/(api|rest)`表示匹配path以`/api`或`/rest`开始请求
-- 前缀模式，如`/api`表示匹配path为`/api`开始的请求
+- `Stats`: 获取Server所对应的性能指标
+- `Admin`: 根据启动时指定的admin地址或者配置的`admin path`转发至对应的管理后台服务
+- `其它`: 常规的反向代理服务，根据域名与路径选择对应的转发节点
 
-在server中会根据所添加的所有location列表，计算对应的权重重新排序，location的计算权限逻辑如下：
+```mermaid
+graph TD;
+    start("新的请求")-->ServiceFilter{{请求服务筛选}};
+    ServiceFilter--是否匹配stats-->stats的处理;
+    ServiceFilter--是否匹配admin-->admin的处理;
+    ServiceFilter--根据host与path选择对应的Location-->Location筛选处理;
+```
+
+## Location的处理逻辑
+
+该Server下的所有location在初始化时根据权重按高至低排序，接受到请求时按顺序一个个匹配到符合的location为止，若无符合的则返回出错。根据符合的location重写path(若无则不需要)，添加请求头(若无则不需要)，成功响应时添加响应头(若无则不需要)。
 
 ```rust
-pub fn get_weight(&self) -> u32 {
-    // path starts with
-    // = 65536
-    // prefix(default) 32768
-    // ~ 16384
-    // host exist 8192
-    let mut weighted: u32 = 0;
-    if let Some(path) = &self.path {
-        if path.starts_with('=') {
-            weighted += 65536;
-        } else if path.starts_with('~') {
-            weighted += 16384;
-        } else {
-            weighted += 32768;
-        }
-        weighted += path.len() as u32;
-    };
-    if self.host.is_some() {
-        weighted += 8192;
-    }
-    weighted
-}
+let header = session.req_header_mut();
+let path = header.uri.path();
+let host = header.uri.host().unwrap_or_default();
+
+let (location_index, lo) = self
+    .locations
+    .iter()
+    .enumerate()
+    .find(|(_, item)| item.matched(host, path))
+    .ok_or_else(|| pingora::Error::new_str(LOCATION_NOT_FOUND))?;
 ```
+
+[Location的详细说明](./location_zh.md)
