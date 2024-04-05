@@ -8,10 +8,15 @@ import IconButton from "@mui/material/IconButton";
 import SettingsSuggestIcon from "@mui/icons-material/SettingsSuggest";
 import SwipeableDrawer from "@mui/material/SwipeableDrawer";
 import CardContent from "@mui/material/CardContent";
-import Divider from "@mui/material/Divider";
+import Button from "@mui/material/Button";
 import Card from "@mui/material/Card";
-
+import Dialog from "@mui/material/Dialog";
+import DialogActions from "@mui/material/DialogActions";
+import DialogContent from "@mui/material/DialogContent";
+import DialogContentText from "@mui/material/DialogContentText";
+import DialogTitle from "@mui/material/DialogTitle";
 import useBasicStore from "../states/basic";
+import request from "../helpers/request";
 
 export default function MainHeader() {
   const [fetch] = useBasicStore((state) => [state.fetch]);
@@ -19,6 +24,7 @@ export default function MainHeader() {
   const [version, setVersion] = React.useState("");
   const [memory, setMemory] = React.useState("");
   const [showSetting, setShowSetting] = React.useState(false);
+  const [showRestartDialog, setShowRestartDialog] = React.useState(false);
 
   useAsync(async () => {
     try {
@@ -30,6 +36,16 @@ export default function MainHeader() {
       console.error(err);
     }
   }, []);
+
+  const confirmRestart = async () => {
+    try {
+      await request.post("/restart");
+      setShowRestartDialog(false);
+    } catch (err) {
+      console.error(err);
+      alert(err);
+    }
+  };
   const box = (
     <React.Fragment>
       <IconButton
@@ -62,10 +78,51 @@ export default function MainHeader() {
               <Typography gutterBottom variant="body2">
                 Memory: {memory}
               </Typography>
+              <Button
+                style={{
+                  marginTop: "10px",
+                }}
+                fullWidth
+                variant="outlined"
+                onClick={() => {
+                  setShowRestartDialog(true);
+                }}
+              >
+                Restart Pingap
+              </Button>
             </Box>
           </CardContent>
         </Card>
       </SwipeableDrawer>
+      <Dialog
+        open={showRestartDialog}
+        onClose={() => {
+          setShowRestartDialog(false);
+        }}
+        aria-labelledby="alert-dialog-title"
+        aria-describedby="alert-dialog-description"
+      >
+        <DialogTitle id="alert-dialog-title">
+          {"Are you sure to restart pingap?"}
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText id="alert-dialog-description">
+            Pingap will graceful restart with new configuration.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => {
+              setShowRestartDialog(false);
+            }}
+          >
+            Cancel
+          </Button>
+          <Button onClick={confirmRestart} autoFocus>
+            Restart
+          </Button>
+        </DialogActions>
+      </Dialog>
     </React.Fragment>
   );
   return (

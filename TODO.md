@@ -23,5 +23,5 @@
 - [x] add remark for config
 - [x] support multi host for location?
 - [ ] support set upstream_keepalive_pool_size
-- [ ] graceful restart for admin web
+- [x] graceful restart for admin web
 - [ ] use stable pingora

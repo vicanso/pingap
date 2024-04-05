@@ -4,14 +4,12 @@ description: Pingap 简述
 
 Pingap是基于[pingora](https://github.com/cloudflare/pingora)开发的，pingora提供了各类模块便于rust开发者使用，但并不方便非rust开发者使用，因此pingap提供了以toml的形式配置简单易用的反向代理，实现支持多location代理转发。特性如下：
 
-- 可通过请求的路径与域名筛选对应的location
-- 支持静态文件目录处理
-- 支持mock的响应配置
-- 支持HTTP1与HTTP2
-- 无中断请求的配置更新
-- 模板式的请求日志输出
-
-TODO 接入http缓存的逻辑
+- 支持多location配置，可通过请求的路径与域名筛选
+- 支持静态文件目录处理，简单方便的chunk的形式响应静态文件
+- 支持mock的响应配置，方便测试或应急使用
+- 支持HTTP1与HTTP2两种协议
+- 无中断请求的配置更新，方便实时更新应用配置
+- 模板式的请求日志输出，可按模板指定各种输出
 
 [Pingap处理流程](./phase_chart_zh.md)
 

@@ -206,6 +206,12 @@ impl Serve for AdminServe {
                 memory,
             })
             .unwrap_or(HttpResponse::unknown_error())
+        } else if path == "/restart" {
+            if let Err(e) = config::restart() {
+                error!("Restart fail: {e}");
+                return Err(pingora::Error::new_str("restart fail"));
+            }
+            HttpResponse::no_content()
         } else {
             let mut file = path.substring(1, path.len());
             if file.is_empty() {

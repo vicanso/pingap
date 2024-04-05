@@ -90,6 +90,28 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
     config::set_config_path(&args.conf);
 
+    if let Ok(exec_path) = std::env::current_exe() {
+        let mut cmd = config::RestartProcessCommand {
+            exec_path,
+            ..Default::default()
+        };
+        if let Ok(env) = std::env::var("RUST_LOG") {
+            cmd.log_level = env;
+        }
+        let conf_path = utils::resolve_path(&args.conf);
+
+        let mut new_args = vec![
+            format!("-c={conf_path}"),
+            "-d".to_string(),
+            "-u".to_string(),
+        ];
+        if let Some(log) = &args.log {
+            new_args.push(format!("--log={log}"));
+        }
+        cmd.args = new_args;
+        config::set_restart_process_command(cmd);
+    }
+
     let opt = Opt {
         upgrade: args.upgrade,
         daemon: args.daemon,
