@@ -44,13 +44,15 @@ graph TD;
 
     server -- "Path:/rest/*"--> locationB
 
-    locationA -- "10.0.0.1:8001" --> upstreamA1
+    locationA -- "10.0.0.1:8001" --> upstreamA1 --> response
 
-    locationA -- "10.0.0.2:8001" --> upstreamA2
+    locationA -- "10.0.0.2:8001" --> upstreamA2 --> response
 
-    locationB -- "10.0.0.1:8002" --> upstreamB1
+    locationB -- "10.0.0.1:8002" --> upstreamB1 --> response
 
-    locationB -- "10.0.0.2:8002" --> upstreamB2
+    locationB -- "10.0.0.2:8002" --> upstreamB2 --> response
+
+    response --> stop("logging");
 ```
 
 ## Rust version
