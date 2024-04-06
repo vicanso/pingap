@@ -114,13 +114,13 @@ impl LocationConf {
         let validate = |headers: &Option<Vec<String>>| -> Result<()> {
             if let Some(headers) = headers {
                 for header in headers.iter() {
-                    let arr = utils::split_to_two_trim(header, ":");
+                    let arr = header.split_once(':');
                     if arr.is_none() {
                         return Err(Error::Invalid {
                             message: format!("{header} is invalid header(location:{name})"),
                         });
                     }
-                    HeaderValue::from_str(&arr.unwrap()[1]).map_err(|err| Error::Invalid {
+                    HeaderValue::from_str(arr.unwrap().1.trim()).map_err(|err| Error::Invalid {
                         message: format!("{}(location:{name})", err),
                     })?;
                 }

@@ -324,28 +324,28 @@ impl Upstream {
     }
 
     #[inline]
-    pub fn get_round_robind(&self) -> Option<Arc<LoadBalancer<RoundRobin>>> {
+    pub fn as_round_robind(&self) -> Option<Arc<LoadBalancer<RoundRobin>>> {
         match &self.lb {
             SelectionLb::RoundRobin(lb) => Some(lb.clone()),
             _ => None,
         }
     }
     #[inline]
-    pub fn get_consistent(&self) -> Option<Arc<LoadBalancer<Consistent>>> {
+    pub fn as_consistent(&self) -> Option<Arc<LoadBalancer<Consistent>>> {
         match &self.lb {
             SelectionLb::Consistent(lb) => Some(lb.clone()),
             _ => None,
         }
     }
     #[inline]
-    pub fn get_directory(&self) -> Option<Arc<Directory>> {
+    pub fn as_directory(&self) -> Option<Arc<Directory>> {
         match &self.lb {
             SelectionLb::Directory(lb) => Some(lb.clone()),
             _ => None,
         }
     }
     #[inline]
-    pub fn get_mock(&self) -> Option<Arc<MockResponse>> {
+    pub fn as_mock(&self) -> Option<Arc<MockResponse>> {
         match &self.lb {
             SelectionLb::Mock(lb) => Some(lb.clone()),
             _ => None,
@@ -444,6 +444,6 @@ mod tests {
             true,
             up.new_http_peer(&State::default(), &session).is_some()
         );
-        assert_eq!(true, up.get_round_robind().is_some());
+        assert_eq!(true, up.as_round_robind().is_some());
     }
 }

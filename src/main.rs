@@ -44,9 +44,15 @@ struct Args {
 }
 
 fn new_server_conf(args: &Args, conf: &PingapConf) -> server::configuration::ServerConf {
-    let mut server_conf = server::configuration::ServerConf::default();
-    server_conf.pid_file = format!("/tmp/{}.pid", utils::get_pkg_name());
-    server_conf.upgrade_sock = format!("/tmp/{}.sock", utils::get_pkg_name());
+    let mut server_conf = server::configuration::ServerConf {
+        pid_file: format!("/tmp/{}.pid", utils::get_pkg_name()),
+        upgrade_sock: format!("/tmp/{}.sock", utils::get_pkg_name()),
+        user: conf.user.clone(),
+        group: conf.group.clone(),
+        daemon: args.daemon,
+        error_log: args.log.clone(),
+        ..Default::default()
+    };
     if let Some(pid_file) = &conf.pid_file {
         server_conf.pid_file = pid_file.to_string();
     }
@@ -59,10 +65,6 @@ fn new_server_conf(args: &Args, conf: &PingapConf) -> server::configuration::Ser
     if let Some(work_stealing) = conf.work_stealing {
         server_conf.work_stealing = work_stealing
     }
-    server_conf.user = conf.user.clone();
-    server_conf.group = conf.group.clone();
-    server_conf.daemon = args.daemon;
-    server_conf.error_log = args.log.clone();
 
     server_conf
 }

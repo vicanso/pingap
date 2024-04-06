@@ -1,4 +1,3 @@
-use crate::utils::split_to_two_trim;
 use http::header;
 use http::{HeaderName, HeaderValue};
 use once_cell::sync::Lazy;
@@ -25,9 +24,11 @@ pub type HttpHeader = (HeaderName, HeaderValue);
 pub fn convert_headers(header_values: &[String]) -> Result<Vec<HttpHeader>> {
     let mut arr = vec![];
     for item in header_values {
-        if let Some([k, v]) = split_to_two_trim(item, ":") {
-            let name = HeaderName::from_str(&k).context(InvalidHeaderNameSnafu { value: k })?;
-            let value = HeaderValue::from_str(&v).context(InvalidHeaderValueSnafu { value: v })?;
+        if let Some((k, v)) = item.split_once(':') {
+            let name =
+                HeaderName::from_str(k.trim()).context(InvalidHeaderNameSnafu { value: k })?;
+            let value =
+                HeaderValue::from_str(v.trim()).context(InvalidHeaderValueSnafu { value: v })?;
             arr.push((name, value));
         }
     }

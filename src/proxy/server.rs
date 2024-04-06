@@ -232,10 +232,10 @@ impl Server {
         let mut bg_services: Vec<Box<dyn IService>> = vec![];
         for item in self.locations.iter() {
             let name = format!("BG {}", item.upstream.name);
-            if let Some(up) = item.upstream.get_round_robind() {
+            if let Some(up) = item.upstream.as_round_robind() {
                 bg_services.push(Box::new(GenBackgroundService::new(name.clone(), up)));
             }
-            if let Some(up) = item.upstream.get_consistent() {
+            if let Some(up) = item.upstream.as_consistent() {
                 bg_services.push(Box::new(GenBackgroundService::new(name, up)));
             }
         }
@@ -395,11 +395,11 @@ impl ProxyHttp for Server {
             let _ = new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri));
         }
         ctx.location_index = Some(location_index);
-        if let Some(dir) = lo.upstream.get_directory() {
+        if let Some(dir) = lo.upstream.as_directory() {
             let result = dir.handle(session, ctx).await?;
             return Ok(result);
         }
-        if let Some(mock) = lo.upstream.get_mock() {
+        if let Some(mock) = lo.upstream.as_mock() {
             let result = mock.handle(session, ctx).await?;
             return Ok(result);
         }
@@ -488,10 +488,11 @@ impl ProxyHttp for Server {
             }
         }
     }
+
     fn upstream_response_body_filter(
         &self,
         _session: &mut Session,
-        body: &Option<bytes::Bytes>,
+        body: &mut Option<bytes::Bytes>,
         _end_of_stream: bool,
         ctx: &mut Self::CTX,
     ) {
