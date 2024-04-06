@@ -4,8 +4,8 @@ error_template = ""
 # The pid file of this server. Default `/tmp/pingap.pid`
 pid_file = "/tmp/pingap.pid"
 
-# The path to the upgrade socket. Default `/tmp/pingap.sock`
-upgrade_sock = "/tmp/pingap.sock"
+# The path to the upgrade socket. Default `/tmp/pingap_upgrade.sock`
+upgrade_sock = "/tmp/pingap_upgrade.sock"
 
 # If configured, after daemonization, this process will switch to
 # the given user before starting to serve traffic. Default `None`

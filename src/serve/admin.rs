@@ -14,6 +14,7 @@ use once_cell::sync::Lazy;
 use pingora::proxy::Session;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use substring::Substring;
 
 #[derive(RustEmbed)]
@@ -37,6 +38,13 @@ struct BasicConfParams {
     group: Option<String>,
     threads: Option<usize>,
     work_stealing: Option<bool>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub grace_period: Option<Duration>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub graceful_shutdown_timeout: Option<Duration>,
+    pub upstream_keepalive_pool_size: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -138,6 +146,9 @@ impl AdminServe {
                 conf.group = basic_conf.group;
                 conf.threads = basic_conf.threads;
                 conf.work_stealing = basic_conf.work_stealing;
+                conf.grace_period = basic_conf.grace_period;
+                conf.graceful_shutdown_timeout = basic_conf.graceful_shutdown_timeout;
+                conf.upstream_keepalive_pool_size = basic_conf.upstream_keepalive_pool_size;
             }
         };
         save_config(&config::get_config_path(), &mut conf).map_err(|e| {

@@ -219,6 +219,7 @@ pub struct PingapConf {
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub graceful_shutdown_timeout: Option<Duration>,
+    pub upstream_keepalive_pool_size: Option<usize>,
 }
 
 impl PingapConf {
@@ -260,6 +261,7 @@ struct TomlConfig {
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub graceful_shutdown_timeout: Option<Duration>,
+    pub upstream_keepalive_pool_size: Option<usize>,
 }
 
 fn format_toml(value: &Value) -> String {
@@ -340,6 +342,7 @@ pub fn load_config(path: &str, admin: bool) -> Result<PingapConf> {
         created_at: data.created_at,
         grace_period: data.grace_period,
         graceful_shutdown_timeout: data.graceful_shutdown_timeout,
+        upstream_keepalive_pool_size: data.upstream_keepalive_pool_size,
         ..Default::default()
     };
     for (name, value) in data.upstreams {

@@ -8,7 +8,7 @@ Pingap使用toml来配置相关参数，具体参数说明如下：
 
 - `error_template`: 参数可选，出错时的html模板，可自定义出错的html模板，在出错时会替换模板中的`{{version}}`为pingap的版本号，`{{content}}`为出错的具体信息。
 - `pid_file`: 参数可选，默认为`/tmp/pingap.pid`，此参数配置进程id的记录文件。
-- `upgrade_sock`: 参数可选，默认为`/tmp/pingap.sock`，此参数配置程序无中断式更新时的socket路径，用于新的pingap进程与旧进程之间切换时使用。
+- `upgrade_sock`: 参数可选，默认为`/tmp/pingap_upgrade.sock`，此参数配置程序无中断式更新时的socket路径，用于新的pingap进程与旧进程之间切换时使用。
 - `user`: 参数可选，默认为空，用于设置守护进程的执行用户
 - `group`: 参数可选，默认为空，与`user`类似
 - `threads`: 参数可选，默认为1，用于设置每个服务(如server监控的tcp连接)使用的线程数，如果设置为0，则使用cpu或cgroup限制核数

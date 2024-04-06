@@ -58,6 +58,27 @@ export default function BasicInfo() {
       category: FormItemCategory.TEXT,
     },
     {
+      id: "grace_period",
+      label: "Grace Period",
+      defaultValue: config.grace_period,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
+      id: "graceful_shutdown_timeout",
+      label: "Graceful Shutdown Timeout",
+      defaultValue: config.graceful_shutdown_timeout,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
+      id: "upstream_keepalive_pool_size",
+      label: "Upstream Keepalive Pool Size",
+      defaultValue: config.upstream_keepalive_pool_size,
+      span: 12,
+      category: FormItemCategory.NUMBER,
+    },
+    {
       id: "error_template",
       label: "Error Template",
       defaultValue: config.error_template,

@@ -46,7 +46,7 @@ struct Args {
 fn new_server_conf(args: &Args, conf: &PingapConf) -> server::configuration::ServerConf {
     let mut server_conf = server::configuration::ServerConf {
         pid_file: format!("/tmp/{}.pid", utils::get_pkg_name()),
-        upgrade_sock: format!("/tmp/{}.sock", utils::get_pkg_name()),
+        upgrade_sock: format!("/tmp/{}_upgrade.sock", utils::get_pkg_name()),
         user: conf.user.clone(),
         group: conf.group.clone(),
         daemon: args.daemon,
@@ -58,6 +58,9 @@ fn new_server_conf(args: &Args, conf: &PingapConf) -> server::configuration::Ser
     }
     if let Some(value) = conf.graceful_shutdown_timeout {
         server_conf.graceful_shutdown_timeout_seconds = Some(value.as_secs());
+    }
+    if let Some(upstream_keepalive_pool_size) = conf.upstream_keepalive_pool_size {
+        server_conf.upstream_keepalive_pool_size = upstream_keepalive_pool_size;
     }
     if let Some(pid_file) = &conf.pid_file {
         server_conf.pid_file = pid_file.to_string();
