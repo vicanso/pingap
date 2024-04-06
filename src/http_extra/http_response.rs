@@ -11,6 +11,17 @@ use std::pin::Pin;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncReadExt;
 
+// 2022-05-07
+const SUPER_TIMESTAMP: u64 = 1651852800;
+
+fn get_super_ts() -> u32 {
+    if let Ok(value) = SystemTime::now().duration_since(UNIX_EPOCH) {
+        (value.as_secs() - SUPER_TIMESTAMP) as u32
+    } else {
+        0
+    }
+}
+
 fn get_cache_control(max_age: Option<u32>, cache_private: Option<bool>) -> HttpHeader {
     if let Some(max_age) = max_age {
         let category = if cache_private.unwrap_or_default() {
@@ -35,7 +46,7 @@ pub struct HttpResponse {
     // max age of http response
     pub max_age: Option<u32>,
     // created time of http response
-    pub created_at: Option<u64>,
+    pub created_at: Option<u32>,
     // private for cache control
     pub cache_private: Option<bool>,
     // headers for http response
@@ -67,6 +78,14 @@ impl HttpResponse {
             headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
             body: Bytes::from("Unknown Error"),
             ..Default::default()
+        }
+    }
+    /// Returns the created time of response
+    pub fn get_created_timestamp(&self) -> u64 {
+        if let Some(value) = self.created_at {
+            SUPER_TIMESTAMP + (value as u64)
+        } else {
+            0
         }
     }
     /// Gets the response from serde json, and sets the status of response.
@@ -109,11 +128,7 @@ impl HttpResponse {
         resp.insert_header(cache_control.0, cache_control.1)?;
 
         if let Some(created_at) = self.created_at {
-            let secs = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-                - created_at;
+            let secs = get_super_ts() - created_at;
             if let Ok(value) = header::HeaderValue::from_str(&secs.to_string()) {
                 resp.insert_header(header::AGE, value)?;
             }
@@ -208,14 +223,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{get_cache_control, HttpChunkResponse, HttpResponse};
+    use super::{get_cache_control, get_super_ts, HttpChunkResponse, HttpResponse};
     use crate::http_extra::convert_headers;
     use crate::utils::resolve_path;
     use bytes::Bytes;
     use http::StatusCode;
-    use pretty_assertions::assert_eq;
+    use pretty_assertions::{assert_eq, assert_ne};
     use serde::Serialize;
-    use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::fs;
 
     #[test]
@@ -273,13 +287,7 @@ mod tests {
             status: StatusCode::OK,
             body: Bytes::from("Hello world!"),
             max_age: Some(3600),
-            created_at: Some(
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
-                    - 10,
-            ),
+            created_at: Some(get_super_ts() - 10),
             cache_private: Some(true),
             headers: Some(
                 convert_headers(&[
@@ -289,6 +297,8 @@ mod tests {
                 .unwrap(),
             ),
         };
+
+        assert_ne!(0, resp.get_created_timestamp());
 
         let mut header = resp.get_response_header().unwrap();
         assert_eq!(true, !header.headers.get("Age").unwrap().is_empty());
