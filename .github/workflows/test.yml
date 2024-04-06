@@ -20,8 +20,7 @@ jobs:
       - name: release
         uses: addnab/docker-run-action@v3
         with:
-          arch: aarch64
-          image: messense/rust-musl-cross:aarch64-musl
+          image: messense/rust-musl-cross:x86_64-musl
           options: -v ${{ github.workspace }}:/home/rust/src
           run: |
             rustc --version
