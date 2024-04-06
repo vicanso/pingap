@@ -24,11 +24,9 @@ pub type HttpHeader = (HeaderName, HeaderValue);
 pub fn convert_headers(header_values: &[String]) -> Result<Vec<HttpHeader>> {
     let mut arr = vec![];
     for item in header_values {
-        if let Some((k, v)) = item.split_once(':') {
-            let name =
-                HeaderName::from_str(k.trim()).context(InvalidHeaderNameSnafu { value: k })?;
-            let value =
-                HeaderValue::from_str(v.trim()).context(InvalidHeaderValueSnafu { value: v })?;
+        if let Some((k, v)) = item.split_once(':').map(|(k, v)| (k.trim(), v.trim())) {
+            let name = HeaderName::from_str(k).context(InvalidHeaderNameSnafu { value: k })?;
+            let value = HeaderValue::from_str(v).context(InvalidHeaderValueSnafu { value: v })?;
             arr.push((name, value));
         }
     }
