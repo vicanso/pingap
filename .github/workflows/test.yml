@@ -20,12 +20,12 @@ jobs:
       - name: release
         uses: addnab/docker-run-action@v3
         with:
-          arch: aarch64
           image: messense/rust-musl-cross:aarch64-musl
           options: -v ${{ github.workspace }}:/home/rust/src
           run: |
             rustc --version
             cargo --version
+            ln -s /usr/bin/g++ /usr/bin/musl-g++
             make test
             make bench
             make release
