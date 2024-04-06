@@ -383,7 +383,7 @@ export default function FormEditor({
             onUpdate={(data) => {
               updateValue(item.id, data);
             }}
-            addLabel="Add Header"
+            addLabel="Add Response Header"
           />
         );
         break;

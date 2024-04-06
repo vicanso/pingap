@@ -16,6 +16,25 @@ upstream地址配置以`file://目录路径?chunk_size=8192&max_age=3600&private
 
 - `index`: 指定默认路径对应的文件，无默认值
 
+性能测试访问`30KB`的静态文件，线程限制为1，CPU为M2系列：
+
+```bash
+wrk 'http://127.0.0.1:6188/common-153cff7b.js' --latency
+Running 10s test @ http://127.0.0.1:6188/common-153cff7b.js
+  2 threads and 10 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   438.96us  113.29us   3.65ms   82.09%
+    Req/Sec    11.44k     1.01k   12.06k    90.10%
+  Latency Distribution
+     50%  420.00us
+     75%  469.00us
+     90%  566.00us
+     99%  782.00us
+  229845 requests in 10.10s, 6.58GB read
+Requests/sec:  22758.02
+Transfer/sec:    667.24MB
+```
+
 ### Mock响应
 
 Mock响应的配置形式为`mock://{"status":500,"headers":["Content-Type: application/json"],"data":"{\"message\":\"Mock Service Unavailable\"}"}`配置响应，配置形式为json形式，用于应急或测试使用，参数说明如下：

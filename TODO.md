@@ -22,6 +22,6 @@
 - [x] mock response for upstream
 - [x] add remark for config
 - [x] support multi host for location?
-- [ ] support set upstream_keepalive_pool_size
+- [x] support set upstream_keepalive_pool_size
 - [x] graceful restart for admin web
-- [ ] use stable pingora
+- [x] use stable pingora
