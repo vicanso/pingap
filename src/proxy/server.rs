@@ -424,7 +424,7 @@ impl ProxyHttp for Server {
         let peer = lo
             .upstream
             .new_http_peer(ctx, session)
-            .ok_or(pingora::Error::new_str("Upstream not found"))?;
+            .ok_or(pingora::Error::new_str("No available upstream"))?;
 
         Ok(Box::new(peer))
     }
