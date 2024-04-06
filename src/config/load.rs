@@ -213,6 +213,12 @@ pub struct PingapConf {
     pub threads: Option<usize>,
     pub work_stealing: Option<bool>,
     pub created_at: Option<String>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub grace_period: Option<Duration>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub graceful_shutdown_timeout: Option<Duration>,
 }
 
 impl PingapConf {
@@ -248,6 +254,12 @@ struct TomlConfig {
     threads: Option<usize>,
     work_stealing: Option<bool>,
     created_at: Option<String>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub grace_period: Option<Duration>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub graceful_shutdown_timeout: Option<Duration>,
 }
 
 fn format_toml(value: &Value) -> String {
@@ -326,6 +338,8 @@ pub fn load_config(path: &str, admin: bool) -> Result<PingapConf> {
         threads,
         work_stealing: data.work_stealing,
         created_at: data.created_at,
+        grace_period: data.grace_period,
+        graceful_shutdown_timeout: data.graceful_shutdown_timeout,
         ..Default::default()
     };
     for (name, value) in data.upstreams {

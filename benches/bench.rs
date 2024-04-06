@@ -102,6 +102,7 @@ fn location_filter(c: &mut Criterion) {
         Upstream::new(
             upstream_name,
             &UpstreamConf {
+                addrs: vec!["127.0.0.1:8001".to_string()],
                 ..Default::default()
             },
         )
@@ -167,6 +168,7 @@ fn location_rewrite_path(c: &mut Criterion) {
         Upstream::new(
             upstream_name,
             &UpstreamConf {
+                addrs: vec!["127.0.0.1:8001".to_string()],
                 ..Default::default()
             },
         )

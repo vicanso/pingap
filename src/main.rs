@@ -53,6 +53,12 @@ fn new_server_conf(args: &Args, conf: &PingapConf) -> server::configuration::Ser
         error_log: args.log.clone(),
         ..Default::default()
     };
+    if let Some(value) = conf.grace_period {
+        server_conf.grace_period_seconds = Some(value.as_secs());
+    }
+    if let Some(value) = conf.graceful_shutdown_timeout {
+        server_conf.graceful_shutdown_timeout_seconds = Some(value.as_secs());
+    }
     if let Some(pid_file) = &conf.pid_file {
         server_conf.pid_file = pid_file.to_string();
     }
