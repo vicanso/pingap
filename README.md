@@ -56,6 +56,27 @@ graph TD;
     response --> stop("logging");
 ```
 
+## Performance
+
+CPU: M2, Thread: 1
+
+```bash
+wrk 'http://127.0.0.1:6188/stats' --latency
+Running 10s test @ http://127.0.0.1:6188/stats
+  2 threads and 10 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    87.92us   60.91us   3.69ms   89.97%
+    Req/Sec    57.32k     2.17k   69.69k    91.09%
+  Latency Distribution
+     50%   93.00us
+     75%  100.00us
+     90%  106.00us
+     99%  133.00us
+  1151171 requests in 10.10s, 320.61MB read
+Requests/sec: 113977.63
+Transfer/sec:     31.74MB
+```
+
 ## Rust version
 
 Our current MSRV is 1.74
