@@ -1,6 +1,6 @@
 [package]
 name = "pingap"
-version = "0.1.15"
+version = "0.1.16"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 edition = "2021"
 categories = ["network-programming", "web-programming::http-server"]
@@ -39,7 +39,7 @@ once_cell = "1.19.0"
 path-absolutize = "3.1.1"
 pingora = { version = "0.1.0", default-features = false, features = [
     "lb",
-    "boringssl",
+    "openssl",
 ], git = "https://github.com/cloudflare/pingora.git", tag = "0.1.1" }
 regex = "1.10.4"
 rust-embed = { version = "8.3.0", features = ["mime-guess", "compression"] }
