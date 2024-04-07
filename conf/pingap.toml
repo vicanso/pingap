@@ -29,6 +29,11 @@ grace_period = "3m"
 # Timeout in seconds of the final step for the graceful shutdown. Default `5s`.
 graceful_shutdown_timeout = "10s"
 
+# Webhook for some events, such as backend becomes unhealthy. Default `None`
+# webhook = "http://127.0.0.1:6001/webhook"
+
+# Log level, `info`, `warn`, `error` or `debug`. Default `None`
+# log_level = "info"
 
 # Upsteam config list, it will defined as [upstreams.name]
 [upstreams.charts]

@@ -25,3 +25,6 @@
 - [x] support set upstream_keepalive_pool_size
 - [x] graceful restart for admin web
 - [x] use stable pingora
+- [ ] support etcd or other storage for config
+- [ ] support web hook for backend health check
+- [ ] sentry uri config

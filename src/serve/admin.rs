@@ -1,9 +1,24 @@
+// Copyright 2024 Tree xie.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use super::embedded_file::EmbeddedStaticFile;
 use super::Serve;
 use crate::config::PingapConf;
-use crate::config::{self, get_start_time, save_config, LocationConf, ServerConf, UpstreamConf};
+use crate::config::{self, save_config, LocationConf, ServerConf, UpstreamConf};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
+use crate::state::{get_start_time, restart};
 use crate::utils::get_pkg_version;
 use async_trait::async_trait;
 use bytesize::ByteSize;
@@ -45,6 +60,8 @@ struct BasicConfParams {
     #[serde(with = "humantime_serde")]
     pub graceful_shutdown_timeout: Option<Duration>,
     pub upstream_keepalive_pool_size: Option<usize>,
+    pub webhook: Option<String>,
+    pub log_level: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -149,6 +166,8 @@ impl AdminServe {
                 conf.grace_period = basic_conf.grace_period;
                 conf.graceful_shutdown_timeout = basic_conf.graceful_shutdown_timeout;
                 conf.upstream_keepalive_pool_size = basic_conf.upstream_keepalive_pool_size;
+                conf.webhook = basic_conf.webhook;
+                conf.log_level = basic_conf.log_level;
             }
         };
         save_config(&config::get_config_path(), &mut conf).map_err(|e| {
@@ -225,7 +244,7 @@ impl Serve for AdminServe {
             })
             .unwrap_or(HttpResponse::unknown_error())
         } else if path == "/restart" {
-            if let Err(e) = config::restart() {
+            if let Err(e) = restart() {
                 error!("Restart fail: {e}");
                 return Err(pingora::Error::new_str("restart fail"));
             }

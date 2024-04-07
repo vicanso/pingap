@@ -72,10 +72,17 @@ export default function BasicInfo() {
       category: FormItemCategory.TEXT,
     },
     {
+      id: "log_level",
+      label: "Log Level",
+      defaultValue: config.log_level,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
       id: "upstream_keepalive_pool_size",
       label: "Upstream Keepalive Pool Size",
       defaultValue: config.upstream_keepalive_pool_size,
-      span: 12,
+      span: 6,
       category: FormItemCategory.NUMBER,
     },
     {

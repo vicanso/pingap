@@ -12,9 +12,9 @@ graph TD;
     LocationFilter--有匹配Location-->按需重写Path-->UpstreamHandle{{Upstream处理}};
     UpstreamHandle--是否静态目录-->读取静态文件-->响应请求;
     UpstreamHandle--是否mock-->响应mock数据-->响应请求;
-    UpstreamHandle--其它类型-->UpstreamServe{{连接Upstream}};
+    UpstreamHandle--反向代理节点-->UpstreamServe{{连接Upstream}};
     UpstreamServe--连接失败-->转换出错信息-->响应请求;
-    UpstreamServe--连接成功-->记录连接相关信息-->写入额外的转发请求头-->UpstreamResponse{{等待Upstream响应}};
+    UpstreamServe--连接成功-->记录连接相关信息-->写入额外的转发请求头-->UpstreamResponse{{等待响应}};
     UpstreamResponse--成功-->添加额外的响应头-->响应请求;
     UpstreamResponse--失败-->转换出错信息-->响应请求;
 

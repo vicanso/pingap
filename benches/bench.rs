@@ -2,13 +2,12 @@ use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion};
 use http::{HeaderName, HeaderValue, StatusCode};
 use pingap::config::{LocationConf, UpstreamConf};
-use pingap::http_extra::{convert_headers, HttpResponse};
+use pingap::http_extra::{convert_headers, get_super_ts, HttpResponse};
 use pingap::proxy::{Location, Upstream};
 use pingora::http::ResponseHeader;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-fn insert_bytes_header(c: &mut Criterion) {
+fn bench_insert_bytes_header(c: &mut Criterion) {
     c.bench_function("bytes header", |b| {
         let arr = vec![
             (
@@ -35,7 +34,7 @@ fn insert_bytes_header(c: &mut Criterion) {
     });
 }
 
-fn insert_header_name(c: &mut Criterion) {
+fn bench_insert_header_name(c: &mut Criterion) {
     c.bench_function("header name", |b| {
         let arr = vec![
             (
@@ -65,19 +64,13 @@ fn insert_header_name(c: &mut Criterion) {
     });
 }
 
-fn get_response_header(c: &mut Criterion) {
+fn bench_get_response_header(c: &mut Criterion) {
     c.bench_function("get response header for http response", |b| {
         let resp = HttpResponse {
             status: StatusCode::OK,
             body: Bytes::from("Hello world!"),
             max_age: Some(3600),
-            created_at: Some(
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
-                    - 10,
-            ),
+            created_at: Some(get_super_ts() - 10),
             cache_private: Some(true),
             headers: Some(
                 convert_headers(&[
@@ -95,7 +88,7 @@ fn get_response_header(c: &mut Criterion) {
     });
 }
 
-fn location_filter(c: &mut Criterion) {
+fn bench_location_filter(c: &mut Criterion) {
     let mut group = c.benchmark_group("location filter");
     let upstream_name = "charts";
     let upstream = Arc::new(
@@ -162,7 +155,7 @@ fn location_filter(c: &mut Criterion) {
     group.finish();
 }
 
-fn location_rewrite_path(c: &mut Criterion) {
+fn bench_location_rewrite_path(c: &mut Criterion) {
     let upstream_name = "charts";
     let upstream = Arc::new(
         Upstream::new(
@@ -192,12 +185,21 @@ fn location_rewrite_path(c: &mut Criterion) {
     });
 }
 
+fn bench_get_super_ts(c: &mut Criterion) {
+    c.bench_function("get super ts", |b| {
+        b.iter(|| {
+            _ = get_super_ts();
+        })
+    });
+}
+
 criterion_group!(
     benches,
-    insert_bytes_header,
-    insert_header_name,
-    get_response_header,
-    location_filter,
-    location_rewrite_path
+    bench_insert_bytes_header,
+    bench_insert_header_name,
+    bench_get_response_header,
+    bench_location_filter,
+    bench_location_rewrite_path,
+    bench_get_super_ts,
 );
 criterion_main!(benches);

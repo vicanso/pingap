@@ -1,22 +1,42 @@
+// Copyright 2024 Tree xie.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use super::{HttpHeader, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_NO_STORE};
 use super::{HTTP_HEADER_NO_CACHE, HTTP_HEADER_TRANSFER_CHUNKED};
 use bytes::Bytes;
 use http::header;
 use http::StatusCode;
 use log::error;
+use once_cell::sync::Lazy;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use serde::Serialize;
 use std::pin::Pin;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncReadExt;
 
-// 2022-05-07
-const SUPER_TIMESTAMP: u64 = 1651852800;
+// 2022-05-07: 1651852800
+// const SUPER_TIMESTAMP: u64 = 1651852800;
+static SUPER_TIMESTAMP: Lazy<SystemTime> = Lazy::new(|| {
+    UNIX_EPOCH
+        .checked_add(Duration::from_secs(1651852800))
+        .unwrap_or(SystemTime::now())
+});
 
-fn get_super_ts() -> u32 {
-    if let Ok(value) = SystemTime::now().duration_since(UNIX_EPOCH) {
-        (value.as_secs() - SUPER_TIMESTAMP) as u32
+pub fn get_super_ts() -> u32 {
+    if let Ok(value) = SystemTime::now().duration_since(*SUPER_TIMESTAMP) {
+        value.as_secs() as u32
     } else {
         0
     }
@@ -80,14 +100,7 @@ impl HttpResponse {
             ..Default::default()
         }
     }
-    /// Returns the created time of response
-    pub fn get_created_timestamp(&self) -> u64 {
-        if let Some(value) = self.created_at {
-            SUPER_TIMESTAMP + (value as u64)
-        } else {
-            0
-        }
-    }
+
     /// Gets the response from serde json, and sets the status of response.
     pub fn try_from_json_status<T>(value: &T, status: StatusCode) -> pingora::Result<Self>
     where
@@ -228,7 +241,7 @@ mod tests {
     use crate::utils::resolve_path;
     use bytes::Bytes;
     use http::StatusCode;
-    use pretty_assertions::{assert_eq, assert_ne};
+    use pretty_assertions::assert_eq;
     use serde::Serialize;
     use tokio::fs;
 
@@ -297,8 +310,6 @@ mod tests {
                 .unwrap(),
             ),
         };
-
-        assert_ne!(0, resp.get_created_timestamp());
 
         let mut header = resp.get_response_header().unwrap();
         assert_eq!(true, !header.headers.get("Age").unwrap().is_empty());

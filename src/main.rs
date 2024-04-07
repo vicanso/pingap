@@ -1,13 +1,29 @@
-use crate::config::get_start_time;
+// Copyright 2024 Tree xie.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use crate::proxy::{Server, ServerConf};
+use crate::state::get_start_time;
 use clap::Parser;
 use config::PingapConf;
-use log::{error, info};
+use log::{error, info, Level};
 use pingora::server;
 use pingora::server::configuration::Opt;
+use std::collections::HashMap;
 use std::error::Error;
 use std::io::Write;
 use std::sync::Arc;
+use std::time::Duration;
 
 mod config;
 mod http_extra;
@@ -78,9 +94,64 @@ fn new_server_conf(args: &Args, conf: &PingapConf) -> server::configuration::Ser
     server_conf
 }
 
+fn send_webhook(webhook: String, msg: String) {
+    if !msg.contains("becomes unhealthy") {
+        return;
+    }
+    std::thread::spawn(move || {
+        if let Ok(rt) = tokio::runtime::Runtime::new() {
+            let send = async move {
+                let client = reqwest::Client::new();
+                let mut data = HashMap::new();
+                data.insert("category", "backend_unhealthy");
+                data.insert("message", &msg);
+                let hostname = state::get_hostname().clone();
+                data.insert("hostname", &hostname);
+                match client
+                    .post(webhook)
+                    .json(&data)
+                    .timeout(Duration::from_secs(30))
+                    .send()
+                    .await
+                {
+                    Ok(res) => {
+                        if res.status().as_u16() < 400 {
+                            info!("Send webhook success");
+                        } else {
+                            error!("Send webhook fail, status:{}", res.status());
+                        }
+                    }
+                    Err(e) => {
+                        error!("Send webhook fail, {e}");
+                    }
+                };
+            };
+            rt.block_on(send);
+        }
+    });
+}
+
 fn run() -> Result<(), Box<dyn Error>> {
-    env_logger::Builder::from_env(env_logger::Env::default())
-        .format(|buf, record| {
+    let args = Args::parse();
+    let conf = config::load_config(&args.conf, args.admin.is_some())?;
+    conf.validate()?;
+    let webhook = conf.webhook.clone().unwrap_or_default();
+    let mut builder = env_logger::Builder::from_env(env_logger::Env::default());
+    if let Some(log_level) = &conf.log_level {
+        match log_level.to_lowercase().as_str() {
+            "error" => builder.filter_level(log::LevelFilter::Error),
+            "warn" => builder.filter_level(log::LevelFilter::Warn),
+            "debug" => builder.filter_level(log::LevelFilter::Debug),
+            _ => builder.filter_level(log::LevelFilter::Info),
+        };
+    }
+
+    builder
+        .format(move |buf, record| {
+            if !webhook.is_empty() && record.level() == Level::Warn {
+                send_webhook(webhook.clone(), format!("{}", record.args()));
+            }
+
             writeln!(
                 buf,
                 "{} {} {}",
@@ -91,9 +162,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         })
         .try_init()?;
 
-    let args = Args::parse();
-    let conf = config::load_config(&args.conf, args.admin.is_some())?;
-    conf.validate()?;
     // return if test mode
     if args.test {
         info!("validate config success");
@@ -102,7 +170,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     config::set_config_path(&args.conf);
 
     if let Ok(exec_path) = std::env::current_exe() {
-        let mut cmd = config::RestartProcessCommand {
+        let mut cmd = state::RestartProcessCommand {
             exec_path,
             ..Default::default()
         };
@@ -120,7 +188,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             new_args.push(format!("--log={log}"));
         }
         cmd.args = new_args;
-        config::set_restart_process_command(cmd);
+        state::set_restart_process_command(cmd);
     }
 
     let opt = Opt {

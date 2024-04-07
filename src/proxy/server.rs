@@ -1,10 +1,24 @@
+// Copyright 2024 Tree xie.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use super::logger::Parser;
 use super::{Location, Upstream};
 use crate::config::{LocationConf, PingapConf, UpstreamConf};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON};
 use crate::serve::Serve;
 use crate::serve::ADMIN_SERVE;
-use crate::state::State;
+use crate::state::{get_hostname, State};
 use crate::utils;
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -13,7 +27,6 @@ use bytesize::ByteSize;
 use http::StatusCode;
 use log::{error, info};
 use memory_stats::memory_stats;
-use once_cell::sync::Lazy;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::listeners::TlsSettings;
 use pingora::protocols::http::error_resp;
@@ -156,14 +169,6 @@ pub struct Server {
     tls_key: Option<Vec<u8>>,
 }
 
-static HOST_NAME: Lazy<String> = Lazy::new(|| {
-    hostname::get()
-        .unwrap_or_default()
-        .to_str()
-        .unwrap_or_default()
-        .to_string()
-});
-
 #[derive(Serialize)]
 struct ServerStats {
     processing: i32,
@@ -281,7 +286,7 @@ impl Server {
         let buf = serde_json::to_vec(&ServerStats {
             accepted: self.accepted.load(Ordering::Relaxed),
             processing: self.processing.load(Ordering::Relaxed),
-            hostname: HOST_NAME.to_string(),
+            hostname: get_hostname(),
             physical_mem: ByteSize(physical_mem as u64).to_string_as(true),
             physical_mem_mb: physical_mem / (1024 * 1024),
         })
