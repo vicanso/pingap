@@ -200,6 +200,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     };
     let mut my_server = server::Server::new(Some(opt))?;
     my_server.configuration = Arc::new(new_server_conf(&args, &conf));
+    my_server.sentry = conf.sentry.clone();
     my_server.bootstrap();
 
     let mut server_conf_list: Vec<ServerConf> = conf.into();
