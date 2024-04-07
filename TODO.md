@@ -26,5 +26,5 @@
 - [x] graceful restart for admin web
 - [x] use stable pingora
 - [ ] support etcd or other storage for config
-- [ ] support web hook for backend health check
-- [ ] sentry uri config
+- [x] support web hook for backend health check
+- [x] sentry uri config

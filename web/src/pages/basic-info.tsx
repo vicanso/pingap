@@ -86,6 +86,13 @@ export default function BasicInfo() {
       category: FormItemCategory.NUMBER,
     },
     {
+      id: "sentry",
+      label: "Sentry",
+      defaultValue: config.sentry,
+      span: 12,
+      category: FormItemCategory.TEXT,
+    },
+    {
       id: "error_template",
       label: "Error Template",
       defaultValue: config.error_template,

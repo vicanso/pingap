@@ -62,6 +62,7 @@ struct BasicConfParams {
     pub upstream_keepalive_pool_size: Option<usize>,
     pub webhook: Option<String>,
     pub log_level: Option<String>,
+    pub sentry: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -168,6 +169,7 @@ impl AdminServe {
                 conf.upstream_keepalive_pool_size = basic_conf.upstream_keepalive_pool_size;
                 conf.webhook = basic_conf.webhook;
                 conf.log_level = basic_conf.log_level;
+                conf.sentry = basic_conf.sentry;
             }
         };
         save_config(&config::get_config_path(), &mut conf).map_err(|e| {

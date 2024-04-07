@@ -52,6 +52,7 @@ interface Config {
   graceful_shutdown_timeout?: string;
   upstream_keepalive_pool_size?: number;
   log_level?: string;
+  sentry?: string;
 }
 
 interface ConfigState {

@@ -236,6 +236,7 @@ pub struct PingapConf {
     pub upstream_keepalive_pool_size: Option<usize>,
     pub webhook: Option<String>,
     pub log_level: Option<String>,
+    pub sentry: Option<String>,
 }
 
 impl PingapConf {
@@ -280,6 +281,7 @@ struct TomlConfig {
     pub upstream_keepalive_pool_size: Option<usize>,
     pub webhook: Option<String>,
     pub log_level: Option<String>,
+    pub sentry: Option<String>,
 }
 
 fn format_toml(value: &Value) -> String {
@@ -363,6 +365,7 @@ pub fn load_config(path: &str, admin: bool) -> Result<PingapConf> {
         upstream_keepalive_pool_size: data.upstream_keepalive_pool_size,
         webhook: data.webhook,
         log_level: data.log_level,
+        sentry: data.sentry,
         ..Default::default()
     };
     for (name, value) in data.upstreams {
