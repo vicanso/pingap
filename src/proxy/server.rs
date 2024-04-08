@@ -542,6 +542,7 @@ impl ProxyHttp for Server {
             .replace("{{version}}", utils::get_pkg_version())
             .replace("{{content}}", &e.to_string());
         let buf = Bytes::from(content);
+        ctx.status = Some(StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR));
         ctx.response_body_size = buf.len();
         let _ = resp.insert_header(http::header::CONTENT_TYPE, "text/html; charset=utf-8");
         let _ = resp.insert_header(http::header::CONTENT_LENGTH, buf.len().to_string());
@@ -562,11 +563,6 @@ impl ProxyHttp for Server {
             });
 
         let _ = server_session.write_response_body(buf).await;
-        if ctx.status.is_none() {
-            if let Ok(status) = StatusCode::from_u16(code) {
-                ctx.status = Some(status);
-            }
-        }
         code
     }
     async fn logging(&self, session: &mut Session, _e: Option<&pingora::Error>, ctx: &mut Self::CTX)
@@ -574,6 +570,11 @@ impl ProxyHttp for Server {
         Self::CTX: Send + Sync,
     {
         self.processing.fetch_add(-1, Ordering::Relaxed);
+        if ctx.status.is_none() {
+            if let Some(header) = session.response_written() {
+                ctx.status = Some(header.status);
+            }
+        }
 
         if let Some(p) = &self.log_parser {
             info!("{}", p.format(session, ctx));

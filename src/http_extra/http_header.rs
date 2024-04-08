@@ -22,12 +22,12 @@ use std::str::FromStr;
 pub enum Error {
     InvalidHeaderValue {
         value: String,
-        source: http::header::InvalidHeaderValue,
+        source: header::InvalidHeaderValue,
     },
     #[snafu(display("Invalid header name {source}, {value}"))]
     InvalidHeaderName {
         value: String,
-        source: http::header::InvalidHeaderName,
+        source: header::InvalidHeaderName,
     },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;

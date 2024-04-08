@@ -51,17 +51,22 @@ fn new_path_selector(path: &str) -> Result<PathSelector> {
         return Ok(PathSelector::Empty);
     }
     let se = if path.starts_with('~') {
-        let re = Regex::new(path.substring(1, path.len())).context(RegexSnafu {
+        // remove ~ and trim
+        let path = path.substring(1, path.len()).trim();
+        let re = Regex::new(path).context(RegexSnafu {
             value: path.to_string(),
         })?;
         PathSelector::RegexPath(RegexPath { value: re })
     } else if path.starts_with('=') {
+        // remove = and trim
+        let path = path.substring(1, path.len()).trim();
         PathSelector::EqualPath(EqualPath {
-            value: path.substring(1, path.len()).to_string(),
+            value: path.to_string(),
         })
     } else {
+        // trim
         PathSelector::PrefixPath(PrefixPath {
-            value: path.to_string(),
+            value: path.trim().to_string(),
         })
     };
     Ok(se)

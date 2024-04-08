@@ -36,6 +36,8 @@ pub struct Directory {
     max_age: Option<u32>,
     // private for cache control
     cache_private: Option<bool>,
+    // charset for text file
+    charset: Option<String>,
 }
 
 async fn get_data(file: &PathBuf) -> std::io::Result<(std::fs::Metadata, fs::File)> {
@@ -49,14 +51,23 @@ async fn get_data(file: &PathBuf) -> std::io::Result<(std::fs::Metadata, fs::Fil
     Ok((meta, f))
 }
 
-pub static FILE_PROTOCOL: &str = "file://";
+pub static PROTOCOL_FILE: &str = "file://";
 
-fn get_cacheable_and_headers_from_meta(file: &PathBuf, meta: &Metadata) -> (bool, Vec<HttpHeader>) {
+fn get_cacheable_and_headers_from_meta(
+    file: &PathBuf,
+    meta: &Metadata,
+    charset: &Option<String>,
+) -> (bool, Vec<HttpHeader>) {
     let result = mime_guess::from_path(file);
     let binding = result.first_or_octet_stream();
-    let value = binding.as_ref();
+    let mut value = binding.to_string();
+    if let Some(charset) = charset {
+        if value.starts_with("text/") {
+            value = format!("{value}; charset={charset}");
+        }
+    }
     let cacheable = !value.contains("text/html");
-    let content_type = HeaderValue::from_str(value).unwrap();
+    let content_type = HeaderValue::from_str(&value).unwrap();
     let mut headers = vec![(header::CONTENT_TYPE, content_type)];
 
     if let Ok(mod_time) = meta.modified() {
@@ -75,11 +86,12 @@ fn get_cacheable_and_headers_from_meta(file: &PathBuf, meta: &Metadata) -> (bool
 impl Directory {
     /// Creates a new directory upstream, which will serve static file of directory.
     pub fn new(path: &str) -> Self {
-        let mut new_path = path.substring(FILE_PROTOCOL.len(), path.len());
+        let mut new_path = path.substring(PROTOCOL_FILE.len(), path.len());
         let mut chunk_size = None;
         let mut max_age = None;
         let mut cache_private = None;
         let mut index_file = "index.html".to_string();
+        let mut charset = None;
         if let Ok(url_info) = Url::parse(path) {
             let query = url_info.query().unwrap_or_default();
             if !query.is_empty() {
@@ -99,6 +111,7 @@ impl Directory {
                     }
                     "private" => cache_private = Some(true),
                     "index" => index_file = value.to_string(),
+                    "charset" => charset = Some(value.to_string()),
                     _ => {}
                 }
             }
@@ -108,6 +121,7 @@ impl Directory {
             path: Path::new(&utils::resolve_path(new_path)).to_path_buf(),
             chunk_size,
             max_age,
+            charset,
             cache_private,
         }
     }
@@ -125,7 +139,8 @@ impl Directory {
 
         match get_data(&file).await {
             Ok((meta, mut f)) => {
-                let (cacheable, headers) = get_cacheable_and_headers_from_meta(&file, &meta);
+                let (cacheable, headers) =
+                    get_cacheable_and_headers_from_meta(&file, &meta, &self.charset);
                 let mut resp = HttpChunkResponse::new(&mut f);
                 if let Some(chunk_size) = self.chunk_size {
                     resp.chunk_size = chunk_size;
@@ -176,11 +191,12 @@ mod tests {
 
         assert_ne!(0, meta.size());
 
-        let (cacheable, headers) = get_cacheable_and_headers_from_meta(&file, &meta);
+        let (cacheable, headers) =
+            get_cacheable_and_headers_from_meta(&file, &meta, &Some("utf-8".to_string()));
         assert_eq!(false, cacheable);
         assert_eq!(
             true,
-            format!("{headers:?}").contains(r###"("content-type", "text/html")"###)
+            format!("{headers:?}").contains(r###"("content-type", "text/html; charset=utf-8")"###)
         );
     }
 }

@@ -29,5 +29,5 @@ pub trait Serve {
 }
 
 pub use admin::ADMIN_SERVE;
-pub use directory::{Directory, FILE_PROTOCOL};
-pub use mock::{MockResponse, MOCK_PROTOCOL};
+pub use directory::{Directory, PROTOCOL_FILE};
+pub use mock::{MockResponse, PROTOCOL_MOCK};

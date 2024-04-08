@@ -28,3 +28,5 @@
 - [ ] support etcd or other storage for config
 - [x] support web hook for backend health check
 - [x] sentry uri config
+- [x] charset for static file
+- [x] web hook for wecom, dingtalk robot

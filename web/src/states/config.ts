@@ -53,6 +53,8 @@ interface Config {
   upstream_keepalive_pool_size?: number;
   log_level?: string;
   sentry?: string;
+  webhook?: string;
+  webhook_type?: string;
 }
 
 interface ConfigState {

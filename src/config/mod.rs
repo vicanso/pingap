@@ -26,3 +26,18 @@ pub fn set_config_path(conf_path: &str) {
 pub fn get_config_path() -> String {
     CONFIG_PATH.get_or_init(|| "".to_string()).to_owned()
 }
+
+static CONFIG_HASH: OnceCell<String> = OnceCell::new();
+/// Sets pingap running config's crc hash
+pub fn set_config_hash(version: &str) {
+    CONFIG_HASH.get_or_init(|| version.to_string());
+}
+
+/// Returns current running pingap's config crc hash
+pub fn get_config_hash() -> String {
+    if let Some(value) = CONFIG_HASH.get() {
+        value.to_string()
+    } else {
+        "".to_string()
+    }
+}

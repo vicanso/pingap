@@ -6,6 +6,7 @@ interface Basic {
   version: string;
   memory: string;
   arch: string;
+  config_hash: string;
 }
 
 interface ConfigState {
@@ -20,6 +21,7 @@ const useBasicStore = create<ConfigState>()((set, get) => ({
     version: "",
     memory: "",
     arch: "",
+    config_hash: "",
   },
   initialized: false,
   fetch: async () => {

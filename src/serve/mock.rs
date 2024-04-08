@@ -29,7 +29,7 @@ pub enum Error {
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-pub static MOCK_PROTOCOL: &str = "mock://";
+pub static PROTOCOL_MOCK: &str = "mock://";
 
 #[derive(Default, Deserialize, Serialize, Clone)]
 pub struct MockInfo {
@@ -45,7 +45,7 @@ pub struct MockResponse {
 impl MockResponse {
     /// Creates a new mock response upstream, which will return a mock data.
     pub fn new(path: &str) -> Result<Self> {
-        let new_data = path.substring(MOCK_PROTOCOL.len(), path.len());
+        let new_data = path.substring(PROTOCOL_MOCK.len(), path.len());
         let info: MockInfo = serde_json::from_str(new_data).context(JsonSnafu)?;
 
         let mut resp = HttpResponse {

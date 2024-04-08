@@ -61,6 +61,7 @@ struct BasicConfParams {
     pub graceful_shutdown_timeout: Option<Duration>,
     pub upstream_keepalive_pool_size: Option<usize>,
     pub webhook: Option<String>,
+    pub webhook_type: Option<String>,
     pub log_level: Option<String>,
     pub sentry: Option<String>,
 }
@@ -71,6 +72,7 @@ struct BasicInfo {
     version: String,
     memory: String,
     arch: String,
+    config_hash: String,
 }
 
 const CATEGORY_UPSTREAM: &str = "upstream";
@@ -168,6 +170,7 @@ impl AdminServe {
                 conf.graceful_shutdown_timeout = basic_conf.graceful_shutdown_timeout;
                 conf.upstream_keepalive_pool_size = basic_conf.upstream_keepalive_pool_size;
                 conf.webhook = basic_conf.webhook;
+                conf.webhook_type = basic_conf.webhook_type;
                 conf.log_level = basic_conf.log_level;
                 conf.sentry = basic_conf.sentry;
             }
@@ -242,6 +245,7 @@ impl Serve for AdminServe {
                 start_time: get_start_time(),
                 version: get_pkg_version().to_string(),
                 arch: arch.to_string(),
+                config_hash: config::get_config_hash(),
                 memory,
             })
             .unwrap_or(HttpResponse::unknown_error())
@@ -258,6 +262,7 @@ impl Serve for AdminServe {
             }
             EmbeddedStaticFile(AdminAsset::get(file), 365 * 24 * 3600).into()
         };
+        ctx.status = Some(resp.status);
         ctx.response_body_size = resp.send(session).await?;
         Ok(true)
     }

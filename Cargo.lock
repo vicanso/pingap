@@ -1616,6 +1616,7 @@ dependencies = [
  "bytesize",
  "chrono",
  "clap 4.5.4",
+ "crc32fast",
  "criterion",
  "dirs",
  "env_logger",

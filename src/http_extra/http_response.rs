@@ -12,8 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{HttpHeader, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_NO_STORE};
-use super::{HTTP_HEADER_NO_CACHE, HTTP_HEADER_TRANSFER_CHUNKED};
+use super::{
+    HttpHeader, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_NO_CACHE, HTTP_HEADER_NO_STORE,
+    HTTP_HEADER_TRANSFER_CHUNKED,
+};
 use bytes::Bytes;
 use http::header;
 use http::StatusCode;

@@ -86,6 +86,21 @@ export default function BasicInfo() {
       category: FormItemCategory.NUMBER,
     },
     {
+      id: "webhook_type",
+      label: "Webhook Type",
+      defaultValue: config.webhook_type,
+      span: 4,
+      category: FormItemCategory.WEBHOOK_TYPE,
+      options: ["normal", "wecom", "dingtalk"],
+    },
+    {
+      id: "webhook",
+      label: "Webhook Url",
+      defaultValue: config.webhook,
+      span: 8,
+      category: FormItemCategory.TEXT,
+    },
+    {
       id: "sentry",
       label: "Sentry",
       defaultValue: config.sentry,

@@ -216,6 +216,7 @@ impl ServerConf {
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct PingapConf {
+    pub hash: String,
     pub upstreams: HashMap<String, UpstreamConf>,
     pub locations: HashMap<String, LocationConf>,
     pub servers: HashMap<String, ServerConf>,
@@ -235,6 +236,7 @@ pub struct PingapConf {
     pub graceful_shutdown_timeout: Option<Duration>,
     pub upstream_keepalive_pool_size: Option<usize>,
     pub webhook: Option<String>,
+    pub webhook_type: Option<String>,
     pub log_level: Option<String>,
     pub sentry: Option<String>,
 }
@@ -280,6 +282,7 @@ struct TomlConfig {
     pub graceful_shutdown_timeout: Option<Duration>,
     pub upstream_keepalive_pool_size: Option<usize>,
     pub webhook: Option<String>,
+    pub webhook_type: Option<String>,
     pub log_level: Option<String>,
     pub sentry: Option<String>,
 }
@@ -336,6 +339,7 @@ pub fn load_config(path: &str, admin: bool) -> Result<PingapConf> {
         let mut buf = std::fs::read(&filepath).context(IoSnafu { file: filepath })?;
         data.append(&mut buf);
     }
+    let hash = crc32fast::hash(&data);
     let data: TomlConfig = toml::from_str(
         std::string::String::from_utf8_lossy(&data)
             .to_string()
@@ -352,6 +356,7 @@ pub fn load_config(path: &str, admin: bool) -> Result<PingapConf> {
         None
     };
     let mut conf = PingapConf {
+        hash: format!("{:X}", hash),
         error_template: data.error_template.unwrap_or_default(),
         pid_file: data.pid_file,
         upgrade_sock: data.upgrade_sock,
@@ -364,6 +369,7 @@ pub fn load_config(path: &str, admin: bool) -> Result<PingapConf> {
         graceful_shutdown_timeout: data.graceful_shutdown_timeout,
         upstream_keepalive_pool_size: data.upstream_keepalive_pool_size,
         webhook: data.webhook,
+        webhook_type: data.webhook_type,
         log_level: data.log_level,
         sentry: data.sentry,
         ..Default::default()

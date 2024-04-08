@@ -34,6 +34,7 @@ export enum FormItemCategory {
   CHECKBOX = "checkbox",
   HEADERS = "headers",
   PROXY_HEADERS = "proxyHeaders",
+  WEBHOOK_TYPE = "webhookType",
 }
 
 export interface FormItem {
@@ -211,8 +212,8 @@ export default function FormEditor({
   const theme = useTheme();
   const [data, setData] = React.useState(getDefaultValues(items));
   const defaultLocations: string[] = [];
-  const defaultAddrs: string[] = [];
   let defaultUpstream = "";
+  let defaultWebhookType = "";
   items.forEach((item) => {
     switch (item.category) {
       case FormItemCategory.LOCATION: {
@@ -226,11 +227,8 @@ export default function FormEditor({
         defaultUpstream = item.defaultValue as string;
         break;
       }
-      case FormItemCategory.ADDRS: {
-        const arr = (item.defaultValue as string[]) || [];
-        arr.forEach((addr) => {
-          defaultAddrs.push(addr);
-        });
+      case FormItemCategory.WEBHOOK_TYPE: {
+        defaultWebhookType = item.defaultValue as string;
         break;
       }
     }
@@ -238,7 +236,7 @@ export default function FormEditor({
 
   const [locations, setLocations] = React.useState<string[]>(defaultLocations);
   const [upstream, setUpstream] = React.useState(defaultUpstream);
-  const [addrs, setAddrs] = React.useState(defaultAddrs);
+  const [webhookType, setWebhookType] = React.useState(defaultWebhookType);
 
   const [updated, setUpdated] = React.useState(false);
   const [processing, setProcessing] = React.useState(false);
@@ -341,6 +339,32 @@ export default function FormEditor({
               onChange={(e) => {
                 const { value } = e.target;
                 setUpstream(value);
+                updateValue(item.id, value);
+              }}
+              input={<OutlinedInput label={item.label} />}
+            >
+              {options.map((name) => (
+                <MenuItem key={name} value={name}>
+                  {name}
+                </MenuItem>
+              ))}
+            </Select>
+          </React.Fragment>
+        );
+        break;
+      }
+      case FormItemCategory.WEBHOOK_TYPE: {
+        const options = item.options || [];
+        formItem = (
+          <React.Fragment>
+            <InputLabel id={`{item.id}-label`}>{item.label}</InputLabel>
+            <Select
+              labelId={`{item.id}-label`}
+              id={item.label}
+              value={webhookType}
+              onChange={(e) => {
+                const { value } = e.target;
+                setWebhookType(value);
                 updateValue(item.id, value);
               }}
               input={<OutlinedInput label={item.label} />}

@@ -109,6 +109,9 @@ export default function MainHeader() {
               <Typography gutterBottom variant="body2">
                 Architecture: {basicInfo.arch}
               </Typography>
+              <Typography gutterBottom variant="body2">
+                Config Hash: {basicInfo.config_hash}
+              </Typography>
               <Button
                 style={{
                   marginTop: "15px",

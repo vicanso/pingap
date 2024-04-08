@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::config::UpstreamConf;
-use crate::serve::{Directory, MockResponse, FILE_PROTOCOL, MOCK_PROTOCOL};
+use crate::serve::{Directory, MockResponse, PROTOCOL_FILE, PROTOCOL_MOCK};
 use crate::state::State;
 use crate::utils;
 use futures_util::FutureExt;
@@ -248,9 +248,9 @@ impl Upstream {
         }
         let mut hash = "".to_string();
         let first_addr = conf.addrs[0].clone();
-        let lb = if first_addr.starts_with(FILE_PROTOCOL) {
+        let lb = if first_addr.starts_with(PROTOCOL_FILE) {
             SelectionLb::Directory(Arc::new(Directory::new(&first_addr)))
-        } else if first_addr.starts_with(MOCK_PROTOCOL) {
+        } else if first_addr.starts_with(PROTOCOL_MOCK) {
             let mock_resp = MockResponse::new(&first_addr).map_err(|err| Error::Invalid {
                 message: err.to_string(),
             })?;
