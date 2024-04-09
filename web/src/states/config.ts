@@ -34,6 +34,7 @@ interface Server {
   addr: string;
   access_log?: string;
   locations?: string[];
+  threads?: number;
   tls_cert?: string;
   tls_key?: string;
   stats_path?: string;

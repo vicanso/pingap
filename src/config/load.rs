@@ -192,6 +192,7 @@ pub struct ServerConf {
     pub tls_key: Option<String>,
     pub stats_path: Option<String>,
     pub admin_path: Option<String>,
+    pub threads: Option<usize>,
     pub remark: Option<String>,
 }
 
@@ -267,9 +268,9 @@ impl PingapConf {
 
 #[derive(Deserialize, Debug)]
 struct TomlConfig {
-    servers: Map<String, Value>,
-    upstreams: Map<String, Value>,
-    locations: Map<String, Value>,
+    servers: Option<Map<String, Value>>,
+    upstreams: Option<Map<String, Value>>,
+    locations: Option<Map<String, Value>>,
     error_template: Option<String>,
     pid_file: Option<String>,
     upgrade_sock: Option<String>,
@@ -378,17 +379,17 @@ pub fn load_config(path: &str, admin: bool) -> Result<PingapConf> {
         sentry: data.sentry,
         ..Default::default()
     };
-    for (name, value) in data.upstreams {
+    for (name, value) in data.upstreams.unwrap_or_default() {
         let upstream: UpstreamConf =
             toml::from_str(format_toml(&value).as_str()).context(DeSnafu)?;
         conf.upstreams.insert(name, upstream);
     }
-    for (name, value) in data.locations {
+    for (name, value) in data.locations.unwrap_or_default() {
         let location: LocationConf =
             toml::from_str(format_toml(&value).as_str()).context(DeSnafu)?;
         conf.locations.insert(name, location);
     }
-    for (name, value) in data.servers {
+    for (name, value) in data.servers.unwrap_or_default() {
         let server: ServerConf = toml::from_str(format_toml(&value).as_str()).context(DeSnafu)?;
         conf.servers.insert(name, server);
     }

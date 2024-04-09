@@ -30,5 +30,6 @@
 - [x] sentry uri config
 - [x] charset for static file
 - [x] web hook for wecom, dingtalk robot
-- [ ] verify_cert option for http peer
-- [ ] compression: zstd, br, gzip
+- [x] verify_cert option for http peer
+- [x] compression: zstd, br, gzip
+- [x] support set threads for each server

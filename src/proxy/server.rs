@@ -76,6 +76,7 @@ pub struct ServerConf {
     pub locations: Vec<(String, LocationConf)>,
     pub tls_cert: Option<Vec<u8>>,
     pub tls_key: Option<Vec<u8>>,
+    pub threads: Option<usize>,
     pub error_template: String,
 }
 
@@ -140,6 +141,7 @@ impl From<PingapConf> for Vec<ServerConf> {
                 access_log: item.access_log,
                 upstreams: filter_upstreams,
                 locations: filter_locations,
+                threads: item.threads,
                 error_template,
             });
         }
@@ -165,6 +167,7 @@ pub struct Server {
     error_template: String,
     stats_path: Option<String>,
     admin_path: Option<String>,
+    threads: Option<usize>,
     tls_cert: Option<Vec<u8>>,
     tls_key: Option<Vec<u8>>,
 }
@@ -230,6 +233,7 @@ impl Server {
             error_template: conf.error_template,
             tls_key: conf.tls_key,
             tls_cert: conf.tls_cert,
+            threads: conf.threads,
         })
     }
     pub fn run(self, conf: &Arc<configuration::ServerConf>) -> Result<ServerServices> {
@@ -248,7 +252,9 @@ impl Server {
         let tls_cert = self.tls_cert.clone();
         let tls_key = self.tls_key.clone();
 
+        let threads = self.threads.clone();
         let mut lb = http_proxy_service(conf, self);
+        lb.threads = threads;
         // add tls
         if tls_cert.is_some() {
             let dir = tempfile::tempdir().context(IoSnafu)?;

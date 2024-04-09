@@ -80,6 +80,13 @@ export default function ServerInfo() {
       category: FormItemCategory.TEXT,
     },
     {
+      id: "threads",
+      label: "Threads",
+      defaultValue: server.threads,
+      span: 6,
+      category: FormItemCategory.NUMBER,
+    },
+    {
       id: "remark",
       label: "Remark",
       defaultValue: server.remark,
