@@ -67,6 +67,7 @@ pub struct Upstream {
     read_timeout: Option<Duration>,
     idle_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
+    verify_cert: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -302,6 +303,7 @@ impl Upstream {
             read_timeout: conf.read_timeout,
             idle_timeout: conf.idle_timeout,
             write_timeout: conf.write_timeout,
+            verify_cert: conf.verify_cert,
         })
     }
     /// Returns a new http peer, if there is no healthy backend, it will return `None`.
@@ -333,6 +335,9 @@ impl Upstream {
             p.options.read_timeout = self.read_timeout;
             p.options.idle_timeout = self.idle_timeout;
             p.options.write_timeout = self.write_timeout;
+            if let Some(verify_cert) = self.verify_cert {
+                p.options.verify_cert = verify_cert;
+            }
             p
         })
     }

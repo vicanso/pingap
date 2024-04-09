@@ -24,9 +24,6 @@ pub struct WebhookSendParams {
 }
 
 pub fn send(params: WebhookSendParams) {
-    if !params.msg.contains("becomes unhealthy") {
-        return;
-    }
     std::thread::spawn(move || {
         if let Ok(rt) = tokio::runtime::Runtime::new() {
             let category = "backend_unhealthy";
@@ -35,7 +32,7 @@ pub fn send(params: WebhookSendParams) {
                 let mut data = serde_json::Map::new();
                 let hostname = state::get_hostname().clone();
                 let content = format!(
-                    r###"Pingap Error
+                    r###"Pingap Warnning
                     >hostname: {hostname}
                     >category: {category}
                     >message: {}

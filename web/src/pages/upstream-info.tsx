@@ -85,6 +85,13 @@ export default function UpstreamInfo() {
       category: FormItemCategory.TEXT,
     },
     {
+      id: "verify_cert",
+      label: "Verify Cert",
+      defaultValue: upstream.verify_cert,
+      span: 6,
+      category: FormItemCategory.CHECKBOX,
+    },
+    {
       id: "remark",
       label: "Remark",
       defaultValue: upstream.remark,

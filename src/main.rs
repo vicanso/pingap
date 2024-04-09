@@ -114,7 +114,11 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     builder
         .format(move |buf, record| {
-            if !webhook_url.is_empty() && record.level() == Level::Warn {
+            let msg = format!("{}", record.args());
+            if !webhook_url.is_empty()
+                && record.level() == Level::Warn
+                && msg.contains("becomes unhealthy")
+            {
                 webhook::send(webhook::WebhookSendParams {
                     url: webhook_url.clone(),
                     category: webhook_type.clone(),
@@ -124,10 +128,9 @@ fn run() -> Result<(), Box<dyn Error>> {
 
             writeln!(
                 buf,
-                "{} {} {}",
+                "{} {} {msg}",
                 record.level(),
                 chrono::Local::now().to_rfc3339(),
-                record.args()
             )
         })
         .try_init()?;

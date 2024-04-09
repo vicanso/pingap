@@ -12,6 +12,7 @@ interface Upstream {
   read_timeout?: string;
   idle_timeout?: string;
   write_timeout?: string;
+  verify_cert?: boolean;
   remark?: string;
 }
 
@@ -23,6 +24,9 @@ interface Location {
   proxy_headers?: string[];
   headers?: string[];
   rewrite?: string;
+  gzip_level?: number;
+  br_level?: number;
+  zstd_level?: number;
   remark?: string;
 }
 

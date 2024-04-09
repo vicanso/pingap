@@ -399,6 +399,12 @@ impl ProxyHttp for Server {
             // TODO parse error
             let _ = new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri));
         }
+        // TODO find a way for compressing for static file
+        if let Some(level) = lo.modify_accept_encoding(header) {
+            session.downstream_compression.adjust_decompression(true);
+            session.downstream_compression.adjust_level(level);
+        }
+
         ctx.location_index = Some(location_index);
         if let Some(dir) = lo.upstream.as_directory() {
             let result = dir.handle(session, ctx).await?;
@@ -418,13 +424,7 @@ impl ProxyHttp for Server {
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Box<HttpPeer>> {
-        let location_index = ctx
-            .location_index
-            .ok_or_else(|| pingora::Error::new_str(LOCATION_NOT_FOUND))?;
-        let lo = self
-            .locations
-            .get(location_index)
-            .ok_or_else(|| pingora::Error::new_str(LOCATION_NOT_FOUND))?;
+        let lo = &self.locations[ctx.location_index.unwrap_or_default()];
 
         let peer = lo
             .upstream

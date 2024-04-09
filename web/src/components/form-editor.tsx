@@ -64,6 +64,45 @@ function getStyles(name: string, selectItems: string[], theme: Theme) {
   };
 }
 
+function FormSelectField({
+  options,
+  label,
+  value,
+  onUpdate,
+}: {
+  options?: string[];
+  label: string;
+  value: string;
+  onUpdate: (data: string) => void;
+}) {
+  const [newValue, setNewValue] = React.useState(value);
+
+  const opts = options || [];
+
+  return (
+    <React.Fragment>
+      <InputLabel id={`{item.id}-label`}>{label}</InputLabel>
+      <Select
+        labelId={`{item.id}-label`}
+        id={label}
+        value={newValue}
+        onChange={(e) => {
+          const { value } = e.target;
+          setNewValue(value);
+          onUpdate(value);
+        }}
+        input={<OutlinedInput label={label} />}
+      >
+        {opts.map((name) => (
+          <MenuItem key={name} value={name}>
+            {name}
+          </MenuItem>
+        ))}
+      </Select>
+    </React.Fragment>
+  );
+}
+
 function FormTwoInputFields({
   id,
   divide,
@@ -83,7 +122,11 @@ function FormTwoInputFields({
   addLabel: string;
   onUpdate: (data: string[]) => void;
 }) {
-  const [newValues, setNewValues] = React.useState(values || []);
+  const arr = values || [];
+  if (arr.length === 0) {
+    arr.push("");
+  }
+  const [newValues, setNewValues] = React.useState(arr);
   const divideToTwoValues = (value: string) => {
     let arr = value.split(divide);
     if (arr.length < 2) {
@@ -108,7 +151,14 @@ function FormTwoInputFields({
     }
     cloneValues[index] = arr.join(divide).trim();
     setNewValues(cloneValues);
-    onUpdate(cloneValues);
+    const updateValues: string[] = [];
+    cloneValues.forEach((item) => {
+      const v = item.trim();
+      if (v) {
+        updateValues.push(v);
+      }
+    });
+    onUpdate(updateValues);
   };
 
   const list = newValues.map((item, index) => {
@@ -212,8 +262,6 @@ export default function FormEditor({
   const theme = useTheme();
   const [data, setData] = React.useState(getDefaultValues(items));
   const defaultLocations: string[] = [];
-  let defaultUpstream = "";
-  let defaultWebhookType = "";
   items.forEach((item) => {
     switch (item.category) {
       case FormItemCategory.LOCATION: {
@@ -223,20 +271,10 @@ export default function FormEditor({
         });
         break;
       }
-      case FormItemCategory.UPSTREAM: {
-        defaultUpstream = item.defaultValue as string;
-        break;
-      }
-      case FormItemCategory.WEBHOOK_TYPE: {
-        defaultWebhookType = item.defaultValue as string;
-        break;
-      }
     }
   });
 
   const [locations, setLocations] = React.useState<string[]>(defaultLocations);
-  const [upstream, setUpstream] = React.useState(defaultUpstream);
-  const [webhookType, setWebhookType] = React.useState(defaultWebhookType);
 
   const [updated, setUpdated] = React.useState(false);
   const [processing, setProcessing] = React.useState(false);
@@ -327,55 +365,17 @@ export default function FormEditor({
         );
         break;
       }
-      case FormItemCategory.UPSTREAM: {
-        const options = item.options || [];
-        formItem = (
-          <React.Fragment>
-            <InputLabel id={`{item.id}-label`}>{item.label}</InputLabel>
-            <Select
-              labelId={`{item.id}-label`}
-              id={item.label}
-              value={upstream}
-              onChange={(e) => {
-                const { value } = e.target;
-                setUpstream(value);
-                updateValue(item.id, value);
-              }}
-              input={<OutlinedInput label={item.label} />}
-            >
-              {options.map((name) => (
-                <MenuItem key={name} value={name}>
-                  {name}
-                </MenuItem>
-              ))}
-            </Select>
-          </React.Fragment>
-        );
-        break;
-      }
+      case FormItemCategory.UPSTREAM:
       case FormItemCategory.WEBHOOK_TYPE: {
-        const options = item.options || [];
         formItem = (
-          <React.Fragment>
-            <InputLabel id={`{item.id}-label`}>{item.label}</InputLabel>
-            <Select
-              labelId={`{item.id}-label`}
-              id={item.label}
-              value={webhookType}
-              onChange={(e) => {
-                const { value } = e.target;
-                setWebhookType(value);
-                updateValue(item.id, value);
-              }}
-              input={<OutlinedInput label={item.label} />}
-            >
-              {options.map((name) => (
-                <MenuItem key={name} value={name}>
-                  {name}
-                </MenuItem>
-              ))}
-            </Select>
-          </React.Fragment>
+          <FormSelectField
+            label={item.label}
+            options={item.options}
+            value={item.defaultValue as string}
+            onUpdate={(value) => {
+              updateValue(item.id, value);
+            }}
+          />
         );
         break;
       }

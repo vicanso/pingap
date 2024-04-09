@@ -81,6 +81,7 @@ pub struct UpstreamConf {
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub write_timeout: Option<Duration>,
+    pub verify_cert: Option<bool>,
     pub remark: Option<String>,
 }
 impl UpstreamConf {
@@ -118,6 +119,9 @@ pub struct LocationConf {
     pub headers: Option<Vec<String>>,
     pub rewrite: Option<String>,
     pub weight: Option<u16>,
+    pub gzip_level: Option<u32>,
+    pub br_level: Option<u32>,
+    pub zstd_level: Option<u32>,
     pub remark: Option<String>,
 }
 
