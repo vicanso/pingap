@@ -33,3 +33,4 @@
 - [x] verify_cert option for http peer
 - [x] compression: zstd, br, gzip
 - [x] support set threads for each server
+- [ ] limit of request: ip or custom field

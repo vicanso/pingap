@@ -87,6 +87,13 @@ export default function ServerInfo() {
       category: FormItemCategory.NUMBER,
     },
     {
+      id: "limit",
+      label: "Limit",
+      defaultValue: server.limit,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
       id: "remark",
       label: "Remark",
       defaultValue: server.remark,

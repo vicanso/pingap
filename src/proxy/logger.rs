@@ -15,10 +15,7 @@
 use crate::state::State;
 use crate::utils;
 use bytesize::ByteSize;
-use pingora::{
-    http::{RequestHeader, ResponseHeader},
-    proxy::Session,
-};
+use pingora::{http::ResponseHeader, proxy::Session};
 use regex::Regex;
 use std::time::{Duration, Instant};
 use substring::Substring;
@@ -230,14 +227,6 @@ impl From<&str> for Parser {
     }
 }
 
-fn get_req_header_value<'a>(req_header: &'a RequestHeader, key: &str) -> Option<&'a str> {
-    if let Some(value) = req_header.headers.get(key) {
-        if let Ok(value) = value.to_str() {
-            return Some(value);
-        }
-    }
-    None
-}
 fn get_resp_header_value<'a>(resp_header: &'a ResponseHeader, key: &str) -> Option<&'a str> {
     if let Some(value) = resp_header.headers.get(key) {
         if let Ok(value) = value.to_str() {
@@ -259,7 +248,7 @@ impl Parser {
                     }
                 }
                 TagCategory::Host => {
-                    if let Some(host) = get_req_header_value(req_header, "Host") {
+                    if let Some(host) = utils::get_req_header_value(req_header, "Host") {
                         buf.push_str(host);
                     } else if let Some(host) = req_header.uri.host() {
                         buf.push_str(host);
@@ -289,7 +278,11 @@ impl Parser {
                     }
                 }
                 TagCategory::ClientIp => {
-                    buf.push_str(&utils::get_client_ip(session));
+                    if let Some(client_ip) = &ctx.client_ip {
+                        buf.push_str(client_ip);
+                    } else {
+                        buf.push_str(&utils::get_client_ip(session));
+                    }
                 }
                 TagCategory::Scheme => {
                     // TODO
@@ -298,12 +291,12 @@ impl Parser {
                     buf.push_str(&req_header.uri.to_string());
                 }
                 TagCategory::Referer => {
-                    if let Some(value) = get_req_header_value(req_header, "Referer") {
+                    if let Some(value) = utils::get_req_header_value(req_header, "Referer") {
                         buf.push_str(value);
                     }
                 }
                 TagCategory::UserAgent => {
-                    if let Some(value) = get_req_header_value(req_header, "User-Agent") {
+                    if let Some(value) = utils::get_req_header_value(req_header, "User-Agent") {
                         buf.push_str(value);
                     }
                 }
@@ -344,7 +337,7 @@ impl Parser {
                 TagCategory::Cookie => {
                     let cookie_name = tag.data.clone().unwrap_or_default();
                     let cookie_value =
-                        get_req_header_value(req_header, "Cookie").unwrap_or_default();
+                        utils::get_req_header_value(req_header, "Cookie").unwrap_or_default();
                     for item in cookie_value.split(';') {
                         if let Some((k, v)) = item.split_once('=') {
                             if k == cookie_name {
@@ -355,7 +348,7 @@ impl Parser {
                 }
                 TagCategory::RequestHeader => {
                     if let Some(key) = &tag.data {
-                        if let Some(value) = get_req_header_value(req_header, key) {
+                        if let Some(value) = utils::get_req_header_value(req_header, key) {
                             buf.push_str(value);
                         }
                     }

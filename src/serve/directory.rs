@@ -14,7 +14,9 @@
 
 use crate::state::State;
 use crate::utils;
-use http::{header, HeaderValue};
+use bytes::Bytes;
+use http::{header, HeaderValue, StatusCode};
+use log::error;
 use pingora::proxy::Session;
 use std::fs::Metadata;
 use std::os::unix::fs::MetadataExt;
@@ -22,6 +24,7 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use substring::Substring;
 use tokio::fs;
+use tokio::io::AsyncReadExt;
 use url::Url;
 use urlencoding::decode;
 
@@ -57,7 +60,7 @@ fn get_cacheable_and_headers_from_meta(
     file: &PathBuf,
     meta: &Metadata,
     charset: &Option<String>,
-) -> (bool, Vec<HttpHeader>) {
+) -> (bool, usize, Vec<HttpHeader>) {
     let result = mime_guess::from_path(file);
     let binding = result.first_or_octet_stream();
     let mut value = binding.to_string();
@@ -70,17 +73,18 @@ fn get_cacheable_and_headers_from_meta(
     let content_type = HeaderValue::from_str(&value).unwrap();
     let mut headers = vec![(header::CONTENT_TYPE, content_type)];
 
+    let size = meta.size() as usize;
     if let Ok(mod_time) = meta.modified() {
         let value = mod_time
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
         if value > 0 {
-            let etag = format!(r###"W/"{:x}-{:x}""###, meta.size(), value);
+            let etag = format!(r###"W/"{:x}-{:x}""###, size, value);
             headers.push((header::ETAG, HeaderValue::from_str(&etag).unwrap()));
         }
     }
-    (cacheable, headers)
+    (cacheable, size, headers)
 }
 
 impl Directory {
@@ -139,18 +143,38 @@ impl Directory {
 
         match get_data(&file).await {
             Ok((meta, mut f)) => {
-                let (cacheable, headers) =
+                let (cacheable, size, headers) =
                     get_cacheable_and_headers_from_meta(&file, &meta, &self.charset);
-                let mut resp = HttpChunkResponse::new(&mut f);
-                if let Some(chunk_size) = self.chunk_size {
-                    resp.chunk_size = chunk_size;
+                // 4kb
+                if size <= 4096 {
+                    let mut buffer = vec![0; size];
+
+                    let _ = f.read(&mut buffer).await.map_err(|e| {
+                        error!("Read data fail: {e}");
+                        pingora::Error::new_str("Read data fail")
+                    })?;
+                    HttpResponse {
+                        status: StatusCode::OK,
+                        max_age: self.max_age,
+                        cache_private: self.cache_private,
+                        headers: Some(headers),
+                        body: Bytes::from(buffer),
+                        ..Default::default()
+                    }
+                    .send(session)
+                    .await?
+                } else {
+                    let mut resp = HttpChunkResponse::new(&mut f);
+                    if let Some(chunk_size) = self.chunk_size {
+                        resp.chunk_size = chunk_size;
+                    }
+                    if cacheable {
+                        resp.max_age = self.max_age;
+                    }
+                    resp.cache_private = self.cache_private;
+                    resp.headers = Some(headers);
+                    resp.send(session).await?
                 }
-                if cacheable {
-                    resp.max_age = self.max_age;
-                }
-                resp.cache_private = self.cache_private;
-                resp.headers = Some(headers);
-                resp.send(session).await?
             }
             Err(err) => {
                 if err.kind() == std::io::ErrorKind::NotFound {
@@ -191,7 +215,7 @@ mod tests {
 
         assert_ne!(0, meta.size());
 
-        let (cacheable, headers) =
+        let (cacheable, _, headers) =
             get_cacheable_and_headers_from_meta(&file, &meta, &Some("utf-8".to_string()));
         assert_eq!(false, cacheable);
         assert_eq!(

@@ -307,14 +307,20 @@ impl Upstream {
         })
     }
     /// Returns a new http peer, if there is no healthy backend, it will return `None`.
-    pub fn new_http_peer(&self, _ctx: &State, session: &Session) -> Option<HttpPeer> {
+    pub fn new_http_peer(&self, ctx: &State, session: &Session) -> Option<HttpPeer> {
         let upstream = match &self.lb {
             SelectionLb::RoundRobin(lb) => lb.select(b"", 256),
             SelectionLb::Consistent(lb) => {
                 let key = match self.hash.as_str() {
                     "url" => session.req_header().uri.to_string(),
                     "path" => session.req_header().uri.path().to_string(),
-                    "ip" => utils::get_client_ip(session),
+                    "ip" => {
+                        if let Some(client_ip) = &ctx.client_ip {
+                            client_ip.to_string()
+                        } else {
+                            utils::get_client_ip(session)
+                        }
+                    }
                     _ => {
                         let header = session.req_header();
                         if let Some(value) = header.headers.get(&self.hash) {

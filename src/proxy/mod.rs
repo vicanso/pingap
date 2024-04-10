@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod limit;
 mod location;
 mod logger;
 mod server;
 mod upstream;
 
+pub(crate) use limit::Limiter;
 pub use location::Location;
 pub use server::*;
 pub use upstream::Upstream;

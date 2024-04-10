@@ -14,8 +14,8 @@
 
 use super::embedded_file::EmbeddedStaticFile;
 use super::Serve;
-use crate::config::PingapConf;
 use crate::config::{self, save_config, LocationConf, ServerConf, UpstreamConf};
+use crate::config::{PingapConf, CATEGORY_LOCATION, CATEGORY_SERVER, CATEGORY_UPSTREAM};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use crate::state::{get_start_time, restart};
@@ -75,10 +75,6 @@ struct BasicInfo {
     config_hash: String,
 }
 
-const CATEGORY_UPSTREAM: &str = "upstream";
-const CATEGORY_LOCATION: &str = "location";
-const CATEGORY_SERVER: &str = "server";
-
 impl AdminServe {
     fn load_config(&self) -> pingora::Result<PingapConf> {
         let conf = config::load_config(&config::get_config_path(), true).map_err(|e| {
@@ -117,7 +113,7 @@ impl AdminServe {
             }
             _ => {}
         };
-        save_config(&config::get_config_path(), &mut conf).map_err(|e| {
+        save_config(&config::get_config_path(), &mut conf, category).map_err(|e| {
             error!("failed to save config: {e}");
             pingora::Error::new_str("Save config fail")
         })?;
@@ -175,7 +171,7 @@ impl AdminServe {
                 conf.sentry = basic_conf.sentry;
             }
         };
-        save_config(&config::get_config_path(), &mut conf).map_err(|e| {
+        save_config(&config::get_config_path(), &mut conf, category).map_err(|e| {
             error!("failed to save config: {e}");
             pingora::Error::new_str("Save config fail")
         })?;

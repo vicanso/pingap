@@ -1635,6 +1635,7 @@ dependencies = [
  "once_cell",
  "path-absolutize",
  "pingora",
+ "pingora-limits",
  "pretty_assertions",
  "regex",
  "reqwest",
@@ -1779,6 +1780,14 @@ version = "0.1.1"
 source = "git+https://github.com/cloudflare/pingora.git?tag=0.1.1#6cd881ff7597a6ba36b92a8efca714435c21ed88"
 dependencies = [
  "crc32fast",
+]
+
+[[package]]
+name = "pingora-limits"
+version = "0.1.1"
+source = "git+https://github.com/cloudflare/pingora.git?tag=0.1.1#6cd881ff7597a6ba36b92a8efca714435c21ed88"
+dependencies = [
+ "ahash",
 ]
 
 [[package]]

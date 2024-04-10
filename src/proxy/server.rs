@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::logger::Parser;
-use super::{Location, Upstream};
+use super::{Limiter, Location, Upstream};
 use crate::config::{LocationConf, PingapConf, UpstreamConf};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON};
 use crate::serve::Serve;
@@ -77,6 +77,7 @@ pub struct ServerConf {
     pub tls_cert: Option<Vec<u8>>,
     pub tls_key: Option<Vec<u8>>,
     pub threads: Option<usize>,
+    pub limit: Option<String>,
     pub error_template: String,
 }
 
@@ -142,6 +143,7 @@ impl From<PingapConf> for Vec<ServerConf> {
                 upstreams: filter_upstreams,
                 locations: filter_locations,
                 threads: item.threads,
+                limit: item.limit,
                 error_template,
             });
         }
@@ -170,6 +172,7 @@ pub struct Server {
     threads: Option<usize>,
     tls_cert: Option<Vec<u8>>,
     tls_key: Option<Vec<u8>>,
+    limiter: Option<Limiter>,
 }
 
 #[derive(Serialize)]
@@ -220,6 +223,17 @@ impl Server {
         if let Some(access_log) = conf.access_log {
             p = Some(Parser::from(access_log.as_str()));
         }
+        let limiter = if let Some(limit) = &conf.limit {
+            match Limiter::new(limit) {
+                Ok(limit) => Some(limit),
+                Err(e) => {
+                    error!("Parse limit fail: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         Ok(Server {
             admin: conf.admin,
@@ -234,6 +248,7 @@ impl Server {
             tls_key: conf.tls_key,
             tls_cert: conf.tls_cert,
             threads: conf.threads,
+            limiter,
         })
     }
     pub fn run(self, conf: &Arc<configuration::ServerConf>) -> Result<ServerServices> {
@@ -252,7 +267,7 @@ impl Server {
         let tls_cert = self.tls_cert.clone();
         let tls_key = self.tls_key.clone();
 
-        let threads = self.threads.clone();
+        let threads = self.threads;
         let mut lb = http_proxy_service(conf, self);
         lb.threads = threads;
         // add tls
@@ -363,8 +378,6 @@ impl Server {
     }
 }
 
-static LOCATION_NOT_FOUND: &str = "Location not found";
-
 #[async_trait]
 impl ProxyHttp for Server {
     type CTX = State;
@@ -379,8 +392,15 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
+        if let Some(limiter) = &self.limiter {
+            limiter.incr(session, ctx).map_err(|_e| {
+                let e = pingora::Error::new(pingora::ErrorType::InternalError);
+                pingora::Error::because(pingora::ErrorType::HTTPStatus(429), "Limit eceed", e)
+            })?;
+        }
         ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed);
         self.accepted.fetch_add(1, Ordering::Relaxed);
+        // session.cache.enable(storage, eviction, predictor, cache_lock)
 
         // serve stats or admin
         let served = self.serve_stats_admin(session, ctx).await?;
@@ -397,7 +417,7 @@ impl ProxyHttp for Server {
             .iter()
             .enumerate()
             .find(|(_, item)| item.matched(host, path))
-            .ok_or_else(|| pingora::Error::new_str(LOCATION_NOT_FOUND))?;
+            .ok_or_else(|| pingora::Error::new_str("Location not found"))?;
         if let Some(mut new_path) = lo.rewrite(path) {
             if let Some(query) = header.uri.query() {
                 new_path = format!("{new_path}?{query}");

@@ -24,6 +24,10 @@ use std::time::Duration;
 use toml::{map::Map, Value};
 use url::Url;
 
+pub const CATEGORY_UPSTREAM: &str = "upstream";
+pub const CATEGORY_LOCATION: &str = "location";
+pub const CATEGORY_SERVER: &str = "server";
+
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("{message}"))]
@@ -193,6 +197,7 @@ pub struct ServerConf {
     pub stats_path: Option<String>,
     pub admin_path: Option<String>,
     pub threads: Option<usize>,
+    pub limit: Option<String>,
     pub remark: Option<String>,
 }
 
@@ -266,7 +271,7 @@ impl PingapConf {
     }
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 struct TomlConfig {
     servers: Option<Map<String, Value>>,
     upstreams: Option<Map<String, Value>>,
@@ -303,15 +308,54 @@ fn format_toml(value: &Value) -> String {
 /// Save the confog to path.
 ///
 /// Validate the config before save.
-pub fn save_config(path: &str, conf: &mut PingapConf) -> Result<()> {
+pub fn save_config(path: &str, conf: &mut PingapConf, category: &str) -> Result<()> {
     conf.validate()?;
     conf.created_at = Some(chrono::Local::now().to_rfc3339());
 
-    let filepath = utils::resolve_path(path);
-    let buf = toml::to_string_pretty(&conf).context(SerSnafu)?;
-    std::fs::write(&filepath, buf).context(IoSnafu { file: filepath })?;
-
-    Ok(())
+    let mut filepath = utils::resolve_path(path);
+    let ping_conf = toml::to_string_pretty(&conf).context(SerSnafu)?;
+    if Path::new(&filepath).is_file() {
+        return std::fs::write(&filepath, ping_conf).context(IoSnafu { file: filepath });
+    }
+    // file path is dir
+    let mut data: TomlConfig = toml::from_str(&ping_conf).context(DeSnafu)?;
+    let conf = match category {
+        CATEGORY_SERVER => {
+            filepath = format!("{filepath}/servers.toml");
+            let mut m = Map::new();
+            let _ = m.insert(
+                "servers".to_string(),
+                toml::Value::Table(data.servers.unwrap_or_default()),
+            );
+            toml::to_string_pretty(&m).context(SerSnafu)?
+        }
+        CATEGORY_LOCATION => {
+            filepath = format!("{filepath}/locations.toml");
+            let mut m = Map::new();
+            let _ = m.insert(
+                "locations".to_string(),
+                toml::Value::Table(data.locations.unwrap_or_default()),
+            );
+            toml::to_string_pretty(&m).context(SerSnafu)?
+        }
+        CATEGORY_UPSTREAM => {
+            filepath = format!("{filepath}/upstreams.toml");
+            let mut m = Map::new();
+            let _ = m.insert(
+                "upstreams".to_string(),
+                toml::Value::Table(data.upstreams.unwrap_or_default()),
+            );
+            toml::to_string_pretty(&m).context(SerSnafu)?
+        }
+        _ => {
+            filepath = format!("{filepath}/basic.toml");
+            data.servers = None;
+            data.locations = None;
+            data.upstreams = None;
+            toml::to_string_pretty(&data).context(SerSnafu)?
+        }
+    };
+    std::fs::write(&filepath, conf).context(IoSnafu { file: filepath })
 }
 
 /// Load the config from path.

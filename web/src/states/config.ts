@@ -39,6 +39,7 @@ interface Server {
   tls_key?: string;
   stats_path?: string;
   admin_path?: string;
+  limit?: string;
   remark?: string;
 }
 

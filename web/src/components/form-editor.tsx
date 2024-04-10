@@ -335,7 +335,7 @@ export default function FormEditor({
         break;
       }
       case FormItemCategory.LOCATION: {
-        const options = item.options || [];
+        const options = (item.options || []).sort();
         formItem = (
           <React.Fragment>
             <InputLabel id={`{item.id}-label`}>{item.label}</InputLabel>
@@ -345,7 +345,7 @@ export default function FormEditor({
               multiple
               value={locations}
               onChange={(e) => {
-                const values = e.target.value as string[];
+                const values = (e.target.value as string[]).sort();
                 setLocations(values);
                 updateValue(item.id, values);
               }}

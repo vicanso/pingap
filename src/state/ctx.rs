@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use http::StatusCode;
+use pingora_limits::inflight::Guard;
 use std::time::Instant;
 
 pub struct State {
@@ -23,6 +24,8 @@ pub struct State {
     pub reused: bool,
     pub upstream_address: String,
     pub location_index: Option<usize>,
+    pub client_ip: Option<String>,
+    pub guard: Option<Guard>,
 }
 
 impl Default for State {
@@ -35,6 +38,8 @@ impl Default for State {
             reused: false,
             upstream_address: "".to_string(),
             location_index: None,
+            client_ip: None,
+            guard: None,
         }
     }
 }

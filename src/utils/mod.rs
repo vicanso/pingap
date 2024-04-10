@@ -15,7 +15,7 @@
 use http::HeaderName;
 use once_cell::sync::Lazy;
 use path_absolutize::*;
-use pingora::proxy::Session;
+use pingora::{http::RequestHeader, proxy::Session};
 use std::{path::Path, str::FromStr};
 use substring::Substring;
 
@@ -82,4 +82,13 @@ pub fn get_client_ip(session: &Session) -> String {
         return addr;
     }
     "".to_string()
+}
+
+pub fn get_req_header_value<'a>(req_header: &'a RequestHeader, key: &str) -> Option<&'a str> {
+    if let Some(value) = req_header.headers.get(key) {
+        if let Ok(value) = value.to_str() {
+            return Some(value);
+        }
+    }
+    None
 }
