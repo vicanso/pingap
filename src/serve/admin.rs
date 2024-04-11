@@ -21,6 +21,7 @@ use crate::state::State;
 use crate::state::{get_start_time, restart};
 use crate::utils::get_pkg_version;
 use async_trait::async_trait;
+use bytes::{BufMut, BytesMut};
 use bytesize::ByteSize;
 use http::{Method, StatusCode};
 use log::error;
@@ -125,7 +126,10 @@ impl AdminServe {
         category: &str,
         name: &str,
     ) -> pingora::Result<HttpResponse> {
-        let buf = session.read_request_body().await?.unwrap_or_default();
+        let mut buf = BytesMut::with_capacity(4096);
+        while let Some(value) = session.read_request_body().await? {
+            buf.put(value.as_ref());
+        }
         let key = name.to_string();
         let mut conf = self.load_config()?;
         match category {

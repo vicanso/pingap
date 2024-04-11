@@ -12,12 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::Upstream;
+use super::{Limiter, Upstream};
 use crate::config::LocationConf;
 use crate::http_extra::{convert_headers, HttpHeader};
+use crate::state::State;
 use http::header::HeaderValue;
+use log::error;
 use once_cell::sync::Lazy;
 use pingora::http::{RequestHeader, ResponseHeader};
+use pingora::proxy::Session;
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
 use std::sync::Arc;
@@ -89,6 +92,7 @@ pub struct Location {
     gzip_level: u32,
     br_level: u32,
     zstd_level: u32,
+    limiter: Option<Limiter>,
     pub support_compression: bool,
     pub upstream: Arc<Upstream>,
 }
@@ -138,6 +142,17 @@ impl Location {
         let zstd_level = conf.zstd_level.unwrap_or_default();
         let support_compression = gzip_level + br_level + zstd_level > 0;
         let path = conf.path.clone().unwrap_or_default();
+        let limiter = if let Some(limit) = &conf.limit {
+            match Limiter::new(limit) {
+                Ok(l) => Some(l),
+                Err(e) => {
+                    error!("New limiter fail: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         Ok(Location {
             // name: conf.name.clone(),
             path_selector: new_path_selector(&path)?,
@@ -151,6 +166,7 @@ impl Location {
             br_level,
             zstd_level,
             support_compression,
+            limiter,
         })
     }
     /// Returns `true` if the host and path match location.
@@ -232,6 +248,17 @@ impl Location {
             };
         }
         None
+    }
+    #[inline]
+    /// Validate the request count less than max limit, and set the guard to ctx.
+    pub fn validate_limit(&self, session: &Session, ctx: &mut State) -> pingora::Result<()> {
+        if let Some(limiter) = &self.limiter {
+            return limiter.incr(session, ctx).map_err(|_e| {
+                let e = pingora::Error::new(pingora::ErrorType::InternalError);
+                pingora::Error::because(pingora::ErrorType::HTTPStatus(429), "Limit eceed", e)
+            });
+        }
+        Ok(())
     }
 }
 

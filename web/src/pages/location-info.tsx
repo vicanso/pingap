@@ -101,6 +101,13 @@ export default function LocationInfo() {
       category: FormItemCategory.NUMBER,
     },
     {
+      id: "limit",
+      label: "Limit",
+      defaultValue: location.limit,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
       id: "remark",
       label: "Remark",
       defaultValue: location.remark,

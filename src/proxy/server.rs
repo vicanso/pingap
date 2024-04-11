@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::logger::Parser;
-use super::{Limiter, Location, Upstream};
+use super::{Location, Upstream};
 use crate::config::{LocationConf, PingapConf, UpstreamConf};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON};
 use crate::serve::Serve;
@@ -77,7 +77,6 @@ pub struct ServerConf {
     pub tls_cert: Option<Vec<u8>>,
     pub tls_key: Option<Vec<u8>>,
     pub threads: Option<usize>,
-    pub limit: Option<String>,
     pub error_template: String,
 }
 
@@ -143,7 +142,6 @@ impl From<PingapConf> for Vec<ServerConf> {
                 upstreams: filter_upstreams,
                 locations: filter_locations,
                 threads: item.threads,
-                limit: item.limit,
                 error_template,
             });
         }
@@ -172,7 +170,6 @@ pub struct Server {
     threads: Option<usize>,
     tls_cert: Option<Vec<u8>>,
     tls_key: Option<Vec<u8>>,
-    limiter: Option<Limiter>,
 }
 
 #[derive(Serialize)]
@@ -223,17 +220,6 @@ impl Server {
         if let Some(access_log) = conf.access_log {
             p = Some(Parser::from(access_log.as_str()));
         }
-        let limiter = if let Some(limit) = &conf.limit {
-            match Limiter::new(limit) {
-                Ok(limit) => Some(limit),
-                Err(e) => {
-                    error!("Parse limit fail: {e}");
-                    None
-                }
-            }
-        } else {
-            None
-        };
 
         Ok(Server {
             admin: conf.admin,
@@ -248,7 +234,6 @@ impl Server {
             tls_key: conf.tls_key,
             tls_cert: conf.tls_cert,
             threads: conf.threads,
-            limiter,
         })
     }
     pub fn run(self, conf: &Arc<configuration::ServerConf>) -> Result<ServerServices> {
@@ -392,12 +377,6 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        if let Some(limiter) = &self.limiter {
-            limiter.incr(session, ctx).map_err(|_e| {
-                let e = pingora::Error::new(pingora::ErrorType::InternalError);
-                pingora::Error::because(pingora::ErrorType::HTTPStatus(429), "Limit eceed", e)
-            })?;
-        }
         ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed);
         self.accepted.fetch_add(1, Ordering::Relaxed);
         // session.cache.enable(storage, eviction, predictor, cache_lock)
@@ -440,6 +419,7 @@ impl ProxyHttp for Server {
             let result = mock.handle(session, ctx).await?;
             return Ok(result);
         }
+        lo.validate_limit(session, ctx)?;
         // TODO get response from cache
         // check location support cache
 

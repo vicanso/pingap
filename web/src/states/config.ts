@@ -27,6 +27,7 @@ interface Location {
   gzip_level?: number;
   br_level?: number;
   zstd_level?: number;
+  limit?: string;
   remark?: string;
 }
 
@@ -39,7 +40,6 @@ interface Server {
   tls_key?: string;
   stats_path?: string;
   admin_path?: string;
-  limit?: string;
   remark?: string;
 }
 

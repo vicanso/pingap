@@ -1,22 +1,24 @@
 # TODO
 
+- [ ] support alpn for location
+- [ ] custom error for pingora error
+- [ ] authentication for admin page
+- [ ] support etcd or other storage for config
+- [ ] better error handler
+- [ ] log rotate
 - [x] support add header for location
 - [x] support x-forwarded-for
 - [x] error page
 - [x] http peer option
 - [x] access log
 - [x] support format for env logger(or tokio tracing)
-- [ ] better error handler
 - [x] config validate
 - [x] support add tls
-- [ ] log rotate
 - [x] stats of server
 - [x] start without config
 - [x] static serve for admin
 - [x] status:499 for client abort
 - [x] support get pingap start time
-- [ ] custom error for pingora error
-- [ ] authentication for admin page
 - [x] static file serve
 - [x] set priority for location
 - [x] mock response for upstream
@@ -25,7 +27,6 @@
 - [x] support set upstream_keepalive_pool_size
 - [x] graceful restart for admin web
 - [x] use stable pingora
-- [ ] support etcd or other storage for config
 - [x] support web hook for backend health check
 - [x] sentry uri config
 - [x] charset for static file
@@ -33,4 +34,4 @@
 - [x] verify_cert option for http peer
 - [x] compression: zstd, br, gzip
 - [x] support set threads for each server
-- [ ] limit of request: ip or custom field
+- [x] location limit of request: ip or custom field

@@ -33,10 +33,10 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(PartialEq)]
 pub enum LimitTag {
-    Cookie,
-    RequestHeader,
-    Query,
     Ip,
+    RequestHeader,
+    Cookie,
+    Query,
 }
 
 pub struct Limiter {
@@ -78,17 +78,22 @@ impl Limiter {
     /// Otherwise returns a Guard.
     pub fn incr(&self, session: &Session, ctx: &mut State) -> Result<()> {
         let key = match self.tag {
-            LimitTag::Ip => {
-                let client_ip = utils::get_client_ip(session);
-                ctx.client_ip = Some(client_ip.clone());
-                client_ip
-            }
+            LimitTag::Query => utils::get_query_value(session.req_header(), &self.value)
+                .unwrap_or_default()
+                .to_string(),
             LimitTag::RequestHeader => {
                 utils::get_req_header_value(session.req_header(), &self.value)
                     .unwrap_or_default()
                     .to_string()
             }
-            _ => "".to_string(),
+            LimitTag::Cookie => utils::get_cookie_value(session.req_header(), &self.value)
+                .unwrap_or_default()
+                .to_string(),
+            _ => {
+                let client_ip = utils::get_client_ip(session);
+                ctx.client_ip = Some(client_ip.clone());
+                client_ip
+            }
         };
         if key.is_empty() {
             return Ok(());

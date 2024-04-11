@@ -92,3 +92,29 @@ pub fn get_req_header_value<'a>(req_header: &'a RequestHeader, key: &str) -> Opt
     }
     None
 }
+
+pub fn get_cookie_value<'a>(req_header: &'a RequestHeader, cookie_name: &str) -> Option<&'a str> {
+    if let Some(cookie_value) = get_req_header_value(req_header, "Cookie") {
+        for item in cookie_value.split(';') {
+            if let Some((k, v)) = item.split_once('=') {
+                if k == cookie_name {
+                    return Some(v.trim());
+                }
+            }
+        }
+    }
+    None
+}
+
+pub fn get_query_value<'a>(req_header: &'a RequestHeader, name: &str) -> Option<&'a str> {
+    if let Some(query) = req_header.uri.query() {
+        for item in query.split('&') {
+            if let Some((k, v)) = item.split_once('=') {
+                if k == name {
+                    return Some(v.trim());
+                }
+            }
+        }
+    }
+    None
+}

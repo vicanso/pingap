@@ -335,15 +335,10 @@ impl Parser {
                     buf.push_str(&format!("{:?}", Duration::from_millis(ms as u64)));
                 }
                 TagCategory::Cookie => {
-                    let cookie_name = tag.data.clone().unwrap_or_default();
-                    let cookie_value =
-                        utils::get_req_header_value(req_header, "Cookie").unwrap_or_default();
-                    for item in cookie_value.split(';') {
-                        if let Some((k, v)) = item.split_once('=') {
-                            if k == cookie_name {
-                                buf.push_str(v.trim());
-                            }
-                        }
+                    if let Some(value) =
+                        utils::get_cookie_value(req_header, &tag.data.clone().unwrap_or_default())
+                    {
+                        buf.push_str(value);
                     }
                 }
                 TagCategory::RequestHeader => {
