@@ -23,6 +23,7 @@ use pingora::lb::health_check::{HealthCheck, HttpHealthCheck, TcpHealthCheck};
 use pingora::lb::selection::{Consistent, RoundRobin};
 use pingora::lb::{discovery, Backend, Backends, LoadBalancer};
 use pingora::protocols::l4::socket::SocketAddr;
+use pingora::protocols::ALPN;
 use pingora::proxy::Session;
 use pingora::upstreams::peer::HttpPeer;
 use snafu::{ResultExt, Snafu};
@@ -68,6 +69,7 @@ pub struct Upstream {
     idle_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
     verify_cert: Option<bool>,
+    alpn: ALPN,
 }
 
 #[derive(Debug)]
@@ -292,12 +294,25 @@ impl Upstream {
             lb
         };
         let sni = conf.sni.clone().unwrap_or_default();
+        let alpn = match conf
+            .alpn
+            .clone()
+            .unwrap_or_default()
+            .to_uppercase()
+            .as_str()
+        {
+            "H2H1" => ALPN::H2H1,
+            "H2" => ALPN::H2,
+            _ => ALPN::H1,
+        };
+        // ALPN::H1
         Ok(Self {
             name: name.to_string(),
             tls: !sni.is_empty(),
             sni: sni.clone(),
             hash,
             lb,
+            alpn,
             connection_timeout: conf.connection_timeout,
             total_connection_timeout: conf.total_connection_timeout,
             read_timeout: conf.read_timeout,
@@ -341,6 +356,7 @@ impl Upstream {
             p.options.read_timeout = self.read_timeout;
             p.options.idle_timeout = self.idle_timeout;
             p.options.write_timeout = self.write_timeout;
+            p.options.alpn = self.alpn.clone();
             if let Some(verify_cert) = self.verify_cert {
                 p.options.verify_cert = verify_cert;
             }

@@ -37,6 +37,12 @@ export enum FormItemCategory {
   WEBHOOK_TYPE = "webhookType",
 }
 
+export interface CheckBoxItem {
+  label: string;
+  option: number;
+  value: string | number | boolean | null;
+}
+
 export interface FormItem {
   id: string;
   label: string;
@@ -44,7 +50,7 @@ export interface FormItem {
   span: number;
   category: FormItemCategory;
   minRows?: number;
-  options?: string[];
+  options?: string[] | CheckBoxItem[];
 }
 
 function getDefaultValues(items: FormItem[]) {
@@ -186,7 +192,7 @@ function FormTwoInputFields({
           id={`${id}-${index}-name`}
           label={label}
           variant="outlined"
-          defaultValue={name}
+          defaultValue={name || ""}
           sx={{ ml: 1, flex: 1 }}
           style={{
             marginLeft: "0px",
@@ -200,7 +206,7 @@ function FormTwoInputFields({
           id={`${id}-${index}value`}
           label={valueLabel}
           variant="outlined"
-          defaultValue={value}
+          defaultValue={value || ""}
           sx={{ ml: flexValue, flex: flexValue }}
           style={{
             marginLeft: "10px",
@@ -290,52 +296,47 @@ export default function FormEditor({
     let formItem: JSX.Element = <></>;
     switch (item.category) {
       case FormItemCategory.CHECKBOX: {
+        let options = (item.options as CheckBoxItem[]) || [];
         let defaultValue = 0;
-        if (item.defaultValue == null) {
-          defaultValue = -1;
-        } else if (item.defaultValue) {
-          defaultValue = 1;
-        }
+        let labelItems = options.map((opt, index) => {
+          if (item.defaultValue === opt.value) {
+            defaultValue = opt.option;
+          }
+          return (
+            <FormControlLabel
+              key={item.id + "-label-" + index}
+              value={opt.option}
+              control={<Radio />}
+              label={opt.label}
+            />
+          );
+        });
+
         formItem = (
           <React.Fragment>
-            <FormLabel id="demo-radio-buttons-group-label">
-              {item.label}
-            </FormLabel>
+            <FormLabel id={item.id}>{item.label}</FormLabel>
             <RadioGroup
               row
-              aria-labelledby="demo-radio-buttons-group-label"
+              aria-labelledby={item.id}
               defaultValue={defaultValue}
               name="radio-buttons-group"
               onChange={(e) => {
                 let value = Number(e.target.value);
-                let checked = null;
-                switch (value) {
-                  case 1: {
-                    checked = true;
-                    break;
+                options.forEach((opt) => {
+                  if (opt.option === value) {
+                    updateValue(item.id, opt.value);
                   }
-                  case 0: {
-                    checked = false;
-                    break;
-                  }
-                  default: {
-                    checked = null;
-                    break;
-                  }
-                }
-                updateValue(item.id, checked);
+                });
               }}
             >
-              <FormControlLabel value={1} control={<Radio />} label="Yes" />
-              <FormControlLabel value={0} control={<Radio />} label="No" />
-              <FormControlLabel value={-1} control={<Radio />} label="None" />
+              {labelItems}
             </RadioGroup>
           </React.Fragment>
         );
         break;
       }
       case FormItemCategory.LOCATION: {
-        const options = (item.options || []).sort();
+        const options = ((item.options as string[]) || []).sort();
         formItem = (
           <React.Fragment>
             <InputLabel id={`{item.id}-label`}>{item.label}</InputLabel>
@@ -370,8 +371,8 @@ export default function FormEditor({
         formItem = (
           <FormSelectField
             label={item.label}
-            options={item.options}
-            value={item.defaultValue as string}
+            options={item.options as string[]}
+            value={(item.defaultValue as string) || ""}
             onUpdate={(value) => {
               updateValue(item.id, value);
             }}
@@ -454,7 +455,7 @@ export default function FormEditor({
             id={item.id}
             label={item.label}
             variant="outlined"
-            defaultValue={item.defaultValue}
+            defaultValue={item.defaultValue || ""}
             onChange={(e) => {
               const value = e.target.value.trim();
               switch (item.category) {
@@ -492,6 +493,9 @@ export default function FormEditor({
     values[key] = value;
     setUpdated(true);
     setData(values);
+    setTimeout(() => {
+      setShowSuccess(false);
+    }, 6000);
   };
   const doUpsert = async () => {
     if (processing) {
@@ -569,7 +573,15 @@ export default function FormEditor({
         </form>
       </CardContent>
       {showSuccess && (
-        <Alert icon={<CheckIcon fontSize="inherit" />} severity="success">
+        <Alert
+          style={{
+            position: "fixed",
+            right: "15px",
+            bottom: "15px",
+          }}
+          icon={<CheckIcon fontSize="inherit" />}
+          severity="success"
+        >
           Update success!
         </Alert>
       )}

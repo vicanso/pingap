@@ -42,6 +42,23 @@ export default function BasicInfo() {
       defaultValue: config.work_stealing,
       span: 6,
       category: FormItemCategory.CHECKBOX,
+      options: [
+        {
+          label: "Yes",
+          option: 1,
+          value: true,
+        },
+        {
+          label: "No",
+          option: 0,
+          value: false,
+        },
+        {
+          label: "None",
+          option: -1,
+          value: null,
+        },
+      ],
     },
     {
       id: "user",

@@ -5,6 +5,7 @@ interface Upstream {
   addrs: string[];
   algo?: string;
   sni?: string;
+  alpn?: string;
   health_check?: string;
   ipv4_only?: boolean;
   connection_timeout?: string;

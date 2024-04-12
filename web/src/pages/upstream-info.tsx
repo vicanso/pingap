@@ -85,18 +85,64 @@ export default function UpstreamInfo() {
       category: FormItemCategory.TEXT,
     },
     {
+      id: "alpn",
+      label: "Alpn",
+      defaultValue: upstream.alpn,
+      span: 4,
+      category: FormItemCategory.CHECKBOX,
+      options: [
+        {
+          label: "http1",
+          option: 1,
+          value: "H1",
+        },
+        {
+          label: "http2",
+          option: 2,
+          value: "H2",
+        },
+        {
+          label: "http2http2",
+          option: 3,
+          value: "H2H1",
+        },
+        {
+          label: "None",
+          option: -1,
+          value: null,
+        },
+      ],
+    },
+    {
       id: "sni",
       label: "Sni",
       defaultValue: upstream.sni,
-      span: 6,
+      span: 4,
       category: FormItemCategory.TEXT,
     },
     {
       id: "verify_cert",
       label: "Verify Cert",
       defaultValue: upstream.verify_cert,
-      span: 6,
+      span: 4,
       category: FormItemCategory.CHECKBOX,
+      options: [
+        {
+          label: "Yes",
+          option: 1,
+          value: true,
+        },
+        {
+          label: "No",
+          option: 0,
+          value: false,
+        },
+        {
+          label: "None",
+          option: -1,
+          value: null,
+        },
+      ],
     },
     {
       id: "remark",

@@ -6,6 +6,7 @@
 - [ ] support etcd or other storage for config
 - [ ] better error handler
 - [ ] log rotate
+- [ ] tls cert auto update
 - [x] support add header for location
 - [x] support x-forwarded-for
 - [x] error page

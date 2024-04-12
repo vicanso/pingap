@@ -70,6 +70,7 @@ pub struct UpstreamConf {
     pub sni: Option<String>,
     pub health_check: Option<String>,
     pub ipv4_only: Option<bool>,
+    pub alpn: Option<String>,
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub connection_timeout: Option<Duration>,
