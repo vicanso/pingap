@@ -118,3 +118,11 @@ pub fn get_query_value<'a>(req_header: &'a RequestHeader, name: &str) -> Option<
     }
     None
 }
+
+pub fn new_internal_error(status: u16, message: String) -> pingora::BError {
+    pingora::Error::because(
+        pingora::ErrorType::HTTPStatus(status),
+        message,
+        pingora::Error::new(pingora::ErrorType::InternalError),
+    )
+}

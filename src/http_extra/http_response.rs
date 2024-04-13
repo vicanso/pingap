@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::utils;
+
 use super::{
     HttpHeader, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_NO_CACHE, HTTP_HEADER_NO_STORE,
     HTTP_HEADER_TRANSFER_CHUNKED,
@@ -119,7 +121,7 @@ impl HttpResponse {
     {
         let buf = serde_json::to_vec(value).map_err(|e| {
             error!("To json fail: {e}");
-            pingora::Error::new_str("To json fail")
+            utils::new_internal_error(400, e.to_string())
         })?;
         Ok(HttpResponse {
             status: StatusCode::OK,
@@ -220,7 +222,7 @@ where
         loop {
             let size = self.reader.read(&mut buffer).await.map_err(|e| {
                 error!("Read data fail: {e}");
-                pingora::Error::new_str("Read data fail")
+                utils::new_internal_error(400, e.to_string())
             })?;
             if size == 0 {
                 break;

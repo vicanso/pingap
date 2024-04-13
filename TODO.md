@@ -1,12 +1,12 @@
 # TODO
 
-- [ ] custom error for pingora error
 - [ ] authentication for admin page
 - [ ] support etcd or other storage for config
 - [ ] better error handler
 - [ ] log rotate
 - [ ] tls cert auto update
 - [ ] support validate config before save(web)
+- [x] custom error for pingora error
 - [x] support alpn for location
 - [x] support add header for location
 - [x] support x-forwarded-for

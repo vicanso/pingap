@@ -16,6 +16,7 @@ use super::{Limiter, Upstream};
 use crate::config::LocationConf;
 use crate::http_extra::{convert_headers, HttpHeader};
 use crate::state::State;
+use crate::utils;
 use http::header::HeaderValue;
 use log::error;
 use once_cell::sync::Lazy;
@@ -82,7 +83,6 @@ fn new_path_selector(path: &str) -> Result<PathSelector> {
 }
 
 pub struct Location {
-    // name: String,
     path: String,
     path_selector: PathSelector,
     hosts: Vec<String>,
@@ -95,6 +95,7 @@ pub struct Location {
     limiter: Option<Limiter>,
     pub support_compression: bool,
     pub upstream: Arc<Upstream>,
+    pub upstream_name: String,
 }
 
 fn format_headers(values: &Option<Vec<String>>) -> Result<Option<Vec<HttpHeader>>> {
@@ -154,7 +155,7 @@ impl Location {
             None
         };
         Ok(Location {
-            // name: conf.name.clone(),
+            upstream_name: conf.upstream.clone(),
             path_selector: new_path_selector(&path)?,
             path,
             hosts,
@@ -253,10 +254,9 @@ impl Location {
     /// Validate the request count less than max limit, and set the guard to ctx.
     pub fn validate_limit(&self, session: &Session, ctx: &mut State) -> pingora::Result<()> {
         if let Some(limiter) = &self.limiter {
-            return limiter.incr(session, ctx).map_err(|_e| {
-                let e = pingora::Error::new(pingora::ErrorType::InternalError);
-                pingora::Error::because(pingora::ErrorType::HTTPStatus(429), "Limit eceed", e)
-            });
+            return limiter
+                .incr(session, ctx)
+                .map_err(|e| utils::new_internal_error(429, e.to_string()));
         }
         Ok(())
     }
@@ -467,5 +467,53 @@ mod tests {
             r###"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"x-response-id": "pig"} }, header_name_map: None }"###,
             format!("{resp_header:?}")
         );
+    }
+
+    #[test]
+    fn test_modify_accept_encoding() {
+        let upstream_name = "charts";
+        let upstream = Arc::new(
+            Upstream::new(
+                upstream_name,
+                &UpstreamConf {
+                    addrs: vec!["127.0.0.1".to_string()],
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        );
+        let lo = Location::new(
+            "",
+            &LocationConf {
+                upstream: upstream_name.to_string(),
+                gzip_level: Some(1),
+                br_level: Some(2),
+                zstd_level: Some(3),
+                ..Default::default()
+            },
+            vec![upstream.clone()],
+        )
+        .unwrap();
+        let mut req_header = RequestHeader::build_no_case(Method::GET, b"", None).unwrap();
+        let result = lo.modify_accept_encoding(&mut req_header);
+        assert_eq!(true, result.is_none());
+
+        let key = "Accept-Encoding";
+        req_header
+            .insert_header(key, "gzip, deflate, br, zstd")
+            .unwrap();
+        let result = lo.modify_accept_encoding(&mut req_header);
+        assert_eq!("zstd", req_header.headers.get(key).unwrap());
+        assert_eq!(3, result.unwrap());
+
+        req_header.insert_header(key, "gzip, deflate, br").unwrap();
+        let result = lo.modify_accept_encoding(&mut req_header);
+        assert_eq!("br", req_header.headers.get(key).unwrap());
+        assert_eq!(2, result.unwrap());
+
+        req_header.insert_header(key, "gzip, deflate").unwrap();
+        let result = lo.modify_accept_encoding(&mut req_header);
+        assert_eq!("gzip", req_header.headers.get(key).unwrap());
+        assert_eq!(1, result.unwrap());
     }
 }

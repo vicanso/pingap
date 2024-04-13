@@ -151,7 +151,7 @@ impl Directory {
 
                     let _ = f.read(&mut buffer).await.map_err(|e| {
                         error!("Read data fail: {e}");
-                        pingora::Error::new_str("Read data fail")
+                        utils::new_internal_error(400, e.to_string())
                     })?;
                     HttpResponse {
                         status: StatusCode::OK,

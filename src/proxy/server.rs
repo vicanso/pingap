@@ -396,7 +396,12 @@ impl ProxyHttp for Server {
             .iter()
             .enumerate()
             .find(|(_, item)| item.matched(host, path))
-            .ok_or_else(|| pingora::Error::new_str("Location not found"))?;
+            .ok_or_else(|| {
+                utils::new_internal_error(
+                    500,
+                    format!("Location not found, host:{host} path:{path}"),
+                )
+            })?;
         if let Some(mut new_path) = lo.rewrite(path) {
             if let Some(query) = header.uri.query() {
                 new_path = format!("{new_path}?{query}");
@@ -432,10 +437,10 @@ impl ProxyHttp for Server {
     ) -> pingora::Result<Box<HttpPeer>> {
         let lo = &self.locations[ctx.location_index.unwrap_or_default()];
 
-        let peer = lo
-            .upstream
-            .new_http_peer(ctx, session)
-            .ok_or(pingora::Error::new_str("No available upstream"))?;
+        // pingora::Error::new_str("No available upstream")
+        let peer = lo.upstream.new_http_peer(ctx, session).ok_or_else(|| {
+            utils::new_internal_error(503, format!("No available upstream({})", lo.upstream_name))
+        })?;
 
         Ok(Box::new(peer))
     }
