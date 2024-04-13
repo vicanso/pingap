@@ -3,20 +3,34 @@ description: Pingap 处理流程
 ---
 
 ```mermaid
-graph TD;
-    start("新的请求")-->ServiceFilter{{请求服务筛选}};
-    ServiceFilter--是否匹配stats-->获取stats数据-->响应请求;
-    ServiceFilter--是否匹配admin-->获取admin管理后台-->响应请求;
-    ServiceFilter--根据host与path选择对应的Location-->LocationFilter{{Location筛选}};
-    LocationFilter--无匹配Location-->返回500出错-->响应请求;
-    LocationFilter--有匹配Location-->按需重写Path-->UpstreamHandle{{Upstream处理}};
-    UpstreamHandle--是否静态目录-->读取静态文件-->响应请求;
-    UpstreamHandle--是否mock-->响应mock数据-->响应请求;
-    UpstreamHandle--反向代理节点-->UpstreamServe{{连接Upstream}};
-    UpstreamServe--连接失败-->转换出错信息-->响应请求;
-    UpstreamServe--连接成功-->记录连接相关信息-->写入额外的转发请求头-->UpstreamResponse{{等待响应}};
-    UpstreamResponse--成功-->添加额外的响应头-->响应请求;
-    UpstreamResponse--失败-->转换出错信息-->响应请求;
+flowchart TB
+    start("新的请求")-->请求过滤;
+    subgraph 请求过滤
+    请求过滤--匹配stats路径-->stats处理
+    请求过滤--匹配admin-->admin处理
+    请求过滤--常规upstream转发-->location处理
+    end
 
+    stats处理-->响应请求
+    admin处理-->响应请求
+    location处理-->location选择
+    subgraph location处理流程
+    location选择--配置rewrite规则-->rewritePath{{按需重写路径}}
+    rewritePath--配置了相应压缩级别-->modifyAcceptEncoding{{重写Accept-Encoding以及设置压缩}}
+    end
+    modifyAcceptEncoding--静态文件-->staticService{{读取静态文件}}
+    modifyAcceptEncoding--mock响应-->mockService{{mock响应设置}}
+    modifyAcceptEncoding-->upstreamSelect{{upstream选择}}
+
+    subgraph upstream处理流程
+    upstreamSelect--按算法选择健康节点-->connectUpstream{{连接对应节点}}
+    connectUpstream--连接失败-->转换出错信息-->响应请求;
+    connectUpstream--连接成功-->记录连接相关信息-->写入额外的转发请求头-->upstreamResponse{{等待响应}};
+    upstreamResponse--成功-->添加额外的响应头-->响应请求;
+    upstreamResponse--失败-->转换出错信息-->响应请求;
+    end
+
+    staticService-->响应请求
+    mockService-->响应请求
     响应请求--发送响应数据-->stop("记录日志");
 ```
