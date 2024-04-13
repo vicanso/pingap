@@ -18,7 +18,7 @@ A reverse proxy like nginx, built on [pingora](https://github.com/cloudflare/pin
 Loads all configurations from `/opt/proxy` and run in the background. Log appends to `/opt/proxy/pingap.log`.
 
 ```bash
-RUST_LOG=INFO pingap -c=/opt/proxy/pingap.toml -d --log=/opt/proxy/pingap.log
+RUST_LOG=INFO pingap -c=/opt/proxy -d --log=/opt/proxy/pingap.log
 ```
 
 ## Graceful restart
@@ -26,9 +26,9 @@ RUST_LOG=INFO pingap -c=/opt/proxy/pingap.toml -d --log=/opt/proxy/pingap.log
 Validate the configurations, send quit signal to pingap, then start a new process to handle all requests.
 
 ```bash
-RUST_LOG=INFO pingap -c=/opt/proxy/pingap.toml -t \
+RUST_LOG=INFO pingap -c=/opt/proxy -t \
   && pkill -SIGQUIT pingap \
-  && RUST_LOG=INFO pingap -c=/opt/proxy/pingap.toml -d -u --log=/opt/proxy/pingap.log
+  && RUST_LOG=INFO pingap -c=/opt/proxy -d -u --log=/opt/proxy/pingap.log
 ```
 
 ## Config
