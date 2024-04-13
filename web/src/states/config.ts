@@ -41,6 +41,7 @@ interface Server {
   tls_key?: string;
   stats_path?: string;
   admin_path?: string;
+  authorization?: string;
   remark?: string;
 }
 

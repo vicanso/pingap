@@ -15,7 +15,7 @@
 use super::logger::Parser;
 use super::{Location, Upstream};
 use crate::config::{LocationConf, PingapConf, UpstreamConf};
-use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON};
+use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_WWW_AUTHENTICATE};
 use crate::serve::Serve;
 use crate::serve::ADMIN_SERVE;
 use crate::state::{get_hostname, State};
@@ -72,6 +72,7 @@ pub struct ServerConf {
     pub stats_path: Option<String>,
     pub admin_path: Option<String>,
     pub access_log: Option<String>,
+    pub authorization: Option<String>,
     pub upstreams: Vec<(String, UpstreamConf)>,
     pub locations: Vec<(String, LocationConf)>,
     pub tls_cert: Option<Vec<u8>>,
@@ -135,6 +136,7 @@ impl From<PingapConf> for Vec<ServerConf> {
                 tls_cert,
                 tls_key,
                 admin: false,
+                authorization: item.authorization,
                 stats_path: item.stats_path,
                 admin_path: item.admin_path,
                 addr: item.addr,
@@ -164,6 +166,7 @@ pub struct Server {
     processing: AtomicI32,
     locations: Vec<Location>,
     log_parser: Option<Parser>,
+    authorization: Option<String>,
     error_template: String,
     stats_path: Option<String>,
     admin_path: Option<String>,
@@ -227,6 +230,7 @@ impl Server {
             processing: AtomicI32::new(0),
             stats_path: conf.stats_path,
             admin_path: conf.admin_path,
+            authorization: conf.authorization,
             addr: conf.addr,
             log_parser: p,
             locations,
@@ -314,12 +318,36 @@ impl Server {
         ctx.status = Some(StatusCode::OK);
         ctx.response_body_size = size;
     }
+    fn auth_validate(&self, req_header: &RequestHeader) -> bool {
+        if let Some(authorization) = &self.authorization {
+            let value =
+                utils::get_req_header_value(req_header, "Authorization").unwrap_or_default();
+            if value.is_empty() {
+                return false;
+            }
+            if value != format!("Basic {authorization}") {
+                return false;
+            }
+        }
+        true
+    }
     async fn serve_admin(
         &self,
         admin_path: &str,
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<bool> {
+        if !self.auth_validate(session.req_header()) {
+            let _ = HttpResponse {
+                status: StatusCode::UNAUTHORIZED,
+                headers: Some(vec![HTTP_HEADER_WWW_AUTHENTICATE.clone()]),
+                ..Default::default()
+            }
+            .send(session)
+            .await?;
+            return Ok(true);
+        }
+
         let header = session.req_header_mut();
         let path = header.uri.path();
         let mut new_path = path.substring(admin_path.len(), path.len()).to_string();

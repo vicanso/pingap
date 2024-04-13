@@ -54,6 +54,13 @@ pub static HTTP_HEADER_NO_STORE: Lazy<HttpHeader> = Lazy::new(|| {
     )
 });
 
+pub static HTTP_HEADER_WWW_AUTHENTICATE: Lazy<HttpHeader> = Lazy::new(|| {
+    (
+        header::WWW_AUTHENTICATE,
+        HeaderValue::from_str(r###"Basic realm="Pingap""###).unwrap(),
+    )
+});
+
 pub static HTTP_HEADER_NO_CACHE: Lazy<HttpHeader> = Lazy::new(|| {
     (
         header::CACHE_CONTROL,

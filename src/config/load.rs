@@ -198,6 +198,7 @@ impl LocationConf {
 pub struct ServerConf {
     pub addr: String,
     pub access_log: Option<String>,
+    pub authorization: Option<String>,
     pub locations: Option<Vec<String>>,
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,

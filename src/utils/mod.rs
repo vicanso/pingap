@@ -67,7 +67,7 @@ pub fn get_remote_addr(session: &Session) -> Option<String> {
 
 /// Gets client ip from X-Forwarded-For,
 /// If none, get from X-Real-Ip,
-/// If none, get remote addr
+/// If none, get remote addr.
 pub fn get_client_ip(session: &Session) -> String {
     if let Some(value) = session.get_header(HTTP_HEADER_X_FORWARDED_FOR.clone()) {
         let arr: Vec<&str> = value.to_str().unwrap_or_default().split(',').collect();
@@ -84,6 +84,7 @@ pub fn get_client_ip(session: &Session) -> String {
     "".to_string()
 }
 
+/// Gets string value from req header.
 pub fn get_req_header_value<'a>(req_header: &'a RequestHeader, key: &str) -> Option<&'a str> {
     if let Some(value) = req_header.headers.get(key) {
         if let Ok(value) = value.to_str() {
@@ -93,6 +94,7 @@ pub fn get_req_header_value<'a>(req_header: &'a RequestHeader, key: &str) -> Opt
     None
 }
 
+/// Gets cookie value from req header.
 pub fn get_cookie_value<'a>(req_header: &'a RequestHeader, cookie_name: &str) -> Option<&'a str> {
     if let Some(cookie_value) = get_req_header_value(req_header, "Cookie") {
         for item in cookie_value.split(';') {
@@ -106,6 +108,7 @@ pub fn get_cookie_value<'a>(req_header: &'a RequestHeader, cookie_name: &str) ->
     None
 }
 
+/// Gets query value from req header.
 pub fn get_query_value<'a>(req_header: &'a RequestHeader, name: &str) -> Option<&'a str> {
     if let Some(query) = req_header.uri.query() {
         for item in query.split('&') {
@@ -119,6 +122,7 @@ pub fn get_query_value<'a>(req_header: &'a RequestHeader, name: &str) -> Option<
     None
 }
 
+/// Creates a new internal error
 pub fn new_internal_error(status: u16, message: String) -> pingora::BError {
     pingora::Error::because(
         pingora::ErrorType::HTTPStatus(status),

@@ -45,13 +45,6 @@ export default function ServerInfo() {
       options: locations,
     },
     {
-      id: "stats_path",
-      label: "Stats Path",
-      defaultValue: server.stats_path,
-      span: 6,
-      category: FormItemCategory.TEXT,
-    },
-    {
       id: "admin_path",
       label: "Admin Path",
       defaultValue: server.admin_path,
@@ -59,10 +52,17 @@ export default function ServerInfo() {
       category: FormItemCategory.TEXT,
     },
     {
-      id: "access_log",
-      label: "Access Log",
-      defaultValue: server.access_log,
-      span: 12,
+      id: "authorization",
+      label: "Authorization",
+      defaultValue: server.authorization,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
+      id: "stats_path",
+      label: "Stats Path",
+      defaultValue: server.stats_path,
+      span: 6,
       category: FormItemCategory.TEXT,
     },
     {
@@ -72,6 +72,14 @@ export default function ServerInfo() {
       span: 6,
       category: FormItemCategory.NUMBER,
     },
+    {
+      id: "access_log",
+      label: "Access Log",
+      defaultValue: server.access_log,
+      span: 12,
+      category: FormItemCategory.TEXT,
+    },
+
     {
       id: "tls_cert",
       label: "Tls Cert(base64)",

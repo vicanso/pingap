@@ -117,3 +117,5 @@ stats_path = "/stats"
 
 # Admin path for admin server. Default `None`
 admin_path = "/pingap"
+# Basic authorization for admin server, value is `base64(account + ":" + password). Default `None`
+# authorization = "dGVzdDoxMjMxMjM="

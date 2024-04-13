@@ -249,7 +249,7 @@ impl Serve for AdminServe {
                 memory,
             })
             .unwrap_or(HttpResponse::unknown_error())
-        } else if path == "/restart" {
+        } else if path == "/restart" && method == Method::POST {
             if let Err(e) = restart() {
                 error!("Restart fail: {e}");
                 return Err(utils::new_internal_error(400, e.to_string()));

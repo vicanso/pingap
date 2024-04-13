@@ -77,7 +77,7 @@ pub fn restart() -> io::Result<process::Output> {
             "Pingap is restarting",
         ));
     }
-    info!("pingap will restart now");
+    info!("pingap will restart");
     if let Some(cmd) = CMD.get() {
         nix::sys::signal::kill(
             nix::unistd::Pid::from_raw(std::process::id() as i32),
