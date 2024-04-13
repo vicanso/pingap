@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{proxy::Limiter, utils};
+use crate::utils;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use glob::glob;
 use http::HeaderValue;
@@ -127,7 +127,6 @@ pub struct LocationConf {
     pub gzip_level: Option<u32>,
     pub br_level: Option<u32>,
     pub zstd_level: Option<u32>,
-    pub limit: Option<String>,
     pub remark: Option<String>,
 }
 
@@ -158,11 +157,7 @@ impl LocationConf {
                 message: format!("{} upstream is not found(location:{name})", self.upstream),
             });
         }
-        if let Some(limit) = &self.limit {
-            Limiter::new(limit).map_err(|err| Error::Invalid {
-                message: format!("{err}({limit})"),
-            })?;
-        }
+
         Ok(())
     }
 

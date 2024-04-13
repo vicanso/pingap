@@ -12,8 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::ProxyPlugin;
 use crate::state::State;
 use crate::utils;
+use async_trait::async_trait;
 use pingora::proxy::Session;
 use pingora_limits::inflight::Inflight;
 use snafu::{ResultExt, Snafu};
@@ -108,6 +110,16 @@ impl Limiter {
         Ok(())
     }
 }
+#[async_trait]
+impl ProxyPlugin for Limiter {
+    async fn handle(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<bool> {
+        let _ = self
+            .incr(session, ctx)
+            .map_err(|e| utils::new_internal_error(429, e.to_string()))?;
+        Ok(false)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::state::State;

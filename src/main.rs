@@ -25,6 +25,7 @@ use std::sync::Arc;
 
 mod config;
 mod http_extra;
+mod plugin;
 mod proxy;
 mod serve;
 mod state;

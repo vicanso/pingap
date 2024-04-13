@@ -452,7 +452,6 @@ impl ProxyHttp for Server {
             let result = mock.handle(session, ctx).await?;
             return Ok(result);
         }
-        lo.validate_limit(session, ctx)?;
         // TODO get response from cache
         // check location support cache
 

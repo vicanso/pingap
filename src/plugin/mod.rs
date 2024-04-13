@@ -12,10 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod config;
-pub mod http_extra;
-pub mod plugin;
-pub mod proxy;
-pub mod serve;
-pub mod state;
-pub mod utils;
+use crate::state::State;
+use async_trait::async_trait;
+use pingora::proxy::Session;
+
+mod limit;
+
+pub use limit::Limiter;
+
+#[async_trait]
+pub trait ProxyPlugin {
+    async fn handle(&self, _session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
+        Ok(false)
+    }
+}

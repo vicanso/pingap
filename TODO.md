@@ -6,6 +6,7 @@
 - [ ] tls cert auto update
 - [ ] support validate config before save(web)
 - [ ] auto reload config and restart
+- [ ] support plugin for proxy and response
 - [x] authentication for admin page
 - [x] custom error for pingora error
 - [x] support alpn for location
