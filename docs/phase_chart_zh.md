@@ -5,7 +5,7 @@ description: Pingap 处理流程
 ```mermaid
 flowchart TB
     start("新的请求")-->请求过滤;
-    subgraph 请求过滤
+    subgraph 针对请求过滤流程
     请求过滤--匹配stats路径-->stats处理
     请求过滤--匹配admin-->admin处理
     请求过滤--常规upstream转发-->location处理
