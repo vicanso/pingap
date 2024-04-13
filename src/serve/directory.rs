@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::state::State;
-use crate::utils;
+use crate::util;
 use bytes::Bytes;
 use http::{header, HeaderValue, StatusCode};
 use log::error;
@@ -122,7 +122,7 @@ impl Directory {
         };
         Directory {
             index: format!("/{index_file}"),
-            path: Path::new(&utils::resolve_path(new_path)).to_path_buf(),
+            path: Path::new(&util::resolve_path(new_path)).to_path_buf(),
             chunk_size,
             max_age,
             charset,
@@ -151,7 +151,7 @@ impl Directory {
 
                     let _ = f.read(&mut buffer).await.map_err(|e| {
                         error!("Read data fail: {e}");
-                        utils::new_internal_error(400, e.to_string())
+                        util::new_internal_error(400, e.to_string())
                     })?;
                     HttpResponse {
                         status: StatusCode::OK,

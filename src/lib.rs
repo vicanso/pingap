@@ -18,4 +18,4 @@ pub mod plugin;
 pub mod proxy;
 pub mod serve;
 pub mod state;
-pub mod utils;
+pub mod util;

@@ -14,7 +14,7 @@
 
 use super::ProxyPlugin;
 use crate::state::State;
-use crate::utils;
+use crate::util;
 use async_trait::async_trait;
 use pingora::proxy::Session;
 use pingora_limits::inflight::Inflight;
@@ -79,19 +79,19 @@ impl Limiter {
     /// Otherwise returns a Guard. It may set the client ip to context.
     pub fn incr(&self, session: &Session, ctx: &mut State) -> Result<()> {
         let key = match self.tag {
-            LimitTag::Query => utils::get_query_value(session.req_header(), &self.value)
+            LimitTag::Query => util::get_query_value(session.req_header(), &self.value)
                 .unwrap_or_default()
                 .to_string(),
             LimitTag::RequestHeader => {
-                utils::get_req_header_value(session.req_header(), &self.value)
+                util::get_req_header_value(session.req_header(), &self.value)
                     .unwrap_or_default()
                     .to_string()
             }
-            LimitTag::Cookie => utils::get_cookie_value(session.req_header(), &self.value)
+            LimitTag::Cookie => util::get_cookie_value(session.req_header(), &self.value)
                 .unwrap_or_default()
                 .to_string(),
             _ => {
-                let client_ip = utils::get_client_ip(session);
+                let client_ip = util::get_client_ip(session);
                 ctx.client_ip = Some(client_ip.clone());
                 client_ip
             }
@@ -115,7 +115,7 @@ impl ProxyPlugin for Limiter {
     async fn handle(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<bool> {
         let _ = self
             .incr(session, ctx)
-            .map_err(|e| utils::new_internal_error(429, e.to_string()))?;
+            .map_err(|e| util::new_internal_error(429, e.to_string()))?;
         Ok(false)
     }
 }

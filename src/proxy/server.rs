@@ -19,7 +19,7 @@ use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_WWW_
 use crate::serve::Serve;
 use crate::serve::ADMIN_SERVE;
 use crate::state::{get_hostname, State};
-use crate::utils;
+use crate::util;
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::Bytes;
@@ -320,8 +320,7 @@ impl Server {
     }
     fn auth_validate(&self, req_header: &RequestHeader) -> bool {
         if let Some(authorization) = &self.authorization {
-            let value =
-                utils::get_req_header_value(req_header, "Authorization").unwrap_or_default();
+            let value = util::get_req_header_value(req_header, "Authorization").unwrap_or_default();
             if value.is_empty() {
                 return false;
             }
@@ -425,7 +424,7 @@ impl ProxyHttp for Server {
             .enumerate()
             .find(|(_, item)| item.matched(host, path))
             .ok_or_else(|| {
-                utils::new_internal_error(
+                util::new_internal_error(
                     500,
                     format!("Location not found, host:{host} path:{path}"),
                 )
@@ -466,7 +465,7 @@ impl ProxyHttp for Server {
 
         // pingora::Error::new_str("No available upstream")
         let peer = lo.upstream.new_http_peer(ctx, session).ok_or_else(|| {
-            utils::new_internal_error(503, format!("No available upstream({})", lo.upstream_name))
+            util::new_internal_error(503, format!("No available upstream({})", lo.upstream_name))
         })?;
 
         Ok(Box::new(peer))
@@ -497,15 +496,15 @@ impl ProxyHttp for Server {
         Self::CTX: Send + Sync,
     {
         // add x-forwarded-for
-        if let Some(addr) = utils::get_remote_addr(session) {
+        if let Some(addr) = util::get_remote_addr(session) {
             let value = if let Some(value) =
-                session.get_header(utils::HTTP_HEADER_X_FORWARDED_FOR.clone())
+                session.get_header(util::HTTP_HEADER_X_FORWARDED_FOR.clone())
             {
                 format!("{}, {}", value.to_str().unwrap_or_default(), addr)
             } else {
                 addr.to_string()
             };
-            let _ = header.insert_header(utils::HTTP_HEADER_X_FORWARDED_FOR.clone(), value);
+            let _ = header.insert_header(util::HTTP_HEADER_X_FORWARDED_FOR.clone(), value);
         }
 
         if let Some(index) = ctx.location_index {
@@ -577,7 +576,7 @@ impl ProxyHttp for Server {
 
         let content = self
             .error_template
-            .replace("{{version}}", utils::get_pkg_version())
+            .replace("{{version}}", util::get_pkg_version())
             .replace("{{content}}", &e.to_string());
         let buf = Bytes::from(content);
         ctx.status = Some(StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR));

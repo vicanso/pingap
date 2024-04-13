@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::state::State;
-use crate::utils;
+use crate::util;
 use bytes::BytesMut;
 use bytesize::ByteSize;
 use pingora::http::{RequestHeader, ResponseHeader};
@@ -280,7 +280,7 @@ impl Parser {
                     }
                 }
                 TagCategory::Remote => {
-                    if let Some(addr) = utils::get_remote_addr(session) {
+                    if let Some(addr) = util::get_remote_addr(session) {
                         buf.extend(addr.as_bytes());
                     }
                 }
@@ -288,7 +288,7 @@ impl Parser {
                     if let Some(client_ip) = &ctx.client_ip {
                         buf.extend(client_ip.as_bytes());
                     } else {
-                        buf.extend(utils::get_client_ip(session).as_bytes());
+                        buf.extend(util::get_client_ip(session).as_bytes());
                     }
                 }
                 TagCategory::Scheme => {
@@ -344,7 +344,7 @@ impl Parser {
                 }
                 TagCategory::Cookie => {
                     if let Some(value) =
-                        utils::get_cookie_value(req_header, &tag.data.clone().unwrap_or_default())
+                        util::get_cookie_value(req_header, &tag.data.clone().unwrap_or_default())
                     {
                         buf.extend(value.as_bytes());
                     }

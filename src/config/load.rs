@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::utils;
+use crate::util;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use glob::glob;
 use http::HeaderValue;
@@ -314,7 +314,7 @@ pub fn save_config(path: &str, conf: &mut PingapConf, category: &str) -> Result<
     conf.validate()?;
     conf.created_at = Some(chrono::Local::now().to_rfc3339());
 
-    let mut filepath = utils::resolve_path(path);
+    let mut filepath = util::resolve_path(path);
     let ping_conf = toml::to_string_pretty(&conf).context(SerSnafu)?;
     if Path::new(&filepath).is_file() {
         return std::fs::write(&filepath, ping_conf).context(IoSnafu { file: filepath });
@@ -362,7 +362,7 @@ pub fn save_config(path: &str, conf: &mut PingapConf, category: &str) -> Result<
 
 /// Load the config from path.
 pub fn load_config(path: &str, admin: bool) -> Result<PingapConf> {
-    let filepath = utils::resolve_path(path);
+    let filepath = util::resolve_path(path);
     ensure!(
         !filepath.is_empty(),
         InvalidSnafu {

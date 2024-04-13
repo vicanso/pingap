@@ -19,7 +19,7 @@ use crate::config::{PingapConf, CATEGORY_LOCATION, CATEGORY_SERVER, CATEGORY_UPS
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use crate::state::{get_start_time, restart};
-use crate::utils::{self, get_pkg_version};
+use crate::util::{self, get_pkg_version};
 use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
 use bytesize::ByteSize;
@@ -80,11 +80,11 @@ impl AdminServe {
     fn load_config(&self) -> pingora::Result<PingapConf> {
         let conf = config::load_config(&config::get_config_path(), true).map_err(|e| {
             error!("failed to load config: {e}");
-            utils::new_internal_error(400, e.to_string())
+            util::new_internal_error(400, e.to_string())
         })?;
         conf.validate().map_err(|e| {
             error!("failed to validate config: {e}");
-            utils::new_internal_error(400, e.to_string())
+            util::new_internal_error(400, e.to_string())
         })?;
         Ok(conf)
     }
@@ -116,7 +116,7 @@ impl AdminServe {
         };
         save_config(&config::get_config_path(), &mut conf, category).map_err(|e| {
             error!("failed to save config: {e}");
-            utils::new_internal_error(400, e.to_string())
+            util::new_internal_error(400, e.to_string())
         })?;
         Ok(HttpResponse::no_content())
     }
@@ -136,28 +136,28 @@ impl AdminServe {
             CATEGORY_UPSTREAM => {
                 let upstream: UpstreamConf = serde_json::from_slice(&buf).map_err(|e| {
                     error!("failed to deserialize upstream: {e}");
-                    utils::new_internal_error(400, e.to_string())
+                    util::new_internal_error(400, e.to_string())
                 })?;
                 conf.upstreams.insert(key, upstream);
             }
             CATEGORY_LOCATION => {
                 let location: LocationConf = serde_json::from_slice(&buf).map_err(|e| {
                     error!("failed to deserialize location: {e}");
-                    utils::new_internal_error(400, e.to_string())
+                    util::new_internal_error(400, e.to_string())
                 })?;
                 conf.locations.insert(key, location);
             }
             CATEGORY_SERVER => {
                 let server: ServerConf = serde_json::from_slice(&buf).map_err(|e| {
                     error!("failed to deserialize server: {e}");
-                    utils::new_internal_error(400, e.to_string())
+                    util::new_internal_error(400, e.to_string())
                 })?;
                 conf.servers.insert(key, server);
             }
             _ => {
                 let basic_conf: BasicConfParams = serde_json::from_slice(&buf).map_err(|e| {
                     error!("failed to basic info: {e}");
-                    utils::new_internal_error(400, e.to_string())
+                    util::new_internal_error(400, e.to_string())
                 })?;
                 conf.error_template = basic_conf.error_template.unwrap_or_default();
                 conf.pid_file = basic_conf.pid_file;
@@ -177,7 +177,7 @@ impl AdminServe {
         };
         save_config(&config::get_config_path(), &mut conf, category).map_err(|e| {
             error!("failed to save config: {e}");
-            utils::new_internal_error(400, e.to_string())
+            util::new_internal_error(400, e.to_string())
         })?;
         Ok(HttpResponse::no_content())
     }
@@ -252,7 +252,7 @@ impl Serve for AdminServe {
         } else if path == "/restart" && method == Method::POST {
             if let Err(e) = restart() {
                 error!("Restart fail: {e}");
-                return Err(utils::new_internal_error(400, e.to_string()));
+                return Err(util::new_internal_error(400, e.to_string()));
             }
             HttpResponse::no_content()
         } else {

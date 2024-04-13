@@ -29,7 +29,7 @@ mod plugin;
 mod proxy;
 mod serve;
 mod state;
-mod utils;
+mod util;
 mod webhook;
 
 /// A reverse proxy like nginx.
@@ -61,8 +61,8 @@ struct Args {
 
 fn new_server_conf(args: &Args, conf: &PingapConf) -> server::configuration::ServerConf {
     let mut server_conf = server::configuration::ServerConf {
-        pid_file: format!("/tmp/{}.pid", utils::get_pkg_name()),
-        upgrade_sock: format!("/tmp/{}_upgrade.sock", utils::get_pkg_name()),
+        pid_file: format!("/tmp/{}.pid", util::get_pkg_name()),
+        upgrade_sock: format!("/tmp/{}_upgrade.sock", util::get_pkg_name()),
         user: conf.user.clone(),
         group: conf.group.clone(),
         daemon: args.daemon,
@@ -153,7 +153,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         if let Ok(env) = std::env::var("RUST_LOG") {
             cmd.log_level = env;
         }
-        let conf_path = utils::resolve_path(&args.conf);
+        let conf_path = util::resolve_path(&args.conf);
 
         let mut new_args = vec![
             format!("-c={conf_path}"),

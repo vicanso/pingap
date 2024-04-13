@@ -15,7 +15,7 @@
 use crate::config::UpstreamConf;
 use crate::serve::{Directory, MockResponse, PROTOCOL_FILE, PROTOCOL_MOCK};
 use crate::state::State;
-use crate::utils;
+use crate::util;
 use futures_util::FutureExt;
 use humantime::parse_duration;
 use pingora::http::RequestHeader;
@@ -333,7 +333,7 @@ impl Upstream {
                         if let Some(client_ip) = &ctx.client_ip {
                             client_ip.to_string()
                         } else {
-                            utils::get_client_ip(session)
+                            util::get_client_ip(session)
                         }
                     }
                     _ => {

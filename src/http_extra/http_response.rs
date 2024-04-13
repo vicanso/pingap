@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::utils;
+use crate::util;
 
 use super::{
     HttpHeader, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_NO_CACHE, HTTP_HEADER_NO_STORE,
@@ -121,7 +121,7 @@ impl HttpResponse {
     {
         let buf = serde_json::to_vec(value).map_err(|e| {
             error!("To json fail: {e}");
-            utils::new_internal_error(400, e.to_string())
+            util::new_internal_error(400, e.to_string())
         })?;
         Ok(HttpResponse {
             status: StatusCode::OK,
@@ -222,7 +222,7 @@ where
         loop {
             let size = self.reader.read(&mut buffer).await.map_err(|e| {
                 error!("Read data fail: {e}");
-                utils::new_internal_error(400, e.to_string())
+                util::new_internal_error(400, e.to_string())
             })?;
             if size == 0 {
                 break;
@@ -242,7 +242,7 @@ where
 mod tests {
     use super::{get_cache_control, get_super_ts, HttpChunkResponse, HttpResponse};
     use crate::http_extra::convert_headers;
-    use crate::utils::resolve_path;
+    use crate::util::resolve_path;
     use bytes::Bytes;
     use http::StatusCode;
     use pretty_assertions::assert_eq;
