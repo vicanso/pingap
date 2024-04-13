@@ -121,7 +121,8 @@ fn run() -> Result<(), Box<dyn Error>> {
             {
                 webhook::send(webhook::WebhookSendParams {
                     url: webhook_url.clone(),
-                    category: webhook_type.clone(),
+                    category: "backend_unhealthy".to_string(),
+                    webhook_type: webhook_type.clone(),
                     msg: format!("{}", record.args()),
                 });
             }
@@ -199,7 +200,9 @@ fn run() -> Result<(), Box<dyn Error>> {
 }
 
 fn main() {
-    if let Err(err) = run() {
-        error!("{}", err.to_string());
+    if let Err(e) = run() {
+        // avoid env logger is not init
+        println!("{e}");
+        error!("{e}");
     }
 }

@@ -37,6 +37,9 @@ graceful_shutdown_timeout = "10s"
 # Log level, `info`, `warn`, `error` or `debug`. Default `None`
 # log_level = "info"
 
+# Sentry DSN
+# sentry = ""
+
 # Upsteam config list, it will defined as [upstreams.name]
 [upstreams.charts]
 addrs = ["127.0.0.1:5000"]
@@ -44,10 +47,26 @@ addrs = ["127.0.0.1:5000"]
 # Load balancer select algorithm, supports `hash` and `round_robin`. Default `round_robin`
 algo = "hash:cookie"
 
+# Set the sni for http peer, if the upstream use https, it should be set.
+# Default `None`.
+# sni = "github.com"
+
+# Verify cert for upstream request. Default is `None`.
+# verify_cert = false
+
 # Upstream health check, supports `tcp`, `http` and `https`. Default `tcp`
 # Tcp: tcp://upstreamname?connection_timeout=3s&success=2&failure=1&check_frequency=10s
 # Http(s): http://upstreamname/ping?connection_timeout=3s&read_timeout=1s&success=2&failure=1&check_frequency=10s
+# The `upstreamname` will be replace to the upstream address when checking.
 health_check = "http://charts/ping?connection_timeout=3s&pingap"
+
+# Set the upstream will only use ipv4.
+# It will be used for domain includes ipv4 and ipv6.
+# Default `false`.
+# ipv4_only = true
+
+# Set the alpn for tls handshake. Default `H1`.
+# alpn = "H1"
 
 # How long to wait before giving up *establishing* a TCP connection. Default `None`
 connection_timeout = "10s"
@@ -96,13 +115,29 @@ rewrite = ""
 # The weight of locaton, max is prior, Default `None`
 # weight = 4096
 
+# Set the gzip level for response. Default `None`.
+# gzip_level = 1
+
+# Set the brotli level for response. Default `None`.
+# br_level = 1
+
+# Set the zstd level for response. Default `None`.
+# zstd_level = 1
+
+# The limit config for location,
+# the limit format is `category max-value`.
+# The format supports 4 category,
+# ~uid: get uid cookie value as limit key,
+# >X-Uid: get X-Uid request header value as limit key,
+# ?uid: get uid query value as limit key,
+# id: get client id as limit key.
+# The max limit value
+# limit = "ip 1"
+
 # Server config list, it will be defined as [servers.name]
 [servers.test]
 # TCP listening address
 addr = "0.0.0.0:6188"
-# tls cert and key, it should be base64
-# tls_cert = ""
-# tls_key = ""
 
 # Access log format layout for the server. Default `None`
 # access_log = '"{method} {uri} {proto}" {status} {size-human} "{referer}" "{user-agent}" {latency-human}'
@@ -111,6 +146,14 @@ access_log = "tiny"
 # Location list for the server, item should be the name of location.
 # The locations should be served by the server.
 locations = ["lo"]
+
+# The threads for server service.
+# Default `None` will use the threads of basic config.
+# threads = 4
+
+# tls cert and key, it should be base64
+# tls_cert = ""
+# tls_key = ""
 
 # Stats path for get the stats of server. Default `None`
 stats_path = "/stats"

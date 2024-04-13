@@ -19,6 +19,7 @@ use std::time::Duration;
 
 pub struct WebhookSendParams {
     pub url: String,
+    pub webhook_type: String,
     pub category: String,
     pub msg: String,
 }
@@ -26,7 +27,7 @@ pub struct WebhookSendParams {
 pub fn send(params: WebhookSendParams) {
     std::thread::spawn(move || {
         if let Ok(rt) = tokio::runtime::Runtime::new() {
-            let category = "backend_unhealthy";
+            let category = params.category;
             let send = async move {
                 let client = reqwest::Client::new();
                 let mut data = serde_json::Map::new();
@@ -39,7 +40,7 @@ pub fn send(params: WebhookSendParams) {
                     "###,
                     params.msg
                 );
-                match params.category.to_lowercase().as_str() {
+                match params.webhook_type.to_lowercase().as_str() {
                     "wecom" => {
                         let mut markdown_data = Map::new();
                         markdown_data.insert("content".to_string(), Value::String(content));
@@ -55,10 +56,7 @@ pub fn send(params: WebhookSendParams) {
                         data.insert("markdown".to_string(), Value::Object(markdown_data));
                     }
                     _ => {
-                        data.insert(
-                            "category".to_string(),
-                            Value::String("backend_unhealthy".to_string()),
-                        );
+                        data.insert("category".to_string(), Value::String(category));
                         data.insert("message".to_string(), Value::String(params.msg));
                         data.insert("hostname".to_string(), Value::String(hostname));
                     }

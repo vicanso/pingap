@@ -569,7 +569,7 @@ impl ProxyHttp for Server {
                 pingora::ErrorSource::Internal | pingora::ErrorSource::Unset => 500,
             },
         };
-        // TODO better error handler
+        // TODO better error handler(e.g. json response)
         let mut resp = match code {
             502 => error_resp::HTTP_502_RESPONSE.clone(),
             400 => error_resp::HTTP_400_RESPONSE.clone(),

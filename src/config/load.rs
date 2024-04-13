@@ -68,6 +68,7 @@ pub struct UpstreamConf {
     pub addrs: Vec<String>,
     pub algo: Option<String>,
     pub sni: Option<String>,
+    pub verify_cert: Option<bool>,
     pub health_check: Option<String>,
     pub ipv4_only: Option<bool>,
     pub alpn: Option<String>,
@@ -86,7 +87,6 @@ pub struct UpstreamConf {
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub write_timeout: Option<Duration>,
-    pub verify_cert: Option<bool>,
     pub remark: Option<String>,
 }
 impl UpstreamConf {
@@ -198,13 +198,13 @@ impl LocationConf {
 pub struct ServerConf {
     pub addr: String,
     pub access_log: Option<String>,
-    pub authorization: Option<String>,
     pub locations: Option<Vec<String>>,
+    pub threads: Option<usize>,
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
     pub stats_path: Option<String>,
     pub admin_path: Option<String>,
-    pub threads: Option<usize>,
+    pub authorization: Option<String>,
     pub remark: Option<String>,
 }
 

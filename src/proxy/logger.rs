@@ -14,8 +14,10 @@
 
 use crate::state::State;
 use crate::utils;
+use bytes::BytesMut;
 use bytesize::ByteSize;
-use pingora::{http::ResponseHeader, proxy::Session};
+use pingora::http::{RequestHeader, ResponseHeader};
+use pingora::proxy::Session;
 use regex::Regex;
 use std::time::{Duration, Instant};
 use substring::Substring;
@@ -227,124 +229,130 @@ impl From<&str> for Parser {
     }
 }
 
-fn get_resp_header_value<'a>(resp_header: &'a ResponseHeader, key: &str) -> Option<&'a str> {
+fn get_resp_header_value<'a>(resp_header: &'a ResponseHeader, key: &str) -> Option<&'a [u8]> {
     if let Some(value) = resp_header.headers.get(key) {
-        if let Ok(value) = value.to_str() {
-            return Some(value);
-        }
+        return Some(value.as_bytes());
+    }
+    None
+}
+
+fn get_req_header_value<'a>(req_header: &'a RequestHeader, key: &str) -> Option<&'a [u8]> {
+    if let Some(value) = req_header.headers.get(key) {
+        return Some(value.as_bytes());
     }
     None
 }
 
 impl Parser {
     pub fn format(&self, session: &Session, ctx: &State) -> String {
-        let mut buf = String::with_capacity(1024);
+        let mut buf = BytesMut::with_capacity(1024);
         let req_header = session.req_header();
         for tag in self.tags.iter() {
             match tag.category {
                 TagCategory::Fill => {
                     if let Some(data) = &tag.data {
-                        buf.push_str(data);
+                        buf.extend(data.as_bytes());
                     }
                 }
                 TagCategory::Host => {
-                    if let Some(host) = utils::get_req_header_value(req_header, "Host") {
-                        buf.push_str(host);
+                    if let Some(host) = get_req_header_value(req_header, "Host") {
+                        buf.extend(host);
                     } else if let Some(host) = req_header.uri.host() {
-                        buf.push_str(host);
+                        buf.extend(host.as_bytes());
                     }
                 }
                 TagCategory::Method => {
-                    buf.push_str(req_header.method.as_str());
+                    buf.extend(req_header.method.as_str().as_bytes());
                 }
                 TagCategory::Path => {
-                    buf.push_str(req_header.uri.path());
+                    buf.extend(req_header.uri.path().as_bytes());
                 }
                 TagCategory::Proto => {
                     if session.is_http2() {
-                        buf.push_str("HTTP/2.0");
+                        buf.extend(b"HTTP/2.0");
                     } else {
-                        buf.push_str("HTTP/1.1");
+                        buf.extend(b"HTTP/1.1");
                     }
                 }
                 TagCategory::Query => {
                     if let Some(query) = req_header.uri.query() {
-                        buf.push_str(query);
+                        buf.extend(query.as_bytes());
                     }
                 }
                 TagCategory::Remote => {
                     if let Some(addr) = utils::get_remote_addr(session) {
-                        buf.push_str(&addr.to_string());
+                        buf.extend(addr.as_bytes());
                     }
                 }
                 TagCategory::ClientIp => {
                     if let Some(client_ip) = &ctx.client_ip {
-                        buf.push_str(client_ip);
+                        buf.extend(client_ip.as_bytes());
                     } else {
-                        buf.push_str(&utils::get_client_ip(session));
+                        buf.extend(utils::get_client_ip(session).as_bytes());
                     }
                 }
                 TagCategory::Scheme => {
                     // TODO
                 }
                 TagCategory::Uri => {
-                    buf.push_str(&req_header.uri.to_string());
+                    buf.extend(req_header.uri.to_string().as_bytes());
                 }
                 TagCategory::Referer => {
-                    if let Some(value) = utils::get_req_header_value(req_header, "Referer") {
-                        buf.push_str(value);
+                    if let Some(value) = get_req_header_value(req_header, "Referer") {
+                        buf.extend(value);
                     }
                 }
                 TagCategory::UserAgent => {
-                    if let Some(value) = utils::get_req_header_value(req_header, "User-Agent") {
-                        buf.push_str(value);
+                    if let Some(value) = get_req_header_value(req_header, "User-Agent") {
+                        buf.extend(value);
                     }
                 }
                 TagCategory::When => {
-                    buf.push_str(&chrono::Local::now().to_rfc3339());
+                    buf.extend(chrono::Local::now().to_rfc3339().as_bytes());
                 }
                 TagCategory::WhenUtcIso => {
-                    buf.push_str(&chrono::Utc::now().to_rfc3339());
+                    buf.extend(chrono::Utc::now().to_rfc3339().as_bytes());
                 }
                 TagCategory::WhenUnix => {
-                    buf.push_str(&chrono::Utc::now().timestamp_millis().to_string());
+                    buf.extend(chrono::Utc::now().timestamp_millis().to_string().as_bytes());
                 }
                 TagCategory::Size => {
-                    buf.push_str(&ctx.response_body_size.to_string());
+                    buf.extend(ctx.response_body_size.to_string().as_bytes());
                 }
                 TagCategory::SizeHuman => {
-                    buf.push_str(
-                        &ByteSize(ctx.response_body_size as u64)
+                    buf.extend(
+                        ByteSize(ctx.response_body_size as u64)
                             .to_string()
-                            .replace(' ', ""),
+                            .replace(' ', "")
+                            .as_bytes(),
                     );
                 }
                 TagCategory::Status => {
                     if let Some(status) = ctx.status {
-                        buf.push_str(status.as_str());
+                        buf.extend(status.as_str().as_bytes());
                     } else {
-                        buf.push('0');
+                        buf.extend(b"0");
                     }
                 }
                 TagCategory::Latency => {
                     let d = Instant::now().duration_since(ctx.created_at);
-                    buf.push_str(&d.as_millis().to_string())
+                    buf.extend(d.as_millis().to_string().as_bytes())
                 }
                 TagCategory::LatencyHuman => {
                     let ms = Instant::now().duration_since(ctx.created_at).as_millis();
-                    buf.push_str(&format!("{:?}", Duration::from_millis(ms as u64)));
+                    buf.extend(format!("{:?}", Duration::from_millis(ms as u64)).as_bytes());
                 }
                 TagCategory::Cookie => {
                     if let Some(value) =
                         utils::get_cookie_value(req_header, &tag.data.clone().unwrap_or_default())
                     {
-                        buf.push_str(value);
+                        buf.extend(value.as_bytes());
                     }
                 }
                 TagCategory::RequestHeader => {
                     if let Some(key) = &tag.data {
-                        if let Some(value) = utils::get_req_header_value(req_header, key) {
-                            buf.push_str(value);
+                        if let Some(value) = get_req_header_value(req_header, key) {
+                            buf.extend(value);
                         }
                     }
                 }
@@ -352,7 +360,7 @@ impl Parser {
                     if let Some(resp_header) = session.response_written() {
                         if let Some(key) = &tag.data {
                             if let Some(value) = get_resp_header_value(resp_header, key) {
-                                buf.push_str(value);
+                                buf.extend(value);
                             }
                         }
                     }
@@ -366,9 +374,9 @@ impl Parser {
                 TagCategory::Context => {
                     if let Some(key) = &tag.data {
                         match key.as_str() {
-                            "reused" => buf.push_str(&ctx.reused.to_string()),
-                            "upstream-address" => buf.push_str(&ctx.upstream_address),
-                            "processing" => buf.push_str(&ctx.processing.to_string()),
+                            "reused" => buf.extend(ctx.reused.to_string().as_bytes()),
+                            "upstream-address" => buf.extend(ctx.upstream_address.as_bytes()),
+                            "processing" => buf.extend(ctx.processing.to_string().as_bytes()),
                             _ => {}
                         }
                     }
@@ -376,7 +384,7 @@ impl Parser {
             };
         }
 
-        buf
+        std::string::String::from_utf8_lossy(&buf).to_string()
     }
 }
 
