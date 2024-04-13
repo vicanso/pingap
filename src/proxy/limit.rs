@@ -31,7 +31,7 @@ pub enum Error {
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub enum LimitTag {
     Ip,
     RequestHeader,
@@ -57,7 +57,6 @@ impl Limiter {
                 message: key.to_string(),
             });
         }
-        let key = key.substring(1, key.len() - 1);
         let ch = key.substring(0, 1);
         let value = key.substring(1, key.len());
         let tag = match ch {
@@ -75,7 +74,7 @@ impl Limiter {
         })
     }
     /// Increment `key` by 1. If value gt max, an error will be return.
-    /// Otherwise returns a Guard.
+    /// Otherwise returns a Guard. It may set the client ip to context.
     pub fn incr(&self, session: &Session, ctx: &mut State) -> Result<()> {
         let key = match self.tag {
             LimitTag::Query => utils::get_query_value(session.req_header(), &self.value)
@@ -107,5 +106,79 @@ impl Limiter {
         }
         ctx.guard = Some(guard);
         Ok(())
+    }
+}
+#[cfg(test)]
+mod tests {
+    use crate::state::State;
+
+    use super::{LimitTag, Limiter};
+    use pingora::proxy::Session;
+    use pretty_assertions::assert_eq;
+    use tokio_test::io::Builder;
+    async fn new_session() -> Session {
+        let headers = vec![
+            "Host: github.com",
+            "Referer: https://github.com/",
+            "User-Agent: pingap/0.1.1",
+            "Cookie: deviceId=abc",
+            "Accept: application/json",
+            "X-Uuid: 138q71",
+            "X-Forwarded-For: 1.1.1.1, 192.168.1.2",
+        ]
+        .join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?key=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        session
+    }
+    #[tokio::test]
+    async fn test_new_cookie_limiter() {
+        let limiter = Limiter::new("~deviceId 10").unwrap();
+        assert_eq!(LimitTag::Cookie, limiter.tag);
+        let mut ctx = State {
+            ..Default::default()
+        };
+        let session = new_session().await;
+
+        limiter.incr(&session, &mut ctx).unwrap();
+        assert_eq!(true, ctx.guard.is_some());
+    }
+    #[tokio::test]
+    async fn test_new_req_header_limiter() {
+        let limiter = Limiter::new(">X-Uuid 10").unwrap();
+        assert_eq!(LimitTag::RequestHeader, limiter.tag);
+        let mut ctx = State {
+            ..Default::default()
+        };
+        let session = new_session().await;
+
+        limiter.incr(&session, &mut ctx).unwrap();
+        assert_eq!(true, ctx.guard.is_some());
+    }
+    #[tokio::test]
+    async fn test_new_query_limiter() {
+        let limiter = Limiter::new("?key 10").unwrap();
+        assert_eq!(LimitTag::Query, limiter.tag);
+        let mut ctx = State {
+            ..Default::default()
+        };
+        let session = new_session().await;
+
+        limiter.incr(&session, &mut ctx).unwrap();
+        assert_eq!(true, ctx.guard.is_some());
+    }
+    #[tokio::test]
+    async fn test_new_ip_limiter() {
+        let limiter = Limiter::new("ip 10").unwrap();
+        assert_eq!(LimitTag::Ip, limiter.tag);
+        let mut ctx = State {
+            ..Default::default()
+        };
+        let session = new_session().await;
+
+        limiter.incr(&session, &mut ctx).unwrap();
+        assert_eq!(true, ctx.guard.is_some());
     }
 }
