@@ -10,15 +10,17 @@ Pingap是基于[pingora](https://github.com/cloudflare/pingora)开发的，pingo
 - 支持HTTP1与HTTP2两种协议
 - 无中断请求的配置更新，方便实时更新应用配置
 - 模板式的请求日志输出，可按模板指定各种输出
+- 提供Web界面式的配置，简化操作
 
 [Pingap处理流程](./phase_chart_zh.md)
 
-## 根据请求的路径选择对应的服务
+## 请求筛选
 
-Pingap支持两种特别的服务类型，以及常规的反向代理服务，具体如下：
+Pingap支持以下的服务类型，以及常规的反向代理服务，具体如下：
 
 - `Stats`: 获取Server所对应的性能指标
 - `Admin`: 根据启动时指定的admin地址或者配置的`admin path`转发至对应的管理后台服务
+- `Directory`: 根据指定的静态目录提供静态文件服务
 - `其它`: 常规的反向代理服务，根据域名与路径选择对应的转发节点
 
 ```mermaid
@@ -26,6 +28,7 @@ graph TD;
     start("新的请求")-->ServiceFilter{{请求服务筛选}};
     ServiceFilter--是否匹配stats-->stats的处理;
     ServiceFilter--是否匹配admin-->admin的处理;
+    ServiceFilter--是否匹配静态文件目录-->静态文件的处理;
     ServiceFilter--根据host与path选择对应的Location-->Location筛选处理;
 ```
 

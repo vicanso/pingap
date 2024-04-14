@@ -12,6 +12,7 @@ A reverse proxy like nginx, built on [pingora](https://github.com/cloudflare/pin
 - Graceful reload
 - Template for http access log
 - TOML base configuration
+- Admin Web UI configuration
 
 ## Start
 

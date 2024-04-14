@@ -4,8 +4,8 @@ description: Pingap 处理流程
 
 ```mermaid
 flowchart TB
-    start("新的请求")-->requestFilter{{请求过滤}};
-    subgraph 针对请求过滤流程
+    start("新的请求")-->requestFilter{{请求筛选}};
+    subgraph 针对请求筛选流程
     requestFilter--匹配stats路径-->stats处理
     requestFilter--匹配admin-->admin处理
     requestFilter--常规upstream转发-->location处理

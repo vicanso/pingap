@@ -443,27 +443,38 @@ impl ProxyHttp for Server {
         }
 
         ctx.location_index = Some(location_index);
-        if let Some(dir) = lo.upstream.as_directory() {
-            let result = dir.handle(session, ctx).await?;
-            return Ok(result);
-        }
-        if let Some(mock) = lo.upstream.as_mock() {
-            let result = mock.handle(session, ctx).await?;
-            return Ok(result);
-        }
+
         // TODO get response from cache
         // check location support cache
 
         Ok(false)
     }
+    async fn proxy_upstream_filter(
+        &self,
+        session: &mut Session,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<bool>
+    where
+        Self::CTX: Send + Sync,
+    {
+        let lo = &self.locations[ctx.location_index.unwrap_or_default()];
+        if let Some(dir) = lo.upstream.as_directory() {
+            let result = dir.handle(session, ctx).await?;
+            return Ok(!result);
+        }
+        if let Some(mock) = lo.upstream.as_mock() {
+            let result = mock.handle(session, ctx).await?;
+            return Ok(!result);
+        }
+        Ok(true)
+    }
+
     async fn upstream_peer(
         &self,
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Box<HttpPeer>> {
         let lo = &self.locations[ctx.location_index.unwrap_or_default()];
-
-        // pingora::Error::new_str("No available upstream")
         let peer = lo.upstream.new_http_peer(ctx, session).ok_or_else(|| {
             util::new_internal_error(503, format!("No available upstream({})", lo.upstream_name))
         })?;
