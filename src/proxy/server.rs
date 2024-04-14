@@ -16,7 +16,7 @@ use super::logger::Parser;
 use super::{Location, Upstream};
 use crate::config::{LocationConf, PingapConf, UpstreamConf};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_WWW_AUTHENTICATE};
-use crate::serve::Serve;
+use crate::plugin::ProxyPlugin;
 use crate::serve::ADMIN_SERVE;
 use crate::state::{get_hostname, State};
 use crate::util;
@@ -440,6 +440,11 @@ impl ProxyHttp for Server {
         if let Some(level) = lo.modify_accept_encoding(header) {
             session.downstream_compression.adjust_decompression(true);
             session.downstream_compression.adjust_level(level);
+        }
+
+        let done = lo.exec_proxy_plugins(session, ctx).await?;
+        if done {
+            return Ok(true);
         }
 
         ctx.location_index = Some(location_index);

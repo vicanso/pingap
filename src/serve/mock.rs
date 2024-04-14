@@ -13,7 +13,9 @@
 // limitations under the License.
 
 use crate::http_extra::{convert_headers, HttpResponse};
+use crate::plugin::ProxyPlugin;
 use crate::state::State;
+use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
 use pingora::proxy::Session;
@@ -64,8 +66,12 @@ impl MockResponse {
 
         Ok(MockResponse { resp })
     }
+}
+
+#[async_trait]
+impl ProxyPlugin for MockResponse {
     /// Sends the mock data to client.
-    pub async fn handle(&self, session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
+    async fn handle(&self, session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
         let _ = self.resp.clone().send(session).await?;
         Ok(true)
     }

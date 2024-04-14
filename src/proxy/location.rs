@@ -15,9 +15,12 @@
 use super::Upstream;
 use crate::config::LocationConf;
 use crate::http_extra::{convert_headers, HttpHeader};
+use crate::plugin::get_proxy_plugin;
+use crate::state::State;
 use http::header::HeaderValue;
 use once_cell::sync::Lazy;
 use pingora::http::{RequestHeader, ResponseHeader};
+use pingora::proxy::Session;
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
 use std::sync::Arc;
@@ -88,6 +91,7 @@ pub struct Location {
     gzip_level: u32,
     br_level: u32,
     zstd_level: u32,
+    proxy_plugins: Option<Vec<String>>,
     pub support_compression: bool,
     pub upstream: Arc<Upstream>,
     pub upstream_name: String,
@@ -149,6 +153,7 @@ impl Location {
             headers: format_headers(&conf.headers)?,
             proxy_headers: format_headers(&conf.proxy_headers)?,
             gzip_level,
+            proxy_plugins: conf.proxy_plugins.clone(),
             br_level,
             zstd_level,
             support_compression,
@@ -233,6 +238,24 @@ impl Location {
             };
         }
         None
+    }
+    #[inline]
+    pub async fn exec_proxy_plugins(
+        &self,
+        session: &mut Session,
+        ctx: &mut State,
+    ) -> pingora::Result<bool> {
+        if let Some(plugins) = &self.proxy_plugins {
+            for name in plugins.iter() {
+                if let Some(plugin) = get_proxy_plugin(name) {
+                    let done = plugin.handle(session, ctx).await?;
+                    if done {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+        Ok(false)
     }
 }
 

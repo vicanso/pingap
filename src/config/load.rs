@@ -128,6 +128,7 @@ pub struct LocationConf {
     pub br_level: Option<u32>,
     pub zstd_level: Option<u32>,
     pub remark: Option<String>,
+    pub proxy_plugins: Option<Vec<String>>,
 }
 
 impl LocationConf {

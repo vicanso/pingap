@@ -12,8 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::plugin::ProxyPlugin;
 use crate::state::State;
 use crate::util;
+use async_trait::async_trait;
 use bytes::Bytes;
 use http::{header, HeaderValue, StatusCode};
 use log::error;
@@ -129,8 +131,11 @@ impl Directory {
             cache_private,
         }
     }
-    /// Gets the file match request path, then sends the data as chunk.
-    pub async fn handle(&self, session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
+}
+
+#[async_trait]
+impl ProxyPlugin for Directory {
+    async fn handle(&self, session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
         let mut filename = session.req_header().uri.path().to_string();
         if filename.len() <= 1 {
             filename = self.index.clone();

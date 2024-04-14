@@ -102,6 +102,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     let webhook_type = conf.webhook_type.clone().unwrap_or_default();
     let mut builder = env_logger::Builder::from_env(env_logger::Env::default());
 
+    // TODO load from config
+    let _ = plugin::init_proxy_plguins(vec![]);
+
     if let Some(log_level) = &conf.log_level {
         match log_level.to_lowercase().as_str() {
             "error" => builder.filter_level(log::LevelFilter::Error),

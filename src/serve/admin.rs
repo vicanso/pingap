@@ -13,10 +13,10 @@
 // limitations under the License.
 
 use super::embedded_file::EmbeddedStaticFile;
-use super::Serve;
 use crate::config::{self, save_config, LocationConf, ServerConf, UpstreamConf};
 use crate::config::{PingapConf, CATEGORY_LOCATION, CATEGORY_SERVER, CATEGORY_UPSTREAM};
 use crate::http_extra::HttpResponse;
+use crate::plugin::ProxyPlugin;
 use crate::state::State;
 use crate::state::{get_start_time, restart};
 use crate::util::{self, get_pkg_version};
@@ -191,7 +191,7 @@ fn get_method_path(session: &Session) -> (Method, String) {
 }
 
 #[async_trait]
-impl Serve for AdminServe {
+impl ProxyPlugin for AdminServe {
     async fn handle(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<bool> {
         let (method, mut path) = get_method_path(session);
         let api_prefix = "/api";

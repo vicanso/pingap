@@ -13,25 +13,13 @@
 // limitations under the License.
 
 use super::ProxyPlugin;
+use super::{Error, Result};
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
 use pingora::proxy::Session;
 use pingora_limits::inflight::Inflight;
-use snafu::{ResultExt, Snafu};
-use std::num::ParseIntError;
 use substring::Substring;
-
-#[derive(Debug, Snafu)]
-pub enum Error {
-    #[snafu(display("Invalid {message}"))]
-    Invalid { message: String },
-    #[snafu(display("Parse int {source}"))]
-    ParseInt { source: ParseIntError },
-    #[snafu(display("Exceed limit {value}/{max}"))]
-    Exceed { max: isize, value: isize },
-}
-type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(PartialEq, Debug)]
 pub enum LimitTag {
@@ -53,7 +41,9 @@ impl Limiter {
         let (key, max) = value.split_once(' ').ok_or(Error::Invalid {
             message: value.to_string(),
         })?;
-        let max = max.parse::<u32>().context(ParseIntSnafu)?;
+        let max = max
+            .parse::<u32>()
+            .map_err(|e| Error::ParseInt { source: e })?;
         if key.len() < 2 {
             return Err(Error::Invalid {
                 message: key.to_string(),
