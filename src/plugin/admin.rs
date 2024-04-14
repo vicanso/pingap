@@ -86,13 +86,13 @@ pub struct AdminServe {
     pub authorization: String,
 }
 impl AdminServe {
-    pub fn new(value: &str) -> Result<AdminServe> {
+    pub fn new(value: &str) -> Result<Self> {
         let arr: Vec<&str> = value.split(' ').collect();
         let mut authorization = "".to_string();
         if arr.len() >= 2 {
             authorization = arr[1].trim().to_string();
         }
-        Ok(AdminServe {
+        Ok(Self {
             path: arr[0].trim().to_string(),
             authorization,
         })

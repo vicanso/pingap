@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use crate::config::UpstreamConf;
-use crate::serve::{Directory, MockResponse, PROTOCOL_FILE, PROTOCOL_MOCK};
 use crate::state::State;
 use crate::util;
 use futures_util::FutureExt;
@@ -53,8 +52,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 enum SelectionLb {
     RoundRobin(Arc<LoadBalancer<RoundRobin>>),
     Consistent(Arc<LoadBalancer<Consistent>>),
-    Directory(Arc<Directory>),
-    Mock(Arc<MockResponse>),
+    Empty,
 }
 
 pub struct Upstream {
@@ -70,6 +68,23 @@ pub struct Upstream {
     write_timeout: Option<Duration>,
     verify_cert: Option<bool>,
     alpn: ALPN,
+}
+
+pub fn new_empty_upstream() -> Upstream {
+    Upstream {
+        name: "".to_string(),
+        hash: "".to_string(),
+        tls: false,
+        sni: "".to_string(),
+        lb: SelectionLb::Empty,
+        connection_timeout: None,
+        total_connection_timeout: None,
+        read_timeout: None,
+        idle_timeout: None,
+        write_timeout: None,
+        verify_cert: None,
+        alpn: ALPN::H1,
+    }
 }
 
 #[derive(Debug)]
@@ -250,48 +265,37 @@ impl Upstream {
             });
         }
         let mut hash = "".to_string();
-        let first_addr = conf.addrs[0].clone();
-        let lb = if first_addr.starts_with(PROTOCOL_FILE) {
-            SelectionLb::Directory(Arc::new(Directory::new(&first_addr)))
-        } else if first_addr.starts_with(PROTOCOL_MOCK) {
-            let mock_resp = MockResponse::new(&first_addr).map_err(|err| Error::Invalid {
-                message: err.to_string(),
-            })?;
-            SelectionLb::Mock(Arc::new(mock_resp))
-        } else {
-            let backends = new_backends(&conf.addrs, conf.ipv4_only.unwrap_or_default())?;
+        let backends = new_backends(&conf.addrs, conf.ipv4_only.unwrap_or_default())?;
 
-            let (hc, health_check_frequency) =
-                new_healtch_check(name, &conf.health_check.clone().unwrap_or_default())?;
-            let algo_method = conf.algo.clone().unwrap_or_default();
-            let algo_params: Vec<&str> = algo_method.split(':').collect();
-            let lb = match algo_params[0] {
-                "hash" => {
-                    let mut lb = LoadBalancer::<Consistent>::from_backends(backends);
-                    if algo_params.len() > 1 {
-                        hash = algo_params[1].to_string();
-                    }
+        let (hc, health_check_frequency) =
+            new_healtch_check(name, &conf.health_check.clone().unwrap_or_default())?;
+        let algo_method = conf.algo.clone().unwrap_or_default();
+        let algo_params: Vec<&str> = algo_method.split(':').collect();
+        let lb = match algo_params[0] {
+            "hash" => {
+                let mut lb = LoadBalancer::<Consistent>::from_backends(backends);
+                if algo_params.len() > 1 {
+                    hash = algo_params[1].to_string();
+                }
 
-                    lb.update()
-                        .now_or_never()
-                        .expect("static should not block")
-                        .expect("static should not error");
-                    lb.set_health_check(hc);
-                    lb.health_check_frequency = Some(health_check_frequency);
-                    SelectionLb::Consistent(Arc::new(lb))
-                }
-                _ => {
-                    let mut lb = LoadBalancer::<RoundRobin>::from_backends(backends);
-                    lb.update()
-                        .now_or_never()
-                        .expect("static should not block")
-                        .expect("static should not error");
-                    lb.set_health_check(hc);
-                    lb.health_check_frequency = Some(health_check_frequency);
-                    SelectionLb::RoundRobin(Arc::new(lb))
-                }
-            };
-            lb
+                lb.update()
+                    .now_or_never()
+                    .expect("static should not block")
+                    .expect("static should not error");
+                lb.set_health_check(hc);
+                lb.health_check_frequency = Some(health_check_frequency);
+                SelectionLb::Consistent(Arc::new(lb))
+            }
+            _ => {
+                let mut lb = LoadBalancer::<RoundRobin>::from_backends(backends);
+                lb.update()
+                    .now_or_never()
+                    .expect("static should not block")
+                    .expect("static should not error");
+                lb.set_health_check(hc);
+                lb.health_check_frequency = Some(health_check_frequency);
+                SelectionLb::RoundRobin(Arc::new(lb))
+            }
         };
         let sni = conf.sni.clone().unwrap_or_default();
         let alpn = match conf
@@ -375,20 +379,6 @@ impl Upstream {
     pub fn as_consistent(&self) -> Option<Arc<LoadBalancer<Consistent>>> {
         match &self.lb {
             SelectionLb::Consistent(lb) => Some(lb.clone()),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn as_directory(&self) -> Option<Arc<Directory>> {
-        match &self.lb {
-            SelectionLb::Directory(lb) => Some(lb.clone()),
-            _ => None,
-        }
-    }
-    #[inline]
-    pub fn as_mock(&self) -> Option<Arc<MockResponse>> {
-        match &self.lb {
-            SelectionLb::Mock(lb) => Some(lb.clone()),
             _ => None,
         }
     }

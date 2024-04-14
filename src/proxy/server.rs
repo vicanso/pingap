@@ -15,7 +15,7 @@
 use super::logger::Parser;
 use super::{Location, Upstream};
 use crate::config::{LocationConf, PingapConf, UpstreamConf};
-use crate::plugin::{self, ProxyPlugin};
+use crate::plugin::get_proxy_plugin;
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
@@ -290,7 +290,7 @@ impl ProxyHttp for Server {
         ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed);
         ctx.accepted = self.accepted.fetch_add(1, Ordering::Relaxed);
         if self.admin {
-            if let Some(plugin) = plugin::get_proxy_plugin(util::ADMIN_SERVER_PLUGIN.as_str()) {
+            if let Some(plugin) = get_proxy_plugin(util::ADMIN_SERVER_PLUGIN.as_str()) {
                 let done = plugin.handle(session, ctx).await?;
                 if done {
                     return Ok(true);
@@ -336,21 +336,12 @@ impl ProxyHttp for Server {
     }
     async fn proxy_upstream_filter(
         &self,
-        session: &mut Session,
-        ctx: &mut Self::CTX,
+        _session: &mut Session,
+        _ctx: &mut Self::CTX,
     ) -> pingora::Result<bool>
     where
         Self::CTX: Send + Sync,
     {
-        let lo = &self.locations[ctx.location_index.unwrap_or_default()];
-        if let Some(dir) = lo.upstream.as_directory() {
-            let result = dir.handle(session, ctx).await?;
-            return Ok(!result);
-        }
-        if let Some(mock) = lo.upstream.as_mock() {
-            let result = mock.handle(session, ctx).await?;
-            return Ok(!result);
-        }
         Ok(true)
     }
 

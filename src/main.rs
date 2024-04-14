@@ -27,7 +27,6 @@ mod config;
 mod http_extra;
 mod plugin;
 mod proxy;
-mod serve;
 mod state;
 mod util;
 mod webhook;

@@ -22,7 +22,9 @@ use std::num::ParseIntError;
 
 mod admin;
 mod compression;
+mod directory;
 mod limit;
+mod mock;
 mod stats;
 
 #[derive(Debug, Snafu)]
@@ -33,6 +35,8 @@ pub enum Error {
     ParseInt { source: ParseIntError },
     #[snafu(display("Exceed limit {value}/{max}"))]
     Exceed { max: isize, value: isize },
+    #[snafu(display("Json parse error {source}"))]
+    Json { source: serde_json::Error },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -49,6 +53,8 @@ pub enum ProxyPluginCategory {
     Compression,
     Stats,
     Admin,
+    Directory,
+    Mock,
 }
 
 #[derive(Clone, Debug)]
@@ -102,6 +108,14 @@ pub fn init_proxy_plguins(confs: Vec<ProxyPluginConf>) -> Result<()> {
                 ProxyPluginCategory::Admin => {
                     let a = admin::AdminServe::new(&conf.value)?;
                     plguins.insert(name, Box::new(a));
+                }
+                ProxyPluginCategory::Directory => {
+                    let d = directory::Directory::new(&conf.value)?;
+                    plguins.insert(name, Box::new(d));
+                }
+                ProxyPluginCategory::Mock => {
+                    let m = mock::MockResponse::new(&conf.value)?;
+                    plguins.insert(name, Box::new(m));
                 }
             };
         }

@@ -38,8 +38,8 @@ pub struct Stats {
 }
 
 impl Stats {
-    pub fn new(value: &str) -> Result<Stats> {
-        Ok(Stats {
+    pub fn new(value: &str) -> Result<Self> {
+        Ok(Self {
             path: value.to_string(),
         })
     }

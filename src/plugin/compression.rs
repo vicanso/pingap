@@ -32,7 +32,7 @@ pub struct Compression {
 }
 
 impl Compression {
-    pub fn new(value: &str) -> Result<Compression> {
+    pub fn new(value: &str) -> Result<Self> {
         let mut levels: [u32; 3] = [0, 0, 0];
         let mut support_compression = false;
         for (index, item) in value.split(' ').enumerate() {
@@ -47,7 +47,7 @@ impl Compression {
                 levels[index] = level;
             }
         }
-        Ok(Compression {
+        Ok(Self {
             gzip_level: levels[0],
             br_level: levels[1],
             zstd_level: levels[2],

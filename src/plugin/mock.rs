@@ -12,26 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::{Error, ProxyPlugin, Result};
 use crate::http_extra::{convert_headers, HttpResponse};
-use crate::plugin::ProxyPlugin;
 use crate::state::State;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
 use pingora::proxy::Session;
 use serde::{Deserialize, Serialize};
-use snafu::{ResultExt, Snafu};
-use substring::Substring;
-
-#[derive(Debug, Snafu)]
-pub enum Error {
-    #[snafu(display("Json parse error {source}"))]
-    Json { source: serde_json::Error },
-}
-
-type Result<T, E = Error> = std::result::Result<T, E>;
-
-pub static PROTOCOL_MOCK: &str = "mock://";
 
 #[derive(Default, Deserialize, Serialize, Clone)]
 pub struct MockInfo {
@@ -46,9 +34,8 @@ pub struct MockResponse {
 
 impl MockResponse {
     /// Creates a new mock response upstream, which will return a mock data.
-    pub fn new(path: &str) -> Result<Self> {
-        let new_data = path.substring(PROTOCOL_MOCK.len(), path.len());
-        let info: MockInfo = serde_json::from_str(new_data).context(JsonSnafu)?;
+    pub fn new(value: &str) -> Result<Self> {
+        let info: MockInfo = serde_json::from_str(value).map_err(|e| Error::Json { source: e })?;
 
         let mut resp = HttpResponse {
             status: StatusCode::OK,
@@ -87,7 +74,7 @@ mod tests {
     #[test]
     fn test_mock_response() {
         let resp = MockResponse::new(
-            r###"mock://{"status":500,"headers":["Content-Type: application/json"],"data":"{\"message\":\"Mock Service Unavailable\"}"}"###,
+            r###"{"status":500,"headers":["Content-Type: application/json"],"data":"{\"message\":\"Mock Service Unavailable\"}"}"###,
         ).unwrap().resp;
         assert_eq!(StatusCode::INTERNAL_SERVER_ERROR, resp.status);
         assert_eq!(

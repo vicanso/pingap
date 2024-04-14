@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::upstream::new_empty_upstream;
 use super::Upstream;
 use crate::config::LocationConf;
 use crate::http_extra::{convert_headers, HttpHeader};
@@ -105,12 +106,17 @@ impl Location {
         conf: &LocationConf,
         upstreams: Vec<Arc<Upstream>>,
     ) -> Result<Location> {
-        let up = upstreams
-            .iter()
-            .find(|item| item.name == conf.upstream)
-            .ok_or(Error::Invalid {
-                message: format!("Upstream({}) not found", conf.upstream),
-            })?;
+        let up = if conf.upstream.is_empty() {
+            Arc::new(new_empty_upstream())
+        } else {
+            upstreams
+                .iter()
+                .find(|item| item.name == conf.upstream)
+                .ok_or(Error::Invalid {
+                    message: format!("Upstream({}) not found", conf.upstream),
+                })?
+                .clone()
+        };
         let mut reg_rewrite = None;
         if let Some(value) = &conf.rewrite {
             let arr: Vec<&str> = value.split(' ').collect();
@@ -134,7 +140,7 @@ impl Location {
             path_selector: new_path_selector(&path)?,
             path,
             hosts,
-            upstream: up.clone(),
+            upstream: up,
             reg_rewrite,
             headers: format_headers(&conf.headers)?,
             proxy_headers: format_headers(&conf.proxy_headers)?,

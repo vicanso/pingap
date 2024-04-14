@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::plugin::ProxyPlugin;
+use super::{ProxyPlugin, Result};
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
@@ -56,8 +56,6 @@ async fn get_data(file: &PathBuf) -> std::io::Result<(std::fs::Metadata, fs::Fil
     Ok((meta, f))
 }
 
-pub static PROTOCOL_FILE: &str = "file://";
-
 fn get_cacheable_and_headers_from_meta(
     file: &PathBuf,
     meta: &Metadata,
@@ -91,14 +89,14 @@ fn get_cacheable_and_headers_from_meta(
 
 impl Directory {
     /// Creates a new directory upstream, which will serve static file of directory.
-    pub fn new(path: &str) -> Self {
-        let mut new_path = path.substring(PROTOCOL_FILE.len(), path.len());
+    pub fn new(value: &str) -> Result<Self> {
+        let mut new_path = value;
         let mut chunk_size = None;
         let mut max_age = None;
         let mut cache_private = None;
         let mut index_file = "index.html".to_string();
         let mut charset = None;
-        if let Ok(url_info) = Url::parse(path) {
+        if let Ok(url_info) = Url::parse(&format!("file://{new_path}")) {
             let query = url_info.query().unwrap_or_default();
             if !query.is_empty() {
                 new_path = new_path.substring(0, new_path.len() - query.len() - 1);
@@ -122,14 +120,14 @@ impl Directory {
                 }
             }
         };
-        Directory {
+        Ok(Self {
             index: format!("/{index_file}"),
             path: Path::new(&util::resolve_path(new_path)).to_path_buf(),
             chunk_size,
             max_age,
             charset,
             cache_private,
-        }
+        })
     }
 }
 
@@ -205,8 +203,9 @@ mod tests {
     #[test]
     fn test_new_directory() {
         let dir = Directory::new(
-            "file://~/Downloads?chunk_size=1024&max_age=3600&private&index=pingap/index.html",
-        );
+            "~/Downloads?chunk_size=1024&max_age=3600&private&index=pingap/index.html",
+        )
+        .unwrap();
         assert_eq!(1024, dir.chunk_size.unwrap_or_default());
         assert_eq!(3600, dir.max_age.unwrap_or_default());
         assert_eq!(true, dir.cache_private.unwrap_or_default());

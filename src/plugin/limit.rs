@@ -37,7 +37,7 @@ pub struct Limiter {
 }
 
 impl Limiter {
-    pub fn new(value: &str) -> Result<Limiter> {
+    pub fn new(value: &str) -> Result<Self> {
         let (key, max) = value.split_once(' ').ok_or(Error::Invalid {
             message: value.to_string(),
         })?;
@@ -58,7 +58,7 @@ impl Limiter {
             _ => LimitTag::Ip,
         };
 
-        Ok(Limiter {
+        Ok(Self {
             tag,
             max: max as isize,
             value: value.to_string(),
