@@ -124,9 +124,6 @@ pub struct LocationConf {
     pub headers: Option<Vec<String>>,
     pub rewrite: Option<String>,
     pub weight: Option<u16>,
-    pub gzip_level: Option<u32>,
-    pub br_level: Option<u32>,
-    pub zstd_level: Option<u32>,
     pub remark: Option<String>,
     pub proxy_plugins: Option<Vec<String>>,
 }

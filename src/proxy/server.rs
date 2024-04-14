@@ -15,18 +15,16 @@
 use super::logger::Parser;
 use super::{Location, Upstream};
 use crate::config::{LocationConf, PingapConf, UpstreamConf};
-use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_WWW_AUTHENTICATE};
+use crate::http_extra::{HttpResponse, HTTP_HEADER_WWW_AUTHENTICATE};
 use crate::plugin::ProxyPlugin;
 use crate::serve::ADMIN_SERVE;
-use crate::state::{get_hostname, State};
+use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::Bytes;
-use bytesize::ByteSize;
 use http::StatusCode;
 use log::{error, info};
-use memory_stats::memory_stats;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::listeners::TlsSettings;
 use pingora::protocols::http::error_resp;
@@ -69,7 +67,6 @@ pub struct ServerConf {
     pub name: String,
     pub addr: String,
     pub admin: bool,
-    pub stats_path: Option<String>,
     pub admin_path: Option<String>,
     pub access_log: Option<String>,
     pub authorization: Option<String>,
@@ -137,7 +134,6 @@ impl From<PingapConf> for Vec<ServerConf> {
                 tls_key,
                 admin: false,
                 authorization: item.authorization,
-                stats_path: item.stats_path,
                 admin_path: item.admin_path,
                 addr: item.addr,
                 access_log: item.access_log,
@@ -168,7 +164,6 @@ pub struct Server {
     log_parser: Option<Parser>,
     authorization: Option<String>,
     error_template: String,
-    stats_path: Option<String>,
     admin_path: Option<String>,
     threads: Option<usize>,
     tls_cert: Option<Vec<u8>>,
@@ -228,7 +223,6 @@ impl Server {
             admin: conf.admin,
             accepted: AtomicU64::new(0),
             processing: AtomicI32::new(0),
-            stats_path: conf.stats_path,
             admin_path: conf.admin_path,
             authorization: conf.authorization,
             addr: conf.addr,
@@ -287,37 +281,7 @@ impl Server {
         }
         Ok(ServerServices { lb, bg_services })
     }
-    async fn send_stats_response(&self, session: &mut Session, ctx: &mut State) {
-        let mut physical_mem = 0;
-        if let Some(value) = memory_stats() {
-            physical_mem = value.physical_mem;
-        }
 
-        let buf = serde_json::to_vec(&ServerStats {
-            accepted: self.accepted.load(Ordering::Relaxed),
-            processing: self.processing.load(Ordering::Relaxed),
-            hostname: get_hostname(),
-            physical_mem: ByteSize(physical_mem as u64).to_string_as(true),
-            physical_mem_mb: physical_mem / (1024 * 1024),
-        })
-        .unwrap_or_default();
-
-        let size = HttpResponse {
-            status: StatusCode::OK,
-            body: Bytes::from(buf),
-            headers: Some(vec![HTTP_HEADER_CONTENT_JSON.clone()]),
-            ..Default::default()
-        }
-        .send(session)
-        .await
-        .unwrap_or_else(|e| {
-            // ingore error for stats
-            error!("failed to send error response to downstream: {e}");
-            0
-        });
-        ctx.status = Some(StatusCode::OK);
-        ctx.response_body_size = size;
-    }
     fn auth_validate(&self, req_header: &RequestHeader) -> bool {
         if let Some(authorization) = &self.authorization {
             let value = util::get_req_header_value(req_header, "Authorization").unwrap_or_default();
@@ -365,13 +329,6 @@ impl Server {
         ctx: &mut State,
     ) -> pingora::Result<bool> {
         let path = session.req_header().uri.path();
-        // stats path
-        if let Some(stats_path) = &self.stats_path {
-            if stats_path == path {
-                self.send_stats_response(session, ctx).await;
-                return Ok(true);
-            }
-        }
 
         // admin server
         if self.admin {
@@ -405,7 +362,7 @@ impl ProxyHttp for Server {
         Self::CTX: Send + Sync,
     {
         ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed);
-        self.accepted.fetch_add(1, Ordering::Relaxed);
+        ctx.accepted = self.accepted.fetch_add(1, Ordering::Relaxed);
         // session.cache.enable(storage, eviction, predictor, cache_lock)
 
         // serve stats or admin
@@ -435,11 +392,6 @@ impl ProxyHttp for Server {
             }
             // TODO parse error
             let _ = new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri));
-        }
-        // TODO find a way for compressing for static file
-        if let Some(level) = lo.modify_accept_encoding(header) {
-            session.downstream_compression.adjust_decompression(true);
-            session.downstream_compression.adjust_level(level);
         }
 
         let done = lo.exec_proxy_plugins(session, ctx).await?;

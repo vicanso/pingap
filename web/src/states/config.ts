@@ -25,9 +25,6 @@ interface Location {
   proxy_headers?: string[];
   headers?: string[];
   rewrite?: string;
-  gzip_level?: number;
-  br_level?: number;
-  zstd_level?: number;
   limit?: string;
   remark?: string;
 }
@@ -39,7 +36,6 @@ interface Server {
   threads?: number;
   tls_cert?: string;
   tls_key?: string;
-  stats_path?: string;
   admin_path?: string;
   authorization?: string;
   remark?: string;

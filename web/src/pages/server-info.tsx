@@ -59,13 +59,6 @@ export default function ServerInfo() {
       category: FormItemCategory.TEXT,
     },
     {
-      id: "stats_path",
-      label: "Stats Path",
-      defaultValue: server.stats_path,
-      span: 6,
-      category: FormItemCategory.TEXT,
-    },
-    {
       id: "threads",
       label: "Threads",
       defaultValue: server.threads,

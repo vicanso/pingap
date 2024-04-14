@@ -80,27 +80,6 @@ export default function LocationInfo() {
       category: FormItemCategory.TEXT,
     },
     {
-      id: "gzip_level",
-      label: "Gzip Level",
-      defaultValue: location.gzip_level,
-      span: 4,
-      category: FormItemCategory.NUMBER,
-    },
-    {
-      id: "br_level",
-      label: "Br Level",
-      defaultValue: location.br_level,
-      span: 4,
-      category: FormItemCategory.NUMBER,
-    },
-    {
-      id: "zstd_level",
-      label: "Zstd Level",
-      defaultValue: location.zstd_level,
-      span: 4,
-      category: FormItemCategory.NUMBER,
-    },
-    {
       id: "limit",
       label: "Limit",
       defaultValue: location.limit,

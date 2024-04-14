@@ -17,8 +17,6 @@ use crate::config::LocationConf;
 use crate::http_extra::{convert_headers, HttpHeader};
 use crate::plugin::get_proxy_plugin;
 use crate::state::State;
-use http::header::HeaderValue;
-use once_cell::sync::Lazy;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
 use regex::Regex;
@@ -34,10 +32,6 @@ pub enum Error {
     Regex { value: String, source: regex::Error },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
-
-static ZSTD_ENCODING: Lazy<HeaderValue> = Lazy::new(|| "zstd".try_into().unwrap());
-static BR_ENCODING: Lazy<HeaderValue> = Lazy::new(|| "br".try_into().unwrap());
-static GZIP_ENCODING: Lazy<HeaderValue> = Lazy::new(|| "gzip".try_into().unwrap());
 
 struct RegexPath {
     value: Regex,
@@ -88,11 +82,7 @@ pub struct Location {
     reg_rewrite: Option<(Regex, String)>,
     headers: Option<Vec<HttpHeader>>,
     proxy_headers: Option<Vec<HttpHeader>>,
-    gzip_level: u32,
-    br_level: u32,
-    zstd_level: u32,
     proxy_plugins: Option<Vec<String>>,
-    pub support_compression: bool,
     pub upstream: Arc<Upstream>,
     pub upstream_name: String,
 }
@@ -137,10 +127,6 @@ impl Location {
             }
         }
 
-        let gzip_level = conf.gzip_level.unwrap_or_default();
-        let br_level = conf.br_level.unwrap_or_default();
-        let zstd_level = conf.zstd_level.unwrap_or_default();
-        let support_compression = gzip_level + br_level + zstd_level > 0;
         let path = conf.path.clone().unwrap_or_default();
 
         Ok(Location {
@@ -152,11 +138,7 @@ impl Location {
             reg_rewrite,
             headers: format_headers(&conf.headers)?,
             proxy_headers: format_headers(&conf.proxy_headers)?,
-            gzip_level,
             proxy_plugins: conf.proxy_plugins.clone(),
-            br_level,
-            zstd_level,
-            support_compression,
         })
     }
     /// Returns `true` if the host and path match location.
@@ -208,36 +190,6 @@ impl Location {
                 let _ = header.insert_header(k, v);
             }
         }
-    }
-    /// Modify accpet encoding for choose compression
-    #[inline]
-    pub fn modify_accept_encoding(&self, header: &mut RequestHeader) -> Option<u32> {
-        if !self.support_compression {
-            return None;
-        }
-        // TODO wait for the feature
-        // pingora_cor:compression:decide_action
-        // TODO: support to configure preferred encoding
-        if let Some(accept_encoding) = header.headers.get(http::header::ACCEPT_ENCODING) {
-            let accept_encoding = accept_encoding.to_str().unwrap_or_default();
-            if accept_encoding.is_empty() {
-                return None;
-            }
-            // zstd first
-            return if self.zstd_level > 0 && accept_encoding.contains("zstd") {
-                let _ = header.insert_header(http::header::ACCEPT_ENCODING, ZSTD_ENCODING.clone());
-                Some(self.zstd_level)
-            } else if self.br_level > 0 && accept_encoding.contains("br") {
-                let _ = header.insert_header(http::header::ACCEPT_ENCODING, BR_ENCODING.clone());
-                Some(self.br_level)
-            } else if self.gzip_level > 0 && accept_encoding.contains("gzip") {
-                let _ = header.insert_header(http::header::ACCEPT_ENCODING, GZIP_ENCODING.clone());
-                Some(self.gzip_level)
-            } else {
-                None
-            };
-        }
-        None
     }
     #[inline]
     pub async fn exec_proxy_plugins(

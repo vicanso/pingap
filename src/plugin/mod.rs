@@ -12,18 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::HashMap;
-
 use crate::state::State;
 use async_trait::async_trait;
 use once_cell::sync::OnceCell;
 use pingora::proxy::Session;
 use snafu::Snafu;
+use std::collections::HashMap;
 use std::num::ParseIntError;
 
+mod compression;
 mod limit;
-
-pub use limit::Limiter;
+mod stats;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -43,15 +42,34 @@ pub trait ProxyPlugin: Sync + Send {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum ProxyPluginCategory {
     Limit,
+    Compression,
+    Stats,
 }
 
+#[derive(Clone, Debug)]
 pub struct ProxyPluginConf {
     pub name: String,
     pub value: String,
     pub category: ProxyPluginCategory,
+}
+
+pub fn get_builtin_proxy_plguins() -> Vec<ProxyPluginConf> {
+    vec![
+        // default level, gzip:6 br:6 zstd:3
+        ProxyPluginConf {
+            name: "Pingap:compression".to_string(),
+            value: "6 6 3".to_string(),
+            category: ProxyPluginCategory::Compression,
+        },
+        ProxyPluginConf {
+            name: "Pingap:stats".to_string(),
+            value: "/stats".to_string(),
+            category: ProxyPluginCategory::Stats,
+        },
+    ]
 }
 
 static PROXY_PLUGINS: OnceCell<HashMap<String, Box<dyn ProxyPlugin>>> = OnceCell::new();
@@ -59,16 +77,22 @@ static PROXY_PLUGINS: OnceCell<HashMap<String, Box<dyn ProxyPlugin>>> = OnceCell
 pub fn init_proxy_plguins(confs: Vec<ProxyPluginConf>) -> Result<()> {
     PROXY_PLUGINS.get_or_try_init(|| {
         let mut plguins: HashMap<String, Box<dyn ProxyPlugin>> = HashMap::new();
-        for conf in confs {
+        let data = &mut confs.clone();
+        data.extend(get_builtin_proxy_plguins());
+        for conf in data {
+            let name = conf.name.clone();
             match conf.category {
                 ProxyPluginCategory::Limit => {
-                    let l = Limiter::new(&conf.value)?;
-                    plguins.insert(conf.name, Box::new(l));
+                    let l = limit::Limiter::new(&conf.value)?;
+                    plguins.insert(name, Box::new(l));
                 }
-                _ => {
-                    return Err(Error::Invalid {
-                        message: format!("Invalid cateogry({:?})", conf.category),
-                    })
+                ProxyPluginCategory::Compression => {
+                    let c = compression::Compression::new(&conf.value)?;
+                    plguins.insert(name, Box::new(c));
+                }
+                ProxyPluginCategory::Stats => {
+                    let s = stats::Stats::new(&conf.value)?;
+                    plguins.insert(name, Box::new(s));
                 }
             };
         }
