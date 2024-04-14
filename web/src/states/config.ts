@@ -36,8 +36,6 @@ interface Server {
   threads?: number;
   tls_cert?: string;
   tls_key?: string;
-  admin_path?: string;
-  authorization?: string;
   remark?: string;
 }
 

@@ -12,11 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod admin;
 mod directory;
-mod embedded_file;
 mod mock;
 
-pub use admin::ADMIN_SERVE;
 pub use directory::{Directory, PROTOCOL_FILE};
 pub use mock::{MockResponse, PROTOCOL_MOCK};

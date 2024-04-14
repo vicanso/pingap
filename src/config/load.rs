@@ -196,8 +196,6 @@ pub struct ServerConf {
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
     pub stats_path: Option<String>,
-    pub admin_path: Option<String>,
-    pub authorization: Option<String>,
     pub remark: Option<String>,
 }
 

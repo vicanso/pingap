@@ -15,9 +15,7 @@
 use super::logger::Parser;
 use super::{Location, Upstream};
 use crate::config::{LocationConf, PingapConf, UpstreamConf};
-use crate::http_extra::{HttpResponse, HTTP_HEADER_WWW_AUTHENTICATE};
-use crate::plugin::ProxyPlugin;
-use crate::serve::ADMIN_SERVE;
+use crate::plugin::{self, ProxyPlugin};
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
@@ -44,7 +42,6 @@ use snafu::{ResultExt, Snafu};
 use std::fs;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
-use substring::Substring;
 
 static ERROR_TEMPLATE: &str = include_str!("../../error.html");
 
@@ -64,12 +61,10 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(Debug, Default)]
 pub struct ServerConf {
+    pub admin: bool,
     pub name: String,
     pub addr: String,
-    pub admin: bool,
-    pub admin_path: Option<String>,
     pub access_log: Option<String>,
-    pub authorization: Option<String>,
     pub upstreams: Vec<(String, UpstreamConf)>,
     pub locations: Vec<(String, LocationConf)>,
     pub tls_cert: Option<Vec<u8>>,
@@ -130,11 +125,9 @@ impl From<PingapConf> for Vec<ServerConf> {
 
             servers.push(ServerConf {
                 name,
+                admin: false,
                 tls_cert,
                 tls_key,
-                admin: false,
-                authorization: item.authorization,
-                admin_path: item.admin_path,
                 addr: item.addr,
                 access_log: item.access_log,
                 upstreams: filter_upstreams,
@@ -162,9 +155,7 @@ pub struct Server {
     processing: AtomicI32,
     locations: Vec<Location>,
     log_parser: Option<Parser>,
-    authorization: Option<String>,
     error_template: String,
-    admin_path: Option<String>,
     threads: Option<usize>,
     tls_cert: Option<Vec<u8>>,
     tls_key: Option<Vec<u8>>,
@@ -214,6 +205,7 @@ impl Server {
                 })?,
             );
         }
+
         let mut p = None;
         if let Some(access_log) = conf.access_log {
             p = Some(Parser::from(access_log.as_str()));
@@ -223,8 +215,6 @@ impl Server {
             admin: conf.admin,
             accepted: AtomicU64::new(0),
             processing: AtomicI32::new(0),
-            admin_path: conf.admin_path,
-            authorization: conf.authorization,
             addr: conf.addr,
             log_parser: p,
             locations,
@@ -281,70 +271,6 @@ impl Server {
         }
         Ok(ServerServices { lb, bg_services })
     }
-
-    fn auth_validate(&self, req_header: &RequestHeader) -> bool {
-        if let Some(authorization) = &self.authorization {
-            let value = util::get_req_header_value(req_header, "Authorization").unwrap_or_default();
-            if value.is_empty() {
-                return false;
-            }
-            if value != format!("Basic {authorization}") {
-                return false;
-            }
-        }
-        true
-    }
-    async fn serve_admin(
-        &self,
-        admin_path: &str,
-        session: &mut Session,
-        ctx: &mut State,
-    ) -> pingora::Result<bool> {
-        if !self.auth_validate(session.req_header()) {
-            let _ = HttpResponse {
-                status: StatusCode::UNAUTHORIZED,
-                headers: Some(vec![HTTP_HEADER_WWW_AUTHENTICATE.clone()]),
-                ..Default::default()
-            }
-            .send(session)
-            .await?;
-            return Ok(true);
-        }
-
-        let header = session.req_header_mut();
-        let path = header.uri.path();
-        let mut new_path = path.substring(admin_path.len(), path.len()).to_string();
-        if let Some(query) = header.uri.query() {
-            new_path = format!("{new_path}?{query}");
-        }
-        // TODO parse error
-        if let Ok(uri) = new_path.parse::<http::Uri>() {
-            header.set_uri(uri);
-        }
-        ADMIN_SERVE.handle(session, ctx).await
-    }
-    async fn serve_stats_admin(
-        &self,
-        session: &mut Session,
-        ctx: &mut State,
-    ) -> pingora::Result<bool> {
-        let path = session.req_header().uri.path();
-
-        // admin server
-        if self.admin {
-            let result = ADMIN_SERVE.handle(session, ctx).await?;
-            return Ok(result);
-        }
-
-        // admin path
-        if let Some(admin_path) = &self.admin_path {
-            if path.starts_with(admin_path) {
-                let result = self.serve_admin(admin_path, session, ctx).await?;
-                return Ok(result);
-            }
-        }
-        Ok(false)
-    }
 }
 
 #[async_trait]
@@ -363,13 +289,15 @@ impl ProxyHttp for Server {
     {
         ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed);
         ctx.accepted = self.accepted.fetch_add(1, Ordering::Relaxed);
-        // session.cache.enable(storage, eviction, predictor, cache_lock)
-
-        // serve stats or admin
-        let served = self.serve_stats_admin(session, ctx).await?;
-        if served {
-            return Ok(true);
+        if self.admin {
+            if let Some(plugin) = plugin::get_proxy_plugin(util::ADMIN_SERVER_PLUGIN.as_str()) {
+                let done = plugin.handle(session, ctx).await?;
+                if done {
+                    return Ok(true);
+                }
+            }
         }
+        // session.cache.enable(storage, eviction, predictor, cache_lock)
 
         let header = session.req_header_mut();
         let path = header.uri.path();

@@ -45,20 +45,6 @@ export default function ServerInfo() {
       options: locations,
     },
     {
-      id: "admin_path",
-      label: "Admin Path",
-      defaultValue: server.admin_path,
-      span: 6,
-      category: FormItemCategory.TEXT,
-    },
-    {
-      id: "authorization",
-      label: "Authorization",
-      defaultValue: server.authorization,
-      span: 6,
-      category: FormItemCategory.TEXT,
-    },
-    {
       id: "threads",
       label: "Threads",
       defaultValue: server.threads,

@@ -22,6 +22,8 @@ use substring::Substring;
 const NAME: &str = env!("CARGO_PKG_NAME");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub static ADMIN_SERVER_PLUGIN: Lazy<String> = Lazy::new(|| uuid::Uuid::new_v4().to_string());
+
 /// Gets the package name.
 pub fn get_pkg_name() -> &'static str {
     NAME

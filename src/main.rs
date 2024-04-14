@@ -102,9 +102,6 @@ fn run() -> Result<(), Box<dyn Error>> {
     let webhook_type = conf.webhook_type.clone().unwrap_or_default();
     let mut builder = env_logger::Builder::from_env(env_logger::Env::default());
 
-    // TODO load from config
-    let _ = plugin::init_proxy_plguins(vec![]);
-
     if let Some(log_level) = &conf.log_level {
         match log_level.to_lowercase().as_str() {
             "error" => builder.filter_level(log::LevelFilter::Error),
@@ -182,8 +179,24 @@ fn run() -> Result<(), Box<dyn Error>> {
     my_server.sentry = conf.sentry.clone();
     my_server.bootstrap();
 
+    // TODO load from config
+    let mut proxy_plugin_confs = vec![];
+
     let mut server_conf_list: Vec<ServerConf> = conf.into();
     if let Some(addr) = args.admin {
+        let arr: Vec<&str> = addr.split('@').collect();
+        let mut addr = arr[0].to_string();
+        let mut authorization = "".to_string();
+        if arr.len() >= 2 {
+            authorization = arr[0].trim().to_string();
+            addr = arr[1].trim().to_string();
+        }
+        proxy_plugin_confs.push(plugin::ProxyPluginConf {
+            name: util::ADMIN_SERVER_PLUGIN.clone(),
+            value: format!("/ {authorization}"),
+            category: plugin::ProxyPluginCategory::Admin,
+            remark: "Admin serve".to_string(),
+        });
         server_conf_list.push(ServerConf {
             name: "admin".to_string(),
             admin: true,
@@ -191,6 +204,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             ..Default::default()
         });
     }
+    let _ = plugin::init_proxy_plguins(proxy_plugin_confs);
     for server_conf in server_conf_list {
         let ps = Server::new(server_conf)?;
         let services = ps.run(&my_server.configuration)?;

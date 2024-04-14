@@ -12,22 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::embedded_file::EmbeddedStaticFile;
+use super::{ProxyPlugin, Result};
 use crate::config::{self, save_config, LocationConf, ServerConf, UpstreamConf};
 use crate::config::{PingapConf, CATEGORY_LOCATION, CATEGORY_SERVER, CATEGORY_UPSTREAM};
-use crate::http_extra::HttpResponse;
-use crate::plugin::ProxyPlugin;
+use crate::http_extra::{HttpResponse, HTTP_HEADER_WWW_AUTHENTICATE};
 use crate::state::State;
 use crate::state::{get_start_time, restart};
 use crate::util::{self, get_pkg_version};
 use async_trait::async_trait;
+use bytes::Bytes;
 use bytes::{BufMut, BytesMut};
 use bytesize::ByteSize;
-use http::{Method, StatusCode};
+use hex::encode;
+use http::Method;
+use http::{header, HeaderValue, StatusCode};
 use log::error;
 use memory_stats::memory_stats;
-use once_cell::sync::Lazy;
+use pingora::http::RequestHeader;
 use pingora::proxy::Session;
+use rust_embed::EmbeddedFile;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -37,8 +40,65 @@ use substring::Substring;
 #[folder = "dist/"]
 struct AdminAsset;
 
-pub struct AdminServe {}
-pub static ADMIN_SERVE: Lazy<&AdminServe> = Lazy::new(|| &AdminServe {});
+pub struct EmbeddedStaticFile(pub Option<EmbeddedFile>, pub u32);
+
+impl From<EmbeddedStaticFile> for HttpResponse {
+    fn from(value: EmbeddedStaticFile) -> Self {
+        if value.0.is_none() {
+            return HttpResponse::not_found();
+        }
+        // value 0 is some
+        let file = value.0.unwrap();
+        // hash为基于内容生成
+        let str = &encode(file.metadata.sha256_hash())[0..8];
+        let mime_type = file.metadata.mimetype();
+        // 长度+hash的一部分
+        let entity_tag = format!(r#""{:x}-{str}""#, file.data.len());
+        // 因为html对于网页是入口，避免缓存后更新不及时
+        // 因此设置为0
+        // 其它js,css会添加版本号，因此无影响
+        let max_age = if mime_type.contains("text/html") {
+            0
+        } else {
+            value.1
+        };
+
+        let mut headers = vec![];
+        if let Ok(value) = HeaderValue::from_str(mime_type) {
+            headers.push((header::CONTENT_TYPE, value));
+        }
+        if let Ok(value) = HeaderValue::from_str(&entity_tag) {
+            headers.push((header::ETAG, value));
+        }
+
+        HttpResponse {
+            status: StatusCode::OK,
+            body: Bytes::copy_from_slice(&file.data),
+            max_age: Some(max_age),
+            headers: Some(headers),
+            ..Default::default()
+        }
+    }
+}
+
+pub struct AdminServe {
+    pub path: String,
+    pub authorization: String,
+}
+impl AdminServe {
+    pub fn new(value: &str) -> Result<AdminServe> {
+        let arr: Vec<&str> = value.split(' ').collect();
+        let mut authorization = "".to_string();
+        if arr.len() >= 2 {
+            authorization = arr[1].trim().to_string();
+        }
+        Ok(AdminServe {
+            path: arr[0].trim().to_string(),
+            authorization,
+        })
+    }
+}
+// pub static ADMIN_SERVE: Lazy<&AdminServe> = Lazy::new(|| &AdminServe {});
 
 #[derive(Serialize, Deserialize)]
 struct ErrorResponse {
@@ -77,6 +137,19 @@ struct BasicInfo {
 }
 
 impl AdminServe {
+    fn auth_validate(&self, req_header: &RequestHeader) -> bool {
+        if self.authorization.is_empty() {
+            return true;
+        }
+        let value = util::get_req_header_value(req_header, "Authorization").unwrap_or_default();
+        if value.is_empty() {
+            return false;
+        }
+        if value != format!("Basic {}", self.authorization) {
+            return false;
+        }
+        true
+    }
     fn load_config(&self) -> pingora::Result<PingapConf> {
         let conf = config::load_config(&config::get_config_path(), true).map_err(|e| {
             error!("failed to load config: {e}");
@@ -193,6 +266,30 @@ fn get_method_path(session: &Session) -> (Method, String) {
 #[async_trait]
 impl ProxyPlugin for AdminServe {
     async fn handle(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<bool> {
+        if !session.req_header().uri.path().starts_with(&self.path) {
+            return Ok(false);
+        }
+        let header = session.req_header_mut();
+        if !self.auth_validate(header) {
+            let _ = HttpResponse {
+                status: StatusCode::UNAUTHORIZED,
+                headers: Some(vec![HTTP_HEADER_WWW_AUTHENTICATE.clone()]),
+                ..Default::default()
+            }
+            .send(session)
+            .await?;
+            return Ok(true);
+        }
+        let path = header.uri.path();
+        let mut new_path = path.substring(self.path.len(), path.len()).to_string();
+        if let Some(query) = header.uri.query() {
+            new_path = format!("{new_path}?{query}");
+        }
+        // TODO parse error
+        if let Ok(uri) = new_path.parse::<http::Uri>() {
+            header.set_uri(uri);
+        }
+
         let (method, mut path) = get_method_path(session);
         let api_prefix = "/api";
         if path.starts_with(api_prefix) {

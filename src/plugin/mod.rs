@@ -20,6 +20,7 @@ use snafu::Snafu;
 use std::collections::HashMap;
 use std::num::ParseIntError;
 
+mod admin;
 mod compression;
 mod limit;
 mod stats;
@@ -42,11 +43,12 @@ pub trait ProxyPlugin: Sync + Send {
     }
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum ProxyPluginCategory {
     Limit,
     Compression,
     Stats,
+    Admin,
 }
 
 #[derive(Clone, Debug)]
@@ -54,6 +56,7 @@ pub struct ProxyPluginConf {
     pub name: String,
     pub value: String,
     pub category: ProxyPluginCategory,
+    pub remark: String,
 }
 
 pub fn get_builtin_proxy_plguins() -> Vec<ProxyPluginConf> {
@@ -63,11 +66,13 @@ pub fn get_builtin_proxy_plguins() -> Vec<ProxyPluginConf> {
             name: "Pingap:compression".to_string(),
             value: "6 6 3".to_string(),
             category: ProxyPluginCategory::Compression,
+            remark: "Compression for http, support zstd:3, br:6, gzip:6".to_string(),
         },
         ProxyPluginConf {
             name: "Pingap:stats".to_string(),
             value: "/stats".to_string(),
             category: ProxyPluginCategory::Stats,
+            remark: "Get stats of server".to_string(),
         },
     ]
 }
@@ -93,6 +98,10 @@ pub fn init_proxy_plguins(confs: Vec<ProxyPluginConf>) -> Result<()> {
                 ProxyPluginCategory::Stats => {
                     let s = stats::Stats::new(&conf.value)?;
                     plguins.insert(name, Box::new(s));
+                }
+                ProxyPluginCategory::Admin => {
+                    let a = admin::AdminServe::new(&conf.value)?;
+                    plguins.insert(name, Box::new(a));
                 }
             };
         }
