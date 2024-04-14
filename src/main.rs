@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::proxy::{Server, ServerConf};
-use crate::state::get_start_time;
 use clap::Parser;
-use config::PingapConf;
+use config::{PingapConf, ProxyPluginCategory, ProxyPluginConf};
 use log::{error, info, Level};
 use pingora::server;
 use pingora::server::configuration::Opt;
+use proxy::{Server, ServerConf};
+use state::get_start_time;
 use std::error::Error;
 use std::io::Write;
 use std::sync::Arc;
@@ -190,12 +190,14 @@ fn run() -> Result<(), Box<dyn Error>> {
             authorization = arr[0].trim().to_string();
             addr = arr[1].trim().to_string();
         }
-        proxy_plugin_confs.push(plugin::ProxyPluginConf {
-            name: util::ADMIN_SERVER_PLUGIN.clone(),
-            value: format!("/ {authorization}"),
-            category: plugin::ProxyPluginCategory::Admin,
-            remark: "Admin serve".to_string(),
-        });
+        proxy_plugin_confs.push((
+            util::ADMIN_SERVER_PLUGIN.clone(),
+            ProxyPluginConf {
+                value: format!("/ {authorization}"),
+                category: ProxyPluginCategory::Admin,
+                remark: "Admin serve".to_string(),
+            },
+        ));
         server_conf_list.push(ServerConf {
             name: "admin".to_string(),
             admin: true,

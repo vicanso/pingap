@@ -271,6 +271,18 @@ impl Server {
         }
         Ok(ServerServices { lb, bg_services })
     }
+    async fn serve_admin(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<()> {
+        if let Some(plugin) = get_proxy_plugin(util::ADMIN_SERVER_PLUGIN.as_str()) {
+            let done = plugin.handle(session, ctx).await?;
+            if !done {
+                return Err(util::new_internal_error(
+                    500,
+                    "Admin server is unavailable".to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -290,12 +302,8 @@ impl ProxyHttp for Server {
         ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed);
         ctx.accepted = self.accepted.fetch_add(1, Ordering::Relaxed);
         if self.admin {
-            if let Some(plugin) = get_proxy_plugin(util::ADMIN_SERVER_PLUGIN.as_str()) {
-                let done = plugin.handle(session, ctx).await?;
-                if done {
-                    return Ok(true);
-                }
-            }
+            self.serve_admin(session, ctx).await?;
+            return Ok(true);
         }
         // session.cache.enable(storage, eviction, predictor, cache_lock)
 
@@ -321,13 +329,12 @@ impl ProxyHttp for Server {
             // TODO parse error
             let _ = new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri));
         }
+        ctx.location_index = Some(location_index);
 
         let done = lo.exec_proxy_plugins(session, ctx).await?;
         if done {
             return Ok(true);
         }
-
-        ctx.location_index = Some(location_index);
 
         // TODO get response from cache
         // check location support cache

@@ -63,6 +63,24 @@ pub enum Error {
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
+#[derive(PartialEq, Debug, Default, Deserialize, Clone, Serialize)]
+pub enum ProxyPluginCategory {
+    #[default]
+    Limit,
+    Compression,
+    Stats,
+    Admin,
+    Directory,
+    Mock,
+}
+
+#[derive(Debug, Default, Deserialize, Clone, Serialize)]
+pub struct ProxyPluginConf {
+    pub value: String,
+    pub category: ProxyPluginCategory,
+    pub remark: String,
+}
+
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
 pub struct UpstreamConf {
     pub addrs: Vec<String>,
@@ -228,6 +246,7 @@ pub struct PingapConf {
     pub upstreams: HashMap<String, UpstreamConf>,
     pub locations: HashMap<String, LocationConf>,
     pub servers: HashMap<String, ServerConf>,
+    pub proxy_plugins: HashMap<String, ProxyPluginConf>,
     pub error_template: String,
     pub pid_file: Option<String>,
     pub upgrade_sock: Option<String>,
@@ -274,6 +293,7 @@ struct TomlConfig {
     servers: Option<Map<String, Value>>,
     upstreams: Option<Map<String, Value>>,
     locations: Option<Map<String, Value>>,
+    proxy_plugins: Option<Map<String, Value>>,
     error_template: Option<String>,
     pid_file: Option<String>,
     upgrade_sock: Option<String>,
@@ -434,6 +454,11 @@ pub fn load_config(path: &str, admin: bool) -> Result<PingapConf> {
     for (name, value) in data.servers.unwrap_or_default() {
         let server: ServerConf = toml::from_str(format_toml(&value).as_str()).context(DeSnafu)?;
         conf.servers.insert(name, server);
+    }
+    for (name, value) in data.proxy_plugins.unwrap_or_default() {
+        let plugin: ProxyPluginConf =
+            toml::from_str(format_toml(&value).as_str()).context(DeSnafu)?;
+        conf.proxy_plugins.insert(name, plugin);
     }
 
     Ok(conf)

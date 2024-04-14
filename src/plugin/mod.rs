@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::config::{ProxyPluginCategory, ProxyPluginConf};
 use crate::state::State;
 use async_trait::async_trait;
 use once_cell::sync::OnceCell;
@@ -47,51 +48,37 @@ pub trait ProxyPlugin: Sync + Send {
     }
 }
 
-#[derive(PartialEq, Clone, Debug)]
-pub enum ProxyPluginCategory {
-    Limit,
-    Compression,
-    Stats,
-    Admin,
-    Directory,
-    Mock,
-}
-
-#[derive(Clone, Debug)]
-pub struct ProxyPluginConf {
-    pub name: String,
-    pub value: String,
-    pub category: ProxyPluginCategory,
-    pub remark: String,
-}
-
-pub fn get_builtin_proxy_plguins() -> Vec<ProxyPluginConf> {
+pub fn get_builtin_proxy_plguins() -> Vec<(String, ProxyPluginConf)> {
     vec![
         // default level, gzip:6 br:6 zstd:3
-        ProxyPluginConf {
-            name: "Pingap:compression".to_string(),
-            value: "6 6 3".to_string(),
-            category: ProxyPluginCategory::Compression,
-            remark: "Compression for http, support zstd:3, br:6, gzip:6".to_string(),
-        },
-        ProxyPluginConf {
-            name: "Pingap:stats".to_string(),
-            value: "/stats".to_string(),
-            category: ProxyPluginCategory::Stats,
-            remark: "Get stats of server".to_string(),
-        },
+        (
+            "Pingap:compression".to_string(),
+            ProxyPluginConf {
+                value: "6 6 3".to_string(),
+                category: ProxyPluginCategory::Compression,
+                remark: "Compression for http, support zstd:3, br:6, gzip:6".to_string(),
+            },
+        ),
+        (
+            "Pingap:stats".to_string(),
+            ProxyPluginConf {
+                value: "/stats".to_string(),
+                category: ProxyPluginCategory::Stats,
+                remark: "Get stats of server".to_string(),
+            },
+        ),
     ]
 }
 
 static PROXY_PLUGINS: OnceCell<HashMap<String, Box<dyn ProxyPlugin>>> = OnceCell::new();
 
-pub fn init_proxy_plguins(confs: Vec<ProxyPluginConf>) -> Result<()> {
+pub fn init_proxy_plguins(confs: Vec<(String, ProxyPluginConf)>) -> Result<()> {
     PROXY_PLUGINS.get_or_try_init(|| {
         let mut plguins: HashMap<String, Box<dyn ProxyPlugin>> = HashMap::new();
         let data = &mut confs.clone();
         data.extend(get_builtin_proxy_plguins());
-        for conf in data {
-            let name = conf.name.clone();
+        for (name, conf) in data {
+            let name = name.to_string();
             match conf.category {
                 ProxyPluginCategory::Limit => {
                     let l = limit::Limiter::new(&conf.value)?;

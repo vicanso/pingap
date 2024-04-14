@@ -17,8 +17,8 @@ use once_cell::sync::OnceCell;
 mod load;
 
 pub use load::{
-    load_config, save_config, LocationConf, PingapConf, ServerConf, UpstreamConf,
-    CATEGORY_LOCATION, CATEGORY_SERVER, CATEGORY_UPSTREAM,
+    load_config, save_config, LocationConf, PingapConf, ProxyPluginCategory, ProxyPluginConf,
+    ServerConf, UpstreamConf, CATEGORY_LOCATION, CATEGORY_SERVER, CATEGORY_UPSTREAM,
 };
 
 static CONFIG_PATH: OnceCell<String> = OnceCell::new();
