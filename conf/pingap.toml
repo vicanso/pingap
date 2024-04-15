@@ -29,6 +29,11 @@ grace_period = "3m"
 # Timeout in seconds of the final step for the graceful shutdown. Default `5s`.
 graceful_shutdown_timeout = "10s"
 
+
+# Keepalive pool size for client connections to upstream.
+# Default `128`.
+# upstream_keepalive_pool_size = 128
+
 # Webhook for some events, such as backend becomes unhealthy. Default `None`
 # webhook = "http://127.0.0.1:6001/webhook"
 # Webhook type, "normal", "wecom", "dingtalk"
@@ -89,11 +94,8 @@ idle_timeout = "120s"
 
 # Anther upstream using all default config.
 [upstreams.diving]
-# static file
-addrs = ["file://~/Downloads"]
-# addrs = [
-#     'mock://{"status":500,"headers":["Content-Type: application/json"],"data":"{\"message\":\"Mock Service Unavailable\"}"}',
-# ]
+addrs = ["127.0.0.1:5001"]
+
 
 # Location config list, it will defined as [locations.name]
 [locations.lo]
@@ -115,25 +117,8 @@ rewrite = ""
 # The weight of locaton, max is prior, Default `None`
 # weight = 4096
 
-# Set the gzip level for response. Default `None`.
-# gzip_level = 1
-
-# Set the brotli level for response. Default `None`.
-# br_level = 1
-
-# Set the zstd level for response. Default `None`.
-# zstd_level = 1
-
-# The limit config for location,
-# the limit format is `category max-value`.
-# The format supports 4 category,
-# ~uid: get uid cookie value as limit key,
-# >X-Uid: get X-Uid request header value as limit key,
-# ?uid: get uid query value as limit key,
-# id: get client id as limit key.
-# The max limit value
-# limit = "ip 1"
-
+# The proxy plugin for location,
+# it will run all plugins in order.
 proxy_plugins = ["pingap:stats"]
 
 # Server config list, it will be defined as [servers.name]
@@ -156,11 +141,3 @@ locations = ["lo"]
 # tls cert and key, it should be base64
 # tls_cert = ""
 # tls_key = ""
-
-# Stats path for get the stats of server. Default `None`
-stats_path = "/stats"
-
-# Admin path for admin server. Default `None`
-admin_path = "/pingap"
-# Basic authorization for admin server, value is `base64(account + ":" + password). Default `None`
-# authorization = "dGVzdDoxMjMxMjM="

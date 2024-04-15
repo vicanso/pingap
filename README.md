@@ -7,12 +7,12 @@ A reverse proxy like nginx, built on [pingora](https://github.com/cloudflare/pin
 ## Feature
 
 - Filter location by host and path
-- static file serve
 - HTTP 1/2 end to end proxy
 - Graceful reload
 - Template for http access log
 - TOML base configuration
 - Admin Web UI configuration
+- Http proxy plugins: `compression`, `static serve`, `limit`, `stats` and `mock`.
 
 ## Start
 
