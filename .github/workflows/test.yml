@@ -25,6 +25,7 @@ jobs:
           run: |
             rustc --version
             cargo --version
+            make msrv
             make test
             make bench
             make release

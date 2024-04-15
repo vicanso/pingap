@@ -161,15 +161,6 @@ pub struct Server {
     tls_key: Option<Vec<u8>>,
 }
 
-#[derive(Serialize)]
-struct ServerStats {
-    processing: i32,
-    accepted: u64,
-    hostname: String,
-    physical_mem_mb: usize,
-    physical_mem: String,
-}
-
 pub struct ServerServices {
     pub lb: Service<HttpProxy<Server>>,
     pub bg_services: Vec<Box<dyn IService>>,
