@@ -13,8 +13,10 @@
 // limitations under the License.
 
 use super::{ProxyPlugin, Result};
-use crate::config::{self, save_config, LocationConf, ServerConf, UpstreamConf};
-use crate::config::{PingapConf, CATEGORY_LOCATION, CATEGORY_SERVER, CATEGORY_UPSTREAM};
+use crate::config::{self, save_config, LocationConf, ProxyPluginConf, ServerConf, UpstreamConf};
+use crate::config::{
+    PingapConf, CATEGORY_LOCATION, CATEGORY_PROXY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
+};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_WWW_AUTHENTICATE};
 use crate::state::State;
 use crate::state::{get_start_time, restart};
@@ -167,6 +169,7 @@ impl AdminServe {
             CATEGORY_UPSTREAM => HttpResponse::try_from_json(&conf.upstreams)?,
             CATEGORY_LOCATION => HttpResponse::try_from_json(&conf.locations)?,
             CATEGORY_SERVER => HttpResponse::try_from_json(&conf.servers)?,
+            CATEGORY_PROXY_PLUGIN => HttpResponse::try_from_json(&conf.proxy_plugins)?,
             _ => HttpResponse::try_from_json(&conf)?,
         };
         Ok(resp)
@@ -184,6 +187,9 @@ impl AdminServe {
             }
             CATEGORY_SERVER => {
                 conf.servers.remove(name);
+            }
+            CATEGORY_PROXY_PLUGIN => {
+                conf.proxy_plugins.remove(name);
             }
             _ => {}
         };
@@ -226,6 +232,13 @@ impl AdminServe {
                     util::new_internal_error(400, e.to_string())
                 })?;
                 conf.servers.insert(key, server);
+            }
+            CATEGORY_PROXY_PLUGIN => {
+                let plugin: ProxyPluginConf = serde_json::from_slice(&buf).map_err(|e| {
+                    error!("failed to deserialize proxy plugin: {e}");
+                    util::new_internal_error(400, e.to_string())
+                })?;
+                conf.proxy_plugins.insert(key, plugin);
             }
             _ => {
                 let basic_conf: BasicConfParams = serde_json::from_slice(&buf).map_err(|e| {

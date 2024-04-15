@@ -134,6 +134,8 @@ rewrite = ""
 # The max limit value
 # limit = "ip 1"
 
+proxy_plugins = ["pingap:stats"]
+
 # Server config list, it will be defined as [servers.name]
 [servers.test]
 # TCP listening address

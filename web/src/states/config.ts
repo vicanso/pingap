@@ -25,7 +25,7 @@ interface Location {
   proxy_headers?: string[];
   headers?: string[];
   rewrite?: string;
-  limit?: string;
+  proxy_plugins?: string[];
   remark?: string;
 }
 
@@ -39,10 +39,17 @@ interface Server {
   remark?: string;
 }
 
+interface ProxyPlugin {
+  value: string;
+  category: number;
+  remark?: string;
+}
+
 interface Config {
   upstreams?: Record<string, Upstream>;
   locations?: Record<string, Location>;
   servers?: Record<string, Server>;
+  proxy_plugins?: Record<string, ProxyPlugin>;
   error_template?: string;
   pid_file?: string;
   upgrade_sock?: string;

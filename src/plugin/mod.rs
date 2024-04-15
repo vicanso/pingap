@@ -48,23 +48,23 @@ pub trait ProxyPlugin: Sync + Send {
     }
 }
 
-pub fn get_builtin_proxy_plguins() -> Vec<(String, ProxyPluginConf)> {
+pub fn get_builtin_proxy_plugins() -> Vec<(String, ProxyPluginConf)> {
     vec![
         // default level, gzip:6 br:6 zstd:3
         (
-            "Pingap:compression".to_string(),
+            "pingap:compression".to_string(),
             ProxyPluginConf {
                 value: "6 6 3".to_string(),
                 category: ProxyPluginCategory::Compression,
-                remark: "Compression for http, support zstd:3, br:6, gzip:6".to_string(),
+                remark: Some("Compression for http, support zstd:3, br:6, gzip:6".to_string()),
             },
         ),
         (
-            "Pingap:stats".to_string(),
+            "pingap:stats".to_string(),
             ProxyPluginConf {
                 value: "/stats".to_string(),
                 category: ProxyPluginCategory::Stats,
-                remark: "Get stats of server".to_string(),
+                remark: Some("Get stats of server".to_string()),
             },
         ),
     ]
@@ -72,11 +72,11 @@ pub fn get_builtin_proxy_plguins() -> Vec<(String, ProxyPluginConf)> {
 
 static PROXY_PLUGINS: OnceCell<HashMap<String, Box<dyn ProxyPlugin>>> = OnceCell::new();
 
-pub fn init_proxy_plguins(confs: Vec<(String, ProxyPluginConf)>) -> Result<()> {
+pub fn init_proxy_plugins(confs: Vec<(String, ProxyPluginConf)>) -> Result<()> {
     PROXY_PLUGINS.get_or_try_init(|| {
         let mut plguins: HashMap<String, Box<dyn ProxyPlugin>> = HashMap::new();
         let data = &mut confs.clone();
-        data.extend(get_builtin_proxy_plguins());
+        data.extend(get_builtin_proxy_plugins());
         for (name, conf) in data {
             let name = name.to_string();
             match conf.category {

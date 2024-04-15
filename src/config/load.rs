@@ -27,6 +27,7 @@ use url::Url;
 pub const CATEGORY_UPSTREAM: &str = "upstream";
 pub const CATEGORY_LOCATION: &str = "location";
 pub const CATEGORY_SERVER: &str = "server";
+pub const CATEGORY_PROXY_PLUGIN: &str = "proxy_plugin";
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -66,9 +67,9 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 #[derive(PartialEq, Debug, Default, Deserialize, Clone, Serialize)]
 pub enum ProxyPluginCategory {
     #[default]
+    Stats,
     Limit,
     Compression,
-    Stats,
     Admin,
     Directory,
     Mock,
@@ -78,7 +79,7 @@ pub enum ProxyPluginCategory {
 pub struct ProxyPluginConf {
     pub value: String,
     pub category: ProxyPluginCategory,
-    pub remark: String,
+    pub remark: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
@@ -362,6 +363,15 @@ pub fn save_config(path: &str, conf: &mut PingapConf, category: &str) -> Result<
             let _ = m.insert(
                 "upstreams".to_string(),
                 toml::Value::Table(data.upstreams.unwrap_or_default()),
+            );
+            toml::to_string_pretty(&m).context(SerSnafu)?
+        }
+        CATEGORY_PROXY_PLUGIN => {
+            filepath = format!("{filepath}/proxy_plugins.toml");
+            let mut m = Map::new();
+            let _ = m.insert(
+                "proxy_plugins".to_string(),
+                toml::Value::Table(data.proxy_plugins.unwrap_or_default()),
             );
             toml::to_string_pretty(&m).context(SerSnafu)?
         }

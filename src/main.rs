@@ -179,7 +179,11 @@ fn run() -> Result<(), Box<dyn Error>> {
     my_server.bootstrap();
 
     // TODO load from config
-    let mut proxy_plugin_confs = vec![];
+    let mut proxy_plugin_confs: Vec<(String, ProxyPluginConf)> = conf
+        .proxy_plugins
+        .iter()
+        .map(|(name, value)| (name.to_string(), value.clone()))
+        .collect();
 
     let mut server_conf_list: Vec<ServerConf> = conf.into();
     if let Some(addr) = args.admin {
@@ -195,7 +199,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             ProxyPluginConf {
                 value: format!("/ {authorization}"),
                 category: ProxyPluginCategory::Admin,
-                remark: "Admin serve".to_string(),
+                remark: Some("Admin serve".to_string()),
             },
         ));
         server_conf_list.push(ServerConf {
@@ -205,7 +209,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             ..Default::default()
         });
     }
-    let _ = plugin::init_proxy_plguins(proxy_plugin_confs);
+    let _ = plugin::init_proxy_plugins(proxy_plugin_confs);
     for server_conf in server_conf_list {
         let ps = Server::new(server_conf)?;
         let services = ps.run(&my_server.configuration)?;

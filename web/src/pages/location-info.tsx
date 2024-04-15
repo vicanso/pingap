@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 
 import Loading from "../components/loading";
 import FormEditor, {
+  CheckBoxItem,
   FormItem,
   FormItemCategory,
 } from "../components/form-editor";
@@ -27,6 +28,28 @@ export default function LocationInfo() {
   const location = locations[locationName || ""] || {};
   const upstreams = Object.keys(config.upstreams || {});
   const currentNames = Object.keys(locations);
+  const proxyPluginOptions: CheckBoxItem[] = [
+    {
+      label: "pingap:stats",
+      option: 0,
+      value: "pingap:stats",
+    },
+    {
+      label: "pingap:compression",
+      option: 1,
+      value: "pingap:compression",
+    },
+  ];
+  if (config.proxy_plugins) {
+    Object.keys(config.proxy_plugins).forEach((name) => {
+      const item = (config.proxy_plugins || {})[name];
+      proxyPluginOptions.push({
+        label: `${name}(${item.category})`,
+        option: proxyPluginOptions.length,
+        value: name,
+      });
+    });
+  }
 
   const arr: FormItem[] = [
     {
@@ -80,11 +103,12 @@ export default function LocationInfo() {
       category: FormItemCategory.TEXT,
     },
     {
-      id: "limit",
-      label: "Limit",
-      defaultValue: location.limit,
-      span: 6,
-      category: FormItemCategory.TEXT,
+      id: "proxy_plugins",
+      label: "Proxy Plugins",
+      defaultValue: location.proxy_plugins,
+      span: 12,
+      options: proxyPluginOptions,
+      category: FormItemCategory.PROXY_PLUGIN_SELECT,
     },
     {
       id: "remark",

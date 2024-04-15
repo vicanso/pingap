@@ -12,6 +12,7 @@ import Snackbar from "@mui/material/Snackbar";
 import AddRoadIcon from "@mui/icons-material/AddRoad";
 import AccountTreeIcon from "@mui/icons-material/AccountTree";
 import AltRouteIcon from "@mui/icons-material/AltRoute";
+import ExtensionIcon from "@mui/icons-material/Extension";
 import Button from "@mui/material/Button";
 import { useAsync } from "react-async-hook";
 import useConfigStore from "../states/config";
@@ -20,6 +21,7 @@ import {
   goToServerInfo,
   goToLoationInfo,
   goToUpstreamInfo,
+  goToProxyPluginInfo,
 } from "../router";
 import { formatError } from "../helpers/util";
 
@@ -28,6 +30,7 @@ enum NavCategory {
   ServerInfo,
   LocationInfo,
   UpstreamInfo,
+  ProxyPluginInfo,
 }
 
 interface NavItem {
@@ -91,6 +94,15 @@ export default function MainNav({
         icon: <AltRouteIcon />,
         children: upstreams,
         category: NavCategory.UpstreamInfo,
+      });
+
+      const proxyPluins = Object.keys(config.proxy_plugins || {}).sort();
+      proxyPluins.push(addTag);
+      items.push({
+        name: "ProxyPlugin",
+        icon: <ExtensionIcon />,
+        children: proxyPluins,
+        category: NavCategory.ProxyPluginInfo,
       });
       setNavItems(items);
     } catch (err) {
@@ -175,6 +187,10 @@ export default function MainNav({
                 }
                 case NavCategory.UpstreamInfo: {
                   goToUpstreamInfo(name);
+                  break;
+                }
+                case NavCategory.ProxyPluginInfo: {
+                  goToProxyPluginInfo(name);
                   break;
                 }
               }

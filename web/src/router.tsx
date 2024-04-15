@@ -4,12 +4,14 @@ import BasicInfo from "./pages/basic-info";
 import ServerInfo from "./pages/server-info";
 import LocationInfo from "./pages/location-info";
 import UpstreamInfo from "./pages/upstream-info";
+import ProxyPluginInfo from "./pages/proxy-plugin-info";
 
 const PAHT_HOME = "/";
 const PATH_BASIC_INFO = "/basic-info";
 const PATH_SERVER_INFO = "/server-info/:name";
 const PATH_LOCATION_INFO = "/location-info/:name";
 const PATH_UPSTREAM_INFO = "/upstream-info/:name";
+const PATH_PROXY_PLUGIN_INFO = "/proxy-plugin-info/:name";
 
 const router = createHashRouter([
   {
@@ -31,6 +33,10 @@ const router = createHashRouter([
   {
     path: PATH_UPSTREAM_INFO,
     element: <UpstreamInfo />,
+  },
+  {
+    path: PATH_PROXY_PLUGIN_INFO,
+    element: <ProxyPluginInfo />,
   },
 ]);
 
@@ -56,6 +62,10 @@ export function goToLoationInfo(name: string) {
 
 export function goToUpstreamInfo(name: string) {
   router.navigate(PATH_UPSTREAM_INFO.replace(":name", name));
+}
+
+export function goToProxyPluginInfo(name: string) {
+  router.navigate(PATH_PROXY_PLUGIN_INFO.replace(":name", name));
 }
 
 export function goBack() {

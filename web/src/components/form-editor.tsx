@@ -6,8 +6,8 @@ import TextField from "@mui/material/TextField";
 import FormControl from "@mui/material/FormControl";
 import Grid from "@mui/material/Grid";
 import FormControlLabel from "@mui/material/FormControlLabel";
+import Checkbox from "@mui/material/Checkbox";
 import RadioGroup from "@mui/material/RadioGroup";
-import FormLabel from "@mui/material/FormLabel";
 import Radio from "@mui/material/Radio";
 import Snackbar from "@mui/material/Snackbar";
 import InputLabel from "@mui/material/InputLabel";
@@ -19,6 +19,14 @@ import IconButton from "@mui/material/IconButton";
 import AddRoadIcon from "@mui/icons-material/AddRoad";
 import Alert from "@mui/material/Alert";
 import CheckIcon from "@mui/icons-material/Check";
+import FormGroup from "@mui/material/FormGroup";
+import FormLabel from "@mui/material/FormLabel";
+import Stack from "@mui/material/Stack";
+import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
+import List from "@mui/material/List";
+import ListItem from "@mui/material/ListItem";
+import ListItemText from "@mui/material/ListItemText";
+import Box from "@mui/material/Box";
 
 import Paper from "@mui/material/Paper";
 import { Theme, useTheme } from "@mui/material/styles";
@@ -35,6 +43,17 @@ export enum FormItemCategory {
   HEADERS = "headers",
   PROXY_HEADERS = "proxyHeaders",
   WEBHOOK_TYPE = "webhookType",
+  PROXY_PLUGIN = "proxyPlugin",
+  PROXY_PLUGIN_SELECT = "proxyPluginSelect",
+}
+
+export enum ProxyPluginCategory {
+  STATS = "Stats",
+  LIMIT = "Limit",
+  COMPRESSION = "Compression",
+  ADMIN = "Admin",
+  DIRECTORY = "Directory",
+  MOCK = "Mock",
 }
 
 export interface CheckBoxItem {
@@ -68,6 +87,123 @@ function getStyles(name: string, selectItems: string[], theme: Theme) {
         ? theme.typography.fontWeightRegular
         : theme.typography.fontWeightMedium,
   };
+}
+
+function FormProxyPluginField({
+  category,
+  value,
+  id,
+  onUpdate,
+}: {
+  value: string;
+  category: string;
+  id: string;
+  onUpdate: (data: string) => void;
+}) {
+  const key = `${id}-${category}`;
+  const arr: string[] = [];
+  const fields: {
+    label: string;
+  }[] = [];
+  const padding = " ";
+
+  switch (category) {
+    case ProxyPluginCategory.COMPRESSION: {
+      arr.push(...value.split(padding));
+      fields.push(
+        {
+          label: "Gzip Level",
+        },
+        {
+          label: "Br Level",
+        },
+        {
+          label: "Zstd Level",
+        },
+      );
+      break;
+    }
+    case ProxyPluginCategory.ADMIN: {
+      arr.push(...value.split(padding));
+      fields.push(
+        {
+          label: "The basic auth",
+        },
+        {
+          label: "The auth path",
+        },
+      );
+      break;
+    }
+    case ProxyPluginCategory.LIMIT: {
+      arr.push(...value.split(padding));
+      fields.push(
+        {
+          label: "The limit key",
+        },
+        {
+          label: "The limit value",
+        },
+      );
+      break;
+    }
+    case ProxyPluginCategory.DIRECTORY: {
+      arr.push(value);
+      fields.push({
+        label: "The static directory",
+      });
+      break;
+    }
+    case ProxyPluginCategory.MOCK: {
+      break;
+    }
+    default: {
+      arr.push(value);
+      fields.push({
+        label: "The stats path",
+      });
+      break;
+    }
+  }
+  const [newValues, setNewValues] = React.useState(arr);
+
+  const items = fields.map((item, index) => {
+    return (
+      <TextField
+        key={`${key}-${index}`}
+        id={`${key}-${index}`}
+        label={item.label}
+        variant="outlined"
+        defaultValue={newValues[index] || ""}
+        sx={{ ml: 1, flex: 1 }}
+        style={{
+          marginLeft: `${index * 15}px`,
+        }}
+        onChange={(e) => {
+          const value = e.target.value.trim();
+          const arr = newValues.slice(0);
+          arr[index] = value;
+          onUpdate(arr.join(padding));
+          setNewValues(arr);
+        }}
+      />
+    );
+  });
+
+  const list = (
+    <Paper
+      sx={{
+        display: "flex",
+        marginBottom: "15px",
+        alignItems: "center",
+        width: "100%",
+      }}
+    >
+      {items}
+    </Paper>
+  );
+
+  return <React.Fragment>{list}</React.Fragment>;
 }
 
 function FormSelectField({
@@ -268,6 +404,7 @@ export default function FormEditor({
   const theme = useTheme();
   const [data, setData] = React.useState(getDefaultValues(items));
   const defaultLocations: string[] = [];
+  const defaultProxyPluginSelected: string[] = [];
   items.forEach((item) => {
     switch (item.category) {
       case FormItemCategory.LOCATION: {
@@ -277,10 +414,20 @@ export default function FormEditor({
         });
         break;
       }
+      case FormItemCategory.PROXY_PLUGIN_SELECT: {
+        const arr = (item.defaultValue as string[]) || [];
+        arr.forEach((lo) => {
+          defaultProxyPluginSelected.push(lo);
+        });
+        break;
+      }
     }
   });
 
   const [locations, setLocations] = React.useState<string[]>(defaultLocations);
+  const [selectedProxyPlugins, setSelectedProxyPlugins] = React.useState<
+    string[]
+  >(defaultProxyPluginSelected);
 
   const [updated, setUpdated] = React.useState(false);
   const [processing, setProcessing] = React.useState(false);
@@ -429,6 +576,21 @@ export default function FormEditor({
         );
         break;
       }
+      case FormItemCategory.PROXY_PLUGIN: {
+        const category = (data["category"] as string) || "";
+        formItem = (
+          <FormProxyPluginField
+            key={`${item.id}-{category}`}
+            value={(item.defaultValue as string) || ""}
+            category={category}
+            id={item.id}
+            onUpdate={(data) => {
+              updateValue(item.id, data);
+            }}
+          />
+        );
+        break;
+      }
       case FormItemCategory.TEXTAREA: {
         let minRows = 4;
         if (item.minRows) {
@@ -446,6 +608,86 @@ export default function FormEditor({
               updateValue(item.id, e.target.value.trim());
             }}
           />
+        );
+        break;
+      }
+      case FormItemCategory.PROXY_PLUGIN_SELECT: {
+        const options = (item.options as CheckBoxItem[]) || [];
+        const labelItems = options.map((opt, index) => {
+          const value = opt.value as string;
+          const checked = selectedProxyPlugins.includes(value);
+          return (
+            <FormControlLabel
+              key={`${item.id}-${index}`}
+              control={<Checkbox checked={checked} />}
+              onChange={() => {
+                if (!checked) {
+                  const arr = selectedProxyPlugins.slice(0);
+                  arr.push(value);
+                  updateValue(item.id, arr);
+                  setSelectedProxyPlugins(arr);
+                } else {
+                  const arr = selectedProxyPlugins
+                    .slice(0)
+                    .filter((item) => item !== value);
+                  updateValue(item.id, arr);
+                  setSelectedProxyPlugins(arr);
+                }
+              }}
+              label={opt.label}
+            />
+          );
+        });
+        const selectedItems = selectedProxyPlugins.map((plugin, index) => {
+          let action = <></>;
+          if (index > 0) {
+            action = (
+              <IconButton
+                edge="end"
+                aria-label="delete"
+                onClick={() => {
+                  // ignore 0
+                  if (index) {
+                    const arr = selectedProxyPlugins.slice(0);
+                    const value = arr[index];
+                    arr[index] = arr[index - 1];
+                    arr[index - 1] = value;
+                    updateValue(item.id, arr);
+                    setSelectedProxyPlugins(arr);
+                  }
+                }}
+              >
+                <KeyboardArrowUpIcon />
+              </IconButton>
+            );
+          }
+          return (
+            <ListItem key={plugin} secondaryAction={action}>
+              <ListItemText>{plugin}</ListItemText>
+            </ListItem>
+          );
+        });
+        formItem = (
+          <React.Fragment>
+            <Stack direction="row" spacing={2}>
+              <Box
+                style={{
+                  width: "50%",
+                }}
+              >
+                <FormLabel component="legend">Select proxy plugin</FormLabel>
+                <FormGroup>{labelItems}</FormGroup>
+              </Box>
+              <Box>
+                <FormLabel component="legend">
+                  Sort selected proxy plugin
+                </FormLabel>
+                <FormGroup>
+                  <List>{selectedItems}</List>
+                </FormGroup>
+              </Box>
+            </Stack>
+          </React.Fragment>
         );
         break;
       }

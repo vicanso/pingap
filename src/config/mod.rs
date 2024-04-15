@@ -18,7 +18,8 @@ mod load;
 
 pub use load::{
     load_config, save_config, LocationConf, PingapConf, ProxyPluginCategory, ProxyPluginConf,
-    ServerConf, UpstreamConf, CATEGORY_LOCATION, CATEGORY_SERVER, CATEGORY_UPSTREAM,
+    ServerConf, UpstreamConf, CATEGORY_LOCATION, CATEGORY_PROXY_PLUGIN, CATEGORY_SERVER,
+    CATEGORY_UPSTREAM,
 };
 
 static CONFIG_PATH: OnceCell<String> = OnceCell::new();
