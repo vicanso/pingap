@@ -25,6 +25,7 @@ jobs:
           run: |
             rustc --version
             cargo --version
+            cargo install cargo-msrv
             make msrv
             make test
             make bench
