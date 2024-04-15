@@ -143,8 +143,8 @@ pub struct LocationConf {
     pub headers: Option<Vec<String>>,
     pub rewrite: Option<String>,
     pub weight: Option<u16>,
-    pub remark: Option<String>,
     pub proxy_plugins: Option<Vec<String>>,
+    pub remark: Option<String>,
 }
 
 impl LocationConf {
@@ -214,7 +214,6 @@ pub struct ServerConf {
     pub threads: Option<usize>,
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
-    pub stats_path: Option<String>,
     pub remark: Option<String>,
 }
 
@@ -243,7 +242,6 @@ impl ServerConf {
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct PingapConf {
-    pub hash: String,
     pub upstreams: HashMap<String, UpstreamConf>,
     pub locations: HashMap<String, LocationConf>,
     pub servers: HashMap<String, ServerConf>,
@@ -286,6 +284,13 @@ impl PingapConf {
             server.validate(name, &location_names)?;
         }
         Ok(())
+    }
+    pub fn hash(&self) -> Result<String> {
+        let data = toml::to_string_pretty(self).context(SerSnafu)?;
+        let mut lines: Vec<&str> = data.split('\n').collect();
+        lines.sort();
+        let hash = crc32fast::hash(lines.join("\n").as_bytes());
+        Ok(format!("{:X}", hash))
     }
 }
 
@@ -416,7 +421,6 @@ pub fn load_config(path: &str, admin: bool) -> Result<PingapConf> {
         let mut buf = std::fs::read(&filepath).context(IoSnafu { file: filepath })?;
         data.append(&mut buf);
     }
-    let hash = crc32fast::hash(&data);
     let data: TomlConfig = toml::from_str(
         std::string::String::from_utf8_lossy(&data)
             .to_string()
@@ -433,7 +437,6 @@ pub fn load_config(path: &str, admin: bool) -> Result<PingapConf> {
         None
     };
     let mut conf = PingapConf {
-        hash: format!("{:X}", hash),
         error_template: data.error_template.unwrap_or_default(),
         pid_file: data.pid_file,
         upgrade_sock: data.upgrade_sock,

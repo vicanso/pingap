@@ -37,7 +37,6 @@ use pingora::{
     proxy::{ProxyHttp, Session},
     upstreams::peer::HttpPeer,
 };
-use serde::Serialize;
 use snafu::{ResultExt, Snafu};
 use std::fs;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};

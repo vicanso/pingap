@@ -142,7 +142,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     config::set_config_path(&args.conf);
-    config::set_config_hash(&conf.hash);
+    config::set_config_hash(&conf.hash().unwrap_or_default());
 
     if let Ok(exec_path) = std::env::current_exe() {
         let mut cmd = state::RestartProcessCommand {

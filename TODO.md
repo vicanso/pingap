@@ -1,5 +1,6 @@
 # TODO
 
+- [ ] ip block proxy plugin
 - [ ] support etcd or other storage for config
 - [ ] better error handler
 - [ ] log rotate

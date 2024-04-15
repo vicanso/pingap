@@ -145,6 +145,30 @@ export default function UpstreamInfo() {
       ],
     },
     {
+      id: "ipv4_only",
+      label: "Ipv4 Only",
+      defaultValue: upstream.ipv4_only,
+      span: 4,
+      category: FormItemCategory.CHECKBOX,
+      options: [
+        {
+          label: "Yes",
+          option: 1,
+          value: true,
+        },
+        {
+          label: "No",
+          option: 0,
+          value: false,
+        },
+        {
+          label: "None",
+          option: -1,
+          value: null,
+        },
+      ],
+    },
+    {
       id: "remark",
       label: "Remark",
       defaultValue: upstream.remark,
