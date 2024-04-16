@@ -40,6 +40,11 @@ export default function LocationInfo() {
       option: 1,
       value: "pingap:compression",
     },
+    {
+      label: "pingap:requestId",
+      option: 2,
+      value: "pingap:requestId",
+    },
   ];
   if (config.proxy_plugins) {
     Object.keys(config.proxy_plugins).forEach((name) => {

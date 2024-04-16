@@ -15,6 +15,7 @@
 use super::logger::Parser;
 use super::{Location, Upstream};
 use crate::config::{LocationConf, PingapConf, ProxyPluginStep, UpstreamConf};
+use crate::http_extra::HTTP_HEADER_NAME_X_REQUEST_ID;
 use crate::plugin::get_proxy_plugin;
 use crate::state::State;
 use crate::util;
@@ -416,6 +417,9 @@ impl ProxyHttp for Server {
     ) {
         if ctx.status.is_none() {
             ctx.status = Some(upstream_response.status);
+        }
+        if let Some(id) = &ctx.request_id {
+            let _ = upstream_response.insert_header(HTTP_HEADER_NAME_X_REQUEST_ID.clone(), id);
         }
         if let Some(index) = ctx.location_index {
             if let Some(lo) = self.locations.get(index) {

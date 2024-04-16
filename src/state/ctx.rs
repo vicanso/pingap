@@ -27,6 +27,7 @@ pub struct State {
     pub location_index: Option<usize>,
     pub client_ip: Option<String>,
     pub guard: Option<Guard>,
+    pub request_id: Option<String>,
 }
 
 impl Default for State {
@@ -42,6 +43,7 @@ impl Default for State {
             location_index: None,
             client_ip: None,
             guard: None,
+            request_id: None,
         }
     }
 }

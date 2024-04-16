@@ -217,6 +217,7 @@ impl ProxyPlugin for Directory {
 #[cfg(test)]
 mod tests {
     use super::{get_cacheable_and_headers_from_meta, get_data, Directory};
+    use crate::config::ProxyPluginStep;
     use pretty_assertions::{assert_eq, assert_ne};
     use std::{os::unix::fs::MetadataExt, path::Path};
 
@@ -224,6 +225,7 @@ mod tests {
     fn test_new_directory() {
         let dir = Directory::new(
             "~/Downloads?chunk_size=1024&max_age=3600&private&index=pingap/index.html",
+            ProxyPluginStep::RequestFilter,
         )
         .unwrap();
         assert_eq!(1024, dir.chunk_size.unwrap_or_default());

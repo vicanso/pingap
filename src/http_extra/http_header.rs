@@ -82,6 +82,9 @@ pub static HTTP_HEADER_TRANSFER_CHUNKED: Lazy<HttpHeader> = Lazy::new(|| {
     )
 });
 
+pub static HTTP_HEADER_NAME_X_REQUEST_ID: Lazy<HeaderName> =
+    Lazy::new(|| HeaderName::from_str("X-Request-Id").unwrap());
+
 #[cfg(test)]
 mod tests {
     use super::convert_headers;

@@ -26,6 +26,7 @@ mod compression;
 mod directory;
 mod limit;
 mod mock;
+mod request_id;
 mod stats;
 
 #[derive(Debug, Snafu)]
@@ -71,6 +72,15 @@ pub fn get_builtin_proxy_plugins() -> Vec<(String, ProxyPluginConf)> {
                 step: None,
             },
         ),
+        (
+            "pingap:requestId".to_string(),
+            ProxyPluginConf {
+                value: "".to_string(),
+                category: ProxyPluginCategory::RequestId,
+                remark: Some("Generate a request id for service".to_string()),
+                step: None,
+            },
+        ),
     ]
 }
 
@@ -108,6 +118,10 @@ pub fn init_proxy_plugins(confs: Vec<(String, ProxyPluginConf)>) -> Result<()> {
                 ProxyPluginCategory::Mock => {
                     let m = mock::MockResponse::new(&conf.value, step)?;
                     plguins.insert(name, Box::new(m));
+                }
+                ProxyPluginCategory::RequestId => {
+                    let r = request_id::RequestId::new(&conf.value, step)?;
+                    plguins.insert(name, Box::new(r));
                 }
             };
         }

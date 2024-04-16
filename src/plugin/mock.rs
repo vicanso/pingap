@@ -86,6 +86,8 @@ impl ProxyPlugin for MockResponse {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::ProxyPluginStep;
+
     use super::MockResponse;
     use bytes::Bytes;
     use http::StatusCode;
@@ -95,7 +97,7 @@ mod tests {
     fn test_mock_response() {
         let resp = MockResponse::new(
             r###"{"status":500,"headers":["Content-Type: application/json"],"data":"{\"message\":\"Mock Service Unavailable\"}"}"###,
-        ).unwrap().resp;
+             ProxyPluginStep::RequestFilter).unwrap().resp;
         assert_eq!(StatusCode::INTERNAL_SERVER_ERROR, resp.status);
         assert_eq!(
             r###"Some([("content-type", "application/json")])"###,

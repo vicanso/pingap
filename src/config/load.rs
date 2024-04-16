@@ -75,6 +75,7 @@ pub enum ProxyPluginCategory {
     Admin,
     Directory,
     Mock,
+    RequestId,
 }
 
 #[derive(PartialEq, Debug, Default, Deserialize_repr, Clone, Copy, Serialize_repr)]

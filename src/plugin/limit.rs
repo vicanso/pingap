@@ -124,7 +124,7 @@ impl ProxyPlugin for Limiter {
 
 #[cfg(test)]
 mod tests {
-    use crate::state::State;
+    use crate::{config::ProxyPluginStep, state::State};
 
     use super::{LimitTag, Limiter};
     use pingora::proxy::Session;
@@ -149,7 +149,7 @@ mod tests {
     }
     #[tokio::test]
     async fn test_new_cookie_limiter() {
-        let limiter = Limiter::new("~deviceId 10").unwrap();
+        let limiter = Limiter::new("~deviceId 10", ProxyPluginStep::RequestFilter).unwrap();
         assert_eq!(LimitTag::Cookie, limiter.tag);
         let mut ctx = State {
             ..Default::default()
@@ -161,7 +161,7 @@ mod tests {
     }
     #[tokio::test]
     async fn test_new_req_header_limiter() {
-        let limiter = Limiter::new(">X-Uuid 10").unwrap();
+        let limiter = Limiter::new(">X-Uuid 10", ProxyPluginStep::RequestFilter).unwrap();
         assert_eq!(LimitTag::RequestHeader, limiter.tag);
         let mut ctx = State {
             ..Default::default()
@@ -173,7 +173,7 @@ mod tests {
     }
     #[tokio::test]
     async fn test_new_query_limiter() {
-        let limiter = Limiter::new("?key 10").unwrap();
+        let limiter = Limiter::new("?key 10", ProxyPluginStep::RequestFilter).unwrap();
         assert_eq!(LimitTag::Query, limiter.tag);
         let mut ctx = State {
             ..Default::default()
@@ -185,7 +185,7 @@ mod tests {
     }
     #[tokio::test]
     async fn test_new_ip_limiter() {
-        let limiter = Limiter::new("ip 10").unwrap();
+        let limiter = Limiter::new("ip 10", ProxyPluginStep::RequestFilter).unwrap();
         assert_eq!(LimitTag::Ip, limiter.tag);
         let mut ctx = State {
             ..Default::default()
