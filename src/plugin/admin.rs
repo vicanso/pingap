@@ -13,7 +13,10 @@
 // limitations under the License.
 
 use super::{ProxyPlugin, Result};
-use crate::config::{self, save_config, LocationConf, ProxyPluginConf, ServerConf, UpstreamConf};
+use crate::config::{
+    self, save_config, LocationConf, ProxyPluginCategory, ProxyPluginConf, ProxyPluginStep,
+    ServerConf, UpstreamConf,
+};
 use crate::config::{
     PingapConf, CATEGORY_LOCATION, CATEGORY_PROXY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
 };
@@ -86,9 +89,10 @@ impl From<EmbeddedStaticFile> for HttpResponse {
 pub struct AdminServe {
     pub path: String,
     pub authorization: String,
+    pub proxy_step: ProxyPluginStep,
 }
 impl AdminServe {
-    pub fn new(value: &str) -> Result<Self> {
+    pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
         let arr: Vec<&str> = value.split(' ').collect();
         let mut authorization = "".to_string();
         if arr.len() >= 2 {
@@ -96,6 +100,7 @@ impl AdminServe {
         }
         Ok(Self {
             path: arr[0].trim().to_string(),
+            proxy_step,
             authorization,
         })
     }
@@ -278,6 +283,14 @@ fn get_method_path(session: &Session) -> (Method, String) {
 
 #[async_trait]
 impl ProxyPlugin for AdminServe {
+    #[inline]
+    fn step(&self) -> ProxyPluginStep {
+        self.proxy_step
+    }
+    #[inline]
+    fn category(&self) -> ProxyPluginCategory {
+        ProxyPluginCategory::Admin
+    }
     async fn handle(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<bool> {
         if !session.req_header().uri.path().starts_with(&self.path) {
             return Ok(false);

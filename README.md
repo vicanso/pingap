@@ -40,21 +40,25 @@ All toml configurations are as follows [pingap.toml](./conf/pingap.toml).
 
 ```mermaid
 graph TD;
-    start("new request")-->server;
+    start("New Request")-->server("HTTP Server");
 
-    server -- "host:HostA, Path:/api/*" --> locationA
+    server -- "host:HostA, Path:/api/*" --> locationA("Location A")
 
-    server -- "Path:/rest/*"--> locationB
+    server -- "Path:/rest/*"--> locationB("Location B")
 
-    locationA -- "10.0.0.1:8001" --> upstreamA1 --> response
+    locationA -- "Exec Plugins" --> locationPluginListA("Plugin List A")
 
-    locationA -- "10.0.0.2:8001" --> upstreamA2 --> response
+    locationB -- "Exec Plugins" --> locationPluginListB("Plugin List B")
 
-    locationB -- "10.0.0.1:8002" --> upstreamB1 --> response
+    locationPluginListA -- "10.0.0.1:8001" --> upstreamA1("Upstream A1") --> response
 
-    locationB -- "10.0.0.2:8002" --> upstreamB2 --> response
+    locationPluginListA -- "10.0.0.2:8001" --> upstreamA2("Upstream A2") --> response
 
-    response --> stop("logging");
+    locationPluginListB -- "10.0.0.1:8002" --> upstreamB1("Upstream B1") --> response
+
+    locationPluginListB -- "10.0.0.2:8002" --> upstreamB2("Upstream B2") --> response
+
+    response("HTTP Response") --> stop("Logging");
 ```
 
 ## Performance

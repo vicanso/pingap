@@ -1642,6 +1642,7 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
+ "serde_repr",
  "snafu",
  "substring",
  "tempfile",
@@ -2515,6 +2516,17 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "serde_repr"
+version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c64451ba24fc7a6a2d60fc75dd9c83c90903b19028d4eff35e88fc1e86564e9"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.58",
 ]
 
 [[package]]

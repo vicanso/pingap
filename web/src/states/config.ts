@@ -42,6 +42,7 @@ interface Server {
 interface ProxyPlugin {
   value: string;
   category: number;
+  step?: number;
   remark?: string;
 }
 

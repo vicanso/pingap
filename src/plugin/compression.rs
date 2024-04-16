@@ -14,6 +14,7 @@
 
 use super::ProxyPlugin;
 use super::{Error, Result};
+use crate::config::{ProxyPluginCategory, ProxyPluginStep};
 use crate::state::State;
 use async_trait::async_trait;
 use http::HeaderValue;
@@ -29,10 +30,11 @@ pub struct Compression {
     br_level: u32,
     zstd_level: u32,
     support_compression: bool,
+    proxy_step: ProxyPluginStep,
 }
 
 impl Compression {
-    pub fn new(value: &str) -> Result<Self> {
+    pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
         let mut levels: [u32; 3] = [0, 0, 0];
         let mut support_compression = false;
         for (index, item) in value.split(' ').enumerate() {
@@ -48,6 +50,7 @@ impl Compression {
             }
         }
         Ok(Self {
+            proxy_step,
             gzip_level: levels[0],
             br_level: levels[1],
             zstd_level: levels[2],
@@ -58,6 +61,14 @@ impl Compression {
 
 #[async_trait]
 impl ProxyPlugin for Compression {
+    #[inline]
+    fn step(&self) -> ProxyPluginStep {
+        self.proxy_step
+    }
+    #[inline]
+    fn category(&self) -> ProxyPluginCategory {
+        ProxyPluginCategory::Compression
+    }
     #[inline]
     async fn handle(&self, session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
         if !self.support_compression {

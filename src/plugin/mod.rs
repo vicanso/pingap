@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config::{ProxyPluginCategory, ProxyPluginConf};
+use crate::config::{ProxyPluginCategory, ProxyPluginConf, ProxyPluginStep};
 use crate::state::State;
 use async_trait::async_trait;
 use once_cell::sync::OnceCell;
@@ -46,6 +46,8 @@ pub trait ProxyPlugin: Sync + Send {
     async fn handle(&self, _session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
         Ok(false)
     }
+    fn category(&self) -> ProxyPluginCategory;
+    fn step(&self) -> ProxyPluginStep;
 }
 
 pub fn get_builtin_proxy_plugins() -> Vec<(String, ProxyPluginConf)> {
@@ -57,6 +59,7 @@ pub fn get_builtin_proxy_plugins() -> Vec<(String, ProxyPluginConf)> {
                 value: "6 6 3".to_string(),
                 category: ProxyPluginCategory::Compression,
                 remark: Some("Compression for http, support zstd:3, br:6, gzip:6".to_string()),
+                step: None,
             },
         ),
         (
@@ -65,6 +68,7 @@ pub fn get_builtin_proxy_plugins() -> Vec<(String, ProxyPluginConf)> {
                 value: "/stats".to_string(),
                 category: ProxyPluginCategory::Stats,
                 remark: Some("Get stats of server".to_string()),
+                step: None,
             },
         ),
     ]
@@ -79,29 +83,30 @@ pub fn init_proxy_plugins(confs: Vec<(String, ProxyPluginConf)>) -> Result<()> {
         data.extend(get_builtin_proxy_plugins());
         for (name, conf) in data {
             let name = name.to_string();
+            let step = conf.step.unwrap_or_default();
             match conf.category {
                 ProxyPluginCategory::Limit => {
-                    let l = limit::Limiter::new(&conf.value)?;
+                    let l = limit::Limiter::new(&conf.value, step)?;
                     plguins.insert(name, Box::new(l));
                 }
                 ProxyPluginCategory::Compression => {
-                    let c = compression::Compression::new(&conf.value)?;
+                    let c = compression::Compression::new(&conf.value, step)?;
                     plguins.insert(name, Box::new(c));
                 }
                 ProxyPluginCategory::Stats => {
-                    let s = stats::Stats::new(&conf.value)?;
+                    let s = stats::Stats::new(&conf.value, step)?;
                     plguins.insert(name, Box::new(s));
                 }
                 ProxyPluginCategory::Admin => {
-                    let a = admin::AdminServe::new(&conf.value)?;
+                    let a = admin::AdminServe::new(&conf.value, step)?;
                     plguins.insert(name, Box::new(a));
                 }
                 ProxyPluginCategory::Directory => {
-                    let d = directory::Directory::new(&conf.value)?;
+                    let d = directory::Directory::new(&conf.value, step)?;
                     plguins.insert(name, Box::new(d));
                 }
                 ProxyPluginCategory::Mock => {
-                    let m = mock::MockResponse::new(&conf.value)?;
+                    let m = mock::MockResponse::new(&conf.value, step)?;
                     plguins.insert(name, Box::new(m));
                 }
             };

@@ -17,6 +17,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use glob::glob;
 use http::HeaderValue;
 use serde::{Deserialize, Serialize};
+use serde_repr::{Deserialize_repr, Serialize_repr};
 use snafu::{ensure, ResultExt, Snafu};
 use std::collections::HashMap;
 use std::path::Path;
@@ -64,7 +65,8 @@ pub enum Error {
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-#[derive(PartialEq, Debug, Default, Deserialize, Clone, Serialize)]
+#[derive(PartialEq, Debug, Default, Deserialize_repr, Clone, Serialize_repr)]
+#[repr(u8)]
 pub enum ProxyPluginCategory {
     #[default]
     Stats,
@@ -75,10 +77,19 @@ pub enum ProxyPluginCategory {
     Mock,
 }
 
+#[derive(PartialEq, Debug, Default, Deserialize_repr, Clone, Copy, Serialize_repr)]
+#[repr(u8)]
+pub enum ProxyPluginStep {
+    #[default]
+    RequestFilter,
+    ProxyUpstreamFilter,
+}
+
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
 pub struct ProxyPluginConf {
     pub value: String,
     pub category: ProxyPluginCategory,
+    pub step: Option<ProxyPluginStep>,
     pub remark: Option<String>,
 }
 

@@ -14,6 +14,7 @@
 
 use super::ProxyPlugin;
 use super::{Error, Result};
+use crate::config::{ProxyPluginCategory, ProxyPluginStep};
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
@@ -34,10 +35,11 @@ pub struct Limiter {
     max: isize,
     value: String,
     inflight: Inflight,
+    proxy_step: ProxyPluginStep,
 }
 
 impl Limiter {
-    pub fn new(value: &str) -> Result<Self> {
+    pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
         let (key, max) = value.split_once(' ').ok_or(Error::Invalid {
             message: value.to_string(),
         })?;
@@ -60,6 +62,7 @@ impl Limiter {
 
         Ok(Self {
             tag,
+            proxy_step,
             max: max as isize,
             value: value.to_string(),
             inflight: Inflight::new(),
@@ -102,6 +105,15 @@ impl Limiter {
 }
 #[async_trait]
 impl ProxyPlugin for Limiter {
+    #[inline]
+    fn step(&self) -> ProxyPluginStep {
+        self.proxy_step
+    }
+    #[inline]
+    fn category(&self) -> ProxyPluginCategory {
+        ProxyPluginCategory::Limit
+    }
+    #[inline]
     async fn handle(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<bool> {
         let _ = self
             .incr(session, ctx)

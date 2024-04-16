@@ -48,12 +48,35 @@ export enum FormItemCategory {
 }
 
 export enum ProxyPluginCategory {
-  STATS = "Stats",
-  LIMIT = "Limit",
-  COMPRESSION = "Compression",
-  ADMIN = "Admin",
-  DIRECTORY = "Directory",
-  MOCK = "Mock",
+  STATS = 0,
+  LIMIT = 1,
+  COMPRESSION = 2,
+  ADMIN = 3,
+  DIRECTORY = 4,
+  MOCK = 5,
+}
+
+export function formatProxyPluginCategory(value: ProxyPluginCategory) {
+  switch (value) {
+    case ProxyPluginCategory.STATS: {
+      return "stats";
+    }
+    case ProxyPluginCategory.LIMIT: {
+      return "limit";
+    }
+    case ProxyPluginCategory.COMPRESSION: {
+      return "compression";
+    }
+    case ProxyPluginCategory.ADMIN: {
+      return "admin";
+    }
+    case ProxyPluginCategory.DIRECTORY: {
+      return "directory";
+    }
+    case ProxyPluginCategory.MOCK: {
+      return "mock";
+    }
+  }
 }
 
 export interface CheckBoxItem {
@@ -96,7 +119,7 @@ function FormProxyPluginField({
   onUpdate,
 }: {
   value: string;
-  category: string;
+  category: number;
   id: string;
   onUpdate: (data: string) => void;
 }) {
@@ -106,6 +129,18 @@ function FormProxyPluginField({
     label: string;
   }[] = [];
   const padding = " ";
+
+  const defaultMockInfo: {
+    status: null | number;
+    headers: string[];
+    data: string;
+    path: string;
+  } = {
+    status: null,
+    path: "",
+    headers: [],
+    data: "",
+  };
 
   switch (category) {
     case ProxyPluginCategory.COMPRESSION: {
@@ -127,10 +162,10 @@ function FormProxyPluginField({
       arr.push(...value.split(padding));
       fields.push(
         {
-          label: "The basic auth",
+          label: "Admin path",
         },
         {
-          label: "The auth path",
+          label: "Basic auth(base64(user:pass))",
         },
       );
       break;
@@ -155,6 +190,13 @@ function FormProxyPluginField({
       break;
     }
     case ProxyPluginCategory.MOCK: {
+      if (value) {
+        try {
+          Object.assign(defaultMockInfo, JSON.parse(value));
+        } catch (err) {
+          console.error(err);
+        }
+      }
       break;
     }
     default: {
@@ -166,7 +208,75 @@ function FormProxyPluginField({
     }
   }
   const [newValues, setNewValues] = React.useState(arr);
+  const [mockInfo, setMockInfo] = React.useState(defaultMockInfo);
 
+  if (category == ProxyPluginCategory.MOCK) {
+    return (
+      <Stack direction="column" spacing={2}>
+        <TextField
+          key={`${key}-path`}
+          id={`${key}-path`}
+          label={"Response Match Path"}
+          variant="outlined"
+          defaultValue={mockInfo.path}
+          sx={{ ml: 1, flex: 1 }}
+          onChange={(e) => {
+            const data = Object.assign({}, mockInfo);
+            data.path = e.target.value.trim();
+            setMockInfo(data);
+            onUpdate(JSON.stringify(data));
+          }}
+        />
+        <TextField
+          key={`${key}-status`}
+          id={`${key}-status`}
+          label={"Response Status"}
+          variant="outlined"
+          defaultValue={mockInfo.status}
+          sx={{ ml: 1, flex: 1 }}
+          onChange={(e) => {
+            const value = Number(e.target.value.trim());
+            const data = Object.assign({}, mockInfo);
+            if (value) {
+              data.status = value;
+            } else {
+              data.status = null;
+            }
+            setMockInfo(data);
+            onUpdate(JSON.stringify(data));
+          }}
+        />
+        <FormTwoInputFields
+          id={id}
+          divide={":"}
+          values={mockInfo.headers}
+          label={"Header Name"}
+          valueLabel={"Header Value"}
+          onUpdate={(headers) => {
+            const data = Object.assign({}, mockInfo);
+            data.headers = headers;
+            setMockInfo(data);
+            onUpdate(JSON.stringify(data));
+          }}
+          addLabel="Add Response Header"
+        />
+        <TextField
+          id={`${key}-data`}
+          label={"Response data"}
+          multiline
+          minRows={3}
+          variant="outlined"
+          defaultValue={mockInfo.data}
+          onChange={(e) => {
+            const data = Object.assign({}, mockInfo);
+            data.data = e.target.value;
+            setMockInfo(data);
+            onUpdate(JSON.stringify(data));
+          }}
+        />
+      </Stack>
+    );
+  }
   const items = fields.map((item, index) => {
     return (
       <TextField
@@ -577,7 +687,7 @@ export default function FormEditor({
         break;
       }
       case FormItemCategory.PROXY_PLUGIN: {
-        const category = (data["category"] as string) || "";
+        const category = (data["category"] as number) || 0;
         formItem = (
           <FormProxyPluginField
             key={`${item.id}-{category}`}
@@ -639,34 +749,45 @@ export default function FormEditor({
           );
         });
         const selectedItems = selectedProxyPlugins.map((plugin, index) => {
-          let action = <></>;
-          if (index > 0) {
-            action = (
-              <IconButton
-                edge="end"
-                aria-label="delete"
-                onClick={() => {
-                  // ignore 0
-                  if (index) {
-                    const arr = selectedProxyPlugins.slice(0);
-                    const value = arr[index];
-                    arr[index] = arr[index - 1];
-                    arr[index - 1] = value;
-                    updateValue(item.id, arr);
-                    setSelectedProxyPlugins(arr);
-                  }
-                }}
-              >
-                <KeyboardArrowUpIcon />
-              </IconButton>
-            );
-          }
+          const action = (
+            <IconButton
+              edge="end"
+              aria-label="delete"
+              disabled={index == 0}
+              onClick={() => {
+                // ignore 0
+                if (index) {
+                  const arr = selectedProxyPlugins.slice(0);
+                  const value = arr[index];
+                  arr[index] = arr[index - 1];
+                  arr[index - 1] = value;
+                  updateValue(item.id, arr);
+                  setSelectedProxyPlugins(arr);
+                }
+              }}
+            >
+              <KeyboardArrowUpIcon />
+            </IconButton>
+          );
           return (
-            <ListItem key={plugin} secondaryAction={action}>
+            <ListItem key={plugin} secondaryAction={action} disablePadding>
               <ListItemText>{plugin}</ListItemText>
             </ListItem>
           );
         });
+        let selectedBox = <></>;
+        if (selectedItems.length !== 0) {
+          selectedBox = (
+            <Box>
+              <FormLabel component="legend">
+                Sort selected proxy plugin
+              </FormLabel>
+              <FormGroup>
+                <List>{selectedItems}</List>
+              </FormGroup>
+            </Box>
+          );
+        }
         formItem = (
           <React.Fragment>
             <Stack direction="row" spacing={2}>
@@ -678,14 +799,7 @@ export default function FormEditor({
                 <FormLabel component="legend">Select proxy plugin</FormLabel>
                 <FormGroup>{labelItems}</FormGroup>
               </Box>
-              <Box>
-                <FormLabel component="legend">
-                  Sort selected proxy plugin
-                </FormLabel>
-                <FormGroup>
-                  <List>{selectedItems}</List>
-                </FormGroup>
-              </Box>
+              {selectedBox}
             </Stack>
           </React.Fragment>
         );

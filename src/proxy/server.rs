@@ -14,7 +14,7 @@
 
 use super::logger::Parser;
 use super::{Location, Upstream};
-use crate::config::{LocationConf, PingapConf, UpstreamConf};
+use crate::config::{LocationConf, PingapConf, ProxyPluginStep, UpstreamConf};
 use crate::plugin::get_proxy_plugin;
 use crate::state::State;
 use crate::util;
@@ -321,7 +321,9 @@ impl ProxyHttp for Server {
         }
         ctx.location_index = Some(location_index);
 
-        let done = lo.exec_proxy_plugins(session, ctx).await?;
+        let done = lo
+            .exec_proxy_plugins(session, ctx, ProxyPluginStep::RequestFilter)
+            .await?;
         if done {
             return Ok(true);
         }
@@ -333,12 +335,19 @@ impl ProxyHttp for Server {
     }
     async fn proxy_upstream_filter(
         &self,
-        _session: &mut Session,
-        _ctx: &mut Self::CTX,
+        session: &mut Session,
+        ctx: &mut Self::CTX,
     ) -> pingora::Result<bool>
     where
         Self::CTX: Send + Sync,
     {
+        let lo = &self.locations[ctx.location_index.unwrap_or_default()];
+        let done = lo
+            .exec_proxy_plugins(session, ctx, ProxyPluginStep::ProxyUpstreamFilter)
+            .await?;
+        if done {
+            return Ok(false);
+        }
         Ok(true)
     }
 

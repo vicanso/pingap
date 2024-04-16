@@ -14,6 +14,8 @@
 
 use super::ProxyPlugin;
 use super::Result;
+use crate::config::ProxyPluginCategory;
+use crate::config::ProxyPluginStep;
 use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON};
 use crate::state::{get_hostname, State};
 use async_trait::async_trait;
@@ -35,11 +37,13 @@ struct ServerStats {
 }
 pub struct Stats {
     path: String,
+    proxy_step: ProxyPluginStep,
 }
 
 impl Stats {
-    pub fn new(value: &str) -> Result<Self> {
+    pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
         Ok(Self {
+            proxy_step,
             path: value.to_string(),
         })
     }
@@ -47,6 +51,14 @@ impl Stats {
 
 #[async_trait]
 impl ProxyPlugin for Stats {
+    #[inline]
+    fn step(&self) -> ProxyPluginStep {
+        self.proxy_step
+    }
+    #[inline]
+    fn category(&self) -> ProxyPluginCategory {
+        ProxyPluginCategory::Stats
+    }
     #[inline]
     async fn handle(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<bool> {
         if session.req_header().uri.path() == self.path {

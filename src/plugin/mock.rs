@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::{Error, ProxyPlugin, Result};
+use crate::config::{ProxyPluginCategory, ProxyPluginStep};
 use crate::http_extra::{convert_headers, HttpResponse};
 use crate::state::State;
 use async_trait::async_trait;
@@ -23,18 +24,21 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Default, Deserialize, Serialize, Clone)]
 pub struct MockInfo {
+    path: Option<String>,
     status: Option<u16>,
     headers: Option<Vec<String>>,
     data: String,
 }
 
 pub struct MockResponse {
+    pub path: String,
+    pub proxy_step: ProxyPluginStep,
     pub resp: HttpResponse,
 }
 
 impl MockResponse {
     /// Creates a new mock response upstream, which will return a mock data.
-    pub fn new(value: &str) -> Result<Self> {
+    pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
         let info: MockInfo = serde_json::from_str(value).map_err(|e| Error::Json { source: e })?;
 
         let mut resp = HttpResponse {
@@ -51,14 +55,30 @@ impl MockResponse {
             }
         }
 
-        Ok(MockResponse { resp })
+        Ok(MockResponse {
+            resp,
+            proxy_step,
+            path: info.path.unwrap_or_default(),
+        })
     }
 }
 
 #[async_trait]
 impl ProxyPlugin for MockResponse {
+    #[inline]
+    fn step(&self) -> ProxyPluginStep {
+        self.proxy_step
+    }
+    #[inline]
+    fn category(&self) -> ProxyPluginCategory {
+        ProxyPluginCategory::Mock
+    }
+    #[inline]
     /// Sends the mock data to client.
     async fn handle(&self, session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
+        if !self.path.is_empty() && session.req_header().uri.path() != self.path {
+            return Ok(false);
+        }
         let _ = self.resp.clone().send(session).await?;
         Ok(true)
     }

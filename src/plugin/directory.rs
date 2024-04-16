@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::{ProxyPlugin, Result};
+use crate::config::{ProxyPluginCategory, ProxyPluginStep};
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
@@ -43,6 +44,7 @@ pub struct Directory {
     cache_private: Option<bool>,
     // charset for text file
     charset: Option<String>,
+    proxy_step: ProxyPluginStep,
 }
 
 async fn get_data(file: &PathBuf) -> std::io::Result<(std::fs::Metadata, fs::File)> {
@@ -89,17 +91,23 @@ fn get_cacheable_and_headers_from_meta(
 
 impl Directory {
     /// Creates a new directory upstream, which will serve static file of directory.
-    pub fn new(value: &str) -> Result<Self> {
-        let mut new_path = value;
+    pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+        let mut new_path = value.to_string();
         let mut chunk_size = None;
         let mut max_age = None;
         let mut cache_private = None;
         let mut index_file = "index.html".to_string();
         let mut charset = None;
-        if let Ok(url_info) = Url::parse(&format!("file://{new_path}")) {
+        let file_protocol = "file://";
+        if !new_path.starts_with(file_protocol) {
+            new_path = format!("{file_protocol}{new_path}").to_string();
+        }
+        if let Ok(url_info) = Url::parse(&new_path) {
             let query = url_info.query().unwrap_or_default();
             if !query.is_empty() {
-                new_path = new_path.substring(0, new_path.len() - query.len() - 1);
+                new_path = new_path
+                    .substring(0, new_path.len() - query.len() - 1)
+                    .to_string();
             }
             for (key, value) in url_info.query_pairs().into_iter() {
                 match key.as_ref() {
@@ -122,17 +130,29 @@ impl Directory {
         };
         Ok(Self {
             index: format!("/{index_file}"),
-            path: Path::new(&util::resolve_path(new_path)).to_path_buf(),
+            path: Path::new(&util::resolve_path(
+                new_path.substring(file_protocol.len(), new_path.len()),
+            ))
+            .to_path_buf(),
             chunk_size,
             max_age,
             charset,
             cache_private,
+            proxy_step,
         })
     }
 }
 
 #[async_trait]
 impl ProxyPlugin for Directory {
+    #[inline]
+    fn step(&self) -> ProxyPluginStep {
+        self.proxy_step
+    }
+    #[inline]
+    fn category(&self) -> ProxyPluginCategory {
+        ProxyPluginCategory::Directory
+    }
     async fn handle(&self, session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
         let mut filename = session.req_header().uri.path().to_string();
         if filename.len() <= 1 {

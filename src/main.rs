@@ -200,6 +200,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 value: format!("/ {authorization}"),
                 category: ProxyPluginCategory::Admin,
                 remark: Some("Admin serve".to_string()),
+                step: None,
             },
         ));
         server_conf_list.push(ServerConf {

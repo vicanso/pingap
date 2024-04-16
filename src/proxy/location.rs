@@ -14,7 +14,7 @@
 
 use super::upstream::new_empty_upstream;
 use super::Upstream;
-use crate::config::LocationConf;
+use crate::config::{LocationConf, ProxyPluginStep};
 use crate::http_extra::{convert_headers, HttpHeader};
 use crate::plugin::get_proxy_plugin;
 use crate::state::State;
@@ -202,10 +202,14 @@ impl Location {
         &self,
         session: &mut Session,
         ctx: &mut State,
+        step: ProxyPluginStep,
     ) -> pingora::Result<bool> {
         if let Some(plugins) = &self.proxy_plugins {
             for name in plugins.iter() {
                 if let Some(plugin) = get_proxy_plugin(name) {
+                    if plugin.step() != step {
+                        continue;
+                    }
                     let done = plugin.handle(session, ctx).await?;
                     if done {
                         return Ok(true);

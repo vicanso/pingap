@@ -30,6 +30,25 @@ export default function ProxyPluginInfo() {
 
   const arr: FormItem[] = [
     {
+      id: "step",
+      label: "Proxy Exec Step",
+      defaultValue: proxyPlugin.step,
+      category: FormItemCategory.CHECKBOX,
+      span: 6,
+      options: [
+        {
+          label: "Request Filter",
+          option: 0,
+          value: 0,
+        },
+        {
+          label: "Proxy Upstream Filter",
+          option: 1,
+          value: 1,
+        },
+      ],
+    },
+    {
       id: "category",
       label: "Proxy Plugin Category",
       defaultValue: proxyPlugin.category,
