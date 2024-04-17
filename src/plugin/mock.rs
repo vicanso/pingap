@@ -19,6 +19,7 @@ use crate::state::State;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
+use log::debug;
 use pingora::proxy::Session;
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +40,7 @@ pub struct MockResponse {
 impl MockResponse {
     /// Creates a new mock response upstream, which will return a mock data.
     pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+        debug!("new mock proxy plugin, {value}, {proxy_step:?}");
         let info: MockInfo = serde_json::from_str(value).map_err(|e| Error::Json { source: e })?;
 
         let mut resp = HttpResponse {

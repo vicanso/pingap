@@ -93,7 +93,9 @@ impl From<PingapConf> for Vec<ServerConf> {
             let mut filter_locations = vec![];
             for item in locations.iter() {
                 if valid_locations.contains(&item.0) {
-                    valid_upstreams.push(item.1.upstream.clone());
+                    if item.1.upstream.is_some() {
+                        valid_upstreams.push(item.1.upstream.clone().unwrap_or_default());
+                    }
                     filter_locations.push(item.clone())
                 }
             }
@@ -172,7 +174,8 @@ impl Server {
         let in_used_upstreams: Vec<_> = conf
             .locations
             .iter()
-            .map(|item| item.1.upstream.clone())
+            .filter(|item| item.1.upstream.is_some())
+            .map(|item| item.1.upstream.clone().unwrap_or_default())
             .collect();
         for item in conf.upstreams.iter() {
             // ignore not in used

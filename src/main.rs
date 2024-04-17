@@ -17,11 +17,14 @@ use config::{PingapConf, ProxyPluginCategory, ProxyPluginConf};
 use log::{error, info, Level};
 use pingora::server;
 use pingora::server::configuration::Opt;
+use pingora::services::background::background_service;
 use proxy::{Server, ServerConf};
 use state::get_start_time;
 use std::error::Error;
 use std::io::Write;
 use std::sync::Arc;
+
+use crate::state::AutoRestart;
 
 mod config;
 mod http_extra;
@@ -56,6 +59,9 @@ struct Args {
     /// Admin server adddr
     #[arg(long)]
     admin: Option<String>,
+    /// Whether this server should try to auto restart
+    #[arg(long)]
+    autorestart: bool,
 }
 
 fn new_server_conf(args: &Args, conf: &PingapConf) -> server::configuration::ServerConf {
@@ -162,6 +168,12 @@ fn run() -> Result<(), Box<dyn Error>> {
         if let Some(log) = &args.log {
             new_args.push(format!("--log={log}"));
         }
+        if let Some(admin) = &args.admin {
+            new_args.push(format!("--admin={admin}"));
+        }
+        if args.autorestart {
+            new_args.push("--autorestart".to_string());
+        }
         cmd.args = new_args;
         state::set_restart_process_command(cmd);
     }
@@ -217,6 +229,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         my_server.add_services(services.bg_services);
         my_server.add_service(services.lb);
     }
+    if args.autorestart {
+        my_server.add_service(background_service("Auto Restart", AutoRestart {}));
+    }
+
     info!("server is running");
     let _ = get_start_time();
     my_server.run_forever();

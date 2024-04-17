@@ -22,6 +22,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use bytesize::ByteSize;
 use http::StatusCode;
+use log::debug;
 use log::error;
 use memory_stats::memory_stats;
 use pingora::proxy::Session;
@@ -42,6 +43,7 @@ pub struct Stats {
 
 impl Stats {
     pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+        debug!("new stats proxy plugin, {value}, {proxy_step:?}");
         Ok(Self {
             proxy_step,
             path: value.to_string(),

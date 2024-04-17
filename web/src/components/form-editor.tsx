@@ -54,6 +54,9 @@ export enum ProxyPluginCategory {
   ADMIN = 3,
   DIRECTORY = 4,
   MOCK = 5,
+  REQUEST_ID = 6,
+  IP_LIMIT = 7,
+  KEY_AUTH = 8,
 }
 
 export function formatProxyPluginCategory(value: ProxyPluginCategory) {
@@ -75,6 +78,15 @@ export function formatProxyPluginCategory(value: ProxyPluginCategory) {
     }
     case ProxyPluginCategory.MOCK: {
       return "mock";
+    }
+    case ProxyPluginCategory.REQUEST_ID: {
+      return "requestId";
+    }
+    case ProxyPluginCategory.IP_LIMIT: {
+      return "ipLimit";
+    }
+    case ProxyPluginCategory.KEY_AUTH: {
+      return "keyAuth";
     }
   }
 }
@@ -187,6 +199,42 @@ function FormProxyPluginField({
       fields.push({
         label: "The static directory",
       });
+      break;
+    }
+    case ProxyPluginCategory.REQUEST_ID: {
+      arr.push(...value.split(padding));
+      fields.push(
+        {
+          label: "The algorithm for genenrate id",
+        },
+        {
+          label: "The length of id",
+        },
+      );
+      break;
+    }
+    case ProxyPluginCategory.IP_LIMIT: {
+      arr.push(...value.split(padding));
+      fields.push(
+        {
+          label: "The ip list",
+        },
+        {
+          label: "The limit mode, 0:allow, 1:deny",
+        },
+      );
+      break;
+    }
+    case ProxyPluginCategory.KEY_AUTH: {
+      arr.push(...value.split(padding));
+      fields.push(
+        {
+          label: "The key name",
+        },
+        {
+          label: "The key value list",
+        },
+      );
       break;
     }
     case ProxyPluginCategory.MOCK: {

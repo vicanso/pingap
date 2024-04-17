@@ -19,6 +19,7 @@ use crate::config::ProxyPluginStep;
 use crate::http_extra::HTTP_HEADER_NAME_X_REQUEST_ID;
 use crate::state::State;
 use async_trait::async_trait;
+use log::debug;
 use nanoid::nanoid;
 use pingora::proxy::Session;
 use uuid::Uuid;
@@ -31,6 +32,7 @@ pub struct RequestId {
 
 impl RequestId {
     pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+        debug!("new request id proxy plugin, {value}, {proxy_step:?}");
         let arr: Vec<&str> = value.split(' ').collect();
         let algorithm = arr[0].trim().to_string();
         let mut size = 8;

@@ -50,6 +50,7 @@ pub enum TagCategory {
     Context,
     PayloadSize,
     PayloadSizeHuman,
+    RequestId,
 }
 
 #[derive(Debug, Clone)]
@@ -207,6 +208,10 @@ impl From<&str> for Parser {
                 }),
                 "{payload-size-human}" => tags.push(Tag {
                     category: TagCategory::PayloadSizeHuman,
+                    data: None,
+                }),
+                "{request-id}" => tags.push(Tag {
+                    category: TagCategory::RequestId,
                     data: None,
                 }),
                 _ => {
@@ -379,6 +384,11 @@ impl Parser {
                             "processing" => buf.extend(ctx.processing.to_string().as_bytes()),
                             _ => {}
                         }
+                    }
+                }
+                TagCategory::RequestId => {
+                    if let Some(key) = &ctx.request_id {
+                        buf.extend(key.as_bytes());
                     }
                 }
             };

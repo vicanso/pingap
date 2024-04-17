@@ -76,6 +76,8 @@ pub enum ProxyPluginCategory {
     Directory,
     Mock,
     RequestId,
+    IpLimit,
+    KeyAuth,
 }
 
 #[derive(PartialEq, Debug, Default, Deserialize_repr, Clone, Copy, Serialize_repr)]
@@ -148,7 +150,7 @@ impl UpstreamConf {
 
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
 pub struct LocationConf {
-    pub upstream: String,
+    pub upstream: Option<String>,
     pub path: Option<String>,
     pub host: Option<String>,
     pub proxy_headers: Option<Vec<String>>,
@@ -181,9 +183,10 @@ impl LocationConf {
         };
         validate(&self.proxy_headers)?;
         validate(&self.headers)?;
-        if !upstream_names.contains(&self.upstream) {
+        let upstream = self.upstream.clone().unwrap_or_default();
+        if !upstream.is_empty() && !upstream_names.contains(&upstream) {
             return Err(Error::Invalid {
-                message: format!("{} upstream is not found(location:{name})", self.upstream),
+                message: format!("{upstream} upstream is not found(location:{name})"),
             });
         }
 

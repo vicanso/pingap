@@ -24,6 +24,8 @@ use std::num::ParseIntError;
 mod admin;
 mod compression;
 mod directory;
+mod ip_limit;
+mod key_auth;
 mod limit;
 mod mock;
 mod request_id;
@@ -122,6 +124,14 @@ pub fn init_proxy_plugins(confs: Vec<(String, ProxyPluginConf)>) -> Result<()> {
                 ProxyPluginCategory::RequestId => {
                     let r = request_id::RequestId::new(&conf.value, step)?;
                     plguins.insert(name, Box::new(r));
+                }
+                ProxyPluginCategory::IpLimit => {
+                    let l = ip_limit::IpLimit::new(&conf.value, step)?;
+                    plguins.insert(name, Box::new(l));
+                }
+                ProxyPluginCategory::KeyAuth => {
+                    let k = key_auth::KeyAuth::new(&conf.value, step)?;
+                    plguins.insert(name, Box::new(k));
                 }
             };
         }

@@ -18,6 +18,7 @@ use crate::config::{ProxyPluginCategory, ProxyPluginStep};
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
+use log::debug;
 use pingora::proxy::Session;
 use pingora_limits::inflight::Inflight;
 use substring::Substring;
@@ -40,6 +41,7 @@ pub struct Limiter {
 
 impl Limiter {
     pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+        debug!("new limit proxy plugin, {value}, {proxy_step:?}");
         let (key, max) = value.split_once(' ').ok_or(Error::Invalid {
             message: value.to_string(),
         })?;

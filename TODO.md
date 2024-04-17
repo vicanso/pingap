@@ -1,13 +1,14 @@
 # TODO
 
-- [ ] request id proxy plugin
-- [ ] allow deny ip proxy plugin
 - [ ] support etcd or other storage for config
 - [ ] better error handler
 - [ ] log rotate
 - [ ] tls cert auto update
 - [ ] support validate config before save(web)
-- [ ] auto reload config and restart
+- [x] allow none upstream for location
+- [x] allow deny ip proxy plugin
+- [x] auto reload config and restart
+- [x] request id proxy plugin
 - [x] support plugin for proxy and response
 - [x] authentication for admin page
 - [x] custom error for pingora error

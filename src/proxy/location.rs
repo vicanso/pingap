@@ -106,14 +106,15 @@ impl Location {
         conf: &LocationConf,
         upstreams: Vec<Arc<Upstream>>,
     ) -> Result<Location> {
-        let up = if conf.upstream.is_empty() {
+        let upstream = conf.upstream.clone().unwrap_or_default();
+        let up = if upstream.is_empty() {
             Arc::new(new_empty_upstream())
         } else {
             upstreams
                 .iter()
-                .find(|item| item.name == conf.upstream)
+                .find(|item| item.name == upstream)
                 .ok_or(Error::Invalid {
-                    message: format!("Upstream({}) not found", conf.upstream),
+                    message: format!("Upstream({upstream}) not found"),
                 })?
                 .clone()
         };
@@ -136,7 +137,7 @@ impl Location {
         let path = conf.path.clone().unwrap_or_default();
 
         Ok(Location {
-            upstream_name: conf.upstream.clone(),
+            upstream_name: upstream,
             path_selector: new_path_selector(&path)?,
             path,
             hosts,
@@ -273,7 +274,7 @@ mod tests {
         let lo = Location::new(
             "",
             &LocationConf {
-                upstream: upstream_name.to_string(),
+                upstream: Some(upstream_name.to_string()),
                 ..Default::default()
             },
             vec![upstream.clone()],
@@ -286,7 +287,7 @@ mod tests {
         let lo = Location::new(
             "",
             &LocationConf {
-                upstream: upstream_name.to_string(),
+                upstream: Some(upstream_name.to_string()),
                 host: Some("test.com,pingap".to_string()),
                 ..Default::default()
             },
@@ -301,7 +302,7 @@ mod tests {
         let lo = Location::new(
             "",
             &LocationConf {
-                upstream: upstream_name.to_string(),
+                upstream: Some(upstream_name.to_string()),
                 path: Some("~/users".to_string()),
                 ..Default::default()
             },
@@ -316,7 +317,7 @@ mod tests {
         let lo = Location::new(
             "",
             &LocationConf {
-                upstream: upstream_name.to_string(),
+                upstream: Some(upstream_name.to_string()),
                 path: Some("~^/api".to_string()),
                 ..Default::default()
             },
@@ -331,7 +332,7 @@ mod tests {
         let lo = Location::new(
             "",
             &LocationConf {
-                upstream: upstream_name.to_string(),
+                upstream: Some(upstream_name.to_string()),
                 path: Some("/api".to_string()),
                 ..Default::default()
             },
@@ -346,7 +347,7 @@ mod tests {
         let lo = Location::new(
             "",
             &LocationConf {
-                upstream: upstream_name.to_string(),
+                upstream: Some(upstream_name.to_string()),
                 path: Some("=/api".to_string()),
                 ..Default::default()
             },
@@ -375,7 +376,7 @@ mod tests {
         let lo = Location::new(
             "",
             &LocationConf {
-                upstream: upstream_name.to_string(),
+                upstream: Some(upstream_name.to_string()),
                 rewrite: Some("^/users/(.*)$ /$1".to_string()),
                 ..Default::default()
             },
@@ -403,7 +404,7 @@ mod tests {
         let lo = Location::new(
             "",
             &LocationConf {
-                upstream: upstream_name.to_string(),
+                upstream: Some(upstream_name.to_string()),
                 rewrite: Some("^/users/(.*)$ /$1".to_string()),
                 proxy_headers: Some(vec!["Cache-Control: no-store".to_string()]),
                 headers: Some(vec!["X-Response-Id: pig".to_string()]),

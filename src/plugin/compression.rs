@@ -18,6 +18,7 @@ use crate::config::{ProxyPluginCategory, ProxyPluginStep};
 use crate::state::State;
 use async_trait::async_trait;
 use http::HeaderValue;
+use log::debug;
 use once_cell::sync::Lazy;
 use pingora::proxy::Session;
 
@@ -35,6 +36,8 @@ pub struct Compression {
 
 impl Compression {
     pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+        debug!("new compresson proxy plugin, {value}, {proxy_step:?}");
+
         let mut levels: [u32; 3] = [0, 0, 0];
         let mut support_compression = false;
         for (index, item) in value.split(' ').enumerate() {

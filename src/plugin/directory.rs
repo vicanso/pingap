@@ -19,7 +19,7 @@ use crate::util;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::{header, HeaderValue, StatusCode};
-use log::error;
+use log::{debug, error};
 use pingora::proxy::Session;
 use std::fs::Metadata;
 use std::os::unix::fs::MetadataExt;
@@ -92,6 +92,7 @@ fn get_cacheable_and_headers_from_meta(
 impl Directory {
     /// Creates a new directory upstream, which will serve static file of directory.
     pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+        debug!("new serve static file proxy plugin, {value}, {proxy_step:?}");
         let mut new_path = value.to_string();
         let mut chunk_size = None;
         let mut max_age = None;

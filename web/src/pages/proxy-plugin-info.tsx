@@ -85,6 +85,21 @@ export default function ProxyPluginInfo() {
           option: 5,
           value: ProxyPluginCategory.MOCK,
         },
+        {
+          label: "Request Id",
+          option: 6,
+          value: ProxyPluginCategory.REQUEST_ID,
+        },
+        {
+          label: "Ip Limit",
+          option: 7,
+          value: ProxyPluginCategory.IP_LIMIT,
+        },
+        {
+          label: "Key Auth",
+          option: 8,
+          value: ProxyPluginCategory.KEY_AUTH,
+        },
       ],
     },
     {

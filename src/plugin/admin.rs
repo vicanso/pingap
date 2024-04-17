@@ -31,7 +31,7 @@ use bytesize::ByteSize;
 use hex::encode;
 use http::Method;
 use http::{header, HeaderValue, StatusCode};
-use log::error;
+use log::{debug, error};
 use memory_stats::memory_stats;
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
@@ -93,6 +93,7 @@ pub struct AdminServe {
 }
 impl AdminServe {
     pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+        debug!("new admin server proxy plugin, {value}, {proxy_step:?}");
         let arr: Vec<&str> = value.split(' ').collect();
         let mut authorization = "".to_string();
         if arr.len() >= 2 {

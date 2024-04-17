@@ -106,7 +106,7 @@ fn bench_location_filter(c: &mut Criterion) {
         let lo = Location::new(
             "",
             &LocationConf {
-                upstream: upstream_name.to_string(),
+                upstream: Some(upstream_name.to_string()),
                 path: Some("/api".to_string()),
                 ..Default::default()
             },
@@ -123,7 +123,7 @@ fn bench_location_filter(c: &mut Criterion) {
         let lo = Location::new(
             "",
             &LocationConf {
-                upstream: upstream_name.to_string(),
+                upstream: Some(upstream_name.to_string()),
                 path: Some("~/api".to_string()),
                 ..Default::default()
             },
@@ -139,7 +139,7 @@ fn bench_location_filter(c: &mut Criterion) {
         let lo = Location::new(
             "",
             &LocationConf {
-                upstream: upstream_name.to_string(),
+                upstream: Some(upstream_name.to_string()),
                 path: Some("=/api".to_string()),
                 ..Default::default()
             },
@@ -170,7 +170,7 @@ fn bench_location_rewrite_path(c: &mut Criterion) {
     let lo = Location::new(
         "",
         &LocationConf {
-            upstream: upstream_name.to_string(),
+            upstream: Some(upstream_name.to_string()),
             rewrite: Some("^/users/(.*)$ /$1".to_string()),
             ..Default::default()
         },
