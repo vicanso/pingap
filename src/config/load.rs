@@ -78,6 +78,7 @@ pub enum ProxyPluginCategory {
     RequestId,
     IpLimit,
     KeyAuth,
+    BasicAuth,
 }
 
 #[derive(PartialEq, Debug, Default, Deserialize_repr, Clone, Copy, Serialize_repr)]

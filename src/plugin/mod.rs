@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use std::num::ParseIntError;
 
 mod admin;
+mod basic_auth;
 mod compression;
 mod directory;
 mod ip_limit;
@@ -132,6 +133,10 @@ pub fn init_proxy_plugins(confs: Vec<(String, ProxyPluginConf)>) -> Result<()> {
                 ProxyPluginCategory::KeyAuth => {
                     let k = key_auth::KeyAuth::new(&conf.value, step)?;
                     plguins.insert(name, Box::new(k));
+                }
+                ProxyPluginCategory::BasicAuth => {
+                    let b = basic_auth::BasicAuth::new(&conf.value, step)?;
+                    plguins.insert(name, Box::new(b));
                 }
             };
         }

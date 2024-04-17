@@ -100,6 +100,11 @@ export default function ProxyPluginInfo() {
           option: 8,
           value: ProxyPluginCategory.KEY_AUTH,
         },
+        {
+          label: "Basic Auth",
+          option: 9,
+          value: ProxyPluginCategory.BASIC_AUTH,
+        },
       ],
     },
     {

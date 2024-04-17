@@ -57,6 +57,7 @@ export enum ProxyPluginCategory {
   REQUEST_ID = 6,
   IP_LIMIT = 7,
   KEY_AUTH = 8,
+  BASIC_AUTH = 9,
 }
 
 export function formatProxyPluginCategory(value: ProxyPluginCategory) {
@@ -87,6 +88,9 @@ export function formatProxyPluginCategory(value: ProxyPluginCategory) {
     }
     case ProxyPluginCategory.KEY_AUTH: {
       return "keyAuth";
+    }
+    case ProxyPluginCategory.BASIC_AUTH: {
+      return "basicAuth";
     }
   }
 }
@@ -235,6 +239,13 @@ function FormProxyPluginField({
           label: "The key value list",
         },
       );
+      break;
+    }
+    case ProxyPluginCategory.BASIC_AUTH: {
+      arr.push(value);
+      fields.push({
+        label: "The basic authorization list",
+      });
       break;
     }
     case ProxyPluginCategory.MOCK: {

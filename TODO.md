@@ -5,6 +5,7 @@
 - [ ] log rotate
 - [ ] tls cert auto update
 - [ ] support validate config before save(web)
+- [x] basic auth
 - [x] allow none upstream for location
 - [x] allow deny ip proxy plugin
 - [x] auto reload config and restart
