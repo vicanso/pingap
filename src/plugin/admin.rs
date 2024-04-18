@@ -106,7 +106,6 @@ impl AdminServe {
         })
     }
 }
-// pub static ADMIN_SERVE: Lazy<&AdminServe> = Lazy::new(|| &AdminServe {});
 
 #[derive(Serialize, Deserialize)]
 struct ErrorResponse {

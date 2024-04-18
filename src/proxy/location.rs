@@ -51,28 +51,30 @@ enum PathSelector {
     Empty,
 }
 fn new_path_selector(path: &str) -> Result<PathSelector> {
+    let path = path.trim();
     if path.is_empty() {
         return Ok(PathSelector::Empty);
     }
-    let se = if path.starts_with('~') {
-        // remove ~ and trim
-        let path = path.substring(1, path.len()).trim();
-        let re = Regex::new(path).context(RegexSnafu {
-            value: path.to_string(),
-        })?;
-        PathSelector::RegexPath(RegexPath { value: re })
-    } else if path.starts_with('=') {
-        // remove = and trim
-        let path = path.substring(1, path.len()).trim();
-        PathSelector::EqualPath(EqualPath {
-            value: path.to_string(),
-        })
-    } else {
-        // trim
-        PathSelector::PrefixPath(PrefixPath {
-            value: path.trim().to_string(),
-        })
+    let first = path.chars().next().unwrap_or_default();
+    let last = path.substring(1, path.len()).trim();
+    let se = match first {
+        '~' => {
+            let re = Regex::new(last).context(RegexSnafu {
+                value: last.to_string(),
+            })?;
+            PathSelector::RegexPath(RegexPath { value: re })
+        }
+        '=' => PathSelector::EqualPath(EqualPath {
+            value: last.to_string(),
+        }),
+        _ => {
+            // trim
+            PathSelector::PrefixPath(PrefixPath {
+                value: path.trim().to_string(),
+            })
+        }
     };
+
     Ok(se)
 }
 

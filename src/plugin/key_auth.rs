@@ -16,10 +16,12 @@ use super::ProxyPlugin;
 use super::{Error, Result};
 use crate::config::ProxyPluginCategory;
 use crate::config::ProxyPluginStep;
+use crate::http_extra::HttpResponse;
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
-use http::HeaderName;
+use bytes::Bytes;
+use http::{HeaderName, StatusCode};
 use log::debug;
 use pingora::proxy::Session;
 use std::str::FromStr;
@@ -31,6 +33,7 @@ pub struct KeyAuth {
     header_name: Option<HeaderName>,
     query_name: Option<String>,
     keys: Vec<Vec<u8>>,
+    unauthorized_resp: HttpResponse,
 }
 
 impl KeyAuth {
@@ -66,6 +69,11 @@ impl KeyAuth {
             proxy_step,
             query_name,
             header_name,
+            unauthorized_resp: HttpResponse {
+                status: StatusCode::UNAUTHORIZED,
+                body: Bytes::from_static(b"Key auth fail"),
+                ..Default::default()
+            },
         })
     }
 }
@@ -93,8 +101,9 @@ impl ProxyPlugin for KeyAuth {
                     .as_bytes()
             })
         };
-        if value.is_none() || self.keys.contains(&value.unwrap().to_vec()) {
-            return Err(util::new_internal_error(401, "Key auth fail".to_string()));
+        if value.is_none() || !self.keys.contains(&value.unwrap().to_vec()) {
+            self.unauthorized_resp.clone().send(session).await?;
+            return Ok(true);
         }
         Ok(false)
     }

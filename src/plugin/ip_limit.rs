@@ -16,9 +16,12 @@ use super::ProxyPlugin;
 use super::Result;
 use crate::config::ProxyPluginCategory;
 use crate::config::ProxyPluginStep;
+use crate::http_extra::HttpResponse;
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
+use bytes::Bytes;
+use http::StatusCode;
 use ipnet::IpNet;
 use log::debug;
 use pingora::proxy::Session;
@@ -30,6 +33,7 @@ pub struct IpLimit {
     ip_net_list: Vec<IpNet>,
     ip_list: Vec<String>,
     category: u8,
+    forbidden_resp: HttpResponse,
 }
 
 impl IpLimit {
@@ -58,6 +62,11 @@ impl IpLimit {
             ip_list,
             ip_net_list,
             category,
+            forbidden_resp: HttpResponse {
+                status: StatusCode::FORBIDDEN,
+                body: Bytes::from_static(b"Request is forbidden"),
+                ..Default::default()
+            },
         })
     }
 }
@@ -93,7 +102,8 @@ impl ProxyPlugin for IpLimit {
         // deny ip
         let allow = if self.category > 0 { !found } else { found };
         if !allow {
-            return Err(util::new_internal_error(403, "Forbidden".to_string()));
+            self.forbidden_resp.clone().send(session).await?;
+            return Ok(true);
         }
         return Ok(false);
     }

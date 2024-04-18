@@ -4,52 +4,15 @@ description: Upstream的详细介绍
 
 ## Upstream
 
-Upstream现支持三种类型，包括`静态目录`，`Mock响应`以及常规的`反向代理节点`，下面一下详细讲解各类型的使用场景。
-
-### 静态目录
-
-upstream地址配置以`file://目录路径?chunk_size=8192&max_age=3600&private&index=index.html`的方式指定访问目录，暂仅支持单路径服务，其querystring部分均为可选，参数说明如下：
-
-- `chunk_size`: 静态文件以chunk的形式读取，此参数指定每次读取的分块大小，默认为8192
-- `max_age`: 指定静态文件的缓存时长，单位为秒。需要注意，对于`text/html`默认设置为不可缓存
-- `private`: 指定缓存是否为私有的，若指定为私有的，则只允许客户端缓存，中间的缓存中间件不缓存该数据
-
-- `index`: 指定默认路径对应的文件，无默认值
-
-性能测试访问`30KB`的静态文件，线程限制为1，CPU为M2系列：
-
-```bash
-wrk 'http://127.0.0.1:6188/common-153cff7b.js' --latency
-Running 10s test @ http://127.0.0.1:6188/common-153cff7b.js
-  2 threads and 10 connections
-  Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency   438.96us  113.29us   3.65ms   82.09%
-    Req/Sec    11.44k     1.01k   12.06k    90.10%
-  Latency Distribution
-     50%  420.00us
-     75%  469.00us
-     90%  566.00us
-     99%  782.00us
-  229845 requests in 10.10s, 6.58GB read
-Requests/sec:  22758.02
-Transfer/sec:    667.24MB
-```
-
-### Mock响应
-
-Mock响应的配置形式为`mock://{"status":500,"headers":["Content-Type: application/json"],"data":"{\"message\":\"Mock Service Unavailable\"}"}`配置响应，配置形式为json形式，用于应急或测试使用，参数说明如下：
-
-- `status`: 响应状态码
-- `headers`: 响应头列表
-- `data`: 响应数据，可根据需要是html或者json等数据
-
-### 反向代理节点
-
-此种形式为最常用形式，配置为节点地址列表，需要注意此节点会使用默认的tcp health check的形式检测节点是否可用，不过建议配置为http health chech。下面针对相关参数详细说明：
+Upstream配置为节点地址列表，配置为域名则会根据解析后的IP添加所有节点地址（之后并不会再次刷新域名解析），需要注意节点会使用默认的tcp health check的形式检测节点是否可用，建议配置为http health chech。下面针对相关参数详细说明：
 
 - `addrs`: 节点地址列表，地址为`ip:port weight`的形式，`weight`权重可不指定，默认为1
-- `health_check`: 节点健康检测配置，支持http与tcp形式
 - `algo`: 节点的选择算法，支持`hash`与`round_robin`两种形式，如`hash:ip`表示按ip hash选择节点。默认为`round_robin`
+- `sni`: 若配置的是https，需要设置对应的SNI
+- `verify_cert`: 若配置的是http，是否需要校验证书有效性
+- `health_check`: 节点健康检测配置，支持http与tcp形式
+- `ipv4_only`: 若配置为域名时，是否仅添加解析的ipv4节点
+- `alpn`: 在tls握手时，alpn的配置，默认为H1
 - `connection_timeout`: tcp连接超时，默认为无
 - `total_connection_timeout`: 连接超时，对于https包括tls握手部分，默认为无
 - `read_timeout`: 读取超时，默认为无

@@ -34,10 +34,10 @@ graceful_shutdown_timeout = "10s"
 # Default `128`.
 # upstream_keepalive_pool_size = 128
 
-# Webhook for some events, such as backend becomes unhealthy. Default `None`
-# webhook = "http://127.0.0.1:6001/webhook"
 # Webhook type, "normal", "wecom", "dingtalk"
 # webhook_type = "wecom"
+# Webhook for some events, such as backend becomes unhealthy. Default `None`
+# webhook = "http://127.0.0.1:6001/webhook"
 
 # Log level, `info`, `warn`, `error` or `debug`. Default `None`
 # log_level = "info"

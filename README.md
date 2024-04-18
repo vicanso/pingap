@@ -50,13 +50,17 @@ graph TD;
 
     locationB -- "Exec Plugins" --> locationPluginListB("Plugin List B")
 
-    locationPluginListA -- "10.0.0.1:8001" --> upstreamA1("Upstream A1") --> response
+    locationPluginListA -- "proxy pass: 10.0.0.1:8001" --> upstreamA1("Upstream A1") --> response
 
-    locationPluginListA -- "10.0.0.2:8001" --> upstreamA2("Upstream A2") --> response
+    locationPluginListA -- "proxy pass: 10.0.0.2:8001" --> upstreamA2("Upstream A2") --> response
 
-    locationPluginListB -- "10.0.0.1:8002" --> upstreamB1("Upstream B1") --> response
+    locationPluginListA -- "done" --> response
 
-    locationPluginListB -- "10.0.0.2:8002" --> upstreamB2("Upstream B2") --> response
+    locationPluginListB -- "proxy pass: 10.0.0.1:8002" --> upstreamB1("Upstream B1") --> response
+
+    locationPluginListB -- "proxy pass: 10.0.0.2:8002" --> upstreamB2("Upstream B2") --> response
+
+    locationPluginListB -- "done" --> response
 
     response("HTTP Response") --> stop("Logging");
 ```

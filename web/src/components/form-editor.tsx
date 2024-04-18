@@ -652,7 +652,7 @@ export default function FormEditor({
         break;
       }
       case FormItemCategory.LOCATION: {
-        const options = ((item.options as string[]) || []).sort();
+        const options = (item.options as string[]) || [];
         formItem = (
           <React.Fragment>
             <InputLabel id={`{item.id}-label`}>{item.label}</InputLabel>

@@ -15,9 +15,12 @@
 use super::ProxyPlugin;
 use super::{Error, Result};
 use crate::config::{ProxyPluginCategory, ProxyPluginStep};
+use crate::http_extra::HttpResponse;
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
+use bytes::Bytes;
+use http::StatusCode;
 use log::debug;
 use pingora::proxy::Session;
 use pingora_limits::inflight::Inflight;
@@ -117,9 +120,16 @@ impl ProxyPlugin for Limiter {
     }
     #[inline]
     async fn handle(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<bool> {
-        let _ = self
-            .incr(session, ctx)
-            .map_err(|e| util::new_internal_error(429, e.to_string()))?;
+        if let Err(e) = self.incr(session, ctx) {
+            HttpResponse {
+                status: StatusCode::TOO_MANY_REQUESTS,
+                body: Bytes::from(e.to_string()),
+                ..Default::default()
+            }
+            .send(session)
+            .await?;
+            return Ok(true);
+        }
         Ok(false)
     }
 }

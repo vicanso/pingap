@@ -1,4 +1,4 @@
-import useConfigStore from "../states/config";
+import useConfigStore, { getLocationWeight } from "../states/config";
 import { useParams } from "react-router-dom";
 
 import Loading from "../components/loading";
@@ -27,6 +27,16 @@ export default function ServerInfo() {
   const currentNames = Object.keys(servers);
   const server = servers[serverName || ""] || {};
   const locations = Object.keys(config.locations || {});
+  const getWeight = (name: string) => {
+    const lo = (config.locations || {})[name];
+    if (lo) {
+      return getLocationWeight(lo);
+    }
+    return -1;
+  };
+  locations.sort((a, b) => {
+    return getWeight(b) - getWeight(a);
+  });
 
   const arr: FormItem[] = [
     {

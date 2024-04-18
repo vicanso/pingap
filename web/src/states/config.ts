@@ -29,6 +29,26 @@ interface Location {
   remark?: string;
 }
 
+export function getLocationWeight(location: Location) {
+  if (location.weight) {
+    return location.weight;
+  }
+  let weight = 0;
+  let path = location.path || "";
+  if (path.startsWith("=")) {
+    weight += 1024;
+  } else if (path.startsWith("~")) {
+    weight += 256;
+  } else {
+    weight += 512;
+  }
+  weight += path.length;
+  if (location.host) {
+    weight += 128;
+  }
+  return weight;
+}
+
 interface Server {
   addr: string;
   access_log?: string;

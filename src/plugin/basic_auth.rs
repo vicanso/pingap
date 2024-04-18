@@ -16,15 +16,18 @@ use super::ProxyPlugin;
 use super::Result;
 use crate::config::ProxyPluginCategory;
 use crate::config::ProxyPluginStep;
+use crate::http_extra::HttpResponse;
 use crate::state::State;
-use crate::util;
 use async_trait::async_trait;
+use http::HeaderValue;
+use http::StatusCode;
 use log::debug;
 use pingora::proxy::Session;
 
 pub struct BasicAuth {
     proxy_step: ProxyPluginStep,
     authorizations: Vec<Vec<u8>>,
+    unauthorized_resp: HttpResponse,
 }
 
 impl BasicAuth {
@@ -34,9 +37,19 @@ impl BasicAuth {
             .split(',')
             .map(|item| format!("Basic {item}").as_bytes().to_owned())
             .collect();
+
         Ok(Self {
             proxy_step,
             authorizations,
+            unauthorized_resp: HttpResponse {
+                status: StatusCode::UNAUTHORIZED,
+                headers: Some(vec![(
+                    http::header::WWW_AUTHENTICATE,
+                    HeaderValue::from_str(r###"Basic realm="Access to the staging site""###)
+                        .unwrap(),
+                )]),
+                ..Default::default()
+            },
         })
     }
 }
@@ -54,8 +67,9 @@ impl ProxyPlugin for BasicAuth {
     #[inline]
     async fn handle(&self, session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
         let value = session.get_header_bytes(http::header::AUTHORIZATION);
-        if value.is_empty() || self.authorizations.contains(&value.to_vec()) {
-            return Err(util::new_internal_error(401, "Basic auth fail".to_string()));
+        if value.is_empty() || !self.authorizations.contains(&value.to_vec()) {
+            self.unauthorized_resp.clone().send(session).await?;
+            return Ok(true);
         }
         Ok(false)
     }
