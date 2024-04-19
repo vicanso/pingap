@@ -303,14 +303,12 @@ impl Parser {
                     buf.extend(req_header.uri.to_string().as_bytes());
                 }
                 TagCategory::Referer => {
-                    if let Some(value) = get_req_header_value(req_header, "Referer") {
-                        buf.extend(value);
-                    }
+                    let value = session.get_header_bytes("Referer");
+                    buf.extend(value);
                 }
                 TagCategory::UserAgent => {
-                    if let Some(value) = get_req_header_value(req_header, "User-Agent") {
-                        buf.extend(value);
-                    }
+                    let value = session.get_header_bytes("User-Agent");
+                    buf.extend(value);
                 }
                 TagCategory::When => {
                     buf.extend(chrono::Local::now().to_rfc3339().as_bytes());
@@ -356,9 +354,8 @@ impl Parser {
                 }
                 TagCategory::RequestHeader => {
                     if let Some(key) = &tag.data {
-                        if let Some(value) = get_req_header_value(req_header, key) {
-                            buf.extend(value);
-                        }
+                        let value = session.get_header_bytes(key);
+                        buf.extend(value);
                     }
                 }
                 TagCategory::ResponseHeader => {

@@ -47,11 +47,11 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[async_trait]
 pub trait ProxyPlugin: Sync + Send {
+    fn category(&self) -> ProxyPluginCategory;
+    fn step(&self) -> ProxyPluginStep;
     async fn handle(&self, _session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
         Ok(false)
     }
-    fn category(&self) -> ProxyPluginCategory;
-    fn step(&self) -> ProxyPluginStep;
 }
 
 pub fn get_builtin_proxy_plugins() -> Vec<(String, ProxyPluginConf)> {

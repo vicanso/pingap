@@ -11,7 +11,7 @@ Pingap格式化可以使用以下几种默认形式`combined`，`common`，`shor
 - `{query}`: 请求的querystring
 - `{remote}`: 请求的源ip
 - `{client-ip}`: 客户ip，根据`x-forwarded-for`中获取
-- `{scheme}`:
+- `{scheme}`: TODO
 - `{uri}`: 请求的完整地址
 - `{referer}`: 请求头中的referer
 - `{user-agent}`: 请求的user-agent
@@ -23,10 +23,11 @@ Pingap格式化可以使用以下几种默认形式`combined`，`common`，`shor
 - `{status}`: 响应状态码
 - `{latency}`: 响应时间的ms
 - `{latency-human}`: 响应时间，按时间格式化
-- `{payload-size}`: 请求数据的字节大小
-- `{payload-size-human}`: 请求数据的大小，按数据大小格式化字符串
 - `{~cookiename}`: 从cookie中获取对应的值
 - `{>request_header_name}`: 请求头中获取对应的值
 - `{<response_header_name}`: 响应头中获取对应的值
-- `{:context_ame}`: 从context中获取对应的值，暂时仅支持以下属性：`reused`, `upstream-address`, `processing`
-- `{$env_name}`: 从环境变量中获取对应的值，仅启动时获取
+- `{payload-size}`: 请求数据的字节大小
+- `{payload-size-human}`: 请求数据的大小，按数据大小格式化字符串
+- `{:context_name}`: 从context中获取对应的值，暂时仅支持以下属性：`reused`, `upstream-address`, `processing`
+- `{$env_name}`: 从环境变量中获取对应的值，仅启动时获取对应的值后保存，非实时获取
+- `{request-id}`: 请求的id，需要添加了对应的中间件

@@ -3,8 +3,9 @@
 - [ ] support etcd or other storage for config
 - [ ] better error handler
 - [ ] log rotate
-- [ ] tls cert auto update
+- [ ] tls cert auto update[instant-acme]
 - [ ] support validate config before save(web)
+- [ ] http response cache
 - [x] basic auth
 - [x] allow none upstream for location
 - [x] allow deny ip proxy plugin

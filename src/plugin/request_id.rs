@@ -58,7 +58,7 @@ impl ProxyPlugin for RequestId {
     }
     #[inline]
     fn category(&self) -> ProxyPluginCategory {
-        ProxyPluginCategory::Stats
+        ProxyPluginCategory::RequestId
     }
     #[inline]
     async fn handle(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<bool> {
