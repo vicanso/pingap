@@ -26,7 +26,7 @@ use http::StatusCode;
 use log::{error, info};
 use pingora::cache::cache_control::CacheControl;
 use pingora::cache::filters::resp_cacheable;
-use pingora::cache::{CacheMetaDefaults, NoCacheReason, RespCacheable};
+use pingora::cache::{CacheKey, CacheMetaDefaults, NoCacheReason, RespCacheable};
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::listeners::TlsSettings;
 use pingora::protocols::http::error_resp;
@@ -339,6 +339,20 @@ impl ProxyHttp for Server {
         Ok(false)
     }
 
+    fn cache_key_callback(
+        &self,
+        session: &Session,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<CacheKey> {
+        let namespace = ctx.cache_namespace.clone().unwrap_or_default();
+
+        Ok(CacheKey::new(
+            namespace,
+            format!("{}", session.req_header().uri),
+            "".to_string(),
+        ))
+    }
+
     fn response_cache_filter(
         &self,
         session: &Session,
@@ -356,14 +370,18 @@ impl ProxyHttp for Server {
         &self,
         session: &mut Session,
         upstream_response: &mut ResponseHeader,
-        _ctx: &mut Self::CTX,
+        ctx: &mut Self::CTX,
     ) -> pingora::Result<()>
     where
         Self::CTX: Send + Sync,
     {
-        upstream_response.insert_header("x-cache-status", session.cache.phase().as_str())?;
-        if let Some(d) = session.cache.lock_duration() {
-            upstream_response.insert_header("x-cache-lock-time-ms", format!("{}", d.as_millis()))?
+        if session.cache.enabled() {
+            upstream_response.insert_header("x-cache-status", session.cache.phase().as_str())?;
+            if let Some(d) = session.cache.lock_duration() {
+                upstream_response
+                    .insert_header("x-cache-lock-time-ms", format!("{}", d.as_millis()))?;
+                ctx.cache_lock_duration = Some(d);
+            }
         }
 
         Ok(())

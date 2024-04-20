@@ -14,7 +14,7 @@
 
 use http::StatusCode;
 use pingora_limits::inflight::Guard;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 pub struct State {
     pub processing: i32,
@@ -28,6 +28,8 @@ pub struct State {
     pub client_ip: Option<String>,
     pub guard: Option<Guard>,
     pub request_id: Option<String>,
+    pub cache_namespace: Option<String>,
+    pub cache_lock_duration: Option<Duration>,
 }
 
 impl Default for State {
@@ -44,6 +46,8 @@ impl Default for State {
             client_ip: None,
             guard: None,
             request_id: None,
+            cache_namespace: None,
+            cache_lock_duration: None,
         }
     }
 }

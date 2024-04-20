@@ -47,6 +47,7 @@ pub struct Cache {
     lock: u8,
     storage: &'static (dyn Storage + Sync),
     max_file_size: usize,
+    namespace: Option<String>,
 }
 
 impl Cache {
@@ -58,6 +59,7 @@ impl Cache {
         let mut lock = 0;
         let mut eviction = false;
         let mut max_file_size = 30 * 1024;
+        let mut namespace = None;
         for (key, value) in url_info.query_pairs().into_iter() {
             match key.as_ref() {
                 "lock" => {
@@ -71,6 +73,7 @@ impl Cache {
                     }
                 }
                 "eviction" => eviction = true,
+                "namespace" => namespace = Some(value.to_string()),
                 _ => {}
             }
         }
@@ -81,6 +84,7 @@ impl Cache {
             eviction,
             lock,
             max_file_size,
+            namespace,
         })
     }
 }
@@ -96,7 +100,7 @@ impl ProxyPlugin for Cache {
         ProxyPluginCategory::Cache
     }
     #[inline]
-    async fn handle(&self, session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
+    async fn handle(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<bool> {
         if ![Method::GET, Method::HEAD].contains(&session.req_header().method) {
             return Ok(false);
         }
@@ -118,6 +122,9 @@ impl ProxyPlugin for Cache {
             .enable(self.storage, eviction, Some(&*PREDICTOR), lock);
         if self.max_file_size > 0 {
             session.cache.set_max_file_size_bytes(self.max_file_size);
+        }
+        if let Some(namespace) = &self.namespace {
+            ctx.cache_namespace = Some(namespace.clone());
         }
 
         Ok(false)
