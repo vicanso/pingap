@@ -222,7 +222,9 @@ fn run() -> Result<(), Box<dyn Error>> {
             ..Default::default()
         });
     }
-    let _ = plugin::init_proxy_plugins(proxy_plugin_confs);
+    if let Err(e) = plugin::init_proxy_plugins(proxy_plugin_confs) {
+        error!("init proxy plugins fail, {e}");
+    }
     for server_conf in server_conf_list {
         let ps = Server::new(server_conf)?;
         let services = ps.run(&my_server.configuration)?;

@@ -43,6 +43,7 @@ path-absolutize = "3.1.1"
 pingora = { version = "0.1.1", default-features = false, features = [
     "lb",
     "openssl",
+    "cache",
 ] }
 pingora-limits = "0.1.1"
 regex = "1.10.4"

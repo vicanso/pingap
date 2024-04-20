@@ -105,6 +105,11 @@ export default function ProxyPluginInfo() {
           option: 9,
           value: ProxyPluginCategory.BASIC_AUTH,
         },
+        {
+          label: "Cache",
+          option: 10,
+          value: ProxyPluginCategory.CACHE,
+        },
       ],
     },
     {

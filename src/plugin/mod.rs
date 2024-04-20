@@ -23,6 +23,7 @@ use std::num::ParseIntError;
 
 mod admin;
 mod basic_auth;
+mod cache;
 mod compression;
 mod directory;
 mod ip_limit;
@@ -137,6 +138,10 @@ pub fn init_proxy_plugins(confs: Vec<(String, ProxyPluginConf)>) -> Result<()> {
                 ProxyPluginCategory::BasicAuth => {
                     let b = basic_auth::BasicAuth::new(&conf.value, step)?;
                     plguins.insert(name, Box::new(b));
+                }
+                ProxyPluginCategory::Cache => {
+                    let c = cache::Cache::new(&conf.value, step)?;
+                    plguins.insert(name, Box::new(c));
                 }
             };
         }

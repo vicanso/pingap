@@ -24,20 +24,20 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::Bytes;
 use http::StatusCode;
 use log::{error, info};
+use pingora::cache::cache_control::CacheControl;
+use pingora::cache::filters::resp_cacheable;
+use pingora::cache::{CacheMetaDefaults, NoCacheReason, RespCacheable};
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::listeners::TlsSettings;
 use pingora::protocols::http::error_resp;
 use pingora::protocols::Digest;
 use pingora::proxy::{http_proxy_service, HttpProxy};
+use pingora::proxy::{ProxyHttp, Session};
 use pingora::server::configuration;
 use pingora::services::background::GenBackgroundService;
 use pingora::services::listening::Service;
 use pingora::services::Service as IService;
-use pingora::upstreams::peer::Peer;
-use pingora::{
-    proxy::{ProxyHttp, Session},
-    upstreams::peer::HttpPeer,
-};
+use pingora::upstreams::peer::{HttpPeer, Peer};
 use snafu::{ResultExt, Snafu};
 use std::fs;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
@@ -167,6 +167,8 @@ pub struct ServerServices {
     pub lb: Service<HttpProxy<Server>>,
     pub bg_services: Vec<Box<dyn IService>>,
 }
+
+const META_DEFAULTS: CacheMetaDefaults = CacheMetaDefaults::new(|_| Some(1), 1, 1);
 
 impl Server {
     pub fn new(conf: ServerConf) -> Result<Self> {
@@ -299,7 +301,6 @@ impl ProxyHttp for Server {
             self.serve_admin(session, ctx).await?;
             return Ok(true);
         }
-        // session.cache.enable(storage, eviction, predictor, cache_lock)
 
         let header = session.req_header_mut();
         let path = header.uri.path();
@@ -337,6 +338,37 @@ impl ProxyHttp for Server {
 
         Ok(false)
     }
+
+    fn response_cache_filter(
+        &self,
+        session: &Session,
+        resp: &ResponseHeader,
+        _ctx: &mut Self::CTX,
+    ) -> pingora::Result<RespCacheable> {
+        if !session.cache.enabled() {
+            return Ok(RespCacheable::Uncacheable(NoCacheReason::Custom("default")));
+        }
+        let cc = CacheControl::from_resp_headers(resp);
+        Ok(resp_cacheable(cc.as_ref(), resp, false, &META_DEFAULTS))
+    }
+
+    async fn response_filter(
+        &self,
+        session: &mut Session,
+        upstream_response: &mut ResponseHeader,
+        _ctx: &mut Self::CTX,
+    ) -> pingora::Result<()>
+    where
+        Self::CTX: Send + Sync,
+    {
+        upstream_response.insert_header("x-cache-status", session.cache.phase().as_str())?;
+        if let Some(d) = session.cache.lock_duration() {
+            upstream_response.insert_header("x-cache-lock-time-ms", format!("{}", d.as_millis()))?
+        }
+
+        Ok(())
+    }
+
     async fn proxy_upstream_filter(
         &self,
         session: &mut Session,

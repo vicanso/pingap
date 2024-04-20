@@ -58,6 +58,7 @@ export enum ProxyPluginCategory {
   IP_LIMIT = 7,
   KEY_AUTH = 8,
   BASIC_AUTH = 9,
+  CACHE = 10,
 }
 
 export function formatProxyPluginCategory(value: ProxyPluginCategory) {
@@ -91,6 +92,9 @@ export function formatProxyPluginCategory(value: ProxyPluginCategory) {
     }
     case ProxyPluginCategory.BASIC_AUTH: {
       return "basicAuth";
+    }
+    case ProxyPluginCategory.CACHE: {
+      return "cache";
     }
   }
 }
@@ -256,6 +260,13 @@ function FormProxyPluginField({
           console.error(err);
         }
       }
+      break;
+    }
+    case ProxyPluginCategory.CACHE: {
+      arr.push(value);
+      fields.push({
+        label: "The cache storage url",
+      });
       break;
     }
     default: {
