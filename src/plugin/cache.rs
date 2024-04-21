@@ -33,7 +33,9 @@ use url::Url;
 
 static MEM_BACKEND: Lazy<MemCache> = Lazy::new(MemCache::new);
 static PREDICTOR: Lazy<Predictor<32>> = Lazy::new(|| Predictor::new(5, None));
-static EVICTION_MANAGER: Lazy<Manager> = Lazy::new(|| Manager::new(8192));
+// meomory limit size
+const MAX_MEMORY_SIZE: usize = 100 * 1024 * 1024;
+static EVICTION_MANAGER: Lazy<Manager> = Lazy::new(|| Manager::new(MAX_MEMORY_SIZE));
 static CACHE_LOCK_ONE_SECOND: Lazy<CacheLock> =
     Lazy::new(|| CacheLock::new(std::time::Duration::from_secs(1)));
 static CACHE_LOCK_TWO_SECONDS: Lazy<CacheLock> =
@@ -48,6 +50,7 @@ pub struct Cache {
     storage: &'static (dyn Storage + Sync),
     max_file_size: usize,
     namespace: Option<String>,
+    headers: Option<Vec<String>>,
 }
 
 impl Cache {
@@ -58,8 +61,9 @@ impl Cache {
         })?;
         let mut lock = 0;
         let mut eviction = false;
-        let mut max_file_size = 30 * 1024;
+        let mut max_file_size = 100 * 1024;
         let mut namespace = None;
+        let mut headers = None;
         for (key, value) in url_info.query_pairs().into_iter() {
             match key.as_ref() {
                 "lock" => {
@@ -74,6 +78,15 @@ impl Cache {
                 }
                 "eviction" => eviction = true,
                 "namespace" => namespace = Some(value.to_string()),
+                "headers" => {
+                    headers = Some(
+                        value
+                            .trim()
+                            .split(',')
+                            .map(|item| item.to_string())
+                            .collect(),
+                    )
+                }
                 _ => {}
             }
         }
@@ -85,6 +98,7 @@ impl Cache {
             lock,
             max_file_size,
             namespace,
+            headers,
         })
     }
 }
@@ -123,8 +137,24 @@ impl ProxyPlugin for Cache {
         if self.max_file_size > 0 {
             session.cache.set_max_file_size_bytes(self.max_file_size);
         }
+        let mut keys = vec![];
         if let Some(namespace) = &self.namespace {
-            ctx.cache_namespace = Some(namespace.clone());
+            keys.push(namespace.as_bytes());
+        }
+        if let Some(headers) = &self.headers {
+            for key in headers.iter() {
+                let buf = session.get_header_bytes(key);
+                if !buf.is_empty() {
+                    keys.push(buf);
+                }
+            }
+        }
+        if !keys.is_empty() {
+            let arr: Vec<_> = keys
+                .iter()
+                .map(|item| std::string::String::from_utf8_lossy(item.to_owned()).to_string())
+                .collect();
+            ctx.cache_prefix = Some(arr.join(":"));
         }
 
         Ok(false)

@@ -28,7 +28,7 @@ pub struct State {
     pub client_ip: Option<String>,
     pub guard: Option<Guard>,
     pub request_id: Option<String>,
-    pub cache_namespace: Option<String>,
+    pub cache_prefix: Option<String>,
     pub cache_lock_duration: Option<Duration>,
 }
 
@@ -46,7 +46,7 @@ impl Default for State {
             client_ip: None,
             guard: None,
             request_id: None,
-            cache_namespace: None,
+            cache_prefix: None,
             cache_lock_duration: None,
         }
     }

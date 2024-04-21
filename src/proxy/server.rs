@@ -344,10 +344,8 @@ impl ProxyHttp for Server {
         session: &Session,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<CacheKey> {
-        let namespace = ctx.cache_namespace.clone().unwrap_or_default();
-
         Ok(CacheKey::new(
-            namespace,
+            ctx.cache_prefix.clone().unwrap_or_default(),
             format!("{}", session.req_header().uri),
             "".to_string(),
         ))
@@ -355,14 +353,17 @@ impl ProxyHttp for Server {
 
     fn response_cache_filter(
         &self,
-        session: &Session,
+        _session: &Session,
         resp: &ResponseHeader,
         _ctx: &mut Self::CTX,
     ) -> pingora::Result<RespCacheable> {
-        if !session.cache.enabled() {
-            return Ok(RespCacheable::Uncacheable(NoCacheReason::Custom("default")));
-        }
         let cc = CacheControl::from_resp_headers(resp);
+        if let Some(c) = &cc {
+            if c.no_cache() || c.no_store() || c.private() {
+                return Ok(RespCacheable::Uncacheable(NoCacheReason::OriginNotCache));
+            }
+        }
+
         Ok(resp_cacheable(cc.as_ref(), resp, false, &META_DEFAULTS))
     }
 
