@@ -231,6 +231,7 @@ pub struct ServerConf {
     pub threads: Option<usize>,
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
+    pub lets_encrypt: Option<String>,
     pub remark: Option<String>,
 }
 

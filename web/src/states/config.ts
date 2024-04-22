@@ -56,6 +56,7 @@ interface Server {
   threads?: number;
   tls_cert?: string;
   tls_key?: string;
+  lets_encrypt?: string;
   remark?: string;
 }
 

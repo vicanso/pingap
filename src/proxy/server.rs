@@ -14,6 +14,7 @@
 
 use super::logger::Parser;
 use super::{Location, Upstream};
+use crate::acme::handle_lets_encrypt;
 use crate::config::{LocationConf, PingapConf, ProxyPluginStep, UpstreamConf};
 use crate::http_extra::HTTP_HEADER_NAME_X_REQUEST_ID;
 use crate::plugin::get_proxy_plugin;
@@ -71,6 +72,7 @@ pub struct ServerConf {
     pub tls_key: Option<Vec<u8>>,
     pub threads: Option<usize>,
     pub error_template: String,
+    pub lets_encrypt: Option<String>,
 }
 
 impl From<PingapConf> for Vec<ServerConf> {
@@ -135,6 +137,7 @@ impl From<PingapConf> for Vec<ServerConf> {
                 upstreams: filter_upstreams,
                 locations: filter_locations,
                 threads: item.threads,
+                lets_encrypt: item.lets_encrypt,
                 error_template,
             });
         }
@@ -161,6 +164,7 @@ pub struct Server {
     threads: Option<usize>,
     tls_cert: Option<Vec<u8>>,
     tls_key: Option<Vec<u8>>,
+    lets_encrypt_enabled: bool,
 }
 
 pub struct ServerServices {
@@ -218,7 +222,11 @@ impl Server {
             tls_key: conf.tls_key,
             tls_cert: conf.tls_cert,
             threads: conf.threads,
+            lets_encrypt_enabled: false,
         })
+    }
+    pub fn enable_lets_encrypt(&mut self) {
+        self.lets_encrypt_enabled = true;
     }
     pub fn run(self, conf: &Arc<configuration::ServerConf>) -> Result<ServerServices> {
         let addr = self.addr.clone();
@@ -300,6 +308,12 @@ impl ProxyHttp for Server {
         if self.admin {
             self.serve_admin(session, ctx).await?;
             return Ok(true);
+        }
+        if self.lets_encrypt_enabled {
+            let done = handle_lets_encrypt(session, ctx).await?;
+            if done {
+                return Ok(true);
+            }
         }
 
         let header = session.req_header_mut();

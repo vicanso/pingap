@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::acme::LetsEncryptService;
+use crate::state::AutoRestart;
 use clap::Parser;
 use config::{PingapConf, ProxyPluginCategory, ProxyPluginConf};
 use log::{error, info, Level};
@@ -24,8 +26,7 @@ use std::error::Error;
 use std::io::Write;
 use std::sync::Arc;
 
-use crate::state::AutoRestart;
-
+mod acme;
 mod config;
 mod http_extra;
 mod plugin;
@@ -225,14 +226,49 @@ fn run() -> Result<(), Box<dyn Error>> {
     if let Err(e) = plugin::init_proxy_plugins(proxy_plugin_confs) {
         error!("init proxy plugins fail, {e}");
     }
+    let mut domains = vec![];
+    let mut exits_80_server = false;
+    for serve_conf in server_conf_list.iter() {
+        if serve_conf.addr.ends_with(":80") {
+            exits_80_server = true;
+        }
+        if let Some(value) = &serve_conf.lets_encrypt {
+            value.split(',').for_each(|item| {
+                let v = item.trim().to_string();
+                if !v.is_empty() && !domains.contains(&v) {
+                    domains.push(v);
+                }
+            });
+        }
+    }
+    // no server listen 80 and lets encrypt domains is not empty
+    if !exits_80_server && !domains.is_empty() {
+        server_conf_list.push(ServerConf {
+            name: "lets encrypt".to_string(),
+            addr: "0.0.0.0:80".to_string(),
+            ..Default::default()
+        });
+    }
+
     for server_conf in server_conf_list {
-        let ps = Server::new(server_conf)?;
+        let listen_80_port = server_conf.addr.ends_with(":80");
+        let mut ps = Server::new(server_conf)?;
+        if !domains.is_empty() && listen_80_port {
+            ps.enable_lets_encrypt();
+        }
         let services = ps.run(&my_server.configuration)?;
         my_server.add_services(services.bg_services);
         my_server.add_service(services.lb);
     }
+
     if args.autorestart {
         my_server.add_service(background_service("Auto Restart", AutoRestart {}));
+    }
+    if !domains.is_empty() {
+        my_server.add_service(background_service(
+            "Lets encrypt",
+            LetsEncryptService { domains },
+        ));
     }
 
     info!("server is running");

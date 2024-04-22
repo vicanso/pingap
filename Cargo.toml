@@ -31,6 +31,7 @@ hostname = "0.3.1"
 http = "1.1.0"
 humantime = "2.1.0"
 humantime-serde = "1.1.1"
+instant-acme = "0.4.3"
 ipnet = "2.9.0"
 log = "0.4.21"
 memory-stats = { version = "1.1.0", features = ["always_use_statm"] }
@@ -46,6 +47,7 @@ pingora = { version = "0.1.1", default-features = false, features = [
     "cache",
 ] }
 pingora-limits = "0.1.1"
+rcgen = "0.12.1"
 regex = "1.10.4"
 reqwest = { version = "0.11.27", features = ["json"] }
 rust-embed = { version = "8.3.0", features = ["mime-guess", "compression"] }

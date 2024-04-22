@@ -84,6 +84,13 @@ export default function ServerInfo() {
       category: FormItemCategory.TEXTAREA,
     },
     {
+      id: "lets_encrypt",
+      label: "Lets encrypt domain list",
+      defaultValue: server.lets_encrypt,
+      span: 12,
+      category: FormItemCategory.TEXT,
+    },
+    {
       id: "remark",
       label: "Remark",
       defaultValue: server.remark,

@@ -6,6 +6,7 @@
 - [ ] tls cert auto update[instant-acme]
 - [ ] support validate config before save(web)
 - [ ] http response cache
+- [ ] headers for location support get from env
 - [x] basic auth
 - [x] allow none upstream for location
 - [x] allow deny ip proxy plugin
