@@ -297,7 +297,11 @@ impl Parser {
                     }
                 }
                 TagCategory::Scheme => {
-                    // TODO
+                    if ctx.is_tls {
+                        buf.extend(b"https");
+                    } else {
+                        buf.extend(b"http");
+                    }
                 }
                 TagCategory::Uri => {
                     buf.extend(req_header.uri.to_string().as_bytes());

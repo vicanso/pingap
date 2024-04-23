@@ -6,7 +6,10 @@
 - [ ] tls cert auto update[instant-acme]
 - [ ] support validate config before save(web)
 - [ ] http response cache
-- [ ] headers for location support get from env
+- [ ] send more event to webhook
+- [ ] delay restart
+- [ ] redirect http to https(orginal uri)
+- [x] headers for location support get from env
 - [x] basic auth
 - [x] allow none upstream for location
 - [x] allow deny ip proxy plugin

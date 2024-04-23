@@ -14,7 +14,7 @@
 
 use super::logger::Parser;
 use super::{Location, Upstream};
-use crate::acme::handle_lets_encrypt;
+use crate::acme::{get_lets_encrypt_cert, handle_lets_encrypt};
 use crate::config::{LocationConf, PingapConf, ProxyPluginStep, UpstreamConf};
 use crate::http_extra::HTTP_HEADER_NAME_X_REQUEST_ID;
 use crate::plugin::get_proxy_plugin;
@@ -164,7 +164,9 @@ pub struct Server {
     threads: Option<usize>,
     tls_cert: Option<Vec<u8>>,
     tls_key: Option<Vec<u8>>,
+    is_tls: bool,
     lets_encrypt_enabled: bool,
+    tls_from_lets_encrypt: bool,
 }
 
 pub struct ServerServices {
@@ -223,12 +225,15 @@ impl Server {
             tls_cert: conf.tls_cert,
             threads: conf.threads,
             lets_encrypt_enabled: false,
+            is_tls: false,
+            tls_from_lets_encrypt: conf.lets_encrypt.is_some(),
         })
     }
     pub fn enable_lets_encrypt(&mut self) {
         self.lets_encrypt_enabled = true;
     }
-    pub fn run(self, conf: &Arc<configuration::ServerConf>) -> Result<ServerServices> {
+    pub fn run(mut self, conf: &Arc<configuration::ServerConf>) -> Result<ServerServices> {
+        let tls_from_lets_encrypt = self.tls_from_lets_encrypt;
         let addr = self.addr.clone();
         let mut bg_services: Vec<Box<dyn IService>> = vec![];
         for item in self.locations.iter() {
@@ -241,14 +246,18 @@ impl Server {
             }
         }
         // tls
-        let tls_cert = self.tls_cert.clone();
-        let tls_key = self.tls_key.clone();
-
-        let threads = self.threads;
-        let mut lb = http_proxy_service(conf, self);
-        lb.threads = threads;
-        // add tls
-        if tls_cert.is_some() {
+        let mut tls_cert = self.tls_cert.clone();
+        let mut tls_key = self.tls_key.clone();
+        if tls_cert.is_none() && tls_from_lets_encrypt {
+            match get_lets_encrypt_cert() {
+                Ok(cert_info) => {
+                    tls_cert = Some(cert_info.get_cert());
+                    tls_key = Some(cert_info.get_key());
+                }
+                Err(e) => error!("get lets encrypt cert fail, {e}"),
+            };
+        }
+        let tls_settings = if tls_cert.is_some() {
             let dir = tempfile::tempdir().context(IoSnafu)?;
             let cert_path = dir.path().join("tls-cert");
             let key_path = dir.path().join("tls-key");
@@ -269,6 +278,18 @@ impl Server {
                 message: err.to_string(),
             })?;
             tls_settings.enable_h2();
+            self.is_tls = true;
+            Some(tls_settings)
+        } else {
+            None
+        };
+
+        let threads = self.threads;
+        let mut lb = http_proxy_service(conf, self);
+        lb.threads = threads;
+
+        // add tls
+        if let Some(tls_settings) = tls_settings {
             lb.add_tls_with_settings(&addr, None, tls_settings);
         } else {
             lb.add_tcp(&addr);
@@ -293,7 +314,10 @@ impl Server {
 impl ProxyHttp for Server {
     type CTX = State;
     fn new_ctx(&self) -> Self::CTX {
-        State::default()
+        State {
+            is_tls: self.is_tls,
+            ..Default::default()
+        }
     }
     async fn request_filter(
         &self,

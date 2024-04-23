@@ -20,6 +20,7 @@ pub struct State {
     pub processing: i32,
     pub accepted: u64,
     pub created_at: Instant,
+    pub is_tls: bool,
     pub status: Option<StatusCode>,
     pub response_body_size: usize,
     pub reused: bool,
@@ -37,6 +38,7 @@ impl Default for State {
         State {
             processing: 0,
             accepted: 0,
+            is_tls: false,
             status: None,
             created_at: Instant::now(),
             response_body_size: 0,

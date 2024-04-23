@@ -30,6 +30,7 @@ mod ip_limit;
 mod key_auth;
 mod limit;
 mod mock;
+mod redirect_https;
 mod request_id;
 mod stats;
 
@@ -142,6 +143,10 @@ pub fn init_proxy_plugins(confs: Vec<(String, ProxyPluginConf)>) -> Result<()> {
                 ProxyPluginCategory::Cache => {
                     let c = cache::Cache::new(&conf.value, step)?;
                     plguins.insert(name, Box::new(c));
+                }
+                ProxyPluginCategory::RedirectHttps => {
+                    let r = redirect_https::RedirectHttps::new(&conf.value, step)?;
+                    plguins.insert(name, Box::new(r));
                 }
             };
         }

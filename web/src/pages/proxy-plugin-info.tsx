@@ -110,6 +110,11 @@ export default function ProxyPluginInfo() {
           option: 10,
           value: ProxyPluginCategory.CACHE,
         },
+        {
+          label: "Redirect Https",
+          option: 11,
+          value: ProxyPluginCategory.REDIRECT_HTTPS,
+        },
       ],
     },
     {

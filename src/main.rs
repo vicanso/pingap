@@ -217,7 +217,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             },
         ));
         server_conf_list.push(ServerConf {
-            name: "admin".to_string(),
+            name: "pingap:admin".to_string(),
             admin: true,
             addr,
             ..Default::default()

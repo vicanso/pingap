@@ -80,6 +80,7 @@ pub enum ProxyPluginCategory {
     KeyAuth,
     BasicAuth,
     Cache,
+    RedirectHttps,
 }
 
 #[derive(PartialEq, Debug, Default, Deserialize_repr, Clone, Copy, Serialize_repr)]

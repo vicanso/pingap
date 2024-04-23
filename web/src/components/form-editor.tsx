@@ -59,6 +59,7 @@ export enum ProxyPluginCategory {
   KEY_AUTH = 8,
   BASIC_AUTH = 9,
   CACHE = 10,
+  REDIRECT_HTTPS = 11,
 }
 
 export function formatProxyPluginCategory(value: ProxyPluginCategory) {
@@ -95,6 +96,9 @@ export function formatProxyPluginCategory(value: ProxyPluginCategory) {
     }
     case ProxyPluginCategory.CACHE: {
       return "cache";
+    }
+    case ProxyPluginCategory.REDIRECT_HTTPS: {
+      return "redirectHttps";
     }
   }
 }
@@ -266,6 +270,13 @@ function FormProxyPluginField({
       arr.push(value);
       fields.push({
         label: "The cache storage url",
+      });
+      break;
+    }
+    case ProxyPluginCategory.REDIRECT_HTTPS: {
+      arr.push(value);
+      fields.push({
+        label: "The prefix path of redirect path",
       });
       break;
     }

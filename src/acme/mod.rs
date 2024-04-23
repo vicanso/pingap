@@ -12,8 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -35,12 +37,31 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct CertInfo {
+    pub domains: Vec<String>,
     pub not_after: i64,
     pub not_before: i64,
     pub pem: String,
     pub key: String,
 }
+impl CertInfo {
+    pub fn valid(&self) -> bool {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        if self.not_before > ts {
+            return false;
+        }
+        self.not_after - ts > 3600
+    }
+    pub fn get_cert(&self) -> Vec<u8> {
+        STANDARD.decode(&self.pem).unwrap_or_default()
+    }
+    pub fn get_key(&self) -> Vec<u8> {
+        STANDARD.decode(&self.key).unwrap_or_default()
+    }
+}
 
 mod lets_encrypt;
 
-pub use lets_encrypt::{handle_lets_encrypt, LetsEncryptService};
+pub use lets_encrypt::{get_lets_encrypt_cert, handle_lets_encrypt, LetsEncryptService};

@@ -141,3 +141,6 @@ locations = ["lo"]
 # tls cert and key, it should be base64
 # tls_cert = ""
 # tls_key = ""
+
+# Acme
+# lets_encrypt = "domain1,domain2"
