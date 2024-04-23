@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::http_extra::HttpResponse;
-use crate::state::{restart, State};
+use crate::state::{restart_now, State};
 use crate::util;
 
 use super::{CertInfo, Error, Result};
@@ -69,7 +69,7 @@ impl BackgroundService for LetsEncryptService {
                     if should_fresh_now {
                         match new_lets_encrypt(&domains).await {
                             Ok(()) => {
-                                if let Err(e) = restart() {
+                                if let Err(e) = restart_now() {
                                     error!("Restart fail: {e}");
                                 }
                             },

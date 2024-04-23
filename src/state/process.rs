@@ -23,7 +23,7 @@ use std::io;
 use std::path::PathBuf;
 use std::process;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::interval;
 
@@ -89,10 +89,7 @@ impl BackgroundService for AutoRestart {
                     match validate_restart() {
                        Ok(should_restart) => {
                            if should_restart {
-                               if let Err(e) = restart() {
-                                   error!("Restart fail: {e}");
-                               }
-                               break;
+                               restart();
                            }
                        },
                        Err(e) => {
@@ -111,9 +108,10 @@ pub fn set_restart_process_command(data: RestartProcessCommand) {
     CMD.get_or_init(|| data);
 }
 
+static PROCESS_RESTAR_COUNT: Lazy<AtomicU8> = Lazy::new(|| AtomicU8::new(0));
 static PROCESS_RESTARTING: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
 
-pub fn restart() -> io::Result<process::Output> {
+pub fn restart_now() -> io::Result<process::Output> {
     let restarting = PROCESS_RESTARTING.swap(true, Ordering::Relaxed);
     if restarting {
         error!("pingap is restarting now");
@@ -135,4 +133,16 @@ pub fn restart() -> io::Result<process::Output> {
             "Command not found",
         ))
     }
+}
+
+pub fn restart() {
+    let count = PROCESS_RESTAR_COUNT.fetch_add(1, Ordering::Relaxed);
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(90)).await;
+        if count == PROCESS_RESTAR_COUNT.load(Ordering::Relaxed) {
+            if let Err(e) = restart_now() {
+                error!("Restart fail: {e}");
+            }
+        }
+    });
 }

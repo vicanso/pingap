@@ -7,8 +7,9 @@
 - [ ] support validate config before save(web)
 - [ ] http response cache
 - [ ] send more event to webhook
-- [ ] delay restart
-- [ ] redirect http to https(orginal uri)
+- [ ] fix not_before not_after of cert
+- [x] delay restart
+- [x] redirect http to https(orginal uri)
 - [x] headers for location support get from env
 - [x] basic auth
 - [x] allow none upstream for location

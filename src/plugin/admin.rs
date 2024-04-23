@@ -21,8 +21,8 @@ use crate::config::{
     PingapConf, CATEGORY_LOCATION, CATEGORY_PROXY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
 };
 use crate::http_extra::{HttpResponse, HTTP_HEADER_WWW_AUTHENTICATE};
-use crate::state::State;
-use crate::state::{get_start_time, restart};
+use crate::state::get_start_time;
+use crate::state::{restart_now, State};
 use crate::util::{self, get_pkg_version};
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -373,7 +373,7 @@ impl ProxyPlugin for AdminServe {
             })
             .unwrap_or(HttpResponse::unknown_error())
         } else if path == "/restart" && method == Method::POST {
-            if let Err(e) = restart() {
+            if let Err(e) = restart_now() {
                 error!("Restart fail: {e}");
                 return Err(util::new_internal_error(400, e.to_string()));
             }
