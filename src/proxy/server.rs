@@ -177,6 +177,7 @@ pub struct ServerServices {
 const META_DEFAULTS: CacheMetaDefaults = CacheMetaDefaults::new(|_| Some(1), 1, 1);
 
 impl Server {
+    /// Create a new server for http proxy.
     pub fn new(conf: ServerConf) -> Result<Self> {
         let mut upstreams = vec![];
         let in_used_upstreams: Vec<_> = conf
@@ -229,9 +230,11 @@ impl Server {
             tls_from_lets_encrypt: conf.lets_encrypt.is_some(),
         })
     }
+    /// Enable lets encrypt proxy plugin for `/.well-known/acme-challenge` handle.
     pub fn enable_lets_encrypt(&mut self) {
         self.lets_encrypt_enabled = true;
     }
+    /// New all background services and add a TCP/TLS listening endpoint.
     pub fn run(mut self, conf: &Arc<configuration::ServerConf>) -> Result<ServerServices> {
         let tls_from_lets_encrypt = self.tls_from_lets_encrypt;
         let addr = self.addr.clone();

@@ -38,8 +38,8 @@ function formatDuraion(ts: number) {
     return `${hours} hours ago`;
   }
   const date = new Date(ts * 1000);
-  let month = `${date.getMonth()}`;
-  let day = `${date.getDay()}`;
+  let month = `${date.getMonth() + 1}`;
+  let day = `${date.getDate()}`;
   if (month.length === 1) {
     month = `0${month}`;
   }

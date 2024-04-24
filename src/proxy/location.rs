@@ -200,6 +200,8 @@ impl Location {
             }
         }
     }
+    /// Execute all proxy plugins. If one plugin return true,
+    /// that means http request processing is complete.
     #[inline]
     pub async fn exec_proxy_plugins(
         &self,

@@ -35,15 +35,16 @@ pub enum Error {
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct CertInfo {
+#[derive(Debug, Deserialize, Serialize, Default)]
+pub struct Cert {
     pub domains: Vec<String>,
     pub not_after: i64,
     pub not_before: i64,
     pub pem: String,
     pub key: String,
 }
-impl CertInfo {
+impl Cert {
+    /// Validate the cert is within the expiration date.
     pub fn valid(&self) -> bool {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -52,11 +53,13 @@ impl CertInfo {
         if self.not_before > ts {
             return false;
         }
-        self.not_after - ts > 3600
+        self.not_after - ts > 2 * 24 * 3600
     }
+    /// Get the cert pem data.
     pub fn get_cert(&self) -> Vec<u8> {
         STANDARD.decode(&self.pem).unwrap_or_default()
     }
+    /// Get the cert key data.
     pub fn get_key(&self) -> Vec<u8> {
         STANDARD.decode(&self.key).unwrap_or_default()
     }
@@ -65,3 +68,27 @@ impl CertInfo {
 mod lets_encrypt;
 
 pub use lets_encrypt::{get_lets_encrypt_cert, handle_lets_encrypt, LetsEncryptService};
+
+#[cfg(test)]
+mod tests {
+    use super::Cert;
+    use pretty_assertions::assert_eq;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn test_cert() {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let mut cert = Cert {
+            not_before: ts - 10,
+            not_after: ts + 3 * 24 * 3600,
+            ..Default::default()
+        };
+        assert_eq!(true, cert.valid());
+
+        cert.not_after = ts;
+        assert_eq!(false, cert.valid());
+    }
+}

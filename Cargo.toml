@@ -9,7 +9,7 @@ description = "A reverse proxy like nginx"
 license = "Apache-2.0"
 homepage = "https://github.com/vicanso/pingap"
 repository = "https://github.com/vicanso/pingap"
-exclude = ["asset/*", "test/*", "Cargo.lock", "web/*", "dist/*", ".github/*"]
+exclude = ["asset/*", "test/*", "Cargo.lock", "web/*", ".github/*"]
 readme = "./README.md"
 rust-version = "1.74"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -19,6 +19,7 @@ async-trait = "0.1.80"
 base64 = "0.22.0"
 bytes = "1.6.0"
 bytesize = "1.3.0"
+cfg-if = "1.0.0"
 chrono = "0.4.37"
 clap = { version = "4.5.4", features = ["derive"] }
 crc32fast = "1.4.0"
@@ -47,6 +48,8 @@ pingora = { version = "0.1.1", default-features = false, features = [
     "cache",
 ] }
 pingora-limits = "0.1.1"
+pyroscope = { version = "0.5.7", optional = true }
+pyroscope_pprofrs = { version = "0.2.7", optional = true }
 rcgen = "0.12.1"
 regex = "1.10.4"
 reqwest = { version = "0.11.27", features = ["json"] }
@@ -62,6 +65,11 @@ toml = "0.8.12"
 url = "2.5.0"
 urlencoding = "2.1.3"
 uuid = { version = "1.8.0", features = ["v4", "fast-rng"] }
+
+[features]
+pyro = ["pyroscope", "pyroscope_pprofrs"]
+# default = ["pyro"]
+
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }

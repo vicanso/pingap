@@ -93,7 +93,7 @@ pub enum ProxyPluginStep {
 
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
 pub struct ProxyPluginConf {
-    pub value: String,
+    pub value: Option<String>,
     pub category: ProxyPluginCategory,
     pub step: Option<ProxyPluginStep>,
     pub remark: Option<String>,
@@ -272,7 +272,6 @@ pub struct PingapConf {
     pub group: Option<String>,
     pub threads: Option<usize>,
     pub work_stealing: Option<bool>,
-    pub created_at: Option<String>,
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub grace_period: Option<Duration>,
@@ -284,6 +283,7 @@ pub struct PingapConf {
     pub webhook_type: Option<String>,
     pub log_level: Option<String>,
     pub sentry: Option<String>,
+    pub pyroscope: Option<String>,
 }
 
 impl PingapConf {
@@ -326,7 +326,6 @@ struct TomlConfig {
     group: Option<String>,
     threads: Option<usize>,
     work_stealing: Option<bool>,
-    created_at: Option<String>,
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub grace_period: Option<Duration>,
@@ -338,6 +337,7 @@ struct TomlConfig {
     pub webhook_type: Option<String>,
     pub log_level: Option<String>,
     pub sentry: Option<String>,
+    pub pyroscope: Option<String>,
 }
 
 fn format_toml(value: &Value) -> String {
@@ -353,7 +353,6 @@ fn format_toml(value: &Value) -> String {
 /// Validate the config before save.
 pub fn save_config(path: &str, conf: &mut PingapConf, category: &str) -> Result<()> {
     conf.validate()?;
-    conf.created_at = Some(chrono::Local::now().to_rfc3339());
 
     let mut filepath = util::resolve_path(path);
     let ping_conf = toml::to_string_pretty(&conf).context(SerSnafu)?;
@@ -463,7 +462,6 @@ pub fn load_config(path: &str, admin: bool) -> Result<PingapConf> {
         group: data.group,
         threads,
         work_stealing: data.work_stealing,
-        created_at: data.created_at,
         grace_period: data.grace_period,
         graceful_shutdown_timeout: data.graceful_shutdown_timeout,
         upstream_keepalive_pool_size: data.upstream_keepalive_pool_size,
@@ -471,6 +469,7 @@ pub fn load_config(path: &str, admin: bool) -> Result<PingapConf> {
         webhook_type: data.webhook_type,
         log_level: data.log_level,
         sentry: data.sentry,
+        pyroscope: data.pyroscope,
         ..Default::default()
     };
     for (name, value) in data.upstreams.unwrap_or_default() {

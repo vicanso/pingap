@@ -31,6 +31,8 @@ mod config;
 mod http_extra;
 mod plugin;
 mod proxy;
+#[cfg(feature = "pyro")]
+mod pyroscope_client;
 mod state;
 mod util;
 mod webhook;
@@ -191,6 +193,14 @@ fn run() -> Result<(), Box<dyn Error>> {
     my_server.sentry = conf.sentry.clone();
     my_server.bootstrap();
 
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "pyro")] {
+            if let Some(url) = &conf.pyroscope{
+                let _ = pyroscope_client::start_pyroscope(url)?;
+            }
+        }
+    }
+
     // TODO load from config
     let mut proxy_plugin_confs: Vec<(String, ProxyPluginConf)> = conf
         .proxy_plugins
@@ -210,7 +220,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         proxy_plugin_confs.push((
             util::ADMIN_SERVER_PLUGIN.clone(),
             ProxyPluginConf {
-                value: format!("/ {authorization}"),
+                value: Some(format!("/ {authorization}")),
                 category: ProxyPluginCategory::Admin,
                 remark: Some("Admin serve".to_string()),
                 step: None,
@@ -273,6 +283,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     info!("server is running");
     let _ = get_start_time();
+
     my_server.run_forever();
     Ok(())
 }

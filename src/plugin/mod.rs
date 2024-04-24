@@ -62,7 +62,7 @@ pub fn get_builtin_proxy_plugins() -> Vec<(String, ProxyPluginConf)> {
         (
             "pingap:compression".to_string(),
             ProxyPluginConf {
-                value: "6 6 3".to_string(),
+                value: Some("6 6 3".to_string()),
                 category: ProxyPluginCategory::Compression,
                 remark: Some("Compression for http, support zstd:3, br:6, gzip:6".to_string()),
                 step: None,
@@ -71,7 +71,7 @@ pub fn get_builtin_proxy_plugins() -> Vec<(String, ProxyPluginConf)> {
         (
             "pingap:stats".to_string(),
             ProxyPluginConf {
-                value: "/stats".to_string(),
+                value: Some("/stats".to_string()),
                 category: ProxyPluginCategory::Stats,
                 remark: Some("Get stats of server".to_string()),
                 step: None,
@@ -80,9 +80,9 @@ pub fn get_builtin_proxy_plugins() -> Vec<(String, ProxyPluginConf)> {
         (
             "pingap:requestId".to_string(),
             ProxyPluginConf {
-                value: "".to_string(),
                 category: ProxyPluginCategory::RequestId,
                 remark: Some("Generate a request id for service".to_string()),
+                value: None,
                 step: None,
             },
         ),
@@ -99,53 +99,54 @@ pub fn init_proxy_plugins(confs: Vec<(String, ProxyPluginConf)>) -> Result<()> {
         for (name, conf) in data {
             let name = name.to_string();
             let step = conf.step.unwrap_or_default();
+            let value = conf.value.clone().unwrap_or_default();
             match conf.category {
                 ProxyPluginCategory::Limit => {
-                    let l = limit::Limiter::new(&conf.value, step)?;
+                    let l = limit::Limiter::new(&value, step)?;
                     plguins.insert(name, Box::new(l));
                 }
                 ProxyPluginCategory::Compression => {
-                    let c = compression::Compression::new(&conf.value, step)?;
+                    let c = compression::Compression::new(&value, step)?;
                     plguins.insert(name, Box::new(c));
                 }
                 ProxyPluginCategory::Stats => {
-                    let s = stats::Stats::new(&conf.value, step)?;
+                    let s = stats::Stats::new(&value, step)?;
                     plguins.insert(name, Box::new(s));
                 }
                 ProxyPluginCategory::Admin => {
-                    let a = admin::AdminServe::new(&conf.value, step)?;
+                    let a = admin::AdminServe::new(&value, step)?;
                     plguins.insert(name, Box::new(a));
                 }
                 ProxyPluginCategory::Directory => {
-                    let d = directory::Directory::new(&conf.value, step)?;
+                    let d = directory::Directory::new(&value, step)?;
                     plguins.insert(name, Box::new(d));
                 }
                 ProxyPluginCategory::Mock => {
-                    let m = mock::MockResponse::new(&conf.value, step)?;
+                    let m = mock::MockResponse::new(&value, step)?;
                     plguins.insert(name, Box::new(m));
                 }
                 ProxyPluginCategory::RequestId => {
-                    let r = request_id::RequestId::new(&conf.value, step)?;
+                    let r = request_id::RequestId::new(&value, step)?;
                     plguins.insert(name, Box::new(r));
                 }
                 ProxyPluginCategory::IpLimit => {
-                    let l = ip_limit::IpLimit::new(&conf.value, step)?;
+                    let l = ip_limit::IpLimit::new(&value, step)?;
                     plguins.insert(name, Box::new(l));
                 }
                 ProxyPluginCategory::KeyAuth => {
-                    let k = key_auth::KeyAuth::new(&conf.value, step)?;
+                    let k = key_auth::KeyAuth::new(&value, step)?;
                     plguins.insert(name, Box::new(k));
                 }
                 ProxyPluginCategory::BasicAuth => {
-                    let b = basic_auth::BasicAuth::new(&conf.value, step)?;
+                    let b = basic_auth::BasicAuth::new(&value, step)?;
                     plguins.insert(name, Box::new(b));
                 }
                 ProxyPluginCategory::Cache => {
-                    let c = cache::Cache::new(&conf.value, step)?;
+                    let c = cache::Cache::new(&value, step)?;
                     plguins.insert(name, Box::new(c));
                 }
                 ProxyPluginCategory::RedirectHttps => {
-                    let r = redirect_https::RedirectHttps::new(&conf.value, step)?;
+                    let r = redirect_https::RedirectHttps::new(&value, step)?;
                     plguins.insert(name, Box::new(r));
                 }
             };

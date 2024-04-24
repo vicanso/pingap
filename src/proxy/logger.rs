@@ -304,7 +304,9 @@ impl Parser {
                     }
                 }
                 TagCategory::Uri => {
-                    buf.extend(req_header.uri.to_string().as_bytes());
+                    if let Some(value) = req_header.uri.path_and_query() {
+                        buf.extend(value.as_str().as_bytes());
+                    }
                 }
                 TagCategory::Referer => {
                     let value = session.get_header_bytes("Referer");
@@ -412,7 +414,7 @@ mod tests {
     async fn test_logger() {
         let p: Parser = "{host} {method} {path} {proto} {query} {remote} {client-ip} \
 {scheme} {uri} {referer} {user-agent} {size} \
-{size-human} {status} {latency} {latency-human} {payload-size} {payload-size-human} \
+{size-human} {status} {payload-size} {payload-size-human} \
 {~deviceId} {>accept} {:reused}"
             .into();
         let headers = vec![
@@ -437,8 +439,8 @@ mod tests {
         };
         let log = p.format(&session, &ctx);
         assert_eq!(
-            "github.com GET /vicanso/pingap HTTP/1.1 size=1    /vicanso/pingap?size=1 \
-https://github.com/ pingap/0.1.1 1024 1.0KB 0 0 0ns   abc application/json true",
+            "github.com GET /vicanso/pingap HTTP/1.1 size=1   http /vicanso/pingap?size=1 \
+https://github.com/ pingap/0.1.1 1024 1.0KB 0   abc application/json true",
             log
         );
     }

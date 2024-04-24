@@ -88,6 +88,7 @@ impl BackgroundService for AutoRestart {
                 _ = period.tick() => {
                     match validate_restart() {
                        Ok(should_restart) => {
+                           info!("auto restart background service, should_restart:{should_restart}");
                            if should_restart {
                                restart();
                            }
@@ -136,7 +137,7 @@ pub fn restart_now() -> io::Result<process::Output> {
 }
 
 pub fn restart() {
-    let count = PROCESS_RESTAR_COUNT.fetch_add(1, Ordering::Relaxed);
+    let count = PROCESS_RESTAR_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(90)).await;
         if count == PROCESS_RESTAR_COUNT.load(Ordering::Relaxed) {

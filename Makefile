@@ -17,7 +17,7 @@ dev:
 	RUST_LOG=INFO cargo watch -w src -x 'run -- -c=~/github/pingap/conf/pingap.toml'
 
 devtest:
-	RUST_LOG=INFO cargo watch -w src -x 'run -- -c=~/tmp/pingap.toml'
+	RUST_LOG=INFO cargo watch -w src -x 'run -- -c=~/tmp/pingap.toml --admin=127.0.0.1:3018'
 
 
 udeps:
@@ -39,6 +39,10 @@ test:
 release:
 	cargo build --release
 	ls -lh target/release
+
+publish:
+	make build-web
+	cargo publish --registry crates-io --no-verify
 
 hooks:
 	cp hooks/* .git/hooks/

@@ -12,11 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::{Cert, Error, Result};
 use crate::http_extra::HttpResponse;
 use crate::state::{restart_now, State};
 use crate::util;
-
-use super::{CertInfo, Error, Result};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::Bytes;
@@ -33,6 +32,7 @@ use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
@@ -50,11 +50,12 @@ pub struct LetsEncryptService {
 
 #[async_trait]
 impl BackgroundService for LetsEncryptService {
+    /// The lets encrypt servier checks the cert, it will get news cert if current is invalid.
     async fn start(&self, mut shutdown: ShutdownWatch) {
         let mut domains = self.domains.clone();
         domains.sort();
 
-        let mut period = interval(Duration::from_secs(5 * 60));
+        let mut period = interval(Duration::from_secs(10 * 60));
         loop {
             tokio::select! {
                 _ = shutdown.changed() => {
@@ -66,6 +67,7 @@ impl BackgroundService for LetsEncryptService {
                     } else {
                         true
                     };
+                    info!("lets encrypt({domains:?}) background service, should refresh:{should_fresh_now}");
                     if should_fresh_now {
                         match new_lets_encrypt(&domains).await {
                             Ok(()) => {
@@ -86,7 +88,8 @@ fn get_lets_encrypt_cert_file() -> PathBuf {
     env::temp_dir().join("pingap-lets-encrypt.json")
 }
 
-pub fn get_lets_encrypt_cert() -> Result<CertInfo> {
+/// Get the cert from file
+pub fn get_lets_encrypt_cert() -> Result<Cert> {
     let path = get_lets_encrypt_cert_file();
     if !path.exists() {
         return Err(Error::NotFound {
@@ -94,11 +97,11 @@ pub fn get_lets_encrypt_cert() -> Result<CertInfo> {
         });
     }
     let buf = std::fs::read(&path).map_err(|e| Error::Io { source: e })?;
-    let cert: CertInfo =
-        serde_json::from_slice(&buf).map_err(|e| Error::SerdeJson { source: e })?;
+    let cert: Cert = serde_json::from_slice(&buf).map_err(|e| Error::SerdeJson { source: e })?;
     Ok(cert)
 }
 
+/// The proxy plugin for lets encrypt http-01.
 pub async fn handle_lets_encrypt(session: &mut Session, ctx: &mut State) -> pingora::Result<bool> {
     let path = session.req_header().uri.path();
     if path.starts_with("/.well-known/acme-challenge/") {
@@ -122,6 +125,8 @@ pub async fn handle_lets_encrypt(session: &mut Session, ctx: &mut State) -> ping
     Ok(false)
 }
 
+/// Get the new cert from lets encrypt for all domains.
+/// The cert will be saved if success.
 async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
     let mut domains: Vec<String> = domains.to_vec();
     domains.sort();
@@ -263,8 +268,14 @@ async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
             None => tokio::time::sleep(Duration::from_secs(1)).await,
         }
     };
-    let not_after = cert.get_params().not_after.unix_timestamp();
     let not_before = cert.get_params().not_before.unix_timestamp();
+    // TODO get the not after from cert
+    // cert.get_params().not_after.unix_timestamp() is wrong
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let not_after = now + 90 * 24 * 3600;
 
     let mut f = fs::OpenOptions::new()
         .create(true)
@@ -273,7 +284,7 @@ async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
         .open(&path)
         .await
         .map_err(|e| Error::Io { source: e })?;
-    let info = CertInfo {
+    let info = Cert {
         domains: domains.to_vec(),
         not_after,
         not_before,

@@ -40,7 +40,7 @@ graceful_shutdown_timeout = "10s"
 # webhook = "http://127.0.0.1:6001/webhook"
 
 # Log level, `info`, `warn`, `error` or `debug`. Default `None`
-# log_level = "info"
+log_level = "info"
 
 # Sentry DSN
 # sentry = ""

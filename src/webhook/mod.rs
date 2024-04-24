@@ -33,7 +33,7 @@ pub fn send(params: WebhookSendParams) {
                 let mut data = serde_json::Map::new();
                 let hostname = state::get_hostname().clone();
                 let content = format!(
-                    r###"Pingap Warnning
+                    r###"Pingap
                     >hostname: {hostname}
                     >category: {category}
                     >message: {}

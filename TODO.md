@@ -3,11 +3,14 @@
 - [ ] support etcd or other storage for config
 - [ ] better error handler
 - [ ] log rotate
-- [ ] tls cert auto update[instant-acme]
 - [ ] support validate config before save(web)
 - [ ] http response cache
 - [ ] send more event to webhook
 - [ ] fix not_before not_after of cert
+- [ ] diff config and send to webhook
+- [ ] client body size limit plugin
+- [ ] support pyroscope
+- [x] tls cert auto update[instant-acme]
 - [x] delay restart
 - [x] redirect http to https(orginal uri)
 - [x] headers for location support get from env
