@@ -113,12 +113,20 @@ impl From<PingapConf> for Vec<ServerConf> {
             // load config validate base64
             // so ignore error
             if let Some(value) = &item.tls_cert {
-                let buf = STANDARD.decode(value).unwrap_or_default();
-                tls_cert = Some(buf);
+                if value.starts_with("-----") {
+                    tls_cert = Some(value.as_bytes().to_vec());
+                } else {
+                    let buf = STANDARD.decode(value).unwrap_or_default();
+                    tls_cert = Some(buf);
+                }
             }
             if let Some(value) = &item.tls_key {
-                let buf = STANDARD.decode(value).unwrap_or_default();
-                tls_key = Some(buf);
+                if value.starts_with("-----") {
+                    tls_key = Some(value.as_bytes().to_vec());
+                } else {
+                    let buf = STANDARD.decode(value).unwrap_or_default();
+                    tls_key = Some(buf);
+                }
             }
 
             let error_template = if conf.error_template.is_empty() {
