@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::config::{get_config_hash, get_config_path, load_config};
+use crate::webhook;
 use async_trait::async_trait;
 use log::{error, info};
 use once_cell::sync::Lazy;
@@ -88,13 +89,14 @@ impl BackgroundService for AutoRestart {
                 _ = period.tick() => {
                     match validate_restart() {
                        Ok(should_restart) => {
-                           info!("auto restart background service, should restart:{should_restart}");
+                           // TODO diff config and sent to webhook
+                           info!("Auto restart background service, should restart:{should_restart}");
                            if should_restart {
                                restart();
                            }
                        },
                        Err(e) => {
-                           error!("auto restart validate fail, {e}");
+                           error!("Auto restart validate fail, {e}");
                        }
                     }
                 }
@@ -115,13 +117,13 @@ static PROCESS_RESTARTING: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false
 pub fn restart_now() -> io::Result<process::Output> {
     let restarting = PROCESS_RESTARTING.swap(true, Ordering::Relaxed);
     if restarting {
-        error!("pingap is restarting now");
+        error!("Pingap is restarting now");
         return Err(std::io::Error::new(
             io::ErrorKind::InvalidInput,
             "Pingap is restarting",
         ));
     }
-    info!("pingap will restart");
+    info!("Pingap will restart");
     if let Some(cmd) = CMD.get() {
         nix::sys::signal::kill(
             nix::unistd::Pid::from_raw(std::process::id() as i32),
@@ -143,6 +145,10 @@ pub fn restart() {
         if count == PROCESS_RESTAR_COUNT.load(Ordering::Relaxed) {
             if let Err(e) = restart_now() {
                 error!("Restart fail: {e}");
+                webhook::send(webhook::WebhookSendParams {
+                    category: "restart_fail".to_string(),
+                    msg: e.to_string(),
+                });
             }
         }
     });

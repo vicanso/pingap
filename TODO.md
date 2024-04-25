@@ -9,7 +9,8 @@
 - [ ] fix not_before not_after of cert
 - [ ] diff config and send to webhook
 - [ ] client body size limit plugin
-- [ ] support pyroscope
+- [ ] remove config
+- [x] support pyroscope
 - [x] tls cert auto update[instant-acme]
 - [x] delay restart
 - [x] redirect http to https(orginal uri)

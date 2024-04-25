@@ -16,6 +16,7 @@ use super::{Cert, Error, Result};
 use crate::http_extra::HttpResponse;
 use crate::state::{restart_now, State};
 use crate::util;
+use crate::webhook;
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::Bytes;
@@ -67,7 +68,7 @@ impl BackgroundService for LetsEncryptService {
                     } else {
                         true
                     };
-                    info!("lets encrypt({domains:?}) background service, should refresh:{should_fresh_now}");
+                    info!("Lets encrypt({domains:?}) background service, should refresh:{should_fresh_now}");
                     if should_fresh_now {
                         match new_lets_encrypt(&domains).await {
                             Ok(()) => {
@@ -132,7 +133,7 @@ async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
     domains.sort();
     let path = get_lets_encrypt_cert_file();
     info!(
-        "lets encrypt start generate acme, domains:{}",
+        "Lets encrypt start generate acme, domains:{}",
         domains.join(",")
     );
     let (account, _) = Account::create(
@@ -172,7 +173,7 @@ async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
     let mut challenges = Vec::with_capacity(authorizations.len());
 
     for authz in &authorizations {
-        info!("lets encrypt authz status:{:?}", authz.status);
+        info!("Lets encrypt authz status:{:?}", authz.status);
         match authz.status {
             instant_acme::AuthorizationStatus::Pending => {}
             instant_acme::AuthorizationStatus::Valid => continue,
@@ -193,7 +194,7 @@ async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
 
         // http://<你的域名>/.well-known/acme-challenge/<TOKEN>
         let well_known_path = format!("/.well-known/acme-challenge/{}", challenge.token);
-        info!("lets encrypt well known path: {well_known_path}");
+        info!("Lets encrypt well known path: {well_known_path}");
 
         let mut map = get_lets_encrypt().lock().await;
         map.insert(well_known_path, key_auth.as_str().to_string());
@@ -226,7 +227,7 @@ async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
         delay *= 2;
         tries += 1;
         match tries < 10 {
-            true => info!("order is not ready, waiting {delay:?}"),
+            true => info!("Order is not ready, waiting {delay:?}"),
             false => {
                 return Err(Error::Fail {
                     message: format!(
@@ -293,7 +294,11 @@ async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
     };
     let buf = serde_json::to_vec(&info).map_err(|e| Error::SerdeJson { source: e })?;
     f.write(&buf).await.map_err(|e| Error::Io { source: e })?;
-    info!("write cert success, {path:?}");
+    info!("Write cert success, {path:?}");
+    webhook::send(webhook::WebhookSendParams {
+        category: "lets_encrypt".to_string(),
+        msg: "Generate new cert from lets encrypt".to_string(),
+    });
 
     Ok(())
 }

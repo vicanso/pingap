@@ -111,7 +111,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let conf = config::load_config(&args.conf, args.admin.is_some())?;
     conf.validate()?;
     let webhook_url = conf.webhook.clone().unwrap_or_default();
-    let webhook_type = conf.webhook_type.clone().unwrap_or_default();
+    webhook::set_web_hook(&webhook_url, &conf.webhook_type.clone().unwrap_or_default());
     let mut builder = env_logger::Builder::from_env(env_logger::Env::default());
 
     if let Some(log_level) = &conf.log_level {
@@ -133,9 +133,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 && msg.contains("becomes unhealthy")
             {
                 webhook::send(webhook::WebhookSendParams {
-                    url: webhook_url.clone(),
                     category: "backend_unhealthy".to_string(),
-                    webhook_type: webhook_type.clone(),
                     msg: format!("{}", record.args()),
                 });
             }
@@ -151,12 +149,12 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     // return if test mode
     if args.test {
-        info!("validate config success");
+        info!("Validate config success");
         return Ok(());
     }
 
     #[cfg(feature = "perf")]
-    info!("enable feature perf");
+    info!("Enable feature perf");
 
     config::set_config_path(&args.conf);
     config::set_config_hash(&conf.hash().unwrap_or_default());
@@ -286,7 +284,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         ));
     }
 
-    info!("server is running");
+    info!("Server is running");
     let _ = get_start_time();
 
     // TODO not process exit until pingora supports

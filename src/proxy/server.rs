@@ -113,7 +113,7 @@ impl From<PingapConf> for Vec<ServerConf> {
             // load config validate base64
             // so ignore error
             if let Some(value) = &item.tls_cert {
-                if value.starts_with("-----") {
+                if util::is_pem(value) {
                     tls_cert = Some(value.as_bytes().to_vec());
                 } else {
                     let buf = STANDARD.decode(value).unwrap_or_default();
@@ -121,7 +121,7 @@ impl From<PingapConf> for Vec<ServerConf> {
                 }
             }
             if let Some(value) = &item.tls_key {
-                if value.starts_with("-----") {
+                if util::is_pem(value) {
                     tls_key = Some(value.as_bytes().to_vec());
                 } else {
                     let buf = STANDARD.decode(value).unwrap_or_default();
@@ -290,10 +290,10 @@ impl Server {
             })?;
             tls_settings.enable_h2();
             if let Some(min_version) = tls_settings.min_proto_version() {
-                info!("tls min proto version:{min_version:?}");
+                info!("Tls min proto version:{min_version:?}");
             }
             if let Some(max_version) = tls_settings.max_proto_version() {
-                info!("tls max proto version:{max_version:?}");
+                info!("Tls max proto version:{max_version:?}");
             }
             self.is_tls = true;
             Some(tls_settings)

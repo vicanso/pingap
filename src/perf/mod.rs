@@ -67,6 +67,6 @@ pub fn start_pyroscope(value: &str) -> Result<PyroscopeAgent<PyroscopeAgentRunni
         // .tags([("app", "Rust"), ("TagB", "ValueB")].to_vec())
         .build()
         .context(PyroscopeSnafu)?;
-    info!("connect to pyroscope, app:{application_name}, url:{connect_url}");
+    info!("Connect to pyroscope, app:{application_name}, url:{connect_url}");
     client.start().context(PyroscopeSnafu)
 }

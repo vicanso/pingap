@@ -14,17 +14,28 @@
 
 use crate::state;
 use log::{error, info};
+use once_cell::sync::OnceCell;
 use serde_json::{Map, Value};
 use std::time::Duration;
 
+static WEBHOOK_URL: OnceCell<String> = OnceCell::new();
+static WEBHOOK_CATEGORY: OnceCell<String> = OnceCell::new();
+pub fn set_web_hook(url: &str, category: &str) {
+    WEBHOOK_URL.get_or_init(|| url.to_string());
+    WEBHOOK_CATEGORY.get_or_init(|| category.to_string());
+}
+
 pub struct WebhookSendParams {
-    pub url: String,
-    pub webhook_type: String,
     pub category: String,
     pub msg: String,
 }
 
 pub fn send(params: WebhookSendParams) {
+    let webhook_type = if let Some(value) = WEBHOOK_CATEGORY.get() {
+        value.to_string()
+    } else {
+        "".to_string()
+    };
     std::thread::spawn(move || {
         if let Ok(rt) = tokio::runtime::Runtime::new() {
             let category = params.category;
@@ -40,7 +51,7 @@ pub fn send(params: WebhookSendParams) {
                     "###,
                     params.msg
                 );
-                match params.webhook_type.to_lowercase().as_str() {
+                match webhook_type.to_lowercase().as_str() {
                     "wecom" => {
                         let mut markdown_data = Map::new();
                         markdown_data.insert("content".to_string(), Value::String(content));
@@ -62,8 +73,14 @@ pub fn send(params: WebhookSendParams) {
                     }
                 }
 
+                let url = if let Some(url) = WEBHOOK_URL.get() {
+                    url.to_string()
+                } else {
+                    "".to_string()
+                };
+
                 match client
-                    .post(&params.url)
+                    .post(url)
                     .json(&data)
                     .timeout(Duration::from_secs(30))
                     .send()

@@ -249,10 +249,14 @@ impl ServerConf {
             }
         }
         if let Some(value) = &self.tls_key {
-            let _ = STANDARD.decode(value).context(Base64DecodeSnafu)?;
+            if !util::is_pem(value) {
+                let _ = STANDARD.decode(value).context(Base64DecodeSnafu)?;
+            }
         }
         if let Some(value) = &self.tls_cert {
-            let _ = STANDARD.decode(value).context(Base64DecodeSnafu)?;
+            if !util::is_pem(value) {
+                let _ = STANDARD.decode(value).context(Base64DecodeSnafu)?;
+            }
         }
 
         Ok(())

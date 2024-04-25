@@ -71,14 +71,14 @@ export default function ServerInfo() {
 
     {
       id: "tls_cert",
-      label: "Tls Cert(base64)",
+      label: "Tls Cert Pem",
       defaultValue: server.tls_cert,
       span: 12,
       category: FormItemCategory.TEXTAREA,
     },
     {
       id: "tls_key",
-      label: "Tls Key(base64)",
+      label: "Tls Key Pem",
       defaultValue: server.tls_key,
       span: 12,
       category: FormItemCategory.TEXTAREA,

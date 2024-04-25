@@ -132,3 +132,8 @@ pub fn new_internal_error(status: u16, message: String) -> pingora::BError {
         pingora::Error::new(pingora::ErrorType::InternalError),
     )
 }
+
+/// Test whether or not the string is pem
+pub fn is_pem(value: &str) -> bool {
+    value.starts_with("-----")
+}
