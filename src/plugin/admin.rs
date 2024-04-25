@@ -132,6 +132,7 @@ struct BasicConfParams {
     pub webhook_type: Option<String>,
     pub log_level: Option<String>,
     pub sentry: Option<String>,
+    pub pyroscope: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -264,6 +265,7 @@ impl AdminServe {
                 conf.webhook_type = basic_conf.webhook_type;
                 conf.log_level = basic_conf.log_level;
                 conf.sentry = basic_conf.sentry;
+                conf.pyroscope = basic_conf.pyroscope;
             }
         };
         save_config(&config::get_config_path(), &mut conf, category).map_err(|e| {

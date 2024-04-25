@@ -29,13 +29,17 @@ use std::sync::Arc;
 mod acme;
 mod config;
 mod http_extra;
+#[cfg(feature = "perf")]
+mod perf;
 mod plugin;
 mod proxy;
-#[cfg(feature = "pyro")]
-mod pyroscope_client;
 mod state;
 mod util;
 mod webhook;
+
+#[cfg(feature = "perf")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
 
 /// A reverse proxy like nginx.
 #[derive(Parser, Debug, Default)]
@@ -150,6 +154,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         info!("validate config success");
         return Ok(());
     }
+
+    #[cfg(feature = "perf")]
+    info!("enable feature perf");
+
     config::set_config_path(&args.conf);
     config::set_config_hash(&conf.hash().unwrap_or_default());
 
@@ -193,12 +201,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     my_server.sentry = conf.sentry.clone();
     my_server.bootstrap();
 
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "pyro")] {
-            if let Some(url) = &conf.pyroscope{
-                let _ = pyroscope_client::start_pyroscope(url)?;
-            }
-        }
+    #[cfg(feature = "perf")]
+    if let Some(url) = &conf.pyroscope {
+        let _ = perf::start_pyroscope(url)?;
     }
 
     // TODO load from config
@@ -284,11 +289,16 @@ fn run() -> Result<(), Box<dyn Error>> {
     info!("server is running");
     let _ = get_start_time();
 
+    // TODO not process exit until pingora supports
     my_server.run_forever();
     Ok(())
 }
 
 fn main() {
+    // can not get the heap profile
+    // because pingora exit the process
+    #[cfg(feature = "perf")]
+    let _profiler = dhat::Profiler::new_heap();
     if let Err(e) = run() {
         // avoid env logger is not init
         println!("{e}");

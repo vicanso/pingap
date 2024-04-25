@@ -289,6 +289,12 @@ impl Server {
                 message: err.to_string(),
             })?;
             tls_settings.enable_h2();
+            if let Some(min_version) = tls_settings.min_proto_version() {
+                info!("tls min proto version:{min_version:?}");
+            }
+            if let Some(max_version) = tls_settings.max_proto_version() {
+                info!("tls max proto version:{max_version:?}");
+            }
             self.is_tls = true;
             Some(tls_settings)
         } else {

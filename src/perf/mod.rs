@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use log::info;
 use pyroscope::{pyroscope::PyroscopeAgentRunning, PyroscopeAgent, PyroscopeError};
 use pyroscope_pprofrs::{pprof_backend, PprofConfig};
 use snafu::{ResultExt, Snafu};
@@ -57,7 +58,7 @@ pub fn start_pyroscope(value: &str) -> Result<PyroscopeAgent<PyroscopeAgentRunni
         connect_url = connect_url.replace(query, "");
     }
 
-    let mut agent = PyroscopeAgent::builder(connect_url, application_name);
+    let mut agent = PyroscopeAgent::builder(&connect_url, &application_name);
     if !user.is_empty() {
         agent = agent.basic_auth(user, password);
     }
@@ -66,5 +67,6 @@ pub fn start_pyroscope(value: &str) -> Result<PyroscopeAgent<PyroscopeAgentRunni
         // .tags([("app", "Rust"), ("TagB", "ValueB")].to_vec())
         .build()
         .context(PyroscopeSnafu)?;
+    info!("connect to pyroscope, app:{application_name}, url:{connect_url}");
     client.start().context(PyroscopeSnafu)
 }

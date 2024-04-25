@@ -40,6 +40,10 @@ release:
 	cargo build --release
 	ls -lh target/release
 
+perf:
+	cargo build --profile=release-perf --features=perf
+	ls -lh target/release
+
 publish:
 	make build-web
 	cargo publish --registry crates-io --no-verify

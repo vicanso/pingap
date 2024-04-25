@@ -403,6 +403,7 @@ pub fn save_config(path: &str, conf: &mut PingapConf, category: &str) -> Result<
             data.servers = None;
             data.locations = None;
             data.upstreams = None;
+            data.proxy_plugins = None;
             toml::to_string_pretty(&data).context(SerSnafu)?
         }
     };

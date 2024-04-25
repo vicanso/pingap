@@ -125,6 +125,13 @@ export default function BasicInfo() {
       category: FormItemCategory.TEXT,
     },
     {
+      id: "pyroscope",
+      label: "Pyroscope",
+      defaultValue: config.pyroscope,
+      span: 12,
+      category: FormItemCategory.TEXT,
+    },
+    {
       id: "error_template",
       label: "Error Template",
       defaultValue: config.error_template,

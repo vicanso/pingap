@@ -79,7 +79,7 @@ fn validate_restart() -> Result<bool, Box<dyn std::error::Error>> {
 #[async_trait]
 impl BackgroundService for AutoRestart {
     async fn start(&self, mut shutdown: ShutdownWatch) {
-        let mut period = interval(Duration::from_secs(60));
+        let mut period = interval(Duration::from_secs(90));
         loop {
             tokio::select! {
                 _ = shutdown.changed() => {
@@ -88,7 +88,7 @@ impl BackgroundService for AutoRestart {
                 _ = period.tick() => {
                     match validate_restart() {
                        Ok(should_restart) => {
-                           info!("auto restart background service, should_restart:{should_restart}");
+                           info!("auto restart background service, should restart:{should_restart}");
                            if should_restart {
                                restart();
                            }
@@ -139,7 +139,7 @@ pub fn restart_now() -> io::Result<process::Output> {
 pub fn restart() {
     let count = PROCESS_RESTAR_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(90)).await;
+        tokio::time::sleep(Duration::from_secs(60)).await;
         if count == PROCESS_RESTAR_COUNT.load(Ordering::Relaxed) {
             if let Err(e) = restart_now() {
                 error!("Restart fail: {e}");

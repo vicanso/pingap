@@ -84,6 +84,7 @@ interface Config {
   upstream_keepalive_pool_size?: number;
   log_level?: string;
   sentry?: string;
+  pyroscope?: string;
   webhook?: string;
   webhook_type?: string;
 }
