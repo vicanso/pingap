@@ -27,6 +27,19 @@ pub fn set_config_path(conf_path: &str) {
     CONFIG_PATH.get_or_init(|| conf_path.to_string());
 }
 
+static CURRENT_CONFIG: OnceCell<String> = OnceCell::new();
+pub fn set_current_config(value: &str) {
+    CURRENT_CONFIG.get_or_init(|| value.to_string());
+}
+
+pub fn get_current_config() -> String {
+    if let Some(value) = CURRENT_CONFIG.get() {
+        value.clone()
+    } else {
+        "".to_string()
+    }
+}
+
 pub fn get_config_path() -> String {
     CONFIG_PATH.get_or_init(|| "".to_string()).to_owned()
 }

@@ -110,6 +110,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
     let conf = config::load_config(&args.conf, args.admin.is_some())?;
     conf.validate()?;
+    if let Ok(tom_data) = toml::to_string_pretty(&conf) {
+        config::set_current_config(&tom_data);
+    }
+
     let webhook_url = conf.webhook.clone().unwrap_or_default();
     webhook::set_web_hook(&webhook_url, &conf.webhook_type.clone().unwrap_or_default());
     let mut builder = env_logger::Builder::from_env(env_logger::Env::default());

@@ -1787,6 +1787,7 @@ dependencies = [
  "crc32fast",
  "criterion",
  "dhat",
+ "diff",
  "dirs",
  "env_logger",
  "futures-util",
