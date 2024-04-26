@@ -590,7 +590,7 @@ export default function FormEditor({
   description: string;
   items: FormItem[];
   onUpsert: (name: string, data: Record<string, unknown>) => Promise<void>;
-  onRemove: () => Promise<void>;
+  onRemove?: () => Promise<void>;
   created?: boolean;
   currentNames?: string[];
 }) {
@@ -961,6 +961,7 @@ export default function FormEditor({
       setProcessing(false);
     }
   };
+
   const doRemove = async () => {
     if (processing) {
       return;
@@ -968,7 +969,9 @@ export default function FormEditor({
     setProcessing(true);
     try {
       setShowSuccess(true);
-      await onRemove();
+      if (onRemove) {
+        await onRemove();
+      }
     } catch (err) {
       setShowError({
         open: true,
@@ -978,8 +981,13 @@ export default function FormEditor({
       setProcessing(false);
     }
   };
+  let showRemove = false;
+  if (onRemove) {
+    showRemove = true;
+  }
   let createNewItem = <></>;
   if (created) {
+    showRemove = false;
     createNewItem = (
       <Grid item xs={12}>
         <FormControl fullWidth={true}>
@@ -995,6 +1003,27 @@ export default function FormEditor({
       </Grid>
     );
   }
+  let removeGrip = <></>;
+  let submitSpan = 12;
+  if (showRemove) {
+    submitSpan = 6;
+    removeGrip = (
+      <Grid item xs={6}>
+        <Button
+          disabled={created}
+          fullWidth
+          variant="outlined"
+          size="large"
+          onClick={() => {
+            doRemove();
+          }}
+        >
+          {processing ? "Removing" : "Remove"}
+        </Button>
+      </Grid>
+    );
+  }
+
   return (
     <React.Fragment>
       <CardContent>
@@ -1012,7 +1041,7 @@ export default function FormEditor({
           <Grid container spacing={2}>
             {createNewItem}
             {list}
-            <Grid item xs={6}>
+            <Grid item xs={submitSpan}>
               <Button
                 disabled={!updated}
                 fullWidth
@@ -1025,19 +1054,7 @@ export default function FormEditor({
                 {processing ? "Submitting" : "Submit"}
               </Button>
             </Grid>
-            <Grid item xs={6}>
-              <Button
-                disabled={created}
-                fullWidth
-                variant="outlined"
-                size="large"
-                onClick={() => {
-                  doRemove();
-                }}
-              >
-                {processing ? "Removing" : "Remove"}
-              </Button>
-            </Grid>
+            {removeGrip}
           </Grid>
         </form>
       </CardContent>
