@@ -8,10 +8,11 @@ import FormEditor, {
 } from "../components/form-editor";
 
 export default function ServerInfo() {
-  const [initialized, config, update] = useConfigStore((state) => [
+  const [initialized, config, update, remove] = useConfigStore((state) => [
     state.initialized,
     state.data,
     state.update,
+    state.remove,
   ]);
   const { name } = useParams();
   if (!initialized) {
@@ -87,8 +88,32 @@ export default function ServerInfo() {
       id: "lets_encrypt",
       label: "Lets encrypt domain list",
       defaultValue: server.lets_encrypt,
-      span: 12,
+      span: 8,
       category: FormItemCategory.TEXT,
+    },
+    {
+      id: "enabled_h2",
+      label: "Enable Http2",
+      defaultValue: server.enabled_h2,
+      span: 4,
+      category: FormItemCategory.CHECKBOX,
+      options: [
+        {
+          label: "Enable",
+          option: 1,
+          value: true,
+        },
+        {
+          label: "Disable",
+          option: 2,
+          value: false,
+        },
+        {
+          label: "None",
+          option: -1,
+          value: null,
+        },
+      ],
     },
     {
       id: "remark",
@@ -106,6 +131,9 @@ export default function ServerInfo() {
     }
     return update("server", serverName, data);
   };
+  const onRemove = async () => {
+    return remove("server", name || "");
+  };
   return (
     <FormEditor
       key={name}
@@ -113,6 +141,7 @@ export default function ServerInfo() {
       description="Change the server configuration"
       items={arr}
       onUpsert={onUpsert}
+      onRemove={onRemove}
       created={created}
       currentNames={currentNames}
     />

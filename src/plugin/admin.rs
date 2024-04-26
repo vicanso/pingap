@@ -183,23 +183,11 @@ impl AdminServe {
 
     async fn remove_config(&self, category: &str, name: &str) -> pingora::Result<HttpResponse> {
         let mut conf = self.load_config()?;
-
-        match category {
-            CATEGORY_UPSTREAM => {
-                conf.upstreams.remove(name);
-            }
-            CATEGORY_LOCATION => {
-                conf.locations.remove(name);
-            }
-            CATEGORY_SERVER => {
-                conf.servers.remove(name);
-            }
-            CATEGORY_PROXY_PLUGIN => {
-                conf.proxy_plugins.remove(name);
-            }
-            _ => {}
-        };
-        save_config(&config::get_config_path(), &mut conf, category).map_err(|e| {
+        conf.remove(category, name).map_err(|e| {
+            error!("failed to validate config: {e}");
+            util::new_internal_error(400, e.to_string())
+        })?;
+        save_config(&config::get_config_path(), &conf, category).map_err(|e| {
             error!("failed to save config: {e}");
             util::new_internal_error(400, e.to_string())
         })?;
@@ -268,7 +256,7 @@ impl AdminServe {
                 conf.pyroscope = basic_conf.pyroscope;
             }
         };
-        save_config(&config::get_config_path(), &mut conf, category).map_err(|e| {
+        save_config(&config::get_config_path(), &conf, category).map_err(|e| {
             error!("failed to save config: {e}");
             util::new_internal_error(400, e.to_string())
         })?;

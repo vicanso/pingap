@@ -57,6 +57,7 @@ interface Server {
   tls_cert?: string;
   tls_key?: string;
   lets_encrypt?: string;
+  enabled_h2?: boolean;
   remark?: string;
 }
 
@@ -99,6 +100,7 @@ interface ConfigState {
     name: string,
     data: Record<string, unknown>,
   ) => Promise<void>;
+  remove: (category: string, name: string) => Promise<void>;
 }
 
 const random = (length = 8) => {
@@ -132,6 +134,13 @@ const useConfigStore = create<ConfigState>()((set, get) => ({
     updateData: Record<string, unknown>,
   ) => {
     await request.post(`/configs/${category}/${name}`, updateData);
+    set({
+      version: random(),
+    });
+    await get().fetch();
+  },
+  remove: async (category: string, name: string) => {
+    await request.delete(`/configs/${category}/${name}`);
     set({
       version: random(),
     });

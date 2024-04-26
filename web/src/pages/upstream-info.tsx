@@ -8,10 +8,11 @@ import FormEditor, {
 } from "../components/form-editor";
 
 export default function UpstreamInfo() {
-  const [initialized, config, update] = useConfigStore((state) => [
+  const [initialized, config, update, remove] = useConfigStore((state) => [
     state.initialized,
     state.data,
     state.update,
+    state.remove,
   ]);
   const { name } = useParams();
   if (!initialized) {
@@ -184,6 +185,9 @@ export default function UpstreamInfo() {
     }
     return update("upstream", upstreamName, data);
   };
+  const onRemove = async () => {
+    return remove("upstream", name || "");
+  };
   return (
     <FormEditor
       key={name}
@@ -191,6 +195,7 @@ export default function UpstreamInfo() {
       description="Change the upstream configuration"
       items={arr}
       onUpsert={onUpsert}
+      onRemove={onRemove}
       created={created}
       currentNames={currentNames}
     />

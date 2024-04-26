@@ -10,10 +10,11 @@ import FormEditor, {
 } from "../components/form-editor";
 
 export default function LocationInfo() {
-  const [initialized, config, update] = useConfigStore((state) => [
+  const [initialized, config, update, remove] = useConfigStore((state) => [
     state.initialized,
     state.data,
     state.update,
+    state.remove,
   ]);
   const { name } = useParams();
   if (!initialized) {
@@ -132,12 +133,16 @@ export default function LocationInfo() {
     }
     return update("location", locationName, data);
   };
+  const onRemove = async () => {
+    return remove("location", name || "");
+  };
   return (
     <FormEditor
       key={name}
       title="Modify location configuration"
       description="Change the location configuration"
       items={arr}
+      onRemove={onRemove}
       onUpsert={onUpsert}
       created={created}
       currentNames={currentNames}

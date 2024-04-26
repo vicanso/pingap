@@ -13,12 +13,13 @@
 // limitations under the License.
 
 use super::ProxyPlugin;
-use super::Result;
+use super::{Error, Result};
 use crate::config::ProxyPluginCategory;
 use crate::config::ProxyPluginStep;
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD, Engine};
 use http::HeaderValue;
 use http::StatusCode;
 use log::debug;
@@ -33,10 +34,14 @@ pub struct BasicAuth {
 impl BasicAuth {
     pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
         debug!("new basic auth proxy plugin, {value}, {proxy_step:?}");
-        let authorizations = value
-            .split(',')
-            .map(|item| format!("Basic {item}").as_bytes().to_owned())
-            .collect();
+        let mut authorizations = vec![];
+        for item in value.split(',') {
+            let _ = STANDARD
+                .decode(item)
+                .map_err(|e| Error::Base64Decode { source: e })?;
+
+            authorizations.push(format!("Basic {item}").as_bytes().to_owned());
+        }
 
         Ok(Self {
             proxy_step,

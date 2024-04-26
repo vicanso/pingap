@@ -7,9 +7,9 @@
 - [ ] http response cache
 - [ ] send more event to webhook
 - [ ] fix not_before not_after of cert
-- [ ] diff config and send to webhook
 - [ ] client body size limit plugin
 - [ ] remove config
+- [x] diff config and send to webhook
 - [x] support pyroscope
 - [x] tls cert auto update[instant-acme]
 - [x] delay restart

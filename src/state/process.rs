@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config;
-use crate::config::{get_config_hash, get_config_path, load_config};
+use crate::config::{
+    get_config_hash, get_config_path, get_current_config, load_config, PingapConf,
+};
 use crate::webhook;
 use async_trait::async_trait;
 use log::{error, info};
@@ -69,14 +70,13 @@ impl RestartProcessCommand {
 
 pub struct AutoRestart {}
 
-fn validate_restart() -> Result<(bool, String), Box<dyn std::error::Error>> {
+fn validate_restart() -> Result<(bool, PingapConf), Box<dyn std::error::Error>> {
     let conf = load_config(&get_config_path(), false)?;
     conf.validate()?;
     if conf.hash().unwrap_or_default() != get_config_hash() {
-        let toml_data = toml::to_string_pretty(&conf).unwrap_or_default();
-        return Ok((true, toml_data));
+        return Ok((true, conf));
     }
-    Ok((false, "".to_string()))
+    Ok((false, conf))
 }
 
 #[async_trait]
@@ -90,24 +90,17 @@ impl BackgroundService for AutoRestart {
                 }
                 _ = period.tick() => {
                     match validate_restart() {
-                       Ok((should_restart, toml_data)) => {
+                       Ok((should_restart, conf)) => {
                            // TODO diff config and sent to webhook
                            info!("Auto restart background service, should restart:{should_restart}");
-                           let mut diff_result = vec![];
-                           for diff in  diff::lines(&config::get_current_config(), &toml_data) {
-                                match diff {
-                                    diff::Result::Left(l)    => diff_result.push(format!("-{}", l)),
-                                    diff::Result::Right(r)   => diff_result.push(format!("+{}", r)),
-                                    _ => {},
-                                };
-                           }
-                           webhook::send(webhook::WebhookSendParams {
-                               category: "diff_config".to_string(),
-                               msg: diff_result.join("\n"),
-                           });
-
-
                            if should_restart {
+                               let diff_result = get_current_config().diff(conf);
+                               if !diff_result.is_empty() {
+                                    webhook::send(webhook::WebhookSendParams {
+                                        category: "diff_config".to_string(),
+                                        msg: diff_result.join("\n"),
+                                    });
+                               }
                                restart();
                            }
                        },
@@ -140,6 +133,10 @@ pub fn restart_now() -> io::Result<process::Output> {
         ));
     }
     info!("Pingap will restart");
+    webhook::send(webhook::WebhookSendParams {
+        category: "restart".to_string(),
+        msg: format!("Restart now, pid:{}", std::process::id()),
+    });
     if let Some(cmd) = CMD.get() {
         nix::sys::signal::kill(
             nix::unistd::Pid::from_raw(std::process::id() as i32),

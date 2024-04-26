@@ -44,6 +44,8 @@ pub enum Error {
     Exceed { max: isize, value: isize },
     #[snafu(display("Json parse error {source}"))]
     Json { source: serde_json::Error },
+    #[snafu(display("Base64 decode error {source}"))]
+    Base64Decode { source: base64::DecodeError },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 

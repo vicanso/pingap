@@ -48,7 +48,7 @@ static ERROR_TEMPLATE: &str = include_str!("../../error.html");
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Toml de error {}, {content}", source.to_string()))]
+    #[snafu(display("Toml de error {source}, {content}"))]
     TomlDe {
         source: toml::de::Error,
         content: String,
@@ -73,6 +73,7 @@ pub struct ServerConf {
     pub threads: Option<usize>,
     pub error_template: String,
     pub lets_encrypt: Option<String>,
+    pub enbaled_h2: bool,
 }
 
 impl From<PingapConf> for Vec<ServerConf> {
@@ -146,6 +147,7 @@ impl From<PingapConf> for Vec<ServerConf> {
                 locations: filter_locations,
                 threads: item.threads,
                 lets_encrypt: item.lets_encrypt,
+                enbaled_h2: item.enabled_h2.unwrap_or(true),
                 error_template,
             });
         }
@@ -173,6 +175,7 @@ pub struct Server {
     tls_cert: Option<Vec<u8>>,
     tls_key: Option<Vec<u8>>,
     is_tls: bool,
+    enbaled_h2: bool,
     lets_encrypt_enabled: bool,
     tls_from_lets_encrypt: bool,
 }
@@ -234,6 +237,7 @@ impl Server {
             tls_cert: conf.tls_cert,
             threads: conf.threads,
             lets_encrypt_enabled: false,
+            enbaled_h2: conf.enbaled_h2,
             is_tls: false,
             tls_from_lets_encrypt: conf.lets_encrypt.is_some(),
         })
@@ -288,7 +292,9 @@ impl Server {
                 category: "tls".to_string(),
                 message: err.to_string(),
             })?;
-            tls_settings.enable_h2();
+            if self.enbaled_h2 {
+                tls_settings.enable_h2();
+            }
             if let Some(min_version) = tls_settings.min_proto_version() {
                 info!("Tls min proto version:{min_version:?}");
             }

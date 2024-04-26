@@ -582,6 +582,7 @@ export default function FormEditor({
   description,
   items,
   onUpsert,
+  onRemove,
   created,
   currentNames,
 }: {
@@ -589,6 +590,7 @@ export default function FormEditor({
   description: string;
   items: FormItem[];
   onUpsert: (name: string, data: Record<string, unknown>) => Promise<void>;
+  onRemove: () => Promise<void>;
   created?: boolean;
   currentNames?: string[];
 }) {
@@ -959,6 +961,23 @@ export default function FormEditor({
       setProcessing(false);
     }
   };
+  const doRemove = async () => {
+    if (processing) {
+      return;
+    }
+    setProcessing(true);
+    try {
+      setShowSuccess(true);
+      await onRemove();
+    } catch (err) {
+      setShowError({
+        open: true,
+        message: formatError(err),
+      });
+    } finally {
+      setProcessing(false);
+    }
+  };
   let createNewItem = <></>;
   if (created) {
     createNewItem = (
@@ -993,7 +1012,7 @@ export default function FormEditor({
           <Grid container spacing={2}>
             {createNewItem}
             {list}
-            <Grid item xs={12}>
+            <Grid item xs={6}>
               <Button
                 disabled={!updated}
                 fullWidth
@@ -1004,6 +1023,19 @@ export default function FormEditor({
                 }}
               >
                 {processing ? "Submitting" : "Submit"}
+              </Button>
+            </Grid>
+            <Grid item xs={6}>
+              <Button
+                disabled={created}
+                fullWidth
+                variant="outlined"
+                size="large"
+                onClick={() => {
+                  doRemove();
+                }}
+              >
+                {processing ? "Removing" : "Remove"}
               </Button>
             </Grid>
           </Grid>

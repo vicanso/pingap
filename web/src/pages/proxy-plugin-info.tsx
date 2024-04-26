@@ -9,10 +9,11 @@ import FormEditor, {
 } from "../components/form-editor";
 
 export default function ProxyPluginInfo() {
-  const [initialized, config, update] = useConfigStore((state) => [
+  const [initialized, config, update, remove] = useConfigStore((state) => [
     state.initialized,
     state.data,
     state.update,
+    state.remove,
   ]);
   const { name } = useParams();
   if (!initialized) {
@@ -144,6 +145,9 @@ export default function ProxyPluginInfo() {
 
     return update("proxy_plugin", pluginName, data);
   };
+  const onRemove = async () => {
+    return remove("proxy_plugin", name || "");
+  };
   return (
     <FormEditor
       key={name}
@@ -151,6 +155,7 @@ export default function ProxyPluginInfo() {
       description="Change the proxy plugin configuration"
       items={arr}
       onUpsert={onUpsert}
+      onRemove={onRemove}
       created={created}
       currentNames={currentNames}
     />

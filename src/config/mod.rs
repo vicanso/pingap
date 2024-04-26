@@ -12,49 +12,54 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use once_cell::sync::OnceCell;
+use snafu::Snafu;
 
+mod common;
+mod file;
 mod load;
 
-pub use load::{
-    load_config, save_config, LocationConf, PingapConf, ProxyPluginCategory, ProxyPluginConf,
-    ProxyPluginStep, ServerConf, UpstreamConf, CATEGORY_LOCATION, CATEGORY_PROXY_PLUGIN,
-    CATEGORY_SERVER, CATEGORY_UPSTREAM,
-};
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("Invalid {message}"))]
+    Invalid { message: String },
+    #[snafu(display("Glob pattern error {source}, {path}"))]
+    Pattern {
+        source: glob::PatternError,
+        path: String,
+    },
+    #[snafu(display("Glob error {source}"))]
+    Glob { source: glob::GlobError },
+    #[snafu(display("Io error {source}, {file}"))]
+    Io {
+        source: std::io::Error,
+        file: String,
+    },
+    #[snafu(display("Toml de error {source}"))]
+    De { source: toml::de::Error },
+    #[snafu(display("Toml ser error {source}"))]
+    Ser { source: toml::ser::Error },
+    #[snafu(display("Url parse error {source}, {url}"))]
+    UrlParse {
+        source: url::ParseError,
+        url: String,
+    },
+    #[snafu(display("Addr parse error {source}, {addr}"))]
+    AddrParse {
+        source: std::net::AddrParseError,
+        addr: String,
+    },
+    #[snafu(display("Base64 decode error {source}"))]
+    Base64Decode { source: base64::DecodeError },
+    #[snafu(display("Regex error {source}"))]
+    Regex { source: regex::Error },
+}
+type Result<T, E = Error> = std::result::Result<T, E>;
 
-static CONFIG_PATH: OnceCell<String> = OnceCell::new();
-pub fn set_config_path(conf_path: &str) {
-    CONFIG_PATH.get_or_init(|| conf_path.to_string());
+pub trait ConfigStorage {
+    fn load_config(&self, admin: bool) -> Result<PingapConf>;
+    fn save_config(&self, conf: &PingapConf, category: &str) -> Result<()>;
 }
 
-static CURRENT_CONFIG: OnceCell<String> = OnceCell::new();
-pub fn set_current_config(value: &str) {
-    CURRENT_CONFIG.get_or_init(|| value.to_string());
-}
-
-pub fn get_current_config() -> String {
-    if let Some(value) = CURRENT_CONFIG.get() {
-        value.clone()
-    } else {
-        "".to_string()
-    }
-}
-
-pub fn get_config_path() -> String {
-    CONFIG_PATH.get_or_init(|| "".to_string()).to_owned()
-}
-
-static CONFIG_HASH: OnceCell<String> = OnceCell::new();
-/// Sets pingap running config's crc hash
-pub fn set_config_hash(version: &str) {
-    CONFIG_HASH.get_or_init(|| version.to_string());
-}
-
-/// Returns current running pingap's config crc hash
-pub fn get_config_hash() -> String {
-    if let Some(value) = CONFIG_HASH.get() {
-        value.to_string()
-    } else {
-        "".to_string()
-    }
-}
+pub use common::*;
+pub use file::FileStorage;
+pub use load::{load_config, save_config};
