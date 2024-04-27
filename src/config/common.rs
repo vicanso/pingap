@@ -402,31 +402,39 @@ impl PingapConf {
         let mut diff_result = vec![];
 
         // remove item
+        let mut exists_remove = false;
         for item in current_descriptions.iter() {
             let mut found = false;
             for new_item in new_descriptions.iter() {
                 if item.name == new_item.name {
                     found = true;
+                    exists_remove = true;
                 }
             }
             if !found {
                 diff_result.push(format!("--{}", item.name));
-                diff_result.push("\n".to_string());
             }
+        }
+        if exists_remove {
+            diff_result.push("\n".to_string());
         }
 
         // add item
+        let mut exists_add = false;
         for new_item in new_descriptions.iter() {
             let mut found = false;
             for item in current_descriptions.iter() {
                 if item.name == new_item.name {
                     found = true;
+                    exists_add = true;
                 }
             }
             if !found {
                 diff_result.push(format!("++{}", new_item.name));
-                diff_result.push("\n".to_string());
             }
+        }
+        if exists_add {
+            diff_result.push("\n".to_string());
         }
 
         for item in current_descriptions.iter() {

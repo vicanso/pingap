@@ -16,6 +16,7 @@ use crate::acme::LetsEncryptService;
 use crate::state::AutoRestart;
 use clap::Parser;
 use config::{PingapConf, ProxyPluginCategory, ProxyPluginConf};
+use crossbeam_channel::Sender;
 use log::{error, info, Level};
 use pingora::server;
 use pingora::server::configuration::Opt;
@@ -106,9 +107,34 @@ fn new_server_conf(args: &Args, conf: &PingapConf) -> server::configuration::Ser
     server_conf
 }
 
+fn get_config(conf: String, admin: bool, s: Sender<Result<PingapConf, config::Error>>) {
+    std::thread::spawn(move || {
+        match tokio::runtime::Runtime::new() {
+            Ok(rt) => {
+                let send = async move {
+                    let result = config::load_config(&conf, admin).await;
+                    if let Err(e) = s.send(result) {
+                        println!("sender fail, {e}");
+                    }
+                };
+                rt.block_on(send);
+            }
+            Err(e) => {
+                if let Err(e) = s.send(Err(config::Error::Invalid {
+                    message: e.to_string(),
+                })) {
+                    println!("sender fail, {e}");
+                }
+            }
+        };
+    });
+}
+
 fn run() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
-    let conf = config::load_config(&args.conf, args.admin.is_some())?;
+    let (s, r) = crossbeam_channel::bounded(0);
+    get_config(args.conf.clone(), args.admin.is_some(), s);
+    let conf = r.recv()??;
     conf.validate()?;
     config::set_current_config(&conf);
     config::set_app_name(&conf.name.clone().unwrap_or_default());

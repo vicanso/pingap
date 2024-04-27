@@ -17,13 +17,13 @@ use super::{ConfigStorage, FileStorage, PingapConf, Result};
 /// Save the confog to path.
 ///
 /// Validate the config before save.
-pub fn save_config(path: &str, conf: &PingapConf, category: &str) -> Result<()> {
+pub async fn save_config(path: &str, conf: &PingapConf, category: &str) -> Result<()> {
     let file = FileStorage::new(path)?;
-    file.save_config(conf, category)
+    file.save_config(conf, category).await
 }
 
 /// Load the config from path.
-pub fn load_config(path: &str, admin: bool) -> Result<PingapConf> {
+pub async fn load_config(path: &str, admin: bool) -> Result<PingapConf> {
     let file = FileStorage::new(path)?;
-    file.load_config(admin)
+    file.load_config(admin).await
 }

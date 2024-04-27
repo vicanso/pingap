@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use async_trait::async_trait;
 use snafu::Snafu;
 
 mod common;
@@ -55,9 +56,10 @@ pub enum Error {
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
+#[async_trait]
 pub trait ConfigStorage {
-    fn load_config(&self, admin: bool) -> Result<PingapConf>;
-    fn save_config(&self, conf: &PingapConf, category: &str) -> Result<()>;
+    async fn load_config(&self, admin: bool) -> Result<PingapConf>;
+    async fn save_config(&self, conf: &PingapConf, category: &str) -> Result<()>;
 }
 
 pub use common::*;

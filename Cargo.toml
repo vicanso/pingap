@@ -23,6 +23,7 @@ cfg-if = "1.0.0"
 chrono = "0.4.37"
 clap = { version = "4.5.4", features = ["derive"] }
 crc32fast = "1.4.0"
+crossbeam-channel = "0.5.12"
 dhat = { version = "0.3.3", optional = true }
 diff = "0.1.13"
 dirs = "5.0.1"

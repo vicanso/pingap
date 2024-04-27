@@ -31,11 +31,20 @@ pub struct WebhookSendParams {
 }
 
 pub fn send(params: WebhookSendParams) {
+    info!("Webhook {}, {}", params.category, params.msg);
     let webhook_type = if let Some(value) = WEBHOOK_CATEGORY.get() {
         value.to_string()
     } else {
         "".to_string()
     };
+    let url = if let Some(url) = WEBHOOK_URL.get() {
+        url.to_string()
+    } else {
+        "".to_string()
+    };
+    if url.is_empty() {
+        return;
+    }
     std::thread::spawn(move || {
         if let Ok(rt) = tokio::runtime::Runtime::new() {
             let category = params.category;
@@ -73,12 +82,6 @@ pub fn send(params: WebhookSendParams) {
                         data.insert("hostname".to_string(), Value::String(hostname));
                     }
                 }
-
-                let url = if let Some(url) = WEBHOOK_URL.get() {
-                    url.to_string()
-                } else {
-                    "".to_string()
-                };
 
                 match client
                     .post(url)

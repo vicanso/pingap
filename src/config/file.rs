@@ -16,10 +16,12 @@ use super::{ConfigStorage, Error, Result};
 use super::{LocationConf, PingapConf, ProxyPluginConf, ServerConf, UpstreamConf};
 use super::{CATEGORY_LOCATION, CATEGORY_PROXY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM};
 use crate::util;
+use async_trait::async_trait;
 use glob::glob;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Duration;
+use tokio::fs;
 use toml::{map::Map, Value};
 
 #[derive(Deserialize, Debug, Serialize)]
@@ -74,8 +76,9 @@ impl FileStorage {
     }
 }
 
+#[async_trait]
 impl ConfigStorage for FileStorage {
-    fn load_config(&self, admin: bool) -> Result<PingapConf> {
+    async fn load_config(&self, admin: bool) -> Result<PingapConf> {
         let filepath = self.path.clone();
         if admin && !Path::new(&filepath).exists() {
             return Ok(PingapConf::default());
@@ -88,7 +91,7 @@ impl ConfigStorage for FileStorage {
                 path: filepath,
             })? {
                 let f = entry.map_err(|e| Error::Glob { source: e })?;
-                let mut buf = std::fs::read(&f).map_err(|e| Error::Io {
+                let mut buf = fs::read(&f).await.map_err(|e| Error::Io {
                     source: e,
                     file: f.to_string_lossy().to_string(),
                 })?;
@@ -96,7 +99,7 @@ impl ConfigStorage for FileStorage {
                 data.push(0x0a);
             }
         } else {
-            let mut buf = std::fs::read(&filepath).map_err(|e| Error::Io {
+            let mut buf = fs::read(&filepath).await.map_err(|e| Error::Io {
                 source: e,
                 file: filepath,
             })?;
@@ -159,16 +162,18 @@ impl ConfigStorage for FileStorage {
 
         Ok(conf)
     }
-    fn save_config(&self, conf: &PingapConf, category: &str) -> Result<()> {
+    async fn save_config(&self, conf: &PingapConf, category: &str) -> Result<()> {
         let mut filepath = self.path.clone();
         conf.validate()?;
 
         let ping_conf = toml::to_string_pretty(&conf).map_err(|e| Error::Ser { source: e })?;
         if Path::new(&filepath).is_file() {
-            return std::fs::write(&filepath, ping_conf).map_err(|e| Error::Io {
-                source: e,
-                file: filepath,
-            });
+            return fs::write(&filepath, ping_conf)
+                .await
+                .map_err(|e| Error::Io {
+                    source: e,
+                    file: filepath,
+                });
         }
         // file path is dir
         let mut data: TomlConfig =
@@ -219,7 +224,7 @@ impl ConfigStorage for FileStorage {
                 toml::to_string_pretty(&data).map_err(|e| Error::Ser { source: e })?
             }
         };
-        std::fs::write(&filepath, conf).map_err(|e| Error::Io {
+        fs::write(&filepath, conf).await.map_err(|e| Error::Io {
             source: e,
             file: filepath,
         })

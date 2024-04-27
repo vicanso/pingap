@@ -159,11 +159,13 @@ impl AdminServe {
         }
         true
     }
-    fn load_config(&self) -> pingora::Result<PingapConf> {
-        let conf = config::load_config(&config::get_config_path(), true).map_err(|e| {
-            error!("failed to load config: {e}");
-            util::new_internal_error(400, e.to_string())
-        })?;
+    async fn load_config(&self) -> pingora::Result<PingapConf> {
+        let conf = config::load_config(&config::get_config_path(), true)
+            .await
+            .map_err(|e| {
+                error!("failed to load config: {e}");
+                util::new_internal_error(400, e.to_string())
+            })?;
         conf.validate().map_err(|e| {
             error!("failed to validate config: {e}");
             util::new_internal_error(400, e.to_string())
@@ -171,7 +173,7 @@ impl AdminServe {
         Ok(conf)
     }
     async fn get_config(&self, category: &str) -> pingora::Result<HttpResponse> {
-        let conf = self.load_config()?;
+        let conf = self.load_config().await?;
         let resp = match category {
             CATEGORY_UPSTREAM => HttpResponse::try_from_json(&conf.upstreams)?,
             CATEGORY_LOCATION => HttpResponse::try_from_json(&conf.locations)?,
@@ -183,15 +185,17 @@ impl AdminServe {
     }
 
     async fn remove_config(&self, category: &str, name: &str) -> pingora::Result<HttpResponse> {
-        let mut conf = self.load_config()?;
+        let mut conf = self.load_config().await?;
         conf.remove(category, name).map_err(|e| {
             error!("failed to validate config: {e}");
             util::new_internal_error(400, e.to_string())
         })?;
-        save_config(&config::get_config_path(), &conf, category).map_err(|e| {
-            error!("failed to save config: {e}");
-            util::new_internal_error(400, e.to_string())
-        })?;
+        save_config(&config::get_config_path(), &conf, category)
+            .await
+            .map_err(|e| {
+                error!("failed to save config: {e}");
+                util::new_internal_error(400, e.to_string())
+            })?;
         Ok(HttpResponse::no_content())
     }
     async fn update_config(
@@ -205,7 +209,7 @@ impl AdminServe {
             buf.put(value.as_ref());
         }
         let key = name.to_string();
-        let mut conf = self.load_config()?;
+        let mut conf = self.load_config().await?;
         match category {
             CATEGORY_UPSTREAM => {
                 let upstream: UpstreamConf = serde_json::from_slice(&buf).map_err(|e| {
@@ -258,10 +262,12 @@ impl AdminServe {
                 conf.pyroscope = basic_conf.pyroscope;
             }
         };
-        save_config(&config::get_config_path(), &conf, category).map_err(|e| {
-            error!("failed to save config: {e}");
-            util::new_internal_error(400, e.to_string())
-        })?;
+        save_config(&config::get_config_path(), &conf, category)
+            .await
+            .map_err(|e| {
+                error!("failed to save config: {e}");
+                util::new_internal_error(400, e.to_string())
+            })?;
         Ok(HttpResponse::no_content())
     }
 }

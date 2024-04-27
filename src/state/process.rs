@@ -70,8 +70,8 @@ impl RestartProcessCommand {
 
 pub struct AutoRestart {}
 
-fn validate_restart() -> Result<(bool, PingapConf), Box<dyn std::error::Error>> {
-    let conf = load_config(&get_config_path(), false)?;
+async fn validate_restart() -> Result<(bool, PingapConf), Box<dyn std::error::Error>> {
+    let conf = load_config(&get_config_path(), false).await?;
     conf.validate()?;
     if conf.hash().unwrap_or_default() != get_config_hash() {
         return Ok((true, conf));
@@ -89,7 +89,7 @@ impl BackgroundService for AutoRestart {
                     break;
                 }
                 _ = period.tick() => {
-                    match validate_restart() {
+                    match validate_restart().await {
                        Ok((should_restart, conf)) => {
                            info!("Auto restart background service, should restart:{should_restart}");
                            if should_restart {
