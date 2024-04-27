@@ -7,7 +7,7 @@
 - [ ] http response cache
 - [ ] fix not_before not_after of cert
 - [ ] client body size limit plugin
-- [ ] send more event to webhook
+- [x] send more event to webhook
 - [x] remove config
 - [x] diff config and send to webhook
 - [x] support pyroscope

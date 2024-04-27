@@ -48,8 +48,7 @@ pub fn send(params: WebhookSendParams) {
                     r###"{name}
                     >hostname: {hostname}
                     >category: {category}
-                    >message: {}
-                    "###,
+                    >message: {}"###,
                     params.msg
                 );
                 match webhook_type.to_lowercase().as_str() {

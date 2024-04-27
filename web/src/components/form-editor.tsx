@@ -1101,8 +1101,8 @@ export default function FormEditor({
         <DialogTitle id="alert-dialog-title">{"Remove config?"}</DialogTitle>
         <DialogContent>
           <DialogContentText id="alert-dialog-description">
-            Check whether you want to delete the configuration, and it can not
-            be restored after delete it.
+            Please confirm whether you want to delete the configuration, and it
+            can not be restored after delete it.
           </DialogContentText>
         </DialogContent>
         <DialogActions>
