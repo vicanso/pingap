@@ -23,6 +23,7 @@ use serde_repr::{Deserialize_repr, Serialize_repr};
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
 use std::time::Duration;
+use toml::{map::Map, Value};
 use url::Url;
 
 pub const CATEGORY_UPSTREAM: &str = "upstream";
@@ -247,6 +248,42 @@ impl ServerConf {
     }
 }
 
+#[derive(Deserialize, Debug, Serialize)]
+struct TomlConfig {
+    name: Option<String>,
+    servers: Option<Map<String, Value>>,
+    upstreams: Option<Map<String, Value>>,
+    locations: Option<Map<String, Value>>,
+    proxy_plugins: Option<Map<String, Value>>,
+    error_template: Option<String>,
+    pid_file: Option<String>,
+    upgrade_sock: Option<String>,
+    user: Option<String>,
+    group: Option<String>,
+    threads: Option<usize>,
+    work_stealing: Option<bool>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub grace_period: Option<Duration>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub graceful_shutdown_timeout: Option<Duration>,
+    pub upstream_keepalive_pool_size: Option<usize>,
+    pub webhook: Option<String>,
+    pub webhook_type: Option<String>,
+    pub log_level: Option<String>,
+    pub sentry: Option<String>,
+    pub pyroscope: Option<String>,
+}
+
+fn format_toml(value: &Value) -> String {
+    if let Some(value) = value.as_table() {
+        value.to_string()
+    } else {
+        "".to_string()
+    }
+}
+
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct PingapConf {
     pub name: Option<String>,
@@ -273,6 +310,123 @@ pub struct PingapConf {
     pub log_level: Option<String>,
     pub sentry: Option<String>,
     pub pyroscope: Option<String>,
+}
+
+impl PingapConf {
+    pub fn get_toml(&self, category: &str) -> Result<(String, String)> {
+        let ping_conf = toml::to_string_pretty(self).map_err(|e| Error::Ser { source: e })?;
+        let mut data: TomlConfig =
+            toml::from_str(&ping_conf).map_err(|e| Error::De { source: e })?;
+        let result = match category {
+            CATEGORY_SERVER => {
+                let mut m = Map::new();
+                let _ = m.insert(
+                    "servers".to_string(),
+                    toml::Value::Table(data.servers.unwrap_or_default()),
+                );
+                let value = toml::to_string_pretty(&m).map_err(|e| Error::Ser { source: e })?;
+                ("/servers.toml".to_string(), value)
+            }
+            CATEGORY_LOCATION => {
+                let mut m = Map::new();
+                let _ = m.insert(
+                    "locations".to_string(),
+                    toml::Value::Table(data.locations.unwrap_or_default()),
+                );
+                let value = toml::to_string_pretty(&m).map_err(|e| Error::Ser { source: e })?;
+                ("/locations.toml".to_string(), value)
+            }
+            CATEGORY_UPSTREAM => {
+                let mut m = Map::new();
+                let _ = m.insert(
+                    "upstreams".to_string(),
+                    toml::Value::Table(data.upstreams.unwrap_or_default()),
+                );
+                let value = toml::to_string_pretty(&m).map_err(|e| Error::Ser { source: e })?;
+                ("/upstreams.toml".to_string(), value)
+            }
+            CATEGORY_PROXY_PLUGIN => {
+                let mut m = Map::new();
+                let _ = m.insert(
+                    "proxy_plugins".to_string(),
+                    toml::Value::Table(data.proxy_plugins.unwrap_or_default()),
+                );
+                let value = toml::to_string_pretty(&m).map_err(|e| Error::Ser { source: e })?;
+                ("/proxy_plugins.toml".to_string(), value)
+            }
+            _ => {
+                data.servers = None;
+                data.locations = None;
+                data.upstreams = None;
+                data.proxy_plugins = None;
+                let value = toml::to_string_pretty(&data).map_err(|e| Error::Ser { source: e })?;
+                ("/basic.toml".to_string(), value)
+            }
+        };
+        Ok(result)
+    }
+}
+
+impl TryFrom<Vec<u8>> for PingapConf {
+    type Error = Error;
+    fn try_from(data: Vec<u8>) -> Result<Self, self::Error> {
+        let data: TomlConfig = toml::from_str(
+            std::string::String::from_utf8_lossy(&data)
+                .to_string()
+                .as_str(),
+        )
+        .map_err(|e| Error::De { source: e })?;
+        let threads = if let Some(threads) = data.threads {
+            if threads > 0 {
+                Some(threads)
+            } else {
+                Some(num_cpus::get())
+            }
+        } else {
+            None
+        };
+        let mut conf = PingapConf {
+            name: data.name,
+            error_template: data.error_template.unwrap_or_default(),
+            pid_file: data.pid_file,
+            upgrade_sock: data.upgrade_sock,
+            user: data.user,
+            group: data.group,
+            threads,
+            work_stealing: data.work_stealing,
+            grace_period: data.grace_period,
+            graceful_shutdown_timeout: data.graceful_shutdown_timeout,
+            upstream_keepalive_pool_size: data.upstream_keepalive_pool_size,
+            webhook: data.webhook,
+            webhook_type: data.webhook_type,
+            log_level: data.log_level,
+            sentry: data.sentry,
+            pyroscope: data.pyroscope,
+            ..Default::default()
+        };
+        for (name, value) in data.upstreams.unwrap_or_default() {
+            let upstream: UpstreamConf = toml::from_str(format_toml(&value).as_str())
+                .map_err(|e| Error::De { source: e })?;
+            conf.upstreams.insert(name, upstream);
+        }
+        for (name, value) in data.locations.unwrap_or_default() {
+            let location: LocationConf = toml::from_str(format_toml(&value).as_str())
+                .map_err(|e| Error::De { source: e })?;
+            conf.locations.insert(name, location);
+        }
+        for (name, value) in data.servers.unwrap_or_default() {
+            let server: ServerConf = toml::from_str(format_toml(&value).as_str())
+                .map_err(|e| Error::De { source: e })?;
+            conf.servers.insert(name, server);
+        }
+        for (name, value) in data.proxy_plugins.unwrap_or_default() {
+            let plugin: ProxyPluginConf = toml::from_str(format_toml(&value).as_str())
+                .map_err(|e| Error::De { source: e })?;
+            conf.proxy_plugins.insert(name, plugin);
+        }
+
+        Ok(conf)
+    }
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]

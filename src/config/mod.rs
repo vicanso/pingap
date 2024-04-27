@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use snafu::Snafu;
 
 mod common;
+mod etcd;
 mod file;
 mod load;
 
@@ -53,6 +54,8 @@ pub enum Error {
     Base64Decode { source: base64::DecodeError },
     #[snafu(display("Regex error {source}"))]
     Regex { source: regex::Error },
+    #[snafu(display("Etcd error {source}"))]
+    Etcd { source: etcd_client::Error },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -63,5 +66,6 @@ pub trait ConfigStorage {
 }
 
 pub use common::*;
+pub use etcd::{EtcdStorage, ETCD_PROTOCOL};
 pub use file::FileStorage;
 pub use load::{load_config, save_config};

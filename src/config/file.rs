@@ -12,9 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::PingapConf;
 use super::{ConfigStorage, Error, Result};
-use super::{LocationConf, PingapConf, ProxyPluginConf, ServerConf, UpstreamConf};
-use super::{CATEGORY_LOCATION, CATEGORY_PROXY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM};
 use crate::util;
 use async_trait::async_trait;
 use glob::glob;
@@ -50,14 +49,6 @@ struct TomlConfig {
     pub log_level: Option<String>,
     pub sentry: Option<String>,
     pub pyroscope: Option<String>,
-}
-
-fn format_toml(value: &Value) -> String {
-    if let Some(value) = value.as_table() {
-        value.to_string()
-    } else {
-        "".to_string()
-    }
 }
 
 pub struct FileStorage {
@@ -105,69 +96,13 @@ impl ConfigStorage for FileStorage {
             })?;
             data.append(&mut buf);
         }
-        let data: TomlConfig = toml::from_str(
-            std::string::String::from_utf8_lossy(&data)
-                .to_string()
-                .as_str(),
-        )
-        .map_err(|e| Error::De { source: e })?;
-        let threads = if let Some(threads) = data.threads {
-            if threads > 0 {
-                Some(threads)
-            } else {
-                Some(num_cpus::get())
-            }
-        } else {
-            None
-        };
-        let mut conf = PingapConf {
-            name: data.name,
-            error_template: data.error_template.unwrap_or_default(),
-            pid_file: data.pid_file,
-            upgrade_sock: data.upgrade_sock,
-            user: data.user,
-            group: data.group,
-            threads,
-            work_stealing: data.work_stealing,
-            grace_period: data.grace_period,
-            graceful_shutdown_timeout: data.graceful_shutdown_timeout,
-            upstream_keepalive_pool_size: data.upstream_keepalive_pool_size,
-            webhook: data.webhook,
-            webhook_type: data.webhook_type,
-            log_level: data.log_level,
-            sentry: data.sentry,
-            pyroscope: data.pyroscope,
-            ..Default::default()
-        };
-        for (name, value) in data.upstreams.unwrap_or_default() {
-            let upstream: UpstreamConf = toml::from_str(format_toml(&value).as_str())
-                .map_err(|e| Error::De { source: e })?;
-            conf.upstreams.insert(name, upstream);
-        }
-        for (name, value) in data.locations.unwrap_or_default() {
-            let location: LocationConf = toml::from_str(format_toml(&value).as_str())
-                .map_err(|e| Error::De { source: e })?;
-            conf.locations.insert(name, location);
-        }
-        for (name, value) in data.servers.unwrap_or_default() {
-            let server: ServerConf = toml::from_str(format_toml(&value).as_str())
-                .map_err(|e| Error::De { source: e })?;
-            conf.servers.insert(name, server);
-        }
-        for (name, value) in data.proxy_plugins.unwrap_or_default() {
-            let plugin: ProxyPluginConf = toml::from_str(format_toml(&value).as_str())
-                .map_err(|e| Error::De { source: e })?;
-            conf.proxy_plugins.insert(name, plugin);
-        }
-
-        Ok(conf)
+        PingapConf::try_from(data)
     }
     async fn save_config(&self, conf: &PingapConf, category: &str) -> Result<()> {
-        let mut filepath = self.path.clone();
+        let filepath = self.path.clone();
         conf.validate()?;
-
-        let ping_conf = toml::to_string_pretty(&conf).map_err(|e| Error::Ser { source: e })?;
         if Path::new(&filepath).is_file() {
+            let ping_conf = toml::to_string_pretty(&conf).map_err(|e| Error::Ser { source: e })?;
             return fs::write(&filepath, ping_conf)
                 .await
                 .map_err(|e| Error::Io {
@@ -175,58 +110,14 @@ impl ConfigStorage for FileStorage {
                     file: filepath,
                 });
         }
-        // file path is dir
-        let mut data: TomlConfig =
-            toml::from_str(&ping_conf).map_err(|e| Error::De { source: e })?;
-        let conf = match category {
-            CATEGORY_SERVER => {
-                filepath = format!("{filepath}/servers.toml");
-                let mut m = Map::new();
-                let _ = m.insert(
-                    "servers".to_string(),
-                    toml::Value::Table(data.servers.unwrap_or_default()),
-                );
-                toml::to_string_pretty(&m).map_err(|e| Error::Ser { source: e })?
-            }
-            CATEGORY_LOCATION => {
-                filepath = format!("{filepath}/locations.toml");
-                let mut m = Map::new();
-                let _ = m.insert(
-                    "locations".to_string(),
-                    toml::Value::Table(data.locations.unwrap_or_default()),
-                );
-                toml::to_string_pretty(&m).map_err(|e| Error::Ser { source: e })?
-            }
-            CATEGORY_UPSTREAM => {
-                filepath = format!("{filepath}/upstreams.toml");
-                let mut m = Map::new();
-                let _ = m.insert(
-                    "upstreams".to_string(),
-                    toml::Value::Table(data.upstreams.unwrap_or_default()),
-                );
-                toml::to_string_pretty(&m).map_err(|e| Error::Ser { source: e })?
-            }
-            CATEGORY_PROXY_PLUGIN => {
-                filepath = format!("{filepath}/proxy_plugins.toml");
-                let mut m = Map::new();
-                let _ = m.insert(
-                    "proxy_plugins".to_string(),
-                    toml::Value::Table(data.proxy_plugins.unwrap_or_default()),
-                );
-                toml::to_string_pretty(&m).map_err(|e| Error::Ser { source: e })?
-            }
-            _ => {
-                filepath = format!("{filepath}/basic.toml");
-                data.servers = None;
-                data.locations = None;
-                data.upstreams = None;
-                data.proxy_plugins = None;
-                toml::to_string_pretty(&data).map_err(|e| Error::Ser { source: e })?
-            }
-        };
-        fs::write(&filepath, conf).await.map_err(|e| Error::Io {
-            source: e,
-            file: filepath,
-        })
+
+        let (path, toml_value) = conf.get_toml(category)?;
+        let filepath = format!("{filepath}{path}");
+        fs::write(&filepath, toml_value)
+            .await
+            .map_err(|e| Error::Io {
+                source: e,
+                file: filepath,
+            })
     }
 }
