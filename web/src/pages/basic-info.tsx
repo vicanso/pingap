@@ -16,6 +16,13 @@ export default function BasicInfo() {
   }
   const arr: FormItem[] = [
     {
+      id: "name",
+      label: "Name",
+      defaultValue: config.name,
+      span: 12,
+      category: FormItemCategory.TEXT,
+    },
+    {
       id: "pid_file",
       label: "Pid File",
       defaultValue: config.pid_file,

@@ -114,6 +114,7 @@ struct ErrorResponse {
 
 #[derive(Serialize, Deserialize)]
 struct BasicConfParams {
+    name: Option<String>,
     error_template: Option<String>,
     pid_file: Option<String>,
     upgrade_sock: Option<String>,
@@ -123,16 +124,16 @@ struct BasicConfParams {
     work_stealing: Option<bool>,
     #[serde(default)]
     #[serde(with = "humantime_serde")]
-    pub grace_period: Option<Duration>,
+    grace_period: Option<Duration>,
     #[serde(default)]
     #[serde(with = "humantime_serde")]
-    pub graceful_shutdown_timeout: Option<Duration>,
-    pub upstream_keepalive_pool_size: Option<usize>,
-    pub webhook: Option<String>,
-    pub webhook_type: Option<String>,
-    pub log_level: Option<String>,
-    pub sentry: Option<String>,
-    pub pyroscope: Option<String>,
+    graceful_shutdown_timeout: Option<Duration>,
+    upstream_keepalive_pool_size: Option<usize>,
+    webhook: Option<String>,
+    webhook_type: Option<String>,
+    log_level: Option<String>,
+    sentry: Option<String>,
+    pyroscope: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -239,6 +240,7 @@ impl AdminServe {
                     error!("failed to basic info: {e}");
                     util::new_internal_error(400, e.to_string())
                 })?;
+                conf.name = basic_conf.name;
                 conf.error_template = basic_conf.error_template.unwrap_or_default();
                 conf.pid_file = basic_conf.pid_file;
                 conf.upgrade_sock = basic_conf.upgrade_sock;

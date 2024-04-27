@@ -24,6 +24,7 @@ use toml::{map::Map, Value};
 
 #[derive(Deserialize, Debug, Serialize)]
 struct TomlConfig {
+    name: Option<String>,
     servers: Option<Map<String, Value>>,
     upstreams: Option<Map<String, Value>>,
     locations: Option<Map<String, Value>>,
@@ -117,6 +118,7 @@ impl ConfigStorage for FileStorage {
             None
         };
         let mut conf = PingapConf {
+            name: data.name,
             error_template: data.error_template.unwrap_or_default(),
             pid_file: data.pid_file,
             upgrade_sock: data.upgrade_sock,

@@ -6,6 +6,7 @@ import FormEditor, {
   FormItem,
   FormItemCategory,
 } from "../components/form-editor";
+import { goToServerInfo } from "../router";
 
 export default function ServerInfo() {
   const [initialized, config, update, remove] = useConfigStore((state) => [
@@ -129,10 +130,16 @@ export default function ServerInfo() {
     if (created) {
       serverName = newName;
     }
-    return update("server", serverName, data);
+    return update("server", serverName, data).then(() => {
+      if (created) {
+        goToServerInfo(serverName);
+      }
+    });
   };
   const onRemove = async () => {
-    return remove("server", name || "");
+    return remove("server", name || "").then(() => {
+      goToServerInfo("*");
+    });
   };
   return (
     <FormEditor

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::state;
+use crate::{config::get_app_name, state};
 use log::{error, info};
 use once_cell::sync::OnceCell;
 use serde_json::{Map, Value};
@@ -43,8 +43,9 @@ pub fn send(params: WebhookSendParams) {
                 let client = reqwest::Client::new();
                 let mut data = serde_json::Map::new();
                 let hostname = state::get_hostname().clone();
+                let name = get_app_name();
                 let content = format!(
-                    r###"Pingap
+                    r###"{name}
                     >hostname: {hostname}
                     >category: {category}
                     >message: {}
@@ -67,6 +68,7 @@ pub fn send(params: WebhookSendParams) {
                         data.insert("markdown".to_string(), Value::Object(markdown_data));
                     }
                     _ => {
+                        data.insert("name".to_string(), Value::String(name));
                         data.insert("category".to_string(), Value::String(category));
                         data.insert("message".to_string(), Value::String(params.msg));
                         data.insert("hostname".to_string(), Value::String(hostname));

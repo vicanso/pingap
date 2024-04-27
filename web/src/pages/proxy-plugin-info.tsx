@@ -7,6 +7,7 @@ import FormEditor, {
   FormItemCategory,
   ProxyPluginCategory,
 } from "../components/form-editor";
+import { goToProxyPluginInfo } from "../router";
 
 export default function ProxyPluginInfo() {
   const [initialized, config, update, remove] = useConfigStore((state) => [
@@ -143,10 +144,16 @@ export default function ProxyPluginInfo() {
       data.category = ProxyPluginCategory.STATS;
     }
 
-    return update("proxy_plugin", pluginName, data);
+    return update("proxy_plugin", pluginName, data).then(() => {
+      if (created) {
+        goToProxyPluginInfo(pluginName);
+      }
+    });
   };
   const onRemove = async () => {
-    return remove("proxy_plugin", name || "");
+    return remove("proxy_plugin", name || "").then(() => {
+      goToProxyPluginInfo("*");
+    });
   };
   return (
     <FormEditor

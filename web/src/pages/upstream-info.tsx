@@ -6,6 +6,7 @@ import FormEditor, {
   FormItem,
   FormItemCategory,
 } from "../components/form-editor";
+import { goToUpstreamInfo } from "../router";
 
 export default function UpstreamInfo() {
   const [initialized, config, update, remove] = useConfigStore((state) => [
@@ -183,10 +184,16 @@ export default function UpstreamInfo() {
     if (created) {
       upstreamName = newName;
     }
-    return update("upstream", upstreamName, data);
+    return update("upstream", upstreamName, data).then(() => {
+      if (created) {
+        goToUpstreamInfo(upstreamName);
+      }
+    });
   };
   const onRemove = async () => {
-    return remove("upstream", name || "");
+    return remove("upstream", name || "").then(() => {
+      goToUpstreamInfo("*");
+    });
   };
   return (
     <FormEditor

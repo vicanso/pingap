@@ -111,6 +111,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let conf = config::load_config(&args.conf, args.admin.is_some())?;
     conf.validate()?;
     config::set_current_config(&conf);
+    config::set_app_name(&conf.name.clone().unwrap_or_default());
 
     let webhook_url = conf.webhook.clone().unwrap_or_default();
     webhook::set_web_hook(&webhook_url, &conf.webhook_type.clone().unwrap_or_default());

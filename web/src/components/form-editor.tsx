@@ -27,6 +27,11 @@ import List from "@mui/material/List";
 import ListItem from "@mui/material/ListItem";
 import ListItemText from "@mui/material/ListItemText";
 import Box from "@mui/material/Box";
+import Dialog from "@mui/material/Dialog";
+import DialogActions from "@mui/material/DialogActions";
+import DialogContent from "@mui/material/DialogContent";
+import DialogContentText from "@mui/material/DialogContentText";
+import DialogTitle from "@mui/material/DialogTitle";
 
 import Paper from "@mui/material/Paper";
 import { Theme, useTheme } from "@mui/material/styles";
@@ -596,6 +601,8 @@ export default function FormEditor({
 }) {
   const theme = useTheme();
   const [data, setData] = React.useState(getDefaultValues(items));
+  const [openRemoveDialog, setOpenRemoveDialog] = React.useState(false);
+
   const defaultLocations: string[] = [];
   const defaultProxyPluginSelected: string[] = [];
   items.forEach((item) => {
@@ -1015,7 +1022,7 @@ export default function FormEditor({
           variant="outlined"
           size="large"
           onClick={() => {
-            doRemove();
+            setOpenRemoveDialog(true);
           }}
         >
           {processing ? "Removing" : "Remove"}
@@ -1023,6 +1030,9 @@ export default function FormEditor({
       </Grid>
     );
   }
+  const handleCloseRemoveDialog = () => {
+    setOpenRemoveDialog(false);
+  };
 
   return (
     <React.Fragment>
@@ -1082,6 +1092,32 @@ export default function FormEditor({
         }}
         message={showError.message}
       />
+      <Dialog
+        open={openRemoveDialog}
+        onClose={handleCloseRemoveDialog}
+        aria-labelledby="alert-dialog-title"
+        aria-describedby="alert-dialog-description"
+      >
+        <DialogTitle id="alert-dialog-title">{"Remove config?"}</DialogTitle>
+        <DialogContent>
+          <DialogContentText id="alert-dialog-description">
+            Check whether you want to delete the configuration, and it can not
+            be restored after delete it.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseRemoveDialog}>Cancel</Button>
+          <Button
+            onClick={() => {
+              doRemove();
+              handleCloseRemoveDialog();
+            }}
+            autoFocus
+          >
+            Confirm
+          </Button>
+        </DialogActions>
+      </Dialog>
     </React.Fragment>
   );
 }

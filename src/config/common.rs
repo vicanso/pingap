@@ -249,6 +249,7 @@ impl ServerConf {
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct PingapConf {
+    pub name: Option<String>,
     pub upstreams: HashMap<String, UpstreamConf>,
     pub locations: HashMap<String, LocationConf>,
     pub servers: HashMap<String, ServerConf>,
@@ -479,6 +480,19 @@ static CONFIG_HASH: OnceCell<String> = OnceCell::new();
 /// Sets pingap running config's crc hash
 pub fn set_config_hash(version: &str) {
     CONFIG_HASH.get_or_init(|| version.to_string());
+}
+
+static APP_NAME: OnceCell<String> = OnceCell::new();
+/// Sets app name
+pub fn set_app_name(name: &str) {
+    APP_NAME.get_or_init(|| name.to_string());
+}
+pub fn get_app_name() -> String {
+    if let Some(name) = APP_NAME.get() {
+        name.to_string()
+    } else {
+        "Pingap".to_string()
+    }
 }
 
 /// Returns current running pingap's config crc hash

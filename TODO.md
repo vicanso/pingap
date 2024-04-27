@@ -5,10 +5,10 @@
 - [ ] log rotate
 - [ ] support validate config before save(web)
 - [ ] http response cache
-- [ ] send more event to webhook
 - [ ] fix not_before not_after of cert
 - [ ] client body size limit plugin
-- [ ] remove config
+- [ ] send more event to webhook
+- [x] remove config
 - [x] diff config and send to webhook
 - [x] support pyroscope
 - [x] tls cert auto update[instant-acme]

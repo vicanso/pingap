@@ -74,6 +74,7 @@ interface Config {
   servers?: Record<string, Server>;
   proxy_plugins?: Record<string, ProxyPlugin>;
   error_template?: string;
+  name?: string;
   pid_file?: string;
   upgrade_sock?: string;
   user?: string;

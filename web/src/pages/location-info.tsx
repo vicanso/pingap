@@ -8,6 +8,7 @@ import FormEditor, {
   FormItemCategory,
   formatProxyPluginCategory,
 } from "../components/form-editor";
+import { goToLoationInfo } from "../router";
 
 export default function LocationInfo() {
   const [initialized, config, update, remove] = useConfigStore((state) => [
@@ -131,10 +132,16 @@ export default function LocationInfo() {
     if (created) {
       locationName = newName;
     }
-    return update("location", locationName, data);
+    return update("location", locationName, data).then(() => {
+      if (created) {
+        goToLoationInfo(locationName);
+      }
+    });
   };
   const onRemove = async () => {
-    return remove("location", name || "");
+    return remove("location", name || "").then(() => {
+      goToLoationInfo("*");
+    });
   };
   return (
     <FormEditor

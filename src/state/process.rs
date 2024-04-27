@@ -91,7 +91,6 @@ impl BackgroundService for AutoRestart {
                 _ = period.tick() => {
                     match validate_restart() {
                        Ok((should_restart, conf)) => {
-                           // TODO diff config and sent to webhook
                            info!("Auto restart background service, should restart:{should_restart}");
                            if should_restart {
                                let diff_result = get_current_config().diff(conf);

@@ -72,9 +72,4 @@ export function goBack() {
   router.navigate(-1);
 }
 
-export function goToEntityForm(entity: string, id: string) {
-  // const url = ENTITY_EDITOR.replace(":entity", entity).replace(":id", id);
-  // router.navigate(url);
-}
-
 export default router;
