@@ -17,6 +17,8 @@ jobs:
         uses: actions/setup-node@v4
       - name: build-web
         run: make build-web
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
       - name: release
         uses: addnab/docker-run-action@v3
         with:
