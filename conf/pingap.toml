@@ -144,3 +144,8 @@ locations = ["lo"]
 
 # Acme
 # lets_encrypt = "domain1,domain2"
+
+
+[proxy_plugins.stats]
+category = 0
+value = "/stats"

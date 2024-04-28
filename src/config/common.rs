@@ -15,7 +15,7 @@
 use super::{Error, Result};
 use crate::util;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use http::HeaderValue;
+use http::{HeaderName, HeaderValue};
 use once_cell::sync::OnceCell;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -95,7 +95,7 @@ impl UpstreamConf {
     pub fn validate(&self, name: &str) -> Result<()> {
         if self.addrs.is_empty() {
             return Err(Error::Invalid {
-                message: "Upstream addrs is empty".to_string(),
+                message: "upstream addrs is empty".to_string(),
             });
         }
         // validate upstream addr
@@ -149,8 +149,20 @@ impl LocationConf {
                             message: format!("Header {header} is invalid(location:{name})"),
                         });
                     }
-                    HeaderValue::from_str(arr.unwrap().1).map_err(|err| Error::Invalid {
-                        message: format!("Header value is invalid, {}(location:{name})", err),
+                    let (header_name, header_value) = arr.unwrap();
+                    HeaderName::from_bytes(header_name.as_bytes()).map_err(|err| {
+                        Error::Invalid {
+                            message: format!(
+                                "Header name({header_name}) is invalid, {}(location:{name})",
+                                err
+                            ),
+                        }
+                    })?;
+                    HeaderValue::from_str(header_value).map_err(|err| Error::Invalid {
+                        message: format!(
+                            "Header value({header_value}) is invalid, {}(location:{name})",
+                            err
+                        ),
                     })?;
                 }
             }
@@ -160,7 +172,7 @@ impl LocationConf {
         let upstream = self.upstream.clone().unwrap_or_default();
         if !upstream.is_empty() && !upstream_names.contains(&upstream) {
             return Err(Error::Invalid {
-                message: format!("Upstream({upstream}) is not found(location:{name})"),
+                message: format!("upstream({upstream}) is not found(location:{name})"),
             });
         }
         validate(&self.proxy_headers)?;
@@ -226,7 +238,7 @@ impl ServerConf {
             for item in locations {
                 if !location_names.contains(item) {
                     return Err(Error::Invalid {
-                        message: format!("Location({item}) is not found(server:{name})"),
+                        message: format!("location({item}) is not found(server:{name})"),
                     });
                 }
             }
@@ -575,7 +587,7 @@ impl PingapConf {
             }
         }
         if exists_remove {
-            diff_result.push("\n".to_string());
+            diff_result.push("".to_string());
         }
 
         // add item
@@ -593,7 +605,7 @@ impl PingapConf {
             }
         }
         if exists_add {
-            diff_result.push("\n".to_string());
+            diff_result.push("".to_string());
         }
 
         for item in current_descriptions.iter() {
@@ -671,5 +683,269 @@ pub fn get_config_hash() -> String {
         value.to_string()
     } else {
         "".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        LocationConf, PingapConf, ServerConf, UpstreamConf, CATEGORY_LOCATION,
+        CATEGORY_PROXY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
+    };
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_upstream_conf() {
+        let mut conf = UpstreamConf::default();
+
+        let result = conf.validate("test");
+        assert_eq!(true, result.is_err());
+        assert_eq!(
+            "Invalid error upstream addrs is empty",
+            result.expect_err("").to_string()
+        );
+
+        conf.addrs = vec!["127.0.0.1".to_string(), "github".to_string()];
+        let result = conf.validate("test");
+        assert_eq!(true, result.is_err());
+        assert_eq!(
+            "Io error failed to lookup address information: nodename nor servname provided, or not known, github(upstream:test)",
+            result.expect_err("").to_string()
+        );
+
+        conf.addrs = vec!["127.0.0.1".to_string(), "github.com".to_string()];
+        conf.health_check = Some("http:///".to_string());
+        let result = conf.validate("test");
+        assert_eq!(true, result.is_err());
+        assert_eq!(
+            "Url parse error empty host, http:///",
+            result.expect_err("").to_string()
+        );
+
+        conf.health_check = Some("http://github.com/".to_string());
+        let result = conf.validate("test");
+        assert_eq!(true, result.is_ok());
+    }
+
+    #[test]
+    fn test_location_conf() {
+        let mut conf = LocationConf::default();
+        let upstream_names = vec!["upstream1".to_string()];
+
+        conf.upstream = Some("upstream2".to_string());
+        let result = conf.validate("lo", &upstream_names);
+        assert_eq!(true, result.is_err());
+        assert_eq!(
+            "Invalid error upstream(upstream2) is not found(location:lo)",
+            result.expect_err("").to_string()
+        );
+
+        conf.upstream = Some("upstream1".to_string());
+        conf.headers = Some(vec!["X-Request-Id".to_string()]);
+        let result = conf.validate("lo", &upstream_names);
+        assert_eq!(true, result.is_err());
+        assert_eq!(
+            "Invalid error Header X-Request-Id is invalid(location:lo)",
+            result.expect_err("").to_string()
+        );
+
+        conf.headers = Some(vec!["请求:响应".to_string()]);
+        let result = conf.validate("lo", &upstream_names);
+        assert_eq!(true, result.is_err());
+        assert_eq!(
+            "Invalid error Header name(请求) is invalid, invalid HTTP header name(location:lo)",
+            result.expect_err("").to_string()
+        );
+
+        conf.headers = Some(vec!["X-Request-Id: abcd".to_string()]);
+        let result = conf.validate("lo", &upstream_names);
+        assert_eq!(true, result.is_ok());
+
+        conf.rewrite = Some(r"foo(bar".to_string());
+        let result = conf.validate("lo", &upstream_names);
+        assert_eq!(true, result.is_err());
+        assert_eq!(
+            true,
+            result
+                .expect_err("")
+                .to_string()
+                .starts_with("Regex error regex parse error")
+        );
+
+        conf.rewrite = Some(r"^/api /".to_string());
+        let result = conf.validate("lo", &upstream_names);
+        assert_eq!(true, result.is_ok());
+    }
+
+    #[test]
+    fn test_location_get_wegiht() {
+        let mut conf = LocationConf::default();
+        conf.weight = Some(2048);
+
+        assert_eq!(2048, conf.get_weight());
+
+        conf.weight = None;
+        conf.path = Some("=/api".to_string());
+        assert_eq!(1029, conf.get_weight());
+
+        conf.path = Some("~/api".to_string());
+        assert_eq!(261, conf.get_weight());
+
+        conf.path = Some("/api".to_string());
+        assert_eq!(516, conf.get_weight());
+
+        conf.path = None;
+        conf.host = Some("github.com".to_string());
+        assert_eq!(128, conf.get_weight());
+    }
+
+    #[test]
+    fn test_server_conf() {
+        let mut conf = ServerConf::default();
+        let location_names = vec!["lo".to_string()];
+
+        let result = conf.validate("test", &location_names);
+        assert_eq!(true, result.is_err());
+        assert_eq!(
+            "Io error invalid socket address, ",
+            result.expect_err("").to_string()
+        );
+
+        conf.addr = "127.0.0.1:3001".to_string();
+        conf.locations = Some(vec!["lo1".to_string()]);
+        let result = conf.validate("test", &location_names);
+        assert_eq!(true, result.is_err());
+        assert_eq!(
+            "Invalid error location(lo1) is not found(server:test)",
+            result.expect_err("").to_string()
+        );
+
+        conf.locations = Some(vec!["lo".to_string()]);
+        conf.tls_key = Some("ab".to_string());
+        let result = conf.validate("test", &location_names);
+        assert_eq!(true, result.is_err());
+        assert_eq!(
+            "Base64 decode error Invalid padding",
+            result.expect_err("").to_string()
+        );
+
+        conf.tls_key = Some("YWJj".to_string());
+        conf.tls_cert = Some("YWJj".to_string());
+        let result = conf.validate("test", &location_names);
+        assert_eq!(true, result.is_ok());
+    }
+
+    #[test]
+    fn test_pingap_conf() {
+        let toml_data = include_bytes!("../../conf/pingap.toml");
+        let conf = PingapConf::try_from(toml_data.to_vec()).unwrap();
+
+        let (key, data) = conf.get_toml(CATEGORY_SERVER).unwrap();
+        assert_eq!("/servers.toml", key);
+        assert_eq!(
+            r###"[servers.test]
+access_log = "tiny"
+addr = "0.0.0.0:6188"
+locations = ["lo"]
+"###,
+            data
+        );
+
+        let (key, data) = conf.get_toml(CATEGORY_LOCATION).unwrap();
+        assert_eq!("/locations.toml", key);
+        assert_eq!(
+            r###"[locations.lo]
+headers = ["name:value"]
+host = ""
+path = "/"
+proxy_headers = ["name:value"]
+proxy_plugins = [
+    "pingap:requestId",
+    "pingap:stats",
+]
+rewrite = ""
+upstream = "charts"
+"###,
+            data
+        );
+
+        let (key, data) = conf.get_toml(CATEGORY_UPSTREAM).unwrap();
+        assert_eq!("/upstreams.toml", key);
+        assert_eq!(
+            r###"[upstreams.charts]
+addrs = ["127.0.0.1:5000"]
+algo = "hash:cookie"
+connection_timeout = "10s"
+health_check = "http://charts/ping?connection_timeout=3s&pingap"
+idle_timeout = "2m"
+read_timeout = "10s"
+total_connection_timeout = "30s"
+write_timeout = "10s"
+
+[upstreams.diving]
+addrs = ["127.0.0.1:5001"]
+"###,
+            data
+        );
+
+        let (key, data) = conf.get_toml(CATEGORY_PROXY_PLUGIN).unwrap();
+        assert_eq!("/proxy_plugins.toml", key);
+        assert_eq!(
+            r###"[proxy_plugins.stats]
+category = 0
+value = "/stats"
+"###,
+            data
+        );
+
+        let (key, data) = conf.get_toml("").unwrap();
+        assert_eq!("/basic.toml", key);
+        assert_eq!(
+            r###"error_template = ""
+pid_file = "/tmp/pingap.pid"
+upgrade_sock = "/tmp/pingap_upgrade.sock"
+threads = 1
+work_stealing = true
+grace_period = "3m"
+graceful_shutdown_timeout = "10s"
+log_level = "info"
+"###,
+            data
+        );
+
+        assert_eq!("CA5D110B", conf.hash().unwrap());
+    }
+
+    #[test]
+    fn test_pingap_diff() {
+        let toml_data = include_bytes!("../../conf/pingap.toml");
+        let conf = PingapConf::try_from(toml_data.to_vec()).unwrap();
+
+        let mut other = conf.clone();
+        other.servers.insert(
+            "github".to_string(),
+            ServerConf {
+                addr: "127.0.0.1:5123".to_string(),
+                ..Default::default()
+            },
+        );
+
+        other.remove(CATEGORY_UPSTREAM, "diving").unwrap();
+        other.threads = Some(5);
+
+        let value = conf.diff(other);
+
+        assert_eq!(
+            r###"--upstream:diving
+
+++server:github
+
+basic
+-threads = 1
++threads = 5
+
+"###,
+            value.join("\n")
+        );
     }
 }

@@ -22,7 +22,7 @@ mod load;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Invalid {message}"))]
+    #[snafu(display("Invalid error {message}"))]
     Invalid { message: String },
     #[snafu(display("Glob pattern error {source}, {path}"))]
     Pattern {
