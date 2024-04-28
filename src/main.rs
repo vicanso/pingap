@@ -162,7 +162,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                 && record.level() == Level::Warn
                 && msg.contains("becomes unhealthy")
             {
-                webhook::send(webhook::WebhookSendParams {
+                webhook::send(webhook::SendNotificationParams {
+                    level: webhook::NotificationLevel::Warn,
                     category: "backend_unhealthy".to_string(),
                     msg: format!("{}", record.args()),
                 });

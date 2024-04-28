@@ -16,7 +16,7 @@ use crate::{config::get_app_name, state};
 use log::{error, info};
 use once_cell::sync::OnceCell;
 use serde_json::{Map, Value};
-use std::time::Duration;
+use std::{fmt::Display, time::Duration};
 
 static WEBHOOK_URL: OnceCell<String> = OnceCell::new();
 static WEBHOOK_CATEGORY: OnceCell<String> = OnceCell::new();
@@ -25,12 +25,30 @@ pub fn set_web_hook(url: &str, category: &str) {
     WEBHOOK_CATEGORY.get_or_init(|| category.to_string());
 }
 
-pub struct WebhookSendParams {
+pub enum NotificationLevel {
+    Info,
+    Warn,
+    Error,
+}
+
+impl Display for NotificationLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let msg = match self {
+            NotificationLevel::Error => "error",
+            NotificationLevel::Warn => "warn",
+            _ => "info",
+        };
+        write!(f, "{msg}")
+    }
+}
+
+pub struct SendNotificationParams {
     pub category: String,
+    pub level: NotificationLevel,
     pub msg: String,
 }
 
-pub fn send(params: WebhookSendParams) {
+pub fn send(params: SendNotificationParams) {
     info!("Webhook {}, {}", params.category, params.msg);
     let webhook_type = if let Some(value) = WEBHOOK_CATEGORY.get() {
         value.to_string()
@@ -48,13 +66,19 @@ pub fn send(params: WebhookSendParams) {
     std::thread::spawn(move || {
         if let Ok(rt) = tokio::runtime::Runtime::new() {
             let category = params.category;
+            let level = params.level;
             let send = async move {
                 let client = reqwest::Client::new();
                 let mut data = serde_json::Map::new();
                 let hostname = state::get_hostname().clone();
                 let name = get_app_name();
+                let color_type = match level {
+                    NotificationLevel::Error => "error",
+                    NotificationLevel::Warn => "warning",
+                    _ => "comment",
+                };
                 let content = format!(
-                    r###"{name}
+                    r###" <font color="{color_type}">{name}({level})</font>
                     >hostname: {hostname}
                     >category: {category}
                     >message: {}"###,
@@ -77,6 +101,7 @@ pub fn send(params: WebhookSendParams) {
                     }
                     _ => {
                         data.insert("name".to_string(), Value::String(name));
+                        data.insert("level".to_string(), Value::String(level.to_string()));
                         data.insert("category".to_string(), Value::String(category));
                         data.insert("message".to_string(), Value::String(params.msg));
                         data.insert("hostname".to_string(), Value::String(hostname));

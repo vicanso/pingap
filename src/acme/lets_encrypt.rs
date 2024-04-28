@@ -295,7 +295,8 @@ async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
     let buf = serde_json::to_vec(&info).map_err(|e| Error::SerdeJson { source: e })?;
     f.write(&buf).await.map_err(|e| Error::Io { source: e })?;
     info!("Write cert success, {path:?}");
-    webhook::send(webhook::WebhookSendParams {
+    webhook::send(webhook::SendNotificationParams {
+        level: webhook::NotificationLevel::Info,
         category: "lets_encrypt".to_string(),
         msg: "Generate new cert from lets encrypt".to_string(),
     });
