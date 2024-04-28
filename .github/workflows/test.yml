@@ -17,14 +17,14 @@ jobs:
         uses: actions/setup-node@v4
       - name: build-web
         run: make build-web
-      - name: Install Protoc
-        uses: arduino/setup-protoc@v3
       - name: release
         uses: addnab/docker-run-action@v3
         with:
           image: messense/rust-musl-cross:x86_64-musl
           options: -v ${{ github.workspace }}:/home/rust/src
           run: |
+            apt-get update
+            apt-get install protobuf-compiler
             rustc --version
             cargo --version
             make test
