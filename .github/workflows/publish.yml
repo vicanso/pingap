@@ -50,6 +50,8 @@ jobs:
           image: messense/rust-musl-cross:x86_64-musl
           options: -v ${{ github.workspace }}:/home/rust/src
           run: |
+            apt-get update
+            apt-get install protobuf-compiler -y
             make release
             mv target/x86_64-unknown-linux-musl/release/pingap ./pingap-linux-x86
       - name: Upload Assets
@@ -70,6 +72,8 @@ jobs:
           image: messense/rust-musl-cross:aarch64-musl
           options: -v ${{ github.workspace }}:/home/rust/src
           run: |
+            apt-get update
+            apt-get install protobuf-compiler -y
             make release
             mv target/aarch64-unknown-linux-musl/release/pingap ./pingap-linux-aarch64
       - name: Upload Assets

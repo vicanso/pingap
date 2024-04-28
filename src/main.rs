@@ -26,6 +26,7 @@ use state::get_start_time;
 use std::error::Error;
 use std::io::Write;
 use std::sync::Arc;
+use std::time::Duration;
 
 mod acme;
 mod config;
@@ -304,7 +305,12 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     if args.autorestart {
-        my_server.add_service(background_service("Auto Restart", AutoRestart {}));
+        my_server.add_service(background_service(
+            "Auto Restart",
+            AutoRestart {
+                interval: Duration::from_secs(90),
+            },
+        ));
     }
     if !domains.is_empty() {
         my_server.add_service(background_service(

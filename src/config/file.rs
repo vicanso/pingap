@@ -55,6 +55,7 @@ pub struct FileStorage {
     path: String,
 }
 impl FileStorage {
+    /// Create a new file storage for config.
     pub fn new(path: &str) -> Result<Self> {
         let filepath = util::resolve_path(path);
         if filepath.is_empty() {

@@ -68,7 +68,9 @@ impl RestartProcessCommand {
     }
 }
 
-pub struct AutoRestart {}
+pub struct AutoRestart {
+    pub interval: Duration,
+}
 
 async fn validate_restart() -> Result<(bool, PingapConf), Box<dyn std::error::Error>> {
     let conf = load_config(&get_config_path(), false).await?;
@@ -82,7 +84,7 @@ async fn validate_restart() -> Result<(bool, PingapConf), Box<dyn std::error::Er
 #[async_trait]
 impl BackgroundService for AutoRestart {
     async fn start(&self, mut shutdown: ShutdownWatch) {
-        let mut period = interval(Duration::from_secs(90));
+        let mut period = interval(self.interval);
         loop {
             tokio::select! {
                 _ = shutdown.changed() => {

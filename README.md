@@ -8,11 +8,12 @@ A reverse proxy like nginx, built on [pingora](https://github.com/cloudflare/pin
 
 - Filter location by host and path
 - HTTP 1/2 end to end proxy
-- Graceful reload
+- TOML base configuration, file or etcd storage
+- Graceful reload and auto restart after the configuration is changed
 - Template for http access log
-- TOML base configuration
 - Admin Web UI configuration
-- Http proxy plugins: `compression`, `static serve`, `limit`, `stats` and `mock`.
+- Genrate TLS certificates from let's encrypt
+- Http proxy plugins: `compression`, `static serve`, `limit`, `stats`, `mock`, etc.
 
 ## Start
 

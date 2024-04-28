@@ -106,7 +106,7 @@ impl UpstreamConf {
                 .map_err(|e| Error::AddrParse {
                     source: e,
                     addr: format!("{}(upstream:{name})", arr[0]),
-                });
+                })?;
         }
         // validate health check
         let health_check = self.health_check.clone().unwrap_or_default();
@@ -144,11 +144,11 @@ impl LocationConf {
                     let arr = header.split_once(':').map(|(k, v)| (k.trim(), v.trim()));
                     if arr.is_none() {
                         return Err(Error::Invalid {
-                            message: format!("{header} is invalid header(location:{name})"),
+                            message: format!("Header {header} is invalid(location:{name})"),
                         });
                     }
                     HeaderValue::from_str(arr.unwrap().1).map_err(|err| Error::Invalid {
-                        message: format!("{}(location:{name})", err),
+                        message: format!("Header value is invalid, {}(location:{name})", err),
                     })?;
                 }
             }
@@ -158,7 +158,7 @@ impl LocationConf {
         let upstream = self.upstream.clone().unwrap_or_default();
         if !upstream.is_empty() && !upstream_names.contains(&upstream) {
             return Err(Error::Invalid {
-                message: format!("{upstream} upstream is not found(location:{name})"),
+                message: format!("Upstream({upstream}) is not found(location:{name})"),
             });
         }
         validate(&self.proxy_headers)?;
@@ -224,7 +224,7 @@ impl ServerConf {
             for item in locations {
                 if !location_names.contains(item) {
                     return Err(Error::Invalid {
-                        message: format!("{item} location is not found(server:{name})"),
+                        message: format!("Location({item}) is not found(server:{name})"),
                     });
                 }
             }
@@ -453,6 +453,7 @@ impl PingapConf {
         }
         Ok(())
     }
+    /// Generate the content hash of config.
     pub fn hash(&self) -> Result<String> {
         let data = toml::to_string_pretty(self).map_err(|e| Error::Ser { source: e })?;
         let mut lines: Vec<&str> = data.split('\n').collect();
@@ -460,6 +461,7 @@ impl PingapConf {
         let hash = crc32fast::hash(lines.join("\n").as_bytes());
         Ok(format!("{:X}", hash))
     }
+    /// Remove the config by name.
     pub fn remove(&mut self, category: &str, name: &str) -> Result<()> {
         match category {
             CATEGORY_UPSTREAM => {
@@ -550,6 +552,7 @@ impl PingapConf {
         descriptions.sort_by_key(|d| d.name.clone());
         descriptions
     }
+    /// Get the different content of two config.
     pub fn diff(&self, other: PingapConf) -> Vec<String> {
         let current_descriptions = self.descriptions();
         let new_descriptions = other.descriptions();
@@ -617,15 +620,18 @@ impl PingapConf {
 }
 
 static CONFIG_PATH: OnceCell<String> = OnceCell::new();
+/// Set the config path.
 pub fn set_config_path(conf_path: &str) {
     CONFIG_PATH.get_or_init(|| conf_path.to_string());
 }
 
 static CURRENT_CONFIG: OnceCell<PingapConf> = OnceCell::new();
+/// Set current config of pingap.
 pub fn set_current_config(value: &PingapConf) {
     CURRENT_CONFIG.get_or_init(|| value.clone());
 }
 
+/// Get the running pingap config.
 pub fn get_current_config() -> PingapConf {
     if let Some(value) = CURRENT_CONFIG.get() {
         value.clone()

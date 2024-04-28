@@ -272,6 +272,7 @@ impl Server {
                 Err(e) => error!("get lets encrypt cert fail, {e}"),
             };
         }
+        // new tls settings
         let tls_settings = if tls_cert.is_some() {
             let dir = tempfile::tempdir().context(IoSnafu)?;
             let cert_path = dir.path().join("tls-cert");
@@ -356,6 +357,7 @@ impl ProxyHttp for Server {
             self.serve_admin(session, ctx).await?;
             return Ok(true);
         }
+        // only enable for http 80
         if self.lets_encrypt_enabled {
             let done = handle_lets_encrypt(session, ctx).await?;
             if done {
@@ -393,9 +395,6 @@ impl ProxyHttp for Server {
         if done {
             return Ok(true);
         }
-
-        // TODO get response from cache
-        // check location support cache
 
         Ok(false)
     }

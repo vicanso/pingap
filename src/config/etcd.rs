@@ -28,6 +28,7 @@ pub struct EtcdStorage {
 pub const ETCD_PROTOCOL: &str = "etcd://";
 
 impl EtcdStorage {
+    /// Create a new etcd storage for config.
     pub fn new(value: &str) -> Result<Self> {
         let mut hosts = "".to_string();
         let mut path = "".to_string();
