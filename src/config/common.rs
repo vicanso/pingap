@@ -567,10 +567,10 @@ impl PingapConf {
             for new_item in new_descriptions.iter() {
                 if item.name == new_item.name {
                     found = true;
-                    exists_remove = true;
                 }
             }
             if !found {
+                exists_remove = true;
                 diff_result.push(format!("--{}", item.name));
             }
         }
@@ -585,10 +585,10 @@ impl PingapConf {
             for item in current_descriptions.iter() {
                 if item.name == new_item.name {
                     found = true;
-                    exists_add = true;
                 }
             }
             if !found {
+                exists_add = true;
                 diff_result.push(format!("++{}", new_item.name));
             }
         }
