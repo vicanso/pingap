@@ -101,7 +101,11 @@ impl UpstreamConf {
         // validate upstream addr
         for addr in self.addrs.iter() {
             let arr: Vec<_> = addr.split(' ').collect();
-            let _ = arr[0].to_socket_addrs().map_err(|e| Error::Io {
+            let mut addr = arr[0].to_string();
+            if !addr.contains(':') {
+                addr = format!("{addr}:80");
+            }
+            let _ = addr.to_socket_addrs().map_err(|e| Error::Io {
                 source: e,
                 file: format!("{}(upstream:{name})", arr[0]),
             })?;
