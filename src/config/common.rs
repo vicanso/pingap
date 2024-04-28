@@ -101,12 +101,10 @@ impl UpstreamConf {
         // validate upstream addr
         for addr in self.addrs.iter() {
             let arr: Vec<_> = addr.split(' ').collect();
-            let _ = arr[0]
-                .parse::<std::net::SocketAddr>()
-                .map_err(|e| Error::AddrParse {
-                    source: e,
-                    addr: format!("{}(upstream:{name})", arr[0]),
-                })?;
+            let _ = arr[0].to_socket_addrs().map_err(|e| Error::Io {
+                source: e,
+                file: format!("{}(upstream:{name})", arr[0]),
+            })?;
         }
         // validate health check
         let health_check = self.health_check.clone().unwrap_or_default();
