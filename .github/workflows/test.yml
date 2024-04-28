@@ -24,7 +24,7 @@ jobs:
           options: -v ${{ github.workspace }}:/home/rust/src
           run: |
             apt-get update
-            apt-get install protobuf-compiler
+            apt-get install protobuf-compiler -y
             rustc --version
             cargo --version
             make test
