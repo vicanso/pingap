@@ -22,6 +22,7 @@ jobs:
         run: make build-web
       - name: Install target
         run: |
+          brew install protobuf
           rustup update
           rustup target add aarch64-apple-darwin
           rustup target add x86_64-apple-darwin

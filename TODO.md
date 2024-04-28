@@ -1,12 +1,12 @@
 # TODO
 
-- [ ] support etcd or other storage for config
 - [ ] better error handler
 - [ ] log rotate
 - [ ] support validate config before save(web)
 - [ ] http response cache
 - [ ] fix not_before not_after of cert
 - [ ] client body size limit plugin
+- [x] support etcd or other storage for config
 - [x] send more event to webhook
 - [x] remove config
 - [x] diff config and send to webhook
