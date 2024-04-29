@@ -122,3 +122,35 @@ impl ConfigStorage for FileStorage {
             })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::FileStorage;
+    use crate::config::{
+        ConfigStorage, PingapConf, CATEGORY_LOCATION, CATEGORY_PROXY_PLUGIN, CATEGORY_SERVER,
+        CATEGORY_UPSTREAM,
+    };
+    use nanoid::nanoid;
+    use pretty_assertions::assert_eq;
+
+    #[tokio::test]
+    async fn test_file_storage() {
+        let path = format!("/tmp/{}", nanoid!(16));
+        tokio::fs::create_dir(&path).await.unwrap();
+        let storage = FileStorage::new(&path).unwrap();
+        let toml_data = include_bytes!("../../conf/pingap.toml");
+        let conf = PingapConf::try_from(toml_data.to_vec()).unwrap();
+
+        storage.save_config(&conf, "basic").await.unwrap();
+        storage.save_config(&conf, CATEGORY_UPSTREAM).await.unwrap();
+        storage.save_config(&conf, CATEGORY_LOCATION).await.unwrap();
+        storage
+            .save_config(&conf, CATEGORY_PROXY_PLUGIN)
+            .await
+            .unwrap();
+        storage.save_config(&conf, CATEGORY_SERVER).await.unwrap();
+
+        let current_conf = storage.load_config(false).await.unwrap();
+        assert_eq!(current_conf.hash().unwrap(), conf.hash().unwrap());
+    }
+}

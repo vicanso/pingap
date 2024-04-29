@@ -108,3 +108,49 @@ impl ProxyPlugin for IpLimit {
         return Ok(false);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::IpLimit;
+    use crate::state::State;
+    use crate::{config::ProxyPluginStep, plugin::ProxyPlugin};
+    use pingora::proxy::Session;
+    use pretty_assertions::assert_eq;
+    use tokio_test::io::Builder;
+
+    #[tokio::test]
+    async fn test_ip_limit() {
+        let deny =
+            IpLimit::new("192.168.1.1,1.1.1.0/24 1", ProxyPluginStep::RequestFilter).unwrap();
+
+        let headers = vec!["X-Forwarded-For: 2.1.1.2"].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let done = deny
+            .handle(&mut session, &mut State::default())
+            .await
+            .unwrap();
+        assert_eq!(false, done);
+
+        let headers = vec!["Accept-Encoding: gzip"].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let done = deny
+            .handle(
+                &mut session,
+                &mut State {
+                    client_ip: Some("2.1.1.2".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(false, done);
+    }
+}

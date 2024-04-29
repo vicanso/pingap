@@ -214,7 +214,6 @@ impl LocationConf {
 }
 
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
-
 pub struct ServerConf {
     pub addr: String,
     pub access_log: Option<String>,

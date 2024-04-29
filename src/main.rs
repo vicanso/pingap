@@ -68,6 +68,12 @@ struct Args {
     /// Admin server adddr
     #[arg(long)]
     admin: Option<String>,
+    /// Admin node for config manager
+    ///
+    /// This flag is useful for config manager, it will only run as admin,
+    /// not run the sevices of config.
+    #[arg(long)]
+    adminnode: bool,
     /// Whether this server should try to auto restart
     #[arg(long)]
     autorestart: bool,
@@ -131,8 +137,63 @@ fn get_config(conf: String, admin: bool, s: Sender<Result<PingapConf, config::Er
     });
 }
 
+fn parse_admin_proxy_plugin(addr: &str) -> (ServerConf, String, ProxyPluginConf) {
+    let arr: Vec<&str> = addr.split('@').collect();
+    let mut addr = arr[0].to_string();
+    let mut authorization = "".to_string();
+    if arr.len() >= 2 {
+        authorization = arr[0].trim().to_string();
+        addr = arr[1].trim().to_string();
+    }
+    (
+        ServerConf {
+            name: "pingap:admin".to_string(),
+            admin: true,
+            addr,
+            ..Default::default()
+        },
+        util::ADMIN_SERVER_PLUGIN.clone(),
+        ProxyPluginConf {
+            value: Some(format!("/ {authorization}")),
+            category: ProxyPluginCategory::Admin,
+            remark: Some("Admin serve".to_string()),
+            step: None,
+        },
+    )
+}
+
+fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
+    env_logger::Builder::from_env(env_logger::Env::default()).try_init()?;
+    let (server_conf, name, proxy_plugin_info) =
+        parse_admin_proxy_plugin(&args.admin.unwrap_or_default());
+
+    if let Err(e) = plugin::init_proxy_plugins(vec![(name, proxy_plugin_info)]) {
+        error!("init proxy plugins fail, {e}");
+    }
+    config::set_config_path(&args.conf);
+    let mut my_server = server::Server::new(None)?;
+    let ps = Server::new(server_conf)?;
+    let services = ps.run(&my_server.configuration)?;
+    my_server.add_services(services.bg_services);
+    my_server.add_service(services.lb);
+
+    my_server.bootstrap();
+    info!("Admin node server is running");
+    let _ = get_start_time();
+
+    // TODO not process exit until pingora supports
+    my_server.run_forever();
+
+    Ok(())
+}
+
 fn run() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
+
+    if args.adminnode && args.admin.is_some() {
+        return run_admin_node(args);
+    }
+
     let (s, r) = crossbeam_channel::bounded(0);
     get_config(args.conf.clone(), args.admin.is_some(), s);
     let conf = r.recv()??;
@@ -244,29 +305,11 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let mut server_conf_list: Vec<ServerConf> = conf.into();
     if let Some(addr) = args.admin {
-        let arr: Vec<&str> = addr.split('@').collect();
-        let mut addr = arr[0].to_string();
-        let mut authorization = "".to_string();
-        if arr.len() >= 2 {
-            authorization = arr[0].trim().to_string();
-            addr = arr[1].trim().to_string();
-        }
-        proxy_plugin_confs.push((
-            util::ADMIN_SERVER_PLUGIN.clone(),
-            ProxyPluginConf {
-                value: Some(format!("/ {authorization}")),
-                category: ProxyPluginCategory::Admin,
-                remark: Some("Admin serve".to_string()),
-                step: None,
-            },
-        ));
-        server_conf_list.push(ServerConf {
-            name: "pingap:admin".to_string(),
-            admin: true,
-            addr,
-            ..Default::default()
-        });
+        let (server_conf, name, proxy_plugin_info) = parse_admin_proxy_plugin(&addr);
+        proxy_plugin_confs.push((name, proxy_plugin_info));
+        server_conf_list.push(server_conf);
     }
+
     if let Err(e) = plugin::init_proxy_plugins(proxy_plugin_confs) {
         error!("init proxy plugins fail, {e}");
     }

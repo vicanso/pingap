@@ -79,3 +79,30 @@ impl ProxyPlugin for BasicAuth {
         Ok(false)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::BasicAuth;
+    use crate::state::State;
+    use crate::{config::ProxyPluginStep, plugin::ProxyPlugin};
+    use pingora::proxy::Session;
+    use pretty_assertions::assert_eq;
+    use tokio_test::io::Builder;
+
+    #[tokio::test]
+    async fn test_basic_auth() {
+        let headers = vec!["Authorization: Basic YWRtaW46MTIzMTIz"].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let auth =
+            BasicAuth::new("YWRtaW46MTIzMTIz", ProxyPluginStep::ProxyUpstreamFilter).unwrap();
+        let done = auth
+            .handle(&mut session, &mut State::default())
+            .await
+            .unwrap();
+        assert_eq!(false, done);
+    }
+}
