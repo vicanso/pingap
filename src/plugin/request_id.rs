@@ -16,6 +16,7 @@ use super::ProxyPlugin;
 use super::Result;
 use crate::config::ProxyPluginCategory;
 use crate::config::ProxyPluginStep;
+use crate::http_extra::HttpResponse;
 use crate::http_extra::HTTP_HEADER_NAME_X_REQUEST_ID;
 use crate::state::State;
 use async_trait::async_trait;
@@ -61,11 +62,15 @@ impl ProxyPlugin for RequestId {
         ProxyPluginCategory::RequestId
     }
     #[inline]
-    async fn handle(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<bool> {
+    async fn handle(
+        &self,
+        session: &mut Session,
+        ctx: &mut State,
+    ) -> pingora::Result<Option<HttpResponse>> {
         let key = HTTP_HEADER_NAME_X_REQUEST_ID.clone();
         if let Some(id) = session.get_header(&key) {
             ctx.request_id = Some(id.to_str().unwrap_or_default().to_string());
-            return Ok(false);
+            return Ok(None);
         }
         let id = match self.algorithm.as_str() {
             "nanoid" => {
@@ -76,6 +81,43 @@ impl ProxyPlugin for RequestId {
         };
         ctx.request_id = Some(id.clone());
         let _ = session.req_header_mut().insert_header(key, &id);
-        Ok(false)
+        Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RequestId;
+    use crate::state::State;
+    use crate::{config::ProxyPluginStep, plugin::ProxyPlugin};
+    use pingora::proxy::Session;
+    use pretty_assertions::assert_eq;
+    use tokio_test::io::Builder;
+
+    #[tokio::test]
+    async fn test_request_id() {
+        let id = RequestId::new("nanoid 10", ProxyPluginStep::RequestFilter).unwrap();
+
+        let headers = vec!["X-Request-Id: 123"].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let mut state = State::default();
+        let result = id.handle(&mut session, &mut state).await.unwrap();
+        assert_eq!(true, result.is_none());
+        assert_eq!("123", state.request_id.unwrap_or_default());
+
+        let headers = vec!["Accept-Encoding: gzip"].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let mut state = State::default();
+        let result = id.handle(&mut session, &mut state).await.unwrap();
+        assert_eq!(true, result.is_none());
+        assert_eq!(10, state.request_id.unwrap_or_default().len());
     }
 }

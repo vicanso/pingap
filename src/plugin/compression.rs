@@ -15,6 +15,7 @@
 use super::ProxyPlugin;
 use super::{Error, Result};
 use crate::config::{ProxyPluginCategory, ProxyPluginStep};
+use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
 use http::HeaderValue;
@@ -73,15 +74,19 @@ impl ProxyPlugin for Compression {
         ProxyPluginCategory::Compression
     }
     #[inline]
-    async fn handle(&self, session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
+    async fn handle(
+        &self,
+        session: &mut Session,
+        _ctx: &mut State,
+    ) -> pingora::Result<Option<HttpResponse>> {
         if !self.support_compression {
-            return Ok(false);
+            return Ok(None);
         }
         let header = session.req_header_mut();
         if let Some(accept_encoding) = header.headers.get(http::header::ACCEPT_ENCODING) {
             let accept_encoding = accept_encoding.to_str().unwrap_or_default();
             if accept_encoding.is_empty() {
-                return Ok(false);
+                return Ok(None);
             }
             let level = if self.zstd_level > 0 && accept_encoding.contains("zstd") {
                 let _ = header.insert_header(http::header::ACCEPT_ENCODING, ZSTD_ENCODING.clone());
@@ -100,7 +105,7 @@ impl ProxyPlugin for Compression {
                 session.downstream_compression.adjust_level(level);
             }
         }
-        Ok(false)
+        Ok(None)
     }
 }
 #[cfg(test)]
@@ -114,60 +119,58 @@ mod tests {
 
     #[tokio::test]
     async fn test_basic_auth() {
+        let compression = Compression::new("9 8 7", ProxyPluginStep::ProxyUpstreamFilter).unwrap();
+
+        // gzip
         let headers = vec!["Accept-Encoding: gzip"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(&input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-
-        let compression = Compression::new("9 8 7", ProxyPluginStep::ProxyUpstreamFilter).unwrap();
-        let done = compression
+        let result = compression
             .handle(&mut session, &mut State::default())
             .await
             .unwrap();
-        assert_eq!(false, done);
+        assert_eq!(true, result.is_none());
         assert_eq!(true, session.downstream_compression.is_enabled());
 
+        // brotli
         let headers = vec!["Accept-Encoding: br"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(&input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-
-        let compression = Compression::new("9 8 7", ProxyPluginStep::ProxyUpstreamFilter).unwrap();
-        let done = compression
+        let result = compression
             .handle(&mut session, &mut State::default())
             .await
             .unwrap();
-        assert_eq!(false, done);
+        assert_eq!(true, result.is_none());
         assert_eq!(true, session.downstream_compression.is_enabled());
 
+        // zstd
         let headers = vec!["Accept-Encoding: zstd"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(&input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-
-        let compression = Compression::new("9 8 7", ProxyPluginStep::ProxyUpstreamFilter).unwrap();
-        let done = compression
+        let result = compression
             .handle(&mut session, &mut State::default())
             .await
             .unwrap();
-        assert_eq!(false, done);
+        assert_eq!(true, result.is_none());
         assert_eq!(true, session.downstream_compression.is_enabled());
 
+        // not support compression
         let headers = vec!["Accept-Encoding: none"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(&input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-
-        let compression = Compression::new("9 8 7", ProxyPluginStep::ProxyUpstreamFilter).unwrap();
-        let done = compression
+        let result = compression
             .handle(&mut session, &mut State::default())
             .await
             .unwrap();
-        assert_eq!(false, done);
+        assert_eq!(true, result.is_none());
         assert_eq!(false, session.downstream_compression.is_enabled());
     }
 }

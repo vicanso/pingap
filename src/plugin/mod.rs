@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::config::{ProxyPluginCategory, ProxyPluginConf, ProxyPluginStep};
+use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
 use once_cell::sync::OnceCell;
@@ -53,8 +54,12 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 pub trait ProxyPlugin: Sync + Send {
     fn category(&self) -> ProxyPluginCategory;
     fn step(&self) -> ProxyPluginStep;
-    async fn handle(&self, _session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
-        Ok(false)
+    async fn handle(
+        &self,
+        _session: &mut Session,
+        _ctx: &mut State,
+    ) -> pingora::Result<Option<HttpResponse>> {
+        Ok(None)
     }
 }
 

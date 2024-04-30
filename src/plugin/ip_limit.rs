@@ -82,7 +82,11 @@ impl ProxyPlugin for IpLimit {
         ProxyPluginCategory::IpLimit
     }
     #[inline]
-    async fn handle(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<bool> {
+    async fn handle(
+        &self,
+        session: &mut Session,
+        ctx: &mut State,
+    ) -> pingora::Result<Option<HttpResponse>> {
         let ip = if let Some(ip) = &ctx.client_ip {
             ip.to_string()
         } else {
@@ -94,18 +98,19 @@ impl ProxyPlugin for IpLimit {
         let found = if self.ip_list.contains(&ip) {
             true
         } else {
-            let addr = ip
-                .parse::<IpAddr>()
-                .map_err(|err| util::new_internal_error(400, err.to_string()))?;
-            self.ip_net_list.iter().any(|item| item.contains(&addr))
+            match ip.parse::<IpAddr>() {
+                Ok(addr) => self.ip_net_list.iter().any(|item| item.contains(&addr)),
+                Err(e) => {
+                    return Ok(Some(HttpResponse::bad_request(e.to_string().into())));
+                }
+            }
         };
         // deny ip
         let allow = if self.category > 0 { !found } else { found };
         if !allow {
-            self.forbidden_resp.clone().send(session).await?;
-            return Ok(true);
+            return Ok(Some(self.forbidden_resp.clone()));
         }
-        return Ok(false);
+        return Ok(None);
     }
 }
 
@@ -114,6 +119,7 @@ mod tests {
     use super::IpLimit;
     use crate::state::State;
     use crate::{config::ProxyPluginStep, plugin::ProxyPlugin};
+    use http::StatusCode;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -129,11 +135,11 @@ mod tests {
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let done = deny
+        let result = deny
             .handle(&mut session, &mut State::default())
             .await
             .unwrap();
-        assert_eq!(false, done);
+        assert_eq!(true, result.is_none());
 
         let headers = vec!["Accept-Encoding: gzip"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
@@ -141,7 +147,7 @@ mod tests {
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let done = deny
+        let result = deny
             .handle(
                 &mut session,
                 &mut State {
@@ -151,6 +157,19 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(false, done);
+        assert_eq!(true, result.is_none());
+
+        let result = deny
+            .handle(
+                &mut session,
+                &mut State {
+                    client_ip: Some("1.1.1.2".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(true, result.is_some());
+        assert_eq!(StatusCode::FORBIDDEN, result.unwrap().status);
     }
 }

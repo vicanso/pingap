@@ -322,8 +322,11 @@ impl Server {
     }
     async fn serve_admin(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<()> {
         if let Some(plugin) = get_proxy_plugin(util::ADMIN_SERVER_PLUGIN.as_str()) {
-            let done = plugin.handle(session, ctx).await?;
-            if !done {
+            let result = plugin.handle(session, ctx).await?;
+            if let Some(resp) = result {
+                ctx.status = Some(resp.status);
+                ctx.response_body_size = resp.send(session).await?;
+            } else {
                 return Err(util::new_internal_error(
                     500,
                     "Admin server is unavailable".to_string(),

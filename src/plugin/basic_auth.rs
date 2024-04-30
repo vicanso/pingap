@@ -70,13 +70,16 @@ impl ProxyPlugin for BasicAuth {
         ProxyPluginCategory::BasicAuth
     }
     #[inline]
-    async fn handle(&self, session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
+    async fn handle(
+        &self,
+        session: &mut Session,
+        _ctx: &mut State,
+    ) -> pingora::Result<Option<HttpResponse>> {
         let value = session.get_header_bytes(http::header::AUTHORIZATION);
         if value.is_empty() || !self.authorizations.contains(&value.to_vec()) {
-            self.unauthorized_resp.clone().send(session).await?;
-            return Ok(true);
+            return Ok(Some(self.unauthorized_resp.clone()));
         }
-        Ok(false)
+        return Ok(None);
     }
 }
 
@@ -85,24 +88,39 @@ mod tests {
     use super::BasicAuth;
     use crate::state::State;
     use crate::{config::ProxyPluginStep, plugin::ProxyPlugin};
+    use http::StatusCode;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
 
     #[tokio::test]
     async fn test_basic_auth() {
+        let auth =
+            BasicAuth::new("YWRtaW46MTIzMTIz", ProxyPluginStep::ProxyUpstreamFilter).unwrap();
+
+        // auth success
         let headers = vec!["Authorization: Basic YWRtaW46MTIzMTIz"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(&input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-
-        let auth =
-            BasicAuth::new("YWRtaW46MTIzMTIz", ProxyPluginStep::ProxyUpstreamFilter).unwrap();
-        let done = auth
+        let result = auth
             .handle(&mut session, &mut State::default())
             .await
             .unwrap();
-        assert_eq!(false, done);
+        assert_eq!(true, result.is_none());
+
+        // auth fail
+        let headers = vec!["Authorization: Basic YWRtaW46MTIzMTIa"].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let result = auth
+            .handle(&mut session, &mut State::default())
+            .await
+            .unwrap();
+        assert_eq!(true, result.is_some());
+        assert_eq!(StatusCode::UNAUTHORIZED, result.unwrap().status);
     }
 }

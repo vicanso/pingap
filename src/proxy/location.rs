@@ -215,8 +215,13 @@ impl Location {
                     if plugin.step() != step {
                         continue;
                     }
-                    let done = plugin.handle(session, ctx).await?;
-                    if done {
+                    let result = plugin.handle(session, ctx).await?;
+                    if let Some(resp) = result {
+                        // ingore http response status >= 900
+                        if resp.status.as_u16() < 900 {
+                            ctx.status = Some(resp.status);
+                            ctx.response_body_size = resp.send(session).await?;
+                        }
                         return Ok(true);
                     }
                 }

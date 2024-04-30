@@ -50,7 +50,7 @@ pub struct EmbeddedStaticFile(pub Option<EmbeddedFile>, pub u32);
 impl From<EmbeddedStaticFile> for HttpResponse {
     fn from(value: EmbeddedStaticFile) -> Self {
         if value.0.is_none() {
-            return HttpResponse::not_found();
+            return HttpResponse::not_found("Not Found".into());
         }
         // value 0 is some
         let file = value.0.unwrap();
@@ -289,20 +289,21 @@ impl ProxyPlugin for AdminServe {
     fn category(&self) -> ProxyPluginCategory {
         ProxyPluginCategory::Admin
     }
-    async fn handle(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<bool> {
+    async fn handle(
+        &self,
+        session: &mut Session,
+        _ctx: &mut State,
+    ) -> pingora::Result<Option<HttpResponse>> {
         if !session.req_header().uri.path().starts_with(&self.path) {
-            return Ok(false);
+            return Ok(None);
         }
         let header = session.req_header_mut();
         if !self.auth_validate(header) {
-            let _ = HttpResponse {
+            return Ok(Some(HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
                 headers: Some(vec![HTTP_HEADER_WWW_AUTHENTICATE.clone()]),
                 ..Default::default()
-            }
-            .send(session)
-            .await?;
-            return Ok(true);
+            }));
         }
         let path = header.uri.path();
         let mut new_path = path.substring(self.path.len(), path.len()).to_string();
@@ -349,7 +350,7 @@ impl ProxyPlugin for AdminServe {
                     },
                     StatusCode::INTERNAL_SERVER_ERROR,
                 )
-                .unwrap_or(HttpResponse::unknown_error())
+                .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
             })
         } else if path == "/basic" {
             let mut memory = "".to_string();
@@ -369,13 +370,14 @@ impl ProxyPlugin for AdminServe {
                 config_hash: config::get_config_hash(),
                 memory,
             })
-            .unwrap_or(HttpResponse::unknown_error())
+            .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
         } else if path == "/restart" && method == Method::POST {
             if let Err(e) = restart_now() {
                 error!("Restart fail: {e}");
-                return Err(util::new_internal_error(400, e.to_string()));
+                HttpResponse::bad_request(e.to_string().into())
+            } else {
+                HttpResponse::no_content()
             }
-            HttpResponse::no_content()
         } else {
             let mut file = path.substring(1, path.len());
             if file.is_empty() {
@@ -383,8 +385,6 @@ impl ProxyPlugin for AdminServe {
             }
             EmbeddedStaticFile(AdminAsset::get(file), 365 * 24 * 3600).into()
         };
-        ctx.status = Some(resp.status);
-        ctx.response_body_size = resp.send(session).await?;
-        Ok(true)
+        Ok(Some(resp))
     }
 }

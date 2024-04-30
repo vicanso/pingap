@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util;
-
 use super::{
     HttpHeader, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_NO_CACHE, HTTP_HEADER_NO_STORE,
     HTTP_HEADER_TRANSFER_CHUNKED,
 };
+use crate::util;
 use bytes::Bytes;
 use http::header;
 use http::StatusCode;
@@ -86,21 +85,30 @@ impl HttpResponse {
             ..Default::default()
         }
     }
+    /// Return the bad request `400` response.
+    pub fn bad_request(body: Bytes) -> Self {
+        HttpResponse {
+            status: StatusCode::BAD_REQUEST,
+            headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
+            body,
+            ..Default::default()
+        }
+    }
     /// Returns the not found `404` response.
-    pub fn not_found() -> Self {
+    pub fn not_found(body: Bytes) -> Self {
         HttpResponse {
             status: StatusCode::NOT_FOUND,
             headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
-            body: Bytes::from("Not Found"),
+            body,
             ..Default::default()
         }
     }
     /// Returns the unknown error `500` response.
-    pub fn unknown_error() -> Self {
+    pub fn unknown_error(body: Bytes) -> Self {
         HttpResponse {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
-            body: Bytes::from("Unknown Error"),
+            body,
             ..Default::default()
         }
     }
@@ -269,11 +277,11 @@ mod tests {
         );
         assert_eq!(
             r###"HttpResponse { status: 404, body: b"Not Found", max_age: None, created_at: None, cache_private: None, headers: Some([("cache-control", "private, no-store")]) }"###,
-            format!("{:?}", HttpResponse::not_found())
+            format!("{:?}", HttpResponse::not_found("Not Found".into()))
         );
         assert_eq!(
             r###"HttpResponse { status: 500, body: b"Unknown Error", max_age: None, created_at: None, cache_private: None, headers: Some([("cache-control", "private, no-store")]) }"###,
-            format!("{:?}", HttpResponse::unknown_error())
+            format!("{:?}", HttpResponse::unknown_error("Unknown Error".into()))
         );
 
         #[derive(Serialize)]

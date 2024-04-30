@@ -67,6 +67,12 @@ pub fn send(params: SendNotificationParams) {
         if let Ok(rt) = tokio::runtime::Runtime::new() {
             let category = params.category;
             let level = params.level;
+            let ip = if let Ok(value) = local_ip_address::local_ip() {
+                value.to_string()
+            } else {
+                "".to_string()
+            };
+
             let send = async move {
                 let client = reqwest::Client::new();
                 let mut data = serde_json::Map::new();
@@ -80,6 +86,7 @@ pub fn send(params: SendNotificationParams) {
                 let content = format!(
                     r###" <font color="{color_type}">{name}({level})</font>
                     >hostname: {hostname}
+                    >ip: {ip}
                     >category: {category}
                     >message: {}"###,
                     params.msg
@@ -102,9 +109,10 @@ pub fn send(params: SendNotificationParams) {
                     _ => {
                         data.insert("name".to_string(), Value::String(name));
                         data.insert("level".to_string(), Value::String(level.to_string()));
+                        data.insert("hostname".to_string(), Value::String(hostname));
+                        data.insert("ip".to_string(), Value::String(ip));
                         data.insert("category".to_string(), Value::String(category));
                         data.insert("message".to_string(), Value::String(params.msg));
-                        data.insert("hostname".to_string(), Value::String(hostname));
                     }
                 }
 

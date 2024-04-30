@@ -89,7 +89,11 @@ impl ProxyPlugin for KeyAuth {
         ProxyPluginCategory::KeyAuth
     }
     #[inline]
-    async fn handle(&self, session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
+    async fn handle(
+        &self,
+        session: &mut Session,
+        _ctx: &mut State,
+    ) -> pingora::Result<Option<HttpResponse>> {
         let value = if self.category == 0 {
             self.header_name
                 .as_ref()
@@ -102,9 +106,8 @@ impl ProxyPlugin for KeyAuth {
             })
         };
         if value.is_none() || !self.keys.contains(&value.unwrap().to_vec()) {
-            self.unauthorized_resp.clone().send(session).await?;
-            return Ok(true);
+            return Ok(Some(self.unauthorized_resp.clone()));
         }
-        Ok(false)
+        Ok(None)
     }
 }

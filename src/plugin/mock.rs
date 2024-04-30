@@ -77,29 +77,49 @@ impl ProxyPlugin for MockResponse {
     }
     #[inline]
     /// Sends the mock data to client.
-    async fn handle(&self, session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
+    async fn handle(
+        &self,
+        session: &mut Session,
+        _ctx: &mut State,
+    ) -> pingora::Result<Option<HttpResponse>> {
         if !self.path.is_empty() && session.req_header().uri.path() != self.path {
-            return Ok(false);
+            return Ok(None);
         }
-        let _ = self.resp.clone().send(session).await?;
-        Ok(true)
+        Ok(Some(self.resp.clone()))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::config::ProxyPluginStep;
-
     use super::MockResponse;
+    use crate::state::State;
+    use crate::{config::ProxyPluginStep, plugin::ProxyPlugin};
     use bytes::Bytes;
     use http::StatusCode;
+    use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
+    use tokio_test::io::Builder;
 
-    #[test]
-    fn test_mock_response() {
-        let resp = MockResponse::new(
+    #[tokio::test]
+    async fn test_mock_response() {
+        let mock = MockResponse::new(
             r###"{"status":500,"headers":["Content-Type: application/json"],"data":"{\"message\":\"Mock Service Unavailable\"}"}"###,
-             ProxyPluginStep::RequestFilter).unwrap().resp;
+             ProxyPluginStep::RequestFilter).unwrap();
+
+        let headers = vec!["Accept-Encoding: gzip"].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let result = mock
+            .handle(&mut session, &mut State::default())
+            .await
+            .unwrap();
+
+        assert_eq!(true, result.is_some());
+
+        let resp = result.unwrap();
         assert_eq!(StatusCode::INTERNAL_SERVER_ERROR, resp.status);
         assert_eq!(
             r###"Some([("content-type", "application/json")])"###,

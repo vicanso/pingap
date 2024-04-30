@@ -119,26 +119,27 @@ impl ProxyPlugin for Limiter {
         ProxyPluginCategory::Limit
     }
     #[inline]
-    async fn handle(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<bool> {
+    async fn handle(
+        &self,
+        session: &mut Session,
+        ctx: &mut State,
+    ) -> pingora::Result<Option<HttpResponse>> {
         if let Err(e) = self.incr(session, ctx) {
-            HttpResponse {
+            return Ok(Some(HttpResponse {
                 status: StatusCode::TOO_MANY_REQUESTS,
                 body: Bytes::from(e.to_string()),
                 ..Default::default()
-            }
-            .send(session)
-            .await?;
-            return Ok(true);
+            }));
         }
-        Ok(false)
+        Ok(None)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{config::ProxyPluginStep, state::State};
-
     use super::{LimitTag, Limiter};
+    use crate::{config::ProxyPluginStep, plugin::ProxyPlugin, state::State};
+    use http::StatusCode;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -206,5 +207,30 @@ mod tests {
 
         limiter.incr(&session, &mut ctx).unwrap();
         assert_eq!(true, ctx.guard.is_some());
+    }
+    #[tokio::test]
+    async fn test_limit() {
+        let limiter = Limiter::new("ip 0", ProxyPluginStep::RequestFilter).unwrap();
+
+        let headers = vec!["X-Forwarded-For: 1.1.1.1"].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let result = limiter
+            .handle(&mut session, &mut State::default())
+            .await
+            .unwrap();
+
+        assert_eq!(true, result.is_some());
+        assert_eq!(StatusCode::TOO_MANY_REQUESTS, result.unwrap().status);
+
+        let limiter = Limiter::new("ip 1", ProxyPluginStep::RequestFilter).unwrap();
+        let result = limiter
+            .handle(&mut session, &mut State::default())
+            .await
+            .unwrap();
+
+        assert_eq!(true, result.is_none());
     }
 }

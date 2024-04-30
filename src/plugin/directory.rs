@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use http::{header, HeaderValue, StatusCode};
 use log::{debug, error};
+use once_cell::sync::Lazy;
 use pingora::proxy::Session;
 use std::fs::Metadata;
 use std::os::unix::fs::MetadataExt;
@@ -144,6 +145,11 @@ impl Directory {
     }
 }
 
+static IGNORE_RESPONSE: Lazy<HttpResponse> = Lazy::new(|| HttpResponse {
+    status: StatusCode::from_u16(999).unwrap(),
+    ..Default::default()
+});
+
 #[async_trait]
 impl ProxyPlugin for Directory {
     #[inline]
@@ -154,7 +160,11 @@ impl ProxyPlugin for Directory {
     fn category(&self) -> ProxyPluginCategory {
         ProxyPluginCategory::Directory
     }
-    async fn handle(&self, session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
+    async fn handle(
+        &self,
+        session: &mut Session,
+        ctx: &mut State,
+    ) -> pingora::Result<Option<HttpResponse>> {
         let mut filename = session.req_header().uri.path().to_string();
         if filename.len() <= 1 {
             filename = self.index.clone();
@@ -165,28 +175,27 @@ impl ProxyPlugin for Directory {
         // convert to relative path
         let file = self.path.join(filename.substring(1, filename.len()));
 
-        match get_data(&file).await {
+        let resp = match get_data(&file).await {
             Ok((meta, mut f)) => {
                 let (cacheable, size, headers) =
                     get_cacheable_and_headers_from_meta(&file, &meta, &self.charset);
                 // 4kb
                 if size <= 4096 {
                     let mut buffer = vec![0; size];
-
-                    let _ = f.read(&mut buffer).await.map_err(|e| {
-                        error!("Read data fail: {e}");
-                        util::new_internal_error(400, e.to_string())
-                    })?;
-                    HttpResponse {
-                        status: StatusCode::OK,
-                        max_age: self.max_age,
-                        cache_private: self.cache_private,
-                        headers: Some(headers),
-                        body: Bytes::from(buffer),
-                        ..Default::default()
+                    match f.read(&mut buffer).await {
+                        Ok(_) => HttpResponse {
+                            status: StatusCode::OK,
+                            max_age: self.max_age,
+                            cache_private: self.cache_private,
+                            headers: Some(headers),
+                            body: Bytes::from(buffer),
+                            ..Default::default()
+                        },
+                        Err(e) => {
+                            error!("Read data fail: {e}");
+                            HttpResponse::bad_request(e.to_string().into())
+                        }
                     }
-                    .send(session)
-                    .await?
                 } else {
                     let mut resp = HttpChunkResponse::new(&mut f);
                     if let Some(chunk_size) = self.chunk_size {
@@ -197,21 +206,22 @@ impl ProxyPlugin for Directory {
                     }
                     resp.cache_private = self.cache_private;
                     resp.headers = Some(headers);
-                    resp.send(session).await?
+                    ctx.status = Some(StatusCode::OK);
+                    ctx.response_body_size = resp.send(session).await?;
+                    // TODO better way to handle chunk response
+                    IGNORE_RESPONSE.clone()
                 }
             }
             Err(err) => {
                 if err.kind() == std::io::ErrorKind::NotFound {
-                    HttpResponse::not_found()
+                    HttpResponse::not_found("Not Found".into())
                 } else {
-                    HttpResponse::unknown_error()
+                    HttpResponse::unknown_error("Get file data fail".into())
                 }
-                .send(session)
-                .await?
             }
         };
 
-        Ok(true)
+        Ok(Some(resp))
     }
 }
 

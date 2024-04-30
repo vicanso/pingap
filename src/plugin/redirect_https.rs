@@ -49,7 +49,11 @@ impl ProxyPlugin for RedirectHttps {
         ProxyPluginCategory::RedirectHttps
     }
     #[inline]
-    async fn handle(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<bool> {
+    async fn handle(
+        &self,
+        session: &mut Session,
+        ctx: &mut State,
+    ) -> pingora::Result<Option<HttpResponse>> {
         if !ctx.is_tls {
             let host = if let Some(value) = session.get_header("Host") {
                 value.to_str().unwrap_or_default()
@@ -61,15 +65,44 @@ impl ProxyPlugin for RedirectHttps {
                 self.prefix,
                 session.req_header().uri
             );
-            let _ = HttpResponse {
+            return Ok(Some(HttpResponse {
                 status: StatusCode::TEMPORARY_REDIRECT,
                 headers: Some(convert_headers(&[location]).unwrap_or_default()),
                 ..Default::default()
-            }
-            .send(session)
-            .await?;
-            return Ok(true);
+            }));
         }
-        Ok(false)
+        Ok(None)
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::RedirectHttps;
+    use crate::state::State;
+    use crate::{config::ProxyPluginStep, plugin::ProxyPlugin};
+    use http::StatusCode;
+    use pingora::proxy::Session;
+    use pretty_assertions::assert_eq;
+    use tokio_test::io::Builder;
+
+    #[tokio::test]
+    async fn test_redirect_https() {
+        let redirect = RedirectHttps::new("/api", ProxyPluginStep::RequestFilter).unwrap();
+
+        let headers = vec!["Host: github.com"].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let result = redirect
+            .handle(&mut session, &mut State::default())
+            .await
+            .unwrap();
+        assert_eq!(true, result.is_some());
+        let resp = result.unwrap();
+        assert_eq!(StatusCode::TEMPORARY_REDIRECT, resp.status);
+        assert_eq!(
+            r###"Some([("location", "https://github.com/api/vicanso/pingap?size=1")])"###,
+            format!("{:?}", resp.headers)
+        );
     }
 }

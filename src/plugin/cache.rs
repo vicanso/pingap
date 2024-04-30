@@ -16,6 +16,7 @@ use super::ProxyPlugin;
 use super::{Error, Result};
 use crate::config::ProxyPluginCategory;
 use crate::config::ProxyPluginStep;
+use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
 use bytesize::ByteSize;
@@ -114,9 +115,13 @@ impl ProxyPlugin for Cache {
         ProxyPluginCategory::Cache
     }
     #[inline]
-    async fn handle(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<bool> {
+    async fn handle(
+        &self,
+        session: &mut Session,
+        ctx: &mut State,
+    ) -> pingora::Result<Option<HttpResponse>> {
         if ![Method::GET, Method::HEAD].contains(&session.req_header().method) {
-            return Ok(false);
+            return Ok(None);
         }
         let eviction = if self.eviction {
             None
@@ -157,6 +162,6 @@ impl ProxyPlugin for Cache {
             ctx.cache_prefix = Some(arr.join(":"));
         }
 
-        Ok(false)
+        Ok(None)
     }
 }

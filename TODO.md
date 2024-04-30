@@ -6,6 +6,7 @@
 - [ ] http response cache
 - [ ] fix not_before not_after of cert
 - [ ] client body size limit plugin
+- [ ] disable notification event
 - [x] support etcd or other storage for config
 - [x] send more event to webhook
 - [x] remove config
