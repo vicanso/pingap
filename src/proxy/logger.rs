@@ -385,6 +385,14 @@ impl Parser {
                             "reused" => buf.extend(ctx.reused.to_string().as_bytes()),
                             "upstream-address" => buf.extend(ctx.upstream_address.as_bytes()),
                             "processing" => buf.extend(ctx.processing.to_string().as_bytes()),
+                            "upstream-connect-time" => {
+                                if let Some(value) = ctx.upstream_connect_time {
+                                    buf.extend(
+                                        format!("{:?}", Duration::from_millis(value as u64))
+                                            .as_bytes(),
+                                    );
+                                }
+                            }
                             _ => {}
                         }
                     }

@@ -45,6 +45,14 @@ pub fn get_super_ts() -> u32 {
     }
 }
 
+pub fn get_hour_duration() -> u32 {
+    if let Ok(value) = SystemTime::now().duration_since(UNIX_EPOCH) {
+        (value.as_millis() % (3600 * 1000)) as u32
+    } else {
+        0
+    }
+}
+
 fn get_cache_control(max_age: Option<u32>, cache_private: Option<bool>) -> HttpHeader {
     if let Some(max_age) = max_age {
         let category = if cache_private.unwrap_or_default() {

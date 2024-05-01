@@ -16,7 +16,7 @@ use super::logger::Parser;
 use super::{Location, Upstream};
 use crate::acme::{get_lets_encrypt_cert, handle_lets_encrypt};
 use crate::config::{LocationConf, PingapConf, ProxyPluginStep, UpstreamConf};
-use crate::http_extra::HTTP_HEADER_NAME_X_REQUEST_ID;
+use crate::http_extra::{get_hour_duration, HTTP_HEADER_NAME_X_REQUEST_ID};
 use crate::plugin::get_proxy_plugin;
 use crate::state::State;
 use crate::util;
@@ -478,6 +478,7 @@ impl ProxyHttp for Server {
         let peer = lo.upstream.new_http_peer(ctx, session).ok_or_else(|| {
             util::new_internal_error(503, format!("No available upstream({})", lo.upstream_name))
         })?;
+        ctx.upstream_connect_time = Some(get_hour_duration());
 
         Ok(Box::new(peer))
     }
@@ -495,6 +496,16 @@ impl ProxyHttp for Server {
     {
         ctx.reused = reused;
         ctx.upstream_address = peer.address().to_string();
+        if let Some(value) = ctx.upstream_connect_time {
+            let d = get_hour_duration();
+            let value = if d >= value {
+                d - value
+            } else {
+                d + (3600 * 1000) - value
+            };
+            ctx.upstream_connect_time = Some(value);
+        }
+
         Ok(())
     }
     async fn upstream_request_filter(

@@ -11,7 +11,7 @@ Pingap格式化可以使用以下几种默认形式`combined`，`common`，`shor
 - `{query}`: 请求的querystring
 - `{remote}`: 请求的源ip
 - `{client-ip}`: 客户ip，根据`x-forwarded-for`中获取
-- `{scheme}`: TODO
+- `{scheme}`: 协议类型，https或http
 - `{uri}`: 请求的完整地址
 - `{referer}`: 请求头中的referer
 - `{user-agent}`: 请求的user-agent

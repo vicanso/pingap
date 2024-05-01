@@ -31,6 +31,7 @@ pub struct State {
     pub request_id: Option<String>,
     pub cache_prefix: Option<String>,
     pub cache_lock_duration: Option<Duration>,
+    pub upstream_connect_time: Option<u32>,
 }
 
 impl Default for State {
@@ -50,6 +51,7 @@ impl Default for State {
             request_id: None,
             cache_prefix: None,
             cache_lock_duration: None,
+            upstream_connect_time: None,
         }
     }
 }

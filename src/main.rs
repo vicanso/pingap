@@ -296,7 +296,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         let _ = perf::start_pyroscope(url)?;
     }
 
-    // TODO load from config
     let mut proxy_plugin_confs: Vec<(String, ProxyPluginConf)> = conf
         .proxy_plugins
         .iter()
