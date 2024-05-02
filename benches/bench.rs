@@ -3,9 +3,12 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use http::{HeaderName, HeaderValue, StatusCode};
 use pingap::config::{LocationConf, UpstreamConf};
 use pingap::http_extra::{convert_headers, get_super_ts, HttpResponse};
-use pingap::proxy::{Location, Upstream};
+use pingap::proxy::{Location, Parser, Upstream};
+use pingap::state::State;
 use pingora::http::ResponseHeader;
+use pingora::proxy::Session;
 use std::sync::Arc;
+use tokio_test::io::Builder;
 
 fn bench_insert_bytes_header(c: &mut Criterion) {
     c.bench_function("bytes header", |b| {
@@ -193,6 +196,57 @@ fn bench_get_super_ts(c: &mut Criterion) {
     });
 }
 
+fn get_logger_session(s: crossbeam_channel::Sender<Option<Session>>) {
+    std::thread::spawn(move || {
+        match tokio::runtime::Runtime::new() {
+            Ok(rt) => {
+                let send = async move {
+                    let headers = vec![
+                        "Host: github.com",
+                        "Referer: https://github.com/",
+                        "User-Agent: pingap/0.1.1",
+                        "Cookie: deviceId=abc",
+                        "Accept: application/json",
+                    ]
+                    .join("\r\n");
+                    let input_header =
+                        format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+                    let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+
+                    let mut session = Session::new_h1(Box::new(mock_io));
+                    session.read_request().await.unwrap();
+                    let _ = s.send(Some(session));
+                };
+                rt.block_on(send);
+            }
+            Err(_e) => {
+                let _ = s.send(None);
+            }
+        };
+    });
+}
+
+fn bench_logger_format(c: &mut Criterion) {
+    let (s, r) = crossbeam_channel::bounded(0);
+    get_logger_session(s);
+    let session = r.recv().unwrap().unwrap();
+    c.bench_function("logger format", |b| {
+        let p: Parser = "{host} {method} {path} {proto} {query} {remote} {client-ip} \
+{scheme} {uri} {referer} {user-agent} {size} \
+{size-human} {status} {payload-size} {payload-size-human} \
+{~deviceId} {>accept} {:reused}"
+            .into();
+        let ctx = State {
+            response_body_size: 1024,
+            reused: true,
+            ..Default::default()
+        };
+        b.iter(|| {
+            let _ = p.format(&session, &ctx);
+        })
+    });
+}
+
 criterion_group!(
     benches,
     bench_insert_bytes_header,
@@ -201,5 +255,6 @@ criterion_group!(
     bench_location_filter,
     bench_location_rewrite_path,
     bench_get_super_ts,
+    bench_logger_format,
 );
 criterion_main!(benches);

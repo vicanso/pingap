@@ -18,5 +18,6 @@ mod server;
 mod upstream;
 
 pub use location::Location;
+pub use logger::Parser;
 pub use server::*;
 pub use upstream::Upstream;
