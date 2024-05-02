@@ -97,10 +97,10 @@ fn format_extra_tag(key: &str) -> Option<Tag> {
 }
 
 static COMBINED: &str =
-    r###"{remote} "{method} {uri} {proto}" {status} {size-human} "{referer}" "{user-agent}""###;
-static COMMON: &str = r###"{remote} "{method} {uri} {proto}" {status} {size-human}""###;
-static SHORT: &str = r###"{remote} {method} {uri} {proto} {status} {size-human} - {latency}ms"###;
-static TINY: &str = r###"{method} {uri} {status} {size-human} - {latency}ms"###;
+    r###"{remote} "{method} {uri} {proto}" {status} {size_human} "{referer}" "{user_agent}""###;
+static COMMON: &str = r###"{remote} "{method} {uri} {proto}" {status} {size_human}""###;
+static SHORT: &str = r###"{remote} {method} {uri} {proto} {status} {size_human} - {latency}ms"###;
+static TINY: &str = r###"{method} {uri} {status} {size_human} - {latency}ms"###;
 
 impl From<&str> for Parser {
     fn from(value: &str) -> Self {
@@ -150,7 +150,7 @@ impl From<&str> for Parser {
                     category: TagCategory::Remote,
                     data: None,
                 }),
-                "{client-ip}" => tags.push(Tag {
+                "{client_ip}" => tags.push(Tag {
                     category: TagCategory::ClientIp,
                     data: None,
                 }),
@@ -166,7 +166,7 @@ impl From<&str> for Parser {
                     category: TagCategory::Referer,
                     data: None,
                 }),
-                "{user-agent}" => tags.push(Tag {
+                "{user_agent}" => tags.push(Tag {
                     category: TagCategory::UserAgent,
                     data: None,
                 }),
@@ -174,11 +174,11 @@ impl From<&str> for Parser {
                     category: TagCategory::When,
                     data: None,
                 }),
-                "{when-utc-iso}" => tags.push(Tag {
+                "{when_utc_iso}" => tags.push(Tag {
                     category: TagCategory::WhenUtcIso,
                     data: None,
                 }),
-                "{when-unix}" => tags.push(Tag {
+                "{when_unix}" => tags.push(Tag {
                     category: TagCategory::WhenUnix,
                     data: None,
                 }),
@@ -186,7 +186,7 @@ impl From<&str> for Parser {
                     category: TagCategory::Size,
                     data: None,
                 }),
-                "{size-human}" => tags.push(Tag {
+                "{size_human}" => tags.push(Tag {
                     category: TagCategory::SizeHuman,
                     data: None,
                 }),
@@ -198,19 +198,19 @@ impl From<&str> for Parser {
                     category: TagCategory::Latency,
                     data: None,
                 }),
-                "{latency-human}" => tags.push(Tag {
+                "{latency_human}" => tags.push(Tag {
                     category: TagCategory::LatencyHuman,
                     data: None,
                 }),
-                "{payload-size}" => tags.push(Tag {
+                "{payload_size}" => tags.push(Tag {
                     category: TagCategory::PayloadSize,
                     data: None,
                 }),
-                "{payload-size-human}" => tags.push(Tag {
+                "{payload_size_human}" => tags.push(Tag {
                     category: TagCategory::PayloadSizeHuman,
                     data: None,
                 }),
-                "{request-id}" => tags.push(Tag {
+                "{request_id}" => tags.push(Tag {
                     category: TagCategory::RequestId,
                     data: None,
                 }),
@@ -383,9 +383,9 @@ impl Parser {
                     if let Some(key) = &tag.data {
                         match key.as_str() {
                             "reused" => buf.extend(ctx.reused.to_string().as_bytes()),
-                            "upstream-address" => buf.extend(ctx.upstream_address.as_bytes()),
+                            "upstream_address" => buf.extend(ctx.upstream_address.as_bytes()),
                             "processing" => buf.extend(ctx.processing.to_string().as_bytes()),
-                            "upstream-connect-time" => {
+                            "upstream_connect_time" => {
                                 if let Some(value) = ctx.upstream_connect_time {
                                     buf.extend(
                                         format!("{:?}", Duration::from_millis(value as u64))
@@ -420,9 +420,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_logger() {
-        let p: Parser = "{host} {method} {path} {proto} {query} {remote} {client-ip} \
-{scheme} {uri} {referer} {user-agent} {size} \
-{size-human} {status} {payload-size} {payload-size-human} \
+        let p: Parser = "{host} {method} {path} {proto} {query} {remote} {client_ip} \
+{scheme} {uri} {referer} {user_agent} {size} \
+{size_human} {status} {payload_size} {payload_size_human} \
 {~deviceId} {>accept} {:reused}"
             .into();
         let headers = vec![

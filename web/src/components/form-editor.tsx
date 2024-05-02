@@ -59,12 +59,12 @@ export enum ProxyPluginCategory {
   ADMIN = "admin",
   DIRECTORY = "directory",
   MOCK = "mock",
-  REQUEST_ID = "request-id",
-  IP_LIMIT = "ip-limit",
-  KEY_AUTH = "key-auth",
-  BASIC_AUTH = "basic-auth",
+  REQUEST_ID = "request_id",
+  IP_LIMIT = "ip_limit",
+  KEY_AUTH = "key_auth",
+  BASIC_AUTH = "basic_auth",
   CACHE = "cache",
-  REDIRECT_HTTPS = "redirect-https",
+  REDIRECT_HTTPS = "redirect_https",
 }
 
 export function formatProxyPluginCategory(value: string) {

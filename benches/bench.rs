@@ -204,7 +204,7 @@ fn get_logger_session(s: crossbeam_channel::Sender<Option<Session>>) {
                     let headers = vec![
                         "Host: github.com",
                         "Referer: https://github.com/",
-                        "User-Agent: pingap/0.1.1",
+                        "user-agent: pingap/0.1.1",
                         "Cookie: deviceId=abc",
                         "Accept: application/json",
                     ]
@@ -231,9 +231,9 @@ fn bench_logger_format(c: &mut Criterion) {
     get_logger_session(s);
     let session = r.recv().unwrap().unwrap();
     c.bench_function("logger format", |b| {
-        let p: Parser = "{host} {method} {path} {proto} {query} {remote} {client-ip} \
-{scheme} {uri} {referer} {user-agent} {size} \
-{size-human} {status} {payload-size} {payload-size-human} \
+        let p: Parser = "{host} {method} {path} {proto} {query} {remote} {client_ip} \
+{scheme} {uri} {referer} {user_agent} {size} \
+{size_human} {status} {payload_size} {payload_size_human} \
 {~deviceId} {>accept} {:reused}"
             .into();
         let ctx = State {
