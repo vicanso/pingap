@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::acme::LetsEncryptService;
+use crate::config::ETCD_PROTOCOL;
 use crate::state::AutoRestart;
 use clap::Parser;
 use config::{PingapConf, ProxyPluginCategory, ProxyPluginConf};
@@ -259,7 +260,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         if let Ok(env) = std::env::var("RUST_LOG") {
             cmd.log_level = env;
         }
-        let conf_path = util::resolve_path(&args.conf);
+        let conf_path = if args.conf.starts_with(ETCD_PROTOCOL) {
+            args.conf.clone()
+        } else {
+            util::resolve_path(&args.conf)
+        };
 
         let mut new_args = vec![
             format!("-c={conf_path}"),

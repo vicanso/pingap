@@ -1013,9 +1013,9 @@ export default function FormEditor({
   let removeGrip = <></>;
   let submitSpan = 12;
   if (showRemove) {
-    submitSpan = 6;
+    submitSpan = 8;
     removeGrip = (
-      <Grid item xs={6}>
+      <Grid item xs={4}>
         <Button
           disabled={created}
           fullWidth

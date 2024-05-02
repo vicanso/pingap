@@ -20,7 +20,7 @@ devtest:
 	RUST_LOG=INFO cargo watch -w src -x 'run -- -c=~/tmp/pingap --admin=127.0.0.1:3018'
 
 devetcd:
-	RUST_LOG=INFO cargo watch -w src -x 'run -- -c=etcd://127.0.0.1:2379/pingap?timeout=10s&connect_timeout=5s --admin=127.0.0.1:3018'
+	RUST_LOG=INFO cargo watch -w src -x 'run -- -c="etcd://127.0.0.1:2379/pingap?timeout=10s&connect_timeout=5s&user=pingap&password=123123" --admin=127.0.0.1:3018'
 
 
 udeps:

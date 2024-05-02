@@ -53,7 +53,7 @@ impl EtcdStorage {
             if let Some((key, value)) = item.split_once('=') {
                 match key {
                     "user" => user = value.to_string(),
-                    "passwrod" => password = value.to_string(),
+                    "password" => password = value.to_string(),
                     "timeout" => {
                         if let Ok(d) = parse_duration(value) {
                             options = options.with_timeout(d);

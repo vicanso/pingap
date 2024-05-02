@@ -159,13 +159,18 @@ pub fn restart() {
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(60)).await;
         if count == PROCESS_RESTAR_COUNT.load(Ordering::Relaxed) {
-            if let Err(e) = restart_now() {
-                error!("Restart fail: {e}");
-                webhook::send(webhook::SendNotificationParams {
-                    level: webhook::NotificationLevel::Error,
-                    category: "restart_fail".to_string(),
-                    msg: e.to_string(),
-                });
+            match restart_now() {
+                Err(e) => {
+                    error!("Restart fail: {e}");
+                    webhook::send(webhook::SendNotificationParams {
+                        level: webhook::NotificationLevel::Error,
+                        category: "restart_fail".to_string(),
+                        msg: e.to_string(),
+                    });
+                }
+                Ok(output) => {
+                    info!("{output:?}");
+                }
             }
         }
     });

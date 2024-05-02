@@ -49,7 +49,10 @@ pub struct SendNotificationParams {
 }
 
 pub fn send(params: SendNotificationParams) {
-    info!("Webhook {}, {}", params.category, params.msg);
+    info!(
+        "Webhook notification, category:{}, message:{}",
+        params.category, params.msg
+    );
     let webhook_type = if let Some(value) = WEBHOOK_CATEGORY.get() {
         value.to_string()
     } else {
