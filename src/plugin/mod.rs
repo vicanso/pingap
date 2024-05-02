@@ -31,6 +31,7 @@ mod ip_limit;
 mod key_auth;
 mod limit;
 mod mock;
+mod ping;
 mod redirect_https;
 mod request_id;
 mod stats;
@@ -72,6 +73,15 @@ pub fn get_builtin_proxy_plugins() -> Vec<(String, ProxyPluginConf)> {
                 value: Some("6 6 3".to_string()),
                 category: ProxyPluginCategory::Compression,
                 remark: Some("Compression for http, support zstd:3, br:6, gzip:6".to_string()),
+                step: None,
+            },
+        ),
+        (
+            "pingap:ping".to_string(),
+            ProxyPluginConf {
+                value: Some("/ping".to_string()),
+                category: ProxyPluginCategory::Ping,
+                remark: Some("Ping pong".to_string()),
                 step: None,
             },
         ),
@@ -155,6 +165,10 @@ pub fn init_proxy_plugins(confs: Vec<(String, ProxyPluginConf)>) -> Result<()> {
                 ProxyPluginCategory::RedirectHttps => {
                     let r = redirect_https::RedirectHttps::new(&value, step)?;
                     plguins.insert(name, Box::new(r));
+                }
+                ProxyPluginCategory::Ping => {
+                    let p = ping::Ping::new(&value, step)?;
+                    plguins.insert(name, Box::new(p));
                 }
             };
         }
