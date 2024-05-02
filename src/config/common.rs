@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::{Error, Result};
+use crate::proxy::Parser;
 use crate::util;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use http::{HeaderName, HeaderValue};
@@ -254,6 +255,14 @@ impl ServerConf {
                 let _ = STANDARD
                     .decode(value)
                     .map_err(|e| Error::Base64Decode { source: e })?;
+            }
+        }
+        if let Some(access_log) = &self.access_log {
+            let logger = Parser::from(access_log.as_str());
+            if logger.tags.is_empty() {
+                return Err(Error::Invalid {
+                    message: "Access log format is invalid".to_string(),
+                });
             }
         }
 
