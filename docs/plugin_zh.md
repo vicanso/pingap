@@ -9,8 +9,12 @@ Pingap中通过Locaton添加各种插件支持更多的应用场景，如鉴权�
 pub trait ProxyPlugin: Sync + Send {
     fn category(&self) -> ProxyPluginCategory;
     fn step(&self) -> ProxyPluginStep;
-    async fn handle(&self, _session: &mut Session, _ctx: &mut State) -> pingora::Result<bool> {
-        Ok(false)
+    async fn handle(
+        &self,
+        _session: &mut Session,
+        _ctx: &mut State,
+    ) -> pingora::Result<Option<HttpResponse>> {
+        Ok(None)
     }
 }
 ```
@@ -19,16 +23,16 @@ pub trait ProxyPlugin: Sync + Send {
 
 - `category`: 插件类型，用于区分该插件是哪类形式的插件
 - `step`: 插件的执行阶段，现只支持在`request_filter`与`proxy_upstream_filter`阶段执行
-- `handle`: 插件的执行逻辑，若返回的是`Ok(true)`，则表示请求已处理完成，不再转发到上游节点
+- `handle`: 插件的执行逻辑，若返回的是`Ok(Some(HttpResponse))`，则表示请求已处理完成，不再转发到上游节点，并将该响应传输至请求端
 
 ## Stats
 
-获取应用性能指标等统计性能，配置是指定对应的访问路径即，如果不需要对路径指定，可以直接使用自带的`pingap:stats`。如配置为`/stats`后，访问该location的`/stats`目录即可获取到应用的统计指标。具体配置如下：
+获取应用性能指标等统计性能，配置是指定对应的访问路径即可，也可直接使用自带的`pingap:stats`。如配置为`/stats`后，访问该location的`/stats`目录即可获取到应用的统计指标。具体配置如下：
 
 ```toml
 [proxy_plugins.stats]
 value = "/stats"
-category = 0
+category = "stats""
 ```
 
 ## Limit
@@ -40,7 +44,7 @@ category = 0
 ```toml
 [proxy_plugins.cookieBigTreeLimit]
 value = "~bigtree 10"
-category = 1
+category = "limit"
 ```
 
 根据请求头的`X-App`参数限制并发数`10`:
@@ -48,7 +52,7 @@ category = 1
 ```toml
 [proxy_plugins.headerAppLimit]
 value = ">X-App 10"
-category = 1
+category = "limit"
 ```
 
 根据query中的`app`参数限制并发数`10`:
@@ -56,7 +60,7 @@ category = 1
 ```toml
 [proxy_plugins.queryAppLimit]
 value = "?query 10"
-category = 1
+category = "limit"
 ```
 
 根据ip限制并发数`10`(ip获取的顺序为X-Forwarded-For --> X-Real-Ip --> Remote Addr):
@@ -64,7 +68,7 @@ category = 1
 ```toml
 [proxy_plugins.ipLimit]
 value = "ip 10"
-category = 1
+category = "limit"
 ```
 
 ## Compression
@@ -74,7 +78,7 @@ category = 1
 ```toml
 [proxy_plugins.commonCompression]
 value = "6 6 5"
-category = 2
+category = "compression"
 ```
 
 需要注意`value`部分对应的是三个压缩方式的压缩级别，分别为`gzip`，`br`与`zstd`，若不需要使用的则设置为0即可。也可使用自带的`pingap:compression`，它的压缩级别配置为`6 6 3`。
@@ -92,7 +96,7 @@ category = 2
 ```toml
 [proxy_plugins.downloadsServe]
 value = "~/Downloads?chunk_size=4096&max_age=3600&private&index=index.html&charset=utf-8"
-category = 4
+category = "directory"
 ```
 
 ## Mock
@@ -102,7 +106,7 @@ category = 4
 ```toml
 [proxy_plugins.errorMock]
 value = '{"status":500,"path":"/","headers":["X-Error:custom error","Content-Type:application/json"],"data":"{\n  \"message\": \"error message\"\n}"}'
-category = 5
+category = "mock"
 ```
 
 ## RequestId
@@ -112,7 +116,7 @@ category = 5
 ```toml
 [proxy_plugins.customReqId]
 value = "nanoid 8"
-category = 6
+category = "request_id"
 ```
 
 ## IpLimit
@@ -122,7 +126,7 @@ Ip限制分为两种模式，允许(0)，禁止(1)，ip可支持配置为单ip�
 ```toml
 [proxy_plugins.ipDeny]
 value = "192.168.1.1,1.1.1.0/24 1"
-category = 7
+category = "ip_limit"
 ```
 
 ## KeyAuth
@@ -134,7 +138,7 @@ KeyAuth用于提供简单的认证方式，支持配置从query(以?开头)或he
 ```toml
 [proxy_plugins.appAuth]
 value = "?app KOXQaw,GKvXY2"
-category = 8
+category = "key_auth"
 ```
 
 从header中的X-App字段中获取校验：
@@ -142,7 +146,7 @@ category = 8
 ```toml
 [proxy_plugins.appAuth]
 value = "X-App KOXQaw,GKvXY2"
-category = 8
+category = "key_auth"
 ```
 
 ## BasicAuth
@@ -152,5 +156,5 @@ BasicAuth鉴权，配置时需要使用保存`base64(user:pass)`的值，若有�
 ```toml
 [proxy_plugins.testBasicAuth]
 value = "YWRtaW46dGVzdA==,YWRtaW46MTIzMTIz"
-category = 9
+category = "basic_auth"
 ```

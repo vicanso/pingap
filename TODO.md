@@ -7,6 +7,8 @@
 - [ ] fix not_before not_after of cert
 - [ ] client body size limit plugin
 - [ ] disable notification event
+- [ ] convert plugin category to string?
+- [ ] support i18n
 - [x] access log format performance
 - [x] support etcd or other storage for config
 - [x] send more event to webhook

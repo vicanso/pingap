@@ -19,11 +19,11 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use http::{HeaderName, HeaderValue};
 use once_cell::sync::OnceCell;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
-use serde_repr::{Deserialize_repr, Serialize_repr};
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize, Serializer};
 use std::net::ToSocketAddrs;
 use std::time::Duration;
+use std::{collections::HashMap, str::FromStr};
+use strum::EnumString;
 use toml::{map::Map, Value};
 use url::Url;
 
@@ -32,8 +32,8 @@ pub const CATEGORY_LOCATION: &str = "location";
 pub const CATEGORY_SERVER: &str = "server";
 pub const CATEGORY_PROXY_PLUGIN: &str = "proxy_plugin";
 
-#[derive(PartialEq, Debug, Default, Deserialize_repr, Clone, Serialize_repr)]
-#[repr(u8)]
+#[derive(PartialEq, Debug, Default, Clone, EnumString, strum::Display)]
+#[strum(serialize_all = "snake_case")]
 pub enum ProxyPluginCategory {
     #[default]
     Stats,
@@ -50,12 +50,55 @@ pub enum ProxyPluginCategory {
     RedirectHttps,
 }
 
-#[derive(PartialEq, Debug, Default, Deserialize_repr, Clone, Copy, Serialize_repr)]
-#[repr(u8)]
+impl Serialize for ProxyPluginCategory {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.to_string().as_ref())
+    }
+}
+
+impl<'de> Deserialize<'de> for ProxyPluginCategory {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value: String = serde::Deserialize::deserialize(deserializer)?;
+        let category =
+            ProxyPluginCategory::from_str(&value).unwrap_or(ProxyPluginCategory::default());
+
+        Ok(category)
+    }
+}
+
+#[derive(PartialEq, Debug, Default, Clone, Copy, EnumString, strum::Display)]
+#[strum(serialize_all = "snake_case")]
 pub enum ProxyPluginStep {
     #[default]
     RequestFilter,
     ProxyUpstreamFilter,
+}
+
+impl Serialize for ProxyPluginStep {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.to_string().as_ref())
+    }
+}
+
+impl<'de> Deserialize<'de> for ProxyPluginStep {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value: String = serde::Deserialize::deserialize(deserializer)?;
+        let category = ProxyPluginStep::from_str(&value).unwrap_or(ProxyPluginStep::default());
+
+        Ok(category)
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]

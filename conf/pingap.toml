@@ -147,5 +147,5 @@ locations = ["lo"]
 
 
 [proxy_plugins.stats]
-category = 0
+category = "stats"
 value = "/stats"

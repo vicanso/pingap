@@ -53,21 +53,21 @@ export enum FormItemCategory {
 }
 
 export enum ProxyPluginCategory {
-  STATS = 0,
-  LIMIT = 1,
-  COMPRESSION = 2,
-  ADMIN = 3,
-  DIRECTORY = 4,
-  MOCK = 5,
-  REQUEST_ID = 6,
-  IP_LIMIT = 7,
-  KEY_AUTH = 8,
-  BASIC_AUTH = 9,
-  CACHE = 10,
-  REDIRECT_HTTPS = 11,
+  STATS = "stats",
+  LIMIT = "limit",
+  COMPRESSION = "compression",
+  ADMIN = "admin",
+  DIRECTORY = "directory",
+  MOCK = "mock",
+  REQUEST_ID = "request-id",
+  IP_LIMIT = "ip-limit",
+  KEY_AUTH = "key-auth",
+  BASIC_AUTH = "basic-auth",
+  CACHE = "cache",
+  REDIRECT_HTTPS = "redirect-https",
 }
 
-export function formatProxyPluginCategory(value: ProxyPluginCategory) {
+export function formatProxyPluginCategory(value: string) {
   switch (value) {
     case ProxyPluginCategory.STATS: {
       return "stats";
@@ -148,7 +148,7 @@ function FormProxyPluginField({
   onUpdate,
 }: {
   value: string;
-  category: number;
+  category: string;
   id: string;
   onUpdate: (data: string) => void;
 }) {
@@ -777,7 +777,7 @@ export default function FormEditor({
         break;
       }
       case FormItemCategory.PROXY_PLUGIN: {
-        const category = (data["category"] as number) || 0;
+        const category = (data["category"] as string) || "";
         formItem = (
           <FormProxyPluginField
             key={`${item.id}-{category}`}

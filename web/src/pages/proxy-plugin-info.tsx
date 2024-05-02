@@ -41,12 +41,12 @@ export default function ProxyPluginInfo() {
         {
           label: "Request Filter",
           option: 0,
-          value: 0,
+          value: "request-filter",
         },
         {
           label: "Proxy Upstream Filter",
           option: 1,
-          value: 1,
+          value: "proxy-upstream-filter",
         },
       ],
     },
