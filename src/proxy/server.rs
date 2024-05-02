@@ -136,6 +136,16 @@ impl From<PingapConf> for Vec<ServerConf> {
                 conf.error_template.clone()
             };
 
+            let threads = if let Some(threads) = item.threads {
+                if threads > 0 {
+                    Some(threads)
+                } else {
+                    Some(num_cpus::get())
+                }
+            } else {
+                None
+            };
+
             servers.push(ServerConf {
                 name,
                 admin: false,
@@ -145,7 +155,7 @@ impl From<PingapConf> for Vec<ServerConf> {
                 access_log: item.access_log,
                 upstreams: filter_upstreams,
                 locations: filter_locations,
-                threads: item.threads,
+                threads,
                 lets_encrypt: item.lets_encrypt,
                 enbaled_h2: item.enabled_h2.unwrap_or(true),
                 error_template,

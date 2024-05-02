@@ -28,3 +28,10 @@ graph TD;
 
     response("HTTP响应") --> stop("日志记录");
 ```
+
+Pingap核心部分功能主要处理以下逻辑(由插件实现更丰富的功能)：
+
+- 根据path与host选择对应的location
+- location根据配置重写path以及添加相应的请求头
+- location根据配置添加相应的响应头
+- 根据配置的日志格式输出对应的访问日志
