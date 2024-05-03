@@ -17,7 +17,7 @@ use super::Result;
 use crate::config::ProxyPluginCategory;
 use crate::config::ProxyPluginStep;
 use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON};
-use crate::state::{get_hostname, State};
+use crate::state::{get_hostname, get_start_time, State};
 use async_trait::async_trait;
 use bytes::Bytes;
 use bytesize::ByteSize;
@@ -27,6 +27,8 @@ use memory_stats::memory_stats;
 use pingora::proxy::Session;
 use serde::Serialize;
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[derive(Serialize)]
 struct ServerStats {
     processing: i32,
@@ -34,6 +36,8 @@ struct ServerStats {
     hostname: String,
     physical_mem_mb: usize,
     physical_mem: String,
+    version: String,
+    start_time: u64,
 }
 pub struct Stats {
     path: String,
@@ -77,6 +81,8 @@ impl ProxyPlugin for Stats {
                 hostname: get_hostname(),
                 physical_mem: ByteSize(physical_mem as u64).to_string_as(true),
                 physical_mem_mb: physical_mem / (1024 * 1024),
+                version: VERSION.to_string(),
+                start_time: get_start_time(),
             })
             .unwrap_or_default();
             return Ok(Some(HttpResponse {
