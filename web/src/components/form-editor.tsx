@@ -152,6 +152,7 @@ function FormProxyPluginField({
   id: string;
   onUpdate: (data: string) => void;
 }) {
+  const { t } = useTranslation();
   const key = `${id}-${category}`;
   const arr: string[] = [];
   const fields: {
@@ -176,13 +177,13 @@ function FormProxyPluginField({
       arr.push(...value.split(padding));
       fields.push(
         {
-          label: "Gzip Level",
+          label: t("form.gzip"),
         },
         {
-          label: "Br Level",
+          label: t("form.br"),
         },
         {
-          label: "Zstd Level",
+          label: t("form.zstd"),
         },
       );
       break;
@@ -191,10 +192,10 @@ function FormProxyPluginField({
       arr.push(...value.split(padding));
       fields.push(
         {
-          label: "Admin path",
+          label: t("form.adminPath"),
         },
         {
-          label: "Basic auth(base64(user:pass))",
+          label: t("form.basicAuth"),
         },
       );
       break;
@@ -203,10 +204,10 @@ function FormProxyPluginField({
       arr.push(...value.split(padding));
       fields.push(
         {
-          label: "The limit key",
+          label: t("form.limitKey"),
         },
         {
-          label: "The limit value",
+          label: t("form.limitValue"),
         },
       );
       break;
@@ -214,7 +215,7 @@ function FormProxyPluginField({
     case ProxyPluginCategory.DIRECTORY: {
       arr.push(value);
       fields.push({
-        label: "The static directory",
+        label: t("form.staticDirectory"),
       });
       break;
     }
@@ -222,10 +223,10 @@ function FormProxyPluginField({
       arr.push(...value.split(padding));
       fields.push(
         {
-          label: "The algorithm for genenrate id",
+          label: t("form.algoForId"),
         },
         {
-          label: "The length of id",
+          label: t("form.lengthForId"),
         },
       );
       break;
@@ -234,10 +235,10 @@ function FormProxyPluginField({
       arr.push(...value.split(padding));
       fields.push(
         {
-          label: "The ip list",
+          label: t("form.ipList"),
         },
         {
-          label: "The limit mode, 0:allow, 1:deny",
+          label: t("form.limitMode"),
         },
       );
       break;
@@ -246,10 +247,10 @@ function FormProxyPluginField({
       arr.push(...value.split(padding));
       fields.push(
         {
-          label: "The key name",
+          label: t("form.keyName"),
         },
         {
-          label: "The key value list",
+          label: t("form.keyValues"),
         },
       );
       break;
@@ -257,7 +258,7 @@ function FormProxyPluginField({
     case ProxyPluginCategory.BASIC_AUTH: {
       arr.push(value);
       fields.push({
-        label: "The basic authorization list",
+        label: t("form.basicAuthList"),
       });
       break;
     }
@@ -274,21 +275,21 @@ function FormProxyPluginField({
     case ProxyPluginCategory.CACHE: {
       arr.push(value);
       fields.push({
-        label: "The cache storage url",
+        label: t("form.cacheStorage"),
       });
       break;
     }
     case ProxyPluginCategory.REDIRECT_HTTPS: {
       arr.push(value);
       fields.push({
-        label: "The prefix path of redirect path",
+        label: t("form.redirectPrefix"),
       });
       break;
     }
     default: {
       arr.push(value);
       fields.push({
-        label: "The stats path",
+        label: t("form.statsPath"),
       });
       break;
     }

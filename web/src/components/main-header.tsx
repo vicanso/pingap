@@ -15,6 +15,7 @@ import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogContentText from "@mui/material/DialogContentText";
 import DialogTitle from "@mui/material/DialogTitle";
+import { useTranslation } from "react-i18next";
 import useBasicStore from "../states/basic";
 import request from "../helpers/request";
 
@@ -50,6 +51,7 @@ function formatDuraion(ts: number) {
 }
 
 export default function MainHeader() {
+  const { t } = useTranslation();
   const [fetch, basicInfo] = useBasicStore((state) => [
     state.fetch,
     state.data,
@@ -97,20 +99,24 @@ export default function MainHeader() {
         <Card sx={{ minWidth: 275, height: "100vh" }}>
           <CardContent>
             <Typography gutterBottom variant="h5" component="div">
-              Informations
+              {t("header.title")}
             </Typography>
             <Box pt={2}>
               <Typography gutterBottom variant="body2">
-                Start Time: {formatDuraion(basicInfo.start_time)}
+                {t("header.startTime")}
+                {formatDuraion(basicInfo.start_time)}
               </Typography>
               <Typography gutterBottom variant="body2">
-                Memory: {basicInfo.memory}
+                {t("header.memory")}
+                {basicInfo.memory}
               </Typography>
               <Typography gutterBottom variant="body2">
-                Architecture: {basicInfo.arch}
+                {t("header.architecture")}
+                {basicInfo.arch}
               </Typography>
               <Typography gutterBottom variant="body2">
-                Config Hash: {basicInfo.config_hash}
+                {t("header.configHash")}
+                {basicInfo.config_hash}
               </Typography>
               <Button
                 style={{
@@ -122,7 +128,7 @@ export default function MainHeader() {
                   setShowRestartDialog(true);
                 }}
               >
-                Restart Pingap
+                {t("header.restart")}
               </Button>
             </Box>
           </CardContent>
@@ -137,11 +143,11 @@ export default function MainHeader() {
         aria-describedby="alert-dialog-description"
       >
         <DialogTitle id="alert-dialog-title">
-          {"Are you sure to restart pingap?"}
+          {t("header.confirmTips")}
         </DialogTitle>
         <DialogContent>
           <DialogContentText id="alert-dialog-description">
-            Pingap will graceful restart with new configuration.
+            {t("header.restartTips")}
           </DialogContentText>
         </DialogContent>
         <DialogActions>
@@ -150,10 +156,10 @@ export default function MainHeader() {
               setShowRestartDialog(false);
             }}
           >
-            Cancel
+            {t("header.cancel")}
           </Button>
           <Button onClick={confirmRestart} autoFocus>
-            Restart
+            {t("header.confirm")}
           </Button>
         </DialogActions>
       </Dialog>
