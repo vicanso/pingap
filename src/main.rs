@@ -25,7 +25,7 @@ use pingora::services::background::background_service;
 use proxy::{Server, ServerConf};
 use state::get_start_time;
 use std::error::Error;
-use std::io::Write;
+use std::io::{self, BufWriter, Write};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -80,6 +80,17 @@ struct Args {
     autorestart: bool,
 }
 
+fn new_logger_buffer(log_file: &str, capacity: usize) -> io::Result<BufWriter<std::fs::File>> {
+    let file = std::fs::OpenOptions::new()
+        .append(true)
+        .create(true)
+        // open read() in case there are no readers
+        // available otherwise we will panic with
+        .read(true)
+        .open(log_file)?;
+    Ok(BufWriter::with_capacity(capacity, file))
+}
+
 fn new_server_conf(args: &Args, conf: &PingapConf) -> server::configuration::ServerConf {
     let mut server_conf = server::configuration::ServerConf {
         pid_file: format!("/tmp/{}.pid", util::get_pkg_name()),
@@ -87,7 +98,6 @@ fn new_server_conf(args: &Args, conf: &PingapConf) -> server::configuration::Ser
         user: conf.user.clone(),
         group: conf.group.clone(),
         daemon: args.daemon,
-        error_log: args.log.clone(),
         ..Default::default()
     };
     if let Some(value) = conf.grace_period {
@@ -188,11 +198,16 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn run() -> Result<(), Box<dyn Error>> {
+fn run(mut builder: env_logger::Builder) -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
     if args.adminnode && args.admin.is_some() {
         return run_admin_node(args);
+    }
+    if let Some(log) = &args.log {
+        // TODO capacity
+        let w = new_logger_buffer(log, 8192)?;
+        builder.target(env_logger::Target::Pipe(Box::new(w)));
     }
 
     let (s, r) = crossbeam_channel::bounded(0);
@@ -204,7 +219,6 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let webhook_url = conf.webhook.clone().unwrap_or_default();
     webhook::set_web_hook(&webhook_url, &conf.webhook_type.clone().unwrap_or_default());
-    let mut builder = env_logger::Builder::from_env(env_logger::Env::default());
 
     if let Some(log_level) = &conf.log_level {
         match log_level.to_lowercase().as_str() {
@@ -356,6 +370,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         my_server.add_service(background_service(
             "Auto Restart",
             AutoRestart {
+                // TODO interval
                 interval: Duration::from_secs(90),
             },
         ));
@@ -380,9 +395,9 @@ fn main() {
     // because pingora exit the process
     #[cfg(feature = "perf")]
     let _profiler = dhat::Profiler::new_heap();
-    if let Err(e) = run() {
-        // avoid env logger is not init
-        println!("{e}");
+    let builder = env_logger::Builder::from_env(env_logger::Env::default());
+
+    if let Err(e) = run(builder) {
         error!("{e}");
     }
 }
