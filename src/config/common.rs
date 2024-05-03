@@ -716,16 +716,24 @@ pub fn set_config_hash(version: &str) {
     CONFIG_HASH.get_or_init(|| version.to_string());
 }
 
+static DEFAULT_APP_NAME: &str = "Pingap";
+
 static APP_NAME: OnceCell<String> = OnceCell::new();
 /// Sets app name
 pub fn set_app_name(name: &str) {
-    APP_NAME.get_or_init(|| name.to_string());
+    APP_NAME.get_or_init(|| {
+        if name.is_empty() {
+            DEFAULT_APP_NAME.to_string()
+        } else {
+            name.to_string()
+        }
+    });
 }
 pub fn get_app_name() -> String {
     if let Some(name) = APP_NAME.get() {
         name.to_string()
     } else {
-        "Pingap".to_string()
+        DEFAULT_APP_NAME.to_string()
     }
 }
 
