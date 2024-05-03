@@ -73,6 +73,7 @@ export default {
   "proxyPlugin.config": "Proxy Plugin Config",
   "proxyPlugin.remark": "Remark",
   // form
+  "form.name": "Name",
   "form.removing": "Removing",
   "form.remove": "Remove",
   "form.submitting": "Submitting",
@@ -86,7 +87,8 @@ export default {
   "form.nameExists": "Name is exitst",
   "form.sortPlugin": "Sort proxy plugins",
   "form.selectPlugin": "Select proxy plugin",
-  "from.addr": "Addr",
+  "form.addr": "Addr",
+  "form.weight": "Weight",
   "from.addrs": "Add addr",
   "form.header": "Add response header",
   "form.headerName": "Header Name",

@@ -9,7 +9,7 @@
 - [ ] disable notification event
 - [ ] convert plugin category to string?
 - [ ] use buffer writer for log
-- [ ] support i18n
+- [x] support i18n
 - [x] access log format performance
 - [x] support etcd or other storage for config
 - [x] send more event to webhook

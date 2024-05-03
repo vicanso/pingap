@@ -42,7 +42,7 @@ export default {
     "修改Location的相关配置，包括路由重写，匹配路由与域名等",
   "location.host": "域名",
   "location.path": "路径",
-  "location.upstream": "Upstream",
+  "location.upstream": "上游服务",
   "location.weight": "权重",
   "location.headers": "响应头",
   "location.proxyHeaders": "转发至upstream的请求头",
@@ -74,6 +74,7 @@ export default {
   "proxyPlugin.remark": "备注",
 
   // form
+  "form.name": "名称",
   "form.removing": "删除中",
   "form.remove": "删除",
   "form.submitting": "提交中",
@@ -86,8 +87,9 @@ export default {
   "form.nameExists": "该名称已存在",
   "form.sortPlugin": "排序插件",
   "form.selectPlugin": "选择插件",
-  "from.addr": "地址",
-  "from.addrs": "添加地址",
+  "form.addr": "地址",
+  "form.weight": "权重",
+  "form.addrs": "添加地址",
   "form.header": "添加响应头",
   "form.headerName": "响应头名称",
   "form.headerValue": "响应头值",

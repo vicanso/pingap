@@ -735,7 +735,7 @@ export default function FormEditor({
             divide={" "}
             values={item.defaultValue as string[]}
             label={t("form.addr")}
-            valueLabel={"Weight"}
+            valueLabel={t("form.weight")}
             valueWidth="100px"
             onUpdate={(data) => {
               updateValue(item.id, data);
@@ -1001,7 +1001,7 @@ export default function FormEditor({
         <FormControl fullWidth={true}>
           <TextField
             id={"new-item-name"}
-            label={"Name"}
+            label={t("form.name")}
             variant="outlined"
             onChange={(e) => {
               setNewName(e.target.value.trim());
