@@ -1,5 +1,6 @@
 import useConfigStore from "../states/config";
 import { useParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 
 import Loading from "../components/loading";
 import FormEditor, {
@@ -10,6 +11,8 @@ import FormEditor, {
 import { goToProxyPluginInfo } from "../router";
 
 export default function ProxyPluginInfo() {
+  const { t } = useTranslation();
+
   const [initialized, config, update, remove] = useConfigStore((state) => [
     state.initialized,
     state.data,
@@ -33,7 +36,7 @@ export default function ProxyPluginInfo() {
   const arr: FormItem[] = [
     {
       id: "step",
-      label: "Proxy Exec Step",
+      label: t("proxyPlugin.step"),
       defaultValue: proxyPlugin.step,
       category: FormItemCategory.CHECKBOX,
       span: 6,
@@ -52,7 +55,7 @@ export default function ProxyPluginInfo() {
     },
     {
       id: "category",
-      label: "Proxy Plugin Category",
+      label: t("proxyPlugin.category"),
       defaultValue: proxyPlugin.category,
       category: FormItemCategory.CHECKBOX,
       span: 12,
@@ -121,14 +124,14 @@ export default function ProxyPluginInfo() {
     },
     {
       id: "value",
-      label: "Proxy Plugin Config",
+      label: t("proxyPlugin.config"),
       defaultValue: proxyPlugin.value,
       category: FormItemCategory.PROXY_PLUGIN,
       span: 12,
     },
     {
       id: "remark",
-      label: "Remark",
+      label: t("proxyPlugin.remark"),
       defaultValue: proxyPlugin.remark,
       span: 12,
       category: FormItemCategory.TEXTAREA,
@@ -158,8 +161,8 @@ export default function ProxyPluginInfo() {
   return (
     <FormEditor
       key={name}
-      title="Modify proxy plugin configuration"
-      description="Change the proxy plugin configuration"
+      title={t("proxyPlugin.title")}
+      description={t("proxyPlugin.description")}
       items={arr}
       onUpsert={onUpsert}
       onRemove={onRemove}

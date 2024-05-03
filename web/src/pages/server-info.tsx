@@ -1,5 +1,6 @@
 import useConfigStore, { getLocationWeight } from "../states/config";
 import { useParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 
 import Loading from "../components/loading";
 import FormEditor, {
@@ -9,6 +10,8 @@ import FormEditor, {
 import { goToServerInfo } from "../router";
 
 export default function ServerInfo() {
+  const { t } = useTranslation();
+
   const [initialized, config, update, remove] = useConfigStore((state) => [
     state.initialized,
     state.data,
@@ -43,14 +46,14 @@ export default function ServerInfo() {
   const arr: FormItem[] = [
     {
       id: "addr",
-      label: "Listen Address",
+      label: t("server.addr"),
       defaultValue: server.addr,
       span: 6,
       category: FormItemCategory.TEXT,
     },
     {
       id: "locations",
-      label: "Locations",
+      label: t("server.locations"),
       defaultValue: server.locations,
       span: 6,
       category: FormItemCategory.LOCATION,
@@ -58,14 +61,14 @@ export default function ServerInfo() {
     },
     {
       id: "threads",
-      label: "Threads",
+      label: t("server.threads"),
       defaultValue: server.threads,
       span: 6,
       category: FormItemCategory.NUMBER,
     },
     {
       id: "access_log",
-      label: "Access Log",
+      label: t("server.accessLog"),
       defaultValue: server.access_log,
       span: 12,
       category: FormItemCategory.TEXT,
@@ -73,28 +76,28 @@ export default function ServerInfo() {
 
     {
       id: "tls_cert",
-      label: "Tls Cert Pem",
+      label: t("server.tlsCert"),
       defaultValue: server.tls_cert,
       span: 12,
       category: FormItemCategory.TEXTAREA,
     },
     {
       id: "tls_key",
-      label: "Tls Key Pem",
+      label: t("server.tlsKey"),
       defaultValue: server.tls_key,
       span: 12,
       category: FormItemCategory.TEXTAREA,
     },
     {
       id: "lets_encrypt",
-      label: "Lets encrypt domain list",
+      label: t("server.letsEncrypt"),
       defaultValue: server.lets_encrypt,
       span: 8,
       category: FormItemCategory.TEXT,
     },
     {
       id: "enabled_h2",
-      label: "Enable Http2",
+      label: t("server.enabledH2"),
       defaultValue: server.enabled_h2,
       span: 4,
       category: FormItemCategory.CHECKBOX,
@@ -118,7 +121,7 @@ export default function ServerInfo() {
     },
     {
       id: "remark",
-      label: "Remark",
+      label: t("server.remark"),
       defaultValue: server.remark,
       span: 12,
       category: FormItemCategory.TEXTAREA,
@@ -144,8 +147,8 @@ export default function ServerInfo() {
   return (
     <FormEditor
       key={name}
-      title="Modify server configuration"
-      description="Change the server configuration"
+      title={t("server.title")}
+      description={t("server.description")}
       items={arr}
       onUpsert={onUpsert}
       onRemove={onRemove}

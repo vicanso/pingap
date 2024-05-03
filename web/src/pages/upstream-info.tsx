@@ -1,5 +1,6 @@
 import useConfigStore from "../states/config";
 import { useParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 
 import Loading from "../components/loading";
 import FormEditor, {
@@ -9,6 +10,7 @@ import FormEditor, {
 import { goToUpstreamInfo } from "../router";
 
 export default function UpstreamInfo() {
+  const { t } = useTranslation();
   const [initialized, config, update, remove] = useConfigStore((state) => [
     state.initialized,
     state.data,
@@ -32,63 +34,63 @@ export default function UpstreamInfo() {
   const arr: FormItem[] = [
     {
       id: "addrs",
-      label: "Upstream Addrs",
+      label: t("upstream.addrs"),
       defaultValue: upstream.addrs,
       span: 12,
       category: FormItemCategory.ADDRS,
     },
     {
       id: "algo",
-      label: "Load balancer algorithm",
+      label: t("upstream.algo"),
       defaultValue: upstream.algo,
       span: 6,
       category: FormItemCategory.TEXT,
     },
     {
       id: "health_check",
-      label: "Health Check",
+      label: t("upstream.healthCheck"),
       defaultValue: upstream.health_check,
       span: 6,
       category: FormItemCategory.TEXT,
     },
     {
       id: "connection_timeout",
-      label: "Connection Timeout",
+      label: t("upstream.connectionTimeout"),
       defaultValue: upstream.connection_timeout,
       span: 6,
       category: FormItemCategory.TEXT,
     },
     {
       id: "total_connection_timeout",
-      label: "Total Connection Timeout",
+      label: t("upstream.totalConnectionTimeout"),
       defaultValue: upstream.total_connection_timeout,
       span: 6,
       category: FormItemCategory.TEXT,
     },
     {
       id: "read_timeout",
-      label: "Read Timeout",
+      label: t("upstream.readTimeout"),
       defaultValue: upstream.read_timeout,
       span: 4,
       category: FormItemCategory.TEXT,
     },
     {
       id: "write_timeout",
-      label: "Write Timeout",
+      label: t("upstream.writeTimeout"),
       defaultValue: upstream.write_timeout,
       span: 4,
       category: FormItemCategory.TEXT,
     },
     {
       id: "idle_timeout",
-      label: "Idle Timeout",
+      label: t("upstream.idleTimeout"),
       defaultValue: upstream.idle_timeout,
       span: 4,
       category: FormItemCategory.TEXT,
     },
     {
       id: "alpn",
-      label: "Alpn",
+      label: t("upstream.alpn"),
       defaultValue: upstream.alpn,
       span: 4,
       category: FormItemCategory.CHECKBOX,
@@ -117,14 +119,14 @@ export default function UpstreamInfo() {
     },
     {
       id: "sni",
-      label: "Sni",
+      label: t("upstream.sni"),
       defaultValue: upstream.sni,
       span: 4,
       category: FormItemCategory.TEXT,
     },
     {
       id: "verify_cert",
-      label: "Verify Cert",
+      label: t("upstream.verifyCert"),
       defaultValue: upstream.verify_cert,
       span: 4,
       category: FormItemCategory.CHECKBOX,
@@ -148,7 +150,7 @@ export default function UpstreamInfo() {
     },
     {
       id: "ipv4_only",
-      label: "Ipv4 Only",
+      label: t("upstream.ipv4Only"),
       defaultValue: upstream.ipv4_only,
       span: 4,
       category: FormItemCategory.CHECKBOX,
@@ -172,7 +174,7 @@ export default function UpstreamInfo() {
     },
     {
       id: "remark",
-      label: "Remark",
+      label: t("upstream.remark"),
       defaultValue: upstream.remark,
       span: 13,
       category: FormItemCategory.TEXTAREA,
@@ -198,8 +200,8 @@ export default function UpstreamInfo() {
   return (
     <FormEditor
       key={name}
-      title="Modify upstream configuration"
-      description="Change the upstream configuration"
+      title={t("upstream.title")}
+      description={t("upstream.description")}
       items={arr}
       onUpsert={onUpsert}
       onRemove={onRemove}

@@ -1,5 +1,6 @@
 import useConfigStore from "../states/config";
 import { useParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 
 import Loading from "../components/loading";
 import FormEditor, {
@@ -11,6 +12,8 @@ import FormEditor, {
 import { goToLoationInfo } from "../router";
 
 export default function LocationInfo() {
+  const { t } = useTranslation();
+
   const [initialized, config, update, remove] = useConfigStore((state) => [
     state.initialized,
     state.data,
@@ -62,21 +65,21 @@ export default function LocationInfo() {
   const arr: FormItem[] = [
     {
       id: "host",
-      label: "Host",
+      label: t("location.host"),
       defaultValue: location.host,
       span: 6,
       category: FormItemCategory.TEXT,
     },
     {
       id: "path",
-      label: "Path",
+      label: t("location.path"),
       defaultValue: location.path,
       span: 6,
       category: FormItemCategory.TEXT,
     },
     {
       id: "upstream",
-      label: "Upstream",
+      label: t("location.upstream"),
       defaultValue: location.upstream,
       span: 6,
       category: FormItemCategory.UPSTREAM,
@@ -84,35 +87,35 @@ export default function LocationInfo() {
     },
     {
       id: "weight",
-      label: "Weight",
+      label: t("location.weight"),
       defaultValue: location.weight,
       span: 6,
       category: FormItemCategory.NUMBER,
     },
     {
       id: "headers",
-      label: "Headers",
+      label: t("location.headers"),
       defaultValue: location.headers,
       span: 6,
       category: FormItemCategory.HEADERS,
     },
     {
       id: "proxy_headers",
-      label: "Proxy Headers",
+      label: t("location.proxyHeaders"),
       defaultValue: location.proxy_headers,
       span: 6,
       category: FormItemCategory.PROXY_HEADERS,
     },
     {
       id: "rewrite",
-      label: "Rewrite",
+      label: t("location.rewrite"),
       defaultValue: location.rewrite,
       span: 12,
       category: FormItemCategory.TEXT,
     },
     {
       id: "proxy_plugins",
-      label: "Proxy Plugins",
+      label: t("location.proxyPlugins"),
       defaultValue: location.proxy_plugins,
       span: 12,
       options: proxyPluginOptions,
@@ -120,7 +123,7 @@ export default function LocationInfo() {
     },
     {
       id: "remark",
-      label: "Remark",
+      label: t("location.remark"),
       defaultValue: location.remark,
       span: 13,
       category: FormItemCategory.TEXTAREA,
@@ -146,8 +149,8 @@ export default function LocationInfo() {
   return (
     <FormEditor
       key={name}
-      title="Modify location configuration"
-      description="Change the location configuration"
+      title={t("location.title")}
+      description={t("location.description")}
       items={arr}
       onRemove={onRemove}
       onUpsert={onUpsert}

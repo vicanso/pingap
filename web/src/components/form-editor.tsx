@@ -32,7 +32,7 @@ import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogContentText from "@mui/material/DialogContentText";
 import DialogTitle from "@mui/material/DialogTitle";
-
+import { useTranslation } from "react-i18next";
 import Paper from "@mui/material/Paper";
 import { Theme, useTheme } from "@mui/material/styles";
 import { formatError } from "../helpers/util";
@@ -599,6 +599,7 @@ export default function FormEditor({
   created?: boolean;
   currentNames?: string[];
 }) {
+  const { t } = useTranslation();
   const theme = useTheme();
   const [data, setData] = React.useState(getDefaultValues(items));
   const [openRemoveDialog, setOpenRemoveDialog] = React.useState(false);
@@ -733,13 +734,13 @@ export default function FormEditor({
             id={item.id}
             divide={" "}
             values={item.defaultValue as string[]}
-            label={"Addr"}
+            label={t("form.addr")}
             valueLabel={"Weight"}
             valueWidth="100px"
             onUpdate={(data) => {
               updateValue(item.id, data);
             }}
-            addLabel="Add Address"
+            addLabel={t("form.addrs")}
           />
         );
         break;
@@ -750,12 +751,12 @@ export default function FormEditor({
             id={item.id}
             divide={":"}
             values={item.defaultValue as string[]}
-            label={"Header Name"}
-            valueLabel={"Header Value"}
+            label={t("form.headerName")}
+            valueLabel={t("form.headerValue")}
             onUpdate={(data) => {
               updateValue(item.id, data);
             }}
-            addLabel="Add Response Header"
+            addLabel={t("form.header")}
           />
         );
         break;
@@ -766,12 +767,12 @@ export default function FormEditor({
             id={item.id}
             divide={":"}
             values={item.defaultValue as string[]}
-            label={"Proxy Header Name"}
-            valueLabel={"Proxy Header Value"}
+            label={t("form.proxyHeaderName")}
+            valueLabel={t("form.proxyHeaderValue")}
             onUpdate={(data) => {
               updateValue(item.id, data);
             }}
-            addLabel="Add Proxy Header"
+            addLabel={t("form.addProxyHeader")}
           />
         );
         break;
@@ -869,9 +870,7 @@ export default function FormEditor({
         if (selectedItems.length !== 0) {
           selectedBox = (
             <Box>
-              <FormLabel component="legend">
-                Sort selected proxy plugin
-              </FormLabel>
+              <FormLabel component="legend">{t("form.sortPlugin")}</FormLabel>
               <FormGroup>
                 <List>{selectedItems}</List>
               </FormGroup>
@@ -886,7 +885,9 @@ export default function FormEditor({
                   width: "50%",
                 }}
               >
-                <FormLabel component="legend">Select proxy plugin</FormLabel>
+                <FormLabel component="legend">
+                  {t("form.selectPlugin")}
+                </FormLabel>
                 <FormGroup>{labelItems}</FormGroup>
               </Box>
               {selectedBox}
@@ -951,10 +952,10 @@ export default function FormEditor({
     try {
       if (created) {
         if (!newName) {
-          throw new Error("Name is required");
+          throw new Error(t("form.nameRequired"));
         }
         if ((currentNames || []).includes(newName)) {
-          throw new Error("Name is exists");
+          throw new Error(t("form.nameExists"));
         }
       }
       await onUpsert(newName, data);
@@ -1025,7 +1026,7 @@ export default function FormEditor({
             setOpenRemoveDialog(true);
           }}
         >
-          {processing ? "Removing" : "Remove"}
+          {processing ? t("form.removing") : t("form.remove")}
         </Button>
       </Grid>
     );
@@ -1061,7 +1062,7 @@ export default function FormEditor({
                   doUpsert();
                 }}
               >
-                {processing ? "Submitting" : "Submit"}
+                {processing ? t("form.submitting") : t("form.submit")}
               </Button>
             </Grid>
             {removeGrip}
@@ -1078,7 +1079,7 @@ export default function FormEditor({
           icon={<CheckIcon fontSize="inherit" />}
           severity="success"
         >
-          Update success!
+          {t("form.success")}
         </Alert>
       )}
       <Snackbar
@@ -1098,11 +1099,12 @@ export default function FormEditor({
         aria-labelledby="alert-dialog-title"
         aria-describedby="alert-dialog-description"
       >
-        <DialogTitle id="alert-dialog-title">{"Remove config?"}</DialogTitle>
+        <DialogTitle id="alert-dialog-title">
+          {t("form.confirmRemove")}
+        </DialogTitle>
         <DialogContent>
           <DialogContentText id="alert-dialog-description">
-            Please confirm whether you want to delete the configuration, and it
-            can not be restored after delete it.
+            {t("form.removeDescript")}
           </DialogContentText>
         </DialogContent>
         <DialogActions>
@@ -1114,7 +1116,7 @@ export default function FormEditor({
             }}
             autoFocus
           >
-            Confirm
+            {t("form.confirm")}
           </Button>
         </DialogActions>
       </Dialog>
