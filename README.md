@@ -4,7 +4,7 @@
 
 A reverse proxy like nginx, built on [pingora](https://github.com/cloudflare/pingora), simple and efficient.
 
-[中文说明](./READMD_zh.md)
+[中文说明](./README_zh.md)
 
 ## Feature
 

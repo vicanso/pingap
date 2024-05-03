@@ -50,6 +50,11 @@ export default function LocationInfo() {
       option: 2,
       value: "pingap:requestId",
     },
+    {
+      label: "pingap:ping",
+      option: 3,
+      value: "pingap:ping",
+    },
   ];
   if (config.proxy_plugins) {
     Object.keys(config.proxy_plugins).forEach((name) => {

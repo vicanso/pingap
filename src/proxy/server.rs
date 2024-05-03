@@ -174,6 +174,7 @@ impl ServerConf {
 }
 
 pub struct Server {
+    name: String,
     admin: bool,
     addr: String,
     accepted: AtomicU64,
@@ -236,6 +237,7 @@ impl Server {
         }
 
         Ok(Server {
+            name: conf.name,
             admin: conf.admin,
             accepted: AtomicU64::new(0),
             processing: AtomicI32::new(0),
@@ -319,6 +321,11 @@ impl Server {
         };
 
         let threads = self.threads;
+        info!(
+            "Server({}) is linsten on:{addr}, threads:{threads:?}, tls:{}",
+            &self.name,
+            tls_settings.is_some()
+        );
         let mut lb = http_proxy_service(conf, self);
         lb.threads = threads;
 
