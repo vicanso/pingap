@@ -4,6 +4,8 @@
 
 A reverse proxy like nginx, built on [pingora](https://github.com/cloudflare/pingora), simple and efficient.
 
+[中文说明](./READMD_zh.md)
+
 ## Feature
 
 - Filter location by host and path
