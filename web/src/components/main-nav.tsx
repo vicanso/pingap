@@ -14,6 +14,8 @@ import AccountTreeIcon from "@mui/icons-material/AccountTree";
 import AltRouteIcon from "@mui/icons-material/AltRoute";
 import ExtensionIcon from "@mui/icons-material/Extension";
 import Button from "@mui/material/Button";
+import { useTranslation } from "react-i18next";
+
 import { useAsync } from "react-async-hook";
 import useConfigStore from "../states/config";
 import {
@@ -47,6 +49,8 @@ export default function MainNav({
   navWidth: string;
   navTop: string;
 }) {
+  const { t } = useTranslation();
+
   const [opens, setOpens] = React.useState([] as Number[]);
   const [navItems, setNavItems] = React.useState([] as NavItem[]);
   const [mainSelectedIndex, setMainSelectedIndex] = React.useState(-1);
@@ -66,7 +70,7 @@ export default function MainNav({
       const config = await fetch();
       const items: NavItem[] = [];
       items.push({
-        name: "Basic",
+        name: t("nav.basic"),
         icon: <DashboardIcon />,
         children: [],
         category: NavCategory.BasicInfo,
@@ -74,7 +78,7 @@ export default function MainNav({
       const servers = Object.keys(config.servers || {}).sort();
       servers.push(addTag);
       items.push({
-        name: "Server",
+        name: t("nav.server"),
         icon: <DnsIcon />,
         children: servers,
         category: NavCategory.ServerInfo,
@@ -82,7 +86,7 @@ export default function MainNav({
       const locations = Object.keys(config.locations || {}).sort();
       locations.push(addTag);
       items.push({
-        name: "Location",
+        name: t("nav.location"),
         icon: <AccountTreeIcon />,
         children: locations,
         category: NavCategory.LocationInfo,
@@ -90,7 +94,7 @@ export default function MainNav({
       const upstreams = Object.keys(config.upstreams || {}).sort();
       upstreams.push(addTag);
       items.push({
-        name: "Upstream",
+        name: t("nav.upstream"),
         icon: <AltRouteIcon />,
         children: upstreams,
         category: NavCategory.UpstreamInfo,
@@ -99,7 +103,7 @@ export default function MainNav({
       const proxyPluins = Object.keys(config.proxy_plugins || {}).sort();
       proxyPluins.push(addTag);
       items.push({
-        name: "ProxyPlugin",
+        name: t("nav.proxyPlugin"),
         icon: <ExtensionIcon />,
         children: proxyPluins,
         category: NavCategory.ProxyPluginInfo,

@@ -1959,7 +1959,6 @@ dependencies = [
  "base64 0.22.0",
  "bytes",
  "bytesize",
- "cfg-if",
  "chrono",
  "clap 4.5.4",
  "crc32fast",

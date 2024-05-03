@@ -944,7 +944,7 @@ addrs = ["127.0.0.1:5001"]
         assert_eq!("/proxy_plugins.toml", key);
         assert_eq!(
             r###"[proxy_plugins.stats]
-category = 0
+category = "stats"
 value = "/stats"
 "###,
             data
@@ -965,7 +965,7 @@ log_level = "info"
             data
         );
 
-        assert_eq!("CA5D110B", conf.hash().unwrap());
+        assert_eq!("B3CF126A", conf.hash().unwrap());
     }
 
     #[test]

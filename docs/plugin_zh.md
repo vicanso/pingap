@@ -158,3 +158,26 @@ BasicAuth鉴权，配置时需要使用保存`base64(user:pass)`的值，若有�
 value = "YWRtaW46dGVzdA==,YWRtaW46MTIzMTIz"
 category = "basic_auth"
 ```
+
+## Cache
+
+Http缓存，仅支持内存式缓存，暂不建议使用。
+
+## RedirectHttps
+
+重定向http至https，可在重定向时添加前缀。
+
+```toml
+[proxy_plugins.http2https]
+category = "redirect_https"
+```
+
+## Ping
+
+Ping->pong的响应处理，可用于判断程序是否正常运行等。
+
+```toml
+[proxy_plugins.pingpong]
+category = "ping"
+value = "/ping"
+```

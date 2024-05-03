@@ -8,6 +8,7 @@
 - [ ] client body size limit plugin
 - [ ] disable notification event
 - [ ] convert plugin category to string?
+- [ ] use buffer writer for log
 - [ ] support i18n
 - [x] access log format performance
 - [x] support etcd or other storage for config

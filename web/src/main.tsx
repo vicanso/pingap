@@ -7,6 +7,7 @@ import theme from "./theme";
 import MainNav from "./components/main-nav";
 import { RouterProvider } from "react-router-dom";
 import MainHeader from "./components/main-header";
+import "./i18n";
 
 import router from "./router";
 
