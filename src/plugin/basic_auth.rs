@@ -99,9 +99,9 @@ mod tests {
             BasicAuth::new("YWRtaW46MTIzMTIz", ProxyPluginStep::ProxyUpstreamFilter).unwrap();
 
         // auth success
-        let headers = vec!["Authorization: Basic YWRtaW46MTIzMTIz"].join("\r\n");
+        let headers = ["Authorization: Basic YWRtaW46MTIzMTIz"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = auth
@@ -111,9 +111,9 @@ mod tests {
         assert_eq!(true, result.is_none());
 
         // auth fail
-        let headers = vec!["Authorization: Basic YWRtaW46MTIzMTIa"].join("\r\n");
+        let headers = ["Authorization: Basic YWRtaW46MTIzMTIa"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = auth

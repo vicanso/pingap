@@ -144,7 +144,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
     async fn new_session() -> Session {
-        let headers = vec![
+        let headers = [
             "Host: github.com",
             "Referer: https://github.com/",
             "User-Agent: pingap/0.1.1",
@@ -155,7 +155,7 @@ mod tests {
         ]
         .join("\r\n");
         let input_header = format!("GET /vicanso/pingap?key=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         session
@@ -212,9 +212,9 @@ mod tests {
     async fn test_limit() {
         let limiter = Limiter::new("ip 0", ProxyPluginStep::RequestFilter).unwrap();
 
-        let headers = vec!["X-Forwarded-For: 1.1.1.1"].join("\r\n");
+        let headers = ["X-Forwarded-For: 1.1.1.1"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = limiter

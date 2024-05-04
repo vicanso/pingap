@@ -122,9 +122,9 @@ mod tests {
         let compression = Compression::new("9 8 7", ProxyPluginStep::ProxyUpstreamFilter).unwrap();
 
         // gzip
-        let headers = vec!["Accept-Encoding: gzip"].join("\r\n");
+        let headers = ["Accept-Encoding: gzip"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = compression
@@ -135,9 +135,9 @@ mod tests {
         assert_eq!(true, session.downstream_compression.is_enabled());
 
         // brotli
-        let headers = vec!["Accept-Encoding: br"].join("\r\n");
+        let headers = ["Accept-Encoding: br"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = compression
@@ -148,9 +148,9 @@ mod tests {
         assert_eq!(true, session.downstream_compression.is_enabled());
 
         // zstd
-        let headers = vec!["Accept-Encoding: zstd"].join("\r\n");
+        let headers = ["Accept-Encoding: zstd"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = compression
@@ -161,9 +161,9 @@ mod tests {
         assert_eq!(true, session.downstream_compression.is_enabled());
 
         // not support compression
-        let headers = vec!["Accept-Encoding: none"].join("\r\n");
+        let headers = ["Accept-Encoding: none"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = compression

@@ -88,9 +88,9 @@ mod tests {
     async fn test_redirect_https() {
         let redirect = RedirectHttps::new("/api", ProxyPluginStep::RequestFilter).unwrap();
 
-        let headers = vec!["Host: github.com"].join("\r\n");
+        let headers = ["Host: github.com"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = redirect

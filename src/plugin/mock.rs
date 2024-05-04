@@ -106,9 +106,9 @@ mod tests {
             r###"{"status":500,"headers":["Content-Type: application/json"],"data":"{\"message\":\"Mock Service Unavailable\"}"}"###,
              ProxyPluginStep::RequestFilter).unwrap();
 
-        let headers = vec!["Accept-Encoding: gzip"].join("\r\n");
+        let headers = ["Accept-Encoding: gzip"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(&input_header.as_bytes()).build();
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 

@@ -813,8 +813,10 @@ mod tests {
 
     #[test]
     fn test_location_get_wegiht() {
-        let mut conf = LocationConf::default();
-        conf.weight = Some(2048);
+        let mut conf = LocationConf {
+            weight: Some(2048),
+            ..Default::default()
+        };
 
         assert_eq!(2048, conf.get_weight());
 

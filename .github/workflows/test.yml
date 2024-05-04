@@ -45,6 +45,6 @@ jobs:
         run: make test
 
       - name: Run cargo clippy
-        run: cargo clippy --all-targets --all -- --deny=warnings
+        run: make lint
       - name: Run cargo release
         run: make release
