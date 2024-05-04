@@ -45,4 +45,6 @@ jobs:
       - name: Run cargo test
         run: make test
       - name: Run cargo release
-        run: make release
+        run: |
+          make release
+          ldd target/release/pingap
