@@ -10,6 +10,10 @@ env:
 
 jobs:
   linux:
+    strategy:
+      matrix:
+        # TODO: add nightly
+        toolchain: [stable]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,17 +21,22 @@ jobs:
         uses: actions/setup-node@v4
       - name: build-web
         run: make build-web
-      - name: release
-        uses: addnab/docker-run-action@v3
+      - name: Install build dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y cmake libclang-dev wget gnupg ca-certificates lsb-release --no-install-recommends
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@master
         with:
-          image: messense/rust-musl-cross:x86_64-musl
-          options: -v ${{ github.workspace }}:/home/rust/src
-          run: |
-            apt-get update
-            apt-get install protobuf-compiler -y
-            rustc --version
-            cargo --version
-            make test
-            make bench
-            make release
-            ls -lh target/x86_64-unknown-linux-musl/release
+          toolchain: ${{ matrix.toolchain }}
+          components: rustfmt, clippy
+      - name: Run cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: Run cargo test
+        run: make test
+
+      - name: Run cargo clippy
+        run: cargo clippy --all-targets --all -- --deny=warnings
+      - name: release
+        run: make release
