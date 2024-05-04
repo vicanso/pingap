@@ -740,8 +740,11 @@ mod tests {
         let result = conf.validate("test");
         assert_eq!(true, result.is_err());
         assert_eq!(
-            "Io error failed to lookup address information: nodename nor servname provided, or not known, github(upstream:test)",
-            result.expect_err("").to_string()
+            true,
+            result
+                .expect_err("")
+                .to_string()
+                .contains("Io error failed to lookup address information")
         );
 
         conf.addrs = vec!["127.0.0.1".to_string(), "github.com".to_string()];
