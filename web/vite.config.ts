@@ -1,13 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-function manualChunks(id) {
-  if (id.includes("react")) {
-    return "react-combine";
-  }
-  if (id.includes("@mui")) {
-    return "mui-combine";
-  }
+function manualChunks(id: string) {
   if (id.includes("node_modules")) {
     return "vendor";
   }

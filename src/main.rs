@@ -18,20 +18,20 @@ use crate::state::AutoRestart;
 use clap::Parser;
 use config::{PingapConf, ProxyPluginCategory, ProxyPluginConf};
 use crossbeam_channel::Sender;
-use log::{error, info, Level};
+use log::{error, info};
 use pingora::server;
 use pingora::server::configuration::Opt;
 use pingora::services::background::background_service;
 use proxy::{Server, ServerConf};
 use state::get_start_time;
 use std::error::Error;
-use std::io::{BufWriter, Write};
 use std::sync::Arc;
 use std::time::Duration;
 
 mod acme;
 mod config;
 mod http_extra;
+mod logger;
 #[cfg(feature = "perf")]
 mod perf;
 mod plugin;
@@ -193,7 +193,6 @@ fn run() -> Result<(), Box<dyn Error>> {
     if args.adminnode && args.admin.is_some() {
         return run_admin_node(args);
     }
-    let mut builder = env_logger::Builder::from_env(env_logger::Env::default());
 
     let (s, r) = crossbeam_channel::bounded(0);
     get_config(args.conf.clone(), args.admin.is_some(), s);
@@ -205,57 +204,12 @@ fn run() -> Result<(), Box<dyn Error>> {
     let webhook_url = conf.webhook.clone().unwrap_or_default();
     webhook::set_web_hook(&webhook_url, &conf.webhook_type.clone().unwrap_or_default());
 
-    if let Some(log_level) = &conf.log_level {
-        match log_level.to_lowercase().as_str() {
-            "error" => builder.filter_level(log::LevelFilter::Error),
-            "warn" => builder.filter_level(log::LevelFilter::Warn),
-            "debug" => builder.filter_level(log::LevelFilter::Debug),
-            _ => builder.filter_level(log::LevelFilter::Info),
-        };
-    } else if std::env::var(env_logger::DEFAULT_FILTER_ENV).is_err() {
-        builder.filter_level(log::LevelFilter::Error);
-    }
-
-    if let Some(log) = &args.log {
-        // TODO capacity
-        let capacity = 8192;
-        let file = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            // open read() in case there are no readers
-            // available otherwise we will panic with
-            .read(true)
-            .open(log)?;
-        if capacity > 512 {
-            let w = BufWriter::with_capacity(capacity, file);
-            builder.target(env_logger::Target::Pipe(Box::new(w)));
-        } else {
-            builder.target(env_logger::Target::Pipe(Box::new(file)));
-        }
-    }
-
-    builder
-        .format(move |buf, record| {
-            let msg = format!("{}", record.args());
-            if !webhook_url.is_empty()
-                && record.level() == Level::Warn
-                && msg.contains("becomes unhealthy")
-            {
-                webhook::send(webhook::SendNotificationParams {
-                    level: webhook::NotificationLevel::Warn,
-                    category: "backend_unhealthy".to_string(),
-                    msg: format!("{}", record.args()),
-                });
-            }
-
-            writeln!(
-                buf,
-                "{} {} {msg}",
-                record.level(),
-                chrono::Local::now().to_rfc3339(),
-            )
-        })
-        .try_init()?;
+    // TODO capacity
+    logger::logger_try_init(logger::LoggerParams {
+        capacity: 8192,
+        file: args.log.clone().unwrap_or_default(),
+        level: conf.log_level.clone().unwrap_or_default(),
+    })?;
 
     // return if test mode
     if args.test {
