@@ -167,10 +167,10 @@ impl ProxyPlugin for Directory {
     ) -> pingora::Result<Option<HttpResponse>> {
         let mut filename = session.req_header().uri.path().to_string();
         if filename.len() <= 1 {
-            filename = self.index.clone();
+            filename.clone_from(&self.index);
         }
         if let Ok(value) = decode(&filename) {
-            filename = value.into_owned().clone();
+            filename.clone_from(&value.into_owned());
         }
         // convert to relative path
         let file = self.path.join(filename.substring(1, filename.len()));
