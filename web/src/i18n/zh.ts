@@ -30,6 +30,7 @@ export default {
   "basic.gracefulShutdownTimeout": "等待关闭时长",
   "basic.logLevel": "日志级别",
   "basic.logCapacity": "日志缓存区大小(字节)",
+  "basic.autoRestartCheckInterval": "自动重启检测间隔",
   "basic.upstreamKeepalivePoolSize": "Upstream连接池大小",
   "basic.webhookType": "Webhook类型",
   "basic.webhook": "Webhook的请求地址",

@@ -221,6 +221,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
+    let auto_restart_check_interval = basic_conf
+        .auto_restart_check_interval
+        .map_or(Duration::from_secs(90), |item| item);
+
     #[cfg(feature = "perf")]
     info!("Enable feature perf");
 
@@ -331,8 +335,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         my_server.add_service(background_service(
             "Auto Restart",
             AutoRestart {
-                // TODO interval
-                interval: Duration::from_secs(90),
+                interval: auto_restart_check_interval,
             },
         ));
     }

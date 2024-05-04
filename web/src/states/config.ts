@@ -82,6 +82,7 @@ interface Basic {
   upstream_keepalive_pool_size?: number;
   log_capacity?: number;
   log_level?: string;
+  auto_restart_check_interval?: string;
   sentry?: string;
   pyroscope?: string;
   webhook?: string;

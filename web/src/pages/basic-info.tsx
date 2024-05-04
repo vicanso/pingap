@@ -121,6 +121,13 @@ export default function BasicInfo() {
       category: FormItemCategory.NUMBER,
     },
     {
+      id: "auto_restart_check_interval",
+      label: t("basic.autoRestartCheckInterval"),
+      defaultValue: basic.auto_restart_check_interval,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
       id: "webhook_type",
       label: t("basic.webhookType"),
       defaultValue: basic.webhook_type,

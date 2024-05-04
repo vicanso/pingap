@@ -336,6 +336,9 @@ pub struct BasicConf {
     pub log_capacity: Option<usize>,
     pub sentry: Option<String>,
     pub pyroscope: Option<String>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub auto_restart_check_interval: Option<Duration>,
 }
 
 #[derive(Deserialize, Debug, Serialize)]
