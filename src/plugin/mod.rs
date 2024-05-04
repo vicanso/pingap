@@ -186,3 +186,7 @@ pub fn get_proxy_plugin(name: &str) -> Option<&dyn ProxyPlugin> {
     }
     None
 }
+
+pub fn list_proxy_plugins() -> Option<&'static HashMap<String, Box<dyn ProxyPlugin>>> {
+    PROXY_PLUGINS.get()
+}

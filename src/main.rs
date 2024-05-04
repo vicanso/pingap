@@ -269,7 +269,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     };
     let mut my_server = server::Server::new(Some(opt))?;
     my_server.configuration = Arc::new(new_server_conf(&args, &conf));
-    my_server.sentry = basic_conf.sentry.clone();
+    my_server.sentry.clone_from(&basic_conf.sentry);
     my_server.bootstrap();
 
     #[cfg(feature = "perf")]
@@ -342,6 +342,16 @@ fn run() -> Result<(), Box<dyn Error>> {
             "Lets encrypt",
             LetsEncryptService { domains },
         ));
+    }
+
+    if let Some(plugins) = plugin::list_proxy_plugins() {
+        for (name, plugin) in plugins {
+            info!(
+                "Proxy plugin name:{name}, step:{}, category:{}",
+                plugin.step(),
+                plugin.category()
+            );
+        }
     }
 
     info!("Server is running");
