@@ -33,6 +33,7 @@ export default {
   "basic.autoRestartCheckInterval": "自动重启检测间隔",
   "basic.upstreamKeepalivePoolSize": "Upstream连接池大小",
   "basic.webhookType": "Webhook类型",
+  "basic.webhookNotifications": "Webhook通知类型",
   "basic.webhook": "Webhook的请求地址",
   "basic.sentry": "Sentry地址",
   "basic.pyroscope": "Pyroscope地址",

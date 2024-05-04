@@ -48,6 +48,7 @@ export enum FormItemCategory {
   HEADERS = "headers",
   PROXY_HEADERS = "proxyHeaders",
   WEBHOOK_TYPE = "webhookType",
+  WEBHOOK_NOTIFICATIONS = "webhookNotifications",
   PROXY_PLUGIN = "proxyPlugin",
   PROXY_PLUGIN_SELECT = "proxyPluginSelect",
 }
@@ -617,6 +618,7 @@ export default function FormEditor({
 
   const defaultLocations: string[] = [];
   const defaultProxyPluginSelected: string[] = [];
+  const defaultWebhookNotifications: string[] = [];
   items.forEach((item) => {
     switch (item.category) {
       case FormItemCategory.LOCATION: {
@@ -633,6 +635,13 @@ export default function FormEditor({
         });
         break;
       }
+      case FormItemCategory.WEBHOOK_NOTIFICATIONS: {
+        const arr = (item.defaultValue as string[]) || [];
+        arr.forEach((item) => {
+          defaultWebhookNotifications.push(item);
+        });
+        break;
+      }
     }
   });
 
@@ -640,6 +649,9 @@ export default function FormEditor({
   const [selectedProxyPlugins, setSelectedProxyPlugins] = React.useState<
     string[]
   >(defaultProxyPluginSelected);
+  const [webhookNotifications, setWebhookNotifications] = React.useState<
+    string[]
+  >(defaultWebhookNotifications);
 
   const [updated, setUpdated] = React.useState(false);
   const [processing, setProcessing] = React.useState(false);
@@ -716,6 +728,37 @@ export default function FormEditor({
                   key={name}
                   value={name}
                   style={getStyles(name, locations, theme)}
+                >
+                  {name}
+                </MenuItem>
+              ))}
+            </Select>
+          </React.Fragment>
+        );
+        break;
+      }
+      case FormItemCategory.WEBHOOK_NOTIFICATIONS: {
+        const options = (item.options as string[]) || [];
+        formItem = (
+          <React.Fragment>
+            <InputLabel id={`{item.id}-label`}>{item.label}</InputLabel>
+            <Select
+              labelId={`{item.id}-label`}
+              id={item.label}
+              multiple
+              value={webhookNotifications}
+              onChange={(e) => {
+                const values = (e.target.value as string[]).sort();
+                setWebhookNotifications(values);
+                updateValue(item.id, values);
+              }}
+              input={<OutlinedInput label={item.label} />}
+            >
+              {options.map((name) => (
+                <MenuItem
+                  key={name}
+                  value={name}
+                  style={getStyles(name, webhookNotifications, theme)}
                 >
                   {name}
                 </MenuItem>

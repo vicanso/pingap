@@ -34,6 +34,7 @@ export default {
   "basic.autoRestartCheckInterval": "Auto Restart Check Interval",
   "basic.upstreamKeepalivePoolSize": "Upstream Keepalive Pool Size",
   "basic.webhookType": "Webhook Type",
+  "basic.webhookNotifications": "Webhook Notifications",
   "basic.webhook": "Webhook Url",
   "basic.sentry": "Sentry",
   "basic.pyroscope": "Pyroscope",

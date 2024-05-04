@@ -17,18 +17,31 @@ use log::{error, info};
 use once_cell::sync::OnceCell;
 use serde_json::{Map, Value};
 use std::{fmt::Display, time::Duration};
+use strum::EnumString;
 
 static WEBHOOK_URL: OnceCell<String> = OnceCell::new();
 static WEBHOOK_CATEGORY: OnceCell<String> = OnceCell::new();
-pub fn set_web_hook(url: &str, category: &str) {
+static WEBHOOK_NOTIFICATIONS: OnceCell<Vec<String>> = OnceCell::new();
+pub fn set_web_hook(url: &str, category: &str, notifications: &[String]) {
     WEBHOOK_URL.get_or_init(|| url.to_string());
     WEBHOOK_CATEGORY.get_or_init(|| category.to_string());
+    WEBHOOK_NOTIFICATIONS.get_or_init(|| notifications.to_owned());
 }
 
 pub enum NotificationLevel {
     Info,
     Warn,
     Error,
+}
+
+#[derive(PartialEq, Debug, Clone, EnumString, strum::Display)]
+#[strum(serialize_all = "snake_case")]
+pub enum NotificationCategory {
+    BackendUnhealthy,
+    LetsEncrypt,
+    DiffConfig,
+    Restart,
+    RestartFail,
 }
 
 impl Display for NotificationLevel {
@@ -43,7 +56,7 @@ impl Display for NotificationLevel {
 }
 
 pub struct SendNotificationParams {
-    pub category: String,
+    pub category: NotificationCategory,
     pub level: NotificationLevel,
     pub msg: String,
 }
@@ -66,9 +79,15 @@ pub fn send(params: SendNotificationParams) {
     if url.is_empty() {
         return;
     }
+    let found = WEBHOOK_NOTIFICATIONS
+        .get()
+        .map(|arr| arr.contains(&params.category.to_string()));
+    if !found.unwrap_or_default() {
+        return;
+    }
     std::thread::spawn(move || {
         if let Ok(rt) = tokio::runtime::Runtime::new() {
-            let category = params.category;
+            let category = params.category.to_string();
             let level = params.level;
             let ip = if let Ok(value) = local_ip_address::local_ip() {
                 value.to_string()

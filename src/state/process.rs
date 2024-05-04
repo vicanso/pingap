@@ -99,7 +99,7 @@ impl BackgroundService for AutoRestart {
                                if !diff_result.is_empty() {
                                     webhook::send(webhook::SendNotificationParams {
                                         level: webhook::NotificationLevel::Info,
-                                        category: "diff_config".to_string(),
+                                        category: webhook::NotificationCategory::DiffConfig,
                                         msg: diff_result.join("\n"),
                                     });
                                }
@@ -137,7 +137,7 @@ pub fn restart_now() -> io::Result<process::Output> {
     info!("Pingap will restart");
     webhook::send(webhook::SendNotificationParams {
         level: webhook::NotificationLevel::Info,
-        category: "restart".to_string(),
+        category: webhook::NotificationCategory::Restart,
         msg: format!("Restart now, pid:{}", std::process::id()),
     });
     if let Some(cmd) = CMD.get() {
@@ -164,7 +164,7 @@ pub fn restart() {
                     error!("Restart fail: {e}");
                     webhook::send(webhook::SendNotificationParams {
                         level: webhook::NotificationLevel::Error,
-                        category: "restart_fail".to_string(),
+                        category: webhook::NotificationCategory::RestartFail,
                         msg: e.to_string(),
                     });
                 }

@@ -87,6 +87,7 @@ interface Basic {
   pyroscope?: string;
   webhook?: string;
   webhook_type?: string;
+  webhook_notifications?: string[];
 }
 
 interface Config {

@@ -207,6 +207,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     webhook::set_web_hook(
         &webhook_url,
         &conf.basic.webhook_type.clone().unwrap_or_default(),
+        &conf.basic.webhook_notifications.clone().unwrap_or_default(),
     );
 
     logger::logger_try_init(logger::LoggerParams {

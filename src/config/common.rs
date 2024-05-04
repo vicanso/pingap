@@ -332,6 +332,7 @@ pub struct BasicConf {
     pub upstream_keepalive_pool_size: Option<usize>,
     pub webhook: Option<String>,
     pub webhook_type: Option<String>,
+    pub webhook_notifications: Option<Vec<String>>,
     pub log_level: Option<String>,
     pub log_capacity: Option<usize>,
     pub sentry: Option<String>,

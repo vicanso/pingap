@@ -297,7 +297,7 @@ async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
     info!("Write cert success, {path:?}");
     webhook::send(webhook::SendNotificationParams {
         level: webhook::NotificationLevel::Info,
-        category: "lets_encrypt".to_string(),
+        category: webhook::NotificationCategory::LetsEncrypt,
         msg: "Generate new cert from lets encrypt".to_string(),
     });
 
