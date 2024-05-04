@@ -30,6 +30,7 @@ export default {
   "basic.gracePeriod": "Grace Period",
   "basic.gracefulShutdownTimeout": "Graceful Shutdown Timeout",
   "basic.logLevel": "Log Level",
+  "basic.logCapacity": "Log Capacity(byte)",
   "basic.upstreamKeepalivePoolSize": "Upstream Keepalive Pool Size",
   "basic.webhookType": "Webhook Type",
   "basic.webhook": "Webhook Url",

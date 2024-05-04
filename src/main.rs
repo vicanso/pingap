@@ -209,9 +209,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         &conf.basic.webhook_type.clone().unwrap_or_default(),
     );
 
-    // TODO capacity
     logger::logger_try_init(logger::LoggerParams {
-        capacity: 8192,
+        capacity: basic_conf.log_capacity.unwrap_or_default(),
         file: args.log.clone().unwrap_or_default(),
         level: basic_conf.log_level.clone().unwrap_or_default(),
     })?;
@@ -347,7 +346,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     if let Some(plugins) = plugin::list_proxy_plugins() {
         for (name, plugin) in plugins {
             info!(
-                "Proxy plugin name:{name}, step:{}, category:{}",
+                "Proxy plugin {name}, step:{}, category:{}",
                 plugin.step(),
                 plugin.category()
             );

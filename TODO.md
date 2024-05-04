@@ -7,7 +7,7 @@
 - [ ] fix not_before not_after of cert
 - [ ] client body size limit plugin
 - [ ] disable notification event
-- [ ] use buffer writer for log
+- [x] use buffer writer for log
 - [x] convert plugin category to string?
 - [x] support i18n
 - [x] access log format performance

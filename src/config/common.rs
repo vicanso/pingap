@@ -333,6 +333,7 @@ pub struct BasicConf {
     pub webhook: Option<String>,
     pub webhook_type: Option<String>,
     pub log_level: Option<String>,
+    pub log_capacity: Option<usize>,
     pub sentry: Option<String>,
     pub pyroscope: Option<String>,
 }

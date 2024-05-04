@@ -107,6 +107,13 @@ export default function BasicInfo() {
       category: FormItemCategory.TEXT,
     },
     {
+      id: "log_capacity",
+      label: t("basic.logCapacity"),
+      defaultValue: basic.log_capacity,
+      span: 6,
+      category: FormItemCategory.NUMBER,
+    },
+    {
       id: "upstream_keepalive_pool_size",
       label: t("basic.upstreamKeepalivePoolSize"),
       defaultValue: basic.upstream_keepalive_pool_size,

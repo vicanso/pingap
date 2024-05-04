@@ -80,6 +80,7 @@ interface Basic {
   grace_period?: string;
   graceful_shutdown_timeout?: string;
   upstream_keepalive_pool_size?: number;
+  log_capacity?: number;
   log_level?: string;
   sentry?: string;
   pyroscope?: string;
