@@ -1,3 +1,4 @@
+[basic]
 # error page html template
 error_template = ""
 

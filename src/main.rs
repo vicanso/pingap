@@ -81,33 +81,34 @@ struct Args {
 }
 
 fn new_server_conf(args: &Args, conf: &PingapConf) -> server::configuration::ServerConf {
+    let basic_conf = &conf.basic;
     let mut server_conf = server::configuration::ServerConf {
         pid_file: format!("/tmp/{}.pid", util::get_pkg_name()),
         upgrade_sock: format!("/tmp/{}_upgrade.sock", util::get_pkg_name()),
-        user: conf.user.clone(),
-        group: conf.group.clone(),
+        user: basic_conf.user.clone(),
+        group: basic_conf.group.clone(),
         daemon: args.daemon,
         ..Default::default()
     };
-    if let Some(value) = conf.grace_period {
+    if let Some(value) = basic_conf.grace_period {
         server_conf.grace_period_seconds = Some(value.as_secs());
     }
-    if let Some(value) = conf.graceful_shutdown_timeout {
+    if let Some(value) = basic_conf.graceful_shutdown_timeout {
         server_conf.graceful_shutdown_timeout_seconds = Some(value.as_secs());
     }
-    if let Some(upstream_keepalive_pool_size) = conf.upstream_keepalive_pool_size {
+    if let Some(upstream_keepalive_pool_size) = basic_conf.upstream_keepalive_pool_size {
         server_conf.upstream_keepalive_pool_size = upstream_keepalive_pool_size;
     }
-    if let Some(pid_file) = &conf.pid_file {
+    if let Some(pid_file) = &basic_conf.pid_file {
         server_conf.pid_file = pid_file.to_string();
     }
-    if let Some(upgrade_sock) = &conf.upgrade_sock {
+    if let Some(upgrade_sock) = &basic_conf.upgrade_sock {
         server_conf.upgrade_sock = upgrade_sock.to_string();
     }
-    if let Some(threads) = conf.threads {
+    if let Some(threads) = basic_conf.threads {
         server_conf.threads = threads;
     }
-    if let Some(work_stealing) = conf.work_stealing {
+    if let Some(work_stealing) = basic_conf.work_stealing {
         server_conf.work_stealing = work_stealing
     }
 
@@ -198,17 +199,21 @@ fn run() -> Result<(), Box<dyn Error>> {
     get_config(args.conf.clone(), args.admin.is_some(), s);
     let conf = r.recv()??;
     conf.validate()?;
+    let basic_conf = &conf.basic;
     config::set_current_config(&conf);
-    config::set_app_name(&conf.name.clone().unwrap_or_default());
+    config::set_app_name(&basic_conf.name.clone().unwrap_or_default());
 
-    let webhook_url = conf.webhook.clone().unwrap_or_default();
-    webhook::set_web_hook(&webhook_url, &conf.webhook_type.clone().unwrap_or_default());
+    let webhook_url = basic_conf.webhook.clone().unwrap_or_default();
+    webhook::set_web_hook(
+        &webhook_url,
+        &conf.basic.webhook_type.clone().unwrap_or_default(),
+    );
 
     // TODO capacity
     logger::logger_try_init(logger::LoggerParams {
         capacity: 8192,
         file: args.log.clone().unwrap_or_default(),
-        level: conf.log_level.clone().unwrap_or_default(),
+        level: basic_conf.log_level.clone().unwrap_or_default(),
     })?;
 
     // return if test mode
@@ -264,7 +269,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     };
     let mut my_server = server::Server::new(Some(opt))?;
     my_server.configuration = Arc::new(new_server_conf(&args, &conf));
-    my_server.sentry = conf.sentry.clone();
+    my_server.sentry = basic_conf.sentry.clone();
     my_server.bootstrap();
 
     #[cfg(feature = "perf")]

@@ -14,8 +14,8 @@
 
 use super::{ProxyPlugin, Result};
 use crate::config::{
-    self, save_config, LocationConf, ProxyPluginCategory, ProxyPluginConf, ProxyPluginStep,
-    ServerConf, UpstreamConf,
+    self, save_config, BasicConf, LocationConf, ProxyPluginCategory, ProxyPluginConf,
+    ProxyPluginStep, ServerConf, UpstreamConf,
 };
 use crate::config::{
     PingapConf, CATEGORY_LOCATION, CATEGORY_PROXY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
@@ -38,7 +38,6 @@ use pingora::proxy::Session;
 use rust_embed::EmbeddedFile;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 use substring::Substring;
 
 #[derive(RustEmbed)]
@@ -110,30 +109,6 @@ impl AdminServe {
 #[derive(Serialize, Deserialize)]
 struct ErrorResponse {
     message: String,
-}
-
-#[derive(Serialize, Deserialize)]
-struct BasicConfParams {
-    name: Option<String>,
-    error_template: Option<String>,
-    pid_file: Option<String>,
-    upgrade_sock: Option<String>,
-    user: Option<String>,
-    group: Option<String>,
-    threads: Option<usize>,
-    work_stealing: Option<bool>,
-    #[serde(default)]
-    #[serde(with = "humantime_serde")]
-    grace_period: Option<Duration>,
-    #[serde(default)]
-    #[serde(with = "humantime_serde")]
-    graceful_shutdown_timeout: Option<Duration>,
-    upstream_keepalive_pool_size: Option<usize>,
-    webhook: Option<String>,
-    webhook_type: Option<String>,
-    log_level: Option<String>,
-    sentry: Option<String>,
-    pyroscope: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -240,26 +215,11 @@ impl AdminServe {
                 conf.proxy_plugins.insert(key, plugin);
             }
             _ => {
-                let basic_conf: BasicConfParams = serde_json::from_slice(&buf).map_err(|e| {
+                let basic_conf: BasicConf = serde_json::from_slice(&buf).map_err(|e| {
                     error!("failed to basic info: {e}");
                     util::new_internal_error(400, e.to_string())
                 })?;
-                conf.name = basic_conf.name;
-                conf.error_template = basic_conf.error_template.unwrap_or_default();
-                conf.pid_file = basic_conf.pid_file;
-                conf.upgrade_sock = basic_conf.upgrade_sock;
-                conf.user = basic_conf.user;
-                conf.group = basic_conf.group;
-                conf.threads = basic_conf.threads;
-                conf.work_stealing = basic_conf.work_stealing;
-                conf.grace_period = basic_conf.grace_period;
-                conf.graceful_shutdown_timeout = basic_conf.graceful_shutdown_timeout;
-                conf.upstream_keepalive_pool_size = basic_conf.upstream_keepalive_pool_size;
-                conf.webhook = basic_conf.webhook;
-                conf.webhook_type = basic_conf.webhook_type;
-                conf.log_level = basic_conf.log_level;
-                conf.sentry = basic_conf.sentry;
-                conf.pyroscope = basic_conf.pyroscope;
+                conf.basic = basic_conf;
             }
         };
         save_config(&config::get_config_path(), &conf, category)

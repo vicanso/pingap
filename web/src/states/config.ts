@@ -68,11 +68,7 @@ interface ProxyPlugin {
   remark?: string;
 }
 
-interface Config {
-  upstreams?: Record<string, Upstream>;
-  locations?: Record<string, Location>;
-  servers?: Record<string, Server>;
-  proxy_plugins?: Record<string, ProxyPlugin>;
+interface Basic {
   error_template?: string;
   name?: string;
   pid_file?: string;
@@ -89,6 +85,14 @@ interface Config {
   pyroscope?: string;
   webhook?: string;
   webhook_type?: string;
+}
+
+interface Config {
+  basic: Basic;
+  upstreams?: Record<string, Upstream>;
+  locations?: Record<string, Location>;
+  servers?: Record<string, Server>;
+  proxy_plugins?: Record<string, ProxyPlugin>;
 }
 
 interface ConfigState {
@@ -118,7 +122,9 @@ const random = (length = 8) => {
 };
 
 const useConfigStore = create<ConfigState>()((set, get) => ({
-  data: {},
+  data: {
+    basic: {} as Basic,
+  },
   version: random(),
   initialized: false,
   fetch: async () => {

@@ -130,11 +130,10 @@ impl From<PingapConf> for Vec<ServerConf> {
                 }
             }
 
-            let error_template = if conf.error_template.is_empty() {
-                ERROR_TEMPLATE.to_string()
-            } else {
-                conf.error_template.clone()
-            };
+            let mut error_template = conf.basic.error_template.clone().unwrap_or_default();
+            if error_template.is_empty() {
+                error_template = ERROR_TEMPLATE.to_string();
+            }
 
             let threads = if let Some(threads) = item.threads {
                 if threads > 0 {

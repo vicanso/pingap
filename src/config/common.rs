@@ -313,51 +313,10 @@ impl ServerConf {
         Ok(())
     }
 }
-
-#[derive(Deserialize, Debug, Serialize)]
-struct TomlConfig {
-    name: Option<String>,
-    servers: Option<Map<String, Value>>,
-    upstreams: Option<Map<String, Value>>,
-    locations: Option<Map<String, Value>>,
-    proxy_plugins: Option<Map<String, Value>>,
-    error_template: Option<String>,
-    pid_file: Option<String>,
-    upgrade_sock: Option<String>,
-    user: Option<String>,
-    group: Option<String>,
-    threads: Option<usize>,
-    work_stealing: Option<bool>,
-    #[serde(default)]
-    #[serde(with = "humantime_serde")]
-    pub grace_period: Option<Duration>,
-    #[serde(default)]
-    #[serde(with = "humantime_serde")]
-    pub graceful_shutdown_timeout: Option<Duration>,
-    pub upstream_keepalive_pool_size: Option<usize>,
-    pub webhook: Option<String>,
-    pub webhook_type: Option<String>,
-    pub log_level: Option<String>,
-    pub sentry: Option<String>,
-    pub pyroscope: Option<String>,
-}
-
-fn format_toml(value: &Value) -> String {
-    if let Some(value) = value.as_table() {
-        value.to_string()
-    } else {
-        "".to_string()
-    }
-}
-
-#[derive(Debug, Default, Clone, Deserialize, Serialize)]
-pub struct PingapConf {
+#[derive(Debug, Default, Deserialize, Clone, Serialize)]
+pub struct BasicConf {
     pub name: Option<String>,
-    pub upstreams: HashMap<String, UpstreamConf>,
-    pub locations: HashMap<String, LocationConf>,
-    pub servers: HashMap<String, ServerConf>,
-    pub proxy_plugins: HashMap<String, ProxyPluginConf>,
-    pub error_template: String,
+    pub error_template: Option<String>,
     pub pid_file: Option<String>,
     pub upgrade_sock: Option<String>,
     pub user: Option<String>,
@@ -376,6 +335,32 @@ pub struct PingapConf {
     pub log_level: Option<String>,
     pub sentry: Option<String>,
     pub pyroscope: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Serialize)]
+struct TomlConfig {
+    basic: BasicConf,
+    servers: Option<Map<String, Value>>,
+    upstreams: Option<Map<String, Value>>,
+    locations: Option<Map<String, Value>>,
+    proxy_plugins: Option<Map<String, Value>>,
+}
+
+fn format_toml(value: &Value) -> String {
+    if let Some(value) = value.as_table() {
+        value.to_string()
+    } else {
+        "".to_string()
+    }
+}
+
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
+pub struct PingapConf {
+    pub basic: BasicConf,
+    pub upstreams: HashMap<String, UpstreamConf>,
+    pub locations: HashMap<String, LocationConf>,
+    pub servers: HashMap<String, ServerConf>,
+    pub proxy_plugins: HashMap<String, ProxyPluginConf>,
 }
 
 impl PingapConf {
@@ -442,7 +427,12 @@ impl TryFrom<Vec<u8>> for PingapConf {
                 .as_str(),
         )
         .map_err(|e| Error::De { source: e })?;
-        let threads = if let Some(threads) = data.threads {
+
+        let mut conf = PingapConf {
+            basic: data.basic,
+            ..Default::default()
+        };
+        conf.basic.threads = if let Some(threads) = conf.basic.threads {
             if threads > 0 {
                 Some(threads)
             } else {
@@ -450,25 +440,6 @@ impl TryFrom<Vec<u8>> for PingapConf {
             }
         } else {
             None
-        };
-        let mut conf = PingapConf {
-            name: data.name,
-            error_template: data.error_template.unwrap_or_default(),
-            pid_file: data.pid_file,
-            upgrade_sock: data.upgrade_sock,
-            user: data.user,
-            group: data.group,
-            threads,
-            work_stealing: data.work_stealing,
-            grace_period: data.grace_period,
-            graceful_shutdown_timeout: data.graceful_shutdown_timeout,
-            upstream_keepalive_pool_size: data.upstream_keepalive_pool_size,
-            webhook: data.webhook,
-            webhook_type: data.webhook_type,
-            log_level: data.log_level,
-            sentry: data.sentry,
-            pyroscope: data.pyroscope,
-            ..Default::default()
         };
         for (name, value) in data.upstreams.unwrap_or_default() {
             let upstream: UpstreamConf = toml::from_str(format_toml(&value).as_str())
@@ -961,7 +932,8 @@ value = "/stats"
         let (key, data) = conf.get_toml("").unwrap();
         assert_eq!("/basic.toml", key);
         assert_eq!(
-            r###"error_template = ""
+            r###"[basic]
+error_template = ""
 pid_file = "/tmp/pingap.pid"
 upgrade_sock = "/tmp/pingap_upgrade.sock"
 threads = 1
@@ -973,7 +945,7 @@ log_level = "info"
             data
         );
 
-        assert_eq!("B3CF126A", conf.hash().unwrap());
+        assert_eq!("DB35E2C4", conf.hash().unwrap());
     }
 
     #[test]
@@ -991,7 +963,7 @@ log_level = "info"
         );
 
         other.remove(CATEGORY_UPSTREAM, "diving").unwrap();
-        other.threads = Some(5);
+        other.basic.threads = Some(5);
 
         let value = conf.diff(other);
 
