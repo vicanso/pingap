@@ -65,6 +65,7 @@ export enum ProxyPluginCategory {
   BASIC_AUTH = "basic_auth",
   CACHE = "cache",
   REDIRECT_HTTPS = "redirect_https",
+  PING = "ping",
 }
 
 export function formatProxyPluginCategory(value: string) {
@@ -104,6 +105,9 @@ export function formatProxyPluginCategory(value: string) {
     }
     case ProxyPluginCategory.REDIRECT_HTTPS: {
       return "redirectHttps";
+    }
+    case ProxyPluginCategory.PING: {
+      return "ping";
     }
   }
 }
@@ -285,6 +289,12 @@ function FormProxyPluginField({
         label: t("form.redirectPrefix"),
       });
       break;
+    }
+    case ProxyPluginCategory.PING: {
+      arr.push(value);
+      fields.push({
+        label: t("form.pingPath"),
+      });
     }
     default: {
       arr.push(value);

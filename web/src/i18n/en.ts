@@ -125,4 +125,5 @@ export default {
   "form.cacheStorage": "The cache storage url",
   "form.redirectPrefix": "The prefix path of redirect path",
   "form.statsPath": "The stats path",
+  "form.pingPath": "The ping path",
 };

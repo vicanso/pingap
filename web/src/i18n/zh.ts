@@ -125,4 +125,5 @@ export default {
   "form.cacheStorage": "缓存的配置",
   "form.redirectPrefix": "重定向时使用的前缀",
   "form.statsPath": "统计插件对应的路径",
+  "form.pingPath": "Ping插件对应的路径",
 };

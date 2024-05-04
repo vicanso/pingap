@@ -120,6 +120,11 @@ export default function ProxyPluginInfo() {
           option: 11,
           value: ProxyPluginCategory.REDIRECT_HTTPS,
         },
+        {
+          label: "Ping",
+          option: 12,
+          value: ProxyPluginCategory.PING,
+        },
       ],
     },
     {
