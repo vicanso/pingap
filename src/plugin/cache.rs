@@ -18,6 +18,7 @@ use crate::config::{get_current_config, ProxyPluginCategory, ProxyPluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
+use bytes::{BufMut, BytesMut};
 use bytesize::ByteSize;
 use http::Method;
 use log::debug;
@@ -148,24 +149,24 @@ impl ProxyPlugin for Cache {
         if self.max_file_size > 0 {
             session.cache.set_max_file_size_bytes(self.max_file_size);
         }
-        let mut keys = vec![];
+        let mut keys = BytesMut::with_capacity(128);
         if let Some(namespace) = &self.namespace {
-            keys.push(namespace.as_bytes());
+            keys.put(namespace.as_bytes());
+            keys.put(&b":"[..]);
         }
         if let Some(headers) = &self.headers {
             for key in headers.iter() {
                 let buf = session.get_header_bytes(key);
                 if !buf.is_empty() {
-                    keys.push(buf);
+                    keys.put(buf);
+                    keys.put(&b":"[..]);
                 }
             }
         }
         if !keys.is_empty() {
-            let arr: Vec<_> = keys
-                .iter()
-                .map(|item| std::string::String::from_utf8_lossy(item.to_owned()).to_string())
-                .collect();
-            ctx.cache_prefix = Some(arr.join(":"));
+            let prefix = std::string::String::from_utf8_lossy(&keys).to_string();
+            debug!("Cache prefix:{prefix}");
+            ctx.cache_prefix = Some(prefix);
         }
 
         Ok(None)
