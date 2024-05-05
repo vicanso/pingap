@@ -26,14 +26,15 @@ use once_cell::sync::Lazy;
 use pingora::cache::eviction::simple_lru::Manager;
 use pingora::cache::eviction::EvictionManager;
 use pingora::cache::lock::CacheLock;
-use pingora::cache::predictor::Predictor;
+use pingora::cache::predictor::{CacheablePredictor, Predictor};
 use pingora::cache::{MemCache, Storage};
 use pingora::proxy::Session;
 use std::str::FromStr;
 use url::Url;
 
+// TODO mem cache is for test
 static MEM_BACKEND: Lazy<MemCache> = Lazy::new(MemCache::new);
-static PREDICTOR: Lazy<Predictor<32>> = Lazy::new(|| Predictor::new(5, None));
+static PREDICTOR: Lazy<Predictor<32>> = Lazy::new(|| Predictor::new(128, None));
 // meomory limit size
 const MAX_MEMORY_SIZE: usize = 100 * 1024 * 1024;
 static EVICTION_MANAGER: Lazy<Manager> = Lazy::new(|| {
@@ -54,6 +55,7 @@ static CACHE_LOCK_THREE_SECONDS: Lazy<CacheLock> =
 pub struct Cache {
     proxy_step: ProxyPluginStep,
     eviction: bool,
+    predictor: bool,
     lock: u8,
     storage: &'static (dyn Storage + Sync),
     max_file_size: usize,
@@ -69,6 +71,7 @@ impl Cache {
         })?;
         let mut lock = 0;
         let mut eviction = false;
+        let mut predictor = false;
         let mut max_file_size = 100 * 1024;
         let mut namespace = None;
         let mut headers = None;
@@ -85,6 +88,7 @@ impl Cache {
                     }
                 }
                 "eviction" => eviction = true,
+                "predictor" => predictor = true,
                 "namespace" => namespace = Some(value.to_string()),
                 "headers" => {
                     headers = Some(
@@ -107,6 +111,7 @@ impl Cache {
             max_file_size,
             namespace,
             headers,
+            predictor,
         })
     }
 }
@@ -142,10 +147,14 @@ impl ProxyPlugin for Cache {
             3 => Some(&*CACHE_LOCK_THREE_SECONDS),
             _ => None,
         };
-
+        let predictor: Option<&'static (dyn CacheablePredictor + Sync)> = if self.predictor {
+            Some(&*PREDICTOR)
+        } else {
+            None
+        };
         session
             .cache
-            .enable(self.storage, eviction, Some(&*PREDICTOR), lock);
+            .enable(self.storage, eviction, predictor, lock);
         if self.max_file_size > 0 {
             session.cache.set_max_file_size_bytes(self.max_file_size);
         }
