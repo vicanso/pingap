@@ -158,7 +158,7 @@ impl ProxyPlugin for Cache {
         if self.max_file_size > 0 {
             session.cache.set_max_file_size_bytes(self.max_file_size);
         }
-        let mut keys = BytesMut::with_capacity(128);
+        let mut keys = BytesMut::with_capacity(64);
         if let Some(namespace) = &self.namespace {
             keys.put(namespace.as_bytes());
             keys.put(&b":"[..]);

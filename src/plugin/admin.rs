@@ -32,13 +32,16 @@ use hex::encode;
 use http::Method;
 use http::{header, HeaderValue, StatusCode};
 use log::{debug, error};
+use lru::LruCache;
 use memory_stats::memory_stats;
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
 use rust_embed::EmbeddedFile;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroUsize;
 use substring::Substring;
+use tokio::sync::RwLock;
 
 #[derive(RustEmbed)]
 #[folder = "dist/"]
@@ -85,10 +88,16 @@ impl From<EmbeddedStaticFile> for HttpResponse {
     }
 }
 
+struct ValidateFail {
+    count: usize,
+    created_at: i64,
+}
+
 pub struct AdminServe {
     pub path: String,
     pub authorization: String,
     pub proxy_step: ProxyPluginStep,
+    ip_fail_lock: RwLock<LruCache<String, ValidateFail>>,
 }
 impl AdminServe {
     pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
@@ -102,6 +111,7 @@ impl AdminServe {
             path: arr[0].trim().to_string(),
             proxy_step,
             authorization,
+            ip_fail_lock: RwLock::new(LruCache::new(NonZeroUsize::new(128).unwrap())),
         })
     }
 }
@@ -121,6 +131,41 @@ struct BasicInfo {
 }
 
 impl AdminServe {
+    async fn ip_validate(&self, ip: String) -> bool {
+        let mut g = self.ip_fail_lock.write().await;
+        let mut should_reset = false;
+        let mut valid = false;
+
+        if let Some(value) = g.peek(&ip) {
+            if value.count < 5 {
+                valid = true;
+            } else if chrono::Utc::now().timestamp() - value.created_at > 5 * 60 {
+                valid = true;
+                should_reset = true;
+            }
+        } else {
+            valid = true
+        }
+        if should_reset {
+            g.pop(&ip);
+        }
+
+        valid
+    }
+    async fn inc_ip_fail(&self, ip: String) {
+        let mut g = self.ip_fail_lock.write().await;
+        if let Some(value) = g.get_mut(&ip) {
+            value.count += 1;
+        } else {
+            g.put(
+                ip,
+                ValidateFail {
+                    count: 1,
+                    created_at: chrono::Utc::now().timestamp(),
+                },
+            );
+        }
+    }
     fn auth_validate(&self, req_header: &RequestHeader) -> bool {
         if self.authorization.is_empty() {
             return true;
@@ -254,11 +299,20 @@ impl ProxyPlugin for AdminServe {
         session: &mut Session,
         _ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        let ip = util::get_client_ip(session);
+        if !self.ip_validate(ip.clone()).await {
+            return Ok(Some(HttpResponse {
+                status: StatusCode::FORBIDDEN,
+                body: Bytes::from_static(b"Forbidden, too many failures"),
+                ..Default::default()
+            }));
+        }
         if !session.req_header().uri.path().starts_with(&self.path) {
             return Ok(None);
         }
         let header = session.req_header_mut();
         if !self.auth_validate(header) {
+            self.inc_ip_fail(ip).await;
             return Ok(Some(HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
                 headers: Some(vec![HTTP_HEADER_WWW_AUTHENTICATE.clone()]),
