@@ -31,6 +31,7 @@ use std::time::Duration;
 mod acme;
 mod config;
 mod http_extra;
+mod limit;
 mod logger;
 #[cfg(feature = "perf")]
 mod perf;

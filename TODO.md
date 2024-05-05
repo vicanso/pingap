@@ -6,6 +6,7 @@
 - [ ] http response cache
 - [ ] fix not_before not_after of cert
 - [ ] client body size limit plugin
+- [ ] support ttl limit
 - [x] disable notification event
 - [x] use buffer writer for log
 - [x] convert plugin category to string?
