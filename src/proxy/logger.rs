@@ -374,10 +374,15 @@ impl Parser {
                     }
                 }
                 TagCategory::PayloadSize => {
-                    // TODO
+                    buf.extend(session.body_bytes_read().to_string().as_bytes());
                 }
                 TagCategory::PayloadSizeHuman => {
-                    // TODO
+                    buf.extend(
+                        ByteSize(session.body_bytes_read() as u64)
+                            .to_string()
+                            .replace(' ', "")
+                            .as_bytes(),
+                    );
                 }
                 TagCategory::Context => {
                     if let Some(key) = &tag.data {

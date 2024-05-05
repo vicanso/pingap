@@ -184,8 +184,6 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
 
     // TODO not process exit until pingora supports
     my_server.run_forever();
-
-    Ok(())
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
@@ -350,7 +348,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     if let Some(plugins) = plugin::list_proxy_plugins() {
         for (name, plugin) in plugins {
             info!(
-                "Proxy plugin {name}, step:{}, category:{}",
+                "Proxy plugin {name}, category:{}, step:{}",
                 plugin.step(),
                 plugin.category()
             );
@@ -362,7 +360,6 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     // TODO not process exit until pingora supports
     my_server.run_forever();
-    Ok(())
 }
 
 fn main() {
