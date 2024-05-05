@@ -453,7 +453,7 @@ mod tests {
         let log = p.format(&session, &ctx);
         assert_eq!(
             "github.com GET /vicanso/pingap HTTP/1.1 size=1   http /vicanso/pingap?size=1 \
-https://github.com/ pingap/0.1.1 1024 1.0KB 0   abc application/json true",
+https://github.com/ pingap/0.1.1 1024 1.0KB 0 0 0B abc application/json true",
             log
         );
     }

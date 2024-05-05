@@ -23,8 +23,8 @@ Pingap格式化可以使用以下几种默认形式`combined`，`common`，`shor
 - `{status}`: 响应状态码
 - `{latency}`: 响应时间的ms
 - `{latency_human}`: 响应时间，按时间格式化
-- `{payload_size}`: 请求数据的字节大小(TODO)
-- `{payload_size_human}`: 请求数据的大小，按数据大小格式化字符串(TODO)
+- `{payload_size}`: 请求数据的字节大小
+- `{payload_size_human}`: 请求数据的大小，按数据大小格式化字符串
 - `{request_id}`: 请求的id，需要添加了对应的中间件
 - `{~name}`: 从cookie中获取`name`对应的值，如获取cookie中的uid则是`{~uid}`
 - `{>name}`: 请求头中获取`name`对应的值
