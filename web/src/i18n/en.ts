@@ -33,6 +33,7 @@ export default {
   "basic.logCapacity": "Log Capacity(byte)",
   "basic.autoRestartCheckInterval": "Auto Restart Check Interval",
   "basic.upstreamKeepalivePoolSize": "Upstream Keepalive Pool Size",
+  "basic.cacheMaxSize": "Cache Max Size(MB)",
   "basic.webhookType": "Webhook Type",
   "basic.webhookNotifications": "Webhook Notifications",
   "basic.webhook": "Webhook Url",

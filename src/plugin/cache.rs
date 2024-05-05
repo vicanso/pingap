@@ -14,8 +14,7 @@
 
 use super::ProxyPlugin;
 use super::{Error, Result};
-use crate::config::ProxyPluginCategory;
-use crate::config::ProxyPluginStep;
+use crate::config::{get_current_config, ProxyPluginCategory, ProxyPluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
@@ -36,7 +35,14 @@ static MEM_BACKEND: Lazy<MemCache> = Lazy::new(MemCache::new);
 static PREDICTOR: Lazy<Predictor<32>> = Lazy::new(|| Predictor::new(5, None));
 // meomory limit size
 const MAX_MEMORY_SIZE: usize = 100 * 1024 * 1024;
-static EVICTION_MANAGER: Lazy<Manager> = Lazy::new(|| Manager::new(MAX_MEMORY_SIZE));
+static EVICTION_MANAGER: Lazy<Manager> = Lazy::new(|| {
+    let size = if let Some(cache_max_size) = get_current_config().basic.cache_max_size {
+        cache_max_size * 1024 * 1024
+    } else {
+        MAX_MEMORY_SIZE
+    };
+    Manager::new(size)
+});
 static CACHE_LOCK_ONE_SECOND: Lazy<CacheLock> =
     Lazy::new(|| CacheLock::new(std::time::Duration::from_secs(1)));
 static CACHE_LOCK_TWO_SECONDS: Lazy<CacheLock> =

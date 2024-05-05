@@ -32,6 +32,7 @@ export default {
   "basic.logCapacity": "日志缓存区大小(字节)",
   "basic.autoRestartCheckInterval": "自动重启检测间隔",
   "basic.upstreamKeepalivePoolSize": "Upstream连接池大小",
+  "basic.cacheMaxSize": "缓存空间大小限制(MB)",
   "basic.webhookType": "Webhook类型",
   "basic.webhookNotifications": "Webhook通知类型",
   "basic.webhook": "Webhook的请求地址",

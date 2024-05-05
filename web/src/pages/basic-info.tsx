@@ -128,6 +128,13 @@ export default function BasicInfo() {
       category: FormItemCategory.TEXT,
     },
     {
+      id: "cache_max_size",
+      label: t("basic.cacheMaxSize"),
+      defaultValue: basic.cache_max_size,
+      span: 12,
+      category: FormItemCategory.NUMBER,
+    },
+    {
       id: "webhook_type",
       label: t("basic.webhookType"),
       defaultValue: basic.webhook_type,
