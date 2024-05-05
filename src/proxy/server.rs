@@ -135,7 +135,12 @@ impl From<PingapConf> for Vec<ServerConf> {
                 error_template = ERROR_TEMPLATE.to_string();
             }
 
-            let threads = if let Some(threads) = item.threads {
+            let mut threads = item.threads;
+            if threads.is_none() {
+                threads = conf.basic.threads;
+            }
+
+            let threads = if let Some(threads) = threads {
                 if threads > 0 {
                     Some(threads)
                 } else {
@@ -319,7 +324,10 @@ impl Server {
             None
         };
 
-        let threads = self.threads;
+        let mut threads = self.threads;
+        if threads.unwrap_or_default() == 0 {
+            threads = Some(1);
+        }
         info!(
             "Server({}) is linsten on:{addr}, threads:{threads:?}, tls:{}",
             &self.name,

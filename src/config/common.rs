@@ -438,15 +438,6 @@ impl TryFrom<Vec<u8>> for PingapConf {
             basic: data.basic.unwrap_or_default(),
             ..Default::default()
         };
-        conf.basic.threads = if let Some(threads) = conf.basic.threads {
-            if threads > 0 {
-                Some(threads)
-            } else {
-                Some(num_cpus::get())
-            }
-        } else {
-            None
-        };
         for (name, value) in data.upstreams.unwrap_or_default() {
             let upstream: UpstreamConf = toml::from_str(format_toml(&value).as_str())
                 .map_err(|e| Error::De { source: e })?;

@@ -951,12 +951,18 @@ export default function FormEditor({
         break;
       }
       default: {
+        let defaultValue = item.defaultValue;
+        if (defaultValue == null) {
+          defaultValue = "";
+        } else {
+          defaultValue = `${defaultValue}`;
+        }
         formItem = (
           <TextField
             id={item.id}
             label={item.label}
             variant="outlined"
-            defaultValue={item.defaultValue || ""}
+            defaultValue={defaultValue}
             onChange={(e) => {
               const value = e.target.value.trim();
               switch (item.category) {
