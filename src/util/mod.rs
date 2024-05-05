@@ -16,6 +16,7 @@ use http::HeaderName;
 use once_cell::sync::Lazy;
 use path_absolutize::*;
 use pingora::{http::RequestHeader, proxy::Session};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{path::Path, str::FromStr};
 use substring::Substring;
 
@@ -136,4 +137,20 @@ pub fn new_internal_error(status: u16, message: String) -> pingora::BError {
 /// Test whether or not the string is pem
 pub fn is_pem(value: &str) -> bool {
     value.starts_with("-----")
+}
+
+// 2022-05-07: 1651852800
+// const SUPER_TIMESTAMP: u64 = 1651852800;
+static SUPER_TIMESTAMP: Lazy<SystemTime> = Lazy::new(|| {
+    UNIX_EPOCH
+        .checked_add(Duration::from_secs(1651852800))
+        .unwrap_or(SystemTime::now())
+});
+
+pub fn get_super_ts() -> u32 {
+    if let Ok(value) = SystemTime::now().duration_since(*SUPER_TIMESTAMP) {
+        value.as_secs() as u32
+    } else {
+        0
+    }
 }

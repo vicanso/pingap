@@ -21,29 +21,12 @@ use bytes::Bytes;
 use http::header;
 use http::StatusCode;
 use log::error;
-use once_cell::sync::Lazy;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use serde::Serialize;
 use std::pin::Pin;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncReadExt;
-
-// 2022-05-07: 1651852800
-// const SUPER_TIMESTAMP: u64 = 1651852800;
-static SUPER_TIMESTAMP: Lazy<SystemTime> = Lazy::new(|| {
-    UNIX_EPOCH
-        .checked_add(Duration::from_secs(1651852800))
-        .unwrap_or(SystemTime::now())
-});
-
-pub fn get_super_ts() -> u32 {
-    if let Ok(value) = SystemTime::now().duration_since(*SUPER_TIMESTAMP) {
-        value.as_secs() as u32
-    } else {
-        0
-    }
-}
 
 pub fn get_hour_duration() -> u32 {
     if let Ok(value) = SystemTime::now().duration_since(UNIX_EPOCH) {
@@ -161,7 +144,7 @@ impl HttpResponse {
         resp.insert_header(cache_control.0, cache_control.1)?;
 
         if let Some(created_at) = self.created_at {
-            let secs = get_super_ts() - created_at;
+            let secs = util::get_super_ts() - created_at;
             if let Ok(value) = header::HeaderValue::from_str(&secs.to_string()) {
                 resp.insert_header(header::AGE, value)?;
             }
@@ -256,9 +239,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{get_cache_control, get_super_ts, HttpChunkResponse, HttpResponse};
+    use super::{get_cache_control, HttpChunkResponse, HttpResponse};
     use crate::http_extra::convert_headers;
-    use crate::util::resolve_path;
+    use crate::util::{get_super_ts, resolve_path};
     use bytes::Bytes;
     use http::StatusCode;
     use pretty_assertions::assert_eq;
