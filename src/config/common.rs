@@ -345,7 +345,7 @@ pub struct BasicConf {
 
 #[derive(Deserialize, Debug, Serialize)]
 struct TomlConfig {
-    basic: BasicConf,
+    basic: Option<BasicConf>,
     servers: Option<Map<String, Value>>,
     upstreams: Option<Map<String, Value>>,
     locations: Option<Map<String, Value>>,
@@ -435,7 +435,7 @@ impl TryFrom<Vec<u8>> for PingapConf {
         .map_err(|e| Error::De { source: e })?;
 
         let mut conf = PingapConf {
-            basic: data.basic,
+            basic: data.basic.unwrap_or_default(),
             ..Default::default()
         };
         conf.basic.threads = if let Some(threads) = conf.basic.threads {
