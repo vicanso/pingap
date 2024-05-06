@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use log::debug;
 use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
+#[derive(Debug)]
 struct TtlLimit {
     count: usize,
     created_at: Duration,
@@ -45,6 +47,7 @@ impl TtlLruLimit {
         let mut valid = false;
 
         if let Some(value) = g.peek(key) {
+            debug!("Ttl lru limit, key:{key}, value:{value:?}");
             if value.count < self.max {
                 valid = true;
             } else if SystemTime::now()

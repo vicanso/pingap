@@ -420,6 +420,7 @@ impl ProxyHttp for Server {
             let _ = new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri));
         }
         debug!("Location {}", lo.name);
+        ctx.location.clone_from(&lo.name);
         ctx.location_index = Some(location_index);
 
         let done = lo

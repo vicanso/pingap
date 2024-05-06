@@ -398,6 +398,7 @@ impl Parser {
                                     );
                                 }
                             }
+                            "location" => buf.extend(ctx.location.as_bytes()),
                             _ => {}
                         }
                     }

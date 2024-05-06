@@ -100,6 +100,7 @@ impl ProxyPlugin for Compression {
             } else {
                 0
             };
+            debug!("Compression level:{level}");
             if level > 0 {
                 session.downstream_compression.adjust_decompression(true);
                 session.downstream_compression.adjust_level(level);
