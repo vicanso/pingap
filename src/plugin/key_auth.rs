@@ -33,6 +33,7 @@ pub struct KeyAuth {
     header_name: Option<HeaderName>,
     query_name: Option<String>,
     keys: Vec<Vec<u8>>,
+    miss_authorization_resp: HttpResponse,
     unauthorized_resp: HttpResponse,
 }
 
@@ -69,6 +70,11 @@ impl KeyAuth {
             proxy_step,
             query_name,
             header_name,
+            miss_authorization_resp: HttpResponse {
+                status: StatusCode::UNAUTHORIZED,
+                body: Bytes::from_static(b"Key missing"),
+                ..Default::default()
+            },
             unauthorized_resp: HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
                 body: Bytes::from_static(b"Key auth fail"),
@@ -105,7 +111,10 @@ impl ProxyPlugin for KeyAuth {
                     .as_bytes()
             })
         };
-        if value.is_none() || !self.keys.contains(&value.unwrap().to_vec()) {
+        if value.is_none() {
+            return Ok(Some(self.miss_authorization_resp.clone()));
+        }
+        if !self.keys.contains(&value.unwrap().to_vec()) {
             return Ok(Some(self.unauthorized_resp.clone()));
         }
         Ok(None)

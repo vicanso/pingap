@@ -39,7 +39,6 @@ use pingora::proxy::Session;
 use rust_embed::EmbeddedFile;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
-use std::num::NonZeroUsize;
 use std::time::Duration;
 use substring::Substring;
 
@@ -106,11 +105,7 @@ impl AdminServe {
             path: arr[0].trim().to_string(),
             proxy_step,
             authorization,
-            ip_fail_limit: TtlLruLimit::new(
-                NonZeroUsize::new(128).unwrap(),
-                Duration::from_secs(5 * 60),
-                5,
-            ),
+            ip_fail_limit: TtlLruLimit::new(512, Duration::from_secs(5 * 60), 5),
         })
     }
 }
@@ -264,7 +259,7 @@ impl ProxyPlugin for AdminServe {
         _ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
         let ip = util::get_client_ip(session);
-        if !self.ip_fail_limit.validate(ip.clone()).await {
+        if !self.ip_fail_limit.validate(&ip).await {
             return Ok(Some(HttpResponse {
                 status: StatusCode::FORBIDDEN,
                 body: Bytes::from_static(b"Forbidden, too many failures"),
@@ -276,7 +271,7 @@ impl ProxyPlugin for AdminServe {
         }
         let header = session.req_header_mut();
         if !self.auth_validate(header) {
-            self.ip_fail_limit.inc(ip).await;
+            self.ip_fail_limit.inc(&ip).await;
             return Ok(Some(HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
                 headers: Some(vec![HTTP_HEADER_WWW_AUTHENTICATE.clone()]),

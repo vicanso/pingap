@@ -46,6 +46,9 @@ release:
 perf:
 	cargo build --profile=release-perf --features=perf
 	ls -lh target/release
+pyro:
+	cargo build --profile=release-perf --features=pyro
+	ls -lh target/release
 
 publish:
 	make build-web

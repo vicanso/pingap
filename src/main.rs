@@ -33,10 +33,10 @@ mod config;
 mod http_extra;
 mod limit;
 mod logger;
-#[cfg(feature = "perf")]
-mod perf;
 mod plugin;
 mod proxy;
+#[cfg(feature = "pyro")]
+mod pyro;
 mod state;
 mod util;
 mod webhook;
@@ -275,9 +275,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     my_server.sentry.clone_from(&basic_conf.sentry);
     my_server.bootstrap();
 
-    #[cfg(feature = "perf")]
-    if let Some(url) = &conf.pyroscope {
-        let _ = perf::start_pyroscope(url)?;
+    #[cfg(feature = "pyro")]
+    if let Some(url) = &conf.basic.pyroscope {
+        let _ = pyro::start_pyroscope(url)?;
     }
 
     let mut proxy_plugin_confs: Vec<(String, ProxyPluginConf)> = conf

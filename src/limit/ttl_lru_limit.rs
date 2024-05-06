@@ -29,19 +29,22 @@ pub struct TtlLruLimit {
 }
 
 impl TtlLruLimit {
-    pub fn new(size: NonZeroUsize, ttl: Duration, max: usize) -> Self {
+    /// Create a ttl lru limit.
+    pub fn new(size: usize, ttl: Duration, max: usize) -> Self {
+        let capacity = NonZeroUsize::new(size.max(1)).unwrap();
         Self {
             ttl,
             max,
-            lru: RwLock::new(LruCache::new(size)),
+            lru: RwLock::new(LruCache::new(capacity)),
         }
     }
-    pub async fn validate(&self, key: String) -> bool {
+    /// Validate the value of key, return true if valid.
+    pub async fn validate(&self, key: &str) -> bool {
         let mut g = self.lru.write().await;
         let mut should_reset = false;
         let mut valid = false;
 
-        if let Some(value) = g.peek(&key) {
+        if let Some(value) = g.peek(key) {
             if value.count < self.max {
                 valid = true;
             } else if SystemTime::now()
@@ -57,18 +60,19 @@ impl TtlLruLimit {
             valid = true
         }
         if should_reset {
-            g.pop(&key);
+            g.pop(key);
         }
 
         valid
     }
-    pub async fn inc(&self, key: String) {
+    /// Increase the value of key.
+    pub async fn inc(&self, key: &str) {
         let mut g = self.lru.write().await;
-        if let Some(value) = g.get_mut(&key) {
+        if let Some(value) = g.get_mut(key) {
             value.count += 1;
         } else {
             g.put(
-                key,
+                key.to_string(),
                 TtlLimit {
                     count: 1,
                     created_at: SystemTime::now()
@@ -77,5 +81,27 @@ impl TtlLruLimit {
                 },
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::TtlLruLimit;
+    use pretty_assertions::assert_eq;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn test_ttl_lru_limit() {
+        let limit = TtlLruLimit::new(5, Duration::from_millis(500), 3);
+
+        let key = "abc";
+        assert_eq!(true, limit.validate(key).await);
+        limit.inc(key).await;
+        limit.inc(key).await;
+        assert_eq!(true, limit.validate(key).await);
+        limit.inc(key).await;
+        assert_eq!(false, limit.validate(key).await);
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert_eq!(true, limit.validate(key).await);
     }
 }

@@ -20,6 +20,7 @@ use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine};
+use bytes::Bytes;
 use http::HeaderValue;
 use http::StatusCode;
 use log::debug;
@@ -28,6 +29,7 @@ use pingora::proxy::Session;
 pub struct BasicAuth {
     proxy_step: ProxyPluginStep,
     authorizations: Vec<Vec<u8>>,
+    miss_authorization_resp: HttpResponse,
     unauthorized_resp: HttpResponse,
 }
 
@@ -46,6 +48,16 @@ impl BasicAuth {
         Ok(Self {
             proxy_step,
             authorizations,
+            miss_authorization_resp: HttpResponse {
+                status: StatusCode::UNAUTHORIZED,
+                headers: Some(vec![(
+                    http::header::WWW_AUTHENTICATE,
+                    HeaderValue::from_str(r###"Basic realm="Access to the staging site""###)
+                        .unwrap(),
+                )]),
+                body: Bytes::from_static(b"Authorization is missing"),
+                ..Default::default()
+            },
             unauthorized_resp: HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
                 headers: Some(vec![(
@@ -53,6 +65,7 @@ impl BasicAuth {
                     HeaderValue::from_str(r###"Basic realm="Access to the staging site""###)
                         .unwrap(),
                 )]),
+                body: Bytes::from_static(b"Invalid user or password"),
                 ..Default::default()
             },
         })
@@ -76,7 +89,10 @@ impl ProxyPlugin for BasicAuth {
         _ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
         let value = session.get_header_bytes(http::header::AUTHORIZATION);
-        if value.is_empty() || !self.authorizations.contains(&value.to_vec()) {
+        if value.is_empty() {
+            return Ok(Some(self.miss_authorization_resp.clone()));
+        }
+        if !self.authorizations.contains(&value.to_vec()) {
             return Ok(Some(self.unauthorized_resp.clone()));
         }
         return Ok(None);

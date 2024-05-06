@@ -18,6 +18,7 @@ use crate::config::{LocationConf, ProxyPluginStep};
 use crate::http_extra::{convert_headers, HttpHeader};
 use crate::plugin::get_proxy_plugin;
 use crate::state::State;
+use log::debug;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
 use regex::Regex;
@@ -79,6 +80,7 @@ fn new_path_selector(path: &str) -> Result<PathSelector> {
 }
 
 pub struct Location {
+    pub name: String,
     path: String,
     path_selector: PathSelector,
     hosts: Vec<String>,
@@ -103,11 +105,7 @@ fn format_headers(values: &Option<Vec<String>>) -> Result<Option<Vec<HttpHeader>
 
 impl Location {
     /// Create a location from config.
-    pub fn new(
-        _name: &str,
-        conf: &LocationConf,
-        upstreams: Vec<Arc<Upstream>>,
-    ) -> Result<Location> {
+    pub fn new(name: &str, conf: &LocationConf, upstreams: Vec<Arc<Upstream>>) -> Result<Location> {
         let upstream = conf.upstream.clone().unwrap_or_default();
         let up = if upstream.is_empty() {
             Arc::new(new_empty_upstream())
@@ -139,6 +137,7 @@ impl Location {
         let path = conf.path.clone().unwrap_or_default();
 
         Ok(Location {
+            name: name.to_string(),
             upstream_name: upstream,
             path_selector: new_path_selector(&path)?,
             path,
@@ -215,6 +214,7 @@ impl Location {
                     if plugin.step() != step {
                         continue;
                     }
+                    debug!("Run plugin {name}");
                     let result = plugin.handle(session, ctx).await?;
                     if let Some(resp) = result {
                         // ingore http response status >= 900

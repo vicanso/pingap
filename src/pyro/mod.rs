@@ -20,8 +20,6 @@ use url::Url;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("{message}"))]
-    Invalid { message: String },
     #[snafu(display("Url parse error {source}, {url}"))]
     UrlParse {
         source: url::ParseError,

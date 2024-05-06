@@ -225,7 +225,7 @@ fn new_healtch_check(
     Ok((hc, health_check_frequency))
 }
 
-fn new_backends(addrs: &[String], ipv4_only: bool) -> Result<Backends> {
+fn new_backends(addrs: &[String], tls: bool, ipv4_only: bool) -> Result<Backends> {
     let mut upstreams = BTreeSet::new();
     let mut backends = vec![];
     for addr in addrs.iter() {
@@ -237,7 +237,11 @@ fn new_backends(addrs: &[String], ipv4_only: bool) -> Result<Backends> {
         };
         let mut addr = arr[0].to_string();
         if !addr.contains(':') {
-            addr = format!("{addr}:80");
+            if tls {
+                addr = format!("{addr}:443");
+            } else {
+                addr = format!("{addr}:80");
+            }
         }
         for item in addr.to_socket_addrs().context(IoSnafu { content: addr })? {
             if ipv4_only && item.is_ipv6() {
@@ -265,7 +269,9 @@ impl Upstream {
             });
         }
         let mut hash = "".to_string();
-        let backends = new_backends(&conf.addrs, conf.ipv4_only.unwrap_or_default())?;
+        let sni = conf.sni.clone().unwrap_or_default();
+        let tls = !sni.is_empty();
+        let backends = new_backends(&conf.addrs, tls, conf.ipv4_only.unwrap_or_default())?;
 
         let (hc, health_check_frequency) =
             new_healtch_check(name, &conf.health_check.clone().unwrap_or_default())?;
@@ -297,7 +303,7 @@ impl Upstream {
                 SelectionLb::RoundRobin(Arc::new(lb))
             }
         };
-        let sni = conf.sni.clone().unwrap_or_default();
+
         let alpn = match conf
             .alpn
             .clone()
@@ -312,7 +318,7 @@ impl Upstream {
         // ALPN::H1
         Ok(Self {
             name: name.to_string(),
-            tls: !sni.is_empty(),
+            tls,
             sni: sni.clone(),
             hash,
             lb,
@@ -444,6 +450,7 @@ mod tests {
                 "192.168.1.1:8001".to_string(),
                 "192.168.1.2:8001".to_string(),
             ],
+            false,
             true,
         )
         .unwrap();

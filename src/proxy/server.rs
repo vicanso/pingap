@@ -16,7 +16,7 @@ use super::logger::Parser;
 use super::{Location, Upstream};
 use crate::acme::{get_lets_encrypt_cert, handle_lets_encrypt};
 use crate::config::{LocationConf, PingapConf, ProxyPluginStep, UpstreamConf};
-use crate::http_extra::{get_hour_duration, HTTP_HEADER_NAME_X_REQUEST_ID};
+use crate::http_extra::{get_hour_duration, HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use crate::plugin::get_proxy_plugin;
 use crate::state::State;
 use crate::util;
@@ -24,7 +24,7 @@ use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::Bytes;
 use http::StatusCode;
-use log::{error, info};
+use log::{debug, error, info};
 use pingora::cache::cache_control::CacheControl;
 use pingora::cache::filters::resp_cacheable;
 use pingora::cache::{CacheKey, CacheMetaDefaults, NoCacheReason, RespCacheable};
@@ -396,17 +396,22 @@ impl ProxyHttp for Server {
         let path = header.uri.path();
         let host = header.uri.host().unwrap_or_default();
 
-        let (location_index, lo) = self
+        let location_result = self
             .locations
             .iter()
             .enumerate()
-            .find(|(_, item)| item.matched(host, path))
-            .ok_or_else(|| {
-                util::new_internal_error(
-                    500,
-                    format!("Location not found, host:{host} path:{path}"),
-                )
-            })?;
+            .find(|(_, item)| item.matched(host, path));
+
+        if location_result.is_none() {
+            HttpResponse::unknown_error(Bytes::from(format!(
+                "Location not found, host:{host} path:{path}"
+            )))
+            .send(session)
+            .await?;
+            return Ok(true);
+        }
+
+        let (location_index, lo) = location_result.unwrap();
         if let Some(mut new_path) = lo.rewrite(path) {
             if let Some(query) = header.uri.query() {
                 new_path = format!("{new_path}?{query}");
@@ -414,6 +419,7 @@ impl ProxyHttp for Server {
             // TODO parse error
             let _ = new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri));
         }
+        debug!("Location {}", lo.name);
         ctx.location_index = Some(location_index);
 
         let done = lo
@@ -464,10 +470,12 @@ impl ProxyHttp for Server {
         Self::CTX: Send + Sync,
     {
         if session.cache.enabled() {
-            upstream_response.insert_header("x-cache-status", session.cache.phase().as_str())?;
+            // ignore insert header error
+            let _ =
+                upstream_response.insert_header("x-cache-status", session.cache.phase().as_str());
             if let Some(d) = session.cache.lock_duration() {
-                upstream_response
-                    .insert_header("x-cache-lock-time-ms", format!("{}", d.as_millis()))?;
+                let _ = upstream_response
+                    .insert_header("x-cache-lock-time-ms", format!("{}", d.as_millis()));
                 ctx.cache_lock_duration = Some(d);
             }
         }
@@ -552,12 +560,8 @@ impl ProxyHttp for Server {
             };
             let _ = header.insert_header(util::HTTP_HEADER_X_FORWARDED_FOR.clone(), value);
         }
-
-        if let Some(index) = ctx.location_index {
-            if let Some(lo) = self.locations.get(index) {
-                lo.insert_proxy_headers(header);
-            }
-        }
+        let lo = &self.locations[ctx.location_index.unwrap_or_default()];
+        lo.insert_proxy_headers(header);
 
         Ok(())
     }
@@ -573,11 +577,8 @@ impl ProxyHttp for Server {
         if let Some(id) = &ctx.request_id {
             let _ = upstream_response.insert_header(HTTP_HEADER_NAME_X_REQUEST_ID.clone(), id);
         }
-        if let Some(index) = ctx.location_index {
-            if let Some(lo) = self.locations.get(index) {
-                lo.insert_headers(upstream_response)
-            }
-        }
+        let lo = &self.locations[ctx.location_index.unwrap_or_default()];
+        lo.insert_headers(upstream_response)
     }
 
     fn upstream_response_body_filter(

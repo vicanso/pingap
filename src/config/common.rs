@@ -198,15 +198,13 @@ impl LocationConf {
                     HeaderName::from_bytes(header_name.as_bytes()).map_err(|err| {
                         Error::Invalid {
                             message: format!(
-                                "Header name({header_name}) is invalid, {}(location:{name})",
-                                err
+                                "Header name({header_name}) is invalid, {err}(location:{name})"
                             ),
                         }
                     })?;
                     HeaderValue::from_str(header_value).map_err(|err| Error::Invalid {
                         message: format!(
-                            "Header value({header_value}) is invalid, {}(location:{name})",
-                            err
+                            "Header value({header_value}) is invalid, {err}(location:{name})"
                         ),
                     })?;
                 }

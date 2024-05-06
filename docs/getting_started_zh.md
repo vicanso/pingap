@@ -35,7 +35,7 @@ RUST_LOG=INFO pingap -c /opt/pingap/conf --admin=cGluZ2FwOjEyMzEyMw==@127.0.0.1:
 基础配置中一般不需要如何调整，若在同一机器运行多个pingap，则需要设置`进程id文件`与`upgrade sock`这两个配置，避免冲突。
 
 <p align="center">
-    <img src="../asset/basic-info-zh.jpg" alt="pingap">
+    <img src="../asset/basic-info-zh.jpg" alt="basic config">
 </p>
 
 ## 上游服务配置
@@ -43,13 +43,13 @@ RUST_LOG=INFO pingap -c /opt/pingap/conf --admin=cGluZ2FwOjEyMzEyMw==@127.0.0.1:
 由于配置中有依赖关系，因此先配置上游服务。点击添加上游服务配置，界面如下：
 
 <p align="center">
-    <img src="../asset/upstream-add-zh.jpg" alt="pingap">
+    <img src="../asset/upstream-add-zh.jpg" alt="upstream config">
 </p>
 
 需要注意，对于各超时的配置建议按需配置，默认值无超时不建议使用。`Sni`与`是否校验证书`用于该upstream的节点使用https时设置，若非https忽略即可。健康检查的`http://charts/ping`其中charts为该upstream的名称，在检测时会替换为该节点对应的地址。
 
 <p align="center">
-    <img src="../asset/upstream-detail-zh.jpg" alt="pingap">
+    <img src="../asset/upstream-detail-zh.jpg" alt="upstream detail">
 </p>
 
 ## Location配置
@@ -57,7 +57,7 @@ RUST_LOG=INFO pingap -c /opt/pingap/conf --admin=cGluZ2FwOjEyMzEyMw==@127.0.0.1:
 Location主要配置其对应的host与path，以及选择关联对应的上游服务，界面如下：
 
 <p align="center">
-    <img src="../asset/location-detail-zh.jpg" alt="pingap">
+    <img src="../asset/location-detail-zh.jpg" alt="location config">
 </p>
 
 host一般不需要设置，path则是因为一般会基于不同的前缀转发至不同的服务，因此会设置对应的path匹配规则（更多的规则可查询location的详细说明），此处选择了自带的`pingap:requestId`插件，用于生成请求id。
@@ -67,7 +67,7 @@ host一般不需要设置，path则是因为一般会基于不同的前缀转发
 服务配置主要配置该服务监听的端口，https相关证书(非https无需设置)，关联对应的location服务，访问日志格式，以及线程数，界面如下：
 
 <p align="center">
-    <img src="../asset/server-detail-zh.jpg" alt="pingap">
+    <img src="../asset/server-detail-zh.jpg" alt="server detail">
 </p>
 
 ## 程序后台运行及自动重启

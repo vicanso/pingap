@@ -14,10 +14,13 @@
 
 use super::{ProxyPlugin, Result};
 use crate::config::{ProxyPluginCategory, ProxyPluginStep};
+use crate::http_extra::{HttpChunkResponse, HttpHeader, HttpResponse};
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
 use bytes::Bytes;
+use bytesize::ByteSize;
+use glob::glob;
 use http::{header, HeaderValue, StatusCode};
 use log::{debug, error};
 use once_cell::sync::Lazy;
@@ -32,12 +35,45 @@ use tokio::io::AsyncReadExt;
 use url::Url;
 use urlencoding::decode;
 
-use crate::http_extra::{HttpChunkResponse, HttpHeader, HttpResponse};
+static WEB_HTML: &str = r###"<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+            }
+            li {
+                line-height: 30px;
+                padding: 3px 10px;
+                list-style: none;
+                background-color: #fefefe;
+            }
+            li:nth-child(odd) {
+                background-color: #f0f0f0;
+            }
+            a {
+                color: #333;
+            }
+            .size {
+                margin-left: 30px;
+            }
+        </style>
+    </head>
+    <body>
+        <ul>
+        {{CONTENT}}
+        </ul>
+    </body>
+</html>
+"###;
 
 #[derive(Default)]
 pub struct Directory {
     path: PathBuf,
     index: String,
+    autoindex: bool,
     chunk_size: Option<usize>,
     // max age of http response
     max_age: Option<u32>,
@@ -100,6 +136,7 @@ impl Directory {
         let mut cache_private = None;
         let mut index_file = "index.html".to_string();
         let mut charset = None;
+        let mut autoindex = false;
         let file_protocol = "file://";
         if !new_path.starts_with(file_protocol) {
             new_path = format!("{file_protocol}{new_path}").to_string();
@@ -123,6 +160,7 @@ impl Directory {
                             max_age = Some(v);
                         }
                     }
+                    "autoindex" => autoindex = true,
                     "private" => cache_private = Some(true),
                     "index" => index_file = value.to_string(),
                     "charset" => charset = Some(value.to_string()),
@@ -131,6 +169,7 @@ impl Directory {
             }
         };
         Ok(Self {
+            autoindex,
             index: format!("/{index_file}"),
             path: Path::new(&util::resolve_path(
                 new_path.substring(file_protocol.len(), new_path.len()),
@@ -150,6 +189,33 @@ static IGNORE_RESPONSE: Lazy<HttpResponse> = Lazy::new(|| HttpResponse {
     ..Default::default()
 });
 
+fn get_autoindex_html(path: &Path) -> Result<String, String> {
+    let path = path.to_string_lossy();
+    let mut file_list_html = vec![];
+    for entry in glob(&format!("{path}/*")).map_err(|e| e.to_string())? {
+        let f = entry.map_err(|e| e.to_string())?;
+        let filepath = f.to_string_lossy();
+        let mut size = "".to_string();
+        if f.is_file() {
+            let _ = f.metadata().map(|meta| {
+                size = ByteSize(meta.size()).to_string();
+            });
+        }
+
+        let name = f.file_name().unwrap_or_default().to_string_lossy();
+        if name.is_empty() || name.starts_with('.') {
+            continue;
+        }
+
+        let target = format!("./{}", filepath.substring(path.len(), filepath.len()));
+        file_list_html.push(format!(
+            r###"<li><a href="{target}">{name}</a><span class="size">{size}</span></li>"###
+        ));
+    }
+
+    Ok(WEB_HTML.replace("{{CONTENT}}", &file_list_html.join("\n")))
+}
+
 #[async_trait]
 impl ProxyPlugin for Directory {
     #[inline]
@@ -166,7 +232,7 @@ impl ProxyPlugin for Directory {
         ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
         let mut filename = session.req_header().uri.path().to_string();
-        if filename.len() <= 1 {
+        if !self.autoindex && filename.len() <= 1 {
             filename.clone_from(&self.index);
         }
         if let Ok(value) = decode(&filename) {
@@ -174,6 +240,17 @@ impl ProxyPlugin for Directory {
         }
         // convert to relative path
         let file = self.path.join(filename.substring(1, filename.len()));
+        debug!("Static serve {file:?}");
+        if self.autoindex && file.is_dir() {
+            let resp = match get_autoindex_html(&file) {
+                Ok(html) => HttpResponse {
+                    body: Bytes::from(html),
+                    ..Default::default()
+                },
+                Err(e) => HttpResponse::bad_request(Bytes::from(e.to_string())),
+            };
+            return Ok(Some(resp));
+        }
 
         let resp = match get_data(&file).await {
             Ok((meta, mut f)) => {
