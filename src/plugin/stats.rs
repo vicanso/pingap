@@ -19,7 +19,6 @@ use crate::config::ProxyPluginStep;
 use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON};
 use crate::state::{get_hostname, get_start_time, State};
 use async_trait::async_trait;
-use bytes::Bytes;
 use bytesize::ByteSize;
 use http::StatusCode;
 use log::debug;
@@ -87,7 +86,7 @@ impl ProxyPlugin for Stats {
             .unwrap_or_default();
             return Ok(Some(HttpResponse {
                 status: StatusCode::OK,
-                body: Bytes::from(buf),
+                body: buf.into(),
                 headers: Some(vec![HTTP_HEADER_CONTENT_JSON.clone()]),
                 ..Default::default()
             }));

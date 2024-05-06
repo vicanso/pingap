@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::HTTP_HEADER_CONTENT_HTML;
 use super::{
     HttpHeader, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_NO_CACHE, HTTP_HEADER_NO_STORE,
     HTTP_HEADER_TRANSFER_CHUNKED,
@@ -103,7 +104,18 @@ impl HttpResponse {
             ..Default::default()
         }
     }
-
+    /// Gets the response for html.
+    pub fn html(body: Bytes) -> Self {
+        HttpResponse {
+            status: StatusCode::OK,
+            headers: Some(vec![
+                HTTP_HEADER_CONTENT_HTML.clone(),
+                HTTP_HEADER_NO_CACHE.clone(),
+            ]),
+            body,
+            ..Default::default()
+        }
+    }
     /// Gets the response from serde json, and sets the status of response.
     pub fn try_from_json_status<T>(value: &T, status: StatusCode) -> pingora::Result<Self>
     where
@@ -113,6 +125,7 @@ impl HttpResponse {
         resp.status = status;
         Ok(resp)
     }
+
     /// Gets the response from serde json, the status sets to `200`.
     pub fn try_from_json<T>(value: &T) -> pingora::Result<Self>
     where
@@ -124,7 +137,7 @@ impl HttpResponse {
         })?;
         Ok(HttpResponse {
             status: StatusCode::OK,
-            body: Bytes::from(buf),
+            body: buf.into(),
             headers: Some(vec![HTTP_HEADER_CONTENT_JSON.clone()]),
             ..Default::default()
         })

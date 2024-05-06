@@ -17,7 +17,6 @@ use crate::config::{ProxyPluginCategory, ProxyPluginStep};
 use crate::http_extra::{convert_headers, HttpResponse};
 use crate::state::State;
 use async_trait::async_trait;
-use bytes::Bytes;
 use http::StatusCode;
 use log::debug;
 use pingora::proxy::Session;
@@ -45,7 +44,7 @@ impl MockResponse {
 
         let mut resp = HttpResponse {
             status: StatusCode::OK,
-            body: Bytes::from(info.data.clone()),
+            body: info.data.into(),
             ..Default::default()
         };
         if let Some(status) = info.status {

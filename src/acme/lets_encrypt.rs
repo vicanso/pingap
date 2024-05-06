@@ -19,7 +19,6 @@ use crate::util;
 use crate::webhook;
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use bytes::Bytes;
 use http::StatusCode;
 use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder, OrderStatus,
@@ -115,7 +114,7 @@ pub async fn handle_lets_encrypt(session: &mut Session, ctx: &mut State) -> ping
         };
         let size = HttpResponse {
             status: StatusCode::OK,
-            body: Bytes::from(value),
+            body: value.into(),
             ..Default::default()
         }
         .send(session)

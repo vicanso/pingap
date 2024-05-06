@@ -18,7 +18,6 @@ use crate::http_extra::{HttpChunkResponse, HttpHeader, HttpResponse};
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
-use bytes::Bytes;
 use bytesize::ByteSize;
 use glob::glob;
 use http::{header, HeaderValue, StatusCode};
@@ -44,27 +43,42 @@ static WEB_HTML: &str = r###"<!doctype html>
                 margin: 0;
                 padding: 0;
             }
-            li {
-                line-height: 30px;
-                padding: 3px 10px;
-                list-style: none;
-                background-color: #fefefe;
-            }
-            li:nth-child(odd) {
-                background-color: #f0f0f0;
+            table {
+                width: 100%;
             }
             a {
                 color: #333;
             }
             .size {
-                margin-left: 30px;
+                width: 180px;
+                text-align: left;
+            }
+            .lastModified {
+                width: 280px;
+                text-align: right;
+            }
+            th, td {
+                padding: 10px;
+            }
+            thead {
+                background-color: #f0f0f0;
+            }
+            tr:nth-child(even) {
+                background-color: #f0f0f0;
             }
         </style>
     </head>
     <body>
-        <ul>
-        {{CONTENT}}
-        </ul>
+        <table border="0" cellpadding="0" cellspacing="0">
+            <thead>
+                <th class="name">File Name</th>
+                <th class="size">Size</th>
+                <th class="lastModified">Last Modified</th>
+            </thread>
+            <tbody>
+                {{CONTENT}}
+            </tobdy>
+        </table>
     </body>
 </html>
 "###;
@@ -196,9 +210,14 @@ fn get_autoindex_html(path: &Path) -> Result<String, String> {
         let f = entry.map_err(|e| e.to_string())?;
         let filepath = f.to_string_lossy();
         let mut size = "".to_string();
+        let mut last_modified = "".to_string();
         if f.is_file() {
             let _ = f.metadata().map(|meta| {
                 size = ByteSize(meta.size()).to_string();
+                last_modified = chrono::DateTime::from_timestamp(meta.mtime(), 0)
+                    .unwrap_or_default()
+                    .to_string()
+                    .replace(" UTC", "");
             });
         }
 
@@ -209,7 +228,11 @@ fn get_autoindex_html(path: &Path) -> Result<String, String> {
 
         let target = format!("./{}", filepath.substring(path.len(), filepath.len()));
         file_list_html.push(format!(
-            r###"<li><a href="{target}">{name}</a><span class="size">{size}</span></li>"###
+            r###"<tr>
+                <td class="name"><a href="{target}">{name}</a></td>
+                <td class="size">{size}</td>
+                <td class="lastModified">{last_modified}</td>
+            </tr>"###
         ));
     }
 
@@ -243,11 +266,8 @@ impl ProxyPlugin for Directory {
         debug!("Static serve {file:?}");
         if self.autoindex && file.is_dir() {
             let resp = match get_autoindex_html(&file) {
-                Ok(html) => HttpResponse {
-                    body: Bytes::from(html),
-                    ..Default::default()
-                },
-                Err(e) => HttpResponse::bad_request(Bytes::from(e.to_string())),
+                Ok(html) => HttpResponse::html(html.into()),
+                Err(e) => HttpResponse::bad_request(e.to_string().into()),
             };
             return Ok(Some(resp));
         }
@@ -265,7 +285,7 @@ impl ProxyPlugin for Directory {
                             max_age: self.max_age,
                             cache_private: self.cache_private,
                             headers: Some(headers),
-                            body: Bytes::from(buffer),
+                            body: buffer.into(),
                             ..Default::default()
                         },
                         Err(e) => {

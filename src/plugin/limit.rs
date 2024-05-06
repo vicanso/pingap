@@ -19,7 +19,6 @@ use crate::http_extra::HttpResponse;
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
-use bytes::Bytes;
 use http::StatusCode;
 use log::debug;
 use pingora::proxy::Session;
@@ -127,7 +126,7 @@ impl ProxyPlugin for Limiter {
         if let Err(e) = self.incr(session, ctx) {
             return Ok(Some(HttpResponse {
                 status: StatusCode::TOO_MANY_REQUESTS,
-                body: Bytes::from(e.to_string()),
+                body: e.to_string().into(),
                 ..Default::default()
             }));
         }
