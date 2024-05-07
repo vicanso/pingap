@@ -45,10 +45,10 @@ release:
 
 perf:
 	cargo build --profile=release-perf --features=perf
-	ls -lh target/release
+	ls -lh target/release-perf
 pyro:
 	cargo build --profile=release-perf --features=pyro
-	ls -lh target/release
+	ls -lh target/release-pyro
 
 publish:
 	make build-web
