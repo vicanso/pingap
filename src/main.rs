@@ -44,6 +44,8 @@ mod webhook;
 #[cfg(feature = "perf")]
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
+#[cfg(feature = "perf")]
+mod perf;
 
 /// A reverse proxy like nginx.
 #[derive(Parser, Debug, Default)]
@@ -355,6 +357,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             );
         }
     }
+    #[cfg(feature = "perf")]
+    {
+        my_server.add_service(background_service("Dhat", perf::DhatService {}))
+    }
 
     info!("Server is running");
     let _ = get_start_time();
@@ -364,11 +370,6 @@ fn run() -> Result<(), Box<dyn Error>> {
 }
 
 fn main() {
-    // can not get the heap profile
-    // because pingora exit the process
-    #[cfg(feature = "perf")]
-    let _profiler = dhat::Profiler::new_heap();
-
     if let Err(e) = run() {
         println!("{e}");
         error!("{e}");

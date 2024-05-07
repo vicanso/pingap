@@ -19,3 +19,4 @@ target/
 .vscode
 node_moudles
 dist
+dhat*.json
