@@ -43,16 +43,12 @@ use snafu::{ResultExt, Snafu};
 use std::fs;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 static ERROR_TEMPLATE: &str = include_str!("../../error.html");
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Toml de error {source}, {content}"))]
-    TomlDe {
-        source: toml::de::Error,
-        content: String,
-    },
     #[snafu(display("Error {category} {message}"))]
     Common { category: String, message: String },
     #[snafu(display("Io {source}"))]
@@ -170,13 +166,6 @@ impl From<PingapConf> for Vec<ServerConf> {
     }
 }
 
-impl ServerConf {
-    pub fn validate(&self) -> Result<()> {
-        // TODO validate
-        Ok(())
-    }
-}
-
 pub struct Server {
     name: String,
     admin: bool,
@@ -189,7 +178,6 @@ pub struct Server {
     threads: Option<usize>,
     tls_cert: Option<Vec<u8>>,
     tls_key: Option<Vec<u8>>,
-    is_tls: bool,
     enbaled_h2: bool,
     lets_encrypt_enabled: bool,
     tls_from_lets_encrypt: bool,
@@ -254,7 +242,6 @@ impl Server {
             threads: conf.threads,
             lets_encrypt_enabled: false,
             enbaled_h2: conf.enbaled_h2,
-            is_tls: false,
             tls_from_lets_encrypt: conf.lets_encrypt.is_some(),
         })
     }
@@ -263,12 +250,17 @@ impl Server {
         self.lets_encrypt_enabled = true;
     }
     /// New all background services and add a TCP/TLS listening endpoint.
-    pub fn run(mut self, conf: &Arc<configuration::ServerConf>) -> Result<ServerServices> {
+    pub fn run(self, conf: &Arc<configuration::ServerConf>) -> Result<ServerServices> {
         let tls_from_lets_encrypt = self.tls_from_lets_encrypt;
         let addr = self.addr.clone();
         let mut bg_services: Vec<Box<dyn IService>> = vec![];
+        let mut exists_background_service = vec![];
         for item in self.locations.iter() {
             let name = format!("BG {}", item.upstream.name);
+            if exists_background_service.contains(&name) {
+                continue;
+            }
+            exists_background_service.push(name.clone());
             if let Some(up) = item.upstream.as_round_robind() {
                 bg_services.push(Box::new(GenBackgroundService::new(name.clone(), up)));
             }
@@ -318,7 +310,6 @@ impl Server {
             if let Some(max_version) = tls_settings.max_proto_version() {
                 info!("Tls max proto version:{max_version:?}");
             }
-            self.is_tls = true;
             Some(tls_settings)
         } else {
             None
@@ -361,12 +352,30 @@ impl Server {
     }
 }
 
+#[inline]
+fn get_established(digest: &Digest) -> (u64, Option<String>) {
+    let mut established = 0;
+    let mut tls_version = None;
+    if let Some(item) = digest.timing_digest.first() {
+        if let Some(item) = item.as_ref() {
+            established = item
+                .established_ts
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+        }
+    }
+    if let Some(item) = &digest.ssl_digest {
+        tls_version = Some(item.version.to_string());
+    }
+    (established, tls_version)
+}
+
 #[async_trait]
 impl ProxyHttp for Server {
     type CTX = State;
     fn new_ctx(&self) -> Self::CTX {
         State {
-            is_tls: self.is_tls,
             ..Default::default()
         }
     }
@@ -378,6 +387,11 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
+        if let Some(digest) = session.digest() {
+            let (established, tls_version) = get_established(digest);
+            ctx.established = established;
+            ctx.tls_version = tls_version;
+        };
         ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed);
         ctx.accepted = self.accepted.fetch_add(1, Ordering::Relaxed);
         if self.admin {
@@ -473,10 +487,10 @@ impl ProxyHttp for Server {
         if session.cache.enabled() {
             // ignore insert header error
             let _ =
-                upstream_response.insert_header("x-cache-status", session.cache.phase().as_str());
+                upstream_response.insert_header("X-Cache-Status", session.cache.phase().as_str());
             if let Some(d) = session.cache.lock_duration() {
-                let _ = upstream_response
-                    .insert_header("x-cache-lock-time-ms", format!("{}", d.as_millis()));
+                let _ =
+                    upstream_response.insert_header("X-Cache-Lock", format!("{}ms", d.as_millis()));
                 ctx.cache_lock_duration = Some(d);
             }
         }
@@ -509,7 +523,10 @@ impl ProxyHttp for Server {
     ) -> pingora::Result<Box<HttpPeer>> {
         let lo = &self.locations[ctx.location_index.unwrap_or_default()];
         let peer = lo.upstream.new_http_peer(ctx, session).ok_or_else(|| {
-            util::new_internal_error(503, format!("No available upstream({})", lo.upstream_name))
+            util::new_internal_error(
+                503,
+                format!("No available upstream({}:{})", lo.name, lo.upstream.name),
+            )
         })?;
         ctx.upstream_connect_time = Some(get_hour_duration());
 

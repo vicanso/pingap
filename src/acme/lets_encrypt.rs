@@ -85,6 +85,7 @@ impl BackgroundService for LetsEncryptService {
 }
 
 fn get_lets_encrypt_cert_file() -> PathBuf {
+    // TODO save the cert to etcd
     env::temp_dir().join("pingap-lets-encrypt.json")
 }
 

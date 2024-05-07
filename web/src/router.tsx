@@ -5,6 +5,7 @@ import ServerInfo from "./pages/server-info";
 import LocationInfo from "./pages/location-info";
 import UpstreamInfo from "./pages/upstream-info";
 import ProxyPluginInfo from "./pages/proxy-plugin-info";
+import TomlPreview from "./pages/toml-preview";
 
 const PAHT_HOME = "/";
 const PATH_BASIC_INFO = "/basic-info";
@@ -12,6 +13,7 @@ const PATH_SERVER_INFO = "/server-info/:name";
 const PATH_LOCATION_INFO = "/location-info/:name";
 const PATH_UPSTREAM_INFO = "/upstream-info/:name";
 const PATH_PROXY_PLUGIN_INFO = "/proxy-plugin-info/:name";
+const PATH_TOML_PREVIEW = "/toml-preivew";
 
 const router = createHashRouter([
   {
@@ -37,6 +39,10 @@ const router = createHashRouter([
   {
     path: PATH_PROXY_PLUGIN_INFO,
     element: <ProxyPluginInfo />,
+  },
+  {
+    path: PATH_TOML_PREVIEW,
+    element: <TomlPreview />,
   },
 ]);
 
@@ -66,6 +72,10 @@ export function goToUpstreamInfo(name: string) {
 
 export function goToProxyPluginInfo(name: string) {
   router.navigate(PATH_PROXY_PLUGIN_INFO.replace(":name", name));
+}
+
+export function goToTomlPrevew() {
+  router.navigate(PATH_TOML_PREVIEW);
 }
 
 export function goBack() {

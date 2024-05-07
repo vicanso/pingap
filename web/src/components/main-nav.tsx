@@ -15,7 +15,6 @@ import AltRouteIcon from "@mui/icons-material/AltRoute";
 import ExtensionIcon from "@mui/icons-material/Extension";
 import Button from "@mui/material/Button";
 import { useTranslation } from "react-i18next";
-
 import { useAsync } from "react-async-hook";
 import useConfigStore from "../states/config";
 import {

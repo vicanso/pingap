@@ -29,6 +29,7 @@ pub const ETCD_PROTOCOL: &str = "etcd://";
 
 impl EtcdStorage {
     /// Create a new etcd storage for config.
+    /// Connection url: etcd://host1:port1,host2:port2/pingap?timeout=10s&connect_timeout=5s&user=**&password=**
     pub fn new(value: &str) -> Result<Self> {
         let mut hosts = "".to_string();
         let mut path = "".to_string();
@@ -77,6 +78,7 @@ impl EtcdStorage {
             path,
         })
     }
+    /// Connect to etcd server.
     async fn connect(&self) -> Result<Client> {
         Client::connect(&self.addrs, Some(self.options.clone()))
             .await
@@ -86,6 +88,7 @@ impl EtcdStorage {
 
 #[async_trait]
 impl ConfigStorage for EtcdStorage {
+    /// Load config from etcd.
     async fn load_config(&self, _admin: bool) -> Result<PingapConf> {
         let mut c = self.connect().await?;
         let mut opts = GetOptions::new();
@@ -100,8 +103,9 @@ impl ConfigStorage for EtcdStorage {
             buffer.extend(item.value());
             buffer.push(0x0a);
         }
-        PingapConf::try_from(buffer)
+        PingapConf::try_from(buffer.as_slice())
     }
+    /// Save config to etcd by category.
     async fn save_config(&self, conf: &PingapConf, category: &str) -> Result<()> {
         let filepath = self.path.clone();
         conf.validate()?;
@@ -133,7 +137,7 @@ mod tests {
         );
         let storage = EtcdStorage::new(&url).unwrap();
         let toml_data = include_bytes!("../../conf/pingap.toml");
-        let conf = PingapConf::try_from(toml_data.to_vec()).unwrap();
+        let conf = PingapConf::try_from(toml_data.to_vec().as_slice()).unwrap();
 
         storage.save_config(&conf, "basic").await.unwrap();
         storage.save_config(&conf, CATEGORY_UPSTREAM).await.unwrap();

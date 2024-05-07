@@ -69,7 +69,7 @@ pub struct HttpResponse {
 }
 
 impl HttpResponse {
-    /// Returns the no content `204` response.
+    /// Create a no content `204` response.
     pub fn no_content() -> Self {
         HttpResponse {
             status: StatusCode::NO_CONTENT,
@@ -77,7 +77,7 @@ impl HttpResponse {
             ..Default::default()
         }
     }
-    /// Return the bad request `400` response.
+    /// Create a bad request `400` response.
     pub fn bad_request(body: Bytes) -> Self {
         HttpResponse {
             status: StatusCode::BAD_REQUEST,
@@ -86,7 +86,7 @@ impl HttpResponse {
             ..Default::default()
         }
     }
-    /// Returns the not found `404` response.
+    /// Create a not found `404` response.
     pub fn not_found(body: Bytes) -> Self {
         HttpResponse {
             status: StatusCode::NOT_FOUND,
@@ -95,7 +95,7 @@ impl HttpResponse {
             ..Default::default()
         }
     }
-    /// Returns the unknown error `500` response.
+    /// Create an unknown error `500` response.
     pub fn unknown_error(body: Bytes) -> Self {
         HttpResponse {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -104,7 +104,7 @@ impl HttpResponse {
             ..Default::default()
         }
     }
-    /// Gets the response for html.
+    /// Create a html response with `no-cache` cache-control.
     pub fn html(body: Bytes) -> Self {
         HttpResponse {
             status: StatusCode::OK,
@@ -116,7 +116,7 @@ impl HttpResponse {
             ..Default::default()
         }
     }
-    /// Gets the response from serde json, and sets the status of response.
+    /// Create a response from serde json, and set the status of response.
     pub fn try_from_json_status<T>(value: &T, status: StatusCode) -> pingora::Result<Self>
     where
         T: ?Sized + Serialize,
@@ -126,7 +126,7 @@ impl HttpResponse {
         Ok(resp)
     }
 
-    /// Gets the response from serde json, the status sets to `200`.
+    /// Create a response from serde json, the status set to `200`.
     pub fn try_from_json<T>(value: &T) -> pingora::Result<Self>
     where
         T: ?Sized + Serialize,
@@ -142,7 +142,7 @@ impl HttpResponse {
             ..Default::default()
         })
     }
-    /// Gets the response header for http response.
+    /// Get the response header for http response.
     pub fn get_response_header(&self) -> pingora::Result<ResponseHeader> {
         let fix_size = 3;
         let size = self
@@ -170,7 +170,7 @@ impl HttpResponse {
         }
         Ok(resp)
     }
-    /// Sends http response to client, return how many bytes were sent.
+    /// Send http response to client, return how many bytes were sent.
     pub async fn send(self, session: &mut Session) -> pingora::Result<usize> {
         let header = self.get_response_header()?;
         let size = self.body.len();
@@ -198,7 +198,7 @@ impl<'r, R> HttpChunkResponse<'r, R>
 where
     R: tokio::io::AsyncRead + std::marker::Unpin,
 {
-    /// Creates a new http chunk response.
+    /// Create a new http chunk response.
     pub fn new(r: &'r mut R) -> Self {
         Self {
             reader: Pin::new(r),
@@ -208,7 +208,7 @@ where
             cache_private: None,
         }
     }
-    /// Gets the response header for http chunk response.
+    /// Get the response header for http chunk response.
     pub fn get_response_header(&self) -> pingora::Result<ResponseHeader> {
         let mut resp = ResponseHeader::build(StatusCode::OK, Some(4))?;
         if let Some(headers) = &self.headers {
@@ -224,7 +224,7 @@ where
         resp.insert_header(cache_control.0, cache_control.1)?;
         Ok(resp)
     }
-    /// Sends the chunk data to client until the end of reader, return how many bytes were sent.
+    /// Send the chunk data to client until the end of reader, return how many bytes were sent.
     pub async fn send(&mut self, session: &mut Session) -> pingora::Result<usize> {
         let header = self.get_response_header()?;
         session.write_response_header(Box::new(header)).await?;

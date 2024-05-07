@@ -370,6 +370,7 @@ impl Upstream {
             if let Some(verify_cert) = self.verify_cert {
                 p.options.verify_cert = verify_cert;
             }
+            // TODO tcp_keepalive tcp_recv_buf
             p
         })
     }

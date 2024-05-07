@@ -3,10 +3,12 @@
 - [ ] better error handler
 - [ ] log rotate
 - [ ] support validate config before save(web)
-- [ ] http response cache
+- [ ] http response cache(stroage: tinyufo, file, redis, etc)
 - [ ] fix not_before not_after of cert
 - [ ] http headers plugin
 - [ ] client body size limit plugin
+- [x] add more digest from session.digest
+- [x] toml config preview
 - [x] support ttl limit
 - [x] disable notification event
 - [x] use buffer writer for log

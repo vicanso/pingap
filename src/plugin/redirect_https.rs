@@ -54,7 +54,7 @@ impl ProxyPlugin for RedirectHttps {
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
-        if !ctx.is_tls {
+        if ctx.tls_version.is_none() {
             let host = if let Some(value) = session.get_header("Host") {
                 value.to_str().unwrap_or_default()
             } else {

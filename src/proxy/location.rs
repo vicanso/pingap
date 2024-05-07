@@ -89,7 +89,6 @@ pub struct Location {
     proxy_headers: Option<Vec<HttpHeader>>,
     proxy_plugins: Option<Vec<String>>,
     pub upstream: Arc<Upstream>,
-    pub upstream_name: String,
 }
 
 fn format_headers(values: &Option<Vec<String>>) -> Result<Option<Vec<HttpHeader>>> {
@@ -138,7 +137,6 @@ impl Location {
 
         Ok(Location {
             name: name.to_string(),
-            upstream_name: upstream,
             path_selector: new_path_selector(&path)?,
             path,
             hosts,

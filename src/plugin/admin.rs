@@ -153,6 +153,15 @@ impl AdminServe {
     }
     async fn get_config(&self, category: &str) -> pingora::Result<HttpResponse> {
         let conf = self.load_config().await?;
+        if category == "toml" {
+            let data = toml::to_string_pretty(&conf)
+                .map_err(|e| util::new_internal_error(400, e.to_string()))?;
+            return Ok(HttpResponse {
+                status: StatusCode::OK,
+                body: data.into(),
+                ..Default::default()
+            });
+        }
         let resp = match category {
             CATEGORY_UPSTREAM => HttpResponse::try_from_json(&conf.upstreams)?,
             CATEGORY_LOCATION => HttpResponse::try_from_json(&conf.locations)?,

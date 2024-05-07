@@ -70,6 +70,7 @@ impl FileStorage {
 
 #[async_trait]
 impl ConfigStorage for FileStorage {
+    /// Load config from file.
     async fn load_config(&self, admin: bool) -> Result<PingapConf> {
         let filepath = self.path.clone();
         if admin && !Path::new(&filepath).exists() {
@@ -97,8 +98,9 @@ impl ConfigStorage for FileStorage {
             })?;
             data.append(&mut buf);
         }
-        PingapConf::try_from(data)
+        PingapConf::try_from(data.as_slice())
     }
+    /// Save config to file by category.
     async fn save_config(&self, conf: &PingapConf, category: &str) -> Result<()> {
         let filepath = self.path.clone();
         conf.validate()?;
@@ -139,7 +141,7 @@ mod tests {
         tokio::fs::create_dir(&path).await.unwrap();
         let storage = FileStorage::new(&path).unwrap();
         let toml_data = include_bytes!("../../conf/pingap.toml");
-        let conf = PingapConf::try_from(toml_data.to_vec()).unwrap();
+        let conf = PingapConf::try_from(toml_data.to_vec().as_slice()).unwrap();
 
         storage.save_config(&conf, "basic").await.unwrap();
         storage.save_config(&conf, CATEGORY_UPSTREAM).await.unwrap();

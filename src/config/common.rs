@@ -137,6 +137,7 @@ pub struct UpstreamConf {
     pub remark: Option<String>,
 }
 impl UpstreamConf {
+    /// Validate the options of upstream config.
     pub fn validate(&self, name: &str) -> Result<()> {
         if self.addrs.is_empty() {
             return Err(Error::Invalid {
@@ -228,7 +229,7 @@ impl LocationConf {
 
         Ok(())
     }
-
+    /// Get weight of location.
     pub fn get_weight(&self) -> u16 {
         if let Some(weight) = self.weight {
             return weight;
@@ -422,11 +423,11 @@ impl PingapConf {
     }
 }
 
-impl TryFrom<Vec<u8>> for PingapConf {
+impl TryFrom<&[u8]> for PingapConf {
     type Error = Error;
-    fn try_from(data: Vec<u8>) -> Result<Self, self::Error> {
+    fn try_from(data: &[u8]) -> Result<Self, self::Error> {
         let data: TomlConfig = toml::from_str(
-            std::string::String::from_utf8_lossy(&data)
+            std::string::String::from_utf8_lossy(data)
                 .to_string()
                 .as_str(),
         )
@@ -869,7 +870,7 @@ mod tests {
     #[test]
     fn test_pingap_conf() {
         let toml_data = include_bytes!("../../conf/pingap.toml");
-        let conf = PingapConf::try_from(toml_data.to_vec()).unwrap();
+        let conf = PingapConf::try_from(toml_data.to_vec().as_slice()).unwrap();
 
         let (key, data) = conf.get_toml(CATEGORY_SERVER).unwrap();
         assert_eq!("/servers.toml", key);
@@ -951,7 +952,7 @@ log_level = "info"
     #[test]
     fn test_pingap_diff() {
         let toml_data = include_bytes!("../../conf/pingap.toml");
-        let conf = PingapConf::try_from(toml_data.to_vec()).unwrap();
+        let conf = PingapConf::try_from(toml_data.to_vec().as_slice()).unwrap();
 
         let mut other = conf.clone();
         other.servers.insert(

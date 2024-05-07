@@ -297,7 +297,7 @@ impl Parser {
                     }
                 }
                 TagCategory::Scheme => {
-                    if ctx.is_tls {
+                    if ctx.tls_version.is_some() {
                         buf.extend(b"https");
                     } else {
                         buf.extend(b"http");
@@ -399,6 +399,12 @@ impl Parser {
                                 }
                             }
                             "location" => buf.extend(ctx.location.as_bytes()),
+                            "established" => buf.extend(ctx.established.to_string().as_bytes()),
+                            "tls_version" => {
+                                if let Some(value) = &ctx.tls_version {
+                                    buf.extend(value.as_bytes());
+                                }
+                            }
                             _ => {}
                         }
                     }

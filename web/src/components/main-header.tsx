@@ -15,9 +15,11 @@ import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogContentText from "@mui/material/DialogContentText";
 import DialogTitle from "@mui/material/DialogTitle";
+import CodeIcon from "@mui/icons-material/Code";
 import { useTranslation } from "react-i18next";
 import useBasicStore from "../states/basic";
 import request from "../helpers/request";
+import { goToTomlPrevew } from "../router";
 
 function formatDuraion(ts: number) {
   const seconds = Math.floor(Date.now() / 1000) - ts;
@@ -78,6 +80,17 @@ export default function MainHeader() {
   };
   const box = (
     <React.Fragment>
+      <IconButton
+        aria-label="toml-preview"
+        style={{
+          marginRight: "15px",
+        }}
+        onClick={() => {
+          goToTomlPrevew();
+        }}
+      >
+        <CodeIcon />
+      </IconButton>
       <IconButton
         aria-label="setting"
         onClick={() => {
