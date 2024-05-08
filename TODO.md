@@ -7,6 +7,7 @@
 - [ ] fix not_before not_after of cert
 - [ ] http headers plugin
 - [ ] client body size limit plugin
+- [x] show name of web view editor
 - [x] add more digest from session.digest
 - [x] toml config preview
 - [x] support ttl limit

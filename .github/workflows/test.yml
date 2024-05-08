@@ -46,5 +46,5 @@ jobs:
         run: make test
       - name: Run cargo release
         run: |
-          make perf
+          make release
           ldd target/release/pingap

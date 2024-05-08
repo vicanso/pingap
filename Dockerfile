@@ -16,26 +16,21 @@ RUN rustup target list --installed
 RUN cd /pingap \
   && make release
 
-FROM alpine
+FROM ubuntu
 
 EXPOSE 7001
 
-# tzdata 安装所有时区配置或可根据需要只添加所需时区
-
-RUN addgroup -g 1000 rust \
-  && adduser -u 1000 -G rust -s /bin/sh -D rust \
-  && apk add --no-cache ca-certificates tzdata
 
 COPY --from=builder /pingap/target/release/pingap /usr/local/bin/pingap
 COPY --from=builder /pingap/entrypoint.sh /entrypoint.sh
 
-USER rust
+USER ubuntu
 
-WORKDIR /home/rust
+WORKDIR /home/ubuntu
 
-RUN mkdir -p /home/rust/pingap/conf
+RUN mkdir -p /home/ubuntu/pingap/conf
 
 
-CMD ["pingap", "-c", "/home/rust/conf"]
+CMD ["pingap", "-c", "/home/rust/pingap/conf"]
 
 ENTRYPOINT ["/entrypoint.sh"]

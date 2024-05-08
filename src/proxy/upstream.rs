@@ -24,7 +24,7 @@ use pingora::lb::{discovery, Backend, Backends, LoadBalancer};
 use pingora::protocols::l4::socket::SocketAddr;
 use pingora::protocols::ALPN;
 use pingora::proxy::Session;
-use pingora::upstreams::peer::HttpPeer;
+use pingora::upstreams::peer::{HttpPeer, PeerOptions};
 use snafu::{ResultExt, Snafu};
 use std::collections::BTreeSet;
 use std::net::ToSocketAddrs;
@@ -176,9 +176,20 @@ impl TryFrom<&str> for HealthCheckConf {
     }
 }
 
+fn update_peer_options(conf: &HealthCheckConf, opt: PeerOptions) -> PeerOptions {
+    let mut options = opt;
+    let timeout = Some(conf.connection_timeout);
+    options.connection_timeout = timeout;
+    options.total_connection_timeout = timeout;
+    options.read_timeout = Some(conf.read_timeout);
+    options.write_timeout = Some(conf.read_timeout);
+    options.idle_timeout = Some(Duration::from_secs(0));
+    options
+}
+
 fn new_tcp_health_check(conf: &HealthCheckConf) -> TcpHealthCheck {
     let mut check = TcpHealthCheck::default();
-    check.peer_template.options.connection_timeout = Some(conf.connection_timeout);
+    check.peer_template.options = update_peer_options(conf, check.peer_template.options.clone());
     check.consecutive_success = conf.consecutive_success;
     check.consecutive_failure = conf.consecutive_failure;
 
@@ -187,8 +198,8 @@ fn new_tcp_health_check(conf: &HealthCheckConf) -> TcpHealthCheck {
 
 fn new_http_health_check(conf: &HealthCheckConf) -> HttpHealthCheck {
     let mut check = HttpHealthCheck::new(&conf.host, conf.schema == "https");
-    check.peer_template.options.connection_timeout = Some(conf.connection_timeout);
-    check.peer_template.options.read_timeout = Some(conf.read_timeout);
+    check.peer_template.options = update_peer_options(conf, check.peer_template.options.clone());
+
     check.consecutive_success = conf.consecutive_success;
     check.consecutive_failure = conf.consecutive_failure;
     check.reuse_connection = conf.reuse_connection;

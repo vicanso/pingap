@@ -34,6 +34,8 @@ import DialogContentText from "@mui/material/DialogContentText";
 import DialogTitle from "@mui/material/DialogTitle";
 import { useTranslation } from "react-i18next";
 import Paper from "@mui/material/Paper";
+import SubtitlesIcon from "@mui/icons-material/Subtitles";
+import { useParams } from "react-router-dom";
 import { Theme, useTheme } from "@mui/material/styles";
 import { formatError } from "../helpers/util";
 
@@ -611,6 +613,7 @@ export default function FormEditor({
   created?: boolean;
   currentNames?: string[];
 }) {
+  const { name } = useParams();
   const { t } = useTranslation();
   const theme = useTheme();
   const [data, setData] = React.useState(getDefaultValues(items));
@@ -1095,9 +1098,30 @@ export default function FormEditor({
     setOpenRemoveDialog(false);
   };
 
+  let nameFragment = <></>;
+  if (name && name != "*") {
+    nameFragment = (
+      <h3
+        style={{
+          margin: "5px 0 15px 0",
+          lineHeight: "24px",
+        }}
+      >
+        <SubtitlesIcon
+          style={{
+            float: "left",
+            marginRight: "5px",
+          }}
+        />
+        <span>{name}</span>
+      </h3>
+    );
+  }
+
   return (
     <React.Fragment>
       <CardContent>
+        {nameFragment}
         <Typography
           sx={{ fontSize: 18, fontWeight: "bold" }}
           color="text.secondary"

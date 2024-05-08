@@ -12,17 +12,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use async_trait::async_trait;
+use log::info;
 use pingora::{server::ShutdownWatch, services::background::BackgroundService};
 
-pub struct DhatService {}
+pub struct DhatHeapService {}
 
 #[async_trait]
-impl BackgroundService for DhatService {
+impl BackgroundService for DhatHeapService {
     /// The lets encrypt servier checks the cert, it will get news cert if current is invalid.
     async fn start(&self, mut shutdown: ShutdownWatch) {
-        // can not get the heap profile
-        // because pingora exit the process
+        info!("Dhat heap service is running");
         let _profiler = dhat::Profiler::new_heap();
         let _ = shutdown.changed().await;
+        info!("Dhat heap service is stopping");
+    }
+}
+
+pub struct DhatAdHocService {}
+
+#[async_trait]
+impl BackgroundService for DhatAdHocService {
+    /// The lets encrypt servier checks the cert, it will get news cert if current is invalid.
+    async fn start(&self, mut shutdown: ShutdownWatch) {
+        info!("Dhat ad hoc service is running");
+        let _profiler = dhat::Profiler::new_ad_hoc();
+        dhat::ad_hoc_event(100);
+        let _ = shutdown.changed().await;
+        info!("Dhat ad hoc service is stopping");
     }
 }
