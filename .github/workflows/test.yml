@@ -9,45 +9,45 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # linux:
-  #   strategy:
-  #     matrix:
-  #       # TODO: add nightly
-  #       toolchain: [stable]
-  #   runs-on: ubuntu-latest
-  #   services:
-  #     etcd:
-  #       image: quay.io/coreos/etcd:v3.5.5
-  #       env:
-  #         ETCD_ADVERTISE_CLIENT_URLS: http://0.0.0.0:2379
-  #         ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
-  #       ports:
-  #         - 2379:2379
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - name: setup node
-  #       uses: actions/setup-node@v4
-  #     - name: build-web
-  #       run: make build-web
-  #     - name: Install build dependencies
-  #       run: |
-  #         sudo apt update
-  #         sudo apt install -y cmake libclang-dev wget gnupg ca-certificates lsb-release --no-install-recommends protobuf-compiler
-  #     - name: Install toolchain
-  #       uses: dtolnay/rust-toolchain@master
-  #       with:
-  #         toolchain: ${{ matrix.toolchain }}
-  #         components: rustfmt, clippy
-  #     - name: Run cargo fmt
-  #       run: cargo fmt --all -- --check
-  #     - name: Run cargo clippy
-  #       run: make lint
-  #     - name: Run cargo test
-  #       run: make test
-  #     - name: Run cargo release
-  #       run: |
-  #         make release
-  #         ldd target/release/pingap
+  linux:
+    strategy:
+      matrix:
+        # TODO: add nightly
+        toolchain: [stable]
+    runs-on: ubuntu-latest
+    services:
+      etcd:
+        image: quay.io/coreos/etcd:v3.5.5
+        env:
+          ETCD_ADVERTISE_CLIENT_URLS: http://0.0.0.0:2379
+          ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+        ports:
+          - 2379:2379
+    steps:
+      - uses: actions/checkout@v4
+      - name: setup node
+        uses: actions/setup-node@v4
+      - name: build-web
+        run: make build-web
+      - name: Install build dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y cmake libclang-dev wget gnupg ca-certificates lsb-release --no-install-recommends protobuf-compiler
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: rustfmt, clippy
+      - name: Run cargo fmt
+        run: cargo fmt --all -- --check
+      - name: Run cargo clippy
+        run: make lint
+      - name: Run cargo test
+        run: make test
+      - name: Run cargo release
+        run: |
+          make release
+          ldd target/release/pingap
   docker:
     runs-on: ubuntu-latest
     timeout-minutes: 3600
@@ -85,6 +85,8 @@ jobs:
         with:
           images: |
             vicanso/pingap
+          tags: |
+            type=raw,value=latest
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
