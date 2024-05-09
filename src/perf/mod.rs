@@ -27,17 +27,3 @@ impl BackgroundService for DhatHeapService {
         info!("Dhat heap service is stopping");
     }
 }
-
-pub struct DhatAdHocService {}
-
-#[async_trait]
-impl BackgroundService for DhatAdHocService {
-    /// The lets encrypt servier checks the cert, it will get news cert if current is invalid.
-    async fn start(&self, mut shutdown: ShutdownWatch) {
-        info!("Dhat ad hoc service is running");
-        let _profiler = dhat::Profiler::new_ad_hoc();
-        dhat::ad_hoc_event(100);
-        let _ = shutdown.changed().await;
-        info!("Dhat ad hoc service is stopping");
-    }
-}

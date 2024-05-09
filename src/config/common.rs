@@ -273,10 +273,12 @@ pub struct ServerConf {
 impl ServerConf {
     /// Validate the options of server config.
     fn validate(&self, name: &str, location_names: &[String]) -> Result<()> {
-        let _ = self.addr.to_socket_addrs().map_err(|e| Error::Io {
-            source: e,
-            file: self.addr.clone(),
-        })?;
+        for addr in self.addr.split(',') {
+            let _ = addr.to_socket_addrs().map_err(|e| Error::Io {
+                source: e,
+                file: self.addr.clone(),
+            })?;
+        }
         if let Some(locations) = &self.locations {
             for item in locations {
                 if !location_names.contains(item) {

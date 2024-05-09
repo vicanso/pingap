@@ -32,7 +32,6 @@ use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
@@ -272,10 +271,7 @@ async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
     let not_before = cert.get_params().not_before.unix_timestamp();
     // TODO get the not after from cert
     // cert.get_params().not_after.unix_timestamp() is wrong
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
+    let now = util::now().as_secs() as i64;
     let not_after = now + 90 * 24 * 3600;
 
     let mut f = fs::OpenOptions::new()

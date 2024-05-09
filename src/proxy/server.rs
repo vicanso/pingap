@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::dynamic_cert::DynamicCert;
 use super::logger::Parser;
 use super::{Location, Upstream};
 use crate::acme::{get_lets_encrypt_cert, handle_lets_encrypt};
@@ -39,8 +40,7 @@ use pingora::services::background::GenBackgroundService;
 use pingora::services::listening::Service;
 use pingora::services::Service as IService;
 use pingora::upstreams::peer::{HttpPeer, Peer};
-use snafu::{ResultExt, Snafu};
-use std::fs;
+use snafu::Snafu;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -51,8 +51,6 @@ static ERROR_TEMPLATE: &str = include_str!("../../error.html");
 pub enum Error {
     #[snafu(display("Error {category} {message}"))]
     Common { category: String, message: String },
-    #[snafu(display("Io {source}"))]
-    Io { source: std::io::Error },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -280,58 +278,55 @@ impl Server {
                 Err(e) => error!("get lets encrypt cert fail, {e}"),
             };
         }
-        // new tls settings
-        let tls_settings = if tls_cert.is_some() {
-            let dir = tempfile::tempdir().context(IoSnafu)?;
-            let cert_path = dir.path().join("tls-cert");
-            let key_path = dir.path().join("tls-key");
-            fs::write(cert_path.clone(), tls_cert.unwrap_or_default()).context(IoSnafu)?;
-            fs::write(key_path.clone(), tls_key.unwrap_or_default()).context(IoSnafu)?;
-            let mut tls_settings = TlsSettings::intermediate(
-                cert_path.to_str().ok_or(Error::Common {
-                    category: "tmpdir".to_string(),
-                    message: cert_path.to_string_lossy().to_string(),
-                })?,
-                key_path.to_str().ok_or(Error::Common {
-                    category: "tmpdir".to_string(),
-                    message: key_path.to_string_lossy().to_string(),
-                })?,
+        let is_tls = tls_cert.is_some();
+        let dynamic_cert = if is_tls {
+            Some(
+                DynamicCert::new(&tls_cert.unwrap_or_default(), &tls_key.unwrap_or_default())
+                    .map_err(|e| Error::Common {
+                        category: "tls".to_string(),
+                        message: e.to_string(),
+                    })?,
             )
-            .map_err(|err| Error::Common {
-                category: "tls".to_string(),
-                message: err.to_string(),
-            })?;
-            if self.enbaled_h2 {
-                tls_settings.enable_h2();
-            }
-            if let Some(min_version) = tls_settings.min_proto_version() {
-                info!("Tls min proto version:{min_version:?}");
-            }
-            if let Some(max_version) = tls_settings.max_proto_version() {
-                info!("Tls max proto version:{max_version:?}");
-            }
-            Some(tls_settings)
         } else {
             None
         };
 
+        let enbaled_h2 = self.enbaled_h2;
         let mut threads = self.threads;
         if threads.unwrap_or_default() == 0 {
             threads = Some(1);
         }
         info!(
-            "Server({}) is linsten on:{addr}, threads:{threads:?}, tls:{}",
-            &self.name,
-            tls_settings.is_some()
+            "Server({}) is linsten on:{addr}, threads:{threads:?}, tls:{is_tls}",
+            &self.name
         );
         let mut lb = http_proxy_service(conf, self);
         lb.threads = threads;
+        // support listen multi adddress
+        for addr in addr.split(',') {
+            // tls
+            if let Some(dynamic_cert) = &dynamic_cert {
+                let mut tls_settings =
+                    TlsSettings::with_callbacks(dynamic_cert.clone()).map_err(|e| {
+                        Error::Common {
+                            category: "tls".to_string(),
+                            message: e.to_string(),
+                        }
+                    })?;
 
-        // add tls
-        if let Some(tls_settings) = tls_settings {
-            lb.add_tls_with_settings(&addr, None, tls_settings);
-        } else {
-            lb.add_tcp(&addr);
+                if enbaled_h2 {
+                    tls_settings.enable_h2();
+                }
+                if let Some(min_version) = tls_settings.min_proto_version() {
+                    info!("Tls min proto version:{min_version:?}");
+                }
+                if let Some(max_version) = tls_settings.max_proto_version() {
+                    info!("Tls max proto version:{max_version:?}");
+                }
+                lb.add_tls_with_settings(addr, None, tls_settings);
+            } else {
+                lb.add_tcp(addr);
+            }
         }
         Ok(ServerServices { lb, bg_services })
     }

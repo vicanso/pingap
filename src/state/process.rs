@@ -15,6 +15,7 @@
 use crate::config::{
     get_config_hash, get_config_path, get_current_config, load_config, PingapConf,
 };
+use crate::util;
 use crate::webhook;
 use async_trait::async_trait;
 use log::{error, info};
@@ -27,14 +28,10 @@ use std::path::PathBuf;
 use std::process;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use tokio::time::interval;
 
-static START_TIME: Lazy<Duration> = Lazy::new(|| {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-});
+static START_TIME: Lazy<Duration> = Lazy::new(util::now);
 
 static HOST_NAME: Lazy<String> = Lazy::new(|| {
     hostname::get()

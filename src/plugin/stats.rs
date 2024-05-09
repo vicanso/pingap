@@ -12,12 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::time::Duration;
+
 use super::ProxyPlugin;
 use super::Result;
 use crate::config::ProxyPluginCategory;
 use crate::config::ProxyPluginStep;
 use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON};
 use crate::state::{get_hostname, get_start_time, State};
+use crate::util;
 use async_trait::async_trait;
 use bytesize::ByteSize;
 use http::StatusCode;
@@ -37,6 +40,7 @@ struct ServerStats {
     physical_mem: String,
     version: String,
     start_time: u64,
+    uptime: String,
 }
 pub struct Stats {
     path: String,
@@ -74,6 +78,8 @@ impl ProxyPlugin for Stats {
             if let Some(value) = memory_stats() {
                 physical_mem = value.physical_mem;
             }
+            let uptime: humantime::Duration =
+                Duration::from_secs(util::now().as_secs() - get_start_time()).into();
             let buf = serde_json::to_vec(&ServerStats {
                 accepted: ctx.accepted,
                 processing: ctx.processing,
@@ -82,6 +88,7 @@ impl ProxyPlugin for Stats {
                 physical_mem_mb: physical_mem / (1024 * 1024),
                 version: VERSION.to_string(),
                 start_time: get_start_time(),
+                uptime: uptime.to_string(),
             })
             .unwrap_or_default();
             return Ok(Some(HttpResponse {

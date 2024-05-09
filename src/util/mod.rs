@@ -154,3 +154,9 @@ pub fn get_super_ts() -> u32 {
         0
     }
 }
+
+pub fn now() -> Duration {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+}

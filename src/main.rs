@@ -360,10 +360,6 @@ fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "perf")]
     {
         my_server.add_service(background_service("Dhat heap", perf::DhatHeapService {}));
-        my_server.add_service(background_service(
-            "Dhat ad hoc ",
-            perf::DhatAdHocService {},
-        ));
     }
 
     info!("Server is running");
