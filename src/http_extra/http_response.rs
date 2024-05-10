@@ -25,16 +25,7 @@ use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use serde::Serialize;
 use std::pin::Pin;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncReadExt;
-
-pub fn get_hour_duration() -> u32 {
-    if let Ok(value) = SystemTime::now().duration_since(UNIX_EPOCH) {
-        (value.as_millis() % (3600 * 1000)) as u32
-    } else {
-        0
-    }
-}
 
 fn get_cache_control(max_age: Option<u32>, cache_private: Option<bool>) -> HttpHeader {
     if let Some(max_age) = max_age {

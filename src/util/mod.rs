@@ -160,3 +160,16 @@ pub fn now() -> Duration {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
 }
+
+pub fn local_ip_list() -> Vec<String> {
+    let mut ip_list = vec![];
+
+    if let Ok(value) = local_ip_address::local_ip() {
+        ip_list.push(value.to_string());
+    }
+    if let Ok(value) = local_ip_address::local_ipv6() {
+        ip_list.push(value.to_string());
+    }
+
+    ip_list
+}

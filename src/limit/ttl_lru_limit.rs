@@ -48,9 +48,8 @@ impl TtlLruLimit {
 
         if let Some(value) = g.peek(key) {
             debug!("Ttl lru limit, key:{key}, value:{value:?}");
-            if value.count < self.max {
-                valid = true;
-            } else if SystemTime::now()
+            // validate expired first
+            if SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 - value.created_at
@@ -58,6 +57,8 @@ impl TtlLruLimit {
             {
                 valid = true;
                 should_reset = true;
+            } else if value.count < self.max {
+                valid = true;
             }
         } else {
             valid = true

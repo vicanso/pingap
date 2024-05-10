@@ -46,6 +46,8 @@ RUST_LOG=INFO pingap -c /opt/pingap/conf --admin=cGluZ2FwOjEyMzEyMw==@127.0.0.1:
     <img src="../asset/upstream-add-zh.jpg" alt="upstream config">
 </p>
 
+地址配置的是`ip:端口`的形式，无需指定协议，默认为http，对于使用https的填充`sni`即可。
+
 需要注意，对于各超时的配置建议按需配置，默认值无超时不建议使用。`Sni`与`是否校验证书`用于该upstream的节点使用https时设置，若非https忽略即可。健康检查的`http://charts/ping`其中charts为该upstream的名称，在检测时会替换为该节点对应的地址。
 
 <p align="center">

@@ -11,12 +11,12 @@ FROM rust as builder
 COPY --from=webbuilder /pingap /pingap
 
 RUN apt update \
-  && apt install -y cmake libclang-dev wget gnupg ca-certificates lsb-release --no-install-recommends protobuf-compiler
+  && apt install -y cmake libclang-dev wget gnupg ca-certificates lsb-release protobuf-compiler --no-install-recommends
 RUN rustup target list --installed
 RUN cd /pingap \
   && make release
 
-FROM ubuntu
+FROM ubuntu:22.04
 
 EXPOSE 7001
 

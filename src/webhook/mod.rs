@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::util;
 use crate::{config::get_app_name, state};
 use log::{error, info};
 use once_cell::sync::OnceCell;
@@ -89,11 +90,7 @@ pub fn send(params: SendNotificationParams) {
         if let Ok(rt) = tokio::runtime::Runtime::new() {
             let category = params.category.to_string();
             let level = params.level;
-            let ip = if let Ok(value) = local_ip_address::local_ip() {
-                value.to_string()
-            } else {
-                "".to_string()
-            };
+            let ip = util::local_ip_list().join(";");
 
             let send = async move {
                 let client = reqwest::Client::new();

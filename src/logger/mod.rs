@@ -16,6 +16,7 @@ use crate::webhook;
 use log::Level;
 use std::error::Error;
 use std::io::{BufWriter, Write};
+use std::os::unix::fs::OpenOptionsExt;
 
 pub struct LoggerParams {
     pub file: String,
@@ -43,6 +44,7 @@ pub fn logger_try_init(params: LoggerParams) -> Result<(), Box<dyn Error>> {
             // open read() in case there are no readers
             // available otherwise we will panic with
             .read(true)
+            .custom_flags(libc::O_NONBLOCK)
             .open(&params.file)?;
         if capacity > 512 {
             let w = BufWriter::with_capacity(capacity, file);

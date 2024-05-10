@@ -17,7 +17,7 @@ use super::logger::Parser;
 use super::{Location, Upstream};
 use crate::acme::{get_lets_encrypt_cert, handle_lets_encrypt};
 use crate::config::{LocationConf, PingapConf, ProxyPluginStep, UpstreamConf};
-use crate::http_extra::{get_hour_duration, HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
+use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use crate::plugin::get_proxy_plugin;
 use crate::state::State;
 use crate::util;
@@ -43,7 +43,7 @@ use pingora::upstreams::peer::{HttpPeer, Peer};
 use snafu::Snafu;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 static ERROR_TEMPLATE: &str = include_str!("../../error.html");
 
@@ -161,6 +161,14 @@ impl From<PingapConf> for Vec<ServerConf> {
         }
 
         servers
+    }
+}
+
+fn get_hour_duration() -> u32 {
+    if let Ok(value) = SystemTime::now().duration_since(UNIX_EPOCH) {
+        (value.as_millis() % (3600 * 1000)) as u32
+    } else {
+        0
     }
 }
 
