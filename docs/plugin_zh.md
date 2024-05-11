@@ -38,7 +38,7 @@ category = "stats""
 界面配置如图所示，主要是配置其对应的请求路径即可：
 
 <p align="center">
-    <img src="../asset/plgunin-stats.jpg" alt="plgunin-stats">
+    <img src="../asset/plugin-stats.jpg" alt="plugin-stats">
 </p>
 
 ## Limit
@@ -80,7 +80,7 @@ category = "limit"
 界面配置如图所示，主要是配置限制条件以及对应的最大并发访问量：
 
 <p align="center">
-    <img src="../asset/plgunin-limit.jpg" alt="plgunin-limit">
+    <img src="../asset/plugin-limit.jpg" alt="plugin-limit">
 </p>
 
 ## Compression
@@ -98,7 +98,7 @@ category = "compression"
 界面配置如图所示，按需分别配置对应的压缩级别即可，若不想启用该压缩算法则配置为0：
 
 <p align="center">
-    <img src="../asset/plgunin-compression.jpg" alt="plgunin-compression">
+    <img src="../asset/plugin-compression.jpg" alt="plugin-compression">
 </p>
 
 ## Directory
