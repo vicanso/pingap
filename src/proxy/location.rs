@@ -431,7 +431,7 @@ mod tests {
         let mut resp_header = ResponseHeader::build_no_case(StatusCode::OK, None).unwrap();
         lo.insert_headers(&mut resp_header);
         assert_eq!(
-            r###"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"x-response-id": "pig"} }, header_name_map: None }"###,
+            r###"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"x-response-id": "pig"} }, header_name_map: None, reason_phrase: None }"###,
             format!("{resp_header:?}")
         );
     }

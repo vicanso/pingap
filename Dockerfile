@@ -28,9 +28,6 @@ USER ubuntu
 
 WORKDIR /home/ubuntu
 
-RUN mkdir -p /home/ubuntu/pingap/conf
-
-
 CMD ["pingap", "-c", "/home/rust/pingap/conf"]
 
 ENTRYPOINT ["/entrypoint.sh"]

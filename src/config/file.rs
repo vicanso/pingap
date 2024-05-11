@@ -16,6 +16,7 @@ use super::PingapConf;
 use super::{ConfigStorage, Error, Result};
 use crate::util;
 use async_trait::async_trait;
+use futures_util::TryFutureExt;
 use glob::glob;
 use log::info;
 use serde::{Deserialize, Serialize};
@@ -74,12 +75,22 @@ impl ConfigStorage for FileStorage {
     /// Load config from file.
     async fn load_config(&self, admin: bool) -> Result<PingapConf> {
         let filepath = self.path.clone();
-        if admin && !Path::new(&filepath).exists() {
+        let dir = Path::new(&filepath);
+        if admin && !dir.exists() {
             return Ok(PingapConf::default());
+        }
+        // create dir
+        if !filepath.ends_with(".toml") && !dir.exists() {
+            fs::create_dir_all(&filepath)
+                .map_err(|e| Error::Io {
+                    source: e,
+                    file: filepath.clone(),
+                })
+                .await?;
         }
 
         let mut data = vec![];
-        if Path::new(&filepath).is_dir() {
+        if dir.is_dir() {
             for entry in glob(&format!("{filepath}/**/*.toml")).map_err(|e| Error::Pattern {
                 source: e,
                 path: filepath,
