@@ -356,7 +356,7 @@ impl Server {
 }
 
 #[inline]
-fn get_established(digest: &Digest) -> (u64, Option<String>) {
+fn get_digest_detail(digest: &Digest) -> (u64, Option<String>) {
     let mut established = 0;
     let mut tls_version = None;
     if let Some(item) = digest.timing_digest.first() {
@@ -391,7 +391,7 @@ impl ProxyHttp for Server {
         Self::CTX: Send + Sync,
     {
         if let Some(digest) = session.digest() {
-            let (established, tls_version) = get_established(digest);
+            let (established, tls_version) = get_digest_detail(digest);
             ctx.established = established;
             ctx.tls_version = tls_version;
         };
