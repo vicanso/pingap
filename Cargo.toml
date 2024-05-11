@@ -1,6 +1,6 @@
 [package]
 name = "pingap"
-version = "0.4.4"
+version = "0.4.5"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 edition = "2021"
 categories = ["network-programming", "web-programming::http-server"]
