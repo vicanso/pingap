@@ -32,7 +32,7 @@ pub trait ProxyPlugin: Sync + Send {
 ```toml
 [proxy_plugins.stats]
 value = "/stats"
-category = "stats""
+category = "stats"
 ```
 
 界面配置如图所示，主要是配置其对应的请求路径即可：
@@ -205,7 +205,7 @@ category = "basic_auth"
 界面配置如图所示，配置basic auth的值(多个值用,分隔)，需要注意配置已做base64处理后的值即可：
 
 <p align="center">
-    <img src="../asset/plugin-key-auth.jpg" alt="plugin-key-auth">
+    <img src="../asset/plugin-basic-auth.jpg" alt="plugin-basic-auth">
 </p>
 
 ## Cache
