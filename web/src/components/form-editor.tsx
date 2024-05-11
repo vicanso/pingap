@@ -298,6 +298,7 @@ function FormProxyPluginField({
       fields.push({
         label: t("form.pingPath"),
       });
+      break;
     }
     default: {
       arr.push(value);
@@ -316,7 +317,7 @@ function FormProxyPluginField({
         <TextField
           key={`${key}-path`}
           id={`${key}-path`}
-          label={"Response Match Path"}
+          label={t("form.mockPath")}
           variant="outlined"
           defaultValue={mockInfo.path}
           sx={{ ml: 1, flex: 1 }}
@@ -330,7 +331,7 @@ function FormProxyPluginField({
         <TextField
           key={`${key}-status`}
           id={`${key}-status`}
-          label={"Response Status"}
+          label={t("form.mockStats")}
           variant="outlined"
           defaultValue={mockInfo.status}
           sx={{ ml: 1, flex: 1 }}
@@ -350,19 +351,19 @@ function FormProxyPluginField({
           id={id}
           divide={":"}
           values={mockInfo.headers}
-          label={"Header Name"}
-          valueLabel={"Header Value"}
+          label={t("form.headerName")}
+          valueLabel={t("form.headerValue")}
           onUpdate={(headers) => {
             const data = Object.assign({}, mockInfo);
             data.headers = headers;
             setMockInfo(data);
             onUpdate(JSON.stringify(data));
           }}
-          addLabel="Add Response Header"
+          addLabel={t("form.mockHeader")}
         />
         <TextField
           id={`${key}-data`}
-          label={"Response data"}
+          label={t("form.mockData")}
           multiline
           minRows={3}
           variant="outlined"

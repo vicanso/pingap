@@ -130,4 +130,8 @@ export default {
   "form.redirectPrefix": "The prefix path of redirect path",
   "form.statsPath": "The stats path",
   "form.pingPath": "The ping path",
+  "form.mockPath": "Response Match Path",
+  "form.mockStats": "Response Status",
+  "form.mockHeader": "Add Response Header",
+  "form.mockData": "Response data",
 };

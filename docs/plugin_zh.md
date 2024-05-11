@@ -35,6 +35,12 @@ value = "/stats"
 category = "stats""
 ```
 
+界面配置如图所示，主要是配置其对应的请求路径即可：
+
+<p align="center">
+    <img src="../asset/plgunin-stats.jpg" alt="plgunin-stats">
+</p>
+
 ## Limit
 
 可基于cookie、请求头或query参数来限制并发访问，需要注意此限制只是限制并发数而非访问频率，以及若配置的字段获取到的值为空，则不限制。
@@ -71,6 +77,12 @@ value = "ip 10"
 category = "limit"
 ```
 
+界面配置如图所示，主要是配置限制条件以及对应的最大并发访问量：
+
+<p align="center">
+    <img src="../asset/plgunin-limit.jpg" alt="plgunin-limit">
+</p>
+
 ## Compression
 
 压缩中间件，处理从上游返回的相关数据压缩，由于`pingora`对于压缩的匹配顺序为`gzip --> br --> zstd`，官方暂未支持调整优先级，而对于现代浏览器，基本都支持`gzip`，大部分支持`br`，少部分支持`zstd`，为了使用更好的压缩方式，此插件会调整请求的`Accept-Encoding`，让压缩的顺序调整为`zstd --> br --> gzip`。配置如下：
@@ -83,6 +95,12 @@ category = "compression"
 
 需要注意`value`部分对应的是三个压缩方式的压缩级别，分别为`gzip`，`br`与`zstd`，若不需要使用的则设置为0即可。也可使用自带的`pingap:compression`，它的压缩级别配置为`6 6 3`。
 
+界面配置如图所示，按需分别配置对应的压缩级别即可，若不想启用该压缩算法则配置为0：
+
+<p align="center">
+    <img src="../asset/plgunin-compression.jpg" alt="plgunin-compression">
+</p>
+
 ## Directory
 
 静态文件目录服务，为指定目录提供静态文件服务，需要注意query部分的参数均为可选值，说明如下：
@@ -92,12 +110,19 @@ category = "compression"
 - `private`: 缓存是否设置为`private`，默认为`public`
 - `index`: 设置默认的index文件，默认为`index.html`
 - `charset`: 指定charset类型，默认无
+- `autoindex`: 是否允许目录以浏览形式展示
 
 ```toml
 [proxy_plugins.downloadsServe]
 value = "~/Downloads?chunk_size=4096&max_age=3600&private&index=index.html&charset=utf-8"
 category = "directory"
 ```
+
+界面配置如图所示，配置对应的静态文件目录，并按需要添加对应的query参数即可：
+
+<p align="center">
+    <img src="../asset/plugin-directory.jpg" alt="plugin-directory">
+</p>
 
 ## Mock
 
@@ -119,6 +144,12 @@ value = "nanoid 8"
 category = "request_id"
 ```
 
+界面配置如图所示，算法类型若不是`nanoid`，其它的值均表示`uuid`。长度也只针对`nanoid`生效：
+
+<p align="center">
+    <img src="../asset/plugin-request-id.jpg" alt="plugin-request-id">
+</p>
+
 ## IpLimit
 
 Ip限制分为两种模式，允许(0)，禁止(1)，ip可支持配置为单ip或ip组，配置如下：
@@ -128,6 +159,12 @@ Ip限制分为两种模式，允许(0)，禁止(1)，ip可支持配置为单ip�
 value = "192.168.1.1,1.1.1.0/24 1"
 category = "ip_limit"
 ```
+
+界面配置如图所示，配置IP列表后，填写是允许还是禁止即可：
+
+<p align="center">
+    <img src="../asset/plugin-ip-limit.jpg" alt="plugin-ip-limit">
+</p>
 
 ## KeyAuth
 
@@ -149,6 +186,12 @@ value = "X-App KOXQaw,GKvXY2"
 category = "key_auth"
 ```
 
+界面配置如图所示，配置key的名称(query需要加前缀?)，再配置符合的值(多个值用,分隔)即可：
+
+<p align="center">
+    <img src="../asset/plugin-key-auth.jpg" alt="plugin-key-auth">
+</p>
+
 ## BasicAuth
 
 BasicAuth鉴权，配置时需要使用保存`base64(user:pass)`的值，若有多个则可以使用`,`分隔。
@@ -158,6 +201,12 @@ BasicAuth鉴权，配置时需要使用保存`base64(user:pass)`的值，若有�
 value = "YWRtaW46dGVzdA==,YWRtaW46MTIzMTIz"
 category = "basic_auth"
 ```
+
+界面配置如图所示，配置basic auth的值(多个值用,分隔)，需要注意配置已做base64处理后的值即可：
+
+<p align="center">
+    <img src="../asset/plugin-key-auth.jpg" alt="plugin-key-auth">
+</p>
 
 ## Cache
 
@@ -171,6 +220,12 @@ Http缓存，仅支持内存式缓存，暂不建议使用。
 [proxy_plugins.http2https]
 category = "redirect_https"
 ```
+
+界面配置如图所示，若需要重定向时添加前缀，可配置对应的前缀，若无需要调整则不配置值即可：
+
+<p align="center">
+    <img src="../asset/plugin-redirect-https.jpg" alt="plugin-redirect-https">
+</p>
 
 ## Ping
 

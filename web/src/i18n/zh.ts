@@ -130,4 +130,8 @@ export default {
   "form.redirectPrefix": "重定向时使用的前缀",
   "form.statsPath": "统计插件对应的路径",
   "form.pingPath": "Ping插件对应的路径",
+  "form.mockPath": "Mock响应的匹配路径",
+  "form.mockStats": "Mock响应的状态码",
+  "form.mockHeader": "Mock响应的响应头",
+  "form.mockData": "Mock响应的数据",
 };
