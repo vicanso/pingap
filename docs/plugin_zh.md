@@ -134,6 +134,12 @@ value = '{"status":500,"path":"/","headers":["X-Error:custom error","Content-Typ
 category = "mock"
 ```
 
+界面配置如图所示，配置对应响应数据既可，需要注意如果指定响应类型，如json等：
+
+<p align="center">
+    <img src="../asset/plugin-mock.jpg" alt="plugin-mock">
+</p>
+
 ## RequestId
 
 用于在请求头中添加`"X-Request-Id`，若已有则忽略，可指定使用`uuid`或`nanoid`两种形式，`nanoid`可以指定长度。
