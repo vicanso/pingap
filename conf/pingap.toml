@@ -1,6 +1,6 @@
 [basic]
 # name of application. Default `Pingap`
-name = "Pingap"
+# name = "Pingap"
 
 # error page html template
 error_template = ""
