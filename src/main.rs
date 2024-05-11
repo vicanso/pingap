@@ -52,7 +52,7 @@ mod perf;
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// The config file or directory
-    #[arg(short, long, default_value = ".")]
+    #[arg(short, long)]
     conf: String,
     /// Whether should run this server in the background
     #[arg(short, long)]

@@ -8,7 +8,7 @@ description: 从零开始使用Pingap反向代理
 
 pingap支持etcd方式存储配置，而文件与etcd的形式仅是启动参数上的差异，因此示例选择使用文件方式存储，方便大家尝试。
 
-pingaap保存文件配置中，若指定的是目录则会按类别生成不同的toml配置，若指定的是文件，则所有配置均保存至该文件中，建议使用目录的形式。
+pingap保存文件配置中，若指定的是目录则会按类别生成不同的toml配置，若指定的是文件，则所有配置均保存至该文件中，建议使用目录的形式。
 
 ```bash
 RUST_LOG=INFO pingap -c /opt/pingap/conf
@@ -28,11 +28,11 @@ RUST_LOG=INFO pingap -c /opt/pingap/conf --admin=cGluZ2FwOjEyMzEyMw==@127.0.0.1:
     <img src="../asset/pingap-zh.jpg" alt="pingap">
 </p>
 
-启动成功后访问`http://127.0.0.1:3018/`可以看到，该界面支持了各类属性配置，后续将一个个讲解。
+启动成功后访问`http://127.0.0.1:3018/`可以看到，该界面支持了各类属性配置，后续将一个个讲解。需要注意，管理后台默认针对多次密码错误的IP会锁定5分钟禁止尝试。
 
 ## 基础配置
 
-基础配置中一般不需要如何调整，若在同一机器运行多个pingap，则需要设置`进程id文件`与`upgrade sock`这两个配置，避免冲突。
+基础配置中一般不需要如何调整，若在同一机器运行多个pingap，则需要设置`进程id文件`与`upgrade sock`这两个配置，避免冲突。若非必要不建议同一机器启动多个pingap实例，若需要监听多端口可通过配置不同的server来实现。
 
 <p align="center">
     <img src="../asset/basic-info-zh.jpg" alt="basic config">
@@ -46,9 +46,9 @@ RUST_LOG=INFO pingap -c /opt/pingap/conf --admin=cGluZ2FwOjEyMzEyMw==@127.0.0.1:
     <img src="../asset/upstream-add-zh.jpg" alt="upstream config">
 </p>
 
-地址配置的是`ip:端口`的形式，无需指定协议，默认为http，对于使用https的填充`sni`即可。
+地址配置的是`ip:端口`的形式，无需指定协议，默认为http，若有配置`sni`则认为是以https的形式访问上游节点。
 
-需要注意，对于各超时的配置建议按需配置，默认值无超时不建议使用。`Sni`与`是否校验证书`用于该upstream的节点使用https时设置，若非https忽略即可。健康检查的`http://charts/ping`其中charts为该upstream的名称，在检测时会替换为该节点对应的地址。
+需要注意，对于各超时的配置建议按需配置，默认值无超时不建议使用。`sni`与`是否校验证书`用于该upstream的节点使用https时设置，若非https忽略即可。健康检查的`http://charts/ping`其中charts为该upstream的名称，在检测时会替换为该节点对应的地址。
 
 <p align="center">
     <img src="../asset/upstream-detail-zh.jpg" alt="upstream detail">
@@ -62,11 +62,11 @@ Location主要配置其对应的host与path，以及选择关联对应的上游�
     <img src="../asset/location-detail-zh.jpg" alt="location config">
 </p>
 
-host一般不需要设置，path则是因为一般会基于不同的前缀转发至不同的服务，因此会设置对应的path匹配规则（更多的规则可查询location的详细说明），此处选择了自带的`pingap:requestId`插件，用于生成请求id。
+若该服务只对应一个host，则host不配置即可。path则是因为一般会基于不同的前缀转发至不同的服务，因此会设置对应的path匹配规则（更多的规则可查询location的详细说明），此处选择了自带的`pingap:requestId`插件，用于生成请求id。
 
 ## 服务配置
 
-服务配置主要配置该服务监听的端口，https相关证书(非https无需设置)，关联对应的location服务，访问日志格式，以及线程数，界面如下：
+服务配置主要配置该服务监听的服务地址，若要监听多个服务地址，以`,`分隔即可，如`127.0.0.1:3001,[::1]:3001`表示监听Ipv4与Ipv6的`3001`端口。按需配置https相关证书(非https无需设置)，关联对应的location服务，访问日志格式，以及线程数(线程数建议按需配置，或者配置为0则按运行时的CPU核数一致），界面如下：
 
 <p align="center">
     <img src="../asset/server-detail-zh.jpg" alt="server detail">

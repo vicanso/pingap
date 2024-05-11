@@ -1,4 +1,7 @@
 [basic]
+# name of application. Default `Pingap`
+name = "Pingap"
+
 # error page html template
 error_template = ""
 
@@ -46,8 +49,19 @@ log_level = "info"
 # Sentry DSN
 # sentry = ""
 
+# Pyroscope connection url
+# pyroscope = ""
+
+# Auto restart check interval, auto restart will be disabled if it less than 1s.
+# Default is `90s`.
+# auto_restart_check_interval = "2m"
+
+# Gobal http cache max size, experimental only for test.
+# cache_max_size = "100mb"
+
 # Upsteam config list, it will defined as [upstreams.name]
 [upstreams.charts]
+# Upstream address, it should be `ip:port`.
 addrs = ["127.0.0.1:5000"]
 
 # Load balancer select algorithm, supports `hash` and `round_robin`. Default `round_robin`
@@ -57,7 +71,7 @@ algo = "hash:cookie"
 # Default `None`.
 # sni = "github.com"
 
-# Verify cert for upstream request. Default is `None`.
+# Verify cert for upstream request. Default is `true`.
 # verify_cert = false
 
 # Upstream health check, supports `tcp`, `http` and `https`. Default `tcp`
@@ -100,7 +114,7 @@ addrs = ["127.0.0.1:5001"]
 
 # Location config list, it will defined as [locations.name]
 [locations.lo]
-# The upstream for location, it will be the name of one upstream.
+# The upstream for location, it is the name of upstream.
 upstream = "charts"
 # How to match the location, it returns true if `host` of http request header
 # equal the config, multiple hosts are separated by ",". Default `None` means all match.
@@ -124,15 +138,15 @@ proxy_plugins = ["pingap:requestId", "pingap:stats"]
 
 # Server config list, it will be defined as [servers.name]
 [servers.test]
-# TCP listening address
+# TCP listening address, multiple addresses are separated by ",".
 addr = "0.0.0.0:6188"
 
 # Access log format layout for the server. Default `None`
 # access_log = '"{method} {uri} {proto}" {status} {size_human} "{referer}" "{user_agent}" {latency_human}'
 access_log = "tiny"
 
-# Location list for the server, item should be the name of location.
-# The locations should be served by the server.
+# Location list for the server, item is the name of location.
+# The locations will be served by the server.
 locations = ["lo"]
 
 # The threads for server service.
@@ -146,6 +160,9 @@ locations = ["lo"]
 # Acme
 # lets_encrypt = "domain1,domain2"
 
+# Enable HTTP/2 support for the server, it is only supported for https.
+# Default `None`.
+# enabled_h2 = true
 
 [proxy_plugins.stats]
 category = "stats"

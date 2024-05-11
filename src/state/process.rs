@@ -81,6 +81,9 @@ async fn validate_restart() -> Result<(bool, PingapConf), Box<dyn std::error::Er
 #[async_trait]
 impl BackgroundService for AutoRestart {
     async fn start(&self, mut shutdown: ShutdownWatch) {
+        if self.interval < Duration::from_secs(1) {
+            return;
+        }
         let mut period = interval(self.interval);
         loop {
             tokio::select! {

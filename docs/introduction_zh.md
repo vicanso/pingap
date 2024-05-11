@@ -15,7 +15,7 @@ Pingap是基于[pingora](https://github.com/cloudflare/pingora)开发的，pingo
 
 ## Location的处理逻辑
 
-该Server下的所有location在初始化时根据权重按高至低排序，接受到请求时按顺序一个个匹配到符合的location为止，若无符合的则返回出错。在选择对应的location之后，判断是否有配置重写pathh(若无则不需要)，添加请求头(若无则不需要)，成功响应时添加响应头(若无则不需要)。
+该Server下的所有location在初始化时根据权重按高至低排序，接受到请求时按顺序一个个匹配到符合的location为止，若无符合的则返回出错。在选择对应的location之后，判断是否有配置重写path(若无则不需要)，添加请求头(若无则不需要)，成功响应时添加响应头(若无则不需要)。
 
 ```rust
 let header = session.req_header_mut();
@@ -45,7 +45,7 @@ if let Some(mut new_path) = lo.rewrite(path) {
 
 ## Upstream的处理逻辑
 
-Upstream的逻辑比较简单，在匹配location后，根据该location配置的upstream节点列表，按算法选择可用节点，并将请求转发至该节点即可。虽然注意，插件也可配置在`proxy_upstream_filter`转发至upstream之前执行，可按需配置对应的插件。
+Upstream的逻辑比较简单，在匹配location后，根据该location配置的upstream节点列表，按算法选择可用节点，并将请求转发至该节点即可。需要注意，插件也可配置在`proxy_upstream_filter`转发至upstream之前执行，可按需配置对应的插件。
 
 [Upstream的详细说明](./upstream_zh.md)
 

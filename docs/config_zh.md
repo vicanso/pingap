@@ -6,7 +6,8 @@ Pingap使用toml来配置相关参数，具体参数说明如下：
 
 ## 基本配置
 
-- `error_template`: 参数可选，出错时的html模板，可自定义出错的html模板，在出错时会替换模板中的`{{version}}`为pingap的版本号，`{{content}}`为出错的具体信息
+- `name`: 实例名称，默认为`Pingap`
+- `error_template`: 参数可选，异常出错时的html模板，可自定义出错的html模板，在出错时会替换模板中的`{{version}}`为pingap的版本号，`{{content}}`为出错的具体信息
 - `pid_file`: 参数可选，默认为`/tmp/pingap.pid`，此参数配置进程id的记录文件
 - `upgrade_sock`: 参数可选，默认为`/tmp/pingap_upgrade.sock`，此参数配置程序无中断式更新时的socket路径，用于新的pingap进程与旧进程之间切换时使用
 - `user`: 参数可选，默认为空，用于设置守护进程的执行用户
@@ -20,6 +21,8 @@ Pingap使用toml来配置相关参数，具体参数说明如下：
 - `webhook`: Webhook的请求路径
 - `log_level`: 应用日志的输出级别
 - `sentry`: Sentry的DSN配置
+- `pyroscope`: Pyroscope连接地址，需要注意默认版本并未编译支持pyroscpe，需要使用perf的版本
+- `auto_restart_check_interval`: 检测配置更新的间隔，默认为每90秒检测一次，若配置为小于1秒的值，则不检测
 
 ## upstreams
 
@@ -32,10 +35,11 @@ Location的相关配置说明可查看[Location的详细说明](./location_zh.md
 ## Server
 
 - `server.x`: server的配置，其中`x`为server的名称，需要注意名称不要相同，相同名称的配置会被覆盖。
-- `addr`: 监控的端口地址。
+- `addr`: 监控的端口地址，地址格式为`ip:port`的形式，若需要监听多地址则以`,`分隔
 - `access_log`: 可选，默认为不输出访问日志。请求日志格式化，指定输出访问日志的形式
 - `locations`: location的列表，指定该server使用的所有location
 - `threads`: 设置服务默认的线程数，设置为0则等于cpu核数，默认为1
 - `tls_cert`: tls证书的cert，base64格式，如果是https的形式才需要添加
 - `tls_key`: tls证书的key，base64格式，如果是https的形式才需要添加
 - `lets_encrypt`: 指定通过let's encrypt生成https证书的域名地址列表，多个域名用`,`分隔
+- `enabled_h2`: 是否启用http2，默认为不启用，需要注意只有https下才有效

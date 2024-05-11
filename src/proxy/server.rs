@@ -433,6 +433,7 @@ impl ProxyHttp for Server {
             if let Some(query) = header.uri.query() {
                 new_path = format!("{new_path}?{query}");
             }
+            debug!("New path:{new_path}");
             // TODO parse error
             let _ = new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri));
         }

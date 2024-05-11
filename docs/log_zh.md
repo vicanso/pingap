@@ -27,7 +27,7 @@ Pingap格式化可以使用以下几种默认形式`combined`，`common`，`shor
 - `{payload_size_human}`: 请求数据的大小，按数据大小格式化字符串
 - `{request_id}`: 请求的id，需要添加了对应的中间件
 - `{~name}`: 从cookie中获取`name`对应的值，如获取cookie中的uid则是`{~uid}`
-- `{>name}`: 请求头中获取`name`对应的值
-- `{<name}`: 响应头中获取`name`对应的值
+- `{>name}`: 请求头中获取`name`对应的值，如获取请求头中的`X-User-Id`则是`{>X-User-Id}`
+- `{<name}`: 响应头中获取`name`对应的值，如获取响应头中的`X-Server`则是`{<X-Server}`
 - `{:name}`: 从context中获取对应的值，暂时仅支持以下属性：`reused`, `upstream_address`, `processing`, `upstream_connect_time`
 - `{$name}`: 从环境变量中获取`name`对应的值，仅启动时获取对应的值后保存，非实时获取
