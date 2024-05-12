@@ -16,7 +16,7 @@ use crate::acme::LetsEncryptService;
 use crate::config::ETCD_PROTOCOL;
 use crate::state::AutoRestart;
 use clap::Parser;
-use config::{PingapConf, PluginCategory, ProxyPluginConf};
+use config::{PingapConf, PluginCategory, PluginConf};
 use crossbeam_channel::Sender;
 use log::{error, info};
 use pingora::server;
@@ -141,7 +141,7 @@ fn get_config(conf: String, admin: bool, s: Sender<Result<PingapConf, config::Er
     });
 }
 
-fn parse_admin_proxy_plugin(addr: &str) -> (ServerConf, String, ProxyPluginConf) {
+fn parse_admin_proxy_plugin(addr: &str) -> (ServerConf, String, PluginConf) {
     let arr: Vec<&str> = addr.split('@').collect();
     let mut addr = arr[0].to_string();
     let mut authorization = "".to_string();
@@ -157,7 +157,7 @@ fn parse_admin_proxy_plugin(addr: &str) -> (ServerConf, String, ProxyPluginConf)
             ..Default::default()
         },
         util::ADMIN_SERVER_PLUGIN.clone(),
-        ProxyPluginConf {
+        PluginConf {
             value: Some(format!("/ {authorization}")),
             category: PluginCategory::Admin,
             remark: Some("Admin serve".to_string()),
@@ -282,8 +282,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         let _ = pyro::start_pyroscope(url)?;
     }
 
-    let mut proxy_plugin_confs: Vec<(String, ProxyPluginConf)> = conf
-        .proxy_plugins
+    let mut proxy_plugin_confs: Vec<(String, PluginConf)> = conf
+        .plugins
         .iter()
         .map(|(name, value)| (name.to_string(), value.clone()))
         .collect();

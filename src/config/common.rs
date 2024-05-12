@@ -104,7 +104,7 @@ impl<'de> Deserialize<'de> for PluginStep {
 }
 
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
-pub struct ProxyPluginConf {
+pub struct PluginConf {
     pub value: Option<String>,
     pub category: PluginCategory,
     pub step: Option<PluginStep>,
@@ -179,7 +179,7 @@ pub struct LocationConf {
     pub headers: Option<Vec<String>>,
     pub rewrite: Option<String>,
     pub weight: Option<u16>,
-    pub proxy_plugins: Option<Vec<String>>,
+    pub plugins: Option<Vec<String>>,
     pub remark: Option<String>,
 }
 
@@ -368,7 +368,7 @@ pub struct PingapConf {
     pub upstreams: HashMap<String, UpstreamConf>,
     pub locations: HashMap<String, LocationConf>,
     pub servers: HashMap<String, ServerConf>,
-    pub proxy_plugins: HashMap<String, ProxyPluginConf>,
+    pub plugins: HashMap<String, PluginConf>,
 }
 
 impl PingapConf {
@@ -456,9 +456,9 @@ impl TryFrom<&[u8]> for PingapConf {
             conf.servers.insert(name, server);
         }
         for (name, value) in data.proxy_plugins.unwrap_or_default() {
-            let plugin: ProxyPluginConf = toml::from_str(format_toml(&value).as_str())
+            let plugin: PluginConf = toml::from_str(format_toml(&value).as_str())
                 .map_err(|e| Error::De { source: e })?;
-            conf.proxy_plugins.insert(name, plugin);
+            conf.plugins.insert(name, plugin);
         }
 
         Ok(conf)
@@ -535,7 +535,7 @@ impl PingapConf {
             CATEGORY_PROXY_PLUGIN => {
                 let mut all_plugins = vec![];
                 for lo in self.locations.values() {
-                    if let Some(plguins) = &lo.proxy_plugins {
+                    if let Some(plguins) = &lo.plugins {
                         all_plugins.extend(plguins.clone());
                     }
                 }
@@ -544,7 +544,7 @@ impl PingapConf {
                         message: format!("Proxy plugin({name}) is in use"),
                     });
                 }
-                self.proxy_plugins.remove(name);
+                self.plugins.remove(name);
             }
             _ => {}
         };
@@ -571,16 +571,16 @@ impl PingapConf {
                 data: toml::to_string_pretty(data).unwrap_or_default(),
             });
         }
-        for (name, data) in value.proxy_plugins.iter() {
+        for (name, data) in value.plugins.iter() {
             descriptions.push(Description {
-                name: format!("proxy_plugin:{name}"),
+                name: format!("plugin:{name}"),
                 data: toml::to_string_pretty(data).unwrap_or_default(),
             });
         }
         value.servers = HashMap::new();
         value.locations = HashMap::new();
         value.upstreams = HashMap::new();
-        value.proxy_plugins = HashMap::new();
+        value.plugins = HashMap::new();
         descriptions.push(Description {
             name: "basic".to_string(),
             data: toml::to_string_pretty(&value).unwrap_or_default(),

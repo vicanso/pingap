@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config::{PluginCategory, PluginStep, ProxyPluginConf};
+use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
@@ -78,12 +78,12 @@ pub trait ResponsePlugin: Sync + Send {
     }
 }
 
-pub fn get_builtin_proxy_plugins() -> Vec<(String, ProxyPluginConf)> {
+pub fn get_builtin_proxy_plugins() -> Vec<(String, PluginConf)> {
     vec![
         // default level, gzip:6 br:6 zstd:3
         (
             "pingap:compression".to_string(),
-            ProxyPluginConf {
+            PluginConf {
                 value: Some("6 6 3".to_string()),
                 category: PluginCategory::Compression,
                 remark: Some("Compression for http, support zstd:3, br:6, gzip:6".to_string()),
@@ -92,7 +92,7 @@ pub fn get_builtin_proxy_plugins() -> Vec<(String, ProxyPluginConf)> {
         ),
         (
             "pingap:ping".to_string(),
-            ProxyPluginConf {
+            PluginConf {
                 value: Some("/ping".to_string()),
                 category: PluginCategory::Ping,
                 remark: Some("Ping pong".to_string()),
@@ -101,7 +101,7 @@ pub fn get_builtin_proxy_plugins() -> Vec<(String, ProxyPluginConf)> {
         ),
         (
             "pingap:stats".to_string(),
-            ProxyPluginConf {
+            PluginConf {
                 value: Some("/stats".to_string()),
                 category: PluginCategory::Stats,
                 remark: Some("Get stats of server".to_string()),
@@ -110,7 +110,7 @@ pub fn get_builtin_proxy_plugins() -> Vec<(String, ProxyPluginConf)> {
         ),
         (
             "pingap:requestId".to_string(),
-            ProxyPluginConf {
+            PluginConf {
                 category: PluginCategory::RequestId,
                 remark: Some("Generate a request id for service".to_string()),
                 value: None,
@@ -127,7 +127,7 @@ type Plugins = (
 
 static PLUGINS: OnceCell<Plugins> = OnceCell::new();
 
-pub fn init_proxy_plugins(confs: Vec<(String, ProxyPluginConf)>) -> Result<()> {
+pub fn init_proxy_plugins(confs: Vec<(String, PluginConf)>) -> Result<()> {
     PLUGINS.get_or_try_init(|| {
         let mut proxy_plugins: HashMap<String, Box<dyn ProxyPlugin>> = HashMap::new();
         let mut response_plugins: HashMap<String, Box<dyn ResponsePlugin>> = HashMap::new();

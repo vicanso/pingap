@@ -87,7 +87,7 @@ pub struct Location {
     reg_rewrite: Option<(Regex, String)>,
     headers: Option<Vec<HttpHeader>>,
     proxy_headers: Option<Vec<HttpHeader>>,
-    proxy_plugins: Option<Vec<String>>,
+    plugins: Option<Vec<String>>,
     response_plugins: Option<Vec<String>>,
     pub upstream: Arc<Upstream>,
 }
@@ -145,7 +145,7 @@ impl Location {
             reg_rewrite,
             headers: format_headers(&conf.headers)?,
             proxy_headers: format_headers(&conf.proxy_headers)?,
-            proxy_plugins: conf.proxy_plugins.clone(),
+            plugins: conf.plugins.clone(),
             response_plugins: vec![].into(),
         })
     }
@@ -208,7 +208,7 @@ impl Location {
         ctx: &mut State,
         step: PluginStep,
     ) -> pingora::Result<bool> {
-        if let Some(plugins) = &self.proxy_plugins {
+        if let Some(plugins) = &self.plugins {
             for name in plugins.iter() {
                 if let Some(plugin) = get_proxy_plugin(name) {
                     if plugin.step() != step {
