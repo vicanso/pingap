@@ -161,7 +161,7 @@ mod tests {
     }
     #[tokio::test]
     async fn test_new_cookie_limiter() {
-        let limiter = Limiter::new("~deviceId 10", PluginStep::RequestFilter).unwrap();
+        let limiter = Limiter::new("~deviceId 10", PluginStep::Request).unwrap();
         assert_eq!(LimitTag::Cookie, limiter.tag);
         let mut ctx = State {
             ..Default::default()
@@ -173,7 +173,7 @@ mod tests {
     }
     #[tokio::test]
     async fn test_new_req_header_limiter() {
-        let limiter = Limiter::new(">X-Uuid 10", PluginStep::RequestFilter).unwrap();
+        let limiter = Limiter::new(">X-Uuid 10", PluginStep::Request).unwrap();
         assert_eq!(LimitTag::RequestHeader, limiter.tag);
         let mut ctx = State {
             ..Default::default()
@@ -185,7 +185,7 @@ mod tests {
     }
     #[tokio::test]
     async fn test_new_query_limiter() {
-        let limiter = Limiter::new("?key 10", PluginStep::RequestFilter).unwrap();
+        let limiter = Limiter::new("?key 10", PluginStep::Request).unwrap();
         assert_eq!(LimitTag::Query, limiter.tag);
         let mut ctx = State {
             ..Default::default()
@@ -197,7 +197,7 @@ mod tests {
     }
     #[tokio::test]
     async fn test_new_ip_limiter() {
-        let limiter = Limiter::new("ip 10", PluginStep::RequestFilter).unwrap();
+        let limiter = Limiter::new("ip 10", PluginStep::Request).unwrap();
         assert_eq!(LimitTag::Ip, limiter.tag);
         let mut ctx = State {
             ..Default::default()
@@ -209,7 +209,7 @@ mod tests {
     }
     #[tokio::test]
     async fn test_limit() {
-        let limiter = Limiter::new("ip 0", PluginStep::RequestFilter).unwrap();
+        let limiter = Limiter::new("ip 0", PluginStep::Request).unwrap();
 
         let headers = ["X-Forwarded-For: 1.1.1.1"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
@@ -224,7 +224,7 @@ mod tests {
         assert_eq!(true, result.is_some());
         assert_eq!(StatusCode::TOO_MANY_REQUESTS, result.unwrap().status);
 
-        let limiter = Limiter::new("ip 1", PluginStep::RequestFilter).unwrap();
+        let limiter = Limiter::new("ip 1", PluginStep::Request).unwrap();
         let result = limiter
             .handle(&mut session, &mut State::default())
             .await

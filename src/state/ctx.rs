@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::http_extra::HttpHeader;
-use http::header::HeaderName;
 use http::StatusCode;
 use pingora_limits::inflight::Guard;
 use std::time::{Duration, Instant};
@@ -36,9 +34,6 @@ pub struct State {
     pub cache_prefix: Option<String>,
     pub cache_lock_duration: Option<Duration>,
     pub upstream_connect_time: Option<u32>,
-    pub add_headers: Option<Vec<HttpHeader>>,
-    pub remove_headers: Option<Vec<HeaderName>>,
-    pub set_headers: Option<Vec<HttpHeader>>,
 }
 
 impl Default for State {
@@ -61,9 +56,6 @@ impl Default for State {
             cache_prefix: None,
             cache_lock_duration: None,
             upstream_connect_time: None,
-            add_headers: None,
-            remove_headers: None,
-            set_headers: None,
         }
     }
 }

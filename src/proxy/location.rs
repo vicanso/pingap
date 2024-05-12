@@ -16,7 +16,7 @@ use super::upstream::new_empty_upstream;
 use super::Upstream;
 use crate::config::{LocationConf, PluginStep};
 use crate::http_extra::{convert_headers, HttpHeader};
-use crate::plugin::get_proxy_plugin;
+use crate::plugin::{get_proxy_plugin, get_response_plugin};
 use crate::state::State;
 use log::debug;
 use pingora::http::{RequestHeader, ResponseHeader};
@@ -88,6 +88,7 @@ pub struct Location {
     headers: Option<Vec<HttpHeader>>,
     proxy_headers: Option<Vec<HttpHeader>>,
     proxy_plugins: Option<Vec<String>>,
+    response_plugins: Option<Vec<String>>,
     pub upstream: Arc<Upstream>,
 }
 
@@ -145,6 +146,7 @@ impl Location {
             headers: format_headers(&conf.headers)?,
             proxy_headers: format_headers(&conf.proxy_headers)?,
             proxy_plugins: conf.proxy_plugins.clone(),
+            response_plugins: vec![].into(),
         })
     }
     /// Returns `true` if the host and path match location.
@@ -226,6 +228,26 @@ impl Location {
             }
         }
         Ok(false)
+    }
+    #[inline]
+    pub fn exec_response_plugins(
+        &self,
+        session: &mut Session,
+        ctx: &mut State,
+        upstream_response: &mut ResponseHeader,
+        step: PluginStep,
+    ) {
+        if let Some(plugins) = &self.response_plugins {
+            for name in plugins.iter() {
+                if let Some(plugin) = get_response_plugin(name) {
+                    if plugin.step() != step {
+                        continue;
+                    }
+                    debug!("Run response plugin {name}");
+                    plugin.handle(session, ctx, upstream_response);
+                }
+            }
+        }
     }
 }
 

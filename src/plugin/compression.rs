@@ -120,7 +120,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_basic_auth() {
-        let compression = Compression::new("9 8 7", PluginStep::ProxyUpstreamFilter).unwrap();
+        let compression = Compression::new("9 8 7", PluginStep::ProxyUpstream).unwrap();
 
         // gzip
         let headers = ["Accept-Encoding: gzip"].join("\r\n");

@@ -333,7 +333,7 @@ mod tests {
     fn test_new_directory() {
         let dir = Directory::new(
             "~/Downloads?chunk_size=1024&max_age=3600&private&index=pingap/index.html",
-            PluginStep::RequestFilter,
+            PluginStep::Request,
         )
         .unwrap();
         assert_eq!(1024, dir.chunk_size.unwrap_or_default());

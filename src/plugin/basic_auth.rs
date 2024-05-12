@@ -111,7 +111,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_basic_auth() {
-        let auth = BasicAuth::new("YWRtaW46MTIzMTIz", PluginStep::ProxyUpstreamFilter).unwrap();
+        let auth = BasicAuth::new("YWRtaW46MTIzMTIz", PluginStep::ProxyUpstream).unwrap();
 
         // auth success
         let headers = ["Authorization: Basic YWRtaW46MTIzMTIz"].join("\r\n");

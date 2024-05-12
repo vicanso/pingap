@@ -86,7 +86,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_redirect_https() {
-        let redirect = RedirectHttps::new("/api", PluginStep::RequestFilter).unwrap();
+        let redirect = RedirectHttps::new("/api", PluginStep::Request).unwrap();
 
         let headers = ["Host: github.com"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");

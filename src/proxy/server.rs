@@ -442,7 +442,7 @@ impl ProxyHttp for Server {
         ctx.location_index = Some(location_index);
 
         let done = lo
-            .exec_proxy_plugins(session, ctx, PluginStep::RequestFilter)
+            .exec_proxy_plugins(session, ctx, PluginStep::Request)
             .await?;
         if done {
             return Ok(true);
@@ -512,7 +512,7 @@ impl ProxyHttp for Server {
     {
         let lo = &self.locations[ctx.location_index.unwrap_or_default()];
         let done = lo
-            .exec_proxy_plugins(session, ctx, PluginStep::ProxyUpstreamFilter)
+            .exec_proxy_plugins(session, ctx, PluginStep::ProxyUpstream)
             .await?;
         if done {
             return Ok(false);
@@ -589,7 +589,7 @@ impl ProxyHttp for Server {
     }
     fn upstream_response_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) {
@@ -601,22 +601,13 @@ impl ProxyHttp for Server {
         }
         let lo = &self.locations[ctx.location_index.unwrap_or_default()];
         lo.insert_headers(upstream_response);
-        // ingore all header handle error
-        if let Some(add_headers) = &ctx.add_headers {
-            for (name, value) in add_headers {
-                let _ = upstream_response.append_header(name, value);
-            }
-        }
-        if let Some(set_headers) = &ctx.set_headers {
-            for (name, value) in set_headers {
-                let _ = upstream_response.insert_header(name, value);
-            }
-        }
-        if let Some(remove_headers) = &ctx.remove_headers {
-            for name in remove_headers {
-                let _ = upstream_response.remove_header(name);
-            }
-        }
+
+        lo.exec_response_plugins(
+            session,
+            ctx,
+            upstream_response,
+            PluginStep::UpstreamResponse,
+        );
     }
 
     fn upstream_response_body_filter(

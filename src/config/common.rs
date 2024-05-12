@@ -77,8 +77,9 @@ impl<'de> Deserialize<'de> for PluginCategory {
 #[strum(serialize_all = "snake_case")]
 pub enum PluginStep {
     #[default]
-    RequestFilter,
-    ProxyUpstreamFilter,
+    Request,
+    ProxyUpstream,
+    UpstreamResponse,
 }
 
 impl Serialize for PluginStep {

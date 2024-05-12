@@ -126,7 +126,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ip_limit() {
-        let deny = IpLimit::new("192.168.1.1,1.1.1.0/24 1", PluginStep::RequestFilter).unwrap();
+        let deny = IpLimit::new("192.168.1.1,1.1.1.0/24 1", PluginStep::Request).unwrap();
 
         let headers = ["X-Forwarded-For: 2.1.1.2"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");

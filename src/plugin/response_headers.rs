@@ -13,15 +13,15 @@ use std::str::FromStr;
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use super::ProxyPlugin;
+use super::ResponsePlugin;
 use super::{Error, Result};
 use crate::config::{PluginCategory, PluginStep};
 use crate::http_extra::{convert_header, HttpHeader};
-use crate::plugin::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
 use http::header::HeaderName;
 use log::debug;
+use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use substring::Substring;
 
@@ -80,7 +80,7 @@ impl ResponseHeaders {
 }
 
 #[async_trait]
-impl ProxyPlugin for ResponseHeaders {
+impl ResponsePlugin for ResponseHeaders {
     #[inline]
     fn step(&self) -> PluginStep {
         self.proxy_step
@@ -90,21 +90,21 @@ impl ProxyPlugin for ResponseHeaders {
         PluginCategory::ResponseHeaders
     }
     #[inline]
-    async fn handle(
+    fn handle(
         &self,
         _session: &mut Session,
-        ctx: &mut State,
-    ) -> pingora::Result<Option<HttpResponse>> {
-        // TODO find a way for better handle
-        if !self.add_headers.is_empty() {
-            ctx.add_headers = Some(self.add_headers.clone());
+        _ctx: &mut State,
+        upstream_response: &mut ResponseHeader,
+    ) {
+        // ingore error
+        for (name, value) in &self.add_headers {
+            let _ = upstream_response.append_header(name, value);
         }
-        if !self.remove_headers.is_empty() {
-            ctx.remove_headers = Some(self.remove_headers.clone());
+        for name in &self.remove_headers {
+            let _ = upstream_response.remove_header(name);
         }
-        if !self.set_headers.is_empty() {
-            ctx.set_headers = Some(self.set_headers.clone());
+        for (name, value) in &self.set_headers {
+            let _ = upstream_response.insert_header(name, value);
         }
-        Ok(None)
     }
 }

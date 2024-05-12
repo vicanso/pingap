@@ -348,10 +348,17 @@ fn run() -> Result<(), Box<dyn Error>> {
         ));
     }
 
-    if let Some(plugins) = plugin::list_proxy_plugins() {
-        for (name, plugin) in plugins {
+    if let Some((prox_plugins, response_plugins)) = plugin::list_plugins() {
+        for (name, plugin) in prox_plugins {
             info!(
                 "Proxy plugin {name}, category:{}, step:{}",
+                plugin.step(),
+                plugin.category()
+            );
+        }
+        for (name, plugin) in response_plugins {
+            info!(
+                "Response plugin {name}, category:{}, step:{}",
                 plugin.step(),
                 plugin.category()
             );

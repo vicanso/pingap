@@ -96,7 +96,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_request_id() {
-        let id = RequestId::new("nanoid 10", PluginStep::RequestFilter).unwrap();
+        let id = RequestId::new("nanoid 10", PluginStep::Request).unwrap();
 
         let headers = ["X-Request-Id: 123"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");

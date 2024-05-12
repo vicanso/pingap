@@ -17,6 +17,7 @@ use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
 use once_cell::sync::OnceCell;
+use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use snafu::Snafu;
 use std::collections::HashMap;
@@ -65,6 +66,18 @@ pub trait ProxyPlugin: Sync + Send {
     }
 }
 
+pub trait ResponsePlugin: Sync + Send {
+    fn category(&self) -> PluginCategory;
+    fn step(&self) -> PluginStep;
+    fn handle(
+        &self,
+        _session: &mut Session,
+        _ctx: &mut State,
+        _upstream_response: &mut ResponseHeader,
+    ) {
+    }
+}
+
 pub fn get_builtin_proxy_plugins() -> Vec<(String, ProxyPluginConf)> {
     vec![
         // default level, gzip:6 br:6 zstd:3
@@ -107,11 +120,17 @@ pub fn get_builtin_proxy_plugins() -> Vec<(String, ProxyPluginConf)> {
     ]
 }
 
-static PROXY_PLUGINS: OnceCell<HashMap<String, Box<dyn ProxyPlugin>>> = OnceCell::new();
+type Plugins = (
+    HashMap<String, Box<dyn ProxyPlugin>>,
+    HashMap<String, Box<dyn ResponsePlugin>>,
+);
+
+static PLUGINS: OnceCell<Plugins> = OnceCell::new();
 
 pub fn init_proxy_plugins(confs: Vec<(String, ProxyPluginConf)>) -> Result<()> {
-    PROXY_PLUGINS.get_or_try_init(|| {
-        let mut plguins: HashMap<String, Box<dyn ProxyPlugin>> = HashMap::new();
+    PLUGINS.get_or_try_init(|| {
+        let mut proxy_plugins: HashMap<String, Box<dyn ProxyPlugin>> = HashMap::new();
+        let mut response_plugins: HashMap<String, Box<dyn ResponsePlugin>> = HashMap::new();
         let data = &mut confs.clone();
         data.extend(get_builtin_proxy_plugins());
         for (name, conf) in data {
@@ -121,77 +140,86 @@ pub fn init_proxy_plugins(confs: Vec<(String, ProxyPluginConf)>) -> Result<()> {
             match conf.category {
                 PluginCategory::Limit => {
                     let l = limit::Limiter::new(&value, step)?;
-                    plguins.insert(name, Box::new(l));
+                    proxy_plugins.insert(name, Box::new(l));
                 }
                 PluginCategory::Compression => {
                     let c = compression::Compression::new(&value, step)?;
-                    plguins.insert(name, Box::new(c));
+                    proxy_plugins.insert(name, Box::new(c));
                 }
                 PluginCategory::Stats => {
                     let s = stats::Stats::new(&value, step)?;
-                    plguins.insert(name, Box::new(s));
+                    proxy_plugins.insert(name, Box::new(s));
                 }
                 PluginCategory::Admin => {
                     let a = admin::AdminServe::new(&value, step)?;
-                    plguins.insert(name, Box::new(a));
+                    proxy_plugins.insert(name, Box::new(a));
                 }
                 PluginCategory::Directory => {
                     let d = directory::Directory::new(&value, step)?;
-                    plguins.insert(name, Box::new(d));
+                    proxy_plugins.insert(name, Box::new(d));
                 }
                 PluginCategory::Mock => {
                     let m = mock::MockResponse::new(&value, step)?;
-                    plguins.insert(name, Box::new(m));
+                    proxy_plugins.insert(name, Box::new(m));
                 }
                 PluginCategory::RequestId => {
                     let r = request_id::RequestId::new(&value, step)?;
-                    plguins.insert(name, Box::new(r));
+                    proxy_plugins.insert(name, Box::new(r));
                 }
                 PluginCategory::IpLimit => {
                     let l = ip_limit::IpLimit::new(&value, step)?;
-                    plguins.insert(name, Box::new(l));
+                    proxy_plugins.insert(name, Box::new(l));
                 }
                 PluginCategory::KeyAuth => {
                     let k = key_auth::KeyAuth::new(&value, step)?;
-                    plguins.insert(name, Box::new(k));
+                    proxy_plugins.insert(name, Box::new(k));
                 }
                 PluginCategory::BasicAuth => {
                     let b = basic_auth::BasicAuth::new(&value, step)?;
-                    plguins.insert(name, Box::new(b));
+                    proxy_plugins.insert(name, Box::new(b));
                 }
                 PluginCategory::Cache => {
                     let c = cache::Cache::new(&value, step)?;
-                    plguins.insert(name, Box::new(c));
+                    proxy_plugins.insert(name, Box::new(c));
                 }
                 PluginCategory::RedirectHttps => {
                     let r = redirect_https::RedirectHttps::new(&value, step)?;
-                    plguins.insert(name, Box::new(r));
+                    proxy_plugins.insert(name, Box::new(r));
                 }
                 PluginCategory::Ping => {
                     let p = ping::Ping::new(&value, step)?;
-                    plguins.insert(name, Box::new(p));
+                    proxy_plugins.insert(name, Box::new(p));
                 }
                 PluginCategory::ResponseHeaders => {
                     let r = response_headers::ResponseHeaders::new(&value, step)?;
-                    plguins.insert(name, Box::new(r));
+                    response_plugins.insert(name, Box::new(r));
                 }
             };
         }
 
-        Ok(plguins)
+        Ok((proxy_plugins, response_plugins))
     })?;
     Ok(())
 }
 
 pub fn get_proxy_plugin(name: &str) -> Option<&dyn ProxyPlugin> {
-    if let Some(plugins) = PROXY_PLUGINS.get() {
-        if let Some(plugin) = plugins.get(name) {
+    if let Some((proxy_plugins, _)) = PLUGINS.get() {
+        if let Some(plugin) = proxy_plugins.get(name) {
             return Some(plugin.as_ref());
         }
     }
     None
 }
 
-pub fn list_proxy_plugins() -> Option<&'static HashMap<String, Box<dyn ProxyPlugin>>> {
-    PROXY_PLUGINS.get()
+pub fn get_response_plugin(name: &str) -> Option<&dyn ResponsePlugin> {
+    if let Some((_, response_plugins)) = PLUGINS.get() {
+        if let Some(plugin) = response_plugins.get(name) {
+            return Some(plugin.as_ref());
+        }
+    }
+    None
+}
+
+pub fn list_plugins() -> Option<&'static Plugins> {
+    PLUGINS.get()
 }
