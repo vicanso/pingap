@@ -14,7 +14,7 @@
 
 use super::ProxyPlugin;
 use super::{Error, Result};
-use crate::config::{ProxyPluginCategory, ProxyPluginStep};
+use crate::config::{PluginCategory, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
@@ -32,11 +32,11 @@ pub struct Compression {
     br_level: u32,
     zstd_level: u32,
     support_compression: bool,
-    proxy_step: ProxyPluginStep,
+    proxy_step: PluginStep,
 }
 
 impl Compression {
-    pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new compresson proxy plugin, {value}, {proxy_step:?}");
 
         let mut levels: [u32; 3] = [0, 0, 0];
@@ -66,12 +66,12 @@ impl Compression {
 #[async_trait]
 impl ProxyPlugin for Compression {
     #[inline]
-    fn step(&self) -> ProxyPluginStep {
+    fn step(&self) -> PluginStep {
         self.proxy_step
     }
     #[inline]
-    fn category(&self) -> ProxyPluginCategory {
-        ProxyPluginCategory::Compression
+    fn category(&self) -> PluginCategory {
+        PluginCategory::Compression
     }
     #[inline]
     async fn handle(
@@ -113,14 +113,14 @@ impl ProxyPlugin for Compression {
 mod tests {
     use super::Compression;
     use crate::state::State;
-    use crate::{config::ProxyPluginStep, plugin::ProxyPlugin};
+    use crate::{config::PluginStep, plugin::ProxyPlugin};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
 
     #[tokio::test]
     async fn test_basic_auth() {
-        let compression = Compression::new("9 8 7", ProxyPluginStep::ProxyUpstreamFilter).unwrap();
+        let compression = Compression::new("9 8 7", PluginStep::ProxyUpstreamFilter).unwrap();
 
         // gzip
         let headers = ["Accept-Encoding: gzip"].join("\r\n");

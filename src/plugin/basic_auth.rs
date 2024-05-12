@@ -14,8 +14,8 @@
 
 use super::ProxyPlugin;
 use super::{Error, Result};
-use crate::config::ProxyPluginCategory;
-use crate::config::ProxyPluginStep;
+use crate::config::PluginCategory;
+use crate::config::PluginStep;
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
@@ -27,14 +27,14 @@ use log::debug;
 use pingora::proxy::Session;
 
 pub struct BasicAuth {
-    proxy_step: ProxyPluginStep,
+    proxy_step: PluginStep,
     authorizations: Vec<Vec<u8>>,
     miss_authorization_resp: HttpResponse,
     unauthorized_resp: HttpResponse,
 }
 
 impl BasicAuth {
-    pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new basic auth proxy plugin, {value}, {proxy_step:?}");
         let mut authorizations = vec![];
         for item in value.split(',') {
@@ -75,12 +75,12 @@ impl BasicAuth {
 #[async_trait]
 impl ProxyPlugin for BasicAuth {
     #[inline]
-    fn step(&self) -> ProxyPluginStep {
+    fn step(&self) -> PluginStep {
         self.proxy_step
     }
     #[inline]
-    fn category(&self) -> ProxyPluginCategory {
-        ProxyPluginCategory::BasicAuth
+    fn category(&self) -> PluginCategory {
+        PluginCategory::BasicAuth
     }
     #[inline]
     async fn handle(
@@ -103,7 +103,7 @@ impl ProxyPlugin for BasicAuth {
 mod tests {
     use super::BasicAuth;
     use crate::state::State;
-    use crate::{config::ProxyPluginStep, plugin::ProxyPlugin};
+    use crate::{config::PluginStep, plugin::ProxyPlugin};
     use http::StatusCode;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -111,8 +111,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_basic_auth() {
-        let auth =
-            BasicAuth::new("YWRtaW46MTIzMTIz", ProxyPluginStep::ProxyUpstreamFilter).unwrap();
+        let auth = BasicAuth::new("YWRtaW46MTIzMTIz", PluginStep::ProxyUpstreamFilter).unwrap();
 
         // auth success
         let headers = ["Authorization: Basic YWRtaW46MTIzMTIz"].join("\r\n");

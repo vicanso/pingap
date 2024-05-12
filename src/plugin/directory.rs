@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{ProxyPlugin, Result};
-use crate::config::{ProxyPluginCategory, ProxyPluginStep};
+use crate::config::{PluginCategory, PluginStep};
 use crate::http_extra::{HttpChunkResponse, HttpHeader, HttpResponse};
 use crate::state::State;
 use crate::util;
@@ -95,7 +95,7 @@ pub struct Directory {
     cache_private: Option<bool>,
     // charset for text file
     charset: Option<String>,
-    proxy_step: ProxyPluginStep,
+    proxy_step: PluginStep,
 }
 
 async fn get_data(file: &PathBuf) -> std::io::Result<(std::fs::Metadata, fs::File)> {
@@ -142,7 +142,7 @@ fn get_cacheable_and_headers_from_meta(
 
 impl Directory {
     /// Creates a new directory upstream, which will serve static file of directory.
-    pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new serve static file proxy plugin, {value}, {proxy_step:?}");
         let mut new_path = value.to_string();
         let mut chunk_size = None;
@@ -242,12 +242,12 @@ fn get_autoindex_html(path: &Path) -> Result<String, String> {
 #[async_trait]
 impl ProxyPlugin for Directory {
     #[inline]
-    fn step(&self) -> ProxyPluginStep {
+    fn step(&self) -> PluginStep {
         self.proxy_step
     }
     #[inline]
-    fn category(&self) -> ProxyPluginCategory {
-        ProxyPluginCategory::Directory
+    fn category(&self) -> PluginCategory {
+        PluginCategory::Directory
     }
     async fn handle(
         &self,
@@ -325,7 +325,7 @@ impl ProxyPlugin for Directory {
 #[cfg(test)]
 mod tests {
     use super::{get_cacheable_and_headers_from_meta, get_data, Directory};
-    use crate::config::ProxyPluginStep;
+    use crate::config::PluginStep;
     use pretty_assertions::{assert_eq, assert_ne};
     use std::{os::unix::fs::MetadataExt, path::Path};
 
@@ -333,7 +333,7 @@ mod tests {
     fn test_new_directory() {
         let dir = Directory::new(
             "~/Downloads?chunk_size=1024&max_age=3600&private&index=pingap/index.html",
-            ProxyPluginStep::RequestFilter,
+            PluginStep::RequestFilter,
         )
         .unwrap();
         assert_eq!(1024, dir.chunk_size.unwrap_or_default());

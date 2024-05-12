@@ -14,8 +14,8 @@
 
 use super::ProxyPlugin;
 use super::Result;
-use crate::config::ProxyPluginCategory;
-use crate::config::ProxyPluginStep;
+use crate::config::PluginCategory;
+use crate::config::PluginStep;
 use crate::http_extra::HttpResponse;
 use crate::http_extra::HTTP_HEADER_NAME_X_REQUEST_ID;
 use crate::state::State;
@@ -26,13 +26,13 @@ use pingora::proxy::Session;
 use uuid::Uuid;
 
 pub struct RequestId {
-    proxy_step: ProxyPluginStep,
+    proxy_step: PluginStep,
     algorithm: String,
     size: usize,
 }
 
 impl RequestId {
-    pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new request id proxy plugin, {value}, {proxy_step:?}");
         let arr: Vec<&str> = value.split(' ').collect();
         let algorithm = arr[0].trim().to_string();
@@ -54,12 +54,12 @@ impl RequestId {
 #[async_trait]
 impl ProxyPlugin for RequestId {
     #[inline]
-    fn step(&self) -> ProxyPluginStep {
+    fn step(&self) -> PluginStep {
         self.proxy_step
     }
     #[inline]
-    fn category(&self) -> ProxyPluginCategory {
-        ProxyPluginCategory::RequestId
+    fn category(&self) -> PluginCategory {
+        PluginCategory::RequestId
     }
     #[inline]
     async fn handle(
@@ -89,14 +89,14 @@ impl ProxyPlugin for RequestId {
 mod tests {
     use super::RequestId;
     use crate::state::State;
-    use crate::{config::ProxyPluginStep, plugin::ProxyPlugin};
+    use crate::{config::PluginStep, plugin::ProxyPlugin};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
 
     #[tokio::test]
     async fn test_request_id() {
-        let id = RequestId::new("nanoid 10", ProxyPluginStep::RequestFilter).unwrap();
+        let id = RequestId::new("nanoid 10", PluginStep::RequestFilter).unwrap();
 
         let headers = ["X-Request-Id: 123"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");

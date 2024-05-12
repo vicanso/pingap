@@ -14,8 +14,8 @@
 
 use super::{ProxyPlugin, Result};
 use crate::config::{
-    self, save_config, BasicConf, LocationConf, ProxyPluginCategory, ProxyPluginConf,
-    ProxyPluginStep, ServerConf, UpstreamConf,
+    self, save_config, BasicConf, LocationConf, PluginCategory, PluginStep, ProxyPluginConf,
+    ServerConf, UpstreamConf,
 };
 use crate::config::{
     PingapConf, CATEGORY_LOCATION, CATEGORY_PROXY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
@@ -90,11 +90,11 @@ impl From<EmbeddedStaticFile> for HttpResponse {
 pub struct AdminServe {
     pub path: String,
     pub authorization: String,
-    pub proxy_step: ProxyPluginStep,
+    pub proxy_step: PluginStep,
     ip_fail_limit: TtlLruLimit,
 }
 impl AdminServe {
-    pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new admin server proxy plugin, {value}, {proxy_step:?}");
         let arr: Vec<&str> = value.split(' ').collect();
         let mut authorization = "".to_string();
@@ -255,12 +255,12 @@ fn get_method_path(session: &Session) -> (Method, String) {
 #[async_trait]
 impl ProxyPlugin for AdminServe {
     #[inline]
-    fn step(&self) -> ProxyPluginStep {
+    fn step(&self) -> PluginStep {
         self.proxy_step
     }
     #[inline]
-    fn category(&self) -> ProxyPluginCategory {
-        ProxyPluginCategory::Admin
+    fn category(&self) -> PluginCategory {
+        PluginCategory::Admin
     }
     async fn handle(
         &self,

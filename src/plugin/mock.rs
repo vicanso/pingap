@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{Error, ProxyPlugin, Result};
-use crate::config::{ProxyPluginCategory, ProxyPluginStep};
+use crate::config::{PluginCategory, PluginStep};
 use crate::http_extra::{convert_headers, HttpResponse};
 use crate::state::State;
 use async_trait::async_trait;
@@ -32,13 +32,13 @@ pub struct MockInfo {
 
 pub struct MockResponse {
     pub path: String,
-    pub proxy_step: ProxyPluginStep,
+    pub proxy_step: PluginStep,
     pub resp: HttpResponse,
 }
 
 impl MockResponse {
     /// Creates a new mock response upstream, which will return a mock data.
-    pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new mock proxy plugin, {value}, {proxy_step:?}");
         let info: MockInfo = serde_json::from_str(value).map_err(|e| Error::Json { source: e })?;
 
@@ -67,12 +67,12 @@ impl MockResponse {
 #[async_trait]
 impl ProxyPlugin for MockResponse {
     #[inline]
-    fn step(&self) -> ProxyPluginStep {
+    fn step(&self) -> PluginStep {
         self.proxy_step
     }
     #[inline]
-    fn category(&self) -> ProxyPluginCategory {
-        ProxyPluginCategory::Mock
+    fn category(&self) -> PluginCategory {
+        PluginCategory::Mock
     }
     #[inline]
     /// Sends the mock data to client.
@@ -92,7 +92,7 @@ impl ProxyPlugin for MockResponse {
 mod tests {
     use super::MockResponse;
     use crate::state::State;
-    use crate::{config::ProxyPluginStep, plugin::ProxyPlugin};
+    use crate::{config::PluginStep, plugin::ProxyPlugin};
     use bytes::Bytes;
     use http::StatusCode;
     use pingora::proxy::Session;
@@ -103,7 +103,7 @@ mod tests {
     async fn test_mock_response() {
         let mock = MockResponse::new(
             r###"{"status":500,"headers":["Content-Type: application/json"],"data":"{\"message\":\"Mock Service Unavailable\"}"}"###,
-             ProxyPluginStep::RequestFilter).unwrap();
+             PluginStep::RequestFilter).unwrap();
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");

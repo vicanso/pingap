@@ -55,7 +55,7 @@ export enum FormItemCategory {
   PROXY_PLUGIN_SELECT = "proxyPluginSelect",
 }
 
-export enum ProxyPluginCategory {
+export enum PluginCategory {
   STATS = "stats",
   LIMIT = "limit",
   COMPRESSION = "compression",
@@ -71,45 +71,45 @@ export enum ProxyPluginCategory {
   PING = "ping",
 }
 
-export function formatProxyPluginCategory(value: string) {
+export function formatPluginCategory(value: string) {
   switch (value) {
-    case ProxyPluginCategory.STATS: {
+    case PluginCategory.STATS: {
       return "stats";
     }
-    case ProxyPluginCategory.LIMIT: {
+    case PluginCategory.LIMIT: {
       return "limit";
     }
-    case ProxyPluginCategory.COMPRESSION: {
+    case PluginCategory.COMPRESSION: {
       return "compression";
     }
-    case ProxyPluginCategory.ADMIN: {
+    case PluginCategory.ADMIN: {
       return "admin";
     }
-    case ProxyPluginCategory.DIRECTORY: {
+    case PluginCategory.DIRECTORY: {
       return "directory";
     }
-    case ProxyPluginCategory.MOCK: {
+    case PluginCategory.MOCK: {
       return "mock";
     }
-    case ProxyPluginCategory.REQUEST_ID: {
+    case PluginCategory.REQUEST_ID: {
       return "requestId";
     }
-    case ProxyPluginCategory.IP_LIMIT: {
+    case PluginCategory.IP_LIMIT: {
       return "ipLimit";
     }
-    case ProxyPluginCategory.KEY_AUTH: {
+    case PluginCategory.KEY_AUTH: {
       return "keyAuth";
     }
-    case ProxyPluginCategory.BASIC_AUTH: {
+    case PluginCategory.BASIC_AUTH: {
       return "basicAuth";
     }
-    case ProxyPluginCategory.CACHE: {
+    case PluginCategory.CACHE: {
       return "cache";
     }
-    case ProxyPluginCategory.REDIRECT_HTTPS: {
+    case PluginCategory.REDIRECT_HTTPS: {
       return "redirectHttps";
     }
-    case ProxyPluginCategory.PING: {
+    case PluginCategory.PING: {
       return "ping";
     }
   }
@@ -180,7 +180,7 @@ function FormProxyPluginField({
   };
 
   switch (category) {
-    case ProxyPluginCategory.COMPRESSION: {
+    case PluginCategory.COMPRESSION: {
       arr.push(...value.split(padding));
       fields.push(
         {
@@ -195,7 +195,7 @@ function FormProxyPluginField({
       );
       break;
     }
-    case ProxyPluginCategory.ADMIN: {
+    case PluginCategory.ADMIN: {
       arr.push(...value.split(padding));
       fields.push(
         {
@@ -207,7 +207,7 @@ function FormProxyPluginField({
       );
       break;
     }
-    case ProxyPluginCategory.LIMIT: {
+    case PluginCategory.LIMIT: {
       arr.push(...value.split(padding));
       fields.push(
         {
@@ -219,14 +219,14 @@ function FormProxyPluginField({
       );
       break;
     }
-    case ProxyPluginCategory.DIRECTORY: {
+    case PluginCategory.DIRECTORY: {
       arr.push(value);
       fields.push({
         label: t("form.staticDirectory"),
       });
       break;
     }
-    case ProxyPluginCategory.REQUEST_ID: {
+    case PluginCategory.REQUEST_ID: {
       arr.push(...value.split(padding));
       fields.push(
         {
@@ -238,7 +238,7 @@ function FormProxyPluginField({
       );
       break;
     }
-    case ProxyPluginCategory.IP_LIMIT: {
+    case PluginCategory.IP_LIMIT: {
       arr.push(...value.split(padding));
       fields.push(
         {
@@ -250,7 +250,7 @@ function FormProxyPluginField({
       );
       break;
     }
-    case ProxyPluginCategory.KEY_AUTH: {
+    case PluginCategory.KEY_AUTH: {
       arr.push(...value.split(padding));
       fields.push(
         {
@@ -262,14 +262,14 @@ function FormProxyPluginField({
       );
       break;
     }
-    case ProxyPluginCategory.BASIC_AUTH: {
+    case PluginCategory.BASIC_AUTH: {
       arr.push(value);
       fields.push({
         label: t("form.basicAuthList"),
       });
       break;
     }
-    case ProxyPluginCategory.MOCK: {
+    case PluginCategory.MOCK: {
       if (value) {
         try {
           Object.assign(defaultMockInfo, JSON.parse(value));
@@ -279,21 +279,21 @@ function FormProxyPluginField({
       }
       break;
     }
-    case ProxyPluginCategory.CACHE: {
+    case PluginCategory.CACHE: {
       arr.push(value);
       fields.push({
         label: t("form.cacheStorage"),
       });
       break;
     }
-    case ProxyPluginCategory.REDIRECT_HTTPS: {
+    case PluginCategory.REDIRECT_HTTPS: {
       arr.push(value);
       fields.push({
         label: t("form.redirectPrefix"),
       });
       break;
     }
-    case ProxyPluginCategory.PING: {
+    case PluginCategory.PING: {
       arr.push(value);
       fields.push({
         label: t("form.pingPath"),
@@ -311,7 +311,7 @@ function FormProxyPluginField({
   const [newValues, setNewValues] = React.useState(arr);
   const [mockInfo, setMockInfo] = React.useState(defaultMockInfo);
 
-  if (category == ProxyPluginCategory.MOCK) {
+  if (category == PluginCategory.MOCK) {
     return (
       <Stack direction="column" spacing={2}>
         <TextField

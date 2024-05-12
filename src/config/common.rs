@@ -34,7 +34,7 @@ pub const CATEGORY_PROXY_PLUGIN: &str = "proxy_plugin";
 
 #[derive(PartialEq, Debug, Default, Clone, EnumString, strum::Display)]
 #[strum(serialize_all = "snake_case")]
-pub enum ProxyPluginCategory {
+pub enum PluginCategory {
     #[default]
     Stats,
     Limit,
@@ -52,7 +52,7 @@ pub enum ProxyPluginCategory {
     ResponseHeaders,
 }
 
-impl Serialize for ProxyPluginCategory {
+impl Serialize for PluginCategory {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -61,14 +61,13 @@ impl Serialize for ProxyPluginCategory {
     }
 }
 
-impl<'de> Deserialize<'de> for ProxyPluginCategory {
+impl<'de> Deserialize<'de> for PluginCategory {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         let value: String = serde::Deserialize::deserialize(deserializer)?;
-        let category =
-            ProxyPluginCategory::from_str(&value).unwrap_or(ProxyPluginCategory::default());
+        let category = PluginCategory::from_str(&value).unwrap_or(PluginCategory::default());
 
         Ok(category)
     }
@@ -76,13 +75,13 @@ impl<'de> Deserialize<'de> for ProxyPluginCategory {
 
 #[derive(PartialEq, Debug, Default, Clone, Copy, EnumString, strum::Display)]
 #[strum(serialize_all = "snake_case")]
-pub enum ProxyPluginStep {
+pub enum PluginStep {
     #[default]
     RequestFilter,
     ProxyUpstreamFilter,
 }
 
-impl Serialize for ProxyPluginStep {
+impl Serialize for PluginStep {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -91,13 +90,13 @@ impl Serialize for ProxyPluginStep {
     }
 }
 
-impl<'de> Deserialize<'de> for ProxyPluginStep {
+impl<'de> Deserialize<'de> for PluginStep {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         let value: String = serde::Deserialize::deserialize(deserializer)?;
-        let category = ProxyPluginStep::from_str(&value).unwrap_or(ProxyPluginStep::default());
+        let category = PluginStep::from_str(&value).unwrap_or(PluginStep::default());
 
         Ok(category)
     }
@@ -106,8 +105,8 @@ impl<'de> Deserialize<'de> for ProxyPluginStep {
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
 pub struct ProxyPluginConf {
     pub value: Option<String>,
-    pub category: ProxyPluginCategory,
-    pub step: Option<ProxyPluginStep>,
+    pub category: PluginCategory,
+    pub step: Option<PluginStep>,
     pub remark: Option<String>,
 }
 

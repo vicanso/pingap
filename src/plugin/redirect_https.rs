@@ -14,8 +14,8 @@
 
 use super::ProxyPlugin;
 use super::Result;
-use crate::config::ProxyPluginCategory;
-use crate::config::ProxyPluginStep;
+use crate::config::PluginCategory;
+use crate::config::PluginStep;
 use crate::http_extra::convert_headers;
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -25,11 +25,11 @@ use pingora::proxy::Session;
 
 pub struct RedirectHttps {
     prefix: String,
-    proxy_step: ProxyPluginStep,
+    proxy_step: PluginStep,
 }
 
 impl RedirectHttps {
-    pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         let mut prefix = "".to_string();
         if value.trim().len() > 1 {
             prefix = value.trim().to_string();
@@ -41,12 +41,12 @@ impl RedirectHttps {
 #[async_trait]
 impl ProxyPlugin for RedirectHttps {
     #[inline]
-    fn step(&self) -> ProxyPluginStep {
+    fn step(&self) -> PluginStep {
         self.proxy_step
     }
     #[inline]
-    fn category(&self) -> ProxyPluginCategory {
-        ProxyPluginCategory::RedirectHttps
+    fn category(&self) -> PluginCategory {
+        PluginCategory::RedirectHttps
     }
     #[inline]
     async fn handle(
@@ -78,7 +78,7 @@ impl ProxyPlugin for RedirectHttps {
 mod tests {
     use super::RedirectHttps;
     use crate::state::State;
-    use crate::{config::ProxyPluginStep, plugin::ProxyPlugin};
+    use crate::{config::PluginStep, plugin::ProxyPlugin};
     use http::StatusCode;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -86,7 +86,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_redirect_https() {
-        let redirect = RedirectHttps::new("/api", ProxyPluginStep::RequestFilter).unwrap();
+        let redirect = RedirectHttps::new("/api", PluginStep::RequestFilter).unwrap();
 
         let headers = ["Host: github.com"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");

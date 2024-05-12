@@ -6,7 +6,7 @@ import Loading from "../components/loading";
 import FormEditor, {
   FormItem,
   FormItemCategory,
-  ProxyPluginCategory,
+  PluginCategory,
 } from "../components/form-editor";
 import { goToProxyPluginInfo } from "../router";
 
@@ -63,67 +63,67 @@ export default function ProxyPluginInfo() {
         {
           label: "Stats",
           option: 0,
-          value: ProxyPluginCategory.STATS,
+          value: PluginCategory.STATS,
         },
         {
           label: "Limit",
           option: 1,
-          value: ProxyPluginCategory.LIMIT,
+          value: PluginCategory.LIMIT,
         },
         {
           label: "Compression",
           option: 2,
-          value: ProxyPluginCategory.COMPRESSION,
+          value: PluginCategory.COMPRESSION,
         },
         {
           label: "Admin",
           option: 3,
-          value: ProxyPluginCategory.ADMIN,
+          value: PluginCategory.ADMIN,
         },
         {
           label: "Directory",
           option: 4,
-          value: ProxyPluginCategory.DIRECTORY,
+          value: PluginCategory.DIRECTORY,
         },
         {
           label: "Mock",
           option: 5,
-          value: ProxyPluginCategory.MOCK,
+          value: PluginCategory.MOCK,
         },
         {
           label: "Request Id",
           option: 6,
-          value: ProxyPluginCategory.REQUEST_ID,
+          value: PluginCategory.REQUEST_ID,
         },
         {
           label: "Ip Limit",
           option: 7,
-          value: ProxyPluginCategory.IP_LIMIT,
+          value: PluginCategory.IP_LIMIT,
         },
         {
           label: "Key Auth",
           option: 8,
-          value: ProxyPluginCategory.KEY_AUTH,
+          value: PluginCategory.KEY_AUTH,
         },
         {
           label: "Basic Auth",
           option: 9,
-          value: ProxyPluginCategory.BASIC_AUTH,
+          value: PluginCategory.BASIC_AUTH,
         },
         {
           label: "Cache",
           option: 10,
-          value: ProxyPluginCategory.CACHE,
+          value: PluginCategory.CACHE,
         },
         {
           label: "Redirect Https",
           option: 11,
-          value: ProxyPluginCategory.REDIRECT_HTTPS,
+          value: PluginCategory.REDIRECT_HTTPS,
         },
         {
           label: "Ping",
           option: 12,
-          value: ProxyPluginCategory.PING,
+          value: PluginCategory.PING,
         },
       ],
     },
@@ -149,7 +149,7 @@ export default function ProxyPluginInfo() {
       pluginName = newName;
     }
     if (!data.category) {
-      data.category = ProxyPluginCategory.STATS;
+      data.category = PluginCategory.STATS;
     }
 
     return update("proxy_plugin", pluginName, data).then(() => {

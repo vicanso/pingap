@@ -14,8 +14,8 @@
 
 use super::ProxyPlugin;
 use super::Result;
-use crate::config::ProxyPluginCategory;
-use crate::config::ProxyPluginStep;
+use crate::config::PluginCategory;
+use crate::config::PluginStep;
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use crate::util;
@@ -29,7 +29,7 @@ use std::net::IpAddr;
 use std::str::FromStr;
 
 pub struct IpLimit {
-    proxy_step: ProxyPluginStep,
+    proxy_step: PluginStep,
     ip_net_list: Vec<IpNet>,
     ip_list: Vec<String>,
     category: u8,
@@ -37,7 +37,7 @@ pub struct IpLimit {
 }
 
 impl IpLimit {
-    pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new ip limit proxy plugin, {value}, {proxy_step:?}");
         let arr: Vec<&str> = value.split(' ').collect();
         let ip = arr[0].trim().to_string();
@@ -74,12 +74,12 @@ impl IpLimit {
 #[async_trait]
 impl ProxyPlugin for IpLimit {
     #[inline]
-    fn step(&self) -> ProxyPluginStep {
+    fn step(&self) -> PluginStep {
         self.proxy_step
     }
     #[inline]
-    fn category(&self) -> ProxyPluginCategory {
-        ProxyPluginCategory::IpLimit
+    fn category(&self) -> PluginCategory {
+        PluginCategory::IpLimit
     }
     #[inline]
     async fn handle(
@@ -118,7 +118,7 @@ impl ProxyPlugin for IpLimit {
 mod tests {
     use super::IpLimit;
     use crate::state::State;
-    use crate::{config::ProxyPluginStep, plugin::ProxyPlugin};
+    use crate::{config::PluginStep, plugin::ProxyPlugin};
     use http::StatusCode;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -126,8 +126,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ip_limit() {
-        let deny =
-            IpLimit::new("192.168.1.1,1.1.1.0/24 1", ProxyPluginStep::RequestFilter).unwrap();
+        let deny = IpLimit::new("192.168.1.1,1.1.1.0/24 1", PluginStep::RequestFilter).unwrap();
 
         let headers = ["X-Forwarded-For: 2.1.1.2"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");

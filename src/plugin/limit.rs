@@ -14,7 +14,7 @@
 
 use super::ProxyPlugin;
 use super::{Error, Result};
-use crate::config::{ProxyPluginCategory, ProxyPluginStep};
+use crate::config::{PluginCategory, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use crate::util;
@@ -38,11 +38,11 @@ pub struct Limiter {
     max: isize,
     value: String,
     inflight: Inflight,
-    proxy_step: ProxyPluginStep,
+    proxy_step: PluginStep,
 }
 
 impl Limiter {
-    pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new limit proxy plugin, {value}, {proxy_step:?}");
         let (key, max) = value.split_once(' ').ok_or(Error::Invalid {
             message: value.to_string(),
@@ -110,12 +110,12 @@ impl Limiter {
 #[async_trait]
 impl ProxyPlugin for Limiter {
     #[inline]
-    fn step(&self) -> ProxyPluginStep {
+    fn step(&self) -> PluginStep {
         self.proxy_step
     }
     #[inline]
-    fn category(&self) -> ProxyPluginCategory {
-        ProxyPluginCategory::Limit
+    fn category(&self) -> PluginCategory {
+        PluginCategory::Limit
     }
     #[inline]
     async fn handle(
@@ -137,7 +137,7 @@ impl ProxyPlugin for Limiter {
 #[cfg(test)]
 mod tests {
     use super::{LimitTag, Limiter};
-    use crate::{config::ProxyPluginStep, plugin::ProxyPlugin, state::State};
+    use crate::{config::PluginStep, plugin::ProxyPlugin, state::State};
     use http::StatusCode;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -161,7 +161,7 @@ mod tests {
     }
     #[tokio::test]
     async fn test_new_cookie_limiter() {
-        let limiter = Limiter::new("~deviceId 10", ProxyPluginStep::RequestFilter).unwrap();
+        let limiter = Limiter::new("~deviceId 10", PluginStep::RequestFilter).unwrap();
         assert_eq!(LimitTag::Cookie, limiter.tag);
         let mut ctx = State {
             ..Default::default()
@@ -173,7 +173,7 @@ mod tests {
     }
     #[tokio::test]
     async fn test_new_req_header_limiter() {
-        let limiter = Limiter::new(">X-Uuid 10", ProxyPluginStep::RequestFilter).unwrap();
+        let limiter = Limiter::new(">X-Uuid 10", PluginStep::RequestFilter).unwrap();
         assert_eq!(LimitTag::RequestHeader, limiter.tag);
         let mut ctx = State {
             ..Default::default()
@@ -185,7 +185,7 @@ mod tests {
     }
     #[tokio::test]
     async fn test_new_query_limiter() {
-        let limiter = Limiter::new("?key 10", ProxyPluginStep::RequestFilter).unwrap();
+        let limiter = Limiter::new("?key 10", PluginStep::RequestFilter).unwrap();
         assert_eq!(LimitTag::Query, limiter.tag);
         let mut ctx = State {
             ..Default::default()
@@ -197,7 +197,7 @@ mod tests {
     }
     #[tokio::test]
     async fn test_new_ip_limiter() {
-        let limiter = Limiter::new("ip 10", ProxyPluginStep::RequestFilter).unwrap();
+        let limiter = Limiter::new("ip 10", PluginStep::RequestFilter).unwrap();
         assert_eq!(LimitTag::Ip, limiter.tag);
         let mut ctx = State {
             ..Default::default()
@@ -209,7 +209,7 @@ mod tests {
     }
     #[tokio::test]
     async fn test_limit() {
-        let limiter = Limiter::new("ip 0", ProxyPluginStep::RequestFilter).unwrap();
+        let limiter = Limiter::new("ip 0", PluginStep::RequestFilter).unwrap();
 
         let headers = ["X-Forwarded-For: 1.1.1.1"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
@@ -224,7 +224,7 @@ mod tests {
         assert_eq!(true, result.is_some());
         assert_eq!(StatusCode::TOO_MANY_REQUESTS, result.unwrap().status);
 
-        let limiter = Limiter::new("ip 1", ProxyPluginStep::RequestFilter).unwrap();
+        let limiter = Limiter::new("ip 1", PluginStep::RequestFilter).unwrap();
         let result = limiter
             .handle(&mut session, &mut State::default())
             .await

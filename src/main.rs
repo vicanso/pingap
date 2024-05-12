@@ -16,7 +16,7 @@ use crate::acme::LetsEncryptService;
 use crate::config::ETCD_PROTOCOL;
 use crate::state::AutoRestart;
 use clap::Parser;
-use config::{PingapConf, ProxyPluginCategory, ProxyPluginConf};
+use config::{PingapConf, PluginCategory, ProxyPluginConf};
 use crossbeam_channel::Sender;
 use log::{error, info};
 use pingora::server;
@@ -159,7 +159,7 @@ fn parse_admin_proxy_plugin(addr: &str) -> (ServerConf, String, ProxyPluginConf)
         util::ADMIN_SERVER_PLUGIN.clone(),
         ProxyPluginConf {
             value: Some(format!("/ {authorization}")),
-            category: ProxyPluginCategory::Admin,
+            category: PluginCategory::Admin,
             remark: Some("Admin serve".to_string()),
             step: None,
         },

@@ -7,8 +7,8 @@ Pingap中通过Locaton添加各种插件支持更多的应用场景，如鉴权�
 ```rust
 #[async_trait]
 pub trait ProxyPlugin: Sync + Send {
-    fn category(&self) -> ProxyPluginCategory;
-    fn step(&self) -> ProxyPluginStep;
+    fn category(&self) -> PluginCategory;
+    fn step(&self) -> PluginStep;
     async fn handle(
         &self,
         _session: &mut Session,

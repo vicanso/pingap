@@ -14,8 +14,8 @@
 
 use super::ProxyPlugin;
 use super::Result;
-use crate::config::ProxyPluginCategory;
-use crate::config::ProxyPluginStep;
+use crate::config::PluginCategory;
+use crate::config::PluginStep;
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
@@ -26,7 +26,7 @@ use pingora::proxy::Session;
 
 pub struct Ping {
     prefix: String,
-    proxy_step: ProxyPluginStep,
+    proxy_step: PluginStep,
 }
 static PONG_RESPONSE: Lazy<HttpResponse> = Lazy::new(|| HttpResponse {
     status: StatusCode::OK,
@@ -35,7 +35,7 @@ static PONG_RESPONSE: Lazy<HttpResponse> = Lazy::new(|| HttpResponse {
 });
 
 impl Ping {
-    pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         let mut prefix = "".to_string();
         if value.trim().len() > 1 {
             prefix = value.trim().to_string();
@@ -47,12 +47,12 @@ impl Ping {
 #[async_trait]
 impl ProxyPlugin for Ping {
     #[inline]
-    fn step(&self) -> ProxyPluginStep {
+    fn step(&self) -> PluginStep {
         self.proxy_step
     }
     #[inline]
-    fn category(&self) -> ProxyPluginCategory {
-        ProxyPluginCategory::RedirectHttps
+    fn category(&self) -> PluginCategory {
+        PluginCategory::RedirectHttps
     }
     #[inline]
     async fn handle(

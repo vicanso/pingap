@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config::{ProxyPluginCategory, ProxyPluginConf, ProxyPluginStep};
+use crate::config::{PluginCategory, PluginStep, ProxyPluginConf};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
@@ -54,8 +54,8 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[async_trait]
 pub trait ProxyPlugin: Sync + Send {
-    fn category(&self) -> ProxyPluginCategory;
-    fn step(&self) -> ProxyPluginStep;
+    fn category(&self) -> PluginCategory;
+    fn step(&self) -> PluginStep;
     async fn handle(
         &self,
         _session: &mut Session,
@@ -72,7 +72,7 @@ pub fn get_builtin_proxy_plugins() -> Vec<(String, ProxyPluginConf)> {
             "pingap:compression".to_string(),
             ProxyPluginConf {
                 value: Some("6 6 3".to_string()),
-                category: ProxyPluginCategory::Compression,
+                category: PluginCategory::Compression,
                 remark: Some("Compression for http, support zstd:3, br:6, gzip:6".to_string()),
                 step: None,
             },
@@ -81,7 +81,7 @@ pub fn get_builtin_proxy_plugins() -> Vec<(String, ProxyPluginConf)> {
             "pingap:ping".to_string(),
             ProxyPluginConf {
                 value: Some("/ping".to_string()),
-                category: ProxyPluginCategory::Ping,
+                category: PluginCategory::Ping,
                 remark: Some("Ping pong".to_string()),
                 step: None,
             },
@@ -90,7 +90,7 @@ pub fn get_builtin_proxy_plugins() -> Vec<(String, ProxyPluginConf)> {
             "pingap:stats".to_string(),
             ProxyPluginConf {
                 value: Some("/stats".to_string()),
-                category: ProxyPluginCategory::Stats,
+                category: PluginCategory::Stats,
                 remark: Some("Get stats of server".to_string()),
                 step: None,
             },
@@ -98,7 +98,7 @@ pub fn get_builtin_proxy_plugins() -> Vec<(String, ProxyPluginConf)> {
         (
             "pingap:requestId".to_string(),
             ProxyPluginConf {
-                category: ProxyPluginCategory::RequestId,
+                category: PluginCategory::RequestId,
                 remark: Some("Generate a request id for service".to_string()),
                 value: None,
                 step: None,
@@ -119,59 +119,59 @@ pub fn init_proxy_plugins(confs: Vec<(String, ProxyPluginConf)>) -> Result<()> {
             let step = conf.step.unwrap_or_default();
             let value = conf.value.clone().unwrap_or_default();
             match conf.category {
-                ProxyPluginCategory::Limit => {
+                PluginCategory::Limit => {
                     let l = limit::Limiter::new(&value, step)?;
                     plguins.insert(name, Box::new(l));
                 }
-                ProxyPluginCategory::Compression => {
+                PluginCategory::Compression => {
                     let c = compression::Compression::new(&value, step)?;
                     plguins.insert(name, Box::new(c));
                 }
-                ProxyPluginCategory::Stats => {
+                PluginCategory::Stats => {
                     let s = stats::Stats::new(&value, step)?;
                     plguins.insert(name, Box::new(s));
                 }
-                ProxyPluginCategory::Admin => {
+                PluginCategory::Admin => {
                     let a = admin::AdminServe::new(&value, step)?;
                     plguins.insert(name, Box::new(a));
                 }
-                ProxyPluginCategory::Directory => {
+                PluginCategory::Directory => {
                     let d = directory::Directory::new(&value, step)?;
                     plguins.insert(name, Box::new(d));
                 }
-                ProxyPluginCategory::Mock => {
+                PluginCategory::Mock => {
                     let m = mock::MockResponse::new(&value, step)?;
                     plguins.insert(name, Box::new(m));
                 }
-                ProxyPluginCategory::RequestId => {
+                PluginCategory::RequestId => {
                     let r = request_id::RequestId::new(&value, step)?;
                     plguins.insert(name, Box::new(r));
                 }
-                ProxyPluginCategory::IpLimit => {
+                PluginCategory::IpLimit => {
                     let l = ip_limit::IpLimit::new(&value, step)?;
                     plguins.insert(name, Box::new(l));
                 }
-                ProxyPluginCategory::KeyAuth => {
+                PluginCategory::KeyAuth => {
                     let k = key_auth::KeyAuth::new(&value, step)?;
                     plguins.insert(name, Box::new(k));
                 }
-                ProxyPluginCategory::BasicAuth => {
+                PluginCategory::BasicAuth => {
                     let b = basic_auth::BasicAuth::new(&value, step)?;
                     plguins.insert(name, Box::new(b));
                 }
-                ProxyPluginCategory::Cache => {
+                PluginCategory::Cache => {
                     let c = cache::Cache::new(&value, step)?;
                     plguins.insert(name, Box::new(c));
                 }
-                ProxyPluginCategory::RedirectHttps => {
+                PluginCategory::RedirectHttps => {
                     let r = redirect_https::RedirectHttps::new(&value, step)?;
                     plguins.insert(name, Box::new(r));
                 }
-                ProxyPluginCategory::Ping => {
+                PluginCategory::Ping => {
                     let p = ping::Ping::new(&value, step)?;
                     plguins.insert(name, Box::new(p));
                 }
-                ProxyPluginCategory::ResponseHeaders => {
+                PluginCategory::ResponseHeaders => {
                     let r = response_headers::ResponseHeaders::new(&value, step)?;
                     plguins.insert(name, Box::new(r));
                 }

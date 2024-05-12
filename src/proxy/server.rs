@@ -16,7 +16,7 @@ use super::dynamic_cert::DynamicCert;
 use super::logger::Parser;
 use super::{Location, Upstream};
 use crate::acme::{get_lets_encrypt_cert, handle_lets_encrypt};
-use crate::config::{LocationConf, PingapConf, ProxyPluginStep, UpstreamConf};
+use crate::config::{LocationConf, PingapConf, PluginStep, UpstreamConf};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use crate::plugin::get_proxy_plugin;
 use crate::state::State;
@@ -442,7 +442,7 @@ impl ProxyHttp for Server {
         ctx.location_index = Some(location_index);
 
         let done = lo
-            .exec_proxy_plugins(session, ctx, ProxyPluginStep::RequestFilter)
+            .exec_proxy_plugins(session, ctx, PluginStep::RequestFilter)
             .await?;
         if done {
             return Ok(true);
@@ -512,7 +512,7 @@ impl ProxyHttp for Server {
     {
         let lo = &self.locations[ctx.location_index.unwrap_or_default()];
         let done = lo
-            .exec_proxy_plugins(session, ctx, ProxyPluginStep::ProxyUpstreamFilter)
+            .exec_proxy_plugins(session, ctx, PluginStep::ProxyUpstreamFilter)
             .await?;
         if done {
             return Ok(false);

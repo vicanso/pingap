@@ -7,7 +7,7 @@ import FormEditor, {
   CheckBoxItem,
   FormItem,
   FormItemCategory,
-  formatProxyPluginCategory,
+  formatPluginCategory,
 } from "../components/form-editor";
 import { goToLoationInfo } from "../router";
 
@@ -60,7 +60,7 @@ export default function LocationInfo() {
     Object.keys(config.proxy_plugins).forEach((name) => {
       const item = (config.proxy_plugins || {})[name];
       proxyPluginOptions.push({
-        label: `${name}(${formatProxyPluginCategory(item.category)})`,
+        label: `${name}(${formatPluginCategory(item.category)})`,
         option: proxyPluginOptions.length,
         value: name,
       });

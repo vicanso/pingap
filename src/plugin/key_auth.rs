@@ -14,8 +14,8 @@
 
 use super::ProxyPlugin;
 use super::{Error, Result};
-use crate::config::ProxyPluginCategory;
-use crate::config::ProxyPluginStep;
+use crate::config::PluginCategory;
+use crate::config::PluginStep;
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use crate::util;
@@ -29,7 +29,7 @@ use substring::Substring;
 
 pub struct KeyAuth {
     category: u8,
-    proxy_step: ProxyPluginStep,
+    proxy_step: PluginStep,
     header_name: Option<HeaderName>,
     query_name: Option<String>,
     keys: Vec<Vec<u8>>,
@@ -38,7 +38,7 @@ pub struct KeyAuth {
 }
 
 impl KeyAuth {
-    pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new key auth proxy plugin, {value}, {proxy_step:?}");
         let arr: Vec<&str> = value.split(' ').collect();
         if arr.len() != 2 {
@@ -87,12 +87,12 @@ impl KeyAuth {
 #[async_trait]
 impl ProxyPlugin for KeyAuth {
     #[inline]
-    fn step(&self) -> ProxyPluginStep {
+    fn step(&self) -> PluginStep {
         self.proxy_step
     }
     #[inline]
-    fn category(&self) -> ProxyPluginCategory {
-        ProxyPluginCategory::KeyAuth
+    fn category(&self) -> PluginCategory {
+        PluginCategory::KeyAuth
     }
     #[inline]
     async fn handle(

@@ -16,8 +16,8 @@ use std::time::Duration;
 
 use super::ProxyPlugin;
 use super::Result;
-use crate::config::ProxyPluginCategory;
-use crate::config::ProxyPluginStep;
+use crate::config::PluginCategory;
+use crate::config::PluginStep;
 use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON};
 use crate::state::{get_hostname, get_start_time, State};
 use crate::util;
@@ -44,11 +44,11 @@ struct ServerStats {
 }
 pub struct Stats {
     path: String,
-    proxy_step: ProxyPluginStep,
+    proxy_step: PluginStep,
 }
 
 impl Stats {
-    pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new stats proxy plugin, {value}, {proxy_step:?}");
         Ok(Self {
             proxy_step,
@@ -60,12 +60,12 @@ impl Stats {
 #[async_trait]
 impl ProxyPlugin for Stats {
     #[inline]
-    fn step(&self) -> ProxyPluginStep {
+    fn step(&self) -> PluginStep {
         self.proxy_step
     }
     #[inline]
-    fn category(&self) -> ProxyPluginCategory {
-        ProxyPluginCategory::Stats
+    fn category(&self) -> PluginCategory {
+        PluginCategory::Stats
     }
     #[inline]
     async fn handle(
@@ -106,14 +106,14 @@ impl ProxyPlugin for Stats {
 mod tests {
     use super::Stats;
     use crate::state::State;
-    use crate::{config::ProxyPluginStep, plugin::ProxyPlugin};
+    use crate::{config::PluginStep, plugin::ProxyPlugin};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
 
     #[tokio::test]
     async fn test_stats() {
-        let stats = Stats::new("/stats", ProxyPluginStep::RequestFilter).unwrap();
+        let stats = Stats::new("/stats", PluginStep::RequestFilter).unwrap();
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");

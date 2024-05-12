@@ -15,7 +15,7 @@ use std::str::FromStr;
 // limitations under the License.
 use super::ProxyPlugin;
 use super::{Error, Result};
-use crate::config::{ProxyPluginCategory, ProxyPluginStep};
+use crate::config::{PluginCategory, PluginStep};
 use crate::http_extra::{convert_header, HttpHeader};
 use crate::plugin::HttpResponse;
 use crate::state::State;
@@ -26,14 +26,14 @@ use pingora::proxy::Session;
 use substring::Substring;
 
 pub struct ResponseHeaders {
-    proxy_step: ProxyPluginStep,
+    proxy_step: PluginStep,
     add_headers: Vec<HttpHeader>,
     remove_headers: Vec<HeaderName>,
     set_headers: Vec<HttpHeader>,
 }
 
 impl ResponseHeaders {
-    pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new stats proxy plugin, {value}, {proxy_step:?}");
         let mut add_headers = vec![];
         let mut remove_headers = vec![];
@@ -82,12 +82,12 @@ impl ResponseHeaders {
 #[async_trait]
 impl ProxyPlugin for ResponseHeaders {
     #[inline]
-    fn step(&self) -> ProxyPluginStep {
+    fn step(&self) -> PluginStep {
         self.proxy_step
     }
     #[inline]
-    fn category(&self) -> ProxyPluginCategory {
-        ProxyPluginCategory::ResponseHeaders
+    fn category(&self) -> PluginCategory {
+        PluginCategory::ResponseHeaders
     }
     #[inline]
     async fn handle(

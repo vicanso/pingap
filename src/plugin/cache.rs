@@ -14,7 +14,7 @@
 
 use super::ProxyPlugin;
 use super::{Error, Result};
-use crate::config::{get_current_config, ProxyPluginCategory, ProxyPluginStep};
+use crate::config::{get_current_config, PluginCategory, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
@@ -53,7 +53,7 @@ static CACHE_LOCK_THREE_SECONDS: Lazy<CacheLock> =
     Lazy::new(|| CacheLock::new(std::time::Duration::from_secs(3)));
 
 pub struct Cache {
-    proxy_step: ProxyPluginStep,
+    proxy_step: PluginStep,
     eviction: bool,
     predictor: bool,
     lock: u8,
@@ -64,7 +64,7 @@ pub struct Cache {
 }
 
 impl Cache {
-    pub fn new(value: &str, proxy_step: ProxyPluginStep) -> Result<Self> {
+    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new cache storage proxy plugin, {value}, {proxy_step:?}");
         let url_info = Url::parse(value).map_err(|e| Error::Invalid {
             message: e.to_string(),
@@ -119,12 +119,12 @@ impl Cache {
 #[async_trait]
 impl ProxyPlugin for Cache {
     #[inline]
-    fn step(&self) -> ProxyPluginStep {
+    fn step(&self) -> PluginStep {
         self.proxy_step
     }
     #[inline]
-    fn category(&self) -> ProxyPluginCategory {
-        ProxyPluginCategory::Cache
+    fn category(&self) -> PluginCategory {
+        PluginCategory::Cache
     }
     #[inline]
     async fn handle(
