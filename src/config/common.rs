@@ -49,6 +49,7 @@ pub enum ProxyPluginCategory {
     Cache,
     RedirectHttps,
     Ping,
+    ResponseHeaders,
 }
 
 impl Serialize for ProxyPluginCategory {

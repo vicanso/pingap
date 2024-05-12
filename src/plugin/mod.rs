@@ -34,6 +34,7 @@ mod mock;
 mod ping;
 mod redirect_https;
 mod request_id;
+mod response_headers;
 mod stats;
 
 #[derive(Debug, Snafu)]
@@ -169,6 +170,10 @@ pub fn init_proxy_plugins(confs: Vec<(String, ProxyPluginConf)>) -> Result<()> {
                 ProxyPluginCategory::Ping => {
                     let p = ping::Ping::new(&value, step)?;
                     plguins.insert(name, Box::new(p));
+                }
+                ProxyPluginCategory::ResponseHeaders => {
+                    let r = response_headers::ResponseHeaders::new(&value, step)?;
+                    plguins.insert(name, Box::new(r));
                 }
             };
         }

@@ -35,21 +35,28 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub type HttpHeader = (HeaderName, HeaderValue);
 
+pub fn convert_header(value: &str) -> Result<Option<HttpHeader>> {
+    if let Some((k, v)) = value.split_once(':').map(|(k, v)| (k.trim(), v.trim())) {
+        let name = HeaderName::from_str(k).context(InvalidHeaderNameSnafu { value: k })?;
+        let key = if v.starts_with('$') {
+            std::env::var(v.substring(1, v.len())).unwrap_or_else(|_| v.to_string())
+        } else {
+            v.to_string()
+        };
+
+        let value = HeaderValue::from_str(&key).context(InvalidHeaderValueSnafu { value: v })?;
+        Ok(Some((name, value)))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Convert string slice to http headers.
 pub fn convert_headers(header_values: &[String]) -> Result<Vec<HttpHeader>> {
     let mut arr = vec![];
     for item in header_values {
-        if let Some((k, v)) = item.split_once(':').map(|(k, v)| (k.trim(), v.trim())) {
-            let name = HeaderName::from_str(k).context(InvalidHeaderNameSnafu { value: k })?;
-            let key = if v.starts_with('$') {
-                std::env::var(v.substring(1, v.len())).unwrap_or_else(|_| v.to_string())
-            } else {
-                v.to_string()
-            };
-
-            let value =
-                HeaderValue::from_str(&key).context(InvalidHeaderValueSnafu { value: v })?;
-            arr.push((name, value));
+        if let Some(item) = convert_header(item)? {
+            arr.push(item);
         }
     }
     Ok(arr)

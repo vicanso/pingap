@@ -600,7 +600,23 @@ impl ProxyHttp for Server {
             let _ = upstream_response.insert_header(HTTP_HEADER_NAME_X_REQUEST_ID.clone(), id);
         }
         let lo = &self.locations[ctx.location_index.unwrap_or_default()];
-        lo.insert_headers(upstream_response)
+        lo.insert_headers(upstream_response);
+        // ingore all header handle error
+        if let Some(add_headers) = &ctx.add_headers {
+            for (name, value) in add_headers {
+                let _ = upstream_response.append_header(name, value);
+            }
+        }
+        if let Some(set_headers) = &ctx.set_headers {
+            for (name, value) in set_headers {
+                let _ = upstream_response.insert_header(name, value);
+            }
+        }
+        if let Some(remove_headers) = &ctx.remove_headers {
+            for name in remove_headers {
+                let _ = upstream_response.remove_header(name);
+            }
+        }
     }
 
     fn upstream_response_body_filter(
