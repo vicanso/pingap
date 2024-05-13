@@ -51,8 +51,8 @@ export enum FormItemCategory {
   PROXY_HEADERS = "proxyHeaders",
   WEBHOOK_TYPE = "webhookType",
   WEBHOOK_NOTIFICATIONS = "webhookNotifications",
-  PROXY_PLUGIN = "proxyPlugin",
-  PROXY_PLUGIN_SELECT = "proxyPluginSelect",
+  PLUGIN = "plugin",
+  PLUGIN_SELECT = "pluginSelect",
 }
 
 export enum PluginCategory {
@@ -69,6 +69,7 @@ export enum PluginCategory {
   CACHE = "cache",
   REDIRECT_HTTPS = "redirect_https",
   PING = "ping",
+  RESPONSE_HEADERS = "response_headers",
 }
 
 export function formatPluginCategory(value: string) {
@@ -177,6 +178,16 @@ function FormProxyPluginField({
     path: "",
     headers: [],
     data: "",
+  };
+
+  const defaultResponseHeaders: {
+    add_headers: string[];
+    remove_headers: string[];
+    set_headers: string[];
+  } = {
+    add_headers: [],
+    remove_headers: [],
+    set_headers: [],
   };
 
   switch (category) {
@@ -300,6 +311,23 @@ function FormProxyPluginField({
       });
       break;
     }
+    case PluginCategory.RESPONSE_HEADERS: {
+      value.split(" ").forEach((item) => {
+        const value = item.trim();
+        if (!value) {
+          return;
+        }
+        let last = value.substring(1);
+        if (item.startsWith("+")) {
+          defaultResponseHeaders.add_headers.push(last);
+        } else if (item.startsWith("-")) {
+          defaultResponseHeaders.remove_headers.push(last);
+        } else {
+          defaultResponseHeaders.set_headers.push(value);
+        }
+      });
+      break;
+    }
     default: {
       arr.push(value);
       fields.push({
@@ -310,6 +338,25 @@ function FormProxyPluginField({
   }
   const [newValues, setNewValues] = React.useState(arr);
   const [mockInfo, setMockInfo] = React.useState(defaultMockInfo);
+  const [responseHeaders, setResponseHeaders] = React.useState(
+    defaultResponseHeaders,
+  );
+
+  const updateResponseHeaders = (headers: {
+    add_headers: string[];
+    remove_headers: string[];
+    set_headers: string[];
+  }) => {
+    setResponseHeaders(headers);
+    const arr = headers.set_headers.slice(0);
+    headers.add_headers.forEach((item) => {
+      arr.push(`+${item}`);
+    });
+    headers.remove_headers.forEach((item) => {
+      arr.push(`-${item}`);
+    });
+    onUpdate(arr.join(" "));
+  };
 
   if (category == PluginCategory.MOCK) {
     return (
@@ -373,6 +420,54 @@ function FormProxyPluginField({
             data.data = e.target.value;
             setMockInfo(data);
             onUpdate(JSON.stringify(data));
+          }}
+        />
+      </Stack>
+    );
+  }
+  if (category == PluginCategory.RESPONSE_HEADERS) {
+    return (
+      <Stack direction="column" spacing={2}>
+        <FormTwoInputFields
+          id={`${id}-set-headers`}
+          divide={":"}
+          values={responseHeaders.set_headers as string[]}
+          label={t("form.headerName")}
+          valueLabel={t("form.headerValue")}
+          onUpdate={(data) => {
+            const headers = Object.assign({}, responseHeaders);
+            headers.set_headers = data;
+            updateResponseHeaders(headers);
+          }}
+          addLabel={t("form.setHeader")}
+        />
+        <FormTwoInputFields
+          id={`${id}-add-headers`}
+          divide={":"}
+          values={responseHeaders.add_headers as string[]}
+          label={t("form.headerName")}
+          valueLabel={t("form.headerValue")}
+          onUpdate={(data) => {
+            const headers = Object.assign({}, responseHeaders);
+            headers.add_headers = data;
+            updateResponseHeaders(headers);
+          }}
+          addLabel={t("form.header")}
+        />
+        <TextField
+          id={`${id}-remove-headers`}
+          label={t("form.removeHeader")}
+          variant="outlined"
+          defaultValue={responseHeaders.remove_headers.join(" ") || ""}
+          sx={{ ml: 1, flex: 1 }}
+          style={{
+            marginLeft: "0px",
+          }}
+          onChange={(e) => {
+            const value = e.target.value.trim();
+            const headers = Object.assign({}, responseHeaders);
+            headers.remove_headers = value.split(" ");
+            updateResponseHeaders(headers);
           }}
         />
       </Stack>
@@ -632,7 +727,7 @@ export default function FormEditor({
         });
         break;
       }
-      case FormItemCategory.PROXY_PLUGIN_SELECT: {
+      case FormItemCategory.PLUGIN_SELECT: {
         const arr = (item.defaultValue as string[]) || [];
         arr.forEach((lo) => {
           defaultProxyPluginSelected.push(lo);
@@ -835,7 +930,7 @@ export default function FormEditor({
         );
         break;
       }
-      case FormItemCategory.PROXY_PLUGIN: {
+      case FormItemCategory.PLUGIN: {
         const category = (data["category"] as string) || "";
         formItem = (
           <FormProxyPluginField
@@ -870,7 +965,7 @@ export default function FormEditor({
         );
         break;
       }
-      case FormItemCategory.PROXY_PLUGIN_SELECT: {
+      case FormItemCategory.PLUGIN_SELECT: {
         const options = (item.options as CheckBoxItem[]) || [];
         const labelItems = options.map((opt, index) => {
           const value = opt.value as string;

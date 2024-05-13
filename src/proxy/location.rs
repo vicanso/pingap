@@ -88,7 +88,6 @@ pub struct Location {
     headers: Option<Vec<HttpHeader>>,
     proxy_headers: Option<Vec<HttpHeader>>,
     plugins: Option<Vec<String>>,
-    response_plugins: Option<Vec<String>>,
     pub upstream: Arc<Upstream>,
 }
 
@@ -146,10 +145,9 @@ impl Location {
             headers: format_headers(&conf.headers)?,
             proxy_headers: format_headers(&conf.proxy_headers)?,
             plugins: conf.plugins.clone(),
-            response_plugins: vec![].into(),
         })
     }
-    /// Returns `true` if the host and path match location.
+    /// Return `true` if the host and path match location.
     #[inline]
     pub fn matched(&self, host: &str, path: &str) -> bool {
         if !self.path.is_empty() {
@@ -170,7 +168,7 @@ impl Location {
 
         self.hosts.iter().any(|item| item == host)
     }
-    /// Rewrites the path by the rule and returns the new path.
+    /// Rewrite the path by the rule and returns the new path.
     /// If the rule is not exists, returns `None`.
     #[inline]
     pub fn rewrite(&self, path: &str) -> Option<String> {
@@ -179,23 +177,23 @@ impl Location {
         }
         None
     }
-    /// Inserts the headers before proxy the request to upstream.
+    /// Append the headers before proxy the request to upstream.
     #[inline]
-    pub fn insert_proxy_headers(&self, header: &mut RequestHeader) {
+    pub fn append_proxy_headers(&self, header: &mut RequestHeader) {
         if let Some(arr) = &self.proxy_headers {
             for (k, v) in arr {
                 // v validate for HeaderValue, so always no error
-                let _ = header.insert_header(k, v);
+                let _ = header.append_header(k, v);
             }
         }
     }
-    /// Inserts the header to response before sends to downstream.
+    /// Append the header to response before sends to downstream.
     #[inline]
-    pub fn insert_headers(&self, header: &mut ResponseHeader) {
+    pub fn append_headers(&self, header: &mut ResponseHeader) {
         if let Some(arr) = &self.headers {
             for (k, v) in arr {
                 // v validate for HeaderValue, so always no error
-                let _ = header.insert_header(k, v);
+                let _ = header.append_header(k, v);
             }
         }
     }
@@ -229,6 +227,7 @@ impl Location {
         }
         Ok(false)
     }
+    /// Execute all response plugins.
     #[inline]
     pub fn exec_response_plugins(
         &self,
@@ -237,7 +236,7 @@ impl Location {
         upstream_response: &mut ResponseHeader,
         step: PluginStep,
     ) {
-        if let Some(plugins) = &self.response_plugins {
+        if let Some(plugins) = &self.plugins {
             for name in plugins.iter() {
                 if let Some(plugin) = get_response_plugin(name) {
                     if plugin.step() != step {
@@ -444,14 +443,14 @@ mod tests {
         .unwrap();
 
         let mut req_header = RequestHeader::build_no_case(Method::GET, b"", None).unwrap();
-        lo.insert_proxy_headers(&mut req_header);
+        lo.append_proxy_headers(&mut req_header);
         assert_eq!(
             r###"RequestHeader { base: Parts { method: GET, uri: , version: HTTP/1.1, headers: {"cache-control": "no-store"} }, header_name_map: None, raw_path_fallback: [] }"###,
             format!("{req_header:?}")
         );
 
         let mut resp_header = ResponseHeader::build_no_case(StatusCode::OK, None).unwrap();
-        lo.insert_headers(&mut resp_header);
+        lo.append_headers(&mut resp_header);
         assert_eq!(
             r###"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"x-response-id": "pig"} }, header_name_map: None, reason_phrase: None }"###,
             format!("{resp_header:?}")

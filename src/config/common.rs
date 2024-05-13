@@ -30,7 +30,7 @@ use url::Url;
 pub const CATEGORY_UPSTREAM: &str = "upstream";
 pub const CATEGORY_LOCATION: &str = "location";
 pub const CATEGORY_SERVER: &str = "server";
-pub const CATEGORY_PROXY_PLUGIN: &str = "proxy_plugin";
+pub const CATEGORY_PLUGIN: &str = "plugin";
 
 #[derive(PartialEq, Debug, Default, Clone, EnumString, strum::Display)]
 #[strum(serialize_all = "snake_case")]
@@ -351,7 +351,7 @@ struct TomlConfig {
     servers: Option<Map<String, Value>>,
     upstreams: Option<Map<String, Value>>,
     locations: Option<Map<String, Value>>,
-    proxy_plugins: Option<Map<String, Value>>,
+    plugins: Option<Map<String, Value>>,
 }
 
 fn format_toml(value: &Value) -> String {
@@ -404,20 +404,20 @@ impl PingapConf {
                 let value = toml::to_string_pretty(&m).map_err(|e| Error::Ser { source: e })?;
                 ("/upstreams.toml".to_string(), value)
             }
-            CATEGORY_PROXY_PLUGIN => {
+            CATEGORY_PLUGIN => {
                 let mut m = Map::new();
                 let _ = m.insert(
-                    "proxy_plugins".to_string(),
-                    toml::Value::Table(data.proxy_plugins.unwrap_or_default()),
+                    "plugins".to_string(),
+                    toml::Value::Table(data.plugins.unwrap_or_default()),
                 );
                 let value = toml::to_string_pretty(&m).map_err(|e| Error::Ser { source: e })?;
-                ("/proxy_plugins.toml".to_string(), value)
+                ("/plugins.toml".to_string(), value)
             }
             _ => {
                 data.servers = None;
                 data.locations = None;
                 data.upstreams = None;
-                data.proxy_plugins = None;
+                data.plugins = None;
                 let value = toml::to_string_pretty(&data).map_err(|e| Error::Ser { source: e })?;
                 ("/basic.toml".to_string(), value)
             }
@@ -455,7 +455,7 @@ impl TryFrom<&[u8]> for PingapConf {
                 .map_err(|e| Error::De { source: e })?;
             conf.servers.insert(name, server);
         }
-        for (name, value) in data.proxy_plugins.unwrap_or_default() {
+        for (name, value) in data.plugins.unwrap_or_default() {
             let plugin: PluginConf = toml::from_str(format_toml(&value).as_str())
                 .map_err(|e| Error::De { source: e })?;
             conf.plugins.insert(name, plugin);
@@ -532,7 +532,7 @@ impl PingapConf {
             CATEGORY_SERVER => {
                 self.servers.remove(name);
             }
-            CATEGORY_PROXY_PLUGIN => {
+            CATEGORY_PLUGIN => {
                 let mut all_plugins = vec![];
                 for lo in self.locations.values() {
                     if let Some(plguins) = &lo.plugins {
@@ -719,8 +719,8 @@ pub fn get_config_hash() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        LocationConf, PingapConf, ServerConf, UpstreamConf, CATEGORY_LOCATION,
-        CATEGORY_PROXY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
+        LocationConf, PingapConf, ServerConf, UpstreamConf, CATEGORY_LOCATION, CATEGORY_PLUGIN,
+        CATEGORY_SERVER, CATEGORY_UPSTREAM,
     };
     use pretty_assertions::assert_eq;
 
@@ -893,11 +893,11 @@ locations = ["lo"]
 headers = ["name:value"]
 host = ""
 path = "/"
-proxy_headers = ["name:value"]
-proxy_plugins = [
+plugins = [
     "pingap:requestId",
     "pingap:stats",
 ]
+proxy_headers = ["name:value"]
 rewrite = ""
 upstream = "charts"
 "###,
@@ -923,10 +923,10 @@ addrs = ["127.0.0.1:5001"]
             data
         );
 
-        let (key, data) = conf.get_toml(CATEGORY_PROXY_PLUGIN).unwrap();
-        assert_eq!("/proxy_plugins.toml", key);
+        let (key, data) = conf.get_toml(CATEGORY_PLUGIN).unwrap();
+        assert_eq!("/plugins.toml", key);
         assert_eq!(
-            r###"[proxy_plugins.stats]
+            r###"[plugins.stats]
 category = "stats"
 value = "/stats"
 "###,
@@ -949,7 +949,7 @@ log_level = "info"
             data
         );
 
-        assert_eq!("DB35E2C4", conf.hash().unwrap());
+        assert_eq!("2FAB121E", conf.hash().unwrap());
     }
 
     #[test]

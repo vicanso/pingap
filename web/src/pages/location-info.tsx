@@ -56,9 +56,9 @@ export default function LocationInfo() {
       value: "pingap:ping",
     },
   ];
-  if (config.proxy_plugins) {
-    Object.keys(config.proxy_plugins).forEach((name) => {
-      const item = (config.proxy_plugins || {})[name];
+  if (config.plugins) {
+    Object.keys(config.plugins).forEach((name) => {
+      const item = (config.plugins || {})[name];
       proxyPluginOptions.push({
         label: `${name}(${formatPluginCategory(item.category)})`,
         option: proxyPluginOptions.length,
@@ -119,12 +119,12 @@ export default function LocationInfo() {
       category: FormItemCategory.TEXT,
     },
     {
-      id: "proxy_plugins",
-      label: t("location.proxyPlugins"),
-      defaultValue: location.proxy_plugins,
+      id: "plugins",
+      label: t("location.plugins"),
+      defaultValue: location.plugins,
       span: 12,
       options: proxyPluginOptions,
-      category: FormItemCategory.PROXY_PLUGIN_SELECT,
+      category: FormItemCategory.PLUGIN_SELECT,
     },
     {
       id: "remark",

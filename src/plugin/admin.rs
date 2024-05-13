@@ -18,7 +18,7 @@ use crate::config::{
     UpstreamConf,
 };
 use crate::config::{
-    PingapConf, CATEGORY_LOCATION, CATEGORY_PROXY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
+    PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
 };
 use crate::http_extra::{HttpResponse, HTTP_HEADER_WWW_AUTHENTICATE};
 use crate::limit::TtlLruLimit;
@@ -166,7 +166,7 @@ impl AdminServe {
             CATEGORY_UPSTREAM => HttpResponse::try_from_json(&conf.upstreams)?,
             CATEGORY_LOCATION => HttpResponse::try_from_json(&conf.locations)?,
             CATEGORY_SERVER => HttpResponse::try_from_json(&conf.servers)?,
-            CATEGORY_PROXY_PLUGIN => HttpResponse::try_from_json(&conf.plugins)?,
+            CATEGORY_PLUGIN => HttpResponse::try_from_json(&conf.plugins)?,
             _ => HttpResponse::try_from_json(&conf)?,
         };
         Ok(resp)
@@ -220,7 +220,7 @@ impl AdminServe {
                 })?;
                 conf.servers.insert(key, server);
             }
-            CATEGORY_PROXY_PLUGIN => {
+            CATEGORY_PLUGIN => {
                 let plugin: PluginConf = serde_json::from_slice(&buf).map_err(|e| {
                     error!("failed to deserialize proxy plugin: {e}");
                     util::new_internal_error(400, e.to_string())

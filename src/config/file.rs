@@ -31,7 +31,7 @@ struct TomlConfig {
     servers: Option<Map<String, Value>>,
     upstreams: Option<Map<String, Value>>,
     locations: Option<Map<String, Value>>,
-    proxy_plugins: Option<Map<String, Value>>,
+    plugins: Option<Map<String, Value>>,
     error_template: Option<String>,
     pid_file: Option<String>,
     upgrade_sock: Option<String>,
@@ -142,7 +142,7 @@ impl ConfigStorage for FileStorage {
 mod tests {
     use super::FileStorage;
     use crate::config::{
-        ConfigStorage, PingapConf, CATEGORY_LOCATION, CATEGORY_PROXY_PLUGIN, CATEGORY_SERVER,
+        ConfigStorage, PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
         CATEGORY_UPSTREAM,
     };
     use nanoid::nanoid;
@@ -159,10 +159,7 @@ mod tests {
         storage.save_config(&conf, "basic").await.unwrap();
         storage.save_config(&conf, CATEGORY_UPSTREAM).await.unwrap();
         storage.save_config(&conf, CATEGORY_LOCATION).await.unwrap();
-        storage
-            .save_config(&conf, CATEGORY_PROXY_PLUGIN)
-            .await
-            .unwrap();
+        storage.save_config(&conf, CATEGORY_PLUGIN).await.unwrap();
         storage.save_config(&conf, CATEGORY_SERVER).await.unwrap();
 
         let current_conf = storage.load_config(false).await.unwrap();

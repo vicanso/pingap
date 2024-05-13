@@ -4,7 +4,7 @@ export default {
   "nav.server": "服务配置",
   "nav.location": "Location配置",
   "nav.upstream": "上游服务配置",
-  "nav.proxyPlugin": "插件配置",
+  "nav.plugin": "插件配置",
   // header
   "header.title": "应用信息",
   "header.startTime": "启动时间：",
@@ -62,7 +62,7 @@ export default {
   "location.headers": "响应头",
   "location.proxyHeaders": "转发至上游节点的请求头",
   "location.rewrite": "路由重写规则",
-  "location.proxyPlugins": "插件列表",
+  "location.plugins": "插件列表",
   "location.remark": "备注",
   // upstream info
   "upstream.title": "上游服务的相关配置",
@@ -80,13 +80,13 @@ export default {
   "upstream.verifyCert": "是否校验证书",
   "upstream.ipv4Only": "是否仅Ipv4",
   "upstream.remark": "备注",
-  // proxy plugin info
-  "proxyPlugin.title": "各类插件的配置",
-  "proxyPlugin.description": "添加配置各类插件，可便于后续服务使用",
-  "proxyPlugin.step": "插件执行阶段",
-  "proxyPlugin.category": "插件类型",
-  "proxyPlugin.config": "插件配置数据",
-  "proxyPlugin.remark": "备注",
+  // plugin info
+  "plugin.title": "各类插件的配置",
+  "plugin.description": "添加配置各类插件，可便于后续服务使用",
+  "plugin.step": "插件执行阶段",
+  "plugin.category": "插件类型",
+  "plugin.config": "插件配置数据",
+  "plugin.remark": "备注",
 
   // form
   "form.name": "名称",
@@ -106,6 +106,8 @@ export default {
   "form.weight": "权重",
   "form.addrs": "添加地址",
   "form.header": "添加响应头",
+  "form.setHeader": "设置响应头",
+  "form.removeHeader": "设置要删除的响应头，多个值以空格分隔",
   "form.headerName": "响应头名称",
   "form.headerValue": "响应头值",
   "form.addProxyHeader": "添加转发请求头",

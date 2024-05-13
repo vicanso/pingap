@@ -22,7 +22,7 @@ import {
   goToServerInfo,
   goToLoationInfo,
   goToUpstreamInfo,
-  goToProxyPluginInfo,
+  goToPluginInfo,
 } from "../router";
 import { formatError } from "../helpers/util";
 
@@ -99,10 +99,10 @@ export default function MainNav({
         category: NavCategory.UpstreamInfo,
       });
 
-      const proxyPluins = Object.keys(config.proxy_plugins || {}).sort();
+      const proxyPluins = Object.keys(config.plugins || {}).sort();
       proxyPluins.push(addTag);
       items.push({
-        name: t("nav.proxyPlugin"),
+        name: t("nav.plugin"),
         icon: <ExtensionIcon />,
         children: proxyPluins,
         category: NavCategory.ProxyPluginInfo,
@@ -193,7 +193,7 @@ export default function MainNav({
                   break;
                 }
                 case NavCategory.ProxyPluginInfo: {
-                  goToProxyPluginInfo(name);
+                  goToPluginInfo(name);
                   break;
                 }
               }

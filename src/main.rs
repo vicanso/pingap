@@ -171,8 +171,8 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     let (server_conf, name, proxy_plugin_info) =
         parse_admin_proxy_plugin(&args.admin.unwrap_or_default());
 
-    if let Err(e) = plugin::init_proxy_plugins(vec![(name, proxy_plugin_info)]) {
-        error!("init proxy plugins fail, {e}");
+    if let Err(e) = plugin::init_plugins(vec![(name, proxy_plugin_info)]) {
+        error!("init plugins fail, {e}");
     }
     config::set_config_path(&args.conf);
     let mut my_server = server::Server::new(None)?;
@@ -282,7 +282,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         let _ = pyro::start_pyroscope(url)?;
     }
 
-    let mut proxy_plugin_confs: Vec<(String, PluginConf)> = conf
+    let mut plugin_confs: Vec<(String, PluginConf)> = conf
         .plugins
         .iter()
         .map(|(name, value)| (name.to_string(), value.clone()))
@@ -291,12 +291,12 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut server_conf_list: Vec<ServerConf> = conf.into();
     if let Some(addr) = args.admin {
         let (server_conf, name, proxy_plugin_info) = parse_admin_proxy_plugin(&addr);
-        proxy_plugin_confs.push((name, proxy_plugin_info));
+        plugin_confs.push((name, proxy_plugin_info));
         server_conf_list.push(server_conf);
     }
 
-    if let Err(e) = plugin::init_proxy_plugins(proxy_plugin_confs) {
-        error!("init proxy plugins fail, {e}");
+    if let Err(e) = plugin::init_plugins(plugin_confs) {
+        error!("init plugins fail, {e}");
     }
     let mut domains = vec![];
     let mut exits_80_server = false;

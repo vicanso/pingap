@@ -8,7 +8,7 @@ import FormEditor, {
   FormItemCategory,
   PluginCategory,
 } from "../components/form-editor";
-import { goToProxyPluginInfo } from "../router";
+import { goToPluginInfo } from "../router";
 
 export default function ProxyPluginInfo() {
   const { t } = useTranslation();
@@ -29,33 +29,38 @@ export default function ProxyPluginInfo() {
     created = true;
     pluginName = "";
   }
-  const proxyPlugins = config.proxy_plugins || {};
+  const proxyPlugins = config.plugins || {};
   const proxyPlugin = proxyPlugins[pluginName || ""] || {};
   const currentNames = Object.keys(proxyPlugins);
 
   const arr: FormItem[] = [
     {
       id: "step",
-      label: t("proxyPlugin.step"),
+      label: t("plugin.step"),
       defaultValue: proxyPlugin.step,
       category: FormItemCategory.CHECKBOX,
       span: 6,
       options: [
         {
-          label: "Request Filter",
+          label: "Request",
           option: 0,
-          value: "request-filter",
+          value: "request",
         },
         {
-          label: "Proxy Upstream Filter",
+          label: "Proxy Upstream",
           option: 1,
-          value: "proxy-upstream-filter",
+          value: "proxy_upstream",
+        },
+        {
+          label: "Upstream Response",
+          option: 2,
+          value: "upstream_response",
         },
       ],
     },
     {
       id: "category",
-      label: t("proxyPlugin.category"),
+      label: t("plugin.category"),
       defaultValue: proxyPlugin.category,
       category: FormItemCategory.CHECKBOX,
       span: 12,
@@ -125,18 +130,23 @@ export default function ProxyPluginInfo() {
           option: 12,
           value: PluginCategory.PING,
         },
+        {
+          label: "Response Headers",
+          option: 13,
+          value: PluginCategory.RESPONSE_HEADERS,
+        },
       ],
     },
     {
       id: "value",
-      label: t("proxyPlugin.config"),
+      label: t("plugin.config"),
       defaultValue: proxyPlugin.value,
-      category: FormItemCategory.PROXY_PLUGIN,
+      category: FormItemCategory.PLUGIN,
       span: 12,
     },
     {
       id: "remark",
-      label: t("proxyPlugin.remark"),
+      label: t("plugin.remark"),
       defaultValue: proxyPlugin.remark,
       span: 12,
       category: FormItemCategory.TEXTAREA,
@@ -152,22 +162,22 @@ export default function ProxyPluginInfo() {
       data.category = PluginCategory.STATS;
     }
 
-    return update("proxy_plugin", pluginName, data).then(() => {
+    return update("plugin", pluginName, data).then(() => {
       if (created) {
-        goToProxyPluginInfo(pluginName);
+        goToPluginInfo(pluginName);
       }
     });
   };
   const onRemove = async () => {
-    return remove("proxy_plugin", name || "").then(() => {
-      goToProxyPluginInfo("*");
+    return remove("plugin", name || "").then(() => {
+      goToPluginInfo("*");
     });
   };
   return (
     <FormEditor
       key={name}
-      title={t("proxyPlugin.title")}
-      description={t("proxyPlugin.description")}
+      title={t("plugin.title")}
+      description={t("plugin.description")}
       items={arr}
       onUpsert={onUpsert}
       onRemove={onRemove}

@@ -123,7 +123,7 @@ impl ConfigStorage for EtcdStorage {
 mod tests {
     use super::EtcdStorage;
     use crate::config::{
-        ConfigStorage, PingapConf, CATEGORY_LOCATION, CATEGORY_PROXY_PLUGIN, CATEGORY_SERVER,
+        ConfigStorage, PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
         CATEGORY_UPSTREAM,
     };
     use nanoid::nanoid;
@@ -142,10 +142,7 @@ mod tests {
         storage.save_config(&conf, "basic").await.unwrap();
         storage.save_config(&conf, CATEGORY_UPSTREAM).await.unwrap();
         storage.save_config(&conf, CATEGORY_LOCATION).await.unwrap();
-        storage
-            .save_config(&conf, CATEGORY_PROXY_PLUGIN)
-            .await
-            .unwrap();
+        storage.save_config(&conf, CATEGORY_PLUGIN).await.unwrap();
         storage.save_config(&conf, CATEGORY_SERVER).await.unwrap();
 
         let current_conf = storage.load_config(false).await.unwrap();

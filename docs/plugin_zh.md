@@ -2,7 +2,11 @@
 description: Pingap 插件体系
 ---
 
-Pingap中通过Locaton添加各种插件支持更多的应用场景，如鉴权、流控等。现在插件支持在`request_filter`与`proxy_upstream_filter`阶段执行，均为转发到上游节点前的处理。下面介绍一下`proxy plunin`的具体逻辑，trait如下：
+Pingap中通过Locaton添加各种插件支持更多的应用场景，如鉴权、流控、设置响应头等场景。
+
+# 转发插件
+
+转发插件是在请求转发至upstream之前执行，支持在`request_filter`与`proxy_upstream_filter`阶段执行，均为转发到上游节点前的处理。下面介绍一下`proxy plugin`的具体逻辑，trait如下：
 
 ```rust
 #[async_trait]
@@ -30,7 +34,7 @@ pub trait ProxyPlugin: Sync + Send {
 获取应用性能指标等统计性能，配置是指定对应的访问路径即可，也可直接使用自带的`pingap:stats`。如配置为`/stats`后，访问该location的`/stats`目录即可获取到应用的统计指标。具体配置如下：
 
 ```toml
-[proxy_plugins.stats]
+[plugins.stats]
 value = "/stats"
 category = "stats"
 ```
@@ -48,7 +52,7 @@ category = "stats"
 根据cookie的`bigtree`限制并发数为`10`:
 
 ```toml
-[proxy_plugins.cookieBigTreeLimit]
+[plugins.cookieBigTreeLimit]
 value = "~bigtree 10"
 category = "limit"
 ```
@@ -56,7 +60,7 @@ category = "limit"
 根据请求头的`X-App`参数限制并发数`10`:
 
 ```toml
-[proxy_plugins.headerAppLimit]
+[plugins.headerAppLimit]
 value = ">X-App 10"
 category = "limit"
 ```
@@ -64,7 +68,7 @@ category = "limit"
 根据query中的`app`参数限制并发数`10`:
 
 ```toml
-[proxy_plugins.queryAppLimit]
+[plugins.queryAppLimit]
 value = "?query 10"
 category = "limit"
 ```
@@ -72,7 +76,7 @@ category = "limit"
 根据ip限制并发数`10`(ip获取的顺序为X-Forwarded-For --> X-Real-Ip --> Remote Addr):
 
 ```toml
-[proxy_plugins.ipLimit]
+[plugins.ipLimit]
 value = "ip 10"
 category = "limit"
 ```
@@ -88,7 +92,7 @@ category = "limit"
 压缩中间件，处理从上游返回的相关数据压缩，由于`pingora`对于压缩的匹配顺序为`gzip --> br --> zstd`，官方暂未支持调整优先级，而对于现代浏览器，基本都支持`gzip`，大部分支持`br`，少部分支持`zstd`，为了使用更好的压缩方式，此插件会调整请求的`Accept-Encoding`，让压缩的顺序调整为`zstd --> br --> gzip`。配置如下：
 
 ```toml
-[proxy_plugins.commonCompression]
+[plugins.commonCompression]
 value = "6 6 5"
 category = "compression"
 ```
@@ -113,7 +117,7 @@ category = "compression"
 - `autoindex`: 是否允许目录以浏览形式展示
 
 ```toml
-[proxy_plugins.downloadsServe]
+[plugins.downloadsServe]
 value = "~/Downloads?chunk_size=4096&max_age=3600&private&index=index.html&charset=utf-8"
 category = "directory"
 ```
@@ -129,7 +133,7 @@ category = "directory"
 用于对特定路径(若不设置则所有)mock响应，用于测试或暂停服务使用。
 
 ```toml
-[proxy_plugins.errorMock]
+[plugins.errorMock]
 value = '{"status":500,"path":"/","headers":["X-Error:custom error","Content-Type:application/json"],"data":"{\n  \"message\": \"error message\"\n}"}'
 category = "mock"
 ```
@@ -145,7 +149,7 @@ category = "mock"
 用于在请求头中添加`"X-Request-Id`，若已有则忽略，可指定使用`uuid`或`nanoid`两种形式，`nanoid`可以指定长度。
 
 ```toml
-[proxy_plugins.customReqId]
+[plugins.customReqId]
 value = "nanoid 8"
 category = "request_id"
 ```
@@ -161,7 +165,7 @@ category = "request_id"
 Ip限制分为两种模式，允许(0)，禁止(1)，ip可支持配置为单ip或ip组，配置如下：
 
 ```toml
-[proxy_plugins.ipDeny]
+[plugins.ipDeny]
 value = "192.168.1.1,1.1.1.0/24 1"
 category = "ip_limit"
 ```
@@ -179,7 +183,7 @@ KeyAuth用于提供简单的认证方式，支持配置从query(以?开头)或he
 从query中的app字段中获取校验：
 
 ```toml
-[proxy_plugins.appAuth]
+[plugins.appAuth]
 value = "?app KOXQaw,GKvXY2"
 category = "key_auth"
 ```
@@ -187,7 +191,7 @@ category = "key_auth"
 从header中的X-App字段中获取校验：
 
 ```toml
-[proxy_plugins.appAuth]
+[plugins.appAuth]
 value = "X-App KOXQaw,GKvXY2"
 category = "key_auth"
 ```
@@ -200,11 +204,11 @@ category = "key_auth"
 
 ## BasicAuth
 
-BasicAuth鉴权，配置时需要使用保存`base64(user:pass)`的值，若有多个则可以使用`,`分隔。
+BasicAuth鉴权，配置时需要使用保存`base64(user:pass)`的值，若有多个则可以使用` `分隔。
 
 ```toml
-[proxy_plugins.testBasicAuth]
-value = "YWRtaW46dGVzdA==,YWRtaW46MTIzMTIz"
+[plugins.testBasicAuth]
+value = "YWRtaW46dGVzdA== YWRtaW46MTIzMTIz"
 category = "basic_auth"
 ```
 
@@ -223,7 +227,7 @@ Http缓存，仅支持内存式缓存，暂不建议使用。
 重定向http至https，可在重定向时添加前缀。
 
 ```toml
-[proxy_plugins.http2https]
+[plugins.http2https]
 category = "redirect_https"
 ```
 
@@ -238,7 +242,42 @@ category = "redirect_https"
 Ping->pong的响应处理，可用于判断程序是否正常运行等。
 
 ```toml
-[proxy_plugins.pingpong]
+[plugins.pingpong]
 category = "ping"
 value = "/ping"
 ```
+
+# 响应插件
+
+响应插件是在获取到响应数据，在数据发送给客户端之前的处理。下面介绍一下`response plugin`的具体逻辑，trait如下：
+
+```rust
+pub trait ResponsePlugin: Sync + Send {
+    fn category(&self) -> PluginCategory;
+    fn step(&self) -> PluginStep;
+    fn handle(
+        &self,
+        _session: &mut Session,
+        _ctx: &mut State,
+        _upstream_response: &mut ResponseHeader,
+    ) {
+    }
+}
+```
+
+## ResponseHeaders
+
+响应头的插件主要是设置、添加以及删除请求头。多个配置以` `分隔，配置以`+`开头的表示添加响应头，以`-`表示删除该响应头，默认的是设置响应头(若已存在则覆盖)。
+
+```toml
+[plugins.commonResponseHeaders]
+category = "response_headers"
+step = "upstream_response"
+value = "X-Response-Id:def X-Account:user +X-Response-Id:ead -X-User -X-Mock"
+```
+
+界面配置如图所示，按需要配置要设置、添加或删除的响应头，若不需要则不设置即可：
+
+<p align="center">
+    <img src="../asset/plugin-response-headers.jpg" alt="plugin-response-headers">
+</p>

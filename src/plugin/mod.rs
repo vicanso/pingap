@@ -127,7 +127,7 @@ type Plugins = (
 
 static PLUGINS: OnceCell<Plugins> = OnceCell::new();
 
-pub fn init_proxy_plugins(confs: Vec<(String, PluginConf)>) -> Result<()> {
+pub fn init_plugins(confs: Vec<(String, PluginConf)>) -> Result<()> {
     PLUGINS.get_or_try_init(|| {
         let mut proxy_plugins: HashMap<String, Box<dyn ProxyPlugin>> = HashMap::new();
         let mut response_plugins: HashMap<String, Box<dyn ResponsePlugin>> = HashMap::new();
@@ -202,6 +202,7 @@ pub fn init_proxy_plugins(confs: Vec<(String, PluginConf)>) -> Result<()> {
     Ok(())
 }
 
+#[inline]
 pub fn get_proxy_plugin(name: &str) -> Option<&dyn ProxyPlugin> {
     if let Some((proxy_plugins, _)) = PLUGINS.get() {
         if let Some(plugin) = proxy_plugins.get(name) {
@@ -211,6 +212,7 @@ pub fn get_proxy_plugin(name: &str) -> Option<&dyn ProxyPlugin> {
     None
 }
 
+#[inline]
 pub fn get_response_plugin(name: &str) -> Option<&dyn ResponsePlugin> {
     if let Some((_, response_plugins)) = PLUGINS.get() {
         if let Some(plugin) = response_plugins.get(name) {

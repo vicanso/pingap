@@ -134,7 +134,7 @@ rewrite = ""
 
 # The proxy plugin for location,
 # it will run all plugins in order.
-proxy_plugins = ["pingap:requestId", "pingap:stats"]
+plugins = ["pingap:requestId", "pingap:stats"]
 
 # Server config list, it will be defined as [servers.name]
 [servers.test]
@@ -164,6 +164,6 @@ locations = ["lo"]
 # Default `None`.
 # enabled_h2 = true
 
-[proxy_plugins.stats]
+[plugins.stats]
 category = "stats"
 value = "/stats"

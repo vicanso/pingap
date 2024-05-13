@@ -37,7 +37,7 @@ impl BasicAuth {
     pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new basic auth proxy plugin, {value}, {proxy_step:?}");
         let mut authorizations = vec![];
-        for item in value.split(',') {
+        for item in value.split(' ') {
             let _ = STANDARD
                 .decode(item)
                 .map_err(|e| Error::Base64Decode { source: e })?;

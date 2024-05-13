@@ -565,7 +565,7 @@ impl ProxyHttp for Server {
     async fn upstream_request_filter(
         &self,
         session: &mut Session,
-        header: &mut RequestHeader,
+        upstream_response: &mut RequestHeader,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<()>
     where
@@ -580,10 +580,11 @@ impl ProxyHttp for Server {
             } else {
                 addr.to_string()
             };
-            let _ = header.insert_header(util::HTTP_HEADER_X_FORWARDED_FOR.clone(), value);
+            let _ =
+                upstream_response.insert_header(util::HTTP_HEADER_X_FORWARDED_FOR.clone(), value);
         }
         let lo = &self.locations[ctx.location_index.unwrap_or_default()];
-        lo.insert_proxy_headers(header);
+        lo.append_proxy_headers(upstream_response);
 
         Ok(())
     }
@@ -600,7 +601,7 @@ impl ProxyHttp for Server {
             let _ = upstream_response.insert_header(HTTP_HEADER_NAME_X_REQUEST_ID.clone(), id);
         }
         let lo = &self.locations[ctx.location_index.unwrap_or_default()];
-        lo.insert_headers(upstream_response);
+        lo.append_headers(upstream_response);
 
         lo.exec_response_plugins(
             session,

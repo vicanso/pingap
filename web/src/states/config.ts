@@ -25,7 +25,7 @@ interface Location {
   proxy_headers?: string[];
   headers?: string[];
   rewrite?: string;
-  proxy_plugins?: string[];
+  plugins?: string[];
   remark?: string;
 }
 
@@ -61,7 +61,7 @@ interface Server {
   remark?: string;
 }
 
-interface ProxyPlugin {
+interface Plugin {
   value: string;
   category: string;
   step?: number;
@@ -96,7 +96,7 @@ interface Config {
   upstreams?: Record<string, Upstream>;
   locations?: Record<string, Location>;
   servers?: Record<string, Server>;
-  proxy_plugins?: Record<string, ProxyPlugin>;
+  plugins?: Record<string, Plugin>;
 }
 
 interface ConfigState {
