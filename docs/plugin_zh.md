@@ -47,13 +47,13 @@ category = "stats"
 
 ## Limit
 
-可基于cookie、请求头或query参数来限制并发访问，需要注意此限制只是限制并发数而非访问频率，以及若配置的字段获取到的值为空，则不限制。
+可基于cookie、请求头或query参数来限制并发访问，需要注意此限制只是限制并发数而非访问频率，以及若配置的字段获取到的值为空，则不限制，支持`inflight`与`rate`两种限制类型。
 
 根据cookie的`bigtree`限制并发数为`10`:
 
 ```toml
 [plugins.cookieBigTreeLimit]
-value = "~bigtree 10"
+value = "inflight key=cookie&value=bigtree&max=10"
 category = "limit"
 ```
 
@@ -61,23 +61,23 @@ category = "limit"
 
 ```toml
 [plugins.headerAppLimit]
-value = ">X-App 10"
+value = "inflight key=header&value=X-App&max=10"
 category = "limit"
 ```
 
-根据query中的`app`参数限制并发数`10`:
+根据query中的`app`参数限制1秒钟仅能访问`10`次:
 
 ```toml
 [plugins.queryAppLimit]
-value = "?query 10"
+value = "rate key=query&value=app&max=10&interval=1s"
 category = "limit"
 ```
 
-根据ip限制并发数`10`(ip获取的顺序为X-Forwarded-For --> X-Real-Ip --> Remote Addr):
+根据ip限制1分钟最多访问`50`次(ip获取的顺序为X-Forwarded-For --> X-Real-Ip --> Remote Addr):
 
 ```toml
 [plugins.ipLimit]
-value = "ip 10"
+value = "rate max=10&interval=1m"
 category = "limit"
 ```
 
