@@ -19,6 +19,8 @@ use snafu::{ResultExt, Snafu};
 use std::str::FromStr;
 use substring::Substring;
 
+use crate::state::get_hostname;
+
 #[derive(Debug, Snafu)]
 pub enum Error {
     InvalidHeaderValue {
@@ -39,7 +41,11 @@ pub fn convert_header(value: &str) -> Result<Option<HttpHeader>> {
     if let Some((k, v)) = value.split_once(':').map(|(k, v)| (k.trim(), v.trim())) {
         let name = HeaderName::from_str(k).context(InvalidHeaderNameSnafu { value: k })?;
         let key = if v.starts_with('$') {
-            std::env::var(v.substring(1, v.len())).unwrap_or_else(|_| v.to_string())
+            if v == "$HOSTNAME" {
+                get_hostname()
+            } else {
+                std::env::var(v.substring(1, v.len())).unwrap_or_else(|_| v.to_string())
+            }
         } else {
             v.to_string()
         };
