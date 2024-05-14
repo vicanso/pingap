@@ -40,7 +40,17 @@ impl MockResponse {
     /// Creates a new mock response upstream, which will return a mock data.
     pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new mock proxy plugin, {value}, {proxy_step:?}");
-        let info: MockInfo = serde_json::from_str(value).map_err(|e| Error::Json { source: e })?;
+        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&proxy_step) {
+            return Err(Error::Invalid {
+                category: PluginCategory::Mock.to_string(),
+                message: "Mock plugin should be executed at request or proxy upstream step"
+                    .to_string(),
+            });
+        }
+        let info: MockInfo = serde_json::from_str(value).map_err(|e| Error::Json {
+            category: PluginCategory::Mock.to_string(),
+            source: e,
+        })?;
 
         let mut resp = HttpResponse {
             status: StatusCode::OK,

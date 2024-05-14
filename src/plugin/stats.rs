@@ -12,12 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::time::Duration;
-
-use super::ProxyPlugin;
-use super::Result;
-use crate::config::PluginCategory;
-use crate::config::PluginStep;
+use super::{Error, ProxyPlugin, Result};
+use crate::config::{PluginCategory, PluginStep};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON};
 use crate::state::{get_hostname, get_start_time, State};
 use crate::util;
@@ -28,6 +24,7 @@ use log::debug;
 use memory_stats::memory_stats;
 use pingora::proxy::Session;
 use serde::Serialize;
+use std::time::Duration;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -50,6 +47,13 @@ pub struct Stats {
 impl Stats {
     pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new stats proxy plugin, {value}, {proxy_step:?}");
+        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&proxy_step) {
+            return Err(Error::Invalid {
+                category: PluginCategory::Stats.to_string(),
+                message: "Stats plugin should be executed at request or proxy upstream step"
+                    .to_string(),
+            });
+        }
         Ok(Self {
             proxy_step,
             path: value.to_string(),

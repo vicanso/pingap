@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{ProxyPlugin, Result};
+use super::{Error, ProxyPlugin, Result};
 use crate::config::{PluginCategory, PluginStep};
 use crate::http_extra::{HttpChunkResponse, HttpHeader, HttpResponse};
 use crate::state::State;
@@ -21,6 +21,7 @@ use async_trait::async_trait;
 use bytesize::ByteSize;
 use glob::glob;
 use http::{header, HeaderValue, StatusCode};
+use humantime::parse_duration;
 use log::{debug, error};
 use once_cell::sync::Lazy;
 use pingora::proxy::Session;
@@ -96,6 +97,8 @@ pub struct Directory {
     // charset for text file
     charset: Option<String>,
     proxy_step: PluginStep,
+    // support download
+    download: bool,
 }
 
 async fn get_data(file: &PathBuf) -> std::io::Result<(std::fs::Metadata, fs::File)> {
@@ -144,6 +147,14 @@ impl Directory {
     /// Creates a new directory upstream, which will serve static file of directory.
     pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new serve static file proxy plugin, {value}, {proxy_step:?}");
+        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&proxy_step) {
+            return Err(Error::Invalid {
+                category: PluginCategory::Directory.to_string(),
+                message:
+                    "Directory serve plugin should be executed at request or proxy upstream step"
+                        .to_string(),
+            });
+        }
         let mut new_path = value.to_string();
         let mut chunk_size = None;
         let mut max_age = None;
@@ -151,6 +162,7 @@ impl Directory {
         let mut index_file = "index.html".to_string();
         let mut charset = None;
         let mut autoindex = false;
+        let mut download = false;
         let file_protocol = "file://";
         if !new_path.starts_with(file_protocol) {
             new_path = format!("{file_protocol}{new_path}").to_string();
@@ -170,14 +182,15 @@ impl Directory {
                         }
                     }
                     "max_age" => {
-                        if let Ok(v) = value.parse::<u32>() {
-                            max_age = Some(v);
+                        if let Ok(v) = parse_duration(&value) {
+                            max_age = Some(v.as_secs() as u32);
                         }
                     }
-                    "autoindex" => autoindex = true,
-                    "private" => cache_private = Some(true),
                     "index" => index_file = value.to_string(),
                     "charset" => charset = Some(value.to_string()),
+                    "autoindex" => autoindex = true,
+                    "private" => cache_private = Some(true),
+                    "download" => download = true,
                     _ => {}
                 }
             }
@@ -194,6 +207,7 @@ impl Directory {
             charset,
             cache_private,
             proxy_step,
+            download,
         })
     }
 }
@@ -211,7 +225,9 @@ fn get_autoindex_html(path: &Path) -> Result<String, String> {
         let filepath = f.to_string_lossy();
         let mut size = "".to_string();
         let mut last_modified = "".to_string();
+        let mut is_file = false;
         if f.is_file() {
+            is_file = true;
             let _ = f.metadata().map(|meta| {
                 size = ByteSize(meta.size()).to_string();
                 last_modified = chrono::DateTime::from_timestamp(meta.mtime(), 0)
@@ -226,7 +242,10 @@ fn get_autoindex_html(path: &Path) -> Result<String, String> {
             continue;
         }
 
-        let target = format!("./{}", filepath.substring(path.len(), filepath.len()));
+        let mut target = format!("./{}", filepath.split('/').last().unwrap_or_default());
+        if !is_file {
+            target += "/";
+        }
         file_list_html.push(format!(
             r###"<tr>
                 <td class="name"><a href="{target}">{name}</a></td>
@@ -272,10 +291,20 @@ impl ProxyPlugin for Directory {
             return Ok(Some(resp));
         }
 
+        // Content-Disposition: attachment; filename="example.pdf"
+
         let resp = match get_data(&file).await {
             Ok((meta, mut f)) => {
-                let (cacheable, size, headers) =
+                let (cacheable, size, mut headers) =
                     get_cacheable_and_headers_from_meta(&file, &meta, &self.charset);
+                if self.download {
+                    if let Ok(value) = HeaderValue::from_str(&format!(
+                        r###"attachment; filename="{}""###,
+                        file.file_name().unwrap_or_default().to_string_lossy()
+                    )) {
+                        headers.push((header::CONTENT_DISPOSITION, value));
+                    }
+                }
                 // 4kb
                 if size <= 4096 {
                     let mut buffer = vec![0; size];
@@ -332,7 +361,7 @@ mod tests {
     #[test]
     fn test_new_directory() {
         let dir = Directory::new(
-            "~/Downloads?chunk_size=1024&max_age=3600&private&index=pingap/index.html",
+            "~/Downloads?chunk_size=1024&max_age=1h&private&index=pingap/index.html",
             PluginStep::Request,
         )
         .unwrap();

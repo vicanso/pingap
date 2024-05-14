@@ -7,7 +7,8 @@
 - [ ] fix not_before not_after of cert
 - [ ] http headers plugin
 - [ ] client body size limit plugin
-- [ ] support more limit plugin
+- [x] support `Content-Disposition` for directory static serve plugin
+- [x] support more limit plugin
 - [x] how to use proxy plugin
 - [x] server listen multi address
 - [x] show name of web view editor

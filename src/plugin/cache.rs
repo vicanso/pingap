@@ -66,7 +66,14 @@ pub struct Cache {
 impl Cache {
     pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new cache storage proxy plugin, {value}, {proxy_step:?}");
+        if proxy_step != PluginStep::Request {
+            return Err(Error::Invalid {
+                category: PluginCategory::Cache.to_string(),
+                message: "Cache plugin should be executed at request step".to_string(),
+            });
+        }
         let url_info = Url::parse(value).map_err(|e| Error::Invalid {
+            category: PluginCategory::Cache.to_string(),
             message: e.to_string(),
         })?;
         let mut lock = 0;

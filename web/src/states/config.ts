@@ -64,7 +64,7 @@ interface Server {
 interface Plugin {
   value: string;
   category: string;
-  step?: number;
+  step?: string;
   remark?: string;
 }
 

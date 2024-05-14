@@ -45,27 +45,48 @@ All toml configurations are as follows [pingap.toml](./conf/pingap.toml).
 
 ```mermaid
 graph TD;
-    start("New Request")-->server("HTTP Server");
+    server("HTTP Server");
+    locationA("Location A");
+    locationB("Location B");
+    locationPluginListA("Proxy Plugin List A");
+    locationPluginListB("Proxy Plugin List B");
+    upstreamA1("Upstream A1");
+    upstreamA2("Upstream A2");
+    upstreamB1("Upstream B1");
+    upstreamB2("Upstream B2");
+    locationResponsePluginListA("Response Plugin List A");
+    locationResponsePluginListB("Response Plugin List B");
 
-    server -- "host:HostA, Path:/api/*" --> locationA("Location A")
+    start("New Request") --> server
 
-    server -- "Path:/rest/*"--> locationB("Location B")
+    server -- "host:HostA, Path:/api/*" --> locationA
 
-    locationA -- "Exec Plugins" --> locationPluginListA("Plugin List A")
+    server -- "Path:/rest/*"--> locationB
 
-    locationB -- "Exec Plugins" --> locationPluginListB("Plugin List B")
+    locationA -- "Exec Proxy Plugins" --> locationPluginListA
 
-    locationPluginListA -- "proxy pass: 10.0.0.1:8001" --> upstreamA1("Upstream A1") --> response
+    locationB -- "Exec Proxy Plugins" --> locationPluginListB
 
-    locationPluginListA -- "proxy pass: 10.0.0.2:8001" --> upstreamA2("Upstream A2") --> response
+    locationPluginListA -- "proxy pass: 10.0.0.1:8001" --> upstreamA1
+
+    locationPluginListA -- "proxy pass: 10.0.0.2:8001" --> upstreamA2
 
     locationPluginListA -- "done" --> response
 
-    locationPluginListB -- "proxy pass: 10.0.0.1:8002" --> upstreamB1("Upstream B1") --> response
+    locationPluginListB -- "proxy pass: 10.0.0.1:8002" --> upstreamB1
 
-    locationPluginListB -- "proxy pass: 10.0.0.2:8002" --> upstreamB2("Upstream B2") --> response
+    locationPluginListB -- "proxy pass: 10.0.0.2:8002" --> upstreamB2
 
     locationPluginListB -- "done" --> response
+
+    upstreamA1 -- "Exec Response Plugins" --> locationResponsePluginListA
+    upstreamA2 -- "Exec Response Plugins" --> locationResponsePluginListA
+
+    upstreamB1 -- "Exec Response Plugins" --> locationResponsePluginListB
+    upstreamB2 -- "Exec Response Plugins" --> locationResponsePluginListB
+
+    locationResponsePluginListA --> response
+    locationResponsePluginListB --> response
 
     response("HTTP Response") --> stop("Logging");
 ```

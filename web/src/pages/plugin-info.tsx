@@ -35,30 +35,6 @@ export default function ProxyPluginInfo() {
 
   const arr: FormItem[] = [
     {
-      id: "step",
-      label: t("plugin.step"),
-      defaultValue: proxyPlugin.step,
-      category: FormItemCategory.CHECKBOX,
-      span: 6,
-      options: [
-        {
-          label: "Request",
-          option: 0,
-          value: "request",
-        },
-        {
-          label: "Proxy Upstream",
-          option: 1,
-          value: "proxy_upstream",
-        },
-        {
-          label: "Upstream Response",
-          option: 2,
-          value: "upstream_response",
-        },
-      ],
-    },
-    {
       id: "category",
       label: t("plugin.category"),
       defaultValue: proxyPlugin.category,
@@ -136,6 +112,13 @@ export default function ProxyPluginInfo() {
           value: PluginCategory.RESPONSE_HEADERS,
         },
       ],
+    },
+    {
+      id: "step",
+      label: t("plugin.step"),
+      defaultValue: proxyPlugin.step,
+      category: FormItemCategory.PLUGIN_STEP,
+      span: 6,
     },
     {
       id: "value",

@@ -14,8 +14,7 @@
 
 use super::ProxyPlugin;
 use super::{Error, Result};
-use crate::config::PluginCategory;
-use crate::config::PluginStep;
+use crate::config::{PluginCategory, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use crate::util;
@@ -40,9 +39,17 @@ pub struct KeyAuth {
 impl KeyAuth {
     pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new key auth proxy plugin, {value}, {proxy_step:?}");
+        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&proxy_step) {
+            return Err(Error::Invalid {
+                category: PluginCategory::KeyAuth.to_string(),
+                message: "Key auth plugin should be executed at request or proxy upstream step"
+                    .to_string(),
+            });
+        }
         let arr: Vec<&str> = value.split(' ').collect();
         if arr.len() != 2 {
             return Err(Error::Invalid {
+                category: PluginCategory::KeyAuth.to_string(),
                 message: "Value for key auth is invalid".to_string(),
             });
         }
@@ -55,6 +62,7 @@ impl KeyAuth {
             query_name = Some(name.substring(1, name.len()).to_string());
         } else {
             header_name = Some(HeaderName::from_str(name).map_err(|e| Error::Invalid {
+                category: PluginCategory::KeyAuth.to_string(),
                 message: format!("invalid header name, {e}"),
             })?);
         }

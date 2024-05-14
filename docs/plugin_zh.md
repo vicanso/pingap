@@ -4,6 +4,14 @@ description: Pingap 插件体系
 
 Pingap中通过Locaton添加各种插件支持更多的应用场景，如鉴权、流控、设置响应头等场景。
 
+# 插件执行时点
+
+现支持将插件添加到以下各阶段时点中执行：
+
+- `Request`: 请求的最开始阶段，适用于针对一些权限类的拦截等处理
+- `ProxyUpstream`: 请求转发至上流节点之前，因为此流程是在读取缓存之后，因此若不希望针对缓存前限制，但转发至上游前限制的可配置为此阶段。如限制IP访问频繁，但允许高并发读取缓存数据。
+- `UpstreamResponse`: 上游数据响应之后，用于针对上游响应数据做调整时使用。
+
 # 转发插件
 
 转发插件是在请求转发至upstream之前执行，支持在`request_filter`与`proxy_upstream_filter`阶段执行，均为转发到上游节点前的处理。下面介绍一下`proxy plugin`的具体逻辑，trait如下：
@@ -110,11 +118,12 @@ category = "compression"
 静态文件目录服务，为指定目录提供静态文件服务，需要注意query部分的参数均为可选值，说明如下：
 
 - `chunk_size`: Http chunk的大小，默认为`8192`
-- `max_age`: 设置http响应的的缓存时间，默认无。此值对于`text/html`无效，html均设置为不可缓存
-- `private`: 缓存是否设置为`private`，默认为`public`
+- `max_age`: 设置http响应的的缓存时间，默认无。此值对于`text/html`无效，html均设置为不可缓存。如设置为`1h`表示缓存有效期1小时
+- `private`: 缓存是否设置为`private`，默认为`public`，，query中只要有`private`即可
 - `index`: 设置默认的index文件，默认为`index.html`
 - `charset`: 指定charset类型，默认无
-- `autoindex`: 是否允许目录以浏览形式展示
+- `autoindex`: 是否允许目录以浏览形式展示，query中只要有`autoindex`即可
+- `download`: 是否支持下载，指定该参数后响应时会设置响应头`Content-Disposition`，query中只要有`download`即可
 
 ```toml
 [plugins.downloadsServe]

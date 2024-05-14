@@ -12,10 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::ProxyPlugin;
-use super::Result;
-use crate::config::PluginCategory;
-use crate::config::PluginStep;
+use super::{Error, ProxyPlugin, Result};
+use crate::config::{PluginCategory, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::http_extra::HTTP_HEADER_NAME_X_REQUEST_ID;
 use crate::state::State;
@@ -34,6 +32,13 @@ pub struct RequestId {
 impl RequestId {
     pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new request id proxy plugin, {value}, {proxy_step:?}");
+        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&proxy_step) {
+            return Err(Error::Invalid {
+                category: PluginCategory::RequestId.to_string(),
+                message: "Request id should be executed at request or proxy upstream step"
+                    .to_string(),
+            });
+        }
         let arr: Vec<&str> = value.split(' ').collect();
         let algorithm = arr[0].trim().to_string();
         let mut size = 8;

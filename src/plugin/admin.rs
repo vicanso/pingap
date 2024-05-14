@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{ProxyPlugin, Result};
+use super::{Error, ProxyPlugin, Result};
 use crate::config::{
     self, save_config, BasicConf, LocationConf, PluginCategory, PluginConf, PluginStep, ServerConf,
     UpstreamConf,
@@ -93,22 +93,6 @@ pub struct AdminServe {
     pub proxy_step: PluginStep,
     ip_fail_limit: TtlLruLimit,
 }
-impl AdminServe {
-    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
-        debug!("new admin server proxy plugin, {value}, {proxy_step:?}");
-        let arr: Vec<&str> = value.split(' ').collect();
-        let mut authorization = "".to_string();
-        if arr.len() >= 2 {
-            authorization = arr[1].trim().to_string();
-        }
-        Ok(Self {
-            path: arr[0].trim().to_string(),
-            proxy_step,
-            authorization,
-            ip_fail_limit: TtlLruLimit::new(512, Duration::from_secs(5 * 60), 5),
-        })
-    }
-}
 
 #[derive(Serialize, Deserialize)]
 struct ErrorResponse {
@@ -125,6 +109,27 @@ struct BasicInfo {
 }
 
 impl AdminServe {
+    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
+        debug!("new admin server proxy plugin, {value}, {proxy_step:?}");
+        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&proxy_step) {
+            return Err(Error::Invalid {
+                category: PluginCategory::Admin.to_string(),
+                message: "Admin serve plugin should be executed at request or proxy upstream step"
+                    .to_string(),
+            });
+        }
+        let arr: Vec<&str> = value.split(' ').collect();
+        let mut authorization = "".to_string();
+        if arr.len() >= 2 {
+            authorization = arr[1].trim().to_string();
+        }
+        Ok(Self {
+            path: arr[0].trim().to_string(),
+            proxy_step,
+            authorization,
+            ip_fail_limit: TtlLruLimit::new(512, Duration::from_secs(5 * 60), 5),
+        })
+    }
     fn auth_validate(&self, req_header: &RequestHeader) -> bool {
         if self.authorization.is_empty() {
             return true;

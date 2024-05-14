@@ -40,16 +40,29 @@ mod stats;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Invalid {message}"))]
-    Invalid { message: String },
-    #[snafu(display("Parse int {source}"))]
-    ParseInt { source: ParseIntError },
-    #[snafu(display("Exceed limit {value}/{max}"))]
-    Exceed { max: isize, value: isize },
-    #[snafu(display("Json parse error {source}"))]
-    Json { source: serde_json::Error },
-    #[snafu(display("Base64 decode error {source}"))]
-    Base64Decode { source: base64::DecodeError },
+    #[snafu(display("Plugin {category}, invalid {message}"))]
+    Invalid { category: String, message: String },
+    #[snafu(display("Plugin {category}, parse int {source}"))]
+    ParseInt {
+        category: String,
+        source: ParseIntError,
+    },
+    #[snafu(display("Plugin {category}, exceed limit {value}/{max}"))]
+    Exceed {
+        category: String,
+        max: isize,
+        value: isize,
+    },
+    #[snafu(display("Plugin {category}, json parse error {source}"))]
+    Json {
+        category: String,
+        source: serde_json::Error,
+    },
+    #[snafu(display("Plugin {category}, base64 decode error {source}"))]
+    Base64Decode {
+        category: String,
+        source: base64::DecodeError,
+    },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 

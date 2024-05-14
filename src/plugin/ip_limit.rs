@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::ProxyPlugin;
-use super::Result;
+use super::{Error, ProxyPlugin, Result};
 use crate::config::PluginCategory;
 use crate::config::PluginStep;
 use crate::http_extra::HttpResponse;
@@ -39,6 +38,13 @@ pub struct IpLimit {
 impl IpLimit {
     pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new ip limit proxy plugin, {value}, {proxy_step:?}");
+        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&proxy_step) {
+            return Err(Error::Invalid {
+                category: PluginCategory::IpLimit.to_string(),
+                message: "Ip limit plugin should be executed at request or proxy upstream step"
+                    .to_string(),
+            });
+        }
         let arr: Vec<&str> = value.split(' ').collect();
         let ip = arr[0].trim().to_string();
         let mut category = 0;

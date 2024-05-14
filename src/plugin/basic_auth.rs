@@ -36,11 +36,19 @@ pub struct BasicAuth {
 impl BasicAuth {
     pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new basic auth proxy plugin, {value}, {proxy_step:?}");
+        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&proxy_step) {
+            return Err(Error::Invalid {
+                category: PluginCategory::BasicAuth.to_string(),
+                message: "Basic auth plugin should be executed at request or proxy upstream step"
+                    .to_string(),
+            });
+        }
         let mut authorizations = vec![];
         for item in value.split(' ') {
-            let _ = STANDARD
-                .decode(item)
-                .map_err(|e| Error::Base64Decode { source: e })?;
+            let _ = STANDARD.decode(item).map_err(|e| Error::Base64Decode {
+                category: PluginCategory::BasicAuth.to_string(),
+                source: e,
+            })?;
 
             authorizations.push(format!("Basic {item}").as_bytes().to_owned());
         }

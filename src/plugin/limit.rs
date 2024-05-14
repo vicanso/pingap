@@ -47,7 +47,15 @@ pub struct Limiter {
 impl Limiter {
     pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new limit proxy plugin, {value}, {proxy_step:?}");
+        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&proxy_step) {
+            return Err(Error::Invalid {
+                category: PluginCategory::Limit.to_string(),
+                message: "Limit plugin should be executed at request or proxy upstream step"
+                    .to_string(),
+            });
+        }
         let (category, limit_value) = value.split_once(' ').ok_or(Error::Invalid {
+            category: PluginCategory::Limit.to_string(),
             message: value.to_string(),
         })?;
 
@@ -57,6 +65,7 @@ impl Limiter {
         let mut interval = Duration::from_secs(10);
         for item in limit_value.split('&') {
             let (key, value) = item.split_once('=').ok_or(Error::Invalid {
+                category: PluginCategory::Limit.to_string(),
                 message: item.to_string(),
             })?;
             match key {
@@ -71,11 +80,13 @@ impl Limiter {
                 "value" => key_value = value.to_string(),
                 "max" => {
                     max = value.parse::<isize>().map_err(|e| Error::Invalid {
+                        category: PluginCategory::Limit.to_string(),
                         message: e.to_string(),
                     })?;
                 }
                 "interval" => {
                     interval = parse_duration(value).map_err(|e| Error::Invalid {
+                        category: PluginCategory::Limit.to_string(),
                         message: e.to_string(),
                     })?;
                 }
@@ -136,6 +147,7 @@ impl Limiter {
         };
         if value > self.max {
             return Err(Error::Exceed {
+                category: PluginCategory::Limit.to_string(),
                 max: self.max,
                 value,
             });

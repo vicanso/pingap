@@ -38,6 +38,13 @@ pub struct Compression {
 impl Compression {
     pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new compresson proxy plugin, {value}, {proxy_step:?}");
+        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&proxy_step) {
+            return Err(Error::Invalid {
+                category: PluginCategory::Compression.to_string(),
+                message: "Compression plugin should be executed at request or proxy upstream step"
+                    .to_string(),
+            });
+        }
 
         let mut levels: [u32; 3] = [0, 0, 0];
         let mut support_compression = false;
@@ -45,9 +52,10 @@ impl Compression {
             if index >= levels.len() {
                 break;
             }
-            let level = item
-                .parse::<u32>()
-                .map_err(|e| Error::ParseInt { source: e })?;
+            let level = item.parse::<u32>().map_err(|e| Error::ParseInt {
+                category: PluginCategory::Compression.to_string(),
+                source: e,
+            })?;
             if level > 0 {
                 support_compression = true;
                 levels[index] = level;

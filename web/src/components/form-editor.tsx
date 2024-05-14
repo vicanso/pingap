@@ -52,6 +52,7 @@ export enum FormItemCategory {
   WEBHOOK_TYPE = "webhookType",
   WEBHOOK_NOTIFICATIONS = "webhookNotifications",
   PLUGIN = "plugin",
+  PLUGIN_STEP = "pluginStep",
   PLUGIN_SELECT = "pluginSelect",
 }
 
@@ -113,7 +114,11 @@ export function formatPluginCategory(value: string) {
     case PluginCategory.PING: {
       return "ping";
     }
+    case PluginCategory.RESPONSE_HEADERS: {
+      return "responseHeaders";
+    }
   }
+  return "";
 }
 
 export interface CheckBoxItem {
@@ -165,6 +170,7 @@ function FormProxyPluginField({
   const arr: string[] = [];
   const fields: {
     label: string;
+    options?: string[] | CheckBoxItem[];
   }[] = [];
   const padding = " ";
 
@@ -222,7 +228,8 @@ function FormProxyPluginField({
       arr.push(...value.split(padding));
       fields.push(
         {
-          label: t("form.limitKey"),
+          label: t("form.limitCategory"),
+          options: ["rate", "inflight"],
         },
         {
           label: t("form.limitValue"),
@@ -242,6 +249,7 @@ function FormProxyPluginField({
       fields.push(
         {
           label: t("form.algoForId"),
+          options: ["uuid", "nanoid"],
         },
         {
           label: t("form.lengthForId"),
@@ -257,6 +265,18 @@ function FormProxyPluginField({
         },
         {
           label: t("form.limitMode"),
+          options: [
+            {
+              label: t("form.allow"),
+              value: "0",
+              option: 0,
+            },
+            {
+              label: t("form.deny"),
+              value: "1",
+              option: 1,
+            },
+          ],
         },
       );
       break;
@@ -474,6 +494,32 @@ function FormProxyPluginField({
     );
   }
   const items = fields.map((item, index) => {
+    if (item.options) {
+      return (
+        <Box
+          key={`${key}-${index}`}
+          id={`${key}-${index}`}
+          sx={{ ml: 1, flex: 1 }}
+          style={{
+            marginLeft: `${index * 15}px`,
+          }}
+        >
+          <FormControl fullWidth={true}>
+            <FormSelectField
+              label={item.label}
+              options={item.options as string[]}
+              value={newValues[index] || ""}
+              onUpdate={(value) => {
+                const arr = newValues.slice(0);
+                arr[index] = value;
+                onUpdate(arr.join(padding));
+                setNewValues(arr);
+              }}
+            />
+          </FormControl>
+        </Box>
+      );
+    }
     return (
       <TextField
         key={`${key}-${index}`}
@@ -518,7 +564,7 @@ function FormSelectField({
   value,
   onUpdate,
 }: {
-  options?: string[];
+  options?: string[] | CheckBoxItem[];
   label: string;
   value: string;
   onUpdate: (data: string) => void;
@@ -541,11 +587,21 @@ function FormSelectField({
         }}
         input={<OutlinedInput label={label} />}
       >
-        {opts.map((name) => (
-          <MenuItem key={name} value={name}>
-            {name}
-          </MenuItem>
-        ))}
+        {opts.map((name) => {
+          if (typeof name == "string") {
+            return (
+              <MenuItem key={name} value={name}>
+                {name}
+              </MenuItem>
+            );
+          }
+          let opt = name as CheckBoxItem;
+          return (
+            <MenuItem key={opt.label} value={opt.value as string}>
+              {opt.label}
+            </MenuItem>
+          );
+        })}
       </Select>
     </React.Fragment>
   );
@@ -692,6 +748,53 @@ function FormTwoInputFields({
   return <React.Fragment>{list}</React.Fragment>;
 }
 
+function getPluginSteps(category: string) {
+  const defaultPluginSteps = [
+    {
+      label: "Request",
+      option: 0,
+      value: "request",
+    },
+    {
+      label: "Proxy Upstream",
+      option: 1,
+      value: "proxy_upstream",
+    },
+    {
+      label: "Upstream Response",
+      option: 2,
+      value: "upstream_response",
+    },
+  ];
+
+  const pluginSupportSteps: Record<string, number[]> = {};
+  pluginSupportSteps[PluginCategory.STATS] = [0, 1];
+  pluginSupportSteps[PluginCategory.LIMIT] = [0, 1];
+  pluginSupportSteps[PluginCategory.COMPRESSION] = [0, 1];
+  pluginSupportSteps[PluginCategory.ADMIN] = [0, 1];
+  pluginSupportSteps[PluginCategory.DIRECTORY] = [0, 1];
+  pluginSupportSteps[PluginCategory.MOCK] = [0, 1];
+  pluginSupportSteps[PluginCategory.REQUEST_ID] = [0, 1];
+  pluginSupportSteps[PluginCategory.IP_LIMIT] = [0, 1];
+  pluginSupportSteps[PluginCategory.KEY_AUTH] = [0, 1];
+  pluginSupportSteps[PluginCategory.BASIC_AUTH] = [0, 1];
+  pluginSupportSteps[PluginCategory.CACHE] = [0];
+  pluginSupportSteps[PluginCategory.REDIRECT_HTTPS] = [0];
+  pluginSupportSteps[PluginCategory.PING] = [0];
+  pluginSupportSteps[PluginCategory.RESPONSE_HEADERS] = [2];
+
+  const steps = pluginSupportSteps[category];
+  if (steps) {
+    const arr = defaultPluginSteps.filter((item) => {
+      return steps.indexOf(item.option) !== -1;
+    });
+    return arr;
+  }
+  return defaultPluginSteps;
+}
+
+// TODO WEB管理界面流程后续优化，暂时仅保证可用
+// 后续调整模块化
 export default function FormEditor({
   title,
   description,
@@ -714,6 +817,9 @@ export default function FormEditor({
   const theme = useTheme();
   const [data, setData] = React.useState(getDefaultValues(items));
   const [openRemoveDialog, setOpenRemoveDialog] = React.useState(false);
+  const [pluginCategory, setPluginCategory] = React.useState(
+    (data["category"] as string) || "",
+  );
 
   const defaultLocations: string[] = [];
   const defaultProxyPluginSelected: string[] = [];
@@ -765,6 +871,8 @@ export default function FormEditor({
   const list = items.map((item) => {
     let formItem: JSX.Element = <></>;
     switch (item.category) {
+      case FormItemCategory.PLUGIN_STEP:
+        item.options = getPluginSteps(pluginCategory || PluginCategory.STATS);
       case FormItemCategory.CHECKBOX: {
         let options = (item.options as CheckBoxItem[]) || [];
         let defaultValue = 0;
@@ -1015,7 +1123,13 @@ export default function FormEditor({
           );
           return (
             <ListItem key={plugin} secondaryAction={action} disablePadding>
-              <ListItemText>{plugin}</ListItemText>
+              <ListItemText
+                style={{
+                  paddingRight: "50px",
+                }}
+              >
+                {plugin}
+              </ListItemText>
             </ListItem>
           );
         });
@@ -1099,6 +1213,7 @@ export default function FormEditor({
     values[key] = value;
     setUpdated(true);
     setData(values);
+    setPluginCategory((values["category"] as string) || "");
     setTimeout(() => {
       setShowSuccess(false);
     }, 6000);

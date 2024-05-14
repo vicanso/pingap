@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 // Copyright 2024 Tree xie.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +20,7 @@ use http::header::HeaderName;
 use log::debug;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
+use std::str::FromStr;
 use substring::Substring;
 
 pub struct ResponseHeaders {
@@ -34,6 +33,13 @@ pub struct ResponseHeaders {
 impl ResponseHeaders {
     pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
         debug!("new stats proxy plugin, {value}, {proxy_step:?}");
+        if proxy_step != PluginStep::UpstreamResponse {
+            return Err(Error::Invalid {
+                category: PluginCategory::ResponseHeaders.to_string(),
+                message: "Response headers plugin should be executed at upstream response step"
+                    .to_string(),
+            });
+        }
         let mut add_headers = vec![];
         let mut remove_headers = vec![];
         let mut set_headers = vec![];
@@ -47,6 +53,7 @@ impl ResponseHeaders {
             match first {
                 '+' => {
                     let header = convert_header(last).map_err(|e| Error::Invalid {
+                        category: PluginCategory::ResponseHeaders.to_string(),
                         message: e.to_string(),
                     })?;
                     if let Some(item) = header {
@@ -55,12 +62,14 @@ impl ResponseHeaders {
                 }
                 '-' => {
                     let name = HeaderName::from_str(last).map_err(|e| Error::Invalid {
+                        category: PluginCategory::ResponseHeaders.to_string(),
                         message: e.to_string(),
                     })?;
                     remove_headers.push(name);
                 }
                 _ => {
                     let header = convert_header(item).map_err(|e| Error::Invalid {
+                        category: PluginCategory::ResponseHeaders.to_string(),
                         message: e.to_string(),
                     })?;
                     if let Some(item) = header {

@@ -12,10 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::ProxyPlugin;
-use super::Result;
-use crate::config::PluginCategory;
-use crate::config::PluginStep;
+use super::{Error, ProxyPlugin, Result};
+use crate::config::{PluginCategory, PluginStep};
 use crate::http_extra::convert_headers;
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -30,6 +28,12 @@ pub struct RedirectHttps {
 
 impl RedirectHttps {
     pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
+        if proxy_step != PluginStep::Request {
+            return Err(Error::Invalid {
+                category: PluginCategory::RedirectHttps.to_string(),
+                message: "Redirect https plugin should be executed at request step".to_string(),
+            });
+        }
         let mut prefix = "".to_string();
         if value.trim().len() > 1 {
             prefix = value.trim().to_string();
