@@ -22,8 +22,8 @@ interface Location {
   path?: string;
   host?: string;
   weight?: number;
-  proxy_headers?: string[];
-  headers?: string[];
+  proxy_set_headers?: string[];
+  proxy_add_headers?: string[];
   rewrite?: string;
   plugins?: string[];
   remark?: string;

@@ -12,14 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::state::{get_hostname, HOST_NAME_TAG};
 use http::header;
 use http::{HeaderName, HeaderValue};
 use once_cell::sync::Lazy;
 use snafu::{ResultExt, Snafu};
 use std::str::FromStr;
 use substring::Substring;
-
-use crate::state::get_hostname;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -41,7 +40,7 @@ pub fn convert_header(value: &str) -> Result<Option<HttpHeader>> {
     if let Some((k, v)) = value.split_once(':').map(|(k, v)| (k.trim(), v.trim())) {
         let name = HeaderName::from_str(k).context(InvalidHeaderNameSnafu { value: k })?;
         let key = if v.starts_with('$') {
-            if v == "$HOSTNAME" {
+            if v == HOST_NAME_TAG {
                 get_hostname()
             } else {
                 std::env::var(v.substring(1, v.len())).unwrap_or_else(|_| v.to_string())

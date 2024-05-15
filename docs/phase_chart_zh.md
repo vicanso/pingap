@@ -22,9 +22,9 @@ graph TD;
 
     server -- "Path:/rest/*"--> locationB
 
-    locationA -- "顺序执行各转发插件" --> locationPluginListA
+    locationA -- "顺序执行转发插件" --> locationPluginListA
 
-    locationB -- "顺序执行各转发插件" --> locationPluginListB
+    locationB -- "顺序执行转发插件" --> locationPluginListB
 
     locationPluginListA -- "转发至: 10.0.0.1:8001" --> upstreamA1
 

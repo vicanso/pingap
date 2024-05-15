@@ -122,10 +122,10 @@ host = ""
 # How to match the location, it returns true if the `url` starts with `path`.
 # Default `None` means all match
 path = "/"
-# Insert header to proxy request. Default `None`
-proxy_headers = ["name:value"]
-# Insert header to response. Default `None`
-headers = ["name:value"]
+# Set header to proxy request. Default `None`
+proxy_set_headers = ["name:value"]
+# Append header to proxy request. Default `None`
+proxy_add_headers = ["name:value"]
 # Rewrite the http url for proxy request, `^/api/ /` means replace the prefix `/api/` as `/`.
 # Default `None`
 rewrite = ""

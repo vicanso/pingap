@@ -23,6 +23,7 @@ use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
+use std::fmt;
 use std::sync::Arc;
 use substring::Substring;
 
@@ -85,10 +86,23 @@ pub struct Location {
     path_selector: PathSelector,
     hosts: Vec<String>,
     reg_rewrite: Option<(Regex, String)>,
-    headers: Option<Vec<HttpHeader>>,
-    proxy_headers: Option<Vec<HttpHeader>>,
+    proxy_add_headers: Option<Vec<HttpHeader>>,
+    proxy_set_headers: Option<Vec<HttpHeader>>,
     plugins: Option<Vec<String>>,
     pub upstream: Arc<Upstream>,
+}
+
+impl fmt::Display for Location {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "name:{}", self.name)?;
+        write!(f, "path:{}", self.path)?;
+        write!(f, "hosts:{:?}", self.hosts)?;
+        write!(f, "reg_rewrite:{:?}", self.reg_rewrite)?;
+        write!(f, "proxy_set_headers:{:?}", self.proxy_set_headers)?;
+        write!(f, "proxy_add_headers:{:?}", self.proxy_add_headers)?;
+        write!(f, "plugins:{:?}", self.plugins)?;
+        write!(f, "upstream:{}", self.upstream.name)
+    }
 }
 
 fn format_headers(values: &Option<Vec<String>>) -> Result<Option<Vec<HttpHeader>>> {
@@ -135,17 +149,20 @@ impl Location {
 
         let path = conf.path.clone().unwrap_or_default();
 
-        Ok(Location {
+        let lo = Location {
             name: name.to_string(),
             path_selector: new_path_selector(&path)?,
             path,
             hosts,
             upstream: up,
             reg_rewrite,
-            headers: format_headers(&conf.headers)?,
-            proxy_headers: format_headers(&conf.proxy_headers)?,
             plugins: conf.plugins.clone(),
-        })
+            proxy_add_headers: format_headers(&conf.proxy_add_headers)?,
+            proxy_set_headers: format_headers(&conf.proxy_set_headers)?,
+        };
+        debug!("Location {lo}");
+
+        Ok(lo)
     }
     /// Return `true` if the host and path match location.
     #[inline]
@@ -177,20 +194,16 @@ impl Location {
         }
         None
     }
-    /// Append the headers before proxy the request to upstream.
+    /// Set or append the headers before proxy the request to upstream.
     #[inline]
-    pub fn append_proxy_headers(&self, header: &mut RequestHeader) {
-        if let Some(arr) = &self.proxy_headers {
+    pub fn set_append_proxy_headers(&self, header: &mut RequestHeader) {
+        if let Some(arr) = &self.proxy_set_headers {
             for (k, v) in arr {
                 // v validate for HeaderValue, so always no error
-                let _ = header.append_header(k, v);
+                let _ = header.insert_header(k, v);
             }
         }
-    }
-    /// Append the header to response before sends to downstream.
-    #[inline]
-    pub fn append_headers(&self, header: &mut ResponseHeader) {
-        if let Some(arr) = &self.headers {
+        if let Some(arr) = &self.proxy_add_headers {
             for (k, v) in arr {
                 // v validate for HeaderValue, so always no error
                 let _ = header.append_header(k, v);
@@ -255,18 +268,17 @@ mod tests {
     use super::{format_headers, new_path_selector, Location, PathSelector};
     use crate::config::{LocationConf, UpstreamConf};
     use crate::proxy::Upstream;
-    use http::{Method, StatusCode};
-    use pingora::http::{RequestHeader, ResponseHeader};
+    use http::Method;
+    use pingora::http::RequestHeader;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
 
     #[test]
     fn test_format_headers() {
-        let headers = format_headers(&Some(vec!["Content-Type: application/json".to_string()]))
-            .unwrap()
-            .unwrap();
+        let headers =
+            format_headers(&Some(vec!["Content-Type: application/json".to_string()])).unwrap();
         assert_eq!(
-            r###"[("content-type", "application/json")]"###,
+            r###"Some([("content-type", "application/json")])"###,
             format!("{headers:?}")
         );
     }
@@ -434,8 +446,7 @@ mod tests {
             &LocationConf {
                 upstream: Some(upstream_name.to_string()),
                 rewrite: Some("^/users/(.*)$ /$1".to_string()),
-                proxy_headers: Some(vec!["Cache-Control: no-store".to_string()]),
-                headers: Some(vec!["X-Response-Id: pig".to_string()]),
+                proxy_set_headers: Some(vec!["Cache-Control: no-store".to_string()]),
                 ..Default::default()
             },
             vec![upstream.clone()],
@@ -443,17 +454,10 @@ mod tests {
         .unwrap();
 
         let mut req_header = RequestHeader::build_no_case(Method::GET, b"", None).unwrap();
-        lo.append_proxy_headers(&mut req_header);
+        lo.set_append_proxy_headers(&mut req_header);
         assert_eq!(
             r###"RequestHeader { base: Parts { method: GET, uri: , version: HTTP/1.1, headers: {"cache-control": "no-store"} }, header_name_map: None, raw_path_fallback: [] }"###,
             format!("{req_header:?}")
-        );
-
-        let mut resp_header = ResponseHeader::build_no_case(StatusCode::OK, None).unwrap();
-        lo.append_headers(&mut resp_header);
-        assert_eq!(
-            r###"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"x-response-id": "pig"} }, header_name_map: None, reason_phrase: None }"###,
-            format!("{resp_header:?}")
         );
     }
 }

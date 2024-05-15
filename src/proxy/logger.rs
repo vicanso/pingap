@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::state::State;
+use crate::state::{get_hostname, State, HOST_NAME_TAG};
 use crate::util;
 use bytes::BytesMut;
 use bytesize::ByteSize;
@@ -88,10 +88,19 @@ fn format_extra_tag(key: &str) -> Option<Tag> {
             category: TagCategory::Context,
             data: Some(value.to_string()),
         }),
-        "$" => Some(Tag {
-            category: TagCategory::Fill,
-            data: Some(std::env::var(value).unwrap_or_default()),
-        }),
+        "$" => {
+            if key == HOST_NAME_TAG {
+                Some(Tag {
+                    category: TagCategory::Fill,
+                    data: Some(get_hostname()),
+                })
+            } else {
+                Some(Tag {
+                    category: TagCategory::Fill,
+                    data: Some(std::env::var(value).unwrap_or_default()),
+                })
+            }
+        }
         _ => None,
     }
 }

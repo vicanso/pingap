@@ -8,7 +8,8 @@ build-web:
 	rm -rf dist \
 	&& cd web \
 	&& yarn install --network-timeout 600000 && yarn build \
-	&& cp -rf dist ../
+	&& cp -rf dist ../ \
+	&& cp -rf asset ../dist/
 
 bench:
 	cargo bench

@@ -584,7 +584,7 @@ impl ProxyHttp for Server {
                 upstream_response.insert_header(util::HTTP_HEADER_X_FORWARDED_FOR.clone(), value);
         }
         let lo = &self.locations[ctx.location_index.unwrap_or_default()];
-        lo.append_proxy_headers(upstream_response);
+        lo.set_append_proxy_headers(upstream_response);
 
         Ok(())
     }
@@ -601,7 +601,6 @@ impl ProxyHttp for Server {
             let _ = upstream_response.insert_header(HTTP_HEADER_NAME_X_REQUEST_ID.clone(), id);
         }
         let lo = &self.locations[ctx.location_index.unwrap_or_default()];
-        lo.append_headers(upstream_response);
 
         lo.exec_response_plugins(
             session,

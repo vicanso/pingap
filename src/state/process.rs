@@ -33,6 +33,8 @@ use tokio::time::interval;
 
 static START_TIME: Lazy<Duration> = Lazy::new(util::now);
 
+pub static HOST_NAME_TAG: &str = "$HOSTNAME";
+
 static HOST_NAME: Lazy<String> = Lazy::new(|| {
     hostname::get()
         .unwrap_or_default()

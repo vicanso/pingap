@@ -175,8 +175,8 @@ pub struct LocationConf {
     pub upstream: Option<String>,
     pub path: Option<String>,
     pub host: Option<String>,
-    pub proxy_headers: Option<Vec<String>>,
-    pub headers: Option<Vec<String>>,
+    pub proxy_set_headers: Option<Vec<String>>,
+    pub proxy_add_headers: Option<Vec<String>>,
     pub rewrite: Option<String>,
     pub weight: Option<u16>,
     pub plugins: Option<Vec<String>>,
@@ -220,8 +220,8 @@ impl LocationConf {
                 message: format!("upstream({upstream}) is not found(location:{name})"),
             });
         }
-        validate(&self.proxy_headers)?;
-        validate(&self.headers)?;
+        validate(&self.proxy_add_headers)?;
+        validate(&self.proxy_set_headers)?;
 
         if let Some(value) = &self.rewrite {
             let arr: Vec<&str> = value.split(' ').collect();
@@ -774,7 +774,7 @@ mod tests {
         );
 
         conf.upstream = Some("upstream1".to_string());
-        conf.headers = Some(vec!["X-Request-Id".to_string()]);
+        conf.proxy_set_headers = Some(vec!["X-Request-Id".to_string()]);
         let result = conf.validate("lo", &upstream_names);
         assert_eq!(true, result.is_err());
         assert_eq!(
@@ -782,7 +782,7 @@ mod tests {
             result.expect_err("").to_string()
         );
 
-        conf.headers = Some(vec!["请求:响应".to_string()]);
+        conf.proxy_set_headers = Some(vec!["请求:响应".to_string()]);
         let result = conf.validate("lo", &upstream_names);
         assert_eq!(true, result.is_err());
         assert_eq!(
@@ -790,7 +790,7 @@ mod tests {
             result.expect_err("").to_string()
         );
 
-        conf.headers = Some(vec!["X-Request-Id: abcd".to_string()]);
+        conf.proxy_set_headers = Some(vec!["X-Request-Id: abcd".to_string()]);
         let result = conf.validate("lo", &upstream_names);
         assert_eq!(true, result.is_ok());
 
@@ -890,14 +890,14 @@ locations = ["lo"]
         assert_eq!("/locations.toml", key);
         assert_eq!(
             r###"[locations.lo]
-headers = ["name:value"]
 host = ""
 path = "/"
 plugins = [
     "pingap:requestId",
     "pingap:stats",
 ]
-proxy_headers = ["name:value"]
+proxy_add_headers = ["name:value"]
+proxy_set_headers = ["name:value"]
 rewrite = ""
 upstream = "charts"
 "###,
@@ -949,7 +949,7 @@ log_level = "info"
             data
         );
 
-        assert_eq!("2FAB121E", conf.hash().unwrap());
+        assert_eq!("6DFE695D", conf.hash().unwrap());
     }
 
     #[test]

@@ -48,7 +48,8 @@ export enum FormItemCategory {
   ADDRS = "addrs",
   CHECKBOX = "checkbox",
   HEADERS = "headers",
-  PROXY_HEADERS = "proxyHeaders",
+  PROXY_ADD_HEADERS = "proxyAddHeaders",
+  PROXY_SET_HEADERS = "proxySetHeaders",
   WEBHOOK_TYPE = "webhookType",
   WEBHOOK_NOTIFICATIONS = "webhookNotifications",
   PLUGIN = "plugin",
@@ -1006,23 +1007,7 @@ export default function FormEditor({
         );
         break;
       }
-      case FormItemCategory.HEADERS: {
-        formItem = (
-          <FormTwoInputFields
-            id={item.id}
-            divide={":"}
-            values={item.defaultValue as string[]}
-            label={t("form.headerName")}
-            valueLabel={t("form.headerValue")}
-            onUpdate={(data) => {
-              updateValue(item.id, data);
-            }}
-            addLabel={t("form.header")}
-          />
-        );
-        break;
-      }
-      case FormItemCategory.PROXY_HEADERS: {
+      case FormItemCategory.PROXY_SET_HEADERS: {
         formItem = (
           <FormTwoInputFields
             id={item.id}
@@ -1033,7 +1018,23 @@ export default function FormEditor({
             onUpdate={(data) => {
               updateValue(item.id, data);
             }}
-            addLabel={t("form.addProxyHeader")}
+            addLabel={item.label}
+          />
+        );
+        break;
+      }
+      case FormItemCategory.PROXY_ADD_HEADERS: {
+        formItem = (
+          <FormTwoInputFields
+            id={item.id}
+            divide={":"}
+            values={item.defaultValue as string[]}
+            label={t("form.proxyHeaderName")}
+            valueLabel={t("form.proxyHeaderValue")}
+            onUpdate={(data) => {
+              updateValue(item.id, data);
+            }}
+            addLabel={item.label}
           />
         );
         break;

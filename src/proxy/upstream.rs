@@ -17,6 +17,7 @@ use crate::state::State;
 use crate::util;
 use futures_util::FutureExt;
 use humantime::parse_duration;
+use log::debug;
 use pingora::http::RequestHeader;
 use pingora::lb::health_check::{HealthCheck, HttpHealthCheck, TcpHealthCheck};
 use pingora::lb::selection::{Consistent, RoundRobin};
@@ -27,6 +28,7 @@ use pingora::proxy::Session;
 use pingora::upstreams::peer::{HttpPeer, PeerOptions};
 use snafu::{ResultExt, Snafu};
 use std::collections::BTreeSet;
+use std::fmt;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::Duration;
@@ -68,6 +70,26 @@ pub struct Upstream {
     write_timeout: Option<Duration>,
     verify_cert: Option<bool>,
     alpn: ALPN,
+}
+
+impl fmt::Display for Upstream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "name:{}", self.name)?;
+        write!(f, "hash:{}", self.hash)?;
+        write!(f, "tls:{}", self.tls)?;
+        write!(f, "sni:{}", self.sni)?;
+        write!(f, "connection_timeout:{:?}", self.connection_timeout)?;
+        write!(
+            f,
+            "total_connection_timeout:{:?}",
+            self.total_connection_timeout
+        )?;
+        write!(f, "read_timeout:{:?}", self.read_timeout)?;
+        write!(f, "idle_timeout:{:?}", self.idle_timeout)?;
+        write!(f, "write_timeout:{:?}", self.write_timeout)?;
+        write!(f, "verify_cert:{:?}", self.verify_cert)?;
+        write!(f, "alpn:{:?}", self.alpn)
+    }
 }
 
 pub fn new_empty_upstream() -> Upstream {
@@ -327,7 +349,7 @@ impl Upstream {
             _ => ALPN::H1,
         };
         // ALPN::H1
-        Ok(Self {
+        let up = Self {
             name: name.to_string(),
             tls,
             sni: sni.clone(),
@@ -340,7 +362,9 @@ impl Upstream {
             idle_timeout: conf.idle_timeout,
             write_timeout: conf.write_timeout,
             verify_cert: conf.verify_cert,
-        })
+        };
+        debug!("Upstream {up}");
+        Ok(up)
     }
     /// Returns a new http peer, if there is no healthy backend, it will return `None`.
     pub fn new_http_peer(&self, ctx: &State, session: &Session) -> Option<HttpPeer> {

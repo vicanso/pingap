@@ -64,6 +64,8 @@ export default {
   "location.rewrite": "Rewrite",
   "location.plugins": "Proxy Plugins",
   "location.remark": "Remark",
+  "location.proxySetHeaders": "Set Proxy Headers",
+  "location.proxyAddHeaders": "Add Proxy Headers",
   // upstream info
   "upstream.title": "Modify upstream configuration",
   "upstream.description": "Change the upstream configuration",
@@ -105,13 +107,13 @@ export default {
   "form.addr": "Addr",
   "form.weight": "Weight",
   "from.addrs": "Add addr",
-  "form.header": "Add response header",
   "form.setHeader": "Set response header",
   "form.removeHeader":
     "Remove response header, multiple values are separated by space",
   "form.headerName": "Header Name",
   "form.headerValue": "Header Value",
   "form.addProxyHeader": "Add proxy request header",
+  "form.setProxyHeader": "Set proxy request header",
   "form.proxyHeaderName": "Header Name",
   "form.proxyHeaderValue": "Header Value",
   "form.gzip": "Gzip Level",
