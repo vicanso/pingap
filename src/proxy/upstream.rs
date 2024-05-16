@@ -22,6 +22,7 @@ use pingora::http::RequestHeader;
 use pingora::lb::health_check::{HealthCheck, HttpHealthCheck, TcpHealthCheck};
 use pingora::lb::selection::{Consistent, RoundRobin};
 use pingora::lb::{discovery, Backend, Backends, LoadBalancer};
+use pingora::protocols::l4::ext::TcpKeepalive;
 use pingora::protocols::l4::socket::SocketAddr;
 use pingora::protocols::ALPN;
 use pingora::proxy::Session;
@@ -70,6 +71,8 @@ pub struct Upstream {
     write_timeout: Option<Duration>,
     verify_cert: Option<bool>,
     alpn: ALPN,
+    tcp_keepalive: Option<TcpKeepalive>,
+    tcp_recv_buf: Option<usize>,
 }
 
 impl fmt::Display for Upstream {
@@ -106,6 +109,8 @@ pub fn new_empty_upstream() -> Upstream {
         write_timeout: None,
         verify_cert: None,
         alpn: ALPN::H1,
+        tcp_recv_buf: None,
+        tcp_keepalive: None,
     }
 }
 
@@ -348,6 +353,18 @@ impl Upstream {
             "H2" => ALPN::H2,
             _ => ALPN::H1,
         };
+        let tcp_keepalive = if conf.tcp_idle.is_some()
+            && conf.tcp_probe_count.is_some()
+            && conf.tcp_interval.is_some()
+        {
+            Some(TcpKeepalive {
+                idle: conf.tcp_idle.unwrap_or_default(),
+                count: conf.tcp_probe_count.unwrap_or_default(),
+                interval: conf.tcp_interval.unwrap_or_default(),
+            })
+        } else {
+            None
+        };
         // ALPN::H1
         let up = Self {
             name: name.to_string(),
@@ -362,6 +379,8 @@ impl Upstream {
             idle_timeout: conf.idle_timeout,
             write_timeout: conf.write_timeout,
             verify_cert: conf.verify_cert,
+            tcp_recv_buf: conf.tcp_recv_buf,
+            tcp_keepalive,
         };
         debug!("Upstream {up}");
         Ok(up)
@@ -405,7 +424,8 @@ impl Upstream {
             if let Some(verify_cert) = self.verify_cert {
                 p.options.verify_cert = verify_cert;
             }
-            // TODO tcp_keepalive tcp_recv_buf
+            p.options.tcp_recv_buf = self.tcp_recv_buf;
+            p.options.tcp_keepalive.clone_from(&self.tcp_keepalive);
             p
         })
     }

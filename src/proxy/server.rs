@@ -41,6 +41,7 @@ use pingora::services::listening::Service;
 use pingora::services::Service as IService;
 use pingora::upstreams::peer::{HttpPeer, Peer};
 use snafu::Snafu;
+use std::fmt;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -68,6 +69,35 @@ pub struct ServerConf {
     pub error_template: String,
     pub lets_encrypt: Option<String>,
     pub enbaled_h2: bool,
+}
+
+impl fmt::Display for ServerConf {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "name:{}", self.name)?;
+        write!(f, "addr:{}", self.addr)?;
+        write!(
+            f,
+            "upstreams:{:?}",
+            self.upstreams
+                .iter()
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>()
+        )?;
+        write!(
+            f,
+            "locations:{:?}",
+            self.locations
+                .iter()
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>()
+        )?;
+        write!(
+            f,
+            "tls:{}",
+            self.tls_cert.is_some() || self.lets_encrypt.is_some()
+        )?;
+        write!(f, "http2:{}", self.enbaled_h2)
+    }
 }
 
 impl From<PingapConf> for Vec<ServerConf> {
@@ -229,12 +259,12 @@ impl Server {
             );
         }
 
+        debug!("Server: {conf}");
         let mut p = None;
         if let Some(access_log) = conf.access_log {
             p = Some(Parser::from(access_log.as_str()));
         }
-
-        Ok(Server {
+        let s = Server {
             name: conf.name,
             admin: conf.admin,
             accepted: AtomicU64::new(0),
@@ -249,7 +279,8 @@ impl Server {
             lets_encrypt_enabled: false,
             enbaled_h2: conf.enbaled_h2,
             tls_from_lets_encrypt: conf.lets_encrypt.is_some(),
-        })
+        };
+        Ok(s)
     }
     /// Enable lets encrypt proxy plugin for `/.well-known/acme-challenge` handle.
     pub fn enable_lets_encrypt(&mut self) {

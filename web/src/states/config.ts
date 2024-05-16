@@ -14,6 +14,10 @@ interface Upstream {
   idle_timeout?: string;
   write_timeout?: string;
   verify_cert?: boolean;
+  tcp_idle?: string;
+  tcp_interval?: string;
+  tcp_probe_count?: number;
+  tcp_recv_buf?: number;
   remark?: string;
 }
 

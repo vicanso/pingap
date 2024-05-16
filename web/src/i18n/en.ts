@@ -81,6 +81,10 @@ export default {
   "upstream.sni": "Sni",
   "upstream.verifyCert": "Verify Cert",
   "upstream.ipv4Only": "Ipv4 Only",
+  "upstream.tcpRecvBuf": "Tcp Recv Buffer Size",
+  "upstream.tcpIdle": "Tcp Keepalive Idle Duration",
+  "upstream.tcpInterval": "Tcp Keepalive Interval Duration",
+  "upstream.tcpProbeCount": "Tcp Keepalive Probe Max Number",
   "upstream.remark": "Remark",
   // plugin info
   "plugin.title": "Modify plugin configuration",

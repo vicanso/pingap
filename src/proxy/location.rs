@@ -225,7 +225,7 @@ impl Location {
                     if plugin.step() != step {
                         continue;
                     }
-                    debug!("Run plugin {name}");
+                    debug!("Run proxy plugin {name}");
                     let result = plugin.handle(session, ctx).await?;
                     if let Some(resp) = result {
                         // ingore http response status >= 900

@@ -135,6 +135,14 @@ pub struct UpstreamConf {
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub write_timeout: Option<Duration>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub tcp_idle: Option<Duration>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub tcp_interval: Option<Duration>,
+    pub tcp_probe_count: Option<usize>,
+    pub tcp_recv_buf: Option<usize>,
     pub remark: Option<String>,
 }
 impl UpstreamConf {

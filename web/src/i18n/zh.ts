@@ -81,6 +81,10 @@ export default {
   "upstream.sni": "Sni",
   "upstream.verifyCert": "是否校验证书",
   "upstream.ipv4Only": "是否仅Ipv4",
+  "upstream.tcpRecvBuf": "Tcp接收缓冲区大小",
+  "upstream.tcpIdle": "Tcp保持连接的空闲时长",
+  "upstream.tcpInterval": "Tcp保持连接探针的发送间隔",
+  "upstream.tcpProbeCount": "Tcp保持连接探针发送的最大次数",
   "upstream.remark": "备注",
   // plugin info
   "plugin.title": "各类插件的配置",
