@@ -15,7 +15,7 @@
 use crate::util;
 use crate::webhook;
 use async_trait::async_trait;
-use log::info;
+use log::{info, warn};
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
 use std::time::Duration;
@@ -36,9 +36,10 @@ impl ValidityChecker {
 impl BackgroundService for ValidityChecker {
     async fn start(&self, mut shutdown: ShutdownWatch) {
         let mut period = interval(Duration::from_secs(60 * 60));
-        let time_offset = 7 * 24 * 3600;
+        let time_offset = 7 * 24 * 3600_i64;
         info!(
-            "Start tls validity checker background service, {time_offset} seconds, {:?}",
+            "Start tls validity checker background service, {:?} seconds, {:?}",
+            Duration::from_secs(time_offset as u64),
             self.validity_list
         );
 
@@ -52,6 +53,8 @@ impl BackgroundService for ValidityChecker {
                     for (name, validity) in self.validity_list.iter() {
                         if now > validity.not_after.timestamp() - time_offset {
                             let message = format!("{name} cert will be expired, expired date:{:?}", validity.not_after);
+                            warn!("{message}");
+
                             webhook::send(webhook::SendNotificationParams {
                                 level: webhook::NotificationLevel::Warn,
                                 category: webhook::NotificationCategory::TlsValidity,
@@ -60,6 +63,7 @@ impl BackgroundService for ValidityChecker {
                         }
                         if now < validity.not_before.timestamp() {
                             let message = format!("{name} cert is not valid, valid date:{:?}", validity.not_before);
+                            warn!("{message}");
                             webhook::send(webhook::SendNotificationParams {
                                 level: webhook::NotificationLevel::Warn,
                                 category: webhook::NotificationCategory::TlsValidity,

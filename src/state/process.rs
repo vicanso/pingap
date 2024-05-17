@@ -86,6 +86,10 @@ impl BackgroundService for AutoRestart {
         if self.interval < Duration::from_secs(1) {
             return;
         }
+        info!(
+            "Auto restart background service, interval:{:?}",
+            self.interval
+        );
         let mut period = interval(self.interval);
         loop {
             tokio::select! {
@@ -95,7 +99,6 @@ impl BackgroundService for AutoRestart {
                 _ = period.tick() => {
                     match validate_restart().await {
                        Ok((should_restart, conf)) => {
-                           info!("Auto restart background service, should restart:{should_restart}");
                            if should_restart {
                                let diff_result = get_current_config().diff(conf);
                                if !diff_result.is_empty() {

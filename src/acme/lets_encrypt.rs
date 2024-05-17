@@ -68,7 +68,7 @@ impl BackgroundService for LetsEncryptService {
                         true
                     };
                     if should_fresh_now {
-                        info!("Lets encrypt cert change, pingap will restart");
+                        info!("Should renew cert from lets encrypt");
                         match new_lets_encrypt(&domains).await {
                             Ok(()) => {
                                 if let Err(e) = restart_now() {

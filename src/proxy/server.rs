@@ -44,7 +44,7 @@ use snafu::Snafu;
 use std::fmt;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 static ERROR_TEMPLATE: &str = include_str!("../../error.html");
 
@@ -195,11 +195,7 @@ impl From<PingapConf> for Vec<ServerConf> {
 }
 
 fn get_hour_duration() -> u32 {
-    if let Ok(value) = SystemTime::now().duration_since(UNIX_EPOCH) {
-        (value.as_millis() % (3600 * 1000)) as u32
-    } else {
-        0
-    }
+    (util::now().as_millis() % (3600 * 1000)) as u32
 }
 
 pub struct Server {

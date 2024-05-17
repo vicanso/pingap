@@ -15,8 +15,10 @@
 use log::debug;
 use lru::LruCache;
 use std::num::NonZeroUsize;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use tokio::sync::RwLock;
+
+use crate::util;
 
 #[derive(Debug)]
 struct TtlLimit {
@@ -49,12 +51,7 @@ impl TtlLruLimit {
         if let Some(value) = g.peek(key) {
             debug!("Ttl lru limit, key:{key}, value:{value:?}");
             // validate expired first
-            if SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                - value.created_at
-                > self.ttl
-            {
+            if util::now() - value.created_at > self.ttl {
                 valid = true;
                 should_reset = true;
             } else if value.count < self.max {
@@ -79,9 +76,7 @@ impl TtlLruLimit {
                 key.to_string(),
                 TtlLimit {
                     count: 1,
-                    created_at: SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or_default(),
+                    created_at: util::now(),
                 },
             );
         }
