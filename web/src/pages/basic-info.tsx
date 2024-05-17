@@ -154,6 +154,7 @@ export default function BasicInfo() {
         "diff_config",
         "restart",
         "restart_fail",
+        "tls_validity",
       ],
     },
     {

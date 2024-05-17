@@ -43,6 +43,7 @@ pub enum NotificationCategory {
     DiffConfig,
     Restart,
     RestartFail,
+    TlsValidity,
 }
 
 impl Display for NotificationLevel {

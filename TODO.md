@@ -4,8 +4,9 @@
 - [ ] log rotate
 - [ ] support validate config before save(web)
 - [ ] http response cache(stroage: tinyufo, file, redis, etc)
-- [ ] fix not_before not_after of cert
 - [ ] client body size limit plugin
+- [x] tls validity checker
+- [x] fix not_before not_after of cert
 - [x] http header convert $HOSTNAME for hostname
 - [x] http headers plugin
 - [x] support `Content-Disposition` for directory static serve plugin

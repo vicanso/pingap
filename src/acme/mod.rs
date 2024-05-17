@@ -15,7 +15,6 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -31,9 +30,22 @@ pub enum Error {
     Io { source: std::io::Error },
     #[snafu(display("Serde json error {source}"))]
     SerdeJson { source: serde_json::Error },
+    #[snafu(display("X509 error, {message}"))]
+    X509 { message: String },
 }
 
 type Result<T, E = Error> = std::result::Result<T, E>;
+
+pub fn parse_x509_validity(data: &[u8]) -> Result<x509_parser::certificate::Validity> {
+    let (_, pem) = x509_parser::pem::parse_x509_pem(data).map_err(|e| Error::X509 {
+        message: e.to_string(),
+    })?;
+    let x509 = pem.parse_x509().map_err(|e| Error::X509 {
+        message: e.to_string(),
+    })?;
+
+    Ok(x509.validity().to_owned())
+}
 
 #[derive(Debug, Deserialize, Serialize, Default)]
 pub struct Cert {
@@ -46,10 +58,7 @@ pub struct Cert {
 impl Cert {
     /// Validate the cert is within the expiration date.
     pub fn valid(&self) -> bool {
-        let ts = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
+        let ts = util::now().as_secs() as i64;
         if self.not_before > ts {
             return false;
         }
@@ -66,8 +75,12 @@ impl Cert {
 }
 
 mod lets_encrypt;
+mod validity_checker;
 
 pub use lets_encrypt::{get_lets_encrypt_cert, handle_lets_encrypt, LetsEncryptService};
+pub use validity_checker::ValidityChecker;
+
+use crate::util;
 
 #[cfg(test)]
 mod tests {

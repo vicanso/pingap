@@ -20,6 +20,7 @@ import { useTranslation } from "react-i18next";
 import useBasicStore from "../states/basic";
 import request from "../helpers/request";
 import { goToTomlPrevew } from "../router";
+import Logo from "../../assets/pingap.png";
 
 function formatDuraion(ts: number) {
   const seconds = Math.floor(Date.now() / 1000) - ts;
@@ -186,6 +187,14 @@ export default function MainHeader() {
           component="div"
           sx={{ flexGrow: 1, display: { xs: "none", sm: "block" } }}
         >
+          <img
+            style={{
+              float: "left",
+              width: "32px",
+              marginRight: "10px",
+            }}
+            src={Logo}
+          />
           Pingap
           <Typography variant="overline" ml={1}>
             {basicInfo.version}

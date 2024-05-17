@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Cert, Error, Result};
+use super::{parse_x509_validity, Cert, Error, Result};
 use crate::http_extra::HttpResponse;
 use crate::state::{restart_now, State};
 use crate::util;
@@ -53,6 +53,7 @@ impl BackgroundService for LetsEncryptService {
     async fn start(&self, mut shutdown: ShutdownWatch) {
         let mut domains = self.domains.clone();
         domains.sort();
+        info!("Lets encrypt background service, domains:{domains:?}");
 
         let mut period = interval(Duration::from_secs(10 * 60));
         loop {
@@ -66,8 +67,8 @@ impl BackgroundService for LetsEncryptService {
                     } else {
                         true
                     };
-                    info!("Lets encrypt({domains:?}) background service, should refresh:{should_fresh_now}");
                     if should_fresh_now {
+                        info!("Lets encrypt cert change, pingap will restart");
                         match new_lets_encrypt(&domains).await {
                             Ok(()) => {
                                 if let Err(e) = restart_now() {
@@ -268,11 +269,13 @@ async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
             None => tokio::time::sleep(Duration::from_secs(1)).await,
         }
     };
-    let not_before = cert.get_params().not_before.unix_timestamp();
-    // TODO get the not after from cert
-    // cert.get_params().not_after.unix_timestamp() is wrong
+    let mut not_before = cert.get_params().not_before.unix_timestamp();
     let now = util::now().as_secs() as i64;
-    let not_after = now + 90 * 24 * 3600;
+    let mut not_after = now + 90 * 24 * 3600;
+    if let Ok(validity) = parse_x509_validity(cert_chain_pem.as_bytes()) {
+        not_before = validity.not_before.timestamp();
+        not_after = validity.not_after.timestamp();
+    }
 
     let mut f = fs::OpenOptions::new()
         .create(true)

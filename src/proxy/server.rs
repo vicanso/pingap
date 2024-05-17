@@ -15,7 +15,7 @@
 use super::dynamic_cert::DynamicCert;
 use super::logger::Parser;
 use super::{Location, Upstream};
-use crate::acme::{get_lets_encrypt_cert, handle_lets_encrypt};
+use crate::acme::{get_lets_encrypt_cert, handle_lets_encrypt, parse_x509_validity};
 use crate::config::{LocationConf, PingapConf, PluginStep, UpstreamConf};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use crate::plugin::get_proxy_plugin;
@@ -220,6 +220,7 @@ pub struct Server {
 }
 
 pub struct ServerServices {
+    pub tls_validity: Option<x509_parser::certificate::Validity>,
     pub lb: Service<HttpProxy<Server>>,
     pub bg_services: Vec<Box<dyn IService>>,
 }
@@ -318,13 +319,20 @@ impl Server {
             };
         }
         let is_tls = tls_cert.is_some();
+        let mut tls_validity = None;
         let dynamic_cert = if is_tls {
+            let cert = tls_cert.unwrap_or_default();
+            if let Ok(validity) = parse_x509_validity(&cert) {
+                tls_validity = Some(validity)
+            }
+
             Some(
-                DynamicCert::new(&tls_cert.unwrap_or_default(), &tls_key.unwrap_or_default())
-                    .map_err(|e| Error::Common {
+                DynamicCert::new(&cert, &tls_key.unwrap_or_default()).map_err(|e| {
+                    Error::Common {
                         category: "tls".to_string(),
                         message: e.to_string(),
-                    })?,
+                    }
+                })?,
             )
         } else {
             None
@@ -367,7 +375,11 @@ impl Server {
                 lb.add_tcp(addr);
             }
         }
-        Ok(ServerServices { lb, bg_services })
+        Ok(ServerServices {
+            tls_validity,
+            lb,
+            bg_services,
+        })
     }
     async fn serve_admin(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<()> {
         if let Some(plugin) = get_proxy_plugin(util::ADMIN_SERVER_PLUGIN.as_str()) {

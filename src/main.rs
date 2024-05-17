@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::acme::LetsEncryptService;
+use crate::acme::{LetsEncryptService, ValidityChecker};
 use crate::config::ETCD_PROTOCOL;
 use crate::state::AutoRestart;
 use clap::Parser;
@@ -322,8 +322,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         });
     }
 
+    let mut validity_list = vec![];
     for server_conf in server_conf_list {
         let listen_80_port = server_conf.addr.ends_with(":80");
+        let name = server_conf.name.clone();
         let mut ps = Server::new(server_conf)?;
         if !domains.is_empty() && listen_80_port {
             ps.enable_lets_encrypt();
@@ -331,6 +333,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         let services = ps.run(&my_server.configuration)?;
         my_server.add_services(services.bg_services);
         my_server.add_service(services.lb);
+        if let Some(tls_validity) = services.tls_validity {
+            validity_list.push((name, tls_validity));
+        }
     }
 
     if args.autorestart {
@@ -345,6 +350,12 @@ fn run() -> Result<(), Box<dyn Error>> {
         my_server.add_service(background_service(
             "Lets encrypt",
             LetsEncryptService { domains },
+        ));
+    }
+    if !validity_list.is_empty() {
+        my_server.add_service(background_service(
+            "Tls cert validity checker",
+            ValidityChecker::new(validity_list),
         ));
     }
 
