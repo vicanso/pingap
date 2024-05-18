@@ -18,6 +18,12 @@ Upstream配置为节点地址列表，配置为域名则会根据解析后的IP�
 - `read_timeout`: 读取超时，默认为无
 - `write_timeout`: 写超时，默认为无
 - `idle_timeout`: 空闲超时，指定连接空闲多久后会自动回收，如果设置为0，则连接不复用，需要注意有些网络设备对于无数据的tcp连接会过期自动关闭，因此可根据需要设置对应的值。默认为无
+- `tcp_idle`: tcp连接keepalive空闲回收时长
+- `tcp_interval`: tcp连接keepavlie检测时长
+- `tcp_probe_count`: tcp连接keepalvie探针检测次数
+- `tcp_recv_buf`: tcp接收字节缓存区大小
+
+需要注意，若要设置tcp的keepalive，`tcp_idle`，`tcp_interval`以及`tcp_probe_count`均需要设置。
 
 ### 节点健康检测
 

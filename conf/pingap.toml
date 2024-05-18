@@ -1,169 +1,47 @@
 [basic]
-# name of application. Default `Pingap`
-# name = "Pingap"
-
-# error page html template
 error_template = ""
-
-# The pid file of this server. Default `/tmp/pingap.pid`
 pid_file = "/tmp/pingap.pid"
-
-# The path to the upgrade socket. Default `/tmp/pingap_upgrade.sock`
 upgrade_sock = "/tmp/pingap_upgrade.sock"
-
-# If configured, after daemonization, this process will switch to
-# the given user before starting to serve traffic. Default `None`
-# user = ""
-
-# Similar to `user`, the group this process should switch to. Default `None`
-# group = ""
-
-# How many threads **each** service should get.
-# The threads are not shared across services. If the value is 0,
-# it will use cpus of system. Default `1`.
 threads = 1
-
-# Allow work stealing between threads of the same service. Default `true`.
 work_stealing = true
-
-# Grace period in seconds before starting the final step of the graceful shutdown after signaling shutdown.
-# Default `5m`.
 grace_period = "3m"
-
-# Timeout in seconds of the final step for the graceful shutdown. Default `5s`.
 graceful_shutdown_timeout = "10s"
-
-
-# Keepalive pool size for client connections to upstream.
-# Default `128`.
-# upstream_keepalive_pool_size = 128
-
-# Webhook type, "normal", "wecom", "dingtalk"
-# webhook_type = "wecom"
-# Webhook for some events, such as backend becomes unhealthy. Default `None`
-# webhook = "http://127.0.0.1:6001/webhook"
-
-# Log level, `info`, `warn`, `error` or `debug`. Default `None`
 log_level = "info"
 
-# Sentry DSN
-# sentry = ""
-
-# Pyroscope connection url
-# pyroscope = ""
-
-# Auto restart check interval, auto restart will be disabled if it less than 1s.
-# Default is `90s`.
-# auto_restart_check_interval = "2m"
-
-# Gobal http cache max size, experimental only for test.
-# cache_max_size = "100mb"
-
-# Upsteam config list, it will defined as [upstreams.name]
 [upstreams.charts]
-# Upstream address, it should be `ip:port`.
 addrs = ["127.0.0.1:5000"]
-
-# Load balancer select algorithm, supports `hash` and `round_robin`. Default `round_robin`
 algo = "hash:cookie"
-
-# Set the sni for http peer, if the upstream use https, it should be set.
-# Default `None`.
-# sni = "github.com"
-
-# Verify cert for upstream request. Default is `true`.
-# verify_cert = false
-
-# Upstream health check, supports `tcp`, `http` and `https`. Default `tcp`
-# Tcp: tcp://upstreamname?connection_timeout=3s&success=2&failure=1&check_frequency=10s
-# Http(s): http://upstreamname/ping?connection_timeout=3s&read_timeout=1s&success=2&failure=1&check_frequency=10s
-# The `upstreamname` will be replace to the upstream address when checking.
 health_check = "http://charts/ping?connection_timeout=3s&pingap"
-
-# Set the upstream will only use ipv4.
-# It will be used for domain includes ipv4 and ipv6.
-# Default `false`.
-# ipv4_only = true
-
-# Set the alpn for tls handshake. Default `H1`.
-# alpn = "H1"
-
-# How long to wait before giving up *establishing* a TCP connection. Default `None`
 connection_timeout = "10s"
-
-# How long to wait before giving up *establishing* a connection including TLS handshake time.
-# Default `None`
 total_connection_timeout = "30s"
-
-# How long to wait before each individual `read()` from upstream.
-# The timer is reset after each `read()`. Default `None`
 read_timeout = "10s"
-
-# How long to wait before a `write()` to upstream finishes. Default `None`
+idle_timeout = "2m"
 write_timeout = "10s"
 
-# How long to wait before closing a idle connection waiting for connection reuse.
-# Set to `0s` will disable connection pooling. Default `None`
-idle_timeout = "120s"
-
-
-# Anther upstream using all default config.
 [upstreams.diving]
 addrs = ["127.0.0.1:5001"]
 
-
-# Location config list, it will defined as [locations.name]
-[locations.lo]
-# The upstream for location, it is the name of upstream.
+[locations.charts]
 upstream = "charts"
-# How to match the location, it returns true if `host` of http request header
-# equal the config, multiple hosts are separated by ",". Default `None` means all match.
-host = ""
-# How to match the location, it returns true if the `url` starts with `path`.
-# Default `None` means all match
+path = "/charts"
+
+[locations.lo]
+upstream = "charts"
 path = "/"
-# Set header to proxy request. Default `None`
+host = ""
 proxy_set_headers = ["name:value"]
-# Append header to proxy request. Default `None`
 proxy_add_headers = ["name:value"]
-# Rewrite the http url for proxy request, `^/api/ /` means replace the prefix `/api/` as `/`.
-# Default `None`
 rewrite = ""
-# The weight of locaton, max is prior, Default `None`
-# weight = 4096
+plugins = [
+    "pingap:requestId",
+    "pingap:stats",
+]
 
-# The proxy plugin for location,
-# it will run all plugins in order.
-plugins = ["pingap:requestId", "pingap:stats"]
-
-# Server config list, it will be defined as [servers.name]
 [servers.test]
-# TCP listening address, multiple addresses are separated by ",".
 addr = "0.0.0.0:6188"
-
-# Access log format layout for the server. Default `None`
-# access_log = '"{method} {uri} {proto}" {status} {size_human} "{referer}" "{user_agent}" {latency_human}'
 access_log = "tiny"
-
-# Location list for the server, item is the name of location.
-# The locations will be served by the server.
 locations = ["lo"]
 
-# The threads for server service.
-# Default `None` will use the threads of basic config.
-# threads = 4
-
-# tls cert and key, it should be base64
-# tls_cert = ""
-# tls_key = ""
-
-# Acme
-# lets_encrypt = "domain1,domain2"
-
-# Enable HTTP/2 support for the server, it is only supported for https.
-# Default `None`.
-# enabled_h2 = true
-
 [plugins.stats]
-category = "stats"
 value = "/stats"
+category = "stats"

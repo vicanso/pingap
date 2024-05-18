@@ -2,9 +2,9 @@
 description: Pingap 简述
 ---
 
-Pingap是基于[pingora](https://github.com/cloudflare/pingora)开发的，pingora提供了各类模块便于rust开发者使用，但并不方便非rust开发者使用，因此pingap提供了以toml的形式配置简单易用的反向代理，实现支持多location代理转发，通过插件的形式支持更多的需求场景。特性如下：
+Pingap是基于[pingora](https://github.com/cloudflare/pingora)开发的，pingora提供了各类模块便于rust开发者使用，但并不方便非rust开发者使用，因此pingap提供了以toml的形式配置简单易用的反向代理，单服务支持多location转发，通过插件的形式支持更多的需求场景。特性如下：
 
-- 支持多location配置，可通过请求的路径与域名筛选
+- 支持多location配置，可通过请求的路径与域名匹配
 - 支持HTTP1与HTTP2两种协议
 - 无中断请求的配置更新，方便实时更新应用配置
 - 模板式的请求日志输出，可按模板指定各种输出
@@ -15,7 +15,7 @@ Pingap是基于[pingora](https://github.com/cloudflare/pingora)开发的，pingo
 
 ## Location的处理逻辑
 
-该Server下的所有location在初始化时根据权重按高至低排序，接受到请求时按顺序一个个匹配到符合的location为止，若无符合的则返回出错。在选择对应的location之后，判断是否有配置重写path(若无则不需要)，添加请求头(若无则不需要)，成功响应时添加响应头(若无则不需要)。
+该Server下的所有location在初始化时根据权重按高至低排序，接收到请求时按顺序一个个匹配到符合的location为止，若无符合的则返回出错。在选择对应的location之后，判断是否有配置重写path(若无则不需要)，添加请求头(若无则不需要)。
 
 ```rust
 let header = session.req_header_mut();

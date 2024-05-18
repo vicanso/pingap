@@ -62,7 +62,7 @@ Location主要配置其对应的host与path，以及选择关联对应的上游�
     <img src="../asset/location-detail-zh.jpg" alt="location config">
 </p>
 
-若该服务只对应一个host，则host不配置即可。path则是因为一般会基于不同的前缀转发至不同的服务，因此会设置对应的path匹配规则（更多的规则可查询location的详细说明），此处选择了自带的`pingap:requestId`插件，用于生成请求id。
+若该服务只对应一个host，则host不配置即可。path则是因为一般会基于不同的前缀转发至不同的服务，因此会设置对应的path匹配规则（更多的规则可查询location的详细说明），此处选择了自带的`pingap:requestId`插件，用于生成请求id。需要注意支持的两种请求头处理方式，`设置转发请求头`会覆盖原有的值，例如对于设置`Host`等唯一请求头使用。`添加转发请求头`则不影响原有的值，而是新添加请求头。
 
 ## 服务配置
 
