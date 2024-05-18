@@ -165,12 +165,43 @@ impl ProxyPlugin for IpLimit {
 #[cfg(test)]
 mod tests {
     use super::IpLimit;
+    use crate::plugin::ip_limit::IpLimitParams;
     use crate::state::State;
     use crate::{config::PluginConf, plugin::ProxyPlugin};
     use http::StatusCode;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
+
+    #[test]
+    fn test_ip_limit_params() {
+        let params = IpLimitParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+ip_list = [
+    "192.168.1.1",
+    "10.1.1.1",
+    "1.1.1.0/24",
+    "2.1.1.0/24",
+]
+category = 1
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!("request", params.plugin_step.to_string());
+        assert_eq!("192.168.1.1,10.1.1.1", params.ip_list.join(","));
+        assert_eq!(
+            "1.1.1.0/24,2.1.1.0/24",
+            params
+                .ip_net_list
+                .iter()
+                .map(|item| item.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+    }
 
     #[tokio::test]
     async fn test_ip_limit() {

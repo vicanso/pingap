@@ -89,7 +89,7 @@ impl TryFrom<&PluginConf> for KeyAuthParams {
             let mut query_name = None;
             let mut header_name = None;
             if category == 1 {
-                query_name = Some(name.substring(1, name.len()).to_string());
+                query_name = Some(name);
             } else {
                 header_name = Some(HeaderName::from_str(&name).map_err(|e| Error::Invalid {
                     category: PluginCategory::KeyAuth.to_string(),
@@ -177,5 +177,43 @@ impl ProxyPlugin for KeyAuth {
             return Ok(Some(self.unauthorized_resp.clone()));
         }
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::KeyAuthParams;
+    use crate::config::PluginConf;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_key_auth_params() {
+        let params = KeyAuthParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+name = "X-User"
+keys = [
+    "123",
+    "456",
+]
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!("request", params.plugin_step.to_string());
+        assert_eq!(true, params.header_name.is_some());
+        if let Some(value) = params.header_name {
+            assert_eq!("x-user", value.to_string());
+        }
+        assert_eq!(
+            "123,456",
+            params
+                .keys
+                .iter()
+                .map(|item| std::string::String::from_utf8_lossy(item))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
     }
 }
