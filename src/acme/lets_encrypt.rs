@@ -53,9 +53,10 @@ impl BackgroundService for LetsEncryptService {
     async fn start(&self, mut shutdown: ShutdownWatch) {
         let mut domains = self.domains.clone();
         domains.sort();
-        info!("Lets encrypt background service, domains:{domains:?}");
+        let period = Duration::from_secs(10 * 60);
+        info!("Lets encrypt background service, domains:{domains:?}, period:{period:?}");
 
-        let mut period = interval(Duration::from_secs(10 * 60));
+        let mut period = interval(period);
         loop {
             tokio::select! {
                 _ = shutdown.changed() => {

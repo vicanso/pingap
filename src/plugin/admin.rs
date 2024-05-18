@@ -297,7 +297,7 @@ impl ProxyPlugin for AdminServe {
         if let Some(query) = header.uri.query() {
             new_path = format!("{new_path}?{query}");
         }
-        // TODO parse error
+        // ignore parse error
         if let Ok(uri) = new_path.parse::<http::Uri>() {
             header.set_uri(uri);
         }

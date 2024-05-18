@@ -12,13 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::util;
 use log::debug;
 use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::time::Duration;
 use tokio::sync::RwLock;
-
-use crate::util;
 
 #[derive(Debug)]
 struct TtlLimit {

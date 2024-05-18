@@ -473,8 +473,9 @@ impl ProxyHttp for Server {
                 new_path = format!("{new_path}?{query}");
             }
             debug!("New path:{new_path}");
-            // TODO parse error
-            let _ = new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri));
+            if let Err(e) = new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri)) {
+                error!("Location:{}, new path parse error:{e:?}", lo.name);
+            }
         }
         debug!("Location {}", lo.name);
         ctx.location.clone_from(&lo.name);

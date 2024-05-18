@@ -35,13 +35,15 @@ impl ValidityChecker {
 #[async_trait]
 impl BackgroundService for ValidityChecker {
     async fn start(&self, mut shutdown: ShutdownWatch) {
-        let mut period = interval(Duration::from_secs(60 * 60));
+        let period = Duration::from_secs(60 * 60);
         let time_offset = 7 * 24 * 3600_i64;
         info!(
-            "Start tls validity checker background service, {:?} seconds, {:?}",
+            "Start tls validity checker background service, offset:{:?}, period:{period:?}, validity_list:{:?}",
             Duration::from_secs(time_offset as u64),
             self.validity_list
         );
+
+        let mut period = interval(period);
 
         loop {
             tokio::select! {

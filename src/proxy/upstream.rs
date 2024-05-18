@@ -17,7 +17,7 @@ use crate::state::State;
 use crate::util;
 use futures_util::FutureExt;
 use humantime::parse_duration;
-use log::debug;
+use log::{debug, error};
 use pingora::http::RequestHeader;
 use pingora::lb::health_check::{HealthCheck, HttpHealthCheck, TcpHealthCheck};
 use pingora::lb::selection::{Consistent, RoundRobin};
@@ -230,11 +230,18 @@ fn new_http_health_check(conf: &HealthCheckConf) -> HttpHealthCheck {
     check.consecutive_success = conf.consecutive_success;
     check.consecutive_failure = conf.consecutive_failure;
     check.reuse_connection = conf.reuse_connection;
-    // TODO 是否针对path做出错处理
-    if let Ok(mut req) = RequestHeader::build("GET", conf.path.as_bytes(), None) {
-        // 忽略append header fail
-        let _ = req.append_header("Host", &conf.host);
-        check.req = req;
+    match RequestHeader::build("GET", conf.path.as_bytes(), None) {
+        Ok(mut req) => {
+            // 忽略append header fail
+            if let Err(e) = req.append_header("Host", &conf.host) {
+                error!(
+                    "Http health check append host fail, host:{}, error:{e:?}",
+                    conf.host
+                );
+            }
+            check.req = req;
+        }
+        Err(e) => error!("Http health check error:{e:?}"),
     }
 
     check

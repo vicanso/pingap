@@ -12,7 +12,6 @@ jobs:
   linux:
     strategy:
       matrix:
-        # TODO: add nightly
         toolchain: [stable]
     runs-on: ubuntu-latest
     services:
