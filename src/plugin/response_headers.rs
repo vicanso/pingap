@@ -11,9 +11,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use super::ResponsePlugin;
-use super::{Error, Result};
-use crate::config::{PluginCategory, PluginStep};
+use super::{get_step_conf, get_str_conf, get_str_slice_conf, Error, ResponsePlugin, Result};
+use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{convert_header, HttpHeader};
 use crate::state::State;
 use http::header::HeaderName;
@@ -24,65 +23,128 @@ use std::str::FromStr;
 use substring::Substring;
 
 pub struct ResponseHeaders {
-    proxy_step: PluginStep,
+    plugin_step: PluginStep,
     add_headers: Vec<HttpHeader>,
     remove_headers: Vec<HeaderName>,
     set_headers: Vec<HttpHeader>,
 }
 
-impl ResponseHeaders {
-    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
-        debug!("new stats proxy plugin, {value}, {proxy_step:?}");
-        if proxy_step != PluginStep::UpstreamResponse {
+struct ResponseHeadersParams {
+    plugin_step: PluginStep,
+    add_headers: Vec<HttpHeader>,
+    remove_headers: Vec<HeaderName>,
+    set_headers: Vec<HttpHeader>,
+}
+
+impl TryFrom<&PluginConf> for ResponseHeadersParams {
+    type Error = Error;
+    fn try_from(value: &PluginConf) -> Result<Self> {
+        let step = get_step_conf(value);
+        let all_params = get_str_conf(value, "value");
+        let params = if !all_params.is_empty() {
+            let mut add_headers = vec![];
+            let mut remove_headers = vec![];
+            let mut set_headers = vec![];
+            for item in all_params.split(' ') {
+                let item = item.trim();
+                if item.is_empty() {
+                    continue;
+                }
+                let first = item.chars().next().unwrap();
+                let last = item.substring(1, item.len());
+                match first {
+                    '+' => {
+                        let header = convert_header(last).map_err(|e| Error::Invalid {
+                            category: PluginCategory::ResponseHeaders.to_string(),
+                            message: e.to_string(),
+                        })?;
+                        if let Some(item) = header {
+                            add_headers.push(item);
+                        }
+                    }
+                    '-' => {
+                        let name = HeaderName::from_str(last).map_err(|e| Error::Invalid {
+                            category: PluginCategory::ResponseHeaders.to_string(),
+                            message: e.to_string(),
+                        })?;
+                        remove_headers.push(name);
+                    }
+                    _ => {
+                        let header = convert_header(item).map_err(|e| Error::Invalid {
+                            category: PluginCategory::ResponseHeaders.to_string(),
+                            message: e.to_string(),
+                        })?;
+                        if let Some(item) = header {
+                            set_headers.push(item);
+                        }
+                    }
+                }
+            }
+            Self {
+                plugin_step: step,
+                add_headers,
+                set_headers,
+                remove_headers,
+            }
+        } else {
+            let mut add_headers = vec![];
+            for item in get_str_slice_conf(value, "add_headers").iter() {
+                let header = convert_header(item).map_err(|e| Error::Invalid {
+                    category: PluginCategory::ResponseHeaders.to_string(),
+                    message: e.to_string(),
+                })?;
+                if let Some(item) = header {
+                    add_headers.push(item);
+                }
+            }
+
+            let mut set_headers = vec![];
+            for item in get_str_slice_conf(value, "set_headers").iter() {
+                let header = convert_header(item).map_err(|e| Error::Invalid {
+                    category: PluginCategory::ResponseHeaders.to_string(),
+                    message: e.to_string(),
+                })?;
+                if let Some(item) = header {
+                    set_headers.push(item);
+                }
+            }
+            let mut remove_headers = vec![];
+            for item in get_str_slice_conf(value, "remove_headers").iter() {
+                let item = HeaderName::from_str(item).map_err(|e| Error::Invalid {
+                    category: PluginCategory::ResponseHeaders.to_string(),
+                    message: e.to_string(),
+                })?;
+                remove_headers.push(item);
+            }
+            Self {
+                plugin_step: step,
+                add_headers,
+                set_headers,
+                remove_headers,
+            }
+        };
+
+        if params.plugin_step != PluginStep::UpstreamResponse {
             return Err(Error::Invalid {
                 category: PluginCategory::ResponseHeaders.to_string(),
                 message: "Response headers plugin should be executed at upstream response step"
                     .to_string(),
             });
         }
-        let mut add_headers = vec![];
-        let mut remove_headers = vec![];
-        let mut set_headers = vec![];
-        for item in value.split(' ') {
-            let item = item.trim();
-            if item.is_empty() {
-                continue;
-            }
-            let first = item.chars().next().unwrap();
-            let last = item.substring(1, item.len());
-            match first {
-                '+' => {
-                    let header = convert_header(last).map_err(|e| Error::Invalid {
-                        category: PluginCategory::ResponseHeaders.to_string(),
-                        message: e.to_string(),
-                    })?;
-                    if let Some(item) = header {
-                        add_headers.push(item);
-                    }
-                }
-                '-' => {
-                    let name = HeaderName::from_str(last).map_err(|e| Error::Invalid {
-                        category: PluginCategory::ResponseHeaders.to_string(),
-                        message: e.to_string(),
-                    })?;
-                    remove_headers.push(name);
-                }
-                _ => {
-                    let header = convert_header(item).map_err(|e| Error::Invalid {
-                        category: PluginCategory::ResponseHeaders.to_string(),
-                        message: e.to_string(),
-                    })?;
-                    if let Some(item) = header {
-                        set_headers.push(item);
-                    }
-                }
-            }
-        }
+        Ok(params)
+    }
+}
+
+impl ResponseHeaders {
+    pub fn new(params: &PluginConf) -> Result<Self> {
+        debug!("new stats proxy plugin, params:{params:?}");
+        let params = ResponseHeadersParams::try_from(params)?;
+
         Ok(Self {
-            proxy_step,
-            add_headers,
-            remove_headers,
-            set_headers,
+            plugin_step: params.plugin_step,
+            add_headers: params.add_headers,
+            remove_headers: params.remove_headers,
+            set_headers: params.set_headers,
         })
     }
 }
@@ -90,7 +152,7 @@ impl ResponseHeaders {
 impl ResponsePlugin for ResponseHeaders {
     #[inline]
     fn step(&self) -> PluginStep {
-        self.proxy_step
+        self.plugin_step
     }
     #[inline]
     fn category(&self) -> PluginCategory {
@@ -120,7 +182,7 @@ impl ResponsePlugin for ResponseHeaders {
 mod tests {
     use super::ResponseHeaders;
     use crate::state::State;
-    use crate::{config::PluginStep, plugin::ResponsePlugin};
+    use crate::{config::PluginConf, plugin::ResponsePlugin};
     use pingora::http::ResponseHeader;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -129,8 +191,21 @@ mod tests {
     #[tokio::test]
     async fn test_response_headers() {
         let response_headers = ResponseHeaders::new(
-            "X-Response-Id:123 -Content-Type +X-Service:1 +X-Service:2",
-            PluginStep::UpstreamResponse,
+            &toml::from_str::<PluginConf>(
+                r###"
+add_headers = [
+    "X-Service:1",
+    "X-Service:2",
+]
+set_headers = [
+    "X-Response-Id:123"
+]
+remove_headers = [
+    "Content-Type"
+]
+    "###,
+            )
+            .unwrap(),
         )
         .unwrap();
         let headers = ["Accept-Encoding: gzip"].join("\r\n");

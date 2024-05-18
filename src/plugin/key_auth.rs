@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::ProxyPlugin;
-use super::{Error, Result};
-use crate::config::{PluginCategory, PluginStep};
+use super::{
+    get_int_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error, ProxyPlugin, Result,
+};
+use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use crate::util;
@@ -28,7 +29,7 @@ use substring::Substring;
 
 pub struct KeyAuth {
     category: u8,
-    proxy_step: PluginStep,
+    plugin_step: PluginStep,
     header_name: Option<HeaderName>,
     query_name: Option<String>,
     keys: Vec<Vec<u8>>,
@@ -36,48 +37,98 @@ pub struct KeyAuth {
     unauthorized_resp: HttpResponse,
 }
 
-impl KeyAuth {
-    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
-        debug!("new key auth proxy plugin, {value}, {proxy_step:?}");
-        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&proxy_step) {
+struct KeyAuthParams {
+    category: u8,
+    plugin_step: PluginStep,
+    header_name: Option<HeaderName>,
+    query_name: Option<String>,
+    keys: Vec<Vec<u8>>,
+}
+
+impl TryFrom<&PluginConf> for KeyAuthParams {
+    type Error = Error;
+    fn try_from(value: &PluginConf) -> Result<Self> {
+        let step = get_step_conf(value);
+        let all_params = get_str_conf(value, "value");
+        let params = if !all_params.is_empty() {
+            let arr: Vec<&str> = all_params.split(' ').collect();
+            if arr.len() != 2 {
+                return Err(Error::Invalid {
+                    category: PluginCategory::KeyAuth.to_string(),
+                    message: "Value for key auth is invalid".to_string(),
+                });
+            }
+            let mut category = 0;
+            let mut query_name = None;
+            let mut header_name = None;
+            let name = arr[0];
+            if name.starts_with('?') {
+                category = 1;
+                query_name = Some(name.substring(1, name.len()).to_string());
+            } else {
+                header_name = Some(HeaderName::from_str(name).map_err(|e| Error::Invalid {
+                    category: PluginCategory::KeyAuth.to_string(),
+                    message: format!("invalid header name, {e}"),
+                })?);
+            }
+
+            let keys = arr[1]
+                .split(',')
+                .map(|item| item.as_bytes().to_owned())
+                .collect();
+            Self {
+                category,
+                keys,
+                plugin_step: step,
+                query_name,
+                header_name,
+            }
+        } else {
+            let category = get_int_conf(value, "category") as u8;
+            let name = get_str_conf(value, "name");
+            let mut query_name = None;
+            let mut header_name = None;
+            if category == 1 {
+                query_name = Some(name.substring(1, name.len()).to_string());
+            } else {
+                header_name = Some(HeaderName::from_str(&name).map_err(|e| Error::Invalid {
+                    category: PluginCategory::KeyAuth.to_string(),
+                    message: format!("invalid header name, {e}"),
+                })?);
+            }
+            Self {
+                category,
+                keys: get_str_slice_conf(value, "keys")
+                    .iter()
+                    .map(|item| item.as_bytes().to_vec())
+                    .collect(),
+                plugin_step: step,
+                query_name,
+                header_name,
+            }
+        };
+        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {
                 category: PluginCategory::KeyAuth.to_string(),
                 message: "Key auth plugin should be executed at request or proxy upstream step"
                     .to_string(),
             });
         }
-        let arr: Vec<&str> = value.split(' ').collect();
-        if arr.len() != 2 {
-            return Err(Error::Invalid {
-                category: PluginCategory::KeyAuth.to_string(),
-                message: "Value for key auth is invalid".to_string(),
-            });
-        }
-        let mut category = 0;
-        let mut query_name = None;
-        let mut header_name = None;
-        let name = arr[0];
-        if name.starts_with('?') {
-            category = 1;
-            query_name = Some(name.substring(1, name.len()).to_string());
-        } else {
-            header_name = Some(HeaderName::from_str(name).map_err(|e| Error::Invalid {
-                category: PluginCategory::KeyAuth.to_string(),
-                message: format!("invalid header name, {e}"),
-            })?);
-        }
+        Ok(params)
+    }
+}
 
-        let keys = arr[1]
-            .split(',')
-            .map(|item| item.as_bytes().to_owned())
-            .collect();
+impl KeyAuth {
+    pub fn new(params: &PluginConf) -> Result<Self> {
+        debug!("new key auth proxy plugin, params:{params:?}");
+        let params = KeyAuthParams::try_from(params)?;
 
         Ok(Self {
-            category,
-            keys,
-            proxy_step,
-            query_name,
-            header_name,
+            category: params.category,
+            keys: params.keys,
+            plugin_step: params.plugin_step,
+            query_name: params.query_name,
+            header_name: params.header_name,
             miss_authorization_resp: HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
                 body: Bytes::from_static(b"Key missing"),
@@ -96,7 +147,7 @@ impl KeyAuth {
 impl ProxyPlugin for KeyAuth {
     #[inline]
     fn step(&self) -> PluginStep {
-        self.proxy_step
+        self.plugin_step
     }
     #[inline]
     fn category(&self) -> PluginCategory {

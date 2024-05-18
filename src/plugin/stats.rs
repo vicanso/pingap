@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, ProxyPlugin, Result};
-use crate::config::{PluginCategory, PluginStep};
+use super::{get_step_conf, get_str_conf, Error, ProxyPlugin, Result};
+use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON};
 use crate::state::{get_hostname, get_start_time, State};
 use crate::util;
@@ -41,22 +41,48 @@ struct ServerStats {
 }
 pub struct Stats {
     path: String,
-    proxy_step: PluginStep,
+    plugin_step: PluginStep,
 }
 
-impl Stats {
-    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
-        debug!("new stats proxy plugin, {value}, {proxy_step:?}");
-        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&proxy_step) {
+struct StatsParams {
+    path: String,
+    plugin_step: PluginStep,
+}
+impl TryFrom<&PluginConf> for StatsParams {
+    type Error = Error;
+    fn try_from(value: &PluginConf) -> Result<Self> {
+        let step = get_step_conf(value);
+        let all_params = get_str_conf(value, "value");
+        let params = if !all_params.is_empty() {
+            Self {
+                plugin_step: step,
+                path: all_params,
+            }
+        } else {
+            Self {
+                plugin_step: step,
+                path: get_str_conf(value, "path"),
+            }
+        };
+        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {
                 category: PluginCategory::Stats.to_string(),
                 message: "Stats plugin should be executed at request or proxy upstream step"
                     .to_string(),
             });
         }
+        Ok(params)
+    }
+}
+
+impl Stats {
+    pub fn new(params: &PluginConf) -> Result<Self> {
+        debug!("new stats proxy plugin, params:{params:?}");
+        let params = StatsParams::try_from(params)?;
+
         Ok(Self {
-            proxy_step,
-            path: value.to_string(),
+            plugin_step: params.plugin_step,
+            path: params.path,
         })
     }
 }
@@ -65,7 +91,7 @@ impl Stats {
 impl ProxyPlugin for Stats {
     #[inline]
     fn step(&self) -> PluginStep {
-        self.proxy_step
+        self.plugin_step
     }
     #[inline]
     fn category(&self) -> PluginCategory {
@@ -110,14 +136,22 @@ impl ProxyPlugin for Stats {
 mod tests {
     use super::Stats;
     use crate::state::State;
-    use crate::{config::PluginStep, plugin::ProxyPlugin};
+    use crate::{config::PluginConf, plugin::ProxyPlugin};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
 
     #[tokio::test]
     async fn test_stats() {
-        let stats = Stats::new("/stats", PluginStep::Request).unwrap();
+        let stats = Stats::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+            path: "/stats"
+        "###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");

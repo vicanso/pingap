@@ -16,7 +16,7 @@ use crate::acme::{LetsEncryptService, ValidityChecker};
 use crate::config::ETCD_PROTOCOL;
 use crate::state::AutoRestart;
 use clap::Parser;
-use config::{PingapConf, PluginCategory, PluginConf};
+use config::{PingapConf, PluginConf};
 use crossbeam_channel::Sender;
 use log::{error, info};
 use pingora::server;
@@ -149,6 +149,15 @@ fn parse_admin_proxy_plugin(addr: &str) -> (ServerConf, String, PluginConf) {
         authorization = arr[0].trim().to_string();
         addr = arr[1].trim().to_string();
     }
+    let data = format!(
+        r#"
+category = "admin"
+path = "/"
+authorization = "{}"
+remark = "Admin serve"
+"#,
+        authorization
+    );
     (
         ServerConf {
             name: "pingap:admin".to_string(),
@@ -157,12 +166,7 @@ fn parse_admin_proxy_plugin(addr: &str) -> (ServerConf, String, PluginConf) {
             ..Default::default()
         },
         util::ADMIN_SERVER_PLUGIN.clone(),
-        PluginConf {
-            value: Some(format!("/ {authorization}")),
-            category: PluginCategory::Admin,
-            remark: Some("Admin serve".to_string()),
-            step: None,
-        },
+        toml::from_str::<PluginConf>(&data).unwrap(),
     )
 }
 

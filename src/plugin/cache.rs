@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::ProxyPlugin;
-use super::{Error, Result};
-use crate::config::{get_current_config, PluginCategory, PluginStep};
+use super::{
+    get_int_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error, ProxyPlugin, Result,
+};
+use crate::config::{get_current_config, PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
@@ -53,7 +54,7 @@ static CACHE_LOCK_THREE_SECONDS: Lazy<CacheLock> =
     Lazy::new(|| CacheLock::new(std::time::Duration::from_secs(3)));
 
 pub struct Cache {
-    proxy_step: PluginStep,
+    plugin_step: PluginStep,
     eviction: bool,
     predictor: bool,
     lock: u8,
@@ -63,62 +64,117 @@ pub struct Cache {
     headers: Option<Vec<String>>,
 }
 
-impl Cache {
-    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
-        debug!("new cache storage proxy plugin, {value}, {proxy_step:?}");
-        if proxy_step != PluginStep::Request {
+struct CacheParams {
+    plpugin_step: PluginStep,
+    eviction: bool,
+    predictor: bool,
+    lock: u8,
+    max_file_size: usize,
+    namespace: Option<String>,
+    headers: Option<Vec<String>>,
+}
+
+impl TryFrom<&PluginConf> for CacheParams {
+    type Error = Error;
+    fn try_from(value: &PluginConf) -> Result<Self> {
+        let step = get_step_conf(value);
+        let all_params = get_str_conf(value, "value");
+        let params = if !all_params.is_empty() {
+            let url_info = Url::parse(&all_params).map_err(|e| Error::Invalid {
+                category: PluginCategory::Cache.to_string(),
+                message: e.to_string(),
+            })?;
+            let mut lock = 0;
+            let mut eviction = false;
+            let mut predictor = false;
+            let mut max_file_size = 100 * 1024;
+            let mut namespace = None;
+            let mut headers = None;
+            for (key, value) in url_info.query_pairs().into_iter() {
+                match key.as_ref() {
+                    "lock" => {
+                        if let Ok(d) = value.parse::<u8>() {
+                            lock = d;
+                        }
+                    }
+                    "max_file_size" => {
+                        if let Ok(v) = ByteSize::from_str(&value) {
+                            max_file_size = v.0 as usize;
+                        }
+                    }
+                    "eviction" => eviction = true,
+                    "predictor" => predictor = true,
+                    "namespace" => namespace = Some(value.to_string()),
+                    "headers" => {
+                        headers = Some(
+                            value
+                                .trim()
+                                .split(',')
+                                .map(|item| item.to_string())
+                                .collect(),
+                        )
+                    }
+                    _ => {}
+                }
+            }
+            Self {
+                plpugin_step: step,
+                eviction,
+                predictor,
+                lock,
+                max_file_size,
+                namespace,
+                headers,
+            }
+        } else {
+            let lock = get_int_conf(value, "lock") as u8;
+            let max_file_size = get_int_conf(value, "max_file_size") as usize;
+            let namespace = get_str_conf(value, "namespace");
+            let namespace = if namespace.is_empty() {
+                None
+            } else {
+                Some(namespace)
+            };
+            let headers = get_str_slice_conf(value, "headers");
+            let headers = if headers.is_empty() {
+                None
+            } else {
+                Some(headers)
+            };
+            Self {
+                plpugin_step: step,
+                eviction: value.contains_key("eviction"),
+                predictor: value.contains_key("predictor"),
+                lock: lock.max(1),
+                max_file_size: max_file_size.max(5 * 1024 * 1024),
+                namespace,
+                headers,
+            }
+        };
+        if params.plpugin_step != PluginStep::Request {
             return Err(Error::Invalid {
                 category: PluginCategory::Cache.to_string(),
                 message: "Cache plugin should be executed at request step".to_string(),
             });
         }
-        let url_info = Url::parse(value).map_err(|e| Error::Invalid {
-            category: PluginCategory::Cache.to_string(),
-            message: e.to_string(),
-        })?;
-        let mut lock = 0;
-        let mut eviction = false;
-        let mut predictor = false;
-        let mut max_file_size = 100 * 1024;
-        let mut namespace = None;
-        let mut headers = None;
-        for (key, value) in url_info.query_pairs().into_iter() {
-            match key.as_ref() {
-                "lock" => {
-                    if let Ok(d) = value.parse::<u8>() {
-                        lock = d;
-                    }
-                }
-                "max_file_size" => {
-                    if let Ok(v) = ByteSize::from_str(&value) {
-                        max_file_size = v.0 as usize;
-                    }
-                }
-                "eviction" => eviction = true,
-                "predictor" => predictor = true,
-                "namespace" => namespace = Some(value.to_string()),
-                "headers" => {
-                    headers = Some(
-                        value
-                            .trim()
-                            .split(',')
-                            .map(|item| item.to_string())
-                            .collect(),
-                    )
-                }
-                _ => {}
-            }
-        }
+        Ok(params)
+    }
+}
+
+impl Cache {
+    pub fn new(params: &PluginConf) -> Result<Self> {
+        debug!("new cache storage proxy plugin, params:{params:?}");
+        let params = CacheParams::try_from(params)?;
 
         Ok(Self {
             storage: &*MEM_BACKEND,
-            proxy_step,
-            eviction,
-            lock,
-            max_file_size,
-            namespace,
-            headers,
-            predictor,
+            plugin_step: params.plpugin_step,
+            eviction: params.eviction,
+            lock: params.lock,
+            max_file_size: params.max_file_size,
+            namespace: params.namespace,
+            headers: params.headers,
+            predictor: params.predictor,
         })
     }
 }
@@ -127,7 +183,7 @@ impl Cache {
 impl ProxyPlugin for Cache {
     #[inline]
     fn step(&self) -> PluginStep {
-        self.proxy_step
+        self.plugin_step
     }
     #[inline]
     fn category(&self) -> PluginCategory {

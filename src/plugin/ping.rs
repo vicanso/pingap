@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, ProxyPlugin, Result};
-use crate::config::{PluginCategory, PluginStep};
+use super::{get_step_conf, get_str_conf, Error, ProxyPlugin, Result};
+use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
@@ -24,7 +24,7 @@ use pingora::proxy::Session;
 
 pub struct Ping {
     prefix: String,
-    proxy_step: PluginStep,
+    plugin_step: PluginStep,
 }
 static PONG_RESPONSE: Lazy<HttpResponse> = Lazy::new(|| HttpResponse {
     status: StatusCode::OK,
@@ -33,18 +33,18 @@ static PONG_RESPONSE: Lazy<HttpResponse> = Lazy::new(|| HttpResponse {
 });
 
 impl Ping {
-    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
-        if proxy_step != PluginStep::Request {
+    pub fn new(params: &PluginConf) -> Result<Self> {
+        let step = get_step_conf(params);
+        if step != PluginStep::Request {
             return Err(Error::Invalid {
                 category: PluginCategory::Ping.to_string(),
                 message: "Ping plugin should be executed at request step".to_string(),
             });
         }
-        let mut prefix = "".to_string();
-        if value.trim().len() > 1 {
-            prefix = value.trim().to_string();
-        }
-        Ok(Self { prefix, proxy_step })
+        Ok(Self {
+            prefix: get_str_conf(params, "value"),
+            plugin_step: step,
+        })
     }
 }
 
@@ -52,7 +52,7 @@ impl Ping {
 impl ProxyPlugin for Ping {
     #[inline]
     fn step(&self) -> PluginStep {
-        self.proxy_step
+        self.plugin_step
     }
     #[inline]
     fn category(&self) -> PluginCategory {

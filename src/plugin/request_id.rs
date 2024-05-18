@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, ProxyPlugin, Result};
-use crate::config::{PluginCategory, PluginStep};
+use super::{get_int_conf, get_step_conf, get_str_conf, Error, ProxyPlugin, Result};
+use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::http_extra::HTTP_HEADER_NAME_X_REQUEST_ID;
 use crate::state::State;
@@ -24,34 +24,64 @@ use pingora::proxy::Session;
 use uuid::Uuid;
 
 pub struct RequestId {
-    proxy_step: PluginStep,
+    plugin_step: PluginStep,
     algorithm: String,
     size: usize,
 }
 
-impl RequestId {
-    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
-        debug!("new request id proxy plugin, {value}, {proxy_step:?}");
-        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&proxy_step) {
+struct RequestIdParams {
+    plugin_step: PluginStep,
+    algorithm: String,
+    size: usize,
+}
+
+impl TryFrom<&PluginConf> for RequestIdParams {
+    type Error = Error;
+    fn try_from(value: &PluginConf) -> Result<Self> {
+        let step = get_step_conf(value);
+        let all_params = get_str_conf(value, "value");
+        let params = if !all_params.is_empty() {
+            let arr: Vec<&str> = all_params.split(' ').collect();
+            let algorithm = arr[0].trim().to_string();
+            let mut size = 8;
+            if arr.len() >= 2 {
+                let v = arr[1].parse::<usize>().unwrap();
+                if v > 0 {
+                    size = v;
+                }
+            }
+            Self {
+                plugin_step: step,
+                algorithm,
+                size,
+            }
+        } else {
+            Self {
+                plugin_step: step,
+                algorithm: get_str_conf(value, "algorithm"),
+                size: get_int_conf(value, "size") as usize,
+            }
+        };
+        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {
                 category: PluginCategory::RequestId.to_string(),
                 message: "Request id should be executed at request or proxy upstream step"
                     .to_string(),
             });
         }
-        let arr: Vec<&str> = value.split(' ').collect();
-        let algorithm = arr[0].trim().to_string();
-        let mut size = 8;
-        if arr.len() >= 2 {
-            let v = arr[1].parse::<usize>().unwrap();
-            if v > 0 {
-                size = v;
-            }
-        }
+        Ok(params)
+    }
+}
+
+impl RequestId {
+    pub fn new(params: &PluginConf) -> Result<Self> {
+        debug!("new request id proxy plugin, params:{params:?}");
+        let params = RequestIdParams::try_from(params)?;
+
         Ok(Self {
-            size,
-            proxy_step,
-            algorithm,
+            size: params.size,
+            plugin_step: params.plugin_step,
+            algorithm: params.algorithm,
         })
     }
 }
@@ -60,7 +90,7 @@ impl RequestId {
 impl ProxyPlugin for RequestId {
     #[inline]
     fn step(&self) -> PluginStep {
-        self.proxy_step
+        self.plugin_step
     }
     #[inline]
     fn category(&self) -> PluginCategory {
@@ -94,14 +124,23 @@ impl ProxyPlugin for RequestId {
 mod tests {
     use super::RequestId;
     use crate::state::State;
-    use crate::{config::PluginStep, plugin::ProxyPlugin};
+    use crate::{config::PluginConf, plugin::ProxyPlugin};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
 
     #[tokio::test]
     async fn test_request_id() {
-        let id = RequestId::new("nanoid 10", PluginStep::Request).unwrap();
+        let id = RequestId::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+algorithm = "nanoid"
+size = 10
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
 
         let headers = ["X-Request-Id: 123"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");

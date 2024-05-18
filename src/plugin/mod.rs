@@ -22,6 +22,7 @@ use pingora::proxy::Session;
 use snafu::Snafu;
 use std::collections::HashMap;
 use std::num::ParseIntError;
+use std::str::FromStr;
 
 mod admin;
 mod basic_auth;
@@ -96,39 +97,48 @@ pub fn get_builtin_proxy_plugins() -> Vec<(String, PluginConf)> {
         // default level, gzip:6 br:6 zstd:3
         (
             "pingap:compression".to_string(),
-            PluginConf {
-                value: Some("6 6 3".to_string()),
-                category: PluginCategory::Compression,
-                remark: Some("Compression for http, support zstd:3, br:6, gzip:6".to_string()),
-                step: None,
-            },
+            toml::from_str::<PluginConf>(
+                r###"
+category = "compression"
+gzip_level = 6
+br_level = 6
+zstd_level = 6
+remark = "Compression for http, support zstd:3, br:6, gzip:6"
+"###,
+            )
+            .unwrap(),
         ),
         (
             "pingap:ping".to_string(),
-            PluginConf {
-                value: Some("/ping".to_string()),
-                category: PluginCategory::Ping,
-                remark: Some("Ping pong".to_string()),
-                step: None,
-            },
+            toml::from_str::<PluginConf>(
+                r###"
+category = "ping"
+path = "/ping"
+remark = "Ping pong"
+"###,
+            )
+            .unwrap(),
         ),
         (
             "pingap:stats".to_string(),
-            PluginConf {
-                value: Some("/stats".to_string()),
-                category: PluginCategory::Stats,
-                remark: Some("Get stats of server".to_string()),
-                step: None,
-            },
+            toml::from_str::<PluginConf>(
+                r###"
+category = "stats"
+path = "/stats"
+remark = "Get stats of server"
+"###,
+            )
+            .unwrap(),
         ),
         (
             "pingap:requestId".to_string(),
-            PluginConf {
-                category: PluginCategory::RequestId,
-                remark: Some("Generate a request id for service".to_string()),
-                value: None,
-                step: None,
-            },
+            toml::from_str::<PluginConf>(
+                r###"
+category = "request_id"
+remark = "Generate a request id for service"
+"###,
+            )
+            .unwrap(),
         ),
     ]
 }
@@ -148,63 +158,67 @@ pub fn init_plugins(confs: Vec<(String, PluginConf)>) -> Result<()> {
         data.extend(get_builtin_proxy_plugins());
         for (name, conf) in data {
             let name = name.to_string();
-            let step = conf.step.unwrap_or_default();
-            let value = conf.value.clone().unwrap_or_default();
-            match conf.category {
+            let category = conf.get("category");
+            if category.is_none() {
+                continue;
+            }
+            let category = PluginCategory::from_str(category.unwrap().as_str().unwrap_or_default())
+                .unwrap_or_default();
+            match category {
                 PluginCategory::Limit => {
-                    let l = limit::Limiter::new(&value, step)?;
+                    let l = limit::Limiter::new(conf)?;
                     proxy_plugins.insert(name, Box::new(l));
                 }
                 PluginCategory::Compression => {
-                    let c = compression::Compression::new(&value, step)?;
+                    let c = compression::Compression::new(conf)?;
                     proxy_plugins.insert(name, Box::new(c));
                 }
                 PluginCategory::Stats => {
-                    let s = stats::Stats::new(&value, step)?;
+                    let s = stats::Stats::new(conf)?;
                     proxy_plugins.insert(name, Box::new(s));
                 }
                 PluginCategory::Admin => {
-                    let a = admin::AdminServe::new(&value, step)?;
+                    let a = admin::AdminServe::new(conf)?;
                     proxy_plugins.insert(name, Box::new(a));
                 }
                 PluginCategory::Directory => {
-                    let d = directory::Directory::new(&value, step)?;
+                    let d = directory::Directory::new(conf)?;
                     proxy_plugins.insert(name, Box::new(d));
                 }
                 PluginCategory::Mock => {
-                    let m = mock::MockResponse::new(&value, step)?;
+                    let m = mock::MockResponse::new(conf)?;
                     proxy_plugins.insert(name, Box::new(m));
                 }
                 PluginCategory::RequestId => {
-                    let r = request_id::RequestId::new(&value, step)?;
+                    let r = request_id::RequestId::new(conf)?;
                     proxy_plugins.insert(name, Box::new(r));
                 }
                 PluginCategory::IpLimit => {
-                    let l = ip_limit::IpLimit::new(&value, step)?;
+                    let l = ip_limit::IpLimit::new(conf)?;
                     proxy_plugins.insert(name, Box::new(l));
                 }
                 PluginCategory::KeyAuth => {
-                    let k = key_auth::KeyAuth::new(&value, step)?;
+                    let k = key_auth::KeyAuth::new(conf)?;
                     proxy_plugins.insert(name, Box::new(k));
                 }
                 PluginCategory::BasicAuth => {
-                    let b = basic_auth::BasicAuth::new(&value, step)?;
+                    let b = basic_auth::BasicAuth::new(conf)?;
                     proxy_plugins.insert(name, Box::new(b));
                 }
                 PluginCategory::Cache => {
-                    let c = cache::Cache::new(&value, step)?;
+                    let c = cache::Cache::new(conf)?;
                     proxy_plugins.insert(name, Box::new(c));
                 }
                 PluginCategory::RedirectHttps => {
-                    let r = redirect_https::RedirectHttps::new(&value, step)?;
+                    let r = redirect_https::RedirectHttps::new(conf)?;
                     proxy_plugins.insert(name, Box::new(r));
                 }
                 PluginCategory::Ping => {
-                    let p = ping::Ping::new(&value, step)?;
+                    let p = ping::Ping::new(conf)?;
                     proxy_plugins.insert(name, Box::new(p));
                 }
                 PluginCategory::ResponseHeaders => {
-                    let r = response_headers::ResponseHeaders::new(&value, step)?;
+                    let r = response_headers::ResponseHeaders::new(conf)?;
                     response_plugins.insert(name, Box::new(r));
                 }
             };
@@ -237,4 +251,44 @@ pub fn get_response_plugin(name: &str) -> Option<&dyn ResponsePlugin> {
 
 pub fn list_plugins() -> Option<&'static Plugins> {
     PLUGINS.get()
+}
+
+pub(crate) fn get_str_conf(value: &PluginConf, key: &str) -> String {
+    if let Some(value) = value.get(key) {
+        value.as_str().unwrap_or_default().to_string()
+    } else {
+        "".to_string()
+    }
+}
+
+pub(crate) fn get_int_conf(value: &PluginConf, key: &str) -> i64 {
+    if let Some(value) = value.get(key) {
+        value.as_integer().unwrap_or_default()
+    } else {
+        0
+    }
+}
+
+pub(crate) fn get_bool_conf(value: &PluginConf, key: &str) -> bool {
+    if let Some(value) = value.get(key) {
+        value.as_bool().unwrap_or_default()
+    } else {
+        false
+    }
+}
+
+pub(crate) fn get_str_slice_conf(value: &PluginConf, key: &str) -> Vec<String> {
+    if let Some(value) = value.get(key) {
+        if let Some(values) = value.as_array() {
+            return values
+                .iter()
+                .map(|item| item.as_str().unwrap_or_default().to_string())
+                .collect();
+        }
+    }
+    vec![]
+}
+
+pub(crate) fn get_step_conf(value: &PluginConf) -> PluginStep {
+    PluginStep::from_str(get_str_conf(value, "step").as_str()).unwrap_or_default()
 }

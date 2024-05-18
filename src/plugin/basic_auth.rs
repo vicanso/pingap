@@ -12,10 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::ProxyPlugin;
-use super::{Error, Result};
-use crate::config::PluginCategory;
-use crate::config::PluginStep;
+use super::{get_step_conf, get_str_conf, get_str_slice_conf, Error, ProxyPlugin, Result};
+use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
@@ -26,36 +24,64 @@ use http::StatusCode;
 use log::debug;
 use pingora::proxy::Session;
 
-pub struct BasicAuth {
-    proxy_step: PluginStep,
+struct BasicAuthParams {
+    plugin_step: PluginStep,
     authorizations: Vec<Vec<u8>>,
-    miss_authorization_resp: HttpResponse,
-    unauthorized_resp: HttpResponse,
 }
 
-impl BasicAuth {
-    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
-        debug!("new basic auth proxy plugin, {value}, {proxy_step:?}");
-        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&proxy_step) {
+impl TryFrom<&PluginConf> for BasicAuthParams {
+    type Error = Error;
+    fn try_from(value: &PluginConf) -> Result<Self> {
+        let step = get_step_conf(value);
+        let all_params = get_str_conf(value, "value");
+        let params = if !all_params.is_empty() {
+            let mut authorizations = vec![];
+            for item in all_params.split(' ') {
+                let _ = STANDARD.decode(item).map_err(|e| Error::Base64Decode {
+                    category: PluginCategory::BasicAuth.to_string(),
+                    source: e,
+                })?;
+                authorizations.push(format!("Basic {item}").as_bytes().to_owned());
+            }
+            Self {
+                plugin_step: step,
+                authorizations,
+            }
+        } else {
+            Self {
+                plugin_step: step,
+                authorizations: get_str_slice_conf(value, "authorizations")
+                    .iter()
+                    .map(|item| format!("Basic {item}").as_bytes().to_vec())
+                    .collect(),
+            }
+        };
+        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {
                 category: PluginCategory::BasicAuth.to_string(),
                 message: "Basic auth plugin should be executed at request or proxy upstream step"
                     .to_string(),
             });
         }
-        let mut authorizations = vec![];
-        for item in value.split(' ') {
-            let _ = STANDARD.decode(item).map_err(|e| Error::Base64Decode {
-                category: PluginCategory::BasicAuth.to_string(),
-                source: e,
-            })?;
+        Ok(params)
+    }
+}
 
-            authorizations.push(format!("Basic {item}").as_bytes().to_owned());
-        }
+pub struct BasicAuth {
+    plugin_step: PluginStep,
+    authorizations: Vec<Vec<u8>>,
+    miss_authorization_resp: HttpResponse,
+    unauthorized_resp: HttpResponse,
+}
+
+impl BasicAuth {
+    pub fn new(params: &PluginConf) -> Result<Self> {
+        debug!("new basic auth proxy plugin, params:{params:?}");
+        let params = BasicAuthParams::try_from(params)?;
 
         Ok(Self {
-            proxy_step,
-            authorizations,
+            plugin_step: params.plugin_step,
+            authorizations: params.authorizations,
             miss_authorization_resp: HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
                 headers: Some(vec![(
@@ -84,7 +110,7 @@ impl BasicAuth {
 impl ProxyPlugin for BasicAuth {
     #[inline]
     fn step(&self) -> PluginStep {
-        self.proxy_step
+        self.plugin_step
     }
     #[inline]
     fn category(&self) -> PluginCategory {
@@ -109,17 +135,53 @@ impl ProxyPlugin for BasicAuth {
 
 #[cfg(test)]
 mod tests {
-    use super::BasicAuth;
+    use super::{BasicAuth, BasicAuthParams, ProxyPlugin};
+    use crate::config::PluginConf;
     use crate::state::State;
-    use crate::{config::PluginStep, plugin::ProxyPlugin};
     use http::StatusCode;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
 
+    #[test]
+    fn test_basic_auth_params() {
+        let params = BasicAuthParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+authorizations = [
+"123",
+"456",
+]
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!("request", params.plugin_step.to_string());
+        assert_eq!(
+            "Basic 123,Basic 456",
+            params
+                .authorizations
+                .iter()
+                .map(|item| std::string::String::from_utf8_lossy(item))
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+    }
+
     #[tokio::test]
     async fn test_basic_auth() {
-        let auth = BasicAuth::new("YWRtaW46MTIzMTIz", PluginStep::ProxyUpstream).unwrap();
+        let auth = BasicAuth::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+authorizations = [
+    "YWRtaW46MTIzMTIz"
+]
+    "###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
 
         // auth success
         let headers = ["Authorization: Basic YWRtaW46MTIzMTIz"].join("\r\n");

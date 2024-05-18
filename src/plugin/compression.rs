@@ -12,9 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::ProxyPlugin;
-use super::{Error, Result};
-use crate::config::{PluginCategory, PluginStep};
+use super::{get_int_conf, get_step_conf, get_str_conf, Error, ProxyPlugin, Result};
+use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
@@ -32,40 +31,70 @@ pub struct Compression {
     br_level: u32,
     zstd_level: u32,
     support_compression: bool,
-    proxy_step: PluginStep,
+    plugin_step: PluginStep,
 }
 
-impl Compression {
-    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
-        debug!("new compresson proxy plugin, {value}, {proxy_step:?}");
-        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&proxy_step) {
+struct CompressionParams {
+    gzip_level: u32,
+    br_level: u32,
+    zstd_level: u32,
+    plugin_step: PluginStep,
+}
+
+impl TryFrom<&PluginConf> for CompressionParams {
+    type Error = Error;
+    fn try_from(value: &PluginConf) -> Result<Self> {
+        let step = get_step_conf(value);
+        let all_params = get_str_conf(value, "value");
+        let params = if !all_params.is_empty() {
+            let mut levels: [u32; 3] = [0, 0, 0];
+            for (index, item) in all_params.split(' ').enumerate() {
+                if index >= levels.len() {
+                    break;
+                }
+                let level = item.parse::<u32>().map_err(|e| Error::ParseInt {
+                    category: PluginCategory::Compression.to_string(),
+                    source: e,
+                })?;
+                if level > 0 {
+                    levels[index] = level;
+                }
+            }
+            Self {
+                gzip_level: levels[0],
+                br_level: levels[1],
+                zstd_level: levels[2],
+                plugin_step: step,
+            }
+        } else {
+            Self {
+                gzip_level: get_int_conf(value, "gzip_level") as u32,
+                br_level: get_int_conf(value, "br_level") as u32,
+                zstd_level: get_int_conf(value, "zstd_level") as u32,
+                plugin_step: step,
+            }
+        };
+        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {
                 category: PluginCategory::Compression.to_string(),
                 message: "Compression plugin should be executed at request or proxy upstream step"
                     .to_string(),
             });
         }
+        Ok(params)
+    }
+}
 
-        let mut levels: [u32; 3] = [0, 0, 0];
-        let mut support_compression = false;
-        for (index, item) in value.split(' ').enumerate() {
-            if index >= levels.len() {
-                break;
-            }
-            let level = item.parse::<u32>().map_err(|e| Error::ParseInt {
-                category: PluginCategory::Compression.to_string(),
-                source: e,
-            })?;
-            if level > 0 {
-                support_compression = true;
-                levels[index] = level;
-            }
-        }
+impl Compression {
+    pub fn new(params: &PluginConf) -> Result<Self> {
+        debug!("new compresson proxy plugin, params:{params:?}");
+        let params = CompressionParams::try_from(params)?;
+        let support_compression = params.gzip_level + params.br_level + params.zstd_level > 0;
         Ok(Self {
-            proxy_step,
-            gzip_level: levels[0],
-            br_level: levels[1],
-            zstd_level: levels[2],
+            plugin_step: params.plugin_step,
+            gzip_level: params.gzip_level,
+            br_level: params.br_level,
+            zstd_level: params.zstd_level,
             support_compression,
         })
     }
@@ -75,7 +104,7 @@ impl Compression {
 impl ProxyPlugin for Compression {
     #[inline]
     fn step(&self) -> PluginStep {
-        self.proxy_step
+        self.plugin_step
     }
     #[inline]
     fn category(&self) -> PluginCategory {
@@ -120,15 +149,45 @@ impl ProxyPlugin for Compression {
 #[cfg(test)]
 mod tests {
     use super::Compression;
+    use crate::plugin::compression::CompressionParams;
     use crate::state::State;
-    use crate::{config::PluginStep, plugin::ProxyPlugin};
+    use crate::{config::PluginConf, plugin::ProxyPlugin};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
 
+    #[test]
+    fn test_compression_params() {
+        let params = CompressionParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+gzip_level = 9
+br_level = 8
+zstd_level = 6
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!("request", params.plugin_step.to_string());
+        assert_eq!(9, params.gzip_level);
+        assert_eq!(8, params.br_level);
+        assert_eq!(6, params.zstd_level);
+    }
+
     #[tokio::test]
-    async fn test_basic_auth() {
-        let compression = Compression::new("9 8 7", PluginStep::ProxyUpstream).unwrap();
+    async fn test_compression() {
+        let compression = Compression::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+gzip_level = 9
+br_level = 8
+zstd_level = 7
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
 
         // gzip
         let headers = ["Accept-Encoding: gzip"].join("\r\n");

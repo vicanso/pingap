@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, ProxyPlugin, Result};
-use crate::config::{PluginCategory, PluginStep};
+use super::{get_bool_conf, get_int_conf, get_step_conf, get_str_conf, Error, ProxyPlugin, Result};
+use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{HttpChunkResponse, HttpHeader, HttpResponse};
 use crate::state::State;
 use crate::util;
@@ -96,7 +96,7 @@ pub struct Directory {
     cache_private: Option<bool>,
     // charset for text file
     charset: Option<String>,
-    proxy_step: PluginStep,
+    plugin_step: PluginStep,
     // support download
     download: bool,
 }
@@ -143,11 +143,116 @@ fn get_cacheable_and_headers_from_meta(
     (cacheable, size, headers)
 }
 
-impl Directory {
-    /// Creates a new directory upstream, which will serve static file of directory.
-    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
-        debug!("new serve static file proxy plugin, {value}, {proxy_step:?}");
-        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&proxy_step) {
+struct DirectoryParams {
+    path: PathBuf,
+    index: String,
+    autoindex: bool,
+    chunk_size: Option<usize>,
+    // max age of http response
+    max_age: Option<u32>,
+    // private for cache control
+    cache_private: Option<bool>,
+    // charset for text file
+    charset: Option<String>,
+    plugin_step: PluginStep,
+    // support download
+    download: bool,
+}
+
+impl TryFrom<&PluginConf> for DirectoryParams {
+    type Error = Error;
+    fn try_from(value: &PluginConf) -> Result<Self> {
+        let step = get_step_conf(value);
+        let all_params = get_str_conf(value, "value");
+        let params = if !all_params.is_empty() {
+            let mut new_path = all_params.to_string();
+            let mut chunk_size = None;
+            let mut max_age = None;
+            let mut cache_private = None;
+            let mut index_file = "index.html".to_string();
+            let mut charset = None;
+            let mut autoindex = false;
+            let mut download = false;
+            let file_protocol = "file://";
+            if !new_path.starts_with(file_protocol) {
+                new_path = format!("{file_protocol}{new_path}").to_string();
+            }
+            if let Ok(url_info) = Url::parse(&new_path) {
+                let query = url_info.query().unwrap_or_default();
+                if !query.is_empty() {
+                    new_path = new_path
+                        .substring(0, new_path.len() - query.len() - 1)
+                        .to_string();
+                }
+                for (key, value) in url_info.query_pairs().into_iter() {
+                    match key.as_ref() {
+                        "chunk_size" => {
+                            if let Ok(v) = value.parse::<usize>() {
+                                chunk_size = Some(v);
+                            }
+                        }
+                        "max_age" => {
+                            if let Ok(v) = parse_duration(&value) {
+                                max_age = Some(v.as_secs() as u32);
+                            }
+                        }
+                        "index" => index_file = value.to_string(),
+                        "charset" => charset = Some(value.to_string()),
+                        "autoindex" => autoindex = true,
+                        "private" => cache_private = Some(true),
+                        "download" => download = true,
+                        _ => {}
+                    }
+                }
+            };
+            Self {
+                autoindex,
+                index: format!("/{index_file}"),
+                path: Path::new(&util::resolve_path(
+                    new_path.substring(file_protocol.len(), new_path.len()),
+                ))
+                .to_path_buf(),
+                chunk_size,
+                max_age,
+                charset,
+                cache_private,
+                plugin_step: step,
+                download,
+            }
+        } else {
+            let chunk_size = get_int_conf(value, "chunk_size");
+            let chunk_size = if chunk_size > 0 {
+                Some(chunk_size as usize)
+            } else {
+                None
+            };
+            let max_age = get_str_conf(value, "max_age");
+            let max_age = if !max_age.is_empty() {
+                Some(parse_duration(&max_age).unwrap_or_default().as_secs() as u32)
+            } else {
+                None
+            };
+            let charset = get_str_conf(value, "charset");
+            let charset = if !charset.is_empty() {
+                Some(charset)
+            } else {
+                None
+            };
+            let cache_private = get_bool_conf(value, "private");
+            let cache_private = if cache_private { Some(true) } else { None };
+            Self {
+                autoindex: get_bool_conf(value, "autoindex"),
+                index: get_str_conf(value, "index"),
+                path: Path::new(&util::resolve_path(&get_str_conf(value, "path"))).to_path_buf(),
+                chunk_size,
+                max_age,
+                charset,
+                cache_private,
+                plugin_step: step,
+                download: get_bool_conf(value, "download"),
+            }
+        };
+        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {
                 category: PluginCategory::Directory.to_string(),
                 message:
@@ -155,59 +260,25 @@ impl Directory {
                         .to_string(),
             });
         }
-        let mut new_path = value.to_string();
-        let mut chunk_size = None;
-        let mut max_age = None;
-        let mut cache_private = None;
-        let mut index_file = "index.html".to_string();
-        let mut charset = None;
-        let mut autoindex = false;
-        let mut download = false;
-        let file_protocol = "file://";
-        if !new_path.starts_with(file_protocol) {
-            new_path = format!("{file_protocol}{new_path}").to_string();
-        }
-        if let Ok(url_info) = Url::parse(&new_path) {
-            let query = url_info.query().unwrap_or_default();
-            if !query.is_empty() {
-                new_path = new_path
-                    .substring(0, new_path.len() - query.len() - 1)
-                    .to_string();
-            }
-            for (key, value) in url_info.query_pairs().into_iter() {
-                match key.as_ref() {
-                    "chunk_size" => {
-                        if let Ok(v) = value.parse::<usize>() {
-                            chunk_size = Some(v);
-                        }
-                    }
-                    "max_age" => {
-                        if let Ok(v) = parse_duration(&value) {
-                            max_age = Some(v.as_secs() as u32);
-                        }
-                    }
-                    "index" => index_file = value.to_string(),
-                    "charset" => charset = Some(value.to_string()),
-                    "autoindex" => autoindex = true,
-                    "private" => cache_private = Some(true),
-                    "download" => download = true,
-                    _ => {}
-                }
-            }
-        };
+        Ok(params)
+    }
+}
+
+impl Directory {
+    /// Creates a new directory upstream, which will serve static file of directory.
+    pub fn new(params: &PluginConf) -> Result<Self> {
+        debug!("new serve static file proxy plugin, params:{params:?}");
+        let params = DirectoryParams::try_from(params)?;
         Ok(Self {
-            autoindex,
-            index: format!("/{index_file}"),
-            path: Path::new(&util::resolve_path(
-                new_path.substring(file_protocol.len(), new_path.len()),
-            ))
-            .to_path_buf(),
-            chunk_size,
-            max_age,
-            charset,
-            cache_private,
-            proxy_step,
-            download,
+            autoindex: params.autoindex,
+            index: params.index,
+            path: params.path,
+            chunk_size: params.chunk_size,
+            max_age: params.max_age,
+            charset: params.charset,
+            cache_private: params.cache_private,
+            plugin_step: params.plugin_step,
+            download: params.download,
         })
     }
 }
@@ -262,7 +333,7 @@ fn get_autoindex_html(path: &Path) -> Result<String, String> {
 impl ProxyPlugin for Directory {
     #[inline]
     fn step(&self) -> PluginStep {
-        self.proxy_step
+        self.plugin_step
     }
     #[inline]
     fn category(&self) -> PluginCategory {
@@ -354,15 +425,54 @@ impl ProxyPlugin for Directory {
 #[cfg(test)]
 mod tests {
     use super::{get_cacheable_and_headers_from_meta, get_data, Directory};
-    use crate::config::PluginStep;
+    use crate::{config::PluginConf, plugin::directory::DirectoryParams};
     use pretty_assertions::{assert_eq, assert_ne};
     use std::{os::unix::fs::MetadataExt, path::Path};
 
     #[test]
+    fn test_directory_params() {
+        let params = DirectoryParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+step = "proxy_upstream"
+path = "~/Downloads"
+index = "/index.html"
+autoindex = true
+chunk_size = 1024
+max_age = "10m"
+private = true
+charset = "utf8"
+download = true
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!("proxy_upstream", params.plugin_step.to_string());
+        assert_eq!(true, params.path.to_string_lossy().ends_with("/Downloads"));
+        assert_eq!("/index.html", params.index);
+        assert_eq!(true, params.autoindex);
+        assert_eq!(1024, params.chunk_size.unwrap_or_default());
+        assert_eq!(600, params.max_age.unwrap_or_default());
+        assert_eq!(true, params.cache_private.unwrap_or_default());
+        assert_eq!(true, params.cache_private.unwrap_or_default());
+        assert_eq!("utf8", params.charset.unwrap_or_default());
+        assert_eq!(true, params.download);
+    }
+
+    #[test]
     fn test_new_directory() {
         let dir = Directory::new(
-            "~/Downloads?chunk_size=1024&max_age=1h&private&index=pingap/index.html",
-            PluginStep::Request,
+            &toml::from_str::<PluginConf>(
+                r###"
+path = "~/Downloads"
+chunk_size = 1024
+max_age = "1h"
+private = true
+index = "/pingap/index.html"
+    "###,
+            )
+            .unwrap(),
         )
         .unwrap();
         assert_eq!(1024, dir.chunk_size.unwrap_or_default());

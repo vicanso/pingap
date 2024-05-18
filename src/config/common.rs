@@ -103,13 +103,13 @@ impl<'de> Deserialize<'de> for PluginStep {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Clone, Serialize)]
-pub struct PluginConf {
-    pub value: Option<String>,
-    pub category: PluginCategory,
-    pub step: Option<PluginStep>,
-    pub remark: Option<String>,
-}
+// #[derive(Debug, Default, Deserialize, Clone, Serialize)]
+// pub struct PluginConf {
+//     pub value: Option<String>,
+//     pub category: PluginCategory,
+//     pub step: Option<PluginStep>,
+//     pub remark: Option<String>,
+// }
 
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
 pub struct UpstreamConf {
@@ -369,6 +369,8 @@ fn format_toml(value: &Value) -> String {
         "".to_string()
     }
 }
+
+pub type PluginConf = Map<String, Value>;
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct PingapConf {

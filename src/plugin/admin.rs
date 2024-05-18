@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, ProxyPlugin, Result};
+use super::{get_step_conf, get_str_conf, Error, ProxyPlugin, Result};
 use crate::config::{
     self, save_config, BasicConf, LocationConf, PluginCategory, PluginConf, PluginStep, ServerConf,
     UpstreamConf,
@@ -90,7 +90,7 @@ impl From<EmbeddedStaticFile> for HttpResponse {
 pub struct AdminServe {
     pub path: String,
     pub authorization: String,
-    pub proxy_step: PluginStep,
+    pub plugin_step: PluginStep,
     ip_fail_limit: TtlLruLimit,
 }
 
@@ -108,25 +108,57 @@ struct BasicInfo {
     config_hash: String,
 }
 
-impl AdminServe {
-    pub fn new(value: &str, proxy_step: PluginStep) -> Result<Self> {
-        debug!("new admin server proxy plugin, {value}, {proxy_step:?}");
-        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&proxy_step) {
+#[derive(Debug)]
+struct AdminServeParams {
+    path: String,
+    step: PluginStep,
+    authorization: String,
+}
+
+impl TryFrom<&PluginConf> for AdminServeParams {
+    type Error = Error;
+    fn try_from(value: &PluginConf) -> Result<Self> {
+        let step = get_step_conf(value);
+        let all_params = get_str_conf(value, "value");
+        let params = if !all_params.is_empty() {
+            let arr: Vec<&str> = all_params.split(' ').collect();
+            let mut authorization = "".to_string();
+            if arr.len() >= 2 {
+                authorization = arr[1].trim().to_string();
+            }
+            Self {
+                path: arr[0].trim().to_string(),
+                step,
+                authorization,
+            }
+        } else {
+            Self {
+                path: get_str_conf(value, "path"),
+                step,
+                authorization: get_str_conf(value, "authorization"),
+            }
+        };
+        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.step) {
             return Err(Error::Invalid {
                 category: PluginCategory::Admin.to_string(),
                 message: "Admin serve plugin should be executed at request or proxy upstream step"
                     .to_string(),
             });
         }
-        let arr: Vec<&str> = value.split(' ').collect();
-        let mut authorization = "".to_string();
-        if arr.len() >= 2 {
-            authorization = arr[1].trim().to_string();
-        }
+
+        Ok(params)
+    }
+}
+
+impl AdminServe {
+    pub fn new(params: &PluginConf) -> Result<Self> {
+        debug!("new admin server proxy plugin, params:{params:?}");
+        let params = AdminServeParams::try_from(params)?;
+
         Ok(Self {
-            path: arr[0].trim().to_string(),
-            proxy_step,
-            authorization,
+            path: params.path,
+            plugin_step: params.step,
+            authorization: params.authorization,
             ip_fail_limit: TtlLruLimit::new(512, Duration::from_secs(5 * 60), 5),
         })
     }
@@ -261,7 +293,7 @@ fn get_method_path(session: &Session) -> (Method, String) {
 impl ProxyPlugin for AdminServe {
     #[inline]
     fn step(&self) -> PluginStep {
-        self.proxy_step
+        self.plugin_step
     }
     #[inline]
     fn category(&self) -> PluginCategory {
@@ -373,5 +405,43 @@ impl ProxyPlugin for AdminServe {
             EmbeddedStaticFile(AdminAsset::get(file), 365 * 24 * 3600).into()
         };
         Ok(Some(resp))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AdminServeParams;
+    use crate::config::PluginConf;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_admin_params() {
+        let params = AdminServeParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r#"
+    category = "admin"
+    path = "/"
+    authorization = "YWRtaW46MTIzMTIz"
+    "#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!("YWRtaW46MTIzMTIz", params.authorization);
+        assert_eq!("request", params.step.to_string());
+        assert_eq!("/", params.path);
+
+        let params = AdminServeParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r#"
+    value = "/ YWRtaW46MTIzMTIz"
+    "#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!("YWRtaW46MTIzMTIz", params.authorization);
+        assert_eq!("request", params.step.to_string());
+        assert_eq!("/", params.path);
     }
 }
