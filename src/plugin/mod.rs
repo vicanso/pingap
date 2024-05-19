@@ -144,81 +144,88 @@ type Plugins = (
 
 static PLUGINS: OnceCell<Plugins> = OnceCell::new();
 
+pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
+    let mut proxy_plugins: HashMap<String, Box<dyn ProxyPlugin>> = HashMap::new();
+    let mut response_plugins: HashMap<String, Box<dyn ResponsePlugin>> = HashMap::new();
+    for (name, conf) in confs.iter() {
+        let name = name.to_string();
+        let category = conf.get("category");
+        if category.is_none() {
+            return Err(Error::Invalid {
+                category: "".to_string(),
+                message: "Category can not be empty".to_string(),
+            });
+        }
+        let category = PluginCategory::from_str(category.unwrap().as_str().unwrap_or_default())
+            .unwrap_or_default();
+        match category {
+            PluginCategory::Limit => {
+                let l = limit::Limiter::new(conf)?;
+                proxy_plugins.insert(name, Box::new(l));
+            }
+            PluginCategory::Compression => {
+                let c = compression::Compression::new(conf)?;
+                proxy_plugins.insert(name, Box::new(c));
+            }
+            PluginCategory::Stats => {
+                let s = stats::Stats::new(conf)?;
+                proxy_plugins.insert(name, Box::new(s));
+            }
+            PluginCategory::Admin => {
+                let a = admin::AdminServe::new(conf)?;
+                proxy_plugins.insert(name, Box::new(a));
+            }
+            PluginCategory::Directory => {
+                let d = directory::Directory::new(conf)?;
+                proxy_plugins.insert(name, Box::new(d));
+            }
+            PluginCategory::Mock => {
+                let m = mock::MockResponse::new(conf)?;
+                proxy_plugins.insert(name, Box::new(m));
+            }
+            PluginCategory::RequestId => {
+                let r = request_id::RequestId::new(conf)?;
+                proxy_plugins.insert(name, Box::new(r));
+            }
+            PluginCategory::IpLimit => {
+                let l = ip_limit::IpLimit::new(conf)?;
+                proxy_plugins.insert(name, Box::new(l));
+            }
+            PluginCategory::KeyAuth => {
+                let k = key_auth::KeyAuth::new(conf)?;
+                proxy_plugins.insert(name, Box::new(k));
+            }
+            PluginCategory::BasicAuth => {
+                let b = basic_auth::BasicAuth::new(conf)?;
+                proxy_plugins.insert(name, Box::new(b));
+            }
+            PluginCategory::Cache => {
+                let c = cache::Cache::new(conf)?;
+                proxy_plugins.insert(name, Box::new(c));
+            }
+            PluginCategory::RedirectHttps => {
+                let r = redirect_https::RedirectHttps::new(conf)?;
+                proxy_plugins.insert(name, Box::new(r));
+            }
+            PluginCategory::Ping => {
+                let p = ping::Ping::new(conf)?;
+                proxy_plugins.insert(name, Box::new(p));
+            }
+            PluginCategory::ResponseHeaders => {
+                let r = response_headers::ResponseHeaders::new(conf)?;
+                response_plugins.insert(name, Box::new(r));
+            }
+        };
+    }
+
+    Ok((proxy_plugins, response_plugins))
+}
+
 pub fn init_plugins(confs: Vec<(String, PluginConf)>) -> Result<()> {
     PLUGINS.get_or_try_init(|| {
-        let mut proxy_plugins: HashMap<String, Box<dyn ProxyPlugin>> = HashMap::new();
-        let mut response_plugins: HashMap<String, Box<dyn ResponsePlugin>> = HashMap::new();
         let data = &mut confs.clone();
         data.extend(get_builtin_proxy_plugins());
-        for (name, conf) in data {
-            let name = name.to_string();
-            let category = conf.get("category");
-            if category.is_none() {
-                continue;
-            }
-            let category = PluginCategory::from_str(category.unwrap().as_str().unwrap_or_default())
-                .unwrap_or_default();
-            match category {
-                PluginCategory::Limit => {
-                    let l = limit::Limiter::new(conf)?;
-                    proxy_plugins.insert(name, Box::new(l));
-                }
-                PluginCategory::Compression => {
-                    let c = compression::Compression::new(conf)?;
-                    proxy_plugins.insert(name, Box::new(c));
-                }
-                PluginCategory::Stats => {
-                    let s = stats::Stats::new(conf)?;
-                    proxy_plugins.insert(name, Box::new(s));
-                }
-                PluginCategory::Admin => {
-                    let a = admin::AdminServe::new(conf)?;
-                    proxy_plugins.insert(name, Box::new(a));
-                }
-                PluginCategory::Directory => {
-                    let d = directory::Directory::new(conf)?;
-                    proxy_plugins.insert(name, Box::new(d));
-                }
-                PluginCategory::Mock => {
-                    let m = mock::MockResponse::new(conf)?;
-                    proxy_plugins.insert(name, Box::new(m));
-                }
-                PluginCategory::RequestId => {
-                    let r = request_id::RequestId::new(conf)?;
-                    proxy_plugins.insert(name, Box::new(r));
-                }
-                PluginCategory::IpLimit => {
-                    let l = ip_limit::IpLimit::new(conf)?;
-                    proxy_plugins.insert(name, Box::new(l));
-                }
-                PluginCategory::KeyAuth => {
-                    let k = key_auth::KeyAuth::new(conf)?;
-                    proxy_plugins.insert(name, Box::new(k));
-                }
-                PluginCategory::BasicAuth => {
-                    let b = basic_auth::BasicAuth::new(conf)?;
-                    proxy_plugins.insert(name, Box::new(b));
-                }
-                PluginCategory::Cache => {
-                    let c = cache::Cache::new(conf)?;
-                    proxy_plugins.insert(name, Box::new(c));
-                }
-                PluginCategory::RedirectHttps => {
-                    let r = redirect_https::RedirectHttps::new(conf)?;
-                    proxy_plugins.insert(name, Box::new(r));
-                }
-                PluginCategory::Ping => {
-                    let p = ping::Ping::new(conf)?;
-                    proxy_plugins.insert(name, Box::new(p));
-                }
-                PluginCategory::ResponseHeaders => {
-                    let r = response_headers::ResponseHeaders::new(conf)?;
-                    response_plugins.insert(name, Box::new(r));
-                }
-            };
-        }
-
-        Ok((proxy_plugins, response_plugins))
+        parse_plugins(data.to_vec())
     })?;
     Ok(())
 }

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::{Error, Result};
+use crate::plugin::parse_plugins;
 use crate::proxy::Parser;
 use crate::util;
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -496,6 +497,13 @@ impl PingapConf {
         }
         for (name, server) in self.servers.iter() {
             server.validate(name, &location_names)?;
+        }
+        for (name, plugin) in self.plugins.iter() {
+            parse_plugins(vec![(name.to_string(), plugin.clone())]).map_err(|e| {
+                Error::Invalid {
+                    message: e.to_string(),
+                }
+            })?;
         }
         Ok(())
     }
