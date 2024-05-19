@@ -118,25 +118,10 @@ struct AdminServeParams {
 impl TryFrom<&PluginConf> for AdminServeParams {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
-        let step = get_step_conf(value);
-        let all_params = get_str_conf(value, "value");
-        let params = if !all_params.is_empty() {
-            let arr: Vec<&str> = all_params.split(' ').collect();
-            let mut authorization = "".to_string();
-            if arr.len() >= 2 {
-                authorization = arr[1].trim().to_string();
-            }
-            Self {
-                path: arr[0].trim().to_string(),
-                step,
-                authorization,
-            }
-        } else {
-            Self {
-                path: get_str_conf(value, "path"),
-                step,
-                authorization: get_str_conf(value, "authorization"),
-            }
+        let params = Self {
+            step: get_step_conf(value),
+            path: get_str_conf(value, "path"),
+            authorization: get_str_conf(value, "authorization"),
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.step) {
             return Err(Error::Invalid {
@@ -422,19 +407,6 @@ mod tests {
     category = "admin"
     path = "/"
     authorization = "YWRtaW46MTIzMTIz"
-    "#,
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        assert_eq!("YWRtaW46MTIzMTIz", params.authorization);
-        assert_eq!("request", params.step.to_string());
-        assert_eq!("/", params.path);
-
-        let params = AdminServeParams::try_from(
-            &toml::from_str::<PluginConf>(
-                r#"
-    value = "/ YWRtaW46MTIzMTIz"
     "#,
             )
             .unwrap(),

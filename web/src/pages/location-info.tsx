@@ -3,13 +3,14 @@ import { useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
 import Loading from "../components/loading";
-import FormEditor, {
-  CheckBoxItem,
+import FormEditor from "../components/form-editor";
+import { goToLoationInfo } from "../router";
+import {
   FormItem,
   FormItemCategory,
-  formatPluginCategory,
-} from "../components/form-editor";
-import { goToLoationInfo } from "../router";
+  CheckBoxItem,
+} from "../components/form-common";
+import { formatPluginCategory } from "../components/form-plugin";
 
 export default function LocationInfo() {
   const { t } = useTranslation();

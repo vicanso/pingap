@@ -3,12 +3,10 @@ import { useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
 import Loading from "../components/loading";
-import FormEditor, {
-  FormItem,
-  FormItemCategory,
-  PluginCategory,
-} from "../components/form-editor";
+import FormEditor from "../components/form-editor";
 import { goToPluginInfo } from "../router";
+import { FormItem, FormItemCategory } from "../components/form-common";
+import { PluginCategory } from "../components/form-plugin";
 
 export default function ProxyPluginInfo() {
   const { t } = useTranslation();

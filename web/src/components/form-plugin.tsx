@@ -1,0 +1,526 @@
+import * as React from "react";
+import TextField from "@mui/material/TextField";
+import FormControl from "@mui/material/FormControl";
+import Stack from "@mui/material/Stack";
+import Box from "@mui/material/Box";
+import { useTranslation } from "react-i18next";
+import Paper from "@mui/material/Paper";
+import {
+  CheckBoxItem,
+  FormSelectField,
+  FormTwoInputFields,
+} from "./form-common";
+
+export enum PluginCategory {
+  STATS = "stats",
+  LIMIT = "limit",
+  COMPRESSION = "compression",
+  ADMIN = "admin",
+  DIRECTORY = "directory",
+  MOCK = "mock",
+  REQUEST_ID = "request_id",
+  IP_LIMIT = "ip_limit",
+  KEY_AUTH = "key_auth",
+  BASIC_AUTH = "basic_auth",
+  CACHE = "cache",
+  REDIRECT_HTTPS = "redirect_https",
+  PING = "ping",
+  RESPONSE_HEADERS = "response_headers",
+}
+
+export function getPluginSteps(category: string) {
+  const defaultPluginSteps = [
+    {
+      label: "Request",
+      option: 0,
+      value: "request",
+    },
+    {
+      label: "Proxy Upstream",
+      option: 1,
+      value: "proxy_upstream",
+    },
+    {
+      label: "Upstream Response",
+      option: 2,
+      value: "upstream_response",
+    },
+  ];
+
+  const pluginSupportSteps: Record<string, number[]> = {};
+  pluginSupportSteps[PluginCategory.STATS] = [0, 1];
+  pluginSupportSteps[PluginCategory.LIMIT] = [0, 1];
+  pluginSupportSteps[PluginCategory.COMPRESSION] = [0, 1];
+  pluginSupportSteps[PluginCategory.ADMIN] = [0, 1];
+  pluginSupportSteps[PluginCategory.DIRECTORY] = [0, 1];
+  pluginSupportSteps[PluginCategory.MOCK] = [0, 1];
+  pluginSupportSteps[PluginCategory.REQUEST_ID] = [0, 1];
+  pluginSupportSteps[PluginCategory.IP_LIMIT] = [0, 1];
+  pluginSupportSteps[PluginCategory.KEY_AUTH] = [0, 1];
+  pluginSupportSteps[PluginCategory.BASIC_AUTH] = [0, 1];
+  pluginSupportSteps[PluginCategory.CACHE] = [0];
+  pluginSupportSteps[PluginCategory.REDIRECT_HTTPS] = [0];
+  pluginSupportSteps[PluginCategory.PING] = [0];
+  pluginSupportSteps[PluginCategory.RESPONSE_HEADERS] = [2];
+
+  const steps = pluginSupportSteps[category];
+  if (steps) {
+    const arr = defaultPluginSteps.filter((item) => {
+      return steps.indexOf(item.option) !== -1;
+    });
+    return arr;
+  }
+  return defaultPluginSteps;
+}
+
+export function formatPluginCategory(value: string) {
+  switch (value) {
+    case PluginCategory.STATS: {
+      return "stats";
+    }
+    case PluginCategory.LIMIT: {
+      return "limit";
+    }
+    case PluginCategory.COMPRESSION: {
+      return "compression";
+    }
+    case PluginCategory.ADMIN: {
+      return "admin";
+    }
+    case PluginCategory.DIRECTORY: {
+      return "directory";
+    }
+    case PluginCategory.MOCK: {
+      return "mock";
+    }
+    case PluginCategory.REQUEST_ID: {
+      return "requestId";
+    }
+    case PluginCategory.IP_LIMIT: {
+      return "ipLimit";
+    }
+    case PluginCategory.KEY_AUTH: {
+      return "keyAuth";
+    }
+    case PluginCategory.BASIC_AUTH: {
+      return "basicAuth";
+    }
+    case PluginCategory.CACHE: {
+      return "cache";
+    }
+    case PluginCategory.REDIRECT_HTTPS: {
+      return "redirectHttps";
+    }
+    case PluginCategory.PING: {
+      return "ping";
+    }
+    case PluginCategory.RESPONSE_HEADERS: {
+      return "responseHeaders";
+    }
+  }
+  return "";
+}
+
+export function FormPluginField({
+  category,
+  value,
+  id,
+  onUpdate,
+}: {
+  value: string;
+  category: string;
+  id: string;
+  onUpdate: (data: string) => void;
+}) {
+  const { t } = useTranslation();
+  const key = `${id}-${category}`;
+  const arr: string[] = [];
+  const fields: {
+    label: string;
+    options?: string[] | CheckBoxItem[];
+  }[] = [];
+  const padding = " ";
+
+  const defaultMockInfo: {
+    status: null | number;
+    headers: string[];
+    data: string;
+    path: string;
+  } = {
+    status: null,
+    path: "",
+    headers: [],
+    data: "",
+  };
+
+  const defaultResponseHeaders: {
+    add_headers: string[];
+    remove_headers: string[];
+    set_headers: string[];
+  } = {
+    add_headers: [],
+    remove_headers: [],
+    set_headers: [],
+  };
+
+  switch (category) {
+    case PluginCategory.COMPRESSION: {
+      arr.push(...value.split(padding));
+      fields.push(
+        {
+          label: t("form.gzip"),
+        },
+        {
+          label: t("form.br"),
+        },
+        {
+          label: t("form.zstd"),
+        },
+      );
+      break;
+    }
+    case PluginCategory.ADMIN: {
+      arr.push(...value.split(padding));
+      fields.push(
+        {
+          label: t("form.adminPath"),
+        },
+        {
+          label: t("form.basicAuth"),
+        },
+      );
+      break;
+    }
+    case PluginCategory.LIMIT: {
+      arr.push(...value.split(padding));
+      fields.push(
+        {
+          label: t("form.limitCategory"),
+          options: ["rate", "inflight"],
+        },
+        {
+          label: t("form.limitValue"),
+        },
+      );
+      break;
+    }
+    case PluginCategory.DIRECTORY: {
+      arr.push(value);
+      fields.push({
+        label: t("form.staticDirectory"),
+      });
+      break;
+    }
+    case PluginCategory.REQUEST_ID: {
+      arr.push(...value.split(padding));
+      fields.push(
+        {
+          label: t("form.algoForId"),
+          options: ["uuid", "nanoid"],
+        },
+        {
+          label: t("form.lengthForId"),
+        },
+      );
+      break;
+    }
+    case PluginCategory.IP_LIMIT: {
+      arr.push(...value.split(padding));
+      fields.push(
+        {
+          label: t("form.ipList"),
+        },
+        {
+          label: t("form.limitMode"),
+          options: [
+            {
+              label: t("form.allow"),
+              value: "0",
+              option: 0,
+            },
+            {
+              label: t("form.deny"),
+              value: "1",
+              option: 1,
+            },
+          ],
+        },
+      );
+      break;
+    }
+    case PluginCategory.KEY_AUTH: {
+      arr.push(...value.split(padding));
+      fields.push(
+        {
+          label: t("form.keyName"),
+        },
+        {
+          label: t("form.keyValues"),
+        },
+      );
+      break;
+    }
+    case PluginCategory.BASIC_AUTH: {
+      arr.push(value);
+      fields.push({
+        label: t("form.basicAuthList"),
+      });
+      break;
+    }
+    case PluginCategory.MOCK: {
+      if (value) {
+        try {
+          Object.assign(defaultMockInfo, JSON.parse(value));
+        } catch (err) {
+          console.error(err);
+        }
+      }
+      break;
+    }
+    case PluginCategory.CACHE: {
+      arr.push(value);
+      fields.push({
+        label: t("form.cacheStorage"),
+      });
+      break;
+    }
+    case PluginCategory.REDIRECT_HTTPS: {
+      arr.push(value);
+      fields.push({
+        label: t("form.redirectPrefix"),
+      });
+      break;
+    }
+    case PluginCategory.PING: {
+      arr.push(value);
+      fields.push({
+        label: t("form.pingPath"),
+      });
+      break;
+    }
+    case PluginCategory.RESPONSE_HEADERS: {
+      value.split(" ").forEach((item) => {
+        const value = item.trim();
+        if (!value) {
+          return;
+        }
+        let last = value.substring(1);
+        if (item.startsWith("+")) {
+          defaultResponseHeaders.add_headers.push(last);
+        } else if (item.startsWith("-")) {
+          defaultResponseHeaders.remove_headers.push(last);
+        } else {
+          defaultResponseHeaders.set_headers.push(value);
+        }
+      });
+      break;
+    }
+    default: {
+      arr.push(value);
+      fields.push({
+        label: t("form.statsPath"),
+      });
+      break;
+    }
+  }
+  const [newValues, setNewValues] = React.useState(arr);
+  const [mockInfo, setMockInfo] = React.useState(defaultMockInfo);
+  const [responseHeaders, setResponseHeaders] = React.useState(
+    defaultResponseHeaders,
+  );
+
+  const updateResponseHeaders = (headers: {
+    add_headers: string[];
+    remove_headers: string[];
+    set_headers: string[];
+  }) => {
+    setResponseHeaders(headers);
+    const arr = headers.set_headers.slice(0);
+    headers.add_headers.forEach((item) => {
+      arr.push(`+${item}`);
+    });
+    headers.remove_headers.forEach((item) => {
+      arr.push(`-${item}`);
+    });
+    onUpdate(arr.join(" "));
+  };
+
+  if (category == PluginCategory.MOCK) {
+    return (
+      <Stack direction="column" spacing={2}>
+        <TextField
+          key={`${key}-path`}
+          id={`${key}-path`}
+          label={t("form.mockPath")}
+          variant="outlined"
+          defaultValue={mockInfo.path}
+          sx={{ ml: 1, flex: 1 }}
+          onChange={(e) => {
+            const data = Object.assign({}, mockInfo);
+            data.path = e.target.value.trim();
+            setMockInfo(data);
+            onUpdate(JSON.stringify(data));
+          }}
+        />
+        <TextField
+          key={`${key}-status`}
+          id={`${key}-status`}
+          label={t("form.mockStats")}
+          variant="outlined"
+          defaultValue={mockInfo.status}
+          sx={{ ml: 1, flex: 1 }}
+          onChange={(e) => {
+            const value = Number(e.target.value.trim());
+            const data = Object.assign({}, mockInfo);
+            if (value) {
+              data.status = value;
+            } else {
+              data.status = null;
+            }
+            setMockInfo(data);
+            onUpdate(JSON.stringify(data));
+          }}
+        />
+        <FormTwoInputFields
+          id={id}
+          divide={":"}
+          values={mockInfo.headers}
+          label={t("form.headerName")}
+          valueLabel={t("form.headerValue")}
+          onUpdate={(headers) => {
+            const data = Object.assign({}, mockInfo);
+            data.headers = headers;
+            setMockInfo(data);
+            onUpdate(JSON.stringify(data));
+          }}
+          addLabel={t("form.mockHeader")}
+        />
+        <TextField
+          id={`${key}-data`}
+          label={t("form.mockData")}
+          multiline
+          minRows={3}
+          variant="outlined"
+          defaultValue={mockInfo.data}
+          onChange={(e) => {
+            const data = Object.assign({}, mockInfo);
+            data.data = e.target.value;
+            setMockInfo(data);
+            onUpdate(JSON.stringify(data));
+          }}
+        />
+      </Stack>
+    );
+  }
+  if (category == PluginCategory.RESPONSE_HEADERS) {
+    return (
+      <Stack direction="column" spacing={2}>
+        <FormTwoInputFields
+          id={`${id}-set-headers`}
+          divide={":"}
+          values={responseHeaders.set_headers as string[]}
+          label={t("form.headerName")}
+          valueLabel={t("form.headerValue")}
+          onUpdate={(data) => {
+            const headers = Object.assign({}, responseHeaders);
+            headers.set_headers = data;
+            updateResponseHeaders(headers);
+          }}
+          addLabel={t("form.setHeader")}
+        />
+        <FormTwoInputFields
+          id={`${id}-add-headers`}
+          divide={":"}
+          values={responseHeaders.add_headers as string[]}
+          label={t("form.headerName")}
+          valueLabel={t("form.headerValue")}
+          onUpdate={(data) => {
+            const headers = Object.assign({}, responseHeaders);
+            headers.add_headers = data;
+            updateResponseHeaders(headers);
+          }}
+          addLabel={t("form.header")}
+        />
+        <TextField
+          id={`${id}-remove-headers`}
+          label={t("form.removeHeader")}
+          variant="outlined"
+          defaultValue={responseHeaders.remove_headers.join(" ") || ""}
+          sx={{ ml: 1, flex: 1 }}
+          style={{
+            marginLeft: "0px",
+          }}
+          onChange={(e) => {
+            const value = e.target.value.trim();
+            const headers = Object.assign({}, responseHeaders);
+            headers.remove_headers = value.split(" ");
+            updateResponseHeaders(headers);
+          }}
+        />
+      </Stack>
+    );
+  }
+  const items = fields.map((item, index) => {
+    if (item.options) {
+      return (
+        <Box
+          key={`${key}-${index}`}
+          id={`${key}-${index}`}
+          sx={{ ml: 1, flex: 1 }}
+          style={{
+            marginLeft: `${index * 15}px`,
+          }}
+        >
+          <FormControl fullWidth={true}>
+            <FormSelectField
+              label={item.label}
+              options={item.options as string[]}
+              value={newValues[index] || ""}
+              onUpdate={(value) => {
+                const arr = newValues.slice(0);
+                arr[index] = value;
+                onUpdate(arr.join(padding));
+                setNewValues(arr);
+              }}
+            />
+          </FormControl>
+        </Box>
+      );
+    }
+    return (
+      <TextField
+        key={`${key}-${index}`}
+        id={`${key}-${index}`}
+        label={item.label}
+        variant="outlined"
+        defaultValue={newValues[index] || ""}
+        sx={{ ml: 1, flex: 1 }}
+        style={{
+          marginLeft: `${index * 15}px`,
+        }}
+        onChange={(e) => {
+          const value = e.target.value.trim();
+          const arr = newValues.slice(0);
+          arr[index] = value;
+          onUpdate(arr.join(padding));
+          setNewValues(arr);
+        }}
+      />
+    );
+  });
+
+  const list = (
+    <Paper
+      sx={{
+        display: "flex",
+        marginBottom: "15px",
+        alignItems: "center",
+        width: "100%",
+      }}
+    >
+      {items}
+    </Paper>
+  );
+
+  return <React.Fragment>{list}</React.Fragment>;
+}

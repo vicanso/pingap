@@ -1,10 +1,8 @@
 import { useTranslation } from "react-i18next";
 import useConfigStore from "../states/config";
 import Loading from "../components/loading";
-import FormEditor, {
-  FormItem,
-  FormItemCategory,
-} from "../components/form-editor";
+import FormEditor from "../components/form-editor";
+import { FormItem, FormItemCategory } from "../components/form-common";
 
 export default function BasicInfo() {
   const { t } = useTranslation();

@@ -3,11 +3,9 @@ import { useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 
 import Loading from "../components/loading";
-import FormEditor, {
-  FormItem,
-  FormItemCategory,
-} from "../components/form-editor";
+import FormEditor from "../components/form-editor";
 import { goToUpstreamInfo } from "../router";
+import { FormItem, FormItemCategory } from "../components/form-common";
 
 export default function UpstreamInfo() {
   const { t } = useTranslation();
