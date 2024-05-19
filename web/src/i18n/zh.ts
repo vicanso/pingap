@@ -144,6 +144,7 @@ export default {
   "form.requestIdAlgo": "请求ID的生成算法",
   "form.requestIdLength": "请求ID长度",
   "form.ipList": "IP列表",
+  "form.ipLimitAdd": "添加更多的IP或IP组",
   "form.limitMode": "限制模式, 0:允许, 1:禁止",
   "form.keyAuthType": "认证key类型，0:header, 1:query",
   "form.keyAuthName": "认证key的名称",
@@ -166,5 +167,7 @@ export default {
   "form.mockPath": "Mock响应的匹配路径",
   "form.mockStats": "Mock响应的状态码",
   "form.mockHeader": "Mock响应的响应头",
+  "form.mockHeaderName": "Mock响应头名称",
+  "form.mockHeaderValue": "Mock响应头值",
   "form.mockData": "Mock响应的数据",
 };

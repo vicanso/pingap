@@ -43,8 +43,9 @@ pub trait ProxyPlugin: Sync + Send {
 
 ```toml
 [plugins.stats]
-value = "/stats"
 category = "stats"
+path = "/stats"
+remark = "用于获取性能指标"
 ```
 
 界面配置如图所示，主要是配置其对应的请求路径即可：
@@ -61,32 +62,45 @@ category = "stats"
 
 ```toml
 [plugins.cookieBigTreeLimit]
-value = "inflight key=cookie&value=bigtree&max=10"
 category = "limit"
+key = "bigtree"
+max = 10
+tag = "cookie"
+type = "inflight"
 ```
 
 根据请求头的`X-App`参数限制并发数`10`:
 
 ```toml
 [plugins.headerAppLimit]
-value = "inflight key=header&value=X-App&max=10"
 category = "limit"
+key = "X-App"
+max = 10
+tag = "header"
+type = "inflight"
 ```
 
 根据query中的`app`参数限制1秒钟仅能访问`10`次:
 
 ```toml
 [plugins.queryAppLimit]
-value = "rate key=query&value=app&max=10&interval=1s"
 category = "limit"
+interval = "1s""
+key = "app"
+max = 10
+tag = "query"
+type = "rate"
 ```
 
 根据ip限制1分钟最多访问`50`次(ip获取的顺序为X-Forwarded-For --> X-Real-Ip --> Remote Addr):
 
 ```toml
 [plugins.ipLimit]
-value = "rate max=10&interval=1m"
 category = "limit"
+interval = "1m"
+max = 10
+tag = "ip"
+type = "rate"
 ```
 
 界面配置如图所示，主要是配置限制条件以及对应的最大并发访问量：
@@ -101,8 +115,10 @@ category = "limit"
 
 ```toml
 [plugins.commonCompression]
-value = "6 6 5"
+br_level = 6
 category = "compression"
+gzip_level = 6
+zstd_level = 5
 ```
 
 需要注意`value`部分对应的是三个压缩方式的压缩级别，分别为`gzip`，`br`与`zstd`，若不需要使用的则设置为0即可。也可使用自带的`pingap:compression`，它的压缩级别配置为`6 6 3`。
@@ -115,7 +131,7 @@ category = "compression"
 
 ## Directory
 
-静态文件目录服务，为指定目录提供静态文件服务，需要注意query部分的参数均为可选值，说明如下：
+静态文件目录服务，为指定目录提供静态文件服务，说明如下：
 
 - `chunk_size`: Http chunk的大小，默认为`8192`
 - `max_age`: 设置http响应的的缓存时间，默认无。此值对于`text/html`无效，html均设置为不可缓存。如设置为`1h`表示缓存有效期1小时
@@ -127,8 +143,12 @@ category = "compression"
 
 ```toml
 [plugins.downloadsServe]
-value = "~/Downloads?chunk_size=4096&max_age=3600&private&index=index.html&charset=utf-8"
 category = "directory"
+charset = "utf-8"
+chunk_size = 4096
+index = "/index.html"
+max_age = "1h"
+path = "~/Downloads"
 ```
 
 界面配置如图所示，配置对应的静态文件目录，并按需要添加对应的query参数即可：
@@ -143,8 +163,14 @@ category = "directory"
 
 ```toml
 [plugins.errorMock]
-value = '{"status":500,"path":"/","headers":["X-Error:custom error","Content-Type:application/json"],"data":"{\n  \"message\": \"error message\"\n}"}'
 category = "mock"
+data = "{\"message\": \"error message\"}"
+headers = [
+    "X-Error:custom error",
+    "Content-Type:application/json",
+]
+path = "/"
+status = 500
 ```
 
 界面配置如图所示，配置对应响应数据既可，需要注意如果指定响应类型，如json等：
@@ -159,8 +185,9 @@ category = "mock"
 
 ```toml
 [plugins.customReqId]
-value = "nanoid 8"
+algorithm = "nanoid"
 category = "request_id"
+size = 8
 ```
 
 界面配置如图所示，算法类型若不是`nanoid`，其它的值均表示`uuid`。长度也只针对`nanoid`生效：
@@ -175,8 +202,12 @@ Ip限制分为两种模式，允许(0)，禁止(1)，ip可支持配置为单ip�
 
 ```toml
 [plugins.ipDeny]
-value = "192.168.1.1,1.1.1.0/24 1"
 category = "ip_limit"
+ip_list = [
+    "192.168.1.1",
+    "1.1.1.0/24",
+]
+type = 1
 ```
 
 界面配置如图所示，配置IP列表后，填写是允许还是禁止即可：
@@ -187,25 +218,35 @@ category = "ip_limit"
 
 ## KeyAuth
 
-KeyAuth用于提供简单的认证方式，支持配置从query(以?开头)或header中获取值，校验的key值可配置多个，以','分隔，并校验是否符合。
+KeyAuth用于提供简单的认证方式，支持配置从query或header中获取值，校验的key值可配置多个，并校验是否符合。
 
 从query中的app字段中获取校验：
 
 ```toml
 [plugins.appAuth]
-value = "?app KOXQaw,GKvXY2"
 category = "key_auth"
+keys = [
+    "KOXQaw",
+    "GKvXY2",
+]
+name = "app"
+type = 1
 ```
 
 从header中的X-App字段中获取校验：
 
 ```toml
 [plugins.appAuth]
-value = "X-App KOXQaw,GKvXY2"
 category = "key_auth"
+keys = [
+    "KOXQaw",
+    "GKvXY2",
+]
+name = "X-App"
+type = 0
 ```
 
-界面配置如图所示，配置key的名称(query需要加前缀?)，再配置符合的值(多个值用,分隔)即可：
+界面配置如图所示，配置key的名称，再配置符合的值即可：
 
 <p align="center">
     <img src="../asset/plugin-key-auth.jpg" alt="plugin-key-auth">
@@ -213,15 +254,18 @@ category = "key_auth"
 
 ## BasicAuth
 
-BasicAuth鉴权，配置时需要使用保存`base64(user:pass)`的值，若有多个则可以使用` `分隔。
+BasicAuth鉴权，配置时需要使用保存`base64(user:pass)`的值，若有多个则配置多个即可。
 
 ```toml
 [plugins.testBasicAuth]
-value = "YWRtaW46dGVzdA== YWRtaW46MTIzMTIz"
+authorizations = [
+    "YWRtaW46dGVzdA==",
+    "YWRtaW46MTIzMTIz",
+]
 category = "basic_auth"
 ```
 
-界面配置如图所示，配置basic auth的值(多个值用,分隔)，需要注意配置已做base64处理后的值即可：
+界面配置如图所示，配置basic auth的值，需要注意配置已做base64处理后的值即可：
 
 <p align="center">
     <img src="../asset/plugin-basic-auth.jpg" alt="plugin-basic-auth">
@@ -238,6 +282,7 @@ Http缓存，仅支持内存式缓存，暂不建议使用。
 ```toml
 [plugins.http2https]
 category = "redirect_https"
+prefix = "/api"
 ```
 
 界面配置如图所示，若需要重定向时添加前缀，可配置对应的前缀，若无需要调整则不配置值即可：
@@ -253,7 +298,7 @@ Ping->pong的响应处理，可用于判断程序是否正常运行等。
 ```toml
 [plugins.pingpong]
 category = "ping"
-value = "/ping"
+path = "/ping"
 ```
 
 # 响应插件
@@ -276,13 +321,15 @@ pub trait ResponsePlugin: Sync + Send {
 
 ## ResponseHeaders
 
-响应头的插件主要是设置、添加以及删除请求头。多个配置以` `分隔，配置以`+`开头的表示添加响应头，以`-`表示删除该响应头，默认的是设置响应头(若已存在则覆盖)。若响应头的值设置为`$HOSTNAME`表示获取机器的hostname，若以`$`开头的则表示从环境变量中获取对应的值。
+响应头的插件主要是设置、添加以及删除请求头。若响应头的值设置为`$HOSTNAME`表示获取机器的hostname，若以`$`开头的则表示从环境变量中获取对应的值。
 
 ```toml
 [plugins.commonResponseHeaders]
+add_headers = ["X-Server:pingap"]
 category = "response_headers"
+remove_headers = ["X-User"]
+set_headers = ["X-Response-Id:123"]
 step = "upstream_response"
-value = "X-Response-Id:def X-Account:user +X-Response-Id:ead -X-User -X-Mock"
 ```
 
 界面配置如图所示，按需要配置要设置、添加或删除的响应头，若不需要则不设置即可：

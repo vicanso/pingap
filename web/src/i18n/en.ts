@@ -145,6 +145,7 @@ export default {
   "form.requestIdAlgo": "The algorithm for genenrate id",
   "form.requestIdLength": "The length of id",
   "form.ipList": "The ip list",
+  "form.ipLimitAdd": "Add more ip or ip net",
   "form.limitMode": "The limit mode, 0:allow, 1:deny",
   "form.keyAuthType": "The key auth type, 0:header, 1:query",
   "form.keyAuthName": "The key name",
@@ -167,5 +168,7 @@ export default {
   "form.mockPath": "Response Match Path",
   "form.mockStats": "Response Status",
   "form.mockHeader": "Add Response Header",
+  "form.mockHeaderName": "The mock header name",
+  "form.mockHeaderValue": "The mock header value",
   "form.mockData": "Response data",
 };

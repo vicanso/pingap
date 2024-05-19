@@ -121,6 +121,9 @@ impl TryFrom<&PluginConf> for AdminServeParams {
     fn try_from(value: &PluginConf) -> Result<Self> {
         let mut authorizations = vec![];
         for item in get_str_slice_conf(value, "authorizations").iter() {
+            if item.is_empty() {
+                continue;
+            }
             let _ = STANDARD.decode(item).map_err(|e| Error::Base64Decode {
                 category: PluginCategory::BasicAuth.to_string(),
                 source: e,

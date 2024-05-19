@@ -352,7 +352,7 @@ export function FormPluginField({
           key: "type",
           label: t("form.limitMode"),
           id: "ip-limit-mode",
-          span: 6,
+          span: 12,
           options: [
             {
               label: "Allow",
@@ -367,11 +367,12 @@ export function FormPluginField({
           ],
         },
         {
-          category: "text",
+          category: "textlist",
           key: "ip_list",
           label: t("form.ipList"),
+          addLabel: t("form.ipLimitAdd"),
           id: "ip-limit-list",
-          span: 6,
+          span: 12,
         },
       );
       break;
@@ -444,6 +445,42 @@ export function FormPluginField({
         id: "ping-path",
         span: 12,
       });
+      break;
+    }
+    case PluginCategory.MOCK: {
+      fields.push(
+        {
+          category: "text",
+          key: "path",
+          label: t("form.mockPath"),
+          id: "mock-path",
+          span: 6,
+        },
+        {
+          category: "number",
+          key: "status",
+          label: t("form.mockStats"),
+          id: "mock-status",
+          span: 6,
+        },
+        {
+          category: "textlist",
+          key: "headers",
+          label: t("form.mockHeaderName"),
+          valueLabel: t("form.mockHeaderValue"),
+          id: "mock-headers",
+          span: 12,
+          divide: ":",
+          addLabel: t("form.mockHeader"),
+        },
+        {
+          category: "text",
+          key: "data",
+          label: t("form.mockData"),
+          id: "mock-data",
+          span: 12,
+        },
+      );
       break;
     }
     case PluginCategory.RESPONSE_HEADERS: {
