@@ -153,7 +153,9 @@ fn parse_admin_proxy_plugin(addr: &str) -> (ServerConf, String, PluginConf) {
         r#"
 category = "admin"
 path = "/"
-authorization = "{}"
+authorizations = [
+    "{}"
+]
 remark = "Admin serve"
 "#,
         authorization

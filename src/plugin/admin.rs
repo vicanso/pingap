@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_conf, Error, ProxyPlugin, Result};
+use super::{get_step_conf, get_str_conf, get_str_slice_conf, Error, ProxyPlugin, Result};
 use crate::config::{
     self, save_config, BasicConf, LocationConf, PluginCategory, PluginConf, PluginStep, ServerConf,
     UpstreamConf,
@@ -26,6 +26,7 @@ use crate::state::get_start_time;
 use crate::state::{restart_now, State};
 use crate::util::{self, get_pkg_version};
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::Bytes;
 use bytes::{BufMut, BytesMut};
 use bytesize::ByteSize;
@@ -89,7 +90,7 @@ impl From<EmbeddedStaticFile> for HttpResponse {
 
 pub struct AdminServe {
     pub path: String,
-    pub authorization: String,
+    pub authorizations: Vec<Vec<u8>>,
     pub plugin_step: PluginStep,
     ip_fail_limit: TtlLruLimit,
 }
@@ -112,16 +113,25 @@ struct BasicInfo {
 struct AdminServeParams {
     path: String,
     step: PluginStep,
-    authorization: String,
+    authorizations: Vec<Vec<u8>>,
 }
 
 impl TryFrom<&PluginConf> for AdminServeParams {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
+        let mut authorizations = vec![];
+        for item in get_str_slice_conf(value, "authorizations").iter() {
+            let _ = STANDARD.decode(item).map_err(|e| Error::Base64Decode {
+                category: PluginCategory::BasicAuth.to_string(),
+                source: e,
+            })?;
+            authorizations.push(format!("Basic {item}").as_bytes().to_vec());
+        }
+
         let params = Self {
             step: get_step_conf(value),
             path: get_str_conf(value, "path"),
-            authorization: get_str_conf(value, "authorization"),
+            authorizations,
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.step) {
             return Err(Error::Invalid {
@@ -143,22 +153,19 @@ impl AdminServe {
         Ok(Self {
             path: params.path,
             plugin_step: params.step,
-            authorization: params.authorization,
+            authorizations: params.authorizations,
             ip_fail_limit: TtlLruLimit::new(512, Duration::from_secs(5 * 60), 5),
         })
     }
     fn auth_validate(&self, req_header: &RequestHeader) -> bool {
-        if self.authorization.is_empty() {
+        if self.authorizations.is_empty() {
             return true;
         }
         let value = util::get_req_header_value(req_header, "Authorization").unwrap_or_default();
         if value.is_empty() {
             return false;
         }
-        if value != format!("Basic {}", self.authorization) {
-            return false;
-        }
-        true
+        self.authorizations.contains(&value.as_bytes().to_vec())
     }
     async fn load_config(&self) -> pingora::Result<PingapConf> {
         let conf = config::load_config(&config::get_config_path(), true)
@@ -406,13 +413,24 @@ mod tests {
                 r#"
     category = "admin"
     path = "/"
-    authorization = "YWRtaW46MTIzMTIz"
+    authorizations = [
+        "YWRtaW46MTIzMTIz",
+        "cGluZ2FwOjEyMzEyMw=="
+    ]
     "#,
             )
             .unwrap(),
         )
         .unwrap();
-        assert_eq!("YWRtaW46MTIzMTIz", params.authorization);
+        assert_eq!(
+            "Basic YWRtaW46MTIzMTIz,Basic cGluZ2FwOjEyMzEyMw==",
+            params
+                .authorizations
+                .iter()
+                .map(|item| std::string::String::from_utf8_lossy(item))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
         assert_eq!("request", params.step.to_string());
         assert_eq!("/", params.path);
     }
