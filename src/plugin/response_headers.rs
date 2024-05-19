@@ -193,6 +193,7 @@ mod tests {
         let response_headers = ResponseHeaders::new(
             &toml::from_str::<PluginConf>(
                 r###"
+step = "upstream_response"
 add_headers = [
     "X-Service:1",
     "X-Service:2",

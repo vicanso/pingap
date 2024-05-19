@@ -42,7 +42,7 @@ impl Ping {
             });
         }
         Ok(Self {
-            prefix: get_str_conf(params, "value"),
+            prefix: get_str_conf(params, "prefix"),
             plugin_step: step,
         })
     }

@@ -21,9 +21,6 @@ write_timeout = "10s"
 [upstreams.diving]
 addrs = ["127.0.0.1:5001"]
 
-[locations.charts]
-upstream = "charts"
-path = "/charts"
 
 [locations.lo]
 upstream = "charts"
@@ -32,10 +29,7 @@ host = ""
 proxy_set_headers = ["name:value"]
 proxy_add_headers = ["name:value"]
 rewrite = ""
-plugins = [
-    "pingap:requestId",
-    "pingap:stats",
-]
+plugins = ["pingap:requestId", "pingap:stats"]
 
 [servers.test]
 addr = "0.0.0.0:6188"

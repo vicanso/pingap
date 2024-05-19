@@ -146,7 +146,7 @@ mod tests {
         let stats = Stats::new(
             &toml::from_str::<PluginConf>(
                 r###"
-            path: "/stats"
+            path = "/stats"
         "###,
             )
             .unwrap(),

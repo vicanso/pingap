@@ -56,76 +56,29 @@ impl TryFrom<&PluginConf> for LimiterParams {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
-        let all_params = get_str_conf(value, "value");
-        let params = if !all_params.is_empty() {
-            let (category, limit_value) = all_params.split_once(' ').ok_or(Error::Invalid {
+
+        let tag = match get_str_conf(value, "key").as_str() {
+            "cookie" => LimitTag::Cookie,
+            "header" => LimitTag::RequestHeader,
+            "query" => LimitTag::Query,
+            _ => LimitTag::Ip,
+        };
+        let interval = get_str_conf(value, "interval");
+        let interval = if !interval.is_empty() {
+            parse_duration(&interval).map_err(|e| Error::Invalid {
                 category: PluginCategory::Limit.to_string(),
-                message: all_params.to_string(),
-            })?;
-
-            let mut tag = LimitTag::Ip;
-            let mut key_value = "".to_string();
-            let mut max = 0;
-            let mut interval = Duration::from_secs(10);
-            for item in limit_value.split('&') {
-                let (key, value) = item.split_once('=').ok_or(Error::Invalid {
-                    category: PluginCategory::Limit.to_string(),
-                    message: item.to_string(),
-                })?;
-                match key {
-                    "key" => {
-                        tag = match value {
-                            "cookie" => LimitTag::Cookie,
-                            "header" => LimitTag::RequestHeader,
-                            "query" => LimitTag::Query,
-                            _ => LimitTag::Ip,
-                        };
-                    }
-                    "value" => key_value = value.to_string(),
-                    "max" => {
-                        max = value.parse::<isize>().map_err(|e| Error::Invalid {
-                            category: PluginCategory::Limit.to_string(),
-                            message: e.to_string(),
-                        })?;
-                    }
-                    "interval" => {
-                        interval = parse_duration(value).map_err(|e| Error::Invalid {
-                            category: PluginCategory::Limit.to_string(),
-                            message: e.to_string(),
-                        })?;
-                    }
-                    _ => {}
-                };
-            }
-
-            Self {
-                tag,
-                value: key_value,
-                max,
-                interval,
-                category: category.to_string(),
-                plugin_step: step,
-            }
+                message: e.to_string(),
+            })?
         } else {
-            let tag = match get_str_conf(value, "key").as_str() {
-                "cookie" => LimitTag::Cookie,
-                "header" => LimitTag::RequestHeader,
-                "query" => LimitTag::Query,
-                _ => LimitTag::Ip,
-            };
-            Self {
-                tag,
-                category: get_str_conf(value, "category"),
-                value: get_str_conf(value, "value"),
-                max: get_int_conf(value, "max") as isize,
-                interval: parse_duration(&get_str_conf(value, "interval")).map_err(|e| {
-                    Error::Invalid {
-                        category: PluginCategory::Limit.to_string(),
-                        message: e.to_string(),
-                    }
-                })?,
-                plugin_step: step,
-            }
+            Duration::from_secs(10)
+        };
+        let params = Self {
+            tag,
+            category: get_str_conf(value, "category"),
+            value: get_str_conf(value, "value"),
+            max: get_int_conf(value, "max") as isize,
+            interval,
+            plugin_step: step,
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {
@@ -234,7 +187,11 @@ impl ProxyPlugin for Limiter {
 #[cfg(test)]
 mod tests {
     use super::{LimitTag, Limiter};
-    use crate::{config::PluginConf, plugin::ProxyPlugin, state::State};
+    use crate::{
+        config::PluginConf,
+        plugin::{limit::LimiterParams, ProxyPlugin},
+        state::State,
+    };
     use http::StatusCode;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -258,6 +215,28 @@ mod tests {
         session.read_request().await.unwrap();
         session
     }
+
+    #[test]
+    fn test_limit_params() {
+        let params = LimiterParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+category = "inflight"
+key = "cookie"
+value = "deviceId"
+max = 10
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!("request", params.plugin_step.to_string());
+        assert_eq!("inflight", params.category);
+        assert_eq!(LimitTag::Cookie, params.tag);
+        assert_eq!("deviceId", params.value);
+        assert_eq!(Duration::from_secs(10), params.interval);
+    }
+
     #[tokio::test]
     async fn test_new_cookie_limiter() {
         let limiter = Limiter::new(
