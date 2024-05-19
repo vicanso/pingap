@@ -37,7 +37,7 @@ pub enum LimitTag {
 pub struct Limiter {
     tag: LimitTag,
     max: isize,
-    value: String,
+    key: String,
     inflight: Option<Inflight>,
     rate: Option<Rate>,
     plugin_step: PluginStep,
@@ -47,7 +47,7 @@ struct LimiterParams {
     category: String,
     tag: LimitTag,
     max: isize,
-    value: String,
+    key: String,
     interval: Duration,
     plugin_step: PluginStep,
 }
@@ -57,7 +57,7 @@ impl TryFrom<&PluginConf> for LimiterParams {
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
 
-        let tag = match get_str_conf(value, "key").as_str() {
+        let tag = match get_str_conf(value, "tag").as_str() {
             "cookie" => LimitTag::Cookie,
             "header" => LimitTag::RequestHeader,
             "query" => LimitTag::Query,
@@ -74,8 +74,8 @@ impl TryFrom<&PluginConf> for LimiterParams {
         };
         let params = Self {
             tag,
-            category: get_str_conf(value, "category"),
-            value: get_str_conf(value, "value"),
+            category: get_str_conf(value, "type"),
+            key: get_str_conf(value, "key"),
             max: get_int_conf(value, "max") as isize,
             interval,
             plugin_step: step,
@@ -107,7 +107,7 @@ impl Limiter {
             tag: params.tag,
             plugin_step: params.plugin_step,
             max: params.max,
-            value: params.value,
+            key: params.key,
             inflight,
             rate,
         })
@@ -116,15 +116,13 @@ impl Limiter {
     /// Otherwise returns a Guard. It may set the client ip to context.
     pub fn incr(&self, session: &Session, ctx: &mut State) -> Result<()> {
         let key = match self.tag {
-            LimitTag::Query => util::get_query_value(session.req_header(), &self.value)
+            LimitTag::Query => util::get_query_value(session.req_header(), &self.key)
                 .unwrap_or_default()
                 .to_string(),
-            LimitTag::RequestHeader => {
-                util::get_req_header_value(session.req_header(), &self.value)
-                    .unwrap_or_default()
-                    .to_string()
-            }
-            LimitTag::Cookie => util::get_cookie_value(session.req_header(), &self.value)
+            LimitTag::RequestHeader => util::get_req_header_value(session.req_header(), &self.key)
+                .unwrap_or_default()
+                .to_string(),
+            LimitTag::Cookie => util::get_cookie_value(session.req_header(), &self.key)
                 .unwrap_or_default()
                 .to_string(),
             _ => {
@@ -221,9 +219,9 @@ mod tests {
         let params = LimiterParams::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
-category = "inflight"
-key = "cookie"
-value = "deviceId"
+type = "inflight"
+tag = "cookie"
+key = "deviceId"
 max = 10
 "###,
             )
@@ -233,7 +231,7 @@ max = 10
         assert_eq!("request", params.plugin_step.to_string());
         assert_eq!("inflight", params.category);
         assert_eq!(LimitTag::Cookie, params.tag);
-        assert_eq!("deviceId", params.value);
+        assert_eq!("deviceId", params.key);
         assert_eq!(Duration::from_secs(10), params.interval);
     }
 
@@ -242,9 +240,9 @@ max = 10
         let limiter = Limiter::new(
             &toml::from_str::<PluginConf>(
                 r###"
-category = "inflight"
-key = "cookie"
-value = "deviceId"
+type = "inflight"
+tag = "cookie"
+key = "deviceId"
 max = 10
     "###,
             )
@@ -265,9 +263,9 @@ max = 10
         let limiter = Limiter::new(
             &toml::from_str::<PluginConf>(
                 r###"
-category = "inflight"
-key = "header"
-value = "X-Uuid"
+type = "inflight"
+tag = "header"
+key = "X-Uuid"
 max = 10
     "###,
             )
@@ -288,9 +286,9 @@ max = 10
         let limiter = Limiter::new(
             &toml::from_str::<PluginConf>(
                 r###"
-category = "inflight"
-key = "query"
-value = "key"
+type = "inflight"
+tag = "query"
+key = "key"
 max = 10
     "###,
             )
@@ -311,7 +309,7 @@ max = 10
         let limiter = Limiter::new(
             &toml::from_str::<PluginConf>(
                 r###"
-category = "inflight"
+type = "inflight"
 max = 10
 "###,
             )
@@ -332,7 +330,7 @@ max = 10
         let limiter = Limiter::new(
             &toml::from_str::<PluginConf>(
                 r###"
-category = "inflight"
+type = "inflight"
 max = 0
 "###,
             )
@@ -356,7 +354,7 @@ max = 0
         let limiter = Limiter::new(
             &toml::from_str::<PluginConf>(
                 r###"
-category = "inflight"
+type = "inflight"
 max = 1
 "###,
             )
@@ -376,7 +374,7 @@ max = 1
         let limiter = Limiter::new(
             &toml::from_str::<PluginConf>(
                 r###"
-category = "rate"
+type = "rate"
 max = 1
 interval = "1s"
 "###,

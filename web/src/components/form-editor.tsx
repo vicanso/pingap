@@ -139,6 +139,7 @@ export default function FormEditor({
               value={opt.option}
               control={<Radio />}
               label={opt.label}
+              disabled={item.disabled || false}
             />
           );
         });
@@ -296,11 +297,12 @@ export default function FormEditor({
         formItem = (
           <FormPluginField
             key={`${item.id}-{category}`}
-            value={(item.defaultValue as string) || ""}
+            value={(item.defaultValue as Record<string, unknown>) || {}}
             category={category}
             id={item.id}
-            onUpdate={(data) => {
-              updateValue(item.id, data);
+            onUpdate={(pluginData) => {
+              const values = Object.assign({}, data, pluginData);
+              updateRecord(values);
             }}
           />
         );
@@ -464,6 +466,10 @@ export default function FormEditor({
       value = null;
     }
     values[key] = value;
+    updateRecord(values);
+  };
+
+  const updateRecord = (values: Record<string, unknown>) => {
     setUpdated(true);
     setData(values);
     setPluginCategory((values["category"] as string) || "");
@@ -471,6 +477,7 @@ export default function FormEditor({
       setShowSuccess(false);
     }, 6000);
   };
+
   const doUpsert = async () => {
     if (processing) {
       return;

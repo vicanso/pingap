@@ -65,13 +65,6 @@ interface Server {
   remark?: string;
 }
 
-interface Plugin {
-  value: string;
-  category: string;
-  step?: string;
-  remark?: string;
-}
-
 interface Basic {
   error_template?: string;
   name?: string;
@@ -100,7 +93,7 @@ interface Config {
   upstreams?: Record<string, Upstream>;
   locations?: Record<string, Location>;
   servers?: Record<string, Server>;
-  plugins?: Record<string, Plugin>;
+  plugins?: Record<string, Record<string, unknown>>;
 }
 
 interface ConfigState {

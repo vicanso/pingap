@@ -61,7 +61,7 @@ export default function LocationInfo() {
     Object.keys(config.plugins).forEach((name) => {
       const item = (config.plugins || {})[name];
       proxyPluginOptions.push({
-        label: `${name}(${formatPluginCategory(item.category)})`,
+        label: `${name}(${formatPluginCategory(item.category as string)})`,
         option: proxyPluginOptions.length,
         value: name,
       });

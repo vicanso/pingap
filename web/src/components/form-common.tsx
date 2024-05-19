@@ -43,6 +43,7 @@ export interface FormItem {
   category: FormItemCategory;
   minRows?: number;
   options?: string[] | CheckBoxItem[];
+  disabled?: boolean;
 }
 
 export function getDefaultValues(items: FormItem[]) {

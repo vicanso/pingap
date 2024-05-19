@@ -38,6 +38,7 @@ export default function ProxyPluginInfo() {
       defaultValue: proxyPlugin.category,
       category: FormItemCategory.CHECKBOX,
       span: 12,
+      disabled: !created,
       options: [
         {
           label: "Stats",
@@ -114,21 +115,21 @@ export default function ProxyPluginInfo() {
     {
       id: "step",
       label: t("plugin.step"),
-      defaultValue: proxyPlugin.step,
+      defaultValue: proxyPlugin.step as string,
       category: FormItemCategory.PLUGIN_STEP,
       span: 6,
     },
     {
       id: "value",
       label: t("plugin.config"),
-      defaultValue: proxyPlugin.value,
+      defaultValue: proxyPlugin,
       category: FormItemCategory.PLUGIN,
       span: 12,
     },
     {
       id: "remark",
       label: t("plugin.remark"),
-      defaultValue: proxyPlugin.remark,
+      defaultValue: proxyPlugin.remark as string,
       span: 12,
       category: FormItemCategory.TEXTAREA,
     },
@@ -142,6 +143,7 @@ export default function ProxyPluginInfo() {
     if (!data.category) {
       data.category = PluginCategory.STATS;
     }
+    delete data["value"];
 
     return update("plugin", pluginName, data).then(() => {
       if (created) {
