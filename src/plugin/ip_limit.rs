@@ -87,7 +87,7 @@ impl TryFrom<&PluginConf> for IpLimitParams {
                 plugin_step: step,
                 ip_list,
                 ip_net_list,
-                category: get_int_conf(value, "category") as u8,
+                category: get_int_conf(value, "type") as u8,
             }
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
@@ -184,7 +184,7 @@ ip_list = [
     "1.1.1.0/24",
     "2.1.1.0/24",
 ]
-category = 1
+type = 1
 "###,
             )
             .unwrap(),
@@ -208,7 +208,7 @@ category = 1
         let deny = IpLimit::new(
             &toml::from_str::<PluginConf>(
                 r###"
-category = 1
+type = 1
 ip_list = [
     "192.168.1.1",
     "1.1.1.0/24",

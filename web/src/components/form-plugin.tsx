@@ -321,6 +321,57 @@ export function FormPluginField({
       );
       break;
     }
+    case PluginCategory.REQUEST_ID: {
+      fields.push(
+        {
+          category: "select",
+          key: "algorithm",
+          label: t("form.requestIdAlgo"),
+          id: "request-id-algo",
+          span: 6,
+          options: ["uuid", "nanoid"],
+        },
+        {
+          category: "number",
+          key: "size",
+          label: t("form.requestIdLength"),
+          id: "request-id-length",
+          span: 6,
+        },
+      );
+      break;
+    }
+    case PluginCategory.IP_LIMIT: {
+      fields.push(
+        {
+          category: "select",
+          key: "type",
+          label: t("form.limitMode"),
+          id: "ip-limit-mode",
+          span: 6,
+          options: [
+            {
+              label: "Allow",
+              option: 0,
+              value: 0,
+            },
+            {
+              label: "Deny",
+              option: 1,
+              value: 1,
+            },
+          ],
+        },
+        {
+          category: "text",
+          key: "ip_list",
+          label: t("form.ipList"),
+          id: "ip-limit-list",
+          span: 6,
+        },
+      );
+      break;
+    }
     default: {
       fields.push({
         category: "text",
