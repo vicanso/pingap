@@ -23,7 +23,7 @@ use once_cell::sync::Lazy;
 use pingora::proxy::Session;
 
 pub struct Ping {
-    prefix: String,
+    path: String,
     plugin_step: PluginStep,
 }
 static PONG_RESPONSE: Lazy<HttpResponse> = Lazy::new(|| HttpResponse {
@@ -42,7 +42,7 @@ impl Ping {
             });
         }
         Ok(Self {
-            prefix: get_str_conf(params, "prefix"),
+            path: get_str_conf(params, "path"),
             plugin_step: step,
         })
     }
@@ -64,7 +64,7 @@ impl ProxyPlugin for Ping {
         session: &mut Session,
         _ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
-        if session.req_header().uri.path() == self.prefix {
+        if session.req_header().uri.path() == self.path {
             return Ok(Some(PONG_RESPONSE.clone()));
         }
         Ok(None)

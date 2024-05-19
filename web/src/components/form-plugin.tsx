@@ -146,7 +146,10 @@ export function FormPluginField({
     category: "text" | "number" | "select" | "checkbox" | "textlist";
     key: string;
     label: string;
+    valueLabel?: string;
+    valueWidth?: string;
     addLabel?: string;
+    divide?: string;
     id: string;
     span: number;
     options?: string[] | CheckBoxItem[];
@@ -412,6 +415,71 @@ export function FormPluginField({
       );
       break;
     }
+    case PluginCategory.BASIC_AUTH: {
+      fields.push({
+        category: "textlist",
+        key: "authorizations",
+        label: t("form.basicAuthList"),
+        id: "key-auth-values",
+        addLabel: t("form.keyAuthAdd"),
+        span: 12,
+      });
+      break;
+    }
+    case PluginCategory.REDIRECT_HTTPS: {
+      fields.push({
+        category: "text",
+        key: "prefix",
+        label: t("form.redirectPrefix"),
+        id: "redirect-https-prefix",
+        span: 12,
+      });
+      break;
+    }
+    case PluginCategory.PING: {
+      fields.push({
+        category: "text",
+        key: "path",
+        label: t("form.pingPath"),
+        id: "ping-path",
+        span: 12,
+      });
+      break;
+    }
+    case PluginCategory.RESPONSE_HEADERS: {
+      fields.push(
+        {
+          category: "textlist",
+          key: "add_headers",
+          label: t("form.responseHeadersAddHeaderName"),
+          valueLabel: t("form.responseHeadersAddHeaderValue"),
+          id: "response-headers-add-headers",
+          span: 12,
+          divide: ":",
+          addLabel: t("form.responseHeadersAdd"),
+        },
+        {
+          category: "textlist",
+          key: "set_headers",
+          label: t("form.responseHeadersSetHeaderName"),
+          valueLabel: t("form.responseHeadersSetHeaderValue"),
+          id: "response-headers-set-headers",
+          span: 12,
+          divide: ":",
+          addLabel: t("form.responseHeadersSet"),
+        },
+        {
+          category: "textlist",
+          key: "remove_headers",
+          label: t("form.responseHeadersRemoveHeaderName"),
+          id: "response-headers-remove-headers",
+          span: 12,
+          divide: "",
+          addLabel: t("form.responseHeadersRemove"),
+        },
+      );
+      break;
+    }
     default: {
       fields.push({
         category: "text",
@@ -522,11 +590,11 @@ export function FormPluginField({
         dom = (
           <FormTwoInputFields
             id={field.id}
-            divide={""}
+            divide={field.divide || ""}
             values={(data[field.key] as string[]) || []}
             label={field.label}
-            valueLabel=""
-            valueWidth="0px"
+            valueLabel={field.valueLabel || ""}
+            valueWidth={field.valueWidth || ""}
             onUpdate={(value) => {
               const current: Record<string, unknown> = {};
               current[field.key] = value;
