@@ -355,14 +355,14 @@ export function FormPluginField({
           span: 12,
           options: [
             {
-              label: "Allow",
+              label: t("form.ipLimitAllow"),
               option: 0,
-              value: 0,
+              value: "allow",
             },
             {
-              label: "Deny",
+              label: t("form.ipLimitDeny"),
               option: 1,
-              value: 1,
+              value: "deny",
             },
           ],
         },
@@ -389,12 +389,12 @@ export function FormPluginField({
             {
               label: "Header",
               option: 0,
-              value: 0,
+              value: "header",
             },
             {
               label: "Query",
               option: 1,
-              value: 1,
+              value: "query",
             },
           ],
         },

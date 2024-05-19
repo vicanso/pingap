@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_int_conf, get_step_conf, get_str_slice_conf, Error, ProxyPlugin, Result};
+use super::{get_step_conf, get_str_conf, get_str_slice_conf, Error, ProxyPlugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -30,7 +30,7 @@ pub struct IpLimit {
     plugin_step: PluginStep,
     ip_net_list: Vec<IpNet>,
     ip_list: Vec<String>,
-    category: u8,
+    category: String,
     forbidden_resp: HttpResponse,
 }
 
@@ -38,7 +38,7 @@ struct IpLimitParams {
     plugin_step: PluginStep,
     ip_net_list: Vec<IpNet>,
     ip_list: Vec<String>,
-    category: u8,
+    category: String,
 }
 
 impl TryFrom<&PluginConf> for IpLimitParams {
@@ -59,7 +59,7 @@ impl TryFrom<&PluginConf> for IpLimitParams {
             plugin_step: step,
             ip_list,
             ip_net_list,
-            category: get_int_conf(value, "type") as u8,
+            category: get_str_conf(value, "type"),
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {
@@ -125,7 +125,11 @@ impl ProxyPlugin for IpLimit {
             }
         };
         // deny ip
-        let allow = if self.category > 0 { !found } else { found };
+        let allow = if self.category == "deny" {
+            !found
+        } else {
+            found
+        };
         if !allow {
             return Ok(Some(self.forbidden_resp.clone()));
         }
@@ -155,7 +159,7 @@ ip_list = [
     "1.1.1.0/24",
     "2.1.1.0/24",
 ]
-type = 1
+type = "deny"
 "###,
             )
             .unwrap(),
@@ -179,7 +183,7 @@ type = 1
         let deny = IpLimit::new(
             &toml::from_str::<PluginConf>(
                 r###"
-type = 1
+type = "deny"
 ip_list = [
     "192.168.1.1",
     "1.1.1.0/24",

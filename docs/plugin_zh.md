@@ -198,7 +198,7 @@ size = 8
 
 ## IpLimit
 
-Ip限制分为两种模式，允许(0)，禁止(1)，ip可支持配置为单ip或ip组，配置如下：
+Ip限制分为两种模式，允许，禁止，ip可支持配置为单ip或ip组，配置如下：
 
 ```toml
 [plugins.ipDeny]
@@ -207,7 +207,7 @@ ip_list = [
     "192.168.1.1",
     "1.1.1.0/24",
 ]
-type = 1
+type = "deny""
 ```
 
 界面配置如图所示，配置IP列表后，填写是允许还是禁止即可：
@@ -230,7 +230,7 @@ keys = [
     "GKvXY2",
 ]
 name = "app"
-type = 1
+type = "query"
 ```
 
 从header中的X-App字段中获取校验：
@@ -243,7 +243,7 @@ keys = [
     "GKvXY2",
 ]
 name = "X-App"
-type = 0
+type = "header"
 ```
 
 界面配置如图所示，配置key的名称，再配置符合的值即可：

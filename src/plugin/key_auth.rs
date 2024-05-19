@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    get_int_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error, ProxyPlugin, Result,
-};
+use super::{get_step_conf, get_str_conf, get_str_slice_conf, Error, ProxyPlugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -27,7 +25,7 @@ use pingora::proxy::Session;
 use std::str::FromStr;
 
 pub struct KeyAuth {
-    category: u8,
+    category: String,
     plugin_step: PluginStep,
     header_name: Option<HeaderName>,
     query_name: Option<String>,
@@ -37,7 +35,7 @@ pub struct KeyAuth {
 }
 
 struct KeyAuthParams {
-    category: u8,
+    category: String,
     plugin_step: PluginStep,
     header_name: Option<HeaderName>,
     query_name: Option<String>,
@@ -49,11 +47,11 @@ impl TryFrom<&PluginConf> for KeyAuthParams {
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
 
-        let category = get_int_conf(value, "type") as u8;
+        let category = get_str_conf(value, "type");
         let name = get_str_conf(value, "name");
         let mut query_name = None;
         let mut header_name = None;
-        if category == 1 {
+        if category == "query" {
             query_name = Some(name);
         } else {
             header_name = Some(HeaderName::from_str(&name).map_err(|e| Error::Invalid {
@@ -123,16 +121,16 @@ impl ProxyPlugin for KeyAuth {
         session: &mut Session,
         _ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
-        let value = if self.category == 0 {
-            self.header_name
-                .as_ref()
-                .map(|v| session.get_header_bytes(v))
-        } else {
+        let value = if self.category == "query" {
             self.query_name.as_ref().map(|name| {
                 util::get_query_value(session.req_header(), name)
                     .unwrap_or_default()
                     .as_bytes()
             })
+        } else {
+            self.header_name
+                .as_ref()
+                .map(|v| session.get_header_bytes(v))
         };
         if value.is_none() {
             return Ok(Some(self.miss_authorization_resp.clone()));
