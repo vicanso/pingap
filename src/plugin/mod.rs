@@ -48,11 +48,6 @@ pub enum Error {
         max: isize,
         value: isize,
     },
-    #[snafu(display("Plugin {category}, json parse error {source}"))]
-    Json {
-        category: String,
-        source: serde_json::Error,
-    },
     #[snafu(display("Plugin {category}, base64 decode error {source}"))]
     Base64Decode {
         category: String,

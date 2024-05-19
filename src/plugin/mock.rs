@@ -15,20 +15,12 @@
 use super::{get_step_conf, get_str_conf, Error, ProxyPlugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{convert_headers, HttpResponse};
+use crate::plugin::{get_int_conf, get_str_slice_conf};
 use crate::state::State;
 use async_trait::async_trait;
 use http::StatusCode;
 use log::debug;
 use pingora::proxy::Session;
-use serde::{Deserialize, Serialize};
-
-#[derive(Default, Deserialize, Serialize, Clone)]
-pub struct MockInfo {
-    path: Option<String>,
-    status: Option<u16>,
-    headers: Option<Vec<String>>,
-    data: String,
-}
 
 pub struct MockResponse {
     pub path: String,
@@ -48,22 +40,22 @@ impl MockResponse {
                     .to_string(),
             });
         }
-        let info: MockInfo =
-            serde_json::from_str(&get_str_conf(params, "value")).map_err(|e| Error::Json {
-                category: PluginCategory::Mock.to_string(),
-                source: e,
-            })?;
+
+        let path = get_str_conf(params, "path");
+        let status = get_int_conf(params, "status") as u16;
+        let headers = get_str_slice_conf(params, "headers");
+        let data = get_str_conf(params, "data");
 
         let mut resp = HttpResponse {
             status: StatusCode::OK,
-            body: info.data.into(),
+            body: data.into(),
             ..Default::default()
         };
-        if let Some(status) = info.status {
+        if status > 0 {
             resp.status = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
         }
-        if let Some(value) = &info.headers {
-            if let Ok(headers) = convert_headers(value) {
+        if !headers.is_empty() {
+            if let Ok(headers) = convert_headers(&headers) {
                 resp.headers = Some(headers);
             }
         }
@@ -71,7 +63,7 @@ impl MockResponse {
         Ok(MockResponse {
             resp,
             plugin_step: step,
-            path: info.path.unwrap_or_default(),
+            path,
         })
     }
 }
@@ -100,45 +92,55 @@ impl ProxyPlugin for MockResponse {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::MockResponse;
-//     use crate::state::State;
-//     use crate::{config::PluginStep, plugin::ProxyPlugin};
-//     use bytes::Bytes;
-//     use http::StatusCode;
-//     use pingora::proxy::Session;
-//     use pretty_assertions::assert_eq;
-//     use tokio_test::io::Builder;
+#[cfg(test)]
+mod tests {
+    use super::MockResponse;
+    use crate::state::State;
+    use crate::{config::PluginConf, plugin::ProxyPlugin};
+    use bytes::Bytes;
+    use http::StatusCode;
+    use pingora::proxy::Session;
+    use pretty_assertions::assert_eq;
+    use tokio_test::io::Builder;
 
-//     #[tokio::test]
-//     async fn test_mock_response() {
-//         let mock = MockResponse::new(
-//             r###"{"status":500,"headers":["Content-Type: application/json"],"data":"{\"message\":\"Mock Service Unavailable\"}"}"###,
-//              PluginStep::Request).unwrap();
+    #[tokio::test]
+    async fn test_mock_response() {
+        let params = toml::from_str::<PluginConf>(
+            r###"
+path = ""
+status = 500
+headers = [
+    "Content-Type: application/json"
+]
+data = "{\"message\":\"Mock Service Unavailable\"}"
+"###,
+        )
+        .unwrap();
 
-//         let headers = ["Accept-Encoding: gzip"].join("\r\n");
-//         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-//         let mock_io = Builder::new().read(input_header.as_bytes()).build();
-//         let mut session = Session::new_h1(Box::new(mock_io));
-//         session.read_request().await.unwrap();
+        let mock = MockResponse::new(&params).unwrap();
 
-//         let result = mock
-//             .handle(&mut session, &mut State::default())
-//             .await
-//             .unwrap();
+        let headers = ["Accept-Encoding: gzip"].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
 
-//         assert_eq!(true, result.is_some());
+        let result = mock
+            .handle(&mut session, &mut State::default())
+            .await
+            .unwrap();
 
-//         let resp = result.unwrap();
-//         assert_eq!(StatusCode::INTERNAL_SERVER_ERROR, resp.status);
-//         assert_eq!(
-//             r###"Some([("content-type", "application/json")])"###,
-//             format!("{:?}", resp.headers)
-//         );
-//         assert_eq!(
-//             Bytes::from_static(b"{\"message\":\"Mock Service Unavailable\"}"),
-//             resp.body
-//         );
-//     }
-// }
+        assert_eq!(true, result.is_some());
+
+        let resp = result.unwrap();
+        assert_eq!(StatusCode::INTERNAL_SERVER_ERROR, resp.status);
+        assert_eq!(
+            r###"Some([("content-type", "application/json")])"###,
+            format!("{:?}", resp.headers)
+        );
+        assert_eq!(
+            Bytes::from_static(b"{\"message\":\"Mock Service Unavailable\"}"),
+            resp.body
+        );
+    }
+}

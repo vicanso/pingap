@@ -70,3 +70,25 @@ impl ProxyPlugin for Ping {
         Ok(None)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Ping;
+    use crate::config::PluginConf;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_ping_params() {
+        let params = Ping::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+path = "/ping"
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!("request", params.plugin_step.to_string());
+        assert_eq!("/ping", params.path);
+    }
+}

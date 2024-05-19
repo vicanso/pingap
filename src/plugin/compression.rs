@@ -123,6 +123,7 @@ impl ProxyPlugin for Compression {
         Ok(None)
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::Compression;
