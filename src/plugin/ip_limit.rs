@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    get_int_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error, ProxyPlugin, Result,
-};
+use super::{get_int_conf, get_step_conf, get_str_slice_conf, Error, ProxyPlugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -47,48 +45,21 @@ impl TryFrom<&PluginConf> for IpLimitParams {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
-        let all_params = get_str_conf(value, "value");
-        let params = if !all_params.is_empty() {
-            let arr: Vec<&str> = all_params.split(' ').collect();
-            let ip = arr[0].trim().to_string();
-            let mut category = 0;
-            if arr.len() >= 2 {
-                let v = arr[1].parse::<u8>().unwrap();
-                if v > 0 {
-                    category = v;
-                }
+
+        let mut ip_net_list = vec![];
+        let mut ip_list = vec![];
+        for item in get_str_slice_conf(value, "ip_list") {
+            if let Ok(value) = IpNet::from_str(&item) {
+                ip_net_list.push(value);
+            } else {
+                ip_list.push(item);
             }
-            let mut ip_net_list = vec![];
-            let mut ip_list = vec![];
-            for item in ip.split(',') {
-                if let Ok(value) = IpNet::from_str(item) {
-                    ip_net_list.push(value);
-                } else {
-                    ip_list.push(item.to_string());
-                }
-            }
-            Self {
-                plugin_step: step,
-                ip_list,
-                ip_net_list,
-                category,
-            }
-        } else {
-            let mut ip_net_list = vec![];
-            let mut ip_list = vec![];
-            for item in get_str_slice_conf(value, "ip_list") {
-                if let Ok(value) = IpNet::from_str(&item) {
-                    ip_net_list.push(value);
-                } else {
-                    ip_list.push(item);
-                }
-            }
-            Self {
-                plugin_step: step,
-                ip_list,
-                ip_net_list,
-                category: get_int_conf(value, "type") as u8,
-            }
+        }
+        let params = Self {
+            plugin_step: step,
+            ip_list,
+            ip_net_list,
+            category: get_int_conf(value, "type") as u8,
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {

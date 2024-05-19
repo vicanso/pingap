@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_conf, get_str_slice_conf, Error, ProxyPlugin, Result};
+use super::{get_step_conf, get_str_slice_conf, Error, ProxyPlugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -33,28 +33,19 @@ impl TryFrom<&PluginConf> for BasicAuthParams {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
-        let all_params = get_str_conf(value, "value");
-        let params = if !all_params.is_empty() {
-            let mut authorizations = vec![];
-            for item in all_params.split(' ') {
-                let _ = STANDARD.decode(item).map_err(|e| Error::Base64Decode {
-                    category: PluginCategory::BasicAuth.to_string(),
-                    source: e,
-                })?;
-                authorizations.push(format!("Basic {item}").as_bytes().to_owned());
-            }
-            Self {
-                plugin_step: step,
-                authorizations,
-            }
-        } else {
-            Self {
-                plugin_step: step,
-                authorizations: get_str_slice_conf(value, "authorizations")
-                    .iter()
-                    .map(|item| format!("Basic {item}").as_bytes().to_vec())
-                    .collect(),
-            }
+
+        let mut authorizations = vec![];
+        for item in get_str_slice_conf(value, "authorizations").iter() {
+            let _ = STANDARD.decode(item).map_err(|e| Error::Base64Decode {
+                category: PluginCategory::BasicAuth.to_string(),
+                source: e,
+            })?;
+            authorizations.push(format!("Basic {item}").as_bytes().to_vec());
+        }
+
+        let params = Self {
+            plugin_step: step,
+            authorizations,
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {
@@ -149,8 +140,8 @@ mod tests {
             &toml::from_str::<PluginConf>(
                 r###"
 authorizations = [
-"123",
-"456",
+"MTIz",
+"NDU2",
 ]
 "###,
             )
@@ -159,7 +150,7 @@ authorizations = [
         .unwrap();
         assert_eq!("request", params.plugin_step.to_string());
         assert_eq!(
-            "Basic 123,Basic 456",
+            "Basic MTIz,Basic NDU2",
             params
                 .authorizations
                 .iter()

@@ -21,7 +21,6 @@ use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use snafu::Snafu;
 use std::collections::HashMap;
-use std::num::ParseIntError;
 use std::str::FromStr;
 
 mod admin;
@@ -43,11 +42,6 @@ mod stats;
 pub enum Error {
     #[snafu(display("Plugin {category}, invalid {message}"))]
     Invalid { category: String, message: String },
-    #[snafu(display("Plugin {category}, parse int {source}"))]
-    ParseInt {
-        category: String,
-        source: ParseIntError,
-    },
     #[snafu(display("Plugin {category}, exceed limit {value}/{max}"))]
     Exceed {
         category: String,

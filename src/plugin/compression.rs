@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_int_conf, get_step_conf, get_str_conf, Error, ProxyPlugin, Result};
+use super::{get_int_conf, get_step_conf, Error, ProxyPlugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -45,34 +45,11 @@ impl TryFrom<&PluginConf> for CompressionParams {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
-        let all_params = get_str_conf(value, "value");
-        let params = if !all_params.is_empty() {
-            let mut levels: [u32; 3] = [0, 0, 0];
-            for (index, item) in all_params.split(' ').enumerate() {
-                if index >= levels.len() {
-                    break;
-                }
-                let level = item.parse::<u32>().map_err(|e| Error::ParseInt {
-                    category: PluginCategory::Compression.to_string(),
-                    source: e,
-                })?;
-                if level > 0 {
-                    levels[index] = level;
-                }
-            }
-            Self {
-                gzip_level: levels[0],
-                br_level: levels[1],
-                zstd_level: levels[2],
-                plugin_step: step,
-            }
-        } else {
-            Self {
-                gzip_level: get_int_conf(value, "gzip_level") as u32,
-                br_level: get_int_conf(value, "br_level") as u32,
-                zstd_level: get_int_conf(value, "zstd_level") as u32,
-                plugin_step: step,
-            }
+        let params = Self {
+            gzip_level: get_int_conf(value, "gzip_level") as u32,
+            br_level: get_int_conf(value, "br_level") as u32,
+            zstd_level: get_int_conf(value, "zstd_level") as u32,
+            plugin_step: step,
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {

@@ -25,7 +25,6 @@ use http::{HeaderName, StatusCode};
 use log::debug;
 use pingora::proxy::Session;
 use std::str::FromStr;
-use substring::Substring;
 
 pub struct KeyAuth {
     category: u8,
@@ -49,63 +48,28 @@ impl TryFrom<&PluginConf> for KeyAuthParams {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
-        let all_params = get_str_conf(value, "value");
-        let params = if !all_params.is_empty() {
-            let arr: Vec<&str> = all_params.split(' ').collect();
-            if arr.len() != 2 {
-                return Err(Error::Invalid {
-                    category: PluginCategory::KeyAuth.to_string(),
-                    message: "Value for key auth is invalid".to_string(),
-                });
-            }
-            let mut category = 0;
-            let mut query_name = None;
-            let mut header_name = None;
-            let name = arr[0];
-            if name.starts_with('?') {
-                category = 1;
-                query_name = Some(name.substring(1, name.len()).to_string());
-            } else {
-                header_name = Some(HeaderName::from_str(name).map_err(|e| Error::Invalid {
-                    category: PluginCategory::KeyAuth.to_string(),
-                    message: format!("invalid header name, {e}"),
-                })?);
-            }
 
-            let keys = arr[1]
-                .split(',')
-                .map(|item| item.as_bytes().to_owned())
-                .collect();
-            Self {
-                category,
-                keys,
-                plugin_step: step,
-                query_name,
-                header_name,
-            }
+        let category = get_int_conf(value, "type") as u8;
+        let name = get_str_conf(value, "name");
+        let mut query_name = None;
+        let mut header_name = None;
+        if category == 1 {
+            query_name = Some(name);
         } else {
-            let category = get_int_conf(value, "type") as u8;
-            let name = get_str_conf(value, "name");
-            let mut query_name = None;
-            let mut header_name = None;
-            if category == 1 {
-                query_name = Some(name);
-            } else {
-                header_name = Some(HeaderName::from_str(&name).map_err(|e| Error::Invalid {
-                    category: PluginCategory::KeyAuth.to_string(),
-                    message: format!("invalid header name, {e}"),
-                })?);
-            }
-            Self {
-                category,
-                keys: get_str_slice_conf(value, "keys")
-                    .iter()
-                    .map(|item| item.as_bytes().to_vec())
-                    .collect(),
-                plugin_step: step,
-                query_name,
-                header_name,
-            }
+            header_name = Some(HeaderName::from_str(&name).map_err(|e| Error::Invalid {
+                category: PluginCategory::KeyAuth.to_string(),
+                message: format!("invalid header name, {e}"),
+            })?);
+        }
+        let params = Self {
+            category,
+            keys: get_str_slice_conf(value, "keys")
+                .iter()
+                .map(|item| item.as_bytes().to_vec())
+                .collect(),
+            plugin_step: step,
+            query_name,
+            header_name,
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {

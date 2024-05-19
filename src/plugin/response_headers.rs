@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use super::{get_step_conf, get_str_conf, get_str_slice_conf, Error, ResponsePlugin, Result};
+use super::{get_step_conf, get_str_slice_conf, Error, ResponsePlugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{convert_header, HttpHeader};
 use crate::state::State;
@@ -20,7 +20,6 @@ use log::debug;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use std::str::FromStr;
-use substring::Substring;
 
 pub struct ResponseHeaders {
     plugin_step: PluginStep,
@@ -40,88 +39,41 @@ impl TryFrom<&PluginConf> for ResponseHeadersParams {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
-        let all_params = get_str_conf(value, "value");
-        let params = if !all_params.is_empty() {
-            let mut add_headers = vec![];
-            let mut remove_headers = vec![];
-            let mut set_headers = vec![];
-            for item in all_params.split(' ') {
-                let item = item.trim();
-                if item.is_empty() {
-                    continue;
-                }
-                let first = item.chars().next().unwrap();
-                let last = item.substring(1, item.len());
-                match first {
-                    '+' => {
-                        let header = convert_header(last).map_err(|e| Error::Invalid {
-                            category: PluginCategory::ResponseHeaders.to_string(),
-                            message: e.to_string(),
-                        })?;
-                        if let Some(item) = header {
-                            add_headers.push(item);
-                        }
-                    }
-                    '-' => {
-                        let name = HeaderName::from_str(last).map_err(|e| Error::Invalid {
-                            category: PluginCategory::ResponseHeaders.to_string(),
-                            message: e.to_string(),
-                        })?;
-                        remove_headers.push(name);
-                    }
-                    _ => {
-                        let header = convert_header(item).map_err(|e| Error::Invalid {
-                            category: PluginCategory::ResponseHeaders.to_string(),
-                            message: e.to_string(),
-                        })?;
-                        if let Some(item) = header {
-                            set_headers.push(item);
-                        }
-                    }
-                }
-            }
-            Self {
-                plugin_step: step,
-                add_headers,
-                set_headers,
-                remove_headers,
-            }
-        } else {
-            let mut add_headers = vec![];
-            for item in get_str_slice_conf(value, "add_headers").iter() {
-                let header = convert_header(item).map_err(|e| Error::Invalid {
-                    category: PluginCategory::ResponseHeaders.to_string(),
-                    message: e.to_string(),
-                })?;
-                if let Some(item) = header {
-                    add_headers.push(item);
-                }
-            }
 
-            let mut set_headers = vec![];
-            for item in get_str_slice_conf(value, "set_headers").iter() {
-                let header = convert_header(item).map_err(|e| Error::Invalid {
-                    category: PluginCategory::ResponseHeaders.to_string(),
-                    message: e.to_string(),
-                })?;
-                if let Some(item) = header {
-                    set_headers.push(item);
-                }
+        let mut add_headers = vec![];
+        for item in get_str_slice_conf(value, "add_headers").iter() {
+            let header = convert_header(item).map_err(|e| Error::Invalid {
+                category: PluginCategory::ResponseHeaders.to_string(),
+                message: e.to_string(),
+            })?;
+            if let Some(item) = header {
+                add_headers.push(item);
             }
-            let mut remove_headers = vec![];
-            for item in get_str_slice_conf(value, "remove_headers").iter() {
-                let item = HeaderName::from_str(item).map_err(|e| Error::Invalid {
-                    category: PluginCategory::ResponseHeaders.to_string(),
-                    message: e.to_string(),
-                })?;
-                remove_headers.push(item);
+        }
+
+        let mut set_headers = vec![];
+        for item in get_str_slice_conf(value, "set_headers").iter() {
+            let header = convert_header(item).map_err(|e| Error::Invalid {
+                category: PluginCategory::ResponseHeaders.to_string(),
+                message: e.to_string(),
+            })?;
+            if let Some(item) = header {
+                set_headers.push(item);
             }
-            Self {
-                plugin_step: step,
-                add_headers,
-                set_headers,
-                remove_headers,
-            }
+        }
+        let mut remove_headers = vec![];
+        for item in get_str_slice_conf(value, "remove_headers").iter() {
+            let item = HeaderName::from_str(item).map_err(|e| Error::Invalid {
+                category: PluginCategory::ResponseHeaders.to_string(),
+                message: e.to_string(),
+            })?;
+            remove_headers.push(item);
+        }
+        let params = Self {
+            plugin_step: step,
+            add_headers,
+            set_headers,
+            remove_headers,
         };
 
         if params.plugin_step != PluginStep::UpstreamResponse {

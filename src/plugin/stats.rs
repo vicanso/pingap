@@ -52,17 +52,10 @@ impl TryFrom<&PluginConf> for StatsParams {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
-        let all_params = get_str_conf(value, "value");
-        let params = if !all_params.is_empty() {
-            Self {
-                plugin_step: step,
-                path: all_params,
-            }
-        } else {
-            Self {
-                plugin_step: step,
-                path: get_str_conf(value, "path"),
-            }
+
+        let params = Self {
+            plugin_step: step,
+            path: get_str_conf(value, "path"),
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {

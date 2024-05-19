@@ -39,28 +39,11 @@ impl TryFrom<&PluginConf> for RequestIdParams {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
-        let all_params = get_str_conf(value, "value");
-        let params = if !all_params.is_empty() {
-            let arr: Vec<&str> = all_params.split(' ').collect();
-            let algorithm = arr[0].trim().to_string();
-            let mut size = 8;
-            if arr.len() >= 2 {
-                let v = arr[1].parse::<usize>().unwrap();
-                if v > 0 {
-                    size = v;
-                }
-            }
-            Self {
-                plugin_step: step,
-                algorithm,
-                size,
-            }
-        } else {
-            Self {
-                plugin_step: step,
-                algorithm: get_str_conf(value, "algorithm"),
-                size: get_int_conf(value, "size") as usize,
-            }
+
+        let params = Self {
+            plugin_step: step,
+            algorithm: get_str_conf(value, "algorithm"),
+            size: get_int_conf(value, "size") as usize,
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {

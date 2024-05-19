@@ -32,7 +32,6 @@ use std::time::UNIX_EPOCH;
 use substring::Substring;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
-use url::Url;
 use urlencoding::decode;
 
 static WEB_HTML: &str = r###"<!doctype html>
@@ -163,93 +162,37 @@ impl TryFrom<&PluginConf> for DirectoryParams {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
-        let all_params = get_str_conf(value, "value");
-        let params = if !all_params.is_empty() {
-            let mut new_path = all_params.to_string();
-            let mut chunk_size = None;
-            let mut max_age = None;
-            let mut cache_private = None;
-            let mut index_file = "index.html".to_string();
-            let mut charset = None;
-            let mut autoindex = false;
-            let mut download = false;
-            let file_protocol = "file://";
-            if !new_path.starts_with(file_protocol) {
-                new_path = format!("{file_protocol}{new_path}").to_string();
-            }
-            if let Ok(url_info) = Url::parse(&new_path) {
-                let query = url_info.query().unwrap_or_default();
-                if !query.is_empty() {
-                    new_path = new_path
-                        .substring(0, new_path.len() - query.len() - 1)
-                        .to_string();
-                }
-                for (key, value) in url_info.query_pairs().into_iter() {
-                    match key.as_ref() {
-                        "chunk_size" => {
-                            if let Ok(v) = value.parse::<usize>() {
-                                chunk_size = Some(v);
-                            }
-                        }
-                        "max_age" => {
-                            if let Ok(v) = parse_duration(&value) {
-                                max_age = Some(v.as_secs() as u32);
-                            }
-                        }
-                        "index" => index_file = value.to_string(),
-                        "charset" => charset = Some(value.to_string()),
-                        "autoindex" => autoindex = true,
-                        "private" => cache_private = Some(true),
-                        "download" => download = true,
-                        _ => {}
-                    }
-                }
-            };
-            Self {
-                autoindex,
-                index: format!("/{index_file}"),
-                path: new_path
-                    .substring(file_protocol.len(), new_path.len())
-                    .to_string(),
-                chunk_size,
-                max_age,
-                charset,
-                cache_private,
-                plugin_step: step,
-                download,
-            }
+
+        let chunk_size = get_int_conf(value, "chunk_size");
+        let chunk_size = if chunk_size > 0 {
+            Some(chunk_size as usize)
         } else {
-            let chunk_size = get_int_conf(value, "chunk_size");
-            let chunk_size = if chunk_size > 0 {
-                Some(chunk_size as usize)
-            } else {
-                None
-            };
-            let max_age = get_str_conf(value, "max_age");
-            let max_age = if !max_age.is_empty() {
-                Some(parse_duration(&max_age).unwrap_or_default().as_secs() as u32)
-            } else {
-                None
-            };
-            let charset = get_str_conf(value, "charset");
-            let charset = if !charset.is_empty() {
-                Some(charset)
-            } else {
-                None
-            };
-            let cache_private = get_bool_conf(value, "private");
-            let cache_private = if cache_private { Some(true) } else { None };
-            Self {
-                autoindex: get_bool_conf(value, "autoindex"),
-                index: get_str_conf(value, "index"),
-                path: get_str_conf(value, "path"),
-                chunk_size,
-                max_age,
-                charset,
-                cache_private,
-                plugin_step: step,
-                download: get_bool_conf(value, "download"),
-            }
+            None
+        };
+        let max_age = get_str_conf(value, "max_age");
+        let max_age = if !max_age.is_empty() {
+            Some(parse_duration(&max_age).unwrap_or_default().as_secs() as u32)
+        } else {
+            None
+        };
+        let charset = get_str_conf(value, "charset");
+        let charset = if !charset.is_empty() {
+            Some(charset)
+        } else {
+            None
+        };
+        let cache_private = get_bool_conf(value, "private");
+        let cache_private = if cache_private { Some(true) } else { None };
+        let params = Self {
+            autoindex: get_bool_conf(value, "autoindex"),
+            index: get_str_conf(value, "index"),
+            path: get_str_conf(value, "path"),
+            chunk_size,
+            max_age,
+            charset,
+            cache_private,
+            plugin_step: step,
+            download: get_bool_conf(value, "download"),
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {
