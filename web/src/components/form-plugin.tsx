@@ -6,6 +6,10 @@ import Box from "@mui/material/Box";
 import { useTranslation } from "react-i18next";
 import Paper from "@mui/material/Paper";
 import Grid from "@mui/material/Grid";
+import FormControlLabel from "@mui/material/FormControlLabel";
+import Radio from "@mui/material/Radio";
+import FormLabel from "@mui/material/FormLabel";
+import RadioGroup from "@mui/material/RadioGroup";
 
 import {
   CheckBoxItem,
@@ -139,13 +143,31 @@ export function FormPluginField({
   const [data, setData] = React.useState(value);
 
   const fields: {
-    category: "text" | "number" | "select";
+    category: "text" | "number" | "select" | "checkbox";
     key: string;
     label: string;
     id: string;
     span: number;
     options?: string[] | CheckBoxItem[];
   }[] = [];
+
+  const boolOptions = [
+    {
+      label: "Yes",
+      option: 1,
+      value: true,
+    },
+    {
+      label: "No",
+      option: 0,
+      value: false,
+    },
+    {
+      label: "None",
+      option: -1,
+      value: null,
+    },
+  ];
 
   switch (category) {
     case PluginCategory.LIMIT: {
@@ -235,6 +257,70 @@ export function FormPluginField({
       );
       break;
     }
+    case PluginCategory.DIRECTORY: {
+      fields.push(
+        {
+          category: "text",
+          key: "path",
+          label: t("form.dirPath"),
+          id: "dir-path",
+          span: 6,
+        },
+        {
+          category: "text",
+          key: "index",
+          label: t("form.dirIndex"),
+          id: "dir-index",
+          span: 6,
+        },
+        {
+          category: "number",
+          key: "chunk_size",
+          label: t("form.dirChunkSize"),
+          id: "dir-chunk-size",
+          span: 6,
+        },
+        {
+          category: "checkbox",
+          key: "autoindex",
+          label: t("form.dirAutoIndex"),
+          id: "dir-auto-index",
+          span: 6,
+          options: boolOptions,
+        },
+        {
+          category: "text",
+          key: "max_age",
+          label: t("form.dirMaxAge"),
+          id: "dir-max-age",
+          span: 6,
+        },
+        {
+          category: "checkbox",
+          key: "cache_private",
+          label: t("form.dirCachePrivate"),
+          id: "dir-cache-private",
+          span: 6,
+          options: boolOptions,
+        },
+        {
+          category: "text",
+          key: "charset",
+          label: t("form.dirCharset"),
+          id: "dir-chartset",
+          span: 6,
+        },
+        {
+          category: "checkbox",
+          key: "download",
+          label: t("form.dirDownload"),
+          id: "dir-download",
+          span: 6,
+          options: boolOptions,
+        },
+      );
+      break;
+    }
     default: {
       fields.push({
         category: "text",
@@ -280,14 +366,64 @@ export function FormPluginField({
             defaultValue={(data[field.key] as string) || ""}
             sx={{ ml: 1, flex: 1 }}
             onChange={(e) => {
-              const value = Number(e.target.value.trim());
+              const original = e.target.value.trim();
+              const value = Number(original);
               const current: Record<string, unknown> = {};
               current[field.key] = value;
               const newValues = Object.assign({}, data, current);
+              if (!original || Number.isNaN(value)) {
+                delete newValues[field.key];
+              }
               setData(newValues);
               onUpdate(newValues);
             }}
           />
+        );
+        break;
+      }
+      case "checkbox": {
+        let options = (field.options as CheckBoxItem[]) || [];
+        let defaultValue = -1;
+        let labelItems = options.map((opt, index) => {
+          if (data[field.key] === opt.value) {
+            defaultValue = opt.option;
+          }
+          return (
+            <FormControlLabel
+              key={field.id + "-label-" + index}
+              value={opt.option}
+              control={<Radio />}
+              label={opt.label}
+            />
+          );
+        });
+
+        dom = (
+          <React.Fragment>
+            <FormLabel id={field.id}>{field.label}</FormLabel>
+            <RadioGroup
+              row
+              aria-labelledby={field.id}
+              defaultValue={defaultValue}
+              name="radio-buttons-group"
+              onChange={(e) => {
+                let value = Number(e.target.value);
+                let currentValue;
+                options.forEach((opt) => {
+                  if (opt.option === value) {
+                    currentValue = opt.value;
+                  }
+                });
+                const current: Record<string, unknown> = {};
+                current[field.key] = currentValue;
+                const newValues = Object.assign({}, data, current);
+                setData(newValues);
+                onUpdate(newValues);
+              }}
+            >
+              {labelItems}
+            </RadioGroup>
+          </React.Fragment>
         );
         break;
       }

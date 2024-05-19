@@ -144,7 +144,7 @@ fn get_cacheable_and_headers_from_meta(
 }
 
 struct DirectoryParams {
-    path: PathBuf,
+    path: String,
     index: String,
     autoindex: bool,
     chunk_size: Option<usize>,
@@ -208,10 +208,9 @@ impl TryFrom<&PluginConf> for DirectoryParams {
             Self {
                 autoindex,
                 index: format!("/{index_file}"),
-                path: Path::new(&util::resolve_path(
-                    new_path.substring(file_protocol.len(), new_path.len()),
-                ))
-                .to_path_buf(),
+                path: new_path
+                    .substring(file_protocol.len(), new_path.len())
+                    .to_string(),
                 chunk_size,
                 max_age,
                 charset,
@@ -243,7 +242,7 @@ impl TryFrom<&PluginConf> for DirectoryParams {
             Self {
                 autoindex: get_bool_conf(value, "autoindex"),
                 index: get_str_conf(value, "index"),
-                path: Path::new(&util::resolve_path(&get_str_conf(value, "path"))).to_path_buf(),
+                path: get_str_conf(value, "path"),
                 chunk_size,
                 max_age,
                 charset,
@@ -272,7 +271,7 @@ impl Directory {
         Ok(Self {
             autoindex: params.autoindex,
             index: params.index,
-            path: params.path,
+            path: Path::new(&util::resolve_path(&params.path)).to_path_buf(),
             chunk_size: params.chunk_size,
             max_age: params.max_age,
             charset: params.charset,
@@ -449,7 +448,7 @@ download = true
         )
         .unwrap();
         assert_eq!("proxy_upstream", params.plugin_step.to_string());
-        assert_eq!(true, params.path.to_string_lossy().ends_with("/Downloads"));
+        assert_eq!("~/Downloads", params.path);
         assert_eq!("/index.html", params.index);
         assert_eq!(true, params.autoindex);
         assert_eq!(1024, params.chunk_size.unwrap_or_default());
