@@ -135,8 +135,12 @@ export function FormTwoInputFields({
   if (arr.length === 0) {
     arr.push("");
   }
+  const isSingleMode = divide == "";
   const [newValues, setNewValues] = React.useState(arr);
   const divideToTwoValues = (value: string) => {
+    if (isSingleMode) {
+      return [value];
+    }
     let arr = value.split(divide);
     if (arr.length < 2) {
       arr.push("");
@@ -153,12 +157,16 @@ export function FormTwoInputFields({
   ) => {
     const cloneValues = newValues.slice(0);
     const arr = divideToTwoValues(cloneValues[index]);
-    if (name === undefined) {
-      arr[1] = value || "";
+    if (isSingleMode) {
+      cloneValues[index] = name || "";
     } else {
-      arr[0] = name;
+      if (name === undefined) {
+        arr[1] = value || "";
+      } else {
+        arr[0] = name;
+      }
+      cloneValues[index] = arr.join(divide).trim();
     }
-    cloneValues[index] = arr.join(divide).trim();
     setNewValues(cloneValues);
     const updateValues: string[] = [];
     cloneValues.forEach((item) => {
@@ -180,6 +188,26 @@ export function FormTwoInputFields({
     let flexValue: number | undefined = undefined;
     if (!valueWidth) {
       flexValue = 1;
+    }
+    let valueDom = <></>;
+    if (!isSingleMode) {
+      valueDom = (
+        <TextField
+          id={`${id}-${index}value`}
+          label={valueLabel}
+          variant="outlined"
+          defaultValue={value || ""}
+          sx={{ ml: flexValue, flex: flexValue }}
+          style={{
+            marginLeft: "10px",
+            width: valueWidth,
+          }}
+          onChange={(e) => {
+            const value = e.target.value.trim();
+            updateNameAndValue(index, undefined, value);
+          }}
+        />
+      );
     }
     return (
       <Paper
@@ -205,21 +233,7 @@ export function FormTwoInputFields({
             updateNameAndValue(index, value, undefined);
           }}
         />
-        <TextField
-          id={`${id}-${index}value`}
-          label={valueLabel}
-          variant="outlined"
-          defaultValue={value || ""}
-          sx={{ ml: flexValue, flex: flexValue }}
-          style={{
-            marginLeft: "10px",
-            width: valueWidth,
-          }}
-          onChange={(e) => {
-            const value = e.target.value.trim();
-            updateNameAndValue(index, undefined, value);
-          }}
-        />
+        {valueDom}
         <IconButton
           color="primary"
           sx={{ p: "10px" }}

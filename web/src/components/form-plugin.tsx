@@ -143,9 +143,10 @@ export function FormPluginField({
   const [data, setData] = React.useState(value);
 
   const fields: {
-    category: "text" | "number" | "select" | "checkbox";
+    category: "text" | "number" | "select" | "checkbox" | "textlist";
     key: string;
     label: string;
+    addLabel?: string;
     id: string;
     span: number;
     options?: string[] | CheckBoxItem[];
@@ -372,6 +373,45 @@ export function FormPluginField({
       );
       break;
     }
+    case PluginCategory.KEY_AUTH: {
+      fields.push(
+        {
+          category: "select",
+          key: "type",
+          label: t("form.keyAuthType"),
+          id: "key-auth-type",
+          span: 6,
+          options: [
+            {
+              label: "Header",
+              option: 0,
+              value: 0,
+            },
+            {
+              label: "Query",
+              option: 1,
+              value: 1,
+            },
+          ],
+        },
+        {
+          category: "text",
+          key: "name",
+          label: t("form.keyAuthName"),
+          id: "key-auth-name",
+          span: 6,
+        },
+        {
+          category: "textlist",
+          key: "keys",
+          label: t("form.keyAuthValues"),
+          id: "key-auth-values",
+          addLabel: t("form.keyAuthAdd"),
+          span: 12,
+        },
+      );
+      break;
+    }
     default: {
       fields.push({
         category: "text",
@@ -476,6 +516,28 @@ export function FormPluginField({
             </RadioGroup>
           </React.Fragment>
         );
+        break;
+      }
+      case "textlist": {
+        dom = (
+          <FormTwoInputFields
+            id={field.id}
+            divide={""}
+            values={(data[field.key] as string[]) || []}
+            label={field.label}
+            valueLabel=""
+            valueWidth="0px"
+            onUpdate={(value) => {
+              const current: Record<string, unknown> = {};
+              current[field.key] = value;
+              const newValues = Object.assign({}, data, current);
+              setData(newValues);
+              onUpdate(newValues);
+            }}
+            addLabel={field.addLabel || ""}
+          />
+        );
+
         break;
       }
       default: {

@@ -84,7 +84,7 @@ impl TryFrom<&PluginConf> for KeyAuthParams {
                 header_name,
             }
         } else {
-            let category = get_int_conf(value, "category") as u8;
+            let category = get_int_conf(value, "type") as u8;
             let name = get_str_conf(value, "name");
             let mut query_name = None;
             let mut header_name = None;
