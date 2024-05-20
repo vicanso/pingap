@@ -61,6 +61,7 @@ enum SelectionLb {
 pub struct Upstream {
     pub name: String,
     hash: String,
+    hash_key: String,
     tls: bool,
     sni: String,
     lb: SelectionLb,
@@ -99,6 +100,7 @@ pub fn new_empty_upstream() -> Upstream {
     Upstream {
         name: "".to_string(),
         hash: "".to_string(),
+        hash_key: "".to_string(),
         tls: false,
         sni: "".to_string(),
         lb: SelectionLb::Empty,
@@ -322,11 +324,16 @@ impl Upstream {
             new_healtch_check(name, &conf.health_check.clone().unwrap_or_default())?;
         let algo_method = conf.algo.clone().unwrap_or_default();
         let algo_params: Vec<&str> = algo_method.split(':').collect();
+        let mut hash_key = "".to_string();
         let lb = match algo_params[0] {
             "hash" => {
                 let mut lb = LoadBalancer::<Consistent>::from_backends(backends);
                 if algo_params.len() > 1 {
                     hash = algo_params[1].to_string();
+                    if let Some((name, value)) = hash.clone().split_once(':') {
+                        hash = name.to_string();
+                        hash_key = value.to_string();
+                    }
                 }
 
                 lb.update()
@@ -378,6 +385,7 @@ impl Upstream {
             tls,
             sni: sni.clone(),
             hash,
+            hash_key,
             lb,
             alpn,
             connection_timeout: conf.connection_timeout,
@@ -399,7 +407,6 @@ impl Upstream {
             SelectionLb::Consistent(lb) => {
                 let key = match self.hash.as_str() {
                     "url" => session.req_header().uri.to_string(),
-                    "path" => session.req_header().uri.path().to_string(),
                     "ip" => {
                         if let Some(client_ip) = &ctx.client_ip {
                             client_ip.to_string()
@@ -407,14 +414,21 @@ impl Upstream {
                             util::get_client_ip(session)
                         }
                     }
-                    _ => {
-                        let header = session.req_header();
-                        if let Some(value) = header.headers.get(&self.hash) {
+                    "header" => {
+                        if let Some(value) = session.get_header(&self.hash_key) {
                             value.to_str().unwrap_or_default().to_string()
                         } else {
-                            header.uri.path().to_string()
+                            "".to_string()
                         }
                     }
+                    "cookie" => util::get_cookie_value(session.req_header(), &self.hash_key)
+                        .unwrap_or_default()
+                        .to_string(),
+                    "query" => util::get_query_value(session.req_header(), &self.hash_key)
+                        .unwrap_or_default()
+                        .to_string(),
+                    // default: path
+                    _ => session.req_header().uri.path().to_string(),
                 };
                 lb.select(key.as_bytes(), 256)
             }

@@ -121,6 +121,7 @@ export function FormTwoInputFields({
   valueWidth,
   addLabel,
   onUpdate,
+  addButtonFullWidth,
 }: {
   id: string;
   divide: string;
@@ -129,6 +130,7 @@ export function FormTwoInputFields({
   valueWidth?: string;
   valueLabel: string;
   addLabel: string;
+  addButtonFullWidth?: boolean;
   onUpdate: (data: string[]) => void;
 }) {
   const arr = values || [];
@@ -254,6 +256,7 @@ export function FormTwoInputFields({
     <Button
       key="addAddr"
       variant="contained"
+      fullWidth={addButtonFullWidth || false}
       endIcon={<AddRoadIcon />}
       onClick={() => {
         const values = newValues.slice(0);

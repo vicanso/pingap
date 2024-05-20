@@ -56,7 +56,7 @@ impl ProxyPlugin for Ping {
     }
     #[inline]
     fn category(&self) -> PluginCategory {
-        PluginCategory::RedirectHttps
+        PluginCategory::Ping
     }
     #[inline]
     async fn handle(

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_conf, Error, ProxyPlugin, Result};
+use super::{get_bool_conf, get_step_conf, get_str_conf, Error, ProxyPlugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::convert_headers;
 use crate::http_extra::HttpResponse;
@@ -21,36 +21,38 @@ use async_trait::async_trait;
 use http::StatusCode;
 use pingora::proxy::Session;
 
-pub struct RedirectHttps {
+pub struct Redirect {
     prefix: String,
+    http_to_https: bool,
     plugin_step: PluginStep,
 }
 
-impl RedirectHttps {
+impl Redirect {
     pub fn new(params: &PluginConf) -> Result<Self> {
         let step = get_step_conf(params);
         if step != PluginStep::Request {
             return Err(Error::Invalid {
-                category: PluginCategory::RedirectHttps.to_string(),
+                category: PluginCategory::Redirect.to_string(),
                 message: "Redirect https plugin should be executed at request step".to_string(),
             });
         }
         Ok(Self {
             prefix: get_str_conf(params, "prefix"),
+            http_to_https: get_bool_conf(params, "http_to_https"),
             plugin_step: step,
         })
     }
 }
 
 #[async_trait]
-impl ProxyPlugin for RedirectHttps {
+impl ProxyPlugin for Redirect {
     #[inline]
     fn step(&self) -> PluginStep {
         self.plugin_step
     }
     #[inline]
     fn category(&self) -> PluginCategory {
-        PluginCategory::RedirectHttps
+        PluginCategory::Redirect
     }
     #[inline]
     async fn handle(
@@ -64,8 +66,10 @@ impl ProxyPlugin for RedirectHttps {
             } else {
                 session.req_header().uri.host().unwrap_or_default()
             };
+            let schema = if self.http_to_https { "https" } else { "http" };
             let location = format!(
-                "Location: https://{host}{}{}",
+                "Location: {}://{host}{}{}",
+                schema,
                 self.prefix,
                 session.req_header().uri
             );
@@ -80,7 +84,7 @@ impl ProxyPlugin for RedirectHttps {
 }
 #[cfg(test)]
 mod tests {
-    use super::RedirectHttps;
+    use super::Redirect;
     use crate::state::State;
     use crate::{config::PluginConf, plugin::ProxyPlugin};
     use http::StatusCode;
@@ -89,10 +93,11 @@ mod tests {
     use tokio_test::io::Builder;
 
     #[tokio::test]
-    async fn test_redirect_https() {
-        let redirect = RedirectHttps::new(
+    async fn test_redirect() {
+        let redirect = Redirect::new(
             &toml::from_str::<PluginConf>(
                 r###"
+http_to_https = true
 prefix = "/api"
 "###,
             )

@@ -26,22 +26,23 @@ use pingora::proxy::Session;
 use std::net::IpAddr;
 use std::str::FromStr;
 
-pub struct IpLimit {
+pub struct IpRestriction {
     plugin_step: PluginStep,
     ip_net_list: Vec<IpNet>,
     ip_list: Vec<String>,
-    category: String,
+    restriction_category: String,
     forbidden_resp: HttpResponse,
 }
 
-struct IpLimitParams {
+struct IpRestrictionParams {
     plugin_step: PluginStep,
     ip_net_list: Vec<IpNet>,
     ip_list: Vec<String>,
-    category: String,
+    restriction_category: String,
+    message: String,
 }
 
-impl TryFrom<&PluginConf> for IpLimitParams {
+impl TryFrom<&PluginConf> for IpRestrictionParams {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
@@ -59,31 +60,37 @@ impl TryFrom<&PluginConf> for IpLimitParams {
             plugin_step: step,
             ip_list,
             ip_net_list,
-            category: get_str_conf(value, "type"),
+            restriction_category: get_str_conf(value, "type"),
+            message: get_str_conf(value, "message"),
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {
-                category: PluginCategory::IpLimit.to_string(),
-                message: "Ip limit plugin should be executed at request or proxy upstream step"
-                    .to_string(),
+                category: PluginCategory::IpRestriction.to_string(),
+                message:
+                    "Ip restriction plugin should be executed at request or proxy upstream step"
+                        .to_string(),
             });
         }
         Ok(params)
     }
 }
 
-impl IpLimit {
+impl IpRestriction {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!("new ip limit proxy plugin, params:{params:?}");
-        let params = IpLimitParams::try_from(params)?;
+        debug!("new ip restriction proxy plugin, params:{params:?}");
+        let params = IpRestrictionParams::try_from(params)?;
+        let mut message = params.message;
+        if message.is_empty() {
+            message = "Request is forbidden".to_string();
+        }
         Ok(Self {
             plugin_step: params.plugin_step,
             ip_list: params.ip_list,
             ip_net_list: params.ip_net_list,
-            category: params.category,
+            restriction_category: params.restriction_category,
             forbidden_resp: HttpResponse {
                 status: StatusCode::FORBIDDEN,
-                body: Bytes::from_static(b"Request is forbidden"),
+                body: Bytes::from(message),
                 ..Default::default()
             },
         })
@@ -91,14 +98,14 @@ impl IpLimit {
 }
 
 #[async_trait]
-impl ProxyPlugin for IpLimit {
+impl ProxyPlugin for IpRestriction {
     #[inline]
     fn step(&self) -> PluginStep {
         self.plugin_step
     }
     #[inline]
     fn category(&self) -> PluginCategory {
-        PluginCategory::IpLimit
+        PluginCategory::IpRestriction
     }
     #[inline]
     async fn handle(
@@ -125,7 +132,7 @@ impl ProxyPlugin for IpLimit {
             }
         };
         // deny ip
-        let allow = if self.category == "deny" {
+        let allow = if self.restriction_category == "deny" {
             !found
         } else {
             found
@@ -139,8 +146,7 @@ impl ProxyPlugin for IpLimit {
 
 #[cfg(test)]
 mod tests {
-    use super::IpLimit;
-    use crate::plugin::ip_limit::IpLimitParams;
+    use super::{IpRestriction, IpRestrictionParams};
     use crate::state::State;
     use crate::{config::PluginConf, plugin::ProxyPlugin};
     use http::StatusCode;
@@ -150,7 +156,7 @@ mod tests {
 
     #[test]
     fn test_ip_limit_params() {
-        let params = IpLimitParams::try_from(
+        let params = IpRestrictionParams::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 ip_list = [
@@ -180,7 +186,7 @@ type = "deny"
 
     #[tokio::test]
     async fn test_ip_limit() {
-        let deny = IpLimit::new(
+        let deny = IpRestriction::new(
             &toml::from_str::<PluginConf>(
                 r###"
 type = "deny"

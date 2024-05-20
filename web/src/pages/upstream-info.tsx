@@ -1,7 +1,6 @@
 import useConfigStore from "../states/config";
 import { useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-
 import Loading from "../components/loading";
 import FormEditor from "../components/form-editor";
 import { goToUpstreamInfo } from "../router";

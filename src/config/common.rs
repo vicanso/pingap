@@ -44,13 +44,14 @@ pub enum PluginCategory {
     Directory,
     Mock,
     RequestId,
-    IpLimit,
+    IpRestriction,
     KeyAuth,
     BasicAuth,
     Cache,
-    RedirectHttps,
+    Redirect,
     Ping,
     ResponseHeaders,
+    RefererRestriction,
 }
 
 impl Serialize for PluginCategory {

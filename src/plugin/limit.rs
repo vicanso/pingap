@@ -44,7 +44,7 @@ pub struct Limiter {
 }
 
 struct LimiterParams {
-    category: String,
+    limit_category: String,
     tag: LimitTag,
     max: isize,
     key: String,
@@ -74,7 +74,7 @@ impl TryFrom<&PluginConf> for LimiterParams {
         };
         let params = Self {
             tag,
-            category: get_str_conf(value, "type"),
+            limit_category: get_str_conf(value, "type"),
             key: get_str_conf(value, "key"),
             max: get_int_conf(value, "max") as isize,
             interval,
@@ -97,7 +97,7 @@ impl Limiter {
         let params = LimiterParams::try_from(params)?;
         let mut inflight = None;
         let mut rate = None;
-        if params.category == "inflight" {
+        if params.limit_category == "inflight" {
             inflight = Some(Inflight::new());
         } else {
             rate = Some(Rate::new(params.interval));
@@ -229,7 +229,7 @@ max = 10
         )
         .unwrap();
         assert_eq!("request", params.plugin_step.to_string());
-        assert_eq!("inflight", params.category);
+        assert_eq!("inflight", params.limit_category);
         assert_eq!(LimitTag::Cookie, params.tag);
         assert_eq!("deviceId", params.key);
         assert_eq!(Duration::from_secs(10), params.interval);

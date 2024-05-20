@@ -76,9 +76,9 @@ export default function ProxyPluginInfo() {
           value: PluginCategory.REQUEST_ID,
         },
         {
-          label: "Ip Limit",
+          label: "Ip Restriction",
           option: 7,
-          value: PluginCategory.IP_LIMIT,
+          value: PluginCategory.IP_RESTRICTION,
         },
         {
           label: "Key Auth",
@@ -96,9 +96,9 @@ export default function ProxyPluginInfo() {
           value: PluginCategory.CACHE,
         },
         {
-          label: "Redirect Https",
+          label: "Redirect",
           option: 11,
-          value: PluginCategory.REDIRECT_HTTPS,
+          value: PluginCategory.REDIRECT,
         },
         {
           label: "Ping",
@@ -109,6 +109,11 @@ export default function ProxyPluginInfo() {
           label: "Response Headers",
           option: 13,
           value: PluginCategory.RESPONSE_HEADERS,
+        },
+        {
+          label: "Referer Restriction",
+          option: 14,
+          value: PluginCategory.REFERER_RESTRICTION,
         },
       ],
     },

@@ -67,6 +67,19 @@ static WEB_HTML: &str = r###"<!doctype html>
                 background-color: #f0f0f0;
             }
         </style>
+        <script type="text/javascript">
+        function updateAllLastModified() {
+            Array.from(document.getElementsByClassName("lastModified")).forEach((item) => {
+                const date = new Date(item.innerHTML);
+                if (isFinite(date)) {
+                    item.innerHTML = date.toLocaleString();
+                }
+            });
+        }
+        document.addEventListener("DOMContentLoaded", (event) => {
+          updateAllLastModified();
+        });
+        </script>
     </head>
     <body>
         <table border="0" cellpadding="0" cellspacing="0">
@@ -245,8 +258,7 @@ fn get_autoindex_html(path: &Path) -> Result<String, String> {
                 size = ByteSize(meta.size()).to_string();
                 last_modified = chrono::DateTime::from_timestamp(meta.mtime(), 0)
                     .unwrap_or_default()
-                    .to_string()
-                    .replace(" UTC", "");
+                    .to_string();
             });
         }
 

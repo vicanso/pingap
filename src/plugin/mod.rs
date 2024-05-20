@@ -28,12 +28,13 @@ mod basic_auth;
 mod cache;
 mod compression;
 mod directory;
-mod ip_limit;
+mod ip_restriction;
 mod key_auth;
 mod limit;
 mod mock;
 mod ping;
-mod redirect_https;
+mod redirect;
+mod referer_restriction;
 mod request_id;
 mod response_headers;
 mod stats;
@@ -182,8 +183,8 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
                 let r = request_id::RequestId::new(conf)?;
                 proxy_plugins.insert(name, Box::new(r));
             }
-            PluginCategory::IpLimit => {
-                let l = ip_limit::IpLimit::new(conf)?;
+            PluginCategory::IpRestriction => {
+                let l = ip_restriction::IpRestriction::new(conf)?;
                 proxy_plugins.insert(name, Box::new(l));
             }
             PluginCategory::KeyAuth => {
@@ -198,8 +199,8 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
                 let c = cache::Cache::new(conf)?;
                 proxy_plugins.insert(name, Box::new(c));
             }
-            PluginCategory::RedirectHttps => {
-                let r = redirect_https::RedirectHttps::new(conf)?;
+            PluginCategory::Redirect => {
+                let r = redirect::Redirect::new(conf)?;
                 proxy_plugins.insert(name, Box::new(r));
             }
             PluginCategory::Ping => {
@@ -209,6 +210,10 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
             PluginCategory::ResponseHeaders => {
                 let r = response_headers::ResponseHeaders::new(conf)?;
                 response_plugins.insert(name, Box::new(r));
+            }
+            PluginCategory::RefererRestriction => {
+                let r = referer_restriction::RefererRestriction::new(conf)?;
+                proxy_plugins.insert(name, Box::new(r));
             }
         };
     }

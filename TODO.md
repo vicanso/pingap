@@ -5,7 +5,8 @@
 - [ ] support validate config before save(web)
 - [ ] http response cache(stroage: tinyufo, file, redis, etc)
 - [ ] client body size limit plugin
-- [ ] upstream hasl algo support more options
+- [ ] referer restriction plugin
+- [x] upstream select algo support more options
 - [x] tls validity checker
 - [x] fix not_before not_after of cert
 - [x] http header convert $HOSTNAME for hostname

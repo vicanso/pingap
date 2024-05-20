@@ -25,7 +25,7 @@ use pingora::proxy::Session;
 use std::str::FromStr;
 
 pub struct KeyAuth {
-    category: String,
+    key_category: String,
     plugin_step: PluginStep,
     header_name: Option<HeaderName>,
     query_name: Option<String>,
@@ -35,7 +35,7 @@ pub struct KeyAuth {
 }
 
 struct KeyAuthParams {
-    category: String,
+    key_category: String,
     plugin_step: PluginStep,
     header_name: Option<HeaderName>,
     query_name: Option<String>,
@@ -60,7 +60,7 @@ impl TryFrom<&PluginConf> for KeyAuthParams {
             })?);
         }
         let params = Self {
-            category,
+            key_category: category,
             keys: get_str_slice_conf(value, "keys")
                 .iter()
                 .map(|item| item.as_bytes().to_vec())
@@ -86,7 +86,7 @@ impl KeyAuth {
         let params = KeyAuthParams::try_from(params)?;
 
         Ok(Self {
-            category: params.category,
+            key_category: params.key_category,
             keys: params.keys,
             plugin_step: params.plugin_step,
             query_name: params.query_name,
@@ -121,7 +121,7 @@ impl ProxyPlugin for KeyAuth {
         session: &mut Session,
         _ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
-        let value = if self.category == "query" {
+        let value = if self.key_category == "query" {
             self.query_name.as_ref().map(|name| {
                 util::get_query_value(session.req_header(), name)
                     .unwrap_or_default()

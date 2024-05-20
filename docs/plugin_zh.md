@@ -56,7 +56,7 @@ remark = "用于获取性能指标"
 
 ## Limit
 
-可基于cookie、请求头或query参数来限制并发访问，需要注意此限制只是限制并发数而非访问频率，以及若配置的字段获取到的值为空，则不限制，支持`inflight`与`rate`两种限制类型。
+可基于cookie、请求头或query参数来限制并发访问，支持`inflight`(并发)与`rate`(访问频率)两种限制类型，若配置的字段获取到的值为空，则不限制，支持`inflight`与`rate`两种限制类型。
 
 根据cookie的`bigtree`限制并发数为`10`:
 
@@ -92,7 +92,7 @@ tag = "query"
 type = "rate"
 ```
 
-根据ip限制1分钟最多访问`50`次(ip获取的顺序为X-Forwarded-For --> X-Real-Ip --> Remote Addr):
+根据ip限制1分钟最多访问`10`次(ip获取的顺序为X-Forwarded-For --> X-Real-Ip --> Remote Addr):
 
 ```toml
 [plugins.ipLimit]
@@ -121,7 +121,7 @@ gzip_level = 6
 zstd_level = 5
 ```
 
-需要注意`value`部分对应的是三个压缩方式的压缩级别，分别为`gzip`，`br`与`zstd`，若不需要使用的则设置为0即可。也可使用自带的`pingap:compression`，它的压缩级别配置为`6 6 3`。
+需要注意三种压缩算法的压缩级别不太可以，按需选择即可，也可使用自带的`pingap:compression`，它的压缩级别配置为`gzip_level = 6`, `br_level = 6`, `zstd_level = 3`。
 
 界面配置如图所示，按需分别配置对应的压缩级别即可，若不想启用该压缩算法则配置为0：
 
@@ -133,13 +133,14 @@ zstd_level = 5
 
 静态文件目录服务，为指定目录提供静态文件服务，说明如下：
 
+- `path`: 静态文件目录路径
 - `chunk_size`: Http chunk的大小，默认为`8192`
 - `max_age`: 设置http响应的的缓存时间，默认无。此值对于`text/html`无效，html均设置为不可缓存。如设置为`1h`表示缓存有效期1小时
-- `private`: 缓存是否设置为`private`，默认为`public`，，query中只要有`private`即可
+- `private`: 缓存是否设置为`private`，默认为`public1
 - `index`: 设置默认的index文件，默认为`index.html`
 - `charset`: 指定charset类型，默认无
-- `autoindex`: 是否允许目录以浏览形式展示，query中只要有`autoindex`即可
-- `download`: 是否支持下载，指定该参数后响应时会设置响应头`Content-Disposition`，query中只要有`download`即可
+- `autoindex`: 是否允许目录以浏览形式展示
+- `download`: 是否支持下载，指定该参数后响应时会设置响应头`Content-Disposition`
 
 ```toml
 [plugins.downloadsServe]
@@ -196,29 +197,30 @@ size = 8
     <img src="../asset/plugin-request-id.jpg" alt="plugin-request-id">
 </p>
 
-## IpLimit
+## IpRestriction
 
 Ip限制分为两种模式，允许，禁止，ip可支持配置为单ip或ip组，配置如下：
 
 ```toml
 [plugins.ipDeny]
-category = "ip_limit"
+category = "ip_restriction"
 ip_list = [
     "192.168.1.1",
     "1.1.1.0/24",
 ]
-type = "deny""
+message = "禁止该IP访问"
+type = "deny"
 ```
 
 界面配置如图所示，配置IP列表后，填写是允许还是禁止即可：
 
 <p align="center">
-    <img src="../asset/plugin-ip-limit.jpg" alt="plugin-ip-limit">
+    <img src="../asset/plugin-ip-restriction.jpg" alt="plugin-ip-restriction">
 </p>
 
 ## KeyAuth
 
-KeyAuth用于提供简单的认证方式，支持配置从query或header中获取值，校验的key值可配置多个，并校验是否符合。
+KeyAuth用于提供简单的认证方式，支持配置从query或header中获取值，可配置多个校验值，方便多系统接入。
 
 从query中的app字段中获取校验：
 
@@ -275,13 +277,14 @@ category = "basic_auth"
 
 Http缓存，仅支持内存式缓存，暂不建议使用。
 
-## RedirectHttps
+## Redirect
 
-重定向http至https，可在重定向时添加前缀。
+http重定向，可在重定向时添加前缀或指定为https。
 
 ```toml
 [plugins.http2https]
-category = "redirect_https"
+category = "redirect"
+http_to_https = true
 prefix = "/api"
 ```
 
