@@ -124,6 +124,7 @@ export default {
   "form.zstd": "Zstd的压缩级别",
   "form.adminPath": "管理后台的路径",
   "form.adminAuthorization": "Basic auth，base64处理后的值，base64(user:pass)",
+  "form.adminAuthorizationAdd": "添加更多的认证值",
   "form.basicAuth": "Basic auth(base64(user:pass))，多个值用','分隔",
   "form.limitCategory": "限流类型",
   "form.limitTag": "限流的标记",

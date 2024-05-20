@@ -251,14 +251,15 @@ export function FormPluginField({
           key: "path",
           label: t("form.adminPath"),
           id: "admin-path",
-          span: 6,
+          span: 12,
         },
         {
-          category: "text",
-          key: "authorization",
+          category: "textlist",
+          key: "authorizations",
           label: t("form.adminAuthorization"),
           id: "admin-authorization",
-          span: 6,
+          addLabel: t("form.adminAuthorizationAdd"),
+          span: 12,
         },
       );
       break;

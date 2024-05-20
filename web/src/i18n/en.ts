@@ -125,6 +125,7 @@ export default {
   "form.zstd": "Zstd Level",
   "form.adminPath": "Admin Path",
   "form.adminAuthorization": "Basic auth(base64(user:pass))",
+  "form.adminAuthorizationAdd": "Add more authorization",
   "form.basicAuth":
     "Basic auth(base64(user:pass)), multiple values are separated by ','",
   "form.limitCategory": "The limit category",
