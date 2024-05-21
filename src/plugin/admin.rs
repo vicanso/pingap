@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_conf, get_str_slice_conf, Error, ProxyPlugin, Result};
+use super::{
+    get_int_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error, ProxyPlugin, Result,
+};
 use crate::config::{
     self, save_config, BasicConf, LocationConf, PluginCategory, PluginConf, PluginStep, ServerConf,
     UpstreamConf,
@@ -114,6 +116,7 @@ struct AdminServeParams {
     path: String,
     step: PluginStep,
     authorizations: Vec<Vec<u8>>,
+    ip_fail_limit: i64,
 }
 
 impl TryFrom<&PluginConf> for AdminServeParams {
@@ -130,10 +133,14 @@ impl TryFrom<&PluginConf> for AdminServeParams {
             })?;
             authorizations.push(format!("Basic {item}").as_bytes().to_vec());
         }
-
+        let mut ip_fail_limit = get_int_conf(value, "ip_fail_limit");
+        if ip_fail_limit <= 0 {
+            ip_fail_limit = 10;
+        }
         let params = Self {
             step: get_step_conf(value),
             path: get_str_conf(value, "path"),
+            ip_fail_limit,
             authorizations,
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.step) {
@@ -157,7 +164,11 @@ impl AdminServe {
             path: params.path,
             plugin_step: params.step,
             authorizations: params.authorizations,
-            ip_fail_limit: TtlLruLimit::new(512, Duration::from_secs(5 * 60), 5),
+            ip_fail_limit: TtlLruLimit::new(
+                512,
+                Duration::from_secs(5 * 60),
+                params.ip_fail_limit as usize,
+            ),
         })
     }
     fn auth_validate(&self, req_header: &RequestHeader) -> bool {

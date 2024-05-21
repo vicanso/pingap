@@ -54,79 +54,31 @@ remark = "用于获取性能指标"
     <img src="../asset/plugin-stats.jpg" alt="plugin-stats">
 </p>
 
-## Limit
+## Ping
 
-可基于cookie、请求头或query参数来限制并发访问，支持`inflight`(并发)与`rate`(访问频率)两种限制类型，若配置的字段获取到的值为空，则不限制，支持`inflight`与`rate`两种限制类型。
-
-根据cookie的`bigtree`限制并发数为`10`:
+Ping->pong的响应处理，可用于判断程序是否正常运行等。
 
 ```toml
-[plugins.cookieBigTreeLimit]
-category = "limit"
-key = "bigtree"
-max = 10
-tag = "cookie"
-type = "inflight"
+[plugins.pingpong]
+category = "ping"
+path = "/ping"
 ```
 
-根据请求头的`X-App`参数限制并发数`10`:
+## Admin
+
+管理后台配置，可在现在的现有的location中添加支持管理后台服务，`YWRtaW46MTIzMTIz`为`base64(admin:123123)`，将该配置关联至对应location后，即可使用该location的/pingap/访问管理后台，账号为`admin`，密码为`123123`
 
 ```toml
-[plugins.headerAppLimit]
-category = "limit"
-key = "X-App"
-max = 10
-tag = "header"
-type = "inflight"
+[plugins.admin]
+authorizations = ["YWRtaW46MTIzMTIz"]
+category = "admin"
+ip_fail_limit = 10
+path = "/pingap"
+remark = "管理后台"
 ```
-
-根据query中的`app`参数限制1秒钟仅能访问`10`次:
-
-```toml
-[plugins.queryAppLimit]
-category = "limit"
-interval = "1s""
-key = "app"
-max = 10
-tag = "query"
-type = "rate"
-```
-
-根据ip限制1分钟最多访问`10`次(ip获取的顺序为X-Forwarded-For --> X-Real-Ip --> Remote Addr):
-
-```toml
-[plugins.ipLimit]
-category = "limit"
-interval = "1m"
-max = 10
-tag = "ip"
-type = "rate"
-```
-
-界面配置如图所示，主要是配置限制条件以及对应的最大并发访问量：
 
 <p align="center">
-    <img src="../asset/plugin-limit.jpg" alt="plugin-limit">
-</p>
-
-## Compression
-
-压缩中间件，处理从上游返回的相关数据压缩，由于`pingora`对于压缩的匹配顺序为`gzip --> br --> zstd`，官方暂未支持调整优先级，而对于现代浏览器，基本都支持`gzip`，大部分支持`br`，少部分支持`zstd`，为了使用更好的压缩方式，此插件会调整请求的`Accept-Encoding`，让压缩的顺序调整为`zstd --> br --> gzip`。配置如下：
-
-```toml
-[plugins.commonCompression]
-br_level = 6
-category = "compression"
-gzip_level = 6
-zstd_level = 5
-```
-
-需要注意三种压缩算法的压缩级别不太可以，按需选择即可，也可使用自带的`pingap:compression`，它的压缩级别配置为`gzip_level = 6`, `br_level = 6`, `zstd_level = 3`。
-
-界面配置如图所示，按需分别配置对应的压缩级别即可，若不想启用该压缩算法则配置为0：
-
-<p align="center">
-    <img src="../asset/plugin-compression.jpg" alt="plugin-compression">
+    <img src="../asset/plugin-admin.jpg" alt="plugin-admin">
 </p>
 
 ## Directory
@@ -180,6 +132,23 @@ status = 500
     <img src="../asset/plugin-mock.jpg" alt="plugin-mock">
 </p>
 
+## Redirect
+
+http重定向，可在重定向时添加前缀或指定为https。
+
+```toml
+[plugins.http2https]
+category = "redirect"
+http_to_https = true
+prefix = "/api"
+```
+
+界面配置如图所示，若需要重定向时添加前缀，可配置对应的前缀，若无需要调整则不配置值即可：
+
+<p align="center">
+    <img src="../asset/plugin-redirect-https.jpg" alt="plugin-redirect-https">
+</p>
+
 ## RequestId
 
 用于在请求头中添加`"X-Request-Id`，若已有则忽略，可指定使用`uuid`或`nanoid`两种形式，`nanoid`可以指定长度。
@@ -197,25 +166,24 @@ size = 8
     <img src="../asset/plugin-request-id.jpg" alt="plugin-request-id">
 </p>
 
-## IpRestriction
+## Compression
 
-Ip限制分为两种模式，允许，禁止，ip可支持配置为单ip或ip组，配置如下：
+压缩中间件，处理从上游返回的相关数据压缩，由于`pingora`对于压缩的匹配顺序为`gzip --> br --> zstd`，官方暂未支持调整优先级，而对于现代浏览器，基本都支持`gzip`，大部分支持`br`，少部分支持`zstd`，为了使用更好的压缩方式，此插件会调整请求的`Accept-Encoding`，让压缩的顺序调整为`zstd --> br --> gzip`。配置如下：
 
 ```toml
-[plugins.ipDeny]
-category = "ip_restriction"
-ip_list = [
-    "192.168.1.1",
-    "1.1.1.0/24",
-]
-message = "禁止该IP访问"
-type = "deny"
+[plugins.commonCompression]
+br_level = 6
+category = "compression"
+gzip_level = 6
+zstd_level = 5
 ```
 
-界面配置如图所示，配置IP列表后，填写是允许还是禁止即可：
+需要注意三种压缩算法的压缩级别不太可以，按需选择即可，也可使用自带的`pingap:compression`，它的压缩级别配置为`gzip_level = 6`, `br_level = 6`, `zstd_level = 3`。
+
+界面配置如图所示，按需分别配置对应的压缩级别即可，若不想启用该压缩算法则配置为0：
 
 <p align="center">
-    <img src="../asset/plugin-ip-restriction.jpg" alt="plugin-ip-restriction">
+    <img src="../asset/plugin-compression.jpg" alt="plugin-compression">
 </p>
 
 ## KeyAuth
@@ -273,36 +241,85 @@ category = "basic_auth"
     <img src="../asset/plugin-basic-auth.jpg" alt="plugin-basic-auth">
 </p>
 
+## Limit
+
+可基于cookie、请求头或query参数来限制并发访问，支持`inflight`(并发)与`rate`(访问频率)两种限制类型，若配置的字段获取到的值为空，则不限制，支持`inflight`与`rate`两种限制类型。
+
+根据cookie的`bigtree`限制并发数为`10`:
+
+```toml
+[plugins.cookieBigTreeLimit]
+category = "limit"
+key = "bigtree"
+max = 10
+tag = "cookie"
+type = "inflight"
+```
+
+根据请求头的`X-App`参数限制并发数`10`:
+
+```toml
+[plugins.headerAppLimit]
+category = "limit"
+key = "X-App"
+max = 10
+tag = "header"
+type = "inflight"
+```
+
+根据query中的`app`参数限制1秒钟仅能访问`10`次:
+
+```toml
+[plugins.queryAppLimit]
+category = "limit"
+interval = "1s""
+key = "app"
+max = 10
+tag = "query"
+type = "rate"
+```
+
+根据ip限制1分钟最多访问`10`次(ip获取的顺序为X-Forwarded-For --> X-Real-Ip --> Remote Addr):
+
+```toml
+[plugins.ipLimit]
+category = "limit"
+interval = "1m"
+max = 10
+tag = "ip"
+type = "rate"
+```
+
+界面配置如图所示，主要是配置限制条件以及对应的最大并发访问量：
+
+<p align="center">
+    <img src="../asset/plugin-limit.jpg" alt="plugin-limit">
+</p>
+
+## IpRestriction
+
+Ip限制分为两种模式，允许，禁止，ip可支持配置为单ip或ip组，配置如下：
+
+```toml
+[plugins.ipDeny]
+category = "ip_restriction"
+ip_list = [
+    "192.168.1.1",
+    "1.1.1.0/24",
+]
+message = "禁止该IP访问"
+type = "deny"
+```
+
+界面配置如图所示，配置IP列表后，填写是允许还是禁止即可：
+
+<p align="center">
+    <img src="../asset/plugin-ip-restriction.jpg" alt="plugin-ip-restriction">
+</p>
+
 ## Cache
 
 Http缓存，仅支持内存式缓存，暂不建议使用。
-
-## Redirect
-
-http重定向，可在重定向时添加前缀或指定为https。
-
-```toml
-[plugins.http2https]
-category = "redirect"
-http_to_https = true
-prefix = "/api"
-```
-
-界面配置如图所示，若需要重定向时添加前缀，可配置对应的前缀，若无需要调整则不配置值即可：
-
-<p align="center">
-    <img src="../asset/plugin-redirect-https.jpg" alt="plugin-redirect-https">
-</p>
-
-## Ping
-
-Ping->pong的响应处理，可用于判断程序是否正常运行等。
-
-```toml
-[plugins.pingpong]
-category = "ping"
-path = "/ping"
-```
 
 # 响应插件
 

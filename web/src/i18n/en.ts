@@ -124,6 +124,7 @@ export default {
   "form.br": "Br Level",
   "form.zstd": "Zstd Level",
   "form.adminPath": "Admin Path",
+  "form.adminIpFailLimit": "Auth fail ip limit count",
   "form.adminAuthorization": "Basic auth(base64(user:pass))",
   "form.adminAuthorizationAdd": "Add more authorization",
   "form.basicAuth":
@@ -145,6 +146,7 @@ export default {
   "form.dirDownload": "Set support download file",
   "form.requestIdAlgo": "The algorithm for genenrate id",
   "form.requestIdLength": "The length of id",
+  "form.requestIdHeaderName": "The http request header name of request id",
   "form.ipList": "The ip list",
   "form.ipRestrictionAdd": "Add more ip or ip net",
   "form.ipRestrictionAllow": "Allow",

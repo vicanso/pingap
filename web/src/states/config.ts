@@ -149,8 +149,15 @@ const useConfigStore = create<ConfigState>()((set, get) => ({
   update: async (
     category: string,
     name: string,
-    updateData: Record<string, unknown>,
+    data: Record<string, unknown>,
   ) => {
+    const updateData: Record<string, unknown> = {};
+    Object.keys(data).forEach((key) => {
+      if (data[key] == null) {
+        return;
+      }
+      updateData[key] = data[key];
+    });
     await request.post(`/configs/${category}/${name}`, updateData);
     set({
       version: random(),

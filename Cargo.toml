@@ -70,7 +70,7 @@ tokio = { version = "1.37.0", features = ["fs"] }
 toml = "0.8.13"
 url = "2.5.0"
 urlencoding = "2.1.3"
-uuid = { version = "1.8.0", features = ["v4", "fast-rng"] }
+uuid = { version = "1.8.0", features = ["v7", "fast-rng"] }
 x509-parser = "0.16.0"
 
 [features]

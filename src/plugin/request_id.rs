@@ -18,20 +18,24 @@ use crate::http_extra::HttpResponse;
 use crate::http_extra::HTTP_HEADER_NAME_X_REQUEST_ID;
 use crate::state::State;
 use async_trait::async_trait;
+use http::HeaderName;
 use log::debug;
 use nanoid::nanoid;
 use pingora::proxy::Session;
+use std::str::FromStr;
 use uuid::Uuid;
 
 pub struct RequestId {
     plugin_step: PluginStep,
     algorithm: String,
+    header_name: Option<HeaderName>,
     size: usize,
 }
 
 struct RequestIdParams {
     plugin_step: PluginStep,
     algorithm: String,
+    header_name: Option<HeaderName>,
     size: usize,
 }
 
@@ -39,11 +43,23 @@ impl TryFrom<&PluginConf> for RequestIdParams {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
+        let header_name = get_str_conf(value, "header_name");
+        let header_name = if header_name.is_empty() {
+            None
+        } else {
+            Some(
+                HeaderName::from_str(&header_name).map_err(|e| Error::Invalid {
+                    category: "header_name".to_string(),
+                    message: e.to_string(),
+                })?,
+            )
+        };
 
         let params = Self {
             plugin_step: step,
             algorithm: get_str_conf(value, "algorithm"),
             size: get_int_conf(value, "size") as usize,
+            header_name,
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {
@@ -65,6 +81,7 @@ impl RequestId {
             size: params.size,
             plugin_step: params.plugin_step,
             algorithm: params.algorithm,
+            header_name: params.header_name,
         })
     }
 }
@@ -85,7 +102,11 @@ impl ProxyPlugin for RequestId {
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
-        let key = HTTP_HEADER_NAME_X_REQUEST_ID.clone();
+        let key = if let Some(header) = &self.header_name {
+            header.clone()
+        } else {
+            HTTP_HEADER_NAME_X_REQUEST_ID.clone()
+        };
         if let Some(id) = session.get_header(&key) {
             ctx.request_id = Some(id.to_str().unwrap_or_default().to_string());
             return Ok(None);
@@ -95,7 +116,7 @@ impl ProxyPlugin for RequestId {
                 let size = self.size;
                 nanoid!(size)
             }
-            _ => Uuid::new_v4().to_string(),
+            _ => Uuid::now_v7().to_string(),
         };
         ctx.request_id = Some(id.clone());
         let _ = session.req_header_mut().insert_header(key, &id);

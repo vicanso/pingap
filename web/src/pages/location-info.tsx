@@ -10,7 +10,6 @@ import {
   FormItemCategory,
   CheckBoxItem,
 } from "../components/form-common";
-import { formatPluginCategory } from "../components/form-plugin";
 
 export default function LocationInfo() {
   const { t } = useTranslation();
@@ -61,7 +60,7 @@ export default function LocationInfo() {
     Object.keys(config.plugins).forEach((name) => {
       const item = (config.plugins || {})[name];
       proxyPluginOptions.push({
-        label: `${name}(${formatPluginCategory(item.category as string)})`,
+        label: `${name}(${item.category || ""})`,
         option: proxyPluginOptions.length,
         value: name,
       });

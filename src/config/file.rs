@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::PingapConf;
-use super::{ConfigStorage, Error, Result};
+use super::{ConfigStorage, Error, PingapConf, Result};
 use crate::util;
 use async_trait::async_trait;
 use futures_util::TryFutureExt;

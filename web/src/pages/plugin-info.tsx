@@ -31,6 +31,38 @@ export default function ProxyPluginInfo() {
   const proxyPlugin = proxyPlugins[pluginName || ""] || {};
   const currentNames = Object.keys(proxyPlugins);
 
+  // PluginCategory.CACHE
+  const plugins = [
+    PluginCategory.STATS,
+    PluginCategory.PING,
+    PluginCategory.ADMIN,
+    PluginCategory.DIRECTORY,
+    PluginCategory.MOCK,
+    PluginCategory.REDIRECT,
+
+    PluginCategory.REQUEST_ID,
+    PluginCategory.COMPRESSION,
+
+    // auth
+    PluginCategory.KEY_AUTH,
+    PluginCategory.BASIC_AUTH,
+
+    // limit
+    PluginCategory.LIMIT,
+    PluginCategory.IP_RESTRICTION,
+    PluginCategory.REFERER_RESTRICTION,
+
+    // response
+    PluginCategory.RESPONSE_HEADERS,
+  ];
+  const pluginOptions = plugins.map((item, index) => {
+    return {
+      label: item.toString(),
+      option: index,
+      value: item,
+    };
+  });
+
   const arr: FormItem[] = [
     {
       id: "category",
@@ -39,83 +71,7 @@ export default function ProxyPluginInfo() {
       category: FormItemCategory.CHECKBOX,
       span: 12,
       disabled: !created,
-      options: [
-        {
-          label: "Stats",
-          option: 0,
-          value: PluginCategory.STATS,
-        },
-        {
-          label: "Limit",
-          option: 1,
-          value: PluginCategory.LIMIT,
-        },
-        {
-          label: "Compression",
-          option: 2,
-          value: PluginCategory.COMPRESSION,
-        },
-        {
-          label: "Admin",
-          option: 3,
-          value: PluginCategory.ADMIN,
-        },
-        {
-          label: "Directory",
-          option: 4,
-          value: PluginCategory.DIRECTORY,
-        },
-        {
-          label: "Mock",
-          option: 5,
-          value: PluginCategory.MOCK,
-        },
-        {
-          label: "Request Id",
-          option: 6,
-          value: PluginCategory.REQUEST_ID,
-        },
-        {
-          label: "Ip Restriction",
-          option: 7,
-          value: PluginCategory.IP_RESTRICTION,
-        },
-        {
-          label: "Key Auth",
-          option: 8,
-          value: PluginCategory.KEY_AUTH,
-        },
-        {
-          label: "Basic Auth",
-          option: 9,
-          value: PluginCategory.BASIC_AUTH,
-        },
-        {
-          label: "Cache",
-          option: 10,
-          value: PluginCategory.CACHE,
-        },
-        {
-          label: "Redirect",
-          option: 11,
-          value: PluginCategory.REDIRECT,
-        },
-        {
-          label: "Ping",
-          option: 12,
-          value: PluginCategory.PING,
-        },
-        {
-          label: "Response Headers",
-          option: 13,
-          value: PluginCategory.RESPONSE_HEADERS,
-        },
-        {
-          label: "Referer Restriction",
-          option: 14,
-          value: PluginCategory.REFERER_RESTRICTION,
-        },
-      ],
+      options: pluginOptions,
     },
     {
       id: "step",
@@ -145,12 +101,13 @@ export default function ProxyPluginInfo() {
     if (created) {
       pluginName = newName;
     }
-    if (!data.category) {
-      data.category = PluginCategory.STATS;
+    const newData = Object.assign({}, data.value, data);
+    if (!newData.category) {
+      newData.category = plugins[0];
     }
-    delete data["value"];
+    delete newData["value"];
 
-    return update("plugin", pluginName, data).then(() => {
+    return update("plugin", pluginName, newData).then(() => {
       if (created) {
         goToPluginInfo(pluginName);
       }

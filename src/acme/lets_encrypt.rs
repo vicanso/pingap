@@ -54,7 +54,8 @@ impl BackgroundService for LetsEncryptService {
         let mut domains = self.domains.clone();
         domains.sort();
         let period = Duration::from_secs(10 * 60);
-        info!("Lets encrypt background service, domains:{domains:?}, period:{period:?}");
+        let period_human: humantime::Duration = period.into();
+        info!("Lets encrypt background service, domains:{domains:?}, period:{period_human}");
 
         let mut period = interval(period);
         loop {

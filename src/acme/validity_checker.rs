@@ -37,9 +37,11 @@ impl BackgroundService for ValidityChecker {
     async fn start(&self, mut shutdown: ShutdownWatch) {
         let period = Duration::from_secs(60 * 60);
         let time_offset = 7 * 24 * 3600_i64;
+
+        let offset_human: humantime::Duration = Duration::from_secs(time_offset as u64).into();
+        let period_human: humantime::Duration = period.into();
         info!(
-            "Start tls validity checker background service, offset:{:?}, period:{period:?}, validity_list:{:?}",
-            Duration::from_secs(time_offset as u64),
+            "Start tls validity checker background service, offset:{offset_human}, period:{period_human}, validity_list:{:?}",
             self.validity_list
         );
 

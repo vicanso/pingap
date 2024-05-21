@@ -125,6 +125,7 @@ export default function FormEditor({
     let formItem: JSX.Element = <></>;
     switch (item.category) {
       case FormItemCategory.PLUGIN_STEP:
+        // 复用后续流程
         item.options = getPluginSteps(pluginCategory || PluginCategory.STATS);
       case FormItemCategory.CHECKBOX: {
         let options = (item.options as CheckBoxItem[]) || [];

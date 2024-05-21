@@ -60,26 +60,27 @@ impl ProxyPlugin for Redirect {
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
-        if ctx.tls_version.is_none() {
-            let host = if let Some(value) = session.get_header("Host") {
-                value.to_str().unwrap_or_default()
-            } else {
-                session.req_header().uri.host().unwrap_or_default()
-            };
-            let schema = if self.http_to_https { "https" } else { "http" };
-            let location = format!(
-                "Location: {}://{host}{}{}",
-                schema,
-                self.prefix,
-                session.req_header().uri
-            );
-            return Ok(Some(HttpResponse {
-                status: StatusCode::TEMPORARY_REDIRECT,
-                headers: Some(convert_headers(&[location]).unwrap_or_default()),
-                ..Default::default()
-            }));
+        let schema_match = ctx.tls_version.is_some() == self.http_to_https;
+        if schema_match && session.req_header().uri.path().starts_with(&self.prefix) {
+            return Ok(None);
         }
-        Ok(None)
+        let host = if let Some(value) = session.get_header("Host") {
+            value.to_str().unwrap_or_default()
+        } else {
+            session.req_header().uri.host().unwrap_or_default()
+        };
+        let schema = if self.http_to_https { "https" } else { "http" };
+        let location = format!(
+            "Location: {}://{host}{}{}",
+            schema,
+            self.prefix,
+            session.req_header().uri
+        );
+        Ok(Some(HttpResponse {
+            status: StatusCode::TEMPORARY_REDIRECT,
+            headers: Some(convert_headers(&[location]).unwrap_or_default()),
+            ..Default::default()
+        }))
     }
 }
 #[cfg(test)]

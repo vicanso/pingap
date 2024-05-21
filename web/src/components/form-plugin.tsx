@@ -78,57 +78,6 @@ export function getPluginSteps(category: string) {
   return defaultPluginSteps;
 }
 
-export function formatPluginCategory(value: string) {
-  switch (value) {
-    case PluginCategory.STATS: {
-      return "stats";
-    }
-    case PluginCategory.LIMIT: {
-      return "limit";
-    }
-    case PluginCategory.COMPRESSION: {
-      return "compression";
-    }
-    case PluginCategory.ADMIN: {
-      return "admin";
-    }
-    case PluginCategory.DIRECTORY: {
-      return "directory";
-    }
-    case PluginCategory.MOCK: {
-      return "mock";
-    }
-    case PluginCategory.REQUEST_ID: {
-      return "requestId";
-    }
-    case PluginCategory.IP_RESTRICTION: {
-      return "ipRestriction";
-    }
-    case PluginCategory.KEY_AUTH: {
-      return "keyAuth";
-    }
-    case PluginCategory.BASIC_AUTH: {
-      return "basicAuth";
-    }
-    case PluginCategory.CACHE: {
-      return "cache";
-    }
-    case PluginCategory.REDIRECT: {
-      return "redirect";
-    }
-    case PluginCategory.PING: {
-      return "ping";
-    }
-    case PluginCategory.RESPONSE_HEADERS: {
-      return "responseHeaders";
-    }
-    case PluginCategory.REFERER_RESTRICTION: {
-      return "refererRestriction";
-    }
-  }
-  return "";
-}
-
 export function FormPluginField({
   category,
   value,
@@ -251,7 +200,14 @@ export function FormPluginField({
           key: "path",
           label: t("form.adminPath"),
           id: "admin-path",
-          span: 12,
+          span: 6,
+        },
+        {
+          category: "number",
+          key: "ip_fail_limit",
+          label: t("form.adminIpFailLimit"),
+          id: "admin-ip-fail-limit",
+          span: 6,
         },
         {
           category: "textlist",
@@ -335,7 +291,7 @@ export function FormPluginField({
           key: "algorithm",
           label: t("form.requestIdAlgo"),
           id: "request-id-algo",
-          span: 6,
+          span: 4,
           options: ["uuid", "nanoid"],
         },
         {
@@ -343,7 +299,14 @@ export function FormPluginField({
           key: "size",
           label: t("form.requestIdLength"),
           id: "request-id-length",
-          span: 6,
+          span: 4,
+        },
+        {
+          category: "text",
+          key: "header_name",
+          label: t("form.requestIdHeaderName"),
+          id: "request-id-header-name",
+          span: 4,
         },
       );
       break;
