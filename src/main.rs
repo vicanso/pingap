@@ -72,12 +72,12 @@ struct Args {
     /// Admin server adddr
     #[arg(long)]
     admin: Option<String>,
-    /// Admin node for config manager
+    /// Control panel for config manager
     ///
     /// This flag is useful for config manager, it will only run as admin,
     /// not run the sevices of config.
     #[arg(long)]
-    adminnode: bool,
+    cp: bool,
     /// Whether this server should try to auto restart
     #[arg(long)]
     autorestart: bool,
@@ -198,7 +198,7 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
 fn run() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
-    if args.adminnode && args.admin.is_some() {
+    if args.cp && args.admin.is_some() {
         return run_admin_node(args);
     }
 
