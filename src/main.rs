@@ -79,7 +79,7 @@ struct Args {
     #[arg(long)]
     cp: bool,
     /// Whether this server should try to auto restart
-    #[arg(long)]
+    #[arg(short, long)]
     autorestart: bool,
 }
 

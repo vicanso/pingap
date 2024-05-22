@@ -396,7 +396,7 @@ export function FormPluginField({
           key: "type",
           label: t("form.keyAuthType"),
           id: "key-auth-type",
-          span: 6,
+          span: 4,
           options: [
             {
               label: "Header",
@@ -415,7 +415,15 @@ export function FormPluginField({
           key: "name",
           label: t("form.keyAuthName"),
           id: "key-auth-name",
-          span: 6,
+          span: 4,
+        },
+        {
+          category: "checkbox",
+          key: "hide_credentials",
+          label: t("form.keyAuthHideCredentials"),
+          id: "key-auth-hide-credentials",
+          span: 4,
+          options: boolOptions,
         },
         {
           category: "textlist",
@@ -429,14 +437,24 @@ export function FormPluginField({
       break;
     }
     case PluginCategory.BASIC_AUTH: {
-      fields.push({
-        category: "textlist",
-        key: "authorizations",
-        label: t("form.basicAuthList"),
-        id: "key-auth-values",
-        addLabel: t("form.keyAuthAdd"),
-        span: 12,
-      });
+      fields.push(
+        {
+          category: "textlist",
+          key: "authorizations",
+          label: t("form.basicAuthList"),
+          id: "key-auth-values",
+          addLabel: t("form.keyAuthAdd"),
+          span: 12,
+        },
+        {
+          category: "checkbox",
+          key: "hide_credentials",
+          label: t("form.basicAuthHideCredentials"),
+          id: "basic-auth-hide-credentials",
+          span: 4,
+          options: boolOptions,
+        },
+      );
       break;
     }
     case PluginCategory.REDIRECT: {

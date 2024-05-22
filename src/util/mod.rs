@@ -125,6 +125,35 @@ pub fn get_query_value<'a>(req_header: &'a RequestHeader, name: &str) -> Option<
     None
 }
 
+/// Remove query from req header
+pub fn remove_query_from_header(
+    req_header: &mut RequestHeader,
+    name: &str,
+) -> Result<(), http::uri::InvalidUri> {
+    if let Some(query) = req_header.uri.query() {
+        let mut query_list = vec![];
+        for item in query.split('&') {
+            if let Some((k, v)) = item.split_once('=') {
+                if k != name {
+                    query_list.push(format!("{k}={v}"));
+                }
+            } else if item != name {
+                query_list.push(item.to_string());
+            }
+        }
+        let query = query_list.join("&");
+        let mut new_path = req_header.uri.path().to_string();
+        if !query.is_empty() {
+            new_path = format!("{new_path}?{query}");
+        }
+        return new_path
+            .parse::<http::Uri>()
+            .map(|uri| req_header.set_uri(uri));
+    }
+
+    Ok(())
+}
+
 /// Creates a new internal error
 pub fn new_internal_error(status: u16, message: String) -> pingora::BError {
     pingora::Error::because(
@@ -172,4 +201,21 @@ pub fn local_ip_list() -> Vec<String> {
     }
 
     ip_list
+}
+
+#[cfg(test)]
+mod tests {
+    use super::remove_query_from_header;
+    use pingora::http::RequestHeader;
+    use pretty_assertions::assert_eq;
+    #[test]
+    fn test_remove_query_from_header() {
+        let mut req = RequestHeader::build("GET", b"/?apikey=123", None).unwrap();
+        remove_query_from_header(&mut req, "apikey").unwrap();
+        assert_eq!("/", req.uri.to_string());
+
+        let mut req = RequestHeader::build("GET", b"/?apikey=123&name=pingap", None).unwrap();
+        remove_query_from_header(&mut req, "apikey").unwrap();
+        assert_eq!("/?name=pingap", req.uri.to_string());
+    }
 }

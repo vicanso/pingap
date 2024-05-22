@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_slice_conf, Error, ProxyPlugin, Result};
+use super::{get_bool_conf, get_step_conf, get_str_slice_conf, Error, ProxyPlugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -27,6 +27,7 @@ use pingora::proxy::Session;
 struct BasicAuthParams {
     plugin_step: PluginStep,
     authorizations: Vec<Vec<u8>>,
+    hide_credentials: bool,
 }
 
 impl TryFrom<&PluginConf> for BasicAuthParams {
@@ -42,9 +43,9 @@ impl TryFrom<&PluginConf> for BasicAuthParams {
             })?;
             authorizations.push(format!("Basic {item}").as_bytes().to_vec());
         }
-
         let params = Self {
             plugin_step: step,
+            hide_credentials: get_bool_conf(value, "hide_credentials"),
             authorizations,
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
@@ -61,6 +62,7 @@ impl TryFrom<&PluginConf> for BasicAuthParams {
 pub struct BasicAuth {
     plugin_step: PluginStep,
     authorizations: Vec<Vec<u8>>,
+    hide_credentials: bool,
     miss_authorization_resp: HttpResponse,
     unauthorized_resp: HttpResponse,
 }
@@ -73,6 +75,7 @@ impl BasicAuth {
         Ok(Self {
             plugin_step: params.plugin_step,
             authorizations: params.authorizations,
+            hide_credentials: params.hide_credentials,
             miss_authorization_resp: HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
                 headers: Some(vec![(
@@ -119,6 +122,11 @@ impl ProxyPlugin for BasicAuth {
         }
         if !self.authorizations.contains(&value.to_vec()) {
             return Ok(Some(self.unauthorized_resp.clone()));
+        }
+        if self.hide_credentials {
+            session
+                .req_header_mut()
+                .remove_header(&http::header::AUTHORIZATION);
         }
         return Ok(None);
     }

@@ -41,7 +41,7 @@ impl BackgroundService for ValidityChecker {
         let offset_human: humantime::Duration = Duration::from_secs(time_offset as u64).into();
         let period_human: humantime::Duration = period.into();
         info!(
-            "Start tls validity checker background service, offset:{offset_human}, period:{period_human}, validity_list:{:?}",
+            "Start tls validity checker background service, expired offset:{offset_human}, period:{period_human}, validity_list:{:?}",
             self.validity_list
         );
 
@@ -58,7 +58,6 @@ impl BackgroundService for ValidityChecker {
                         if now > validity.not_after.timestamp() - time_offset {
                             let message = format!("{name} cert will be expired, expired date:{:?}", validity.not_after);
                             warn!("{message}");
-
                             webhook::send(webhook::SendNotificationParams {
                                 level: webhook::NotificationLevel::Warn,
                                 category: webhook::NotificationCategory::TlsValidity,

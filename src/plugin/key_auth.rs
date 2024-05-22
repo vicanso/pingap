@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_conf, get_str_slice_conf, Error, ProxyPlugin, Result};
+use super::{
+    get_bool_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error, ProxyPlugin, Result,
+};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -20,7 +22,7 @@ use crate::util;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::{HeaderName, StatusCode};
-use log::debug;
+use log::{debug, error};
 use pingora::proxy::Session;
 use std::str::FromStr;
 
@@ -32,6 +34,7 @@ pub struct KeyAuth {
     keys: Vec<Vec<u8>>,
     miss_authorization_resp: HttpResponse,
     unauthorized_resp: HttpResponse,
+    hide_credentials: bool,
 }
 
 struct KeyAuthParams {
@@ -40,6 +43,7 @@ struct KeyAuthParams {
     header_name: Option<HeaderName>,
     query_name: Option<String>,
     keys: Vec<Vec<u8>>,
+    hide_credentials: bool,
 }
 
 impl TryFrom<&PluginConf> for KeyAuthParams {
@@ -49,6 +53,12 @@ impl TryFrom<&PluginConf> for KeyAuthParams {
 
         let category = get_str_conf(value, "type");
         let name = get_str_conf(value, "name");
+        if name.is_empty() {
+            return Err(Error::Invalid {
+                category: PluginCategory::KeyAuth.to_string(),
+                message: "Auth key is not allowed empty".to_string(),
+            });
+        }
         let mut query_name = None;
         let mut header_name = None;
         if category == "query" {
@@ -65,6 +75,7 @@ impl TryFrom<&PluginConf> for KeyAuthParams {
                 .iter()
                 .map(|item| item.as_bytes().to_vec())
                 .collect(),
+            hide_credentials: get_bool_conf(value, "hide_credentials"),
             plugin_step: step,
             query_name,
             header_name,
@@ -91,6 +102,7 @@ impl KeyAuth {
             plugin_step: params.plugin_step,
             query_name: params.query_name,
             header_name: params.header_name,
+            hide_credentials: params.hide_credentials,
             miss_authorization_resp: HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
                 body: Bytes::from_static(b"Key missing"),
@@ -137,6 +149,15 @@ impl ProxyPlugin for KeyAuth {
         }
         if !self.keys.contains(&value.unwrap().to_vec()) {
             return Ok(Some(self.unauthorized_resp.clone()));
+        }
+        if self.hide_credentials {
+            if let Some(name) = &self.header_name {
+                session.req_header_mut().remove_header(name);
+            } else if let Some(name) = &self.query_name {
+                if let Err(e) = util::remove_query_from_header(session.req_header_mut(), name) {
+                    error!("Remove query fail, error:{e:?}");
+                }
+            }
         }
         Ok(None)
     }

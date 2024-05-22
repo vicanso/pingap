@@ -117,6 +117,7 @@ impl ResponsePlugin for ResponseHeaders {
         _ctx: &mut State,
         upstream_response: &mut ResponseHeader,
     ) {
+        // add --> remove --> set
         // ingore error
         for (name, value) in &self.add_headers {
             let _ = upstream_response.append_header(name, value);

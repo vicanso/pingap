@@ -95,22 +95,53 @@ graph TD;
 
 CPU: M2, Thread: 1
 
+### Ping no accces log:
+
 ```bash
-wrk 'http://127.0.0.1:6188/stats' --latency
-Running 10s test @ http://127.0.0.1:6188/stats
+wrk 'http://127.0.0.1:6188/ping' --latency
+
+Running 10s test @ http://127.0.0.1:6188/ping
   2 threads and 10 connections
   Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency    87.92us   60.91us   3.69ms   89.97%
-    Req/Sec    57.32k     2.17k   69.69k    91.09%
+    Latency    67.10us   67.52us   4.63ms   99.53%
+    Req/Sec    74.82k     2.57k   85.56k    92.57%
   Latency Distribution
-     50%   93.00us
-     75%  100.00us
-     90%  106.00us
-     99%  133.00us
-  1151171 requests in 10.10s, 320.61MB read
-Requests/sec: 113977.63
-Transfer/sec:     31.74MB
+     50%   69.00us
+     75%   76.00us
+     90%   83.00us
+     99%  105.00us
+  1504165 requests in 10.10s, 196.52MB read
+Requests/sec: 148928.76
+Transfer/sec:     19.46MB
 ```
+
+### Static serve 8kb html
+
+```bash
+wrk 'http://127.0.0.1:6188/downloads/index.html' --latency
+
+Running 10s test @ http://127.0.0.1:6188/downloads/index.html
+  2 threads and 10 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   225.84us   59.47us   1.83ms   78.04%
+    Req/Sec    22.17k     1.94k   25.25k    87.13%
+  Latency Distribution
+     50%  222.00us
+     75%  247.00us
+     90%  286.00us
+     99%  418.00us
+  445764 requests in 10.10s, 3.16GB read
+Requests/sec:  44134.06
+Transfer/sec:    320.01MB
+```
+
+### Compression
+
+TODO
+
+### Cache
+
+TODO
 
 ## Rust version
 

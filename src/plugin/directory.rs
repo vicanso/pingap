@@ -330,8 +330,8 @@ impl ProxyPlugin for Directory {
                         headers.push((header::CONTENT_DISPOSITION, value));
                     }
                 }
-                // 4kb
-                if size <= 4096 {
+                let chunk_size = self.chunk_size.unwrap_or_default().max(4096);
+                if size <= chunk_size {
                     let mut buffer = vec![0; size];
                     match f.read(&mut buffer).await {
                         Ok(_) => HttpResponse {
@@ -349,9 +349,7 @@ impl ProxyPlugin for Directory {
                     }
                 } else {
                     let mut resp = HttpChunkResponse::new(&mut f);
-                    if let Some(chunk_size) = self.chunk_size {
-                        resp.chunk_size = chunk_size;
-                    }
+                    resp.chunk_size = chunk_size;
                     if cacheable {
                         resp.max_age = self.max_age;
                     }
