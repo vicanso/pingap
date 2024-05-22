@@ -6,6 +6,7 @@
 - [ ] http response cache(stroage: tinyufo, file, redis, etc)
 - [ ] client body size limit plugin
 - [ ] csrf plugin
+- [ ] support validate config for plugin
 - [x] referer restriction plugin
 - [x] upstream select algo support more options
 - [x] tls validity checker

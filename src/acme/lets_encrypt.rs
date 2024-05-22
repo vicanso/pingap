@@ -73,11 +73,12 @@ impl BackgroundService for LetsEncryptService {
                         info!("Should renew cert from lets encrypt");
                         match new_lets_encrypt(&domains).await {
                             Ok(()) => {
+                                info!("Renew cert success");
                                 if let Err(e) = restart_now() {
                                     error!("Restart fail: {e}");
                                 }
                             },
-                            Err(e) => error!("{e}"),
+                            Err(e) => error!("Renew cert fail, {e}"),
                         };
                     }
                 }

@@ -220,7 +220,8 @@ where
         session.write_response_header(Box::new(header)).await?;
 
         let mut sent = 0;
-        let mut buffer = vec![0; self.chunk_size.max(512)];
+        let chunk_size = self.chunk_size.max(512);
+        let mut buffer = vec![0; chunk_size];
         loop {
             let size = self.reader.read(&mut buffer).await.map_err(|e| {
                 error!("Read data fail: {e}");
@@ -232,7 +233,10 @@ where
             session
                 .write_response_body(Bytes::copy_from_slice(&buffer[..size]))
                 .await?;
-            sent += size
+            sent += size;
+            if size < chunk_size {
+                break;
+            }
         }
         session.finish_body().await?;
 
