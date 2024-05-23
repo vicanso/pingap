@@ -45,17 +45,17 @@ RUST_LOG=INFO pingap -c=/opt/proxy -t \
 
 ```mermaid
 graph TD;
-    server("HTTP服务");
-    locationA("Location A");
-    locationB("Location B");
-    locationPluginListA("转发插件列表A");
-    locationPluginListB("转发插件列表B");
-    upstreamA1("上游服务A1");
-    upstreamA2("上游服务A2");
-    upstreamB1("上游服务B1");
-    upstreamB2("上游服务B2");
-    locationResponsePluginListA("响应插件列表A");
-    locationResponsePluginListB("响应插件列表B");
+    server["HTTP服务"];
+    locationA["Location A"];
+    locationB["Location B"];
+    locationPluginListA["转发插件列表A"];
+    locationPluginListB["转发插件列表B"];
+    upstreamA1["上游服务A1"];
+    upstreamA2["上游服务A2"];
+    upstreamB1["上游服务B1"];
+    upstreamB2["上游服务B2"];
+    locationResponsePluginListA["响应插件列表A"];
+    locationResponsePluginListB["响应插件列表B"];
 
     start("新的请求") --> server
 
@@ -88,7 +88,7 @@ graph TD;
     locationResponsePluginListA --> response
     locationResponsePluginListB --> response
 
-    response("HTTP响应") --> stop("日志记录");
+    response["HTTP响应"] --> stop("日志记录");
 ```
 
 ## 性能测试

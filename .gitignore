@@ -20,3 +20,4 @@ target/
 node_moudles
 dist
 dhat*.json
+default_*

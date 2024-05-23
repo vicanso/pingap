@@ -151,6 +151,19 @@ zstd_level = 6
         assert_eq!(9, params.gzip_level);
         assert_eq!(8, params.br_level);
         assert_eq!(6, params.zstd_level);
+
+        let result = CompressionParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+step = "upstream_response"
+gzip_level = 9
+br_level = 8
+zstd_level = 6
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!("Plugin compression invalid, message:Compression plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
     }
 
     #[tokio::test]
@@ -166,6 +179,9 @@ zstd_level = 7
             .unwrap(),
         )
         .unwrap();
+
+        assert_eq!("compression", compression.category().to_string());
+        assert_eq!("request", compression.step().to_string());
 
         // gzip
         let headers = ["Accept-Encoding: gzip"].join("\r\n");

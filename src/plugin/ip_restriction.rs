@@ -182,6 +182,23 @@ type = "deny"
                 .collect::<Vec<_>>()
                 .join(",")
         );
+
+        let result = IpRestrictionParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+step = "upstream_response"
+ip_list = [
+    "192.168.1.1",
+    "10.1.1.1",
+    "1.1.1.0/24",
+    "2.1.1.0/24",
+]
+type = "deny"
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!("Plugin ip_restriction invalid, message:Ip restriction plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
     }
 
     #[tokio::test]
@@ -199,6 +216,9 @@ ip_list = [
             .unwrap(),
         )
         .unwrap();
+        assert_eq!("ip_restriction", deny.category().to_string());
+        assert_eq!("request", deny.step().to_string());
+
         let headers = ["X-Forwarded-For: 2.1.1.2"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
@@ -210,6 +230,18 @@ ip_list = [
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
+
+        let headers = ["X-Forwarded-For: 192.168.1.1"].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let result = deny
+            .handle(&mut session, &mut State::default())
+            .await
+            .unwrap();
+        assert_eq!(true, result.is_some());
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
@@ -241,5 +273,30 @@ ip_list = [
             .unwrap();
         assert_eq!(true, result.is_some());
         assert_eq!(StatusCode::FORBIDDEN, result.unwrap().status);
+
+        let allow = IpRestriction::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+type = "allow"
+ip_list = [
+    "192.168.1.1",
+    "1.1.1.0/24",
+]
+    "###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let headers = ["X-Forwarded-For: 192.168.1.1"].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let result = allow
+            .handle(&mut session, &mut State::default())
+            .await
+            .unwrap();
+        assert_eq!(true, result.is_none());
     }
 }

@@ -233,6 +233,20 @@ max = 10
         assert_eq!(LimitTag::Cookie, params.tag);
         assert_eq!("deviceId", params.key);
         assert_eq!(Duration::from_secs(10), params.interval);
+
+        let result = LimiterParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+step = "upstream_response"
+type = "inflight"
+tag = "cookie"
+key = "deviceId"
+max = 10
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!("Plugin limit invalid, message:Limit plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
     }
 
     #[tokio::test]
@@ -249,6 +263,9 @@ max = 10
             .unwrap(),
         )
         .unwrap();
+        assert_eq!("limit", limiter.category().to_string());
+        assert_eq!("request", limiter.step().to_string());
+
         assert_eq!(LimitTag::Cookie, limiter.tag);
         let mut ctx = State {
             ..Default::default()

@@ -39,6 +39,9 @@ outdated:
 test:
 	cargo test
 
+cov:
+	cargo llvm-cov --html --open
+
 release:
 	cargo build --release
 	ls -lh target/release

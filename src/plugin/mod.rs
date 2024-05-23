@@ -41,7 +41,7 @@ mod stats;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Plugin {category}, invalid {message}"))]
+    #[snafu(display("Plugin {category} invalid, message:{message}"))]
     Invalid { category: String, message: String },
     #[snafu(display("Plugin {category}, exceed limit {value}/{max}"))]
     Exceed {

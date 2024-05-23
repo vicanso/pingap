@@ -667,9 +667,17 @@ impl PingapConf {
 }
 
 static CONFIG_PATH: OnceCell<String> = OnceCell::new();
-/// Set the config path.
+/// Set config path.
 pub fn set_config_path(conf_path: &str) {
     CONFIG_PATH.get_or_init(|| conf_path.to_string());
+}
+/// Get config path
+pub fn get_config_path() -> String {
+    if let Some(value) = CONFIG_PATH.get() {
+        value.to_string()
+    } else {
+        "".to_string()
+    }
 }
 
 static CURRENT_CONFIG: OnceCell<PingapConf> = OnceCell::new();
@@ -685,10 +693,6 @@ pub fn get_current_config() -> PingapConf {
     } else {
         PingapConf::default()
     }
-}
-
-pub fn get_config_path() -> String {
-    CONFIG_PATH.get_or_init(|| "".to_string()).to_owned()
 }
 
 static CONFIG_HASH: OnceCell<String> = OnceCell::new();
@@ -730,10 +734,27 @@ pub fn get_config_hash() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        LocationConf, PingapConf, ServerConf, UpstreamConf, CATEGORY_LOCATION, CATEGORY_PLUGIN,
-        CATEGORY_SERVER, CATEGORY_UPSTREAM,
+        LocationConf, PingapConf, PluginCategory, ServerConf, UpstreamConf, CATEGORY_LOCATION,
+        CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
     };
     use pretty_assertions::assert_eq;
+    use serde::{Deserialize, Serialize};
+
+    #[test]
+    fn test_plugin_category_serde() {
+        #[derive(Deserialize, Serialize)]
+        struct TmpPluginCategory {
+            category: PluginCategory,
+        }
+        let tmp = TmpPluginCategory {
+            category: PluginCategory::RequestId,
+        };
+        let data = serde_json::to_string(&tmp).unwrap();
+        assert_eq!(r#"{"category":"request_id"}"#, data);
+
+        let tmp: TmpPluginCategory = serde_json::from_str(&data).unwrap();
+        assert_eq!(PluginCategory::RequestId, tmp.category);
+    }
 
     #[test]
     fn test_upstream_conf() {

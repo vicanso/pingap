@@ -32,6 +32,27 @@ impl ValidityChecker {
     }
 }
 
+fn validity_check(validity_list: &[(String, Validity)], time_offset: i64) -> Option<String> {
+    let now = util::now().as_secs() as i64;
+    for (name, validity) in validity_list.iter() {
+        if now > validity.not_after.timestamp() - time_offset {
+            let message = format!(
+                "{name} cert will be expired, expired date:{:?}",
+                validity.not_after
+            );
+            return Some(message);
+        }
+        if now < validity.not_before.timestamp() {
+            let message = format!(
+                "{name} cert is not valid, valid date:{:?}",
+                validity.not_before
+            );
+            return Some(message);
+        }
+    }
+    None
+}
+
 #[async_trait]
 impl BackgroundService for ValidityChecker {
     async fn start(&self, mut shutdown: ShutdownWatch) {
@@ -53,29 +74,66 @@ impl BackgroundService for ValidityChecker {
                     break;
                 }
                 _ = period.tick() => {
-                    let now = util::now().as_secs() as i64;
-                    for (name, validity) in self.validity_list.iter() {
-                        if now > validity.not_after.timestamp() - time_offset {
-                            let message = format!("{name} cert will be expired, expired date:{:?}", validity.not_after);
-                            warn!("{message}");
-                            webhook::send(webhook::SendNotificationParams {
-                                level: webhook::NotificationLevel::Warn,
-                                category: webhook::NotificationCategory::TlsValidity,
-                                msg: message,
-                            });
-                        }
-                        if now < validity.not_before.timestamp() {
-                            let message = format!("{name} cert is not valid, valid date:{:?}", validity.not_before);
-                            warn!("{message}");
-                            webhook::send(webhook::SendNotificationParams {
-                                level: webhook::NotificationLevel::Warn,
-                                category: webhook::NotificationCategory::TlsValidity,
-                                msg: message,
-                            });
-                        }
+                    if let Some(message) = validity_check(&self.validity_list, time_offset) {
+
+
+                    warn!("{message}");
+                    webhook::send(webhook::SendNotificationParams {
+                        level: webhook::NotificationLevel::Warn,
+                        category: webhook::NotificationCategory::TlsValidity,
+                        msg: message,
+                    });
                     }
+
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // use super::{get_cache_control, HttpChunkResponse, HttpResponse};
+    // use crate::http_extra::convert_headers;
+    // use crate::util::{get_super_ts, resolve_path};
+    // use bytes::Bytes;
+    // use http::StatusCode;
+    use pretty_assertions::assert_eq;
+    use x509_parser::time::ASN1Time;
+    // use serde::Serialize;
+    // use tokio::fs;
+    use super::{validity_check, Validity};
+
+    #[test]
+    fn test_validity_check() {
+        let result = validity_check(
+            &[(
+                "Pingap".to_string(),
+                Validity {
+                    not_after: ASN1Time::from_timestamp(1651852800).unwrap(),
+                    not_before: ASN1Time::now(),
+                },
+            )],
+            7 * 24 * 3600,
+        );
+        assert_eq!(
+            "Pingap cert will be expired, expired date:ASN1Time(2022-05-06 16:00:00.0 +00:00:00)",
+            result.unwrap_or_default().to_string()
+        );
+
+        let result = validity_check(
+            &[(
+                "Pingap".to_string(),
+                Validity {
+                    not_after: ASN1Time::from_timestamp(2651852800).unwrap(),
+                    not_before: ASN1Time::from_timestamp(2651852800).unwrap(),
+                },
+            )],
+            7 * 24 * 3600,
+        );
+        assert_eq!(
+            "Pingap cert is not valid, valid date:ASN1Time(2054-01-12 17:46:40.0 +00:00:00)",
+            result.unwrap_or_default().to_string()
+        );
     }
 }

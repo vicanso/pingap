@@ -114,7 +114,11 @@ pub static HTTP_HEADER_NAME_X_REQUEST_ID: Lazy<HeaderName> =
 
 #[cfg(test)]
 mod tests {
-    use super::convert_headers;
+    use super::{
+        convert_headers, HTTP_HEADER_CONTENT_HTML, HTTP_HEADER_CONTENT_JSON,
+        HTTP_HEADER_NAME_X_REQUEST_ID, HTTP_HEADER_NO_CACHE, HTTP_HEADER_NO_STORE,
+        HTTP_HEADER_TRANSFER_CHUNKED, HTTP_HEADER_WWW_AUTHENTICATE,
+    };
     use pretty_assertions::assert_eq;
     #[test]
     fn test_convert_headers() {
@@ -123,5 +127,66 @@ mod tests {
         assert_eq!(1, headers.len());
         assert_eq!("content-type", headers[0].0.to_string());
         assert_eq!("application/octet-stream", headers[0].1.to_str().unwrap());
+    }
+    #[test]
+    fn test_static_value() {
+        assert_eq!(
+            "cache-control: private, no-store",
+            format!(
+                "{}: {}",
+                HTTP_HEADER_NO_STORE.0.to_string(),
+                HTTP_HEADER_NO_STORE.1.to_str().unwrap_or_default()
+            )
+        );
+
+        assert_eq!(
+            r#"www-authenticate: Basic realm="Pingap""#,
+            format!(
+                "{}: {}",
+                HTTP_HEADER_WWW_AUTHENTICATE.0.to_string(),
+                HTTP_HEADER_WWW_AUTHENTICATE.1.to_str().unwrap_or_default()
+            )
+        );
+
+        assert_eq!(
+            "cache-control: private, no-cache",
+            format!(
+                "{}: {}",
+                HTTP_HEADER_NO_CACHE.0.to_string(),
+                HTTP_HEADER_NO_CACHE.1.to_str().unwrap_or_default()
+            )
+        );
+
+        assert_eq!(
+            "content-type: application/json; charset=utf-8",
+            format!(
+                "{}: {}",
+                HTTP_HEADER_CONTENT_JSON.0.to_string(),
+                HTTP_HEADER_CONTENT_JSON.1.to_str().unwrap_or_default()
+            )
+        );
+
+        assert_eq!(
+            "content-type: text/html; charset=utf-8",
+            format!(
+                "{}: {}",
+                HTTP_HEADER_CONTENT_HTML.0.to_string(),
+                HTTP_HEADER_CONTENT_HTML.1.to_str().unwrap_or_default()
+            )
+        );
+
+        assert_eq!(
+            "transfer-encoding: chunked",
+            format!(
+                "{}: {}",
+                HTTP_HEADER_TRANSFER_CHUNKED.0.to_string(),
+                HTTP_HEADER_TRANSFER_CHUNKED.1.to_str().unwrap_or_default()
+            )
+        );
+
+        assert_eq!(
+            "x-request-id",
+            format!("{}", HTTP_HEADER_NAME_X_REQUEST_ID.to_string(),)
+        );
     }
 }

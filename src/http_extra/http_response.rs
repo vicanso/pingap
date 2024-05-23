@@ -265,6 +265,10 @@ mod tests {
             r###"("cache-control", "public, max-age=3600")"###,
             format!("{:?}", get_cache_control(Some(3600), None))
         );
+        assert_eq!(
+            r###"("cache-control", "private, no-cache")"###,
+            format!("{:?}", get_cache_control(None, None))
+        );
     }
 
     #[test]
@@ -280,6 +284,16 @@ mod tests {
         assert_eq!(
             r###"HttpResponse { status: 500, body: b"Unknown Error", max_age: None, created_at: None, cache_private: None, headers: Some([("cache-control", "private, no-store")]) }"###,
             format!("{:?}", HttpResponse::unknown_error("Unknown Error".into()))
+        );
+
+        assert_eq!(
+            r###"HttpResponse { status: 400, body: b"Bad Request", max_age: None, created_at: None, cache_private: None, headers: Some([("cache-control", "private, no-store")]) }"###,
+            format!("{:?}", HttpResponse::bad_request("Bad Request".into()))
+        );
+
+        assert_eq!(
+            r###"HttpResponse { status: 200, body: b"<p>Pingap</p>", max_age: None, created_at: None, cache_private: None, headers: Some([("content-type", "text/html; charset=utf-8"), ("cache-control", "private, no-cache")]) }"###,
+            format!("{:?}", HttpResponse::html("<p>Pingap</p>".into()))
         );
 
         #[derive(Serialize)]

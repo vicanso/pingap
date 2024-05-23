@@ -377,9 +377,15 @@ impl ProxyPlugin for Directory {
 #[cfg(test)]
 mod tests {
     use super::{get_cacheable_and_headers_from_meta, get_data, Directory};
-    use crate::{config::PluginConf, plugin::directory::DirectoryParams};
+    use crate::state::State;
+    use crate::{
+        config::PluginConf,
+        plugin::{directory::DirectoryParams, ProxyPlugin},
+    };
+    use pingora::proxy::Session;
     use pretty_assertions::{assert_eq, assert_ne};
     use std::{os::unix::fs::MetadataExt, path::Path};
+    use tokio_test::io::Builder;
 
     #[test]
     fn test_directory_params() {
@@ -410,18 +416,38 @@ download = true
         assert_eq!(true, params.cache_private.unwrap_or_default());
         assert_eq!("utf8", params.charset.unwrap_or_default());
         assert_eq!(true, params.download);
+
+        let result = DirectoryParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+step = "upstream_response"
+path = "~/Downloads"
+index = "/index.html"
+autoindex = true
+chunk_size = 1024
+max_age = "10m"
+private = true
+charset = "utf8"
+download = true
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!("Plugin directory invalid, message:Directory serve plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
     }
 
-    #[test]
-    fn test_new_directory() {
+    #[tokio::test]
+    async fn test_new_directory() {
         let dir = Directory::new(
             &toml::from_str::<PluginConf>(
                 r###"
-path = "~/Downloads"
+path = "./"
 chunk_size = 1024
 max_age = "1h"
 private = true
 index = "/pingap/index.html"
+autoindex = true
+download = true
     "###,
             )
             .unwrap(),
@@ -431,6 +457,52 @@ index = "/pingap/index.html"
         assert_eq!(3600, dir.max_age.unwrap_or_default());
         assert_eq!(true, dir.cache_private.unwrap_or_default());
         assert_eq!("/pingap/index.html", dir.index);
+        assert_eq!("directory", dir.category().to_string());
+        assert_eq!("request", dir.step().to_string());
+
+        let headers = ["Accept-Encoding: gzip"].join("\r\n");
+        let input_header = format!("GET /error.html?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let result = dir
+            .handle(&mut session, &mut State::default())
+            .await
+            .unwrap();
+        assert_eq!(true, result.is_some());
+        let resp = result.unwrap();
+        assert_eq!(200, resp.status.as_u16());
+        let headers = resp.headers.unwrap();
+        assert_eq!(
+            r#"("content-type", "text/html")"#,
+            format!("{:?}", headers[0])
+        );
+        assert_eq!(
+            r#"("content-disposition", "attachment; filename=\"error.html\"")"#,
+            format!("{:?}", headers[2])
+        );
+        assert_eq!(true, !resp.body.is_empty());
+
+        let headers = ["Accept-Encoding: gzip"].join("\r\n");
+        let input_header = format!("GET / HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let result = dir
+            .handle(&mut session, &mut State::default())
+            .await
+            .unwrap();
+        assert_eq!(true, result.is_some());
+        let resp = result.unwrap();
+        assert_eq!(200, resp.status.as_u16());
+        assert_eq!(
+            r#"("content-type", "text/html; charset=utf-8")"#,
+            format!("{:?}", resp.headers.unwrap()[0])
+        );
+        assert_eq!(
+            true,
+            std::string::String::from_utf8_lossy(resp.body.as_ref()).contains("Cargo.toml")
+        );
     }
 
     #[tokio::test]

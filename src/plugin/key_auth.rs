@@ -144,7 +144,7 @@ impl ProxyPlugin for KeyAuth {
                 .as_ref()
                 .map(|v| session.get_header_bytes(v))
         };
-        if value.is_none() {
+        if value.is_none() || value.unwrap().is_empty() {
             return Ok(Some(self.miss_authorization_resp.clone()));
         }
         if !self.keys.contains(&value.unwrap().to_vec()) {
@@ -165,9 +165,12 @@ impl ProxyPlugin for KeyAuth {
 
 #[cfg(test)]
 mod tests {
-    use super::KeyAuthParams;
-    use crate::config::PluginConf;
+    use super::{KeyAuth, KeyAuthParams};
+    use crate::state::State;
+    use crate::{config::PluginConf, plugin::ProxyPlugin};
+    use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
+    use tokio_test::io::Builder;
 
     #[test]
     fn test_key_auth_params() {
@@ -197,6 +200,157 @@ keys = [
                 .map(|item| std::string::String::from_utf8_lossy(item))
                 .collect::<Vec<_>>()
                 .join(",")
+        );
+
+        let params = KeyAuthParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+name = "X-User"
+type = "query"
+keys = [
+    "123",
+    "456",
+]
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!("query", params.key_category);
+
+        let result = KeyAuthParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+keys = [
+    "123",
+    "456",
+]
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            "Plugin key_auth invalid, message:Auth key is not allowed empty",
+            result.err().unwrap().to_string()
+        );
+
+        let result = KeyAuthParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+step = "upstream_response"
+name = "X-User"
+keys = [
+    "123",
+    "456",
+]
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            "Plugin key_auth invalid, message:Key auth plugin should be executed at request or proxy upstream step",
+            result.err().unwrap().to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_key_auth() {
+        let auth = KeyAuth::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+name = "X-User"
+keys = [
+    "123",
+    "456",
+]
+hide_credentials = true
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!("key_auth", auth.category().to_string());
+        assert_eq!("request", auth.step().to_string());
+
+        let headers = ["X-User: 123"].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        assert_eq!(false, session.get_header_bytes("X-User").is_empty());
+        let result = auth
+            .handle(&mut session, &mut State::default())
+            .await
+            .unwrap();
+        assert_eq!(true, result.is_none());
+        assert_eq!(true, session.get_header_bytes("X-User").is_empty());
+
+        let headers = ["X-User: 12"].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let result = auth
+            .handle(&mut session, &mut State::default())
+            .await
+            .unwrap();
+        let resp = result.unwrap();
+        assert_eq!(401, resp.status.as_u16());
+        assert_eq!(
+            "Key auth fail",
+            std::string::String::from_utf8_lossy(resp.body.as_ref())
+        );
+
+        let headers = [""].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let result = auth
+            .handle(&mut session, &mut State::default())
+            .await
+            .unwrap();
+        let resp = result.unwrap();
+        assert_eq!(401, resp.status.as_u16());
+        assert_eq!(
+            "Key missing",
+            std::string::String::from_utf8_lossy(resp.body.as_ref())
+        );
+
+        let auth = KeyAuth::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+type = "query"
+name = "user"
+keys = [
+    "123",
+    "456",
+]
+hide_credentials = true
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let headers = [""].join("\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?user=123&type=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        assert_eq!(
+            "/vicanso/pingap?user=123&type=1",
+            session.req_header().uri.to_string()
+        );
+        let result = auth
+            .handle(&mut session, &mut State::default())
+            .await
+            .unwrap();
+        assert_eq!(true, result.is_none());
+        assert_eq!(
+            "/vicanso/pingap?type=1",
+            session.req_header().uri.to_string()
         );
     }
 }

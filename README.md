@@ -45,17 +45,17 @@ All toml configurations are as follows [pingap.toml](./conf/pingap.toml).
 
 ```mermaid
 graph TD;
-    server("HTTP Server");
-    locationA("Location A");
-    locationB("Location B");
-    locationPluginListA("Proxy Plugin List A");
-    locationPluginListB("Proxy Plugin List B");
-    upstreamA1("Upstream A1");
-    upstreamA2("Upstream A2");
-    upstreamB1("Upstream B1");
-    upstreamB2("Upstream B2");
-    locationResponsePluginListA("Response Plugin List A");
-    locationResponsePluginListB("Response Plugin List B");
+    server["HTTP Server"];
+    locationA["Location A"];
+    locationB["Location B"];
+    locationPluginListA["Proxy Plugin List A"];
+    locationPluginListB["Proxy Plugin List B"];
+    upstreamA1["Upstream A1"];
+    upstreamA2["Upstream A2"];
+    upstreamB1["Upstream B1"];
+    upstreamB2["Upstream B2"];
+    locationResponsePluginListA["Response Plugin List A"];
+    locationResponsePluginListB["Response Plugin List B"];
 
     start("New Request") --> server
 
@@ -88,7 +88,7 @@ graph TD;
     locationResponsePluginListA --> response
     locationResponsePluginListB --> response
 
-    response("HTTP Response") --> stop("Logging");
+    response["HTTP Response"] --> stop("Logging");
 ```
 
 ## Performance

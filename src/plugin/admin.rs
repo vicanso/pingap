@@ -49,7 +49,7 @@ use substring::Substring;
 #[folder = "dist/"]
 struct AdminAsset;
 
-pub struct EmbeddedStaticFile(pub Option<EmbeddedFile>, pub u32);
+pub struct EmbeddedStaticFile(pub Option<EmbeddedFile>, pub Duration);
 
 impl From<EmbeddedStaticFile> for HttpResponse {
     fn from(value: EmbeddedStaticFile) -> Self {
@@ -69,7 +69,7 @@ impl From<EmbeddedStaticFile> for HttpResponse {
         let max_age = if mime_type.contains("text/html") {
             0
         } else {
-            value.1
+            value.1.as_secs()
         };
 
         let mut headers = vec![];
@@ -83,7 +83,7 @@ impl From<EmbeddedStaticFile> for HttpResponse {
         HttpResponse {
             status: StatusCode::OK,
             body: Bytes::copy_from_slice(&file.data),
-            max_age: Some(max_age),
+            max_age: Some(max_age as u32),
             headers: Some(headers),
             ..Default::default()
         }
@@ -408,7 +408,7 @@ impl ProxyPlugin for AdminServe {
             if file.is_empty() {
                 file = "index.html";
             }
-            EmbeddedStaticFile(AdminAsset::get(file), 365 * 24 * 3600).into()
+            EmbeddedStaticFile(AdminAsset::get(file), Duration::from_secs(365 * 24 * 3600)).into()
         };
         Ok(Some(resp))
     }
@@ -416,9 +416,10 @@ impl ProxyPlugin for AdminServe {
 
 #[cfg(test)]
 mod tests {
-    use super::AdminServeParams;
-    use crate::config::PluginConf;
+    use super::{AdminAsset, AdminServeParams, EmbeddedStaticFile};
+    use crate::{config::PluginConf, http_extra::HttpResponse};
     use pretty_assertions::assert_eq;
+    use std::time::Duration;
 
     #[test]
     fn test_admin_params() {
@@ -447,5 +448,21 @@ mod tests {
         );
         assert_eq!("request", params.step.to_string());
         assert_eq!("/", params.path);
+    }
+
+    #[test]
+    fn test_embeded_static_file() {
+        let file = AdminAsset::get("index.html").unwrap();
+        let resp: HttpResponse = EmbeddedStaticFile(Some(file), Duration::from_secs(60)).into();
+        assert_eq!(true, !resp.body.is_empty());
+        assert_eq!(200, resp.status.as_u16());
+        assert_eq!(0, resp.max_age.unwrap_or_default());
+        assert_eq!(
+            r#"("content-type", "text/html")"#,
+            format!("{:?}", resp.headers.unwrap_or_default()[0])
+        );
+
+        let resp: HttpResponse = EmbeddedStaticFile(None, Duration::from_secs(60)).into();
+        assert_eq!(404, resp.status.as_u16())
     }
 }

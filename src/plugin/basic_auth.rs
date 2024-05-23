@@ -166,6 +166,37 @@ authorizations = [
                 .collect::<Vec<_>>()
                 .join(","),
         );
+
+        let result = BasicAuthParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+authorizations = [
+"1"
+]
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            "Plugin basic_auth, base64 decode error Invalid input length: 1",
+            result.err().unwrap().to_string()
+        );
+
+        let result = BasicAuthParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+step = "upstream_response"
+authorizations = [
+"1234"
+]
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            "Plugin basic_auth invalid, message:Basic auth plugin should be executed at request or proxy upstream step",
+            result.err().unwrap().to_string()
+        );
     }
 
     #[tokio::test]
@@ -181,6 +212,9 @@ authorizations = [
             .unwrap(),
         )
         .unwrap();
+
+        assert_eq!("basic_auth", auth.category().to_string());
+        assert_eq!("request", auth.step().to_string());
 
         // auth success
         let headers = ["Authorization: Basic YWRtaW46MTIzMTIz"].join("\r\n");
