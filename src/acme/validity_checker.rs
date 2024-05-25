@@ -12,24 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::service::{CommonServiceTask, ServiceTask};
 use crate::util;
 use crate::webhook;
 use async_trait::async_trait;
-use log::{info, warn};
-use pingora::server::ShutdownWatch;
-use pingora::services::background::BackgroundService;
+use log::warn;
 use std::time::Duration;
-use tokio::time::interval;
 use x509_parser::certificate::Validity;
 
-pub struct ValidityChecker {
+struct ValidityChecker {
+    time_offset: i64,
     validity_list: Vec<(String, Validity)>,
-}
-
-impl ValidityChecker {
-    pub fn new(validity_list: Vec<(String, Validity)>) -> Self {
-        Self { validity_list }
-    }
 }
 
 fn validity_check(validity_list: &[(String, Validity)], time_offset: i64) -> Option<String> {
@@ -54,41 +47,39 @@ fn validity_check(validity_list: &[(String, Validity)], time_offset: i64) -> Opt
 }
 
 #[async_trait]
-impl BackgroundService for ValidityChecker {
-    async fn start(&self, mut shutdown: ShutdownWatch) {
-        let period = Duration::from_secs(60 * 60);
-        let time_offset = 7 * 24 * 3600_i64;
-
-        let offset_human: humantime::Duration = Duration::from_secs(time_offset as u64).into();
-        let period_human: humantime::Duration = period.into();
-        info!(
-            "Start tls validity checker background service, expired offset:{offset_human}, period:{period_human}, validity_list:{:?}",
-            self.validity_list
-        );
-
-        let mut period = interval(period);
-
-        loop {
-            tokio::select! {
-                _ = shutdown.changed() => {
-                    break;
-                }
-                _ = period.tick() => {
-                    if let Some(message) = validity_check(&self.validity_list, time_offset) {
-
-
-                    warn!("{message}");
-                    webhook::send(webhook::SendNotificationParams {
-                        level: webhook::NotificationLevel::Warn,
-                        category: webhook::NotificationCategory::TlsValidity,
-                        msg: message,
-                    });
-                    }
-
-                }
-            }
+impl ServiceTask for ValidityChecker {
+    async fn run(&self) -> Option<bool> {
+        if let Some(message) = validity_check(&self.validity_list, self.time_offset) {
+            warn!("{message}");
+            webhook::send(webhook::SendNotificationParams {
+                level: webhook::NotificationLevel::Warn,
+                category: webhook::NotificationCategory::TlsValidity,
+                msg: message,
+            });
         }
+        None
     }
+    fn description(&self) -> String {
+        let offset_human: humantime::Duration = Duration::from_secs(self.time_offset as u64).into();
+        format!(
+            "offset:{offset_human}, validity_list:{:?}",
+            self.validity_list
+        )
+    }
+}
+
+pub fn new_tls_validity_background_service(
+    validity_list: Vec<(String, Validity)>,
+) -> CommonServiceTask {
+    let checker = ValidityChecker {
+        validity_list,
+        time_offset: 7 * 24 * 3600_i64,
+    };
+    CommonServiceTask::new(
+        "Tls validity checker".to_string(),
+        Duration::from_secs(60 * 60),
+        checker,
+    )
 }
 
 #[cfg(test)]

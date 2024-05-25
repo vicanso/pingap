@@ -19,6 +19,7 @@ pub mod limit;
 pub mod logger;
 pub mod plugin;
 pub mod proxy;
+pub mod service;
 pub mod state;
 pub mod util;
 pub mod webhook;

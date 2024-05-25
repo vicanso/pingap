@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::acme::{LetsEncryptService, ValidityChecker};
+use crate::acme::{new_tls_validity_background_service, LetsEncryptService};
 use crate::config::ETCD_PROTOCOL;
 use crate::state::AutoRestart;
 use clap::Parser;
@@ -37,6 +37,7 @@ mod plugin;
 mod proxy;
 #[cfg(feature = "pyro")]
 mod pyro;
+mod service;
 mod state;
 mod util;
 mod webhook;
@@ -361,7 +362,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     if !validity_list.is_empty() {
         my_server.add_service(background_service(
             "Tls cert validity checker",
-            ValidityChecker::new(validity_list),
+            new_tls_validity_background_service(validity_list),
         ));
     }
 
