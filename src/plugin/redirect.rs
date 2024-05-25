@@ -17,6 +17,7 @@ use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::convert_headers;
 use crate::http_extra::HttpResponse;
 use crate::state::State;
+use crate::util;
 use async_trait::async_trait;
 use http::StatusCode;
 use pingora::proxy::Session;
@@ -64,11 +65,7 @@ impl ProxyPlugin for Redirect {
         if schema_match && session.req_header().uri.path().starts_with(&self.prefix) {
             return Ok(None);
         }
-        let host = if let Some(value) = session.get_header("Host") {
-            value.to_str().unwrap_or_default()
-        } else {
-            session.req_header().uri.host().unwrap_or_default()
-        };
+        let host = util::get_host(session.req_header()).unwrap_or_default();
         let schema = if self.http_to_https { "https" } else { "http" };
         let location = format!(
             "Location: {}://{host}{}{}",

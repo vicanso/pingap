@@ -203,9 +203,16 @@ pub fn local_ip_list() -> Vec<String> {
     ip_list
 }
 
+pub fn get_host(header: &RequestHeader) -> Option<String> {
+    if let Some(host) = header.headers.get("Host") {
+        return Some(host.to_str().unwrap_or_default().to_string());
+    }
+    header.uri.host().map(|host| host.to_string())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::remove_query_from_header;
+    use super::{get_pkg_name, get_pkg_version, remove_query_from_header, resolve_path};
     use pingora::http::RequestHeader;
     use pretty_assertions::assert_eq;
     #[test]
@@ -217,5 +224,19 @@ mod tests {
         let mut req = RequestHeader::build("GET", b"/?apikey=123&name=pingap", None).unwrap();
         remove_query_from_header(&mut req, "apikey").unwrap();
         assert_eq!("/?name=pingap", req.uri.to_string());
+    }
+
+    #[test]
+    fn test_get_pkg_info() {
+        assert_eq!("pingap", get_pkg_name());
+        assert_eq!(false, get_pkg_version().is_empty());
+    }
+
+    #[test]
+    fn test_resolve_path() {
+        assert_eq!(
+            dirs::home_dir().unwrap().to_string_lossy(),
+            resolve_path("~/")
+        );
     }
 }

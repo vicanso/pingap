@@ -16,7 +16,7 @@ use crate::state::{get_hostname, State, HOST_NAME_TAG};
 use crate::util;
 use bytes::BytesMut;
 use bytesize::ByteSize;
-use pingora::http::{RequestHeader, ResponseHeader};
+use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::Regex;
 use std::time::{Duration, Instant};
@@ -250,13 +250,6 @@ fn get_resp_header_value<'a>(resp_header: &'a ResponseHeader, key: &str) -> Opti
     None
 }
 
-fn get_req_header_value<'a>(req_header: &'a RequestHeader, key: &str) -> Option<&'a [u8]> {
-    if let Some(value) = req_header.headers.get(key) {
-        return Some(value.as_bytes());
-    }
-    None
-}
-
 impl Parser {
     pub fn format(&self, session: &Session, ctx: &State) -> String {
         let mut buf = BytesMut::with_capacity(1024);
@@ -269,9 +262,7 @@ impl Parser {
                     }
                 }
                 TagCategory::Host => {
-                    if let Some(host) = get_req_header_value(req_header, "Host") {
-                        buf.extend(host);
-                    } else if let Some(host) = req_header.uri.host() {
+                    if let Some(host) = util::get_host(req_header) {
                         buf.extend(host.as_bytes());
                     }
                 }

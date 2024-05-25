@@ -450,13 +450,13 @@ impl ProxyHttp for Server {
 
         let header = session.req_header_mut();
         let path = header.uri.path();
-        let host = header.uri.host().unwrap_or_default();
+        let host = util::get_host(header).unwrap_or_default();
 
         let location_result = self
             .locations
             .iter()
             .enumerate()
-            .find(|(_, item)| item.matched(host, path));
+            .find(|(_, item)| item.matched(&host, path));
 
         if location_result.is_none() {
             HttpResponse::unknown_error(Bytes::from(format!(
