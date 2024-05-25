@@ -82,16 +82,11 @@ pub fn new_tls_validity_service(validity_list: Vec<(String, Validity)>) -> Commo
 
 #[cfg(test)]
 mod tests {
-    // use super::{get_cache_control, HttpChunkResponse, HttpResponse};
-    // use crate::http_extra::convert_headers;
-    // use crate::util::{get_super_ts, resolve_path};
-    // use bytes::Bytes;
-    // use http::StatusCode;
+    use crate::service::ServiceTask;
+
+    use super::{new_tls_validity_service, validity_check, Validity, ValidityChecker};
     use pretty_assertions::assert_eq;
     use x509_parser::time::ASN1Time;
-    // use serde::Serialize;
-    // use tokio::fs;
-    use super::{validity_check, Validity};
 
     #[test]
     fn test_validity_check() {
@@ -124,5 +119,31 @@ mod tests {
             "Pingap cert is not valid, valid date:ASN1Time(2054-01-12 17:46:40.0 +00:00:00)",
             result.unwrap_or_default().to_string()
         );
+    }
+    #[tokio::test]
+    async fn test_validity_service() {
+        let _ = new_tls_validity_service(vec![(
+            "Pingap".to_string(),
+            Validity {
+                not_after: ASN1Time::from_timestamp(2651852800).unwrap(),
+                not_before: ASN1Time::from_timestamp(2651852800).unwrap(),
+            },
+        )]);
+        let checker = ValidityChecker {
+            validity_list: vec![(
+                "Pingap".to_string(),
+                Validity {
+                    not_after: ASN1Time::from_timestamp(2651852800).unwrap(),
+                    not_before: ASN1Time::from_timestamp(2651852800).unwrap(),
+                },
+            )],
+            time_offset: 7 * 24 * 3600_i64,
+        };
+        assert_eq!(
+            r#"offset:7days, validity_list:[("Pingap", Validity { not_before: ASN1Time(2054-01-12 17:46:40.0 +00:00:00), not_after: ASN1Time(2054-01-12 17:46:40.0 +00:00:00) })]"#,
+            checker.description()
+        );
+        let result = checker.run().await;
+        assert_eq!(true, result.is_none());
     }
 }

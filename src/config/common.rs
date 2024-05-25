@@ -519,7 +519,7 @@ impl PingapConf {
                     .collect();
                 if upstreams.contains(&name.to_string()) {
                     return Err(Error::Invalid {
-                        message: format!("Upstream({name}) is in use"),
+                        message: format!("Upstream({name}) is in used"),
                     });
                 }
 
@@ -534,7 +534,7 @@ impl PingapConf {
                         .contains(&name.to_string())
                     {
                         return Err(Error::Invalid {
-                            message: format!("Location({name}) is in use"),
+                            message: format!("Location({name}) is in used"),
                         });
                     }
                 }
@@ -552,7 +552,7 @@ impl PingapConf {
                 }
                 if all_plugins.contains(&name.to_string()) {
                     return Err(Error::Invalid {
-                        message: format!("Proxy plugin({name}) is in use"),
+                        message: format!("Proxy plugin({name}) is in used"),
                     });
                 }
                 self.plugins.remove(name);
@@ -926,7 +926,7 @@ host = ""
 path = "/"
 plugins = [
     "pingap:requestId",
-    "pingap:stats",
+    "stats",
 ]
 proxy_add_headers = ["name:value"]
 proxy_set_headers = ["name:value"]
@@ -981,7 +981,7 @@ log_level = "info"
             data
         );
 
-        assert_eq!("6DFE695D", conf.hash().unwrap());
+        assert_eq!("71D5A190", conf.hash().unwrap());
     }
 
     #[test]
@@ -1015,5 +1015,41 @@ basic
 "###,
             value.join("\n")
         );
+    }
+
+    #[test]
+    fn test_config_remove() {
+        let toml_data = include_bytes!("../../conf/pingap.toml");
+        let mut conf = PingapConf::try_from(toml_data.to_vec().as_slice()).unwrap();
+
+        let result = conf.remove("plugin", "stats");
+        assert_eq!(
+            "Invalid error Proxy plugin(stats) is in used",
+            result.err().unwrap().to_string()
+        );
+
+        let result = conf.remove("upstream", "charts");
+        assert_eq!(
+            "Invalid error Upstream(charts) is in used",
+            result.err().unwrap().to_string()
+        );
+
+        let result = conf.remove("location", "lo");
+        assert_eq!(
+            "Invalid error Location(lo) is in used",
+            result.err().unwrap().to_string()
+        );
+
+        let result = conf.remove("server", "test");
+        assert_eq!(true, result.is_ok());
+
+        let result = conf.remove("location", "lo");
+        assert_eq!(true, result.is_ok());
+
+        let result = conf.remove("upstream", "charts");
+        assert_eq!(true, result.is_ok());
+
+        let result = conf.remove("plugin", "stats");
+        assert_eq!(true, result.is_ok());
     }
 }

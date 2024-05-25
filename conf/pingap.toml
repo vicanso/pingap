@@ -29,7 +29,7 @@ host = ""
 proxy_set_headers = ["name:value"]
 proxy_add_headers = ["name:value"]
 rewrite = ""
-plugins = ["pingap:requestId", "pingap:stats"]
+plugins = ["pingap:requestId", "stats"]
 
 [servers.test]
 addr = "0.0.0.0:6188"
