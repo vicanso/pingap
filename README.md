@@ -115,33 +115,7 @@ Requests/sec: 148928.76
 Transfer/sec:     19.46MB
 ```
 
-### Static serve 8kb html
-
-```bash
-wrk 'http://127.0.0.1:6188/downloads/index.html' --latency
-
-Running 10s test @ http://127.0.0.1:6188/downloads/index.html
-  2 threads and 10 connections
-  Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency   225.84us   59.47us   1.83ms   78.04%
-    Req/Sec    22.17k     1.94k   25.25k    87.13%
-  Latency Distribution
-     50%  222.00us
-     75%  247.00us
-     90%  286.00us
-     99%  418.00us
-  445764 requests in 10.10s, 3.16GB read
-Requests/sec:  44134.06
-Transfer/sec:    320.01MB
-```
-
-### Compression
-
-TODO
-
-### Cache
-
-TODO
+[More Performance](./docs/performance.md)
 
 ## Rust version
 

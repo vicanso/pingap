@@ -17,7 +17,7 @@ use crate::state::State;
 use crate::util;
 use futures_util::FutureExt;
 use humantime::parse_duration;
-use log::{debug, error};
+use log::{debug, error, info};
 use pingora::http::RequestHeader;
 use pingora::lb::health_check::{HealthCheck, HttpHealthCheck, TcpHealthCheck};
 use pingora::lb::selection::{Consistent, RoundRobin};
@@ -258,6 +258,10 @@ fn new_health_check(
     let hc: Box<dyn HealthCheck + Send + Sync + 'static> = if health_check.is_empty() {
         let mut check = TcpHealthCheck::new();
         check.peer_template.options.connection_timeout = Some(Duration::from_secs(3));
+        info!(
+            "Tcp health check, name: {name}, options:{:?}",
+            check.peer_template.options
+        );
         check
     } else {
         let mut health_check_conf: HealthCheckConf = health_check.try_into()?;
@@ -265,6 +269,7 @@ fn new_health_check(
             health_check_conf.host = "".to_string();
         }
         health_check_frequency = health_check_conf.check_frequency;
+        info!("Http health check, conf:{health_check_conf:?}");
         match health_check_conf.schema.as_str() {
             "http" | "https" => Box::new(new_http_health_check(&health_check_conf)),
             _ => Box::new(new_tcp_health_check(&health_check_conf)),
