@@ -33,11 +33,11 @@ pub struct CommonServiceTask {
 }
 
 impl CommonServiceTask {
-    pub fn new(name: String, interval: Duration, task: impl ServiceTask + 'static) -> Self {
+    pub fn new(name: &str, interval: Duration, task: impl ServiceTask + 'static) -> Self {
         Self {
             task: Box::new(task),
             interval,
-            name,
+            name: name.to_string(),
         }
     }
 }
@@ -48,7 +48,7 @@ impl BackgroundService for CommonServiceTask {
         let period_human: humantime::Duration = self.interval.into();
 
         info!(
-            "Background servcie {} is ruuning, interval: {period_human}, description: {}",
+            "{} background servcie is runing, interval: {period_human}, description: {}",
             self.name,
             self.task.description()
         );

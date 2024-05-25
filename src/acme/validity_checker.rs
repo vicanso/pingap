@@ -68,15 +68,13 @@ impl ServiceTask for ValidityChecker {
     }
 }
 
-pub fn new_tls_validity_background_service(
-    validity_list: Vec<(String, Validity)>,
-) -> CommonServiceTask {
+pub fn new_tls_validity_service(validity_list: Vec<(String, Validity)>) -> CommonServiceTask {
     let checker = ValidityChecker {
         validity_list,
         time_offset: 7 * 24 * 3600_i64,
     };
     CommonServiceTask::new(
-        "Tls validity checker".to_string(),
+        "Tls validity checker",
         Duration::from_secs(60 * 60),
         checker,
     )

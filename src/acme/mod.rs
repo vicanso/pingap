@@ -77,8 +77,8 @@ impl Cert {
 mod lets_encrypt;
 mod validity_checker;
 
-pub use lets_encrypt::{get_lets_encrypt_cert, handle_lets_encrypt, LetsEncryptService};
-pub use validity_checker::new_tls_validity_background_service;
+pub use lets_encrypt::{get_lets_encrypt_cert, handle_lets_encrypt, new_lets_encrypt_service};
+pub use validity_checker::new_tls_validity_service;
 
 use crate::util;
 

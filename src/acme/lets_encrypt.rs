@@ -14,6 +14,7 @@
 
 use super::{parse_x509_validity, Cert, Error, Result};
 use crate::http_extra::HttpResponse;
+use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::{restart_now, State};
 use crate::util;
 use crate::webhook;
@@ -26,7 +27,6 @@ use instant_acme::{
 use log::{error, info};
 use once_cell::sync::OnceCell;
 use pingora::proxy::Session;
-use pingora::{server::ShutdownWatch, services::background::BackgroundService};
 use rcgen::{Certificate, CertificateParams, DistinguishedName};
 use std::collections::HashMap;
 use std::env;
@@ -35,55 +35,52 @@ use std::time::Duration;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
-use tokio::time::interval;
 
 static LETS_ENCRYPT: OnceCell<Mutex<HashMap<String, String>>> = OnceCell::new();
 
 fn get_lets_encrypt() -> &'static Mutex<HashMap<String, String>> {
     LETS_ENCRYPT.get_or_init(|| Mutex::new(HashMap::new()))
 }
+struct LetsEncryptService {
+    domains: Vec<String>,
+}
 
-pub struct LetsEncryptService {
-    pub domains: Vec<String>,
+pub fn new_lets_encrypt_service(domains: Vec<String>) -> CommonServiceTask {
+    let mut domains = domains;
+    domains.sort();
+
+    CommonServiceTask::new(
+        "Lets encrypt",
+        Duration::from_secs(10 * 60),
+        LetsEncryptService { domains },
+    )
 }
 
 #[async_trait]
-impl BackgroundService for LetsEncryptService {
-    /// The lets encrypt servier checks the cert, it will get news cert if current is invalid.
-    async fn start(&self, mut shutdown: ShutdownWatch) {
-        let mut domains = self.domains.clone();
-        domains.sort();
-        let period = Duration::from_secs(10 * 60);
-        let period_human: humantime::Duration = period.into();
-        info!("Lets encrypt background service, domains:{domains:?}, period:{period_human}");
-
-        let mut period = interval(period);
-        loop {
-            tokio::select! {
-                _ = shutdown.changed() => {
-                    break;
-                }
-                _ = period.tick() => {
-                    let should_fresh_now = if let Ok(cert) = get_lets_encrypt_cert() {
-                        !cert.valid() || domains.join(",") != cert.domains.join(",")
-                    } else {
-                        true
-                    };
-                    if should_fresh_now {
-                        info!("Should renew cert from lets encrypt");
-                        match new_lets_encrypt(&domains).await {
-                            Ok(()) => {
-                                info!("Renew cert success");
-                                if let Err(e) = restart_now() {
-                                    error!("Restart fail: {e}");
-                                }
-                            },
-                            Err(e) => error!("Renew cert fail, {e}"),
-                        };
+impl ServiceTask for LetsEncryptService {
+    async fn run(&self) -> Option<bool> {
+        let domains = &self.domains;
+        let should_fresh_now = if let Ok(cert) = get_lets_encrypt_cert() {
+            !cert.valid() || domains.join(",") != cert.domains.join(",")
+        } else {
+            true
+        };
+        if should_fresh_now {
+            info!("Should renew cert from lets encrypt");
+            match new_lets_encrypt(domains).await {
+                Ok(()) => {
+                    info!("Renew cert success");
+                    if let Err(e) = restart_now() {
+                        error!("Restart fail: {e}");
                     }
                 }
-            }
+                Err(e) => error!("Renew cert fail, {e}"),
+            };
         }
+        None
+    }
+    fn description(&self) -> String {
+        format!("domains {:?}", self.domains)
     }
 }
 

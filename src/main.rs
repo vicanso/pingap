@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::acme::{new_tls_validity_background_service, LetsEncryptService};
+use crate::acme::{new_lets_encrypt_service, new_tls_validity_service};
 use crate::config::ETCD_PROTOCOL;
-use crate::state::AutoRestart;
+use crate::state::new_auto_restart_service;
 use clap::Parser;
 use config::{PingapConf, PluginConf};
 use crossbeam_channel::Sender;
@@ -348,21 +348,19 @@ fn run() -> Result<(), Box<dyn Error>> {
     if args.autorestart {
         my_server.add_service(background_service(
             "Auto Restart",
-            AutoRestart {
-                interval: auto_restart_check_interval,
-            },
+            new_auto_restart_service(auto_restart_check_interval),
         ));
     }
     if !domains.is_empty() {
         my_server.add_service(background_service(
             "Lets encrypt",
-            LetsEncryptService { domains },
+            new_lets_encrypt_service(domains),
         ));
     }
     if !validity_list.is_empty() {
         my_server.add_service(background_service(
             "Tls cert validity checker",
-            new_tls_validity_background_service(validity_list),
+            new_tls_validity_service(validity_list),
         ));
     }
 

@@ -15,21 +15,19 @@
 use crate::config::{
     get_config_hash, get_config_path, get_current_config, load_config, PingapConf,
 };
+use crate::service::{CommonServiceTask, ServiceTask};
 use crate::util;
 use crate::webhook;
 use async_trait::async_trait;
 use log::{error, info};
 use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
-use pingora::server::ShutdownWatch;
-use pingora::services::background::BackgroundService;
 use std::io;
 use std::path::PathBuf;
 use std::process;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
-use tokio::time::interval;
 
 static START_TIME: Lazy<Duration> = Lazy::new(util::now);
 
@@ -67,10 +65,6 @@ impl RestartProcessCommand {
     }
 }
 
-pub struct AutoRestart {
-    pub interval: Duration,
-}
-
 async fn validate_restart() -> Result<(bool, PingapConf), Box<dyn std::error::Error>> {
     let conf = load_config(&get_config_path(), false).await?;
     conf.validate()?;
@@ -80,44 +74,37 @@ async fn validate_restart() -> Result<(bool, PingapConf), Box<dyn std::error::Er
     Ok((false, conf))
 }
 
+struct AutoRestart {}
+
+pub fn new_auto_restart_service(interval: Duration) -> CommonServiceTask {
+    CommonServiceTask::new("Auto restart checker", interval, AutoRestart {})
+}
+
 #[async_trait]
-impl BackgroundService for AutoRestart {
-    async fn start(&self, mut shutdown: ShutdownWatch) {
-        if self.interval < Duration::from_secs(1) {
-            return;
-        }
-        info!(
-            "Auto restart background service, interval:{:?}",
-            self.interval
-        );
-        let mut period = interval(self.interval);
-        loop {
-            tokio::select! {
-                _ = shutdown.changed() => {
-                    break;
-                }
-                _ = period.tick() => {
-                    match validate_restart().await {
-                       Ok((should_restart, conf)) => {
-                           if should_restart {
-                               let diff_result = get_current_config().diff(conf);
-                               if !diff_result.is_empty() {
-                                    webhook::send(webhook::SendNotificationParams {
-                                        level: webhook::NotificationLevel::Info,
-                                        category: webhook::NotificationCategory::DiffConfig,
-                                        msg: diff_result.join("\n"),
-                                    });
-                               }
-                               restart();
-                           }
-                       },
-                       Err(e) => {
-                           error!("Auto restart validate fail, {e}");
-                       }
+impl ServiceTask for AutoRestart {
+    async fn run(&self) -> Option<bool> {
+        match validate_restart().await {
+            Ok((should_restart, conf)) => {
+                if should_restart {
+                    let diff_result = get_current_config().diff(conf);
+                    if !diff_result.is_empty() {
+                        webhook::send(webhook::SendNotificationParams {
+                            level: webhook::NotificationLevel::Info,
+                            category: webhook::NotificationCategory::DiffConfig,
+                            msg: diff_result.join("\n"),
+                        });
                     }
+                    restart();
                 }
             }
+            Err(e) => {
+                error!("Auto restart validate fail, {e}");
+            }
         }
+        None
+    }
+    fn description(&self) -> String {
+        "pingap will be restart if config changed".to_string()
     }
 }
 
