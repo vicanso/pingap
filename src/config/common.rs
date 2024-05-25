@@ -32,6 +32,7 @@ pub const CATEGORY_UPSTREAM: &str = "upstream";
 pub const CATEGORY_LOCATION: &str = "location";
 pub const CATEGORY_SERVER: &str = "server";
 pub const CATEGORY_PLUGIN: &str = "plugin";
+pub const CATEGORY_BASIC: &str = "basic";
 
 #[derive(PartialEq, Debug, Default, Clone, EnumString, strum::Display)]
 #[strum(serialize_all = "snake_case")]
@@ -593,7 +594,7 @@ impl PingapConf {
         value.upstreams = HashMap::new();
         value.plugins = HashMap::new();
         descriptions.push(Description {
-            name: "basic".to_string(),
+            name: CATEGORY_BASIC.to_string(),
             data: toml::to_string_pretty(&value).unwrap_or_default(),
         });
         descriptions.sort_by_key(|d| d.name.clone());

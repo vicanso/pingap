@@ -416,8 +416,9 @@ impl ProxyPlugin for AdminServe {
 
 #[cfg(test)]
 mod tests {
-    use super::{AdminAsset, AdminServeParams, EmbeddedStaticFile};
-    use crate::{config::PluginConf, http_extra::HttpResponse};
+    use super::{AdminAsset, AdminServe, AdminServeParams, EmbeddedStaticFile};
+    use crate::{config::set_config_path, config::PluginConf, http_extra::HttpResponse};
+    use pingora::http::RequestHeader;
     use pretty_assertions::assert_eq;
     use std::time::Duration;
 
@@ -448,6 +449,43 @@ mod tests {
         );
         assert_eq!("request", params.step.to_string());
         assert_eq!("/", params.path);
+
+        let result = AdminServeParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r#"
+    category = "admin"
+    path = "/"
+    authorizations = [
+        "123",
+    ]
+    "#,
+            )
+            .unwrap(),
+        );
+
+        assert_eq!(
+            "Plugin basic_auth, base64 decode error Invalid padding",
+            result.err().unwrap().to_string()
+        );
+
+        let result = AdminServeParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r#"
+    step = "upstream_response"
+    category = "admin"
+    path = "/"
+    authorizations = [
+        "YWRtaW46MTIzMTIz",
+        "cGluZ2FwOjEyMzEyMw=="
+    ]
+    "#,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            "Plugin admin invalid, message: Admin serve plugin should be executed at request or proxy upstream step",
+            result.err().unwrap().to_string()
+        );
     }
 
     #[test]
@@ -464,5 +502,51 @@ mod tests {
 
         let resp: HttpResponse = EmbeddedStaticFile(None, Duration::from_secs(60)).into();
         assert_eq!(404, resp.status.as_u16())
+    }
+
+    #[tokio::test]
+    async fn test_admin_serve() {
+        let serve = AdminServe::new(
+            &toml::from_str::<PluginConf>(
+                r#"
+category = "admin"
+path = "/"
+authorizations = [
+    "YWRtaW46MTIzMTIz",
+    "cGluZ2FwOjEyMzEyMw=="
+]
+"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let mut req_header = RequestHeader::build("GET", b"/", None).unwrap();
+        req_header.insert_header("Authorization", "123").unwrap();
+        assert_eq!(false, serve.auth_validate(&req_header));
+        req_header
+            .insert_header("Authorization", "Basic YWRtaW46MTIzMTIz")
+            .unwrap();
+        assert_eq!(true, serve.auth_validate(&req_header));
+
+        set_config_path("./conf/pingap.toml");
+
+        let conf = serve.load_config().await.unwrap();
+        assert_eq!("71D5A190", conf.hash().unwrap());
+
+        let resp = serve.get_config("upstream").await.unwrap();
+        assert_eq!(200, resp.status.as_u16());
+
+        let resp = serve.get_config("location").await.unwrap();
+        assert_eq!(200, resp.status.as_u16());
+
+        let resp = serve.get_config("server").await.unwrap();
+        assert_eq!(200, resp.status.as_u16());
+
+        let resp = serve.get_config("plguin").await.unwrap();
+        assert_eq!(200, resp.status.as_u16());
+
+        let resp = serve.get_config("basic").await.unwrap();
+        assert_eq!(200, resp.status.as_u16());
     }
 }

@@ -141,8 +141,8 @@ impl ConfigStorage for FileStorage {
 mod tests {
     use super::FileStorage;
     use crate::config::{
-        ConfigStorage, PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
-        CATEGORY_UPSTREAM,
+        ConfigStorage, PingapConf, CATEGORY_BASIC, CATEGORY_LOCATION, CATEGORY_PLUGIN,
+        CATEGORY_SERVER, CATEGORY_UPSTREAM,
     };
     use nanoid::nanoid;
     use pretty_assertions::assert_eq;
@@ -155,7 +155,7 @@ mod tests {
         let toml_data = include_bytes!("../../conf/pingap.toml");
         let conf = PingapConf::try_from(toml_data.to_vec().as_slice()).unwrap();
 
-        storage.save_config(&conf, "basic").await.unwrap();
+        storage.save_config(&conf, CATEGORY_BASIC).await.unwrap();
         storage.save_config(&conf, CATEGORY_UPSTREAM).await.unwrap();
         storage.save_config(&conf, CATEGORY_LOCATION).await.unwrap();
         storage.save_config(&conf, CATEGORY_PLUGIN).await.unwrap();
