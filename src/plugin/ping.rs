@@ -74,12 +74,15 @@ impl ProxyPlugin for Ping {
 #[cfg(test)]
 mod tests {
     use super::Ping;
-    use crate::config::PluginConf;
+    use crate::state::State;
+    use crate::{config::PluginConf, plugin::ProxyPlugin};
+    use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
+    use tokio_test::io::Builder;
 
-    #[test]
-    fn test_ping_params() {
-        let params = Ping::new(
+    #[tokio::test]
+    async fn test_ping() {
+        let ping = Ping::new(
             &toml::from_str::<PluginConf>(
                 r###"
 path = "/ping"
@@ -88,7 +91,38 @@ path = "/ping"
             .unwrap(),
         )
         .unwrap();
-        assert_eq!("request", params.plugin_step.to_string());
-        assert_eq!("/ping", params.path);
+        assert_eq!("request", ping.plugin_step.to_string());
+        assert_eq!("/ping", ping.path);
+        assert_eq!("ping", ping.category().to_string());
+        assert_eq!("request", ping.step().to_string());
+
+        let headers = [""].join("\r\n");
+        let input_header = format!("GET /ping HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let result = ping
+            .handle(&mut session, &mut State::default())
+            .await
+            .unwrap();
+
+        assert_eq!(true, result.is_some());
+        let resp = result.unwrap();
+        assert_eq!(200, resp.status.as_u16());
+        assert_eq!(b"pong", resp.body.as_ref());
+
+        let result = Ping::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+step = "upstream_response"
+path = "/ping"
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            "Plugin ping invalid, message: Ping plugin should be executed at request step",
+            result.err().unwrap().to_string()
+        );
     }
 }

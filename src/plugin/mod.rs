@@ -41,7 +41,7 @@ mod stats;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Plugin {category} invalid, message:{message}"))]
+    #[snafu(display("Plugin {category} invalid, message: {message}"))]
     Invalid { category: String, message: String },
     #[snafu(display("Plugin {category}, exceed limit {value}/{max}"))]
     Exceed {
@@ -292,4 +292,42 @@ pub(crate) fn get_str_slice_conf(value: &PluginConf, key: &str) -> Vec<String> {
 
 pub(crate) fn get_step_conf(value: &PluginConf) -> PluginStep {
     PluginStep::from_str(get_str_conf(value, "step").as_str()).unwrap_or_default()
+}
+
+#[test]
+pub fn initialize_test_plugins() {
+    let _ = init_plugins(vec![
+        (
+            "test:mock".to_string(),
+            toml::from_str::<PluginConf>(
+                r###"
+category = "mock"
+path = "/mock"
+status = 999
+data = "abc"
+"###,
+            )
+            .unwrap(),
+        ),
+        (
+            "test:add_headers".to_string(),
+            toml::from_str::<PluginConf>(
+                r###"
+category = "response_headers"
+step = "upstream_response"
+add_headers = [
+"X-Service:1",
+"X-Service:2",
+]
+set_headers = [
+"X-Response-Id:123"
+]
+remove_headers = [
+"Content-Type"
+]
+"###,
+            )
+            .unwrap(),
+        ),
+    ]);
 }

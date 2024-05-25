@@ -106,6 +106,9 @@ prefix = "/api"
         )
         .unwrap();
 
+        assert_eq!("redirect", redirect.category().to_string());
+        assert_eq!("request", redirect.step().to_string());
+
         let headers = ["Host: github.com"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
@@ -122,5 +125,17 @@ prefix = "/api"
             r###"Some([("location", "https://github.com/api/vicanso/pingap?size=1")])"###,
             format!("{:?}", resp.headers)
         );
+
+        let params = Redirect::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+step = "upstream_response"
+http_to_https = true
+prefix = "/api"
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!("Plugin redirect invalid, message: Redirect https plugin should be executed at request step", params.err().unwrap().to_string());
     }
 }

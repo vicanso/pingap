@@ -78,20 +78,21 @@ pub struct Upstream {
 
 impl fmt::Display for Upstream {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "name:{}", self.name)?;
-        write!(f, "hash:{}", self.hash)?;
-        write!(f, "tls:{}", self.tls)?;
-        write!(f, "sni:{}", self.sni)?;
-        write!(f, "connection_timeout:{:?}", self.connection_timeout)?;
+        write!(f, "name:{} ", self.name)?;
+        write!(f, "hash:{} ", self.hash)?;
+        write!(f, "hash_key:{} ", self.hash_key)?;
+        write!(f, "tls:{} ", self.tls)?;
+        write!(f, "sni:{} ", self.sni)?;
+        write!(f, "connection_timeout:{:?} ", self.connection_timeout)?;
         write!(
             f,
-            "total_connection_timeout:{:?}",
+            "total_connection_timeout:{:?} ",
             self.total_connection_timeout
         )?;
-        write!(f, "read_timeout:{:?}", self.read_timeout)?;
-        write!(f, "idle_timeout:{:?}", self.idle_timeout)?;
-        write!(f, "write_timeout:{:?}", self.write_timeout)?;
-        write!(f, "verify_cert:{:?}", self.verify_cert)?;
+        write!(f, "read_timeout:{:?} ", self.read_timeout)?;
+        write!(f, "idle_timeout:{:?} ", self.idle_timeout)?;
+        write!(f, "write_timeout:{:?} ", self.write_timeout)?;
+        write!(f, "verify_cert:{:?} ", self.verify_cert)?;
         write!(f, "alpn:{:?}", self.alpn)
     }
 }
@@ -249,7 +250,7 @@ fn new_http_health_check(conf: &HealthCheckConf) -> HttpHealthCheck {
     check
 }
 
-fn new_healtch_check(
+fn new_health_check(
     name: &str,
     health_check: &str,
 ) -> Result<(Box<dyn HealthCheck + Send + Sync + 'static>, Duration)> {
@@ -307,6 +308,34 @@ fn new_backends(addrs: &[String], tls: bool, ipv4_only: bool) -> Result<Backends
     Ok(backends)
 }
 
+fn get_hash_value(hash: &str, hash_key: &str, session: &Session, ctx: &State) -> String {
+    match hash {
+        "url" => session.req_header().uri.to_string(),
+        "ip" => {
+            if let Some(client_ip) = &ctx.client_ip {
+                client_ip.to_string()
+            } else {
+                util::get_client_ip(session)
+            }
+        }
+        "header" => {
+            if let Some(value) = session.get_header(hash_key) {
+                value.to_str().unwrap_or_default().to_string()
+            } else {
+                "".to_string()
+            }
+        }
+        "cookie" => util::get_cookie_value(session.req_header(), hash_key)
+            .unwrap_or_default()
+            .to_string(),
+        "query" => util::get_query_value(session.req_header(), hash_key)
+            .unwrap_or_default()
+            .to_string(),
+        // default: path
+        _ => session.req_header().uri.path().to_string(),
+    }
+}
+
 impl Upstream {
     /// Creates a new upstream from config.
     pub fn new(name: &str, conf: &UpstreamConf) -> Result<Self> {
@@ -321,7 +350,7 @@ impl Upstream {
         let backends = new_backends(&conf.addrs, tls, conf.ipv4_only.unwrap_or_default())?;
 
         let (hc, health_check_frequency) =
-            new_healtch_check(name, &conf.health_check.clone().unwrap_or_default())?;
+            new_health_check(name, &conf.health_check.clone().unwrap_or_default())?;
         let algo_method = conf.algo.clone().unwrap_or_default();
         let algo_params: Vec<&str> = algo_method.split(':').collect();
         let mut hash_key = "".to_string();
@@ -330,9 +359,8 @@ impl Upstream {
                 let mut lb = LoadBalancer::<Consistent>::from_backends(backends);
                 if algo_params.len() > 1 {
                     hash = algo_params[1].to_string();
-                    if let Some((name, value)) = hash.clone().split_once(':') {
-                        hash = name.to_string();
-                        hash_key = value.to_string();
+                    if algo_params.len() > 2 {
+                        hash_key = algo_params[2].to_string();
                     }
                 }
 
@@ -401,36 +429,12 @@ impl Upstream {
         Ok(up)
     }
     /// Returns a new http peer, if there is no healthy backend, it will return `None`.
-    pub fn new_http_peer(&self, ctx: &State, session: &Session) -> Option<HttpPeer> {
+    pub fn new_http_peer(&self, session: &Session, ctx: &State) -> Option<HttpPeer> {
         let upstream = match &self.lb {
             SelectionLb::RoundRobin(lb) => lb.select(b"", 256),
             SelectionLb::Consistent(lb) => {
-                let key = match self.hash.as_str() {
-                    "url" => session.req_header().uri.to_string(),
-                    "ip" => {
-                        if let Some(client_ip) = &ctx.client_ip {
-                            client_ip.to_string()
-                        } else {
-                            util::get_client_ip(session)
-                        }
-                    }
-                    "header" => {
-                        if let Some(value) = session.get_header(&self.hash_key) {
-                            value.to_str().unwrap_or_default().to_string()
-                        } else {
-                            "".to_string()
-                        }
-                    }
-                    "cookie" => util::get_cookie_value(session.req_header(), &self.hash_key)
-                        .unwrap_or_default()
-                        .to_string(),
-                    "query" => util::get_query_value(session.req_header(), &self.hash_key)
-                        .unwrap_or_default()
-                        .to_string(),
-                    // default: path
-                    _ => session.req_header().uri.path().to_string(),
-                };
-                lb.select(key.as_bytes(), 256)
+                let value = get_hash_value(&self.hash, &self.hash_key, session, ctx);
+                lb.select(value.as_bytes(), 256)
             }
             _ => None,
         };
@@ -470,15 +474,15 @@ impl Upstream {
 #[cfg(test)]
 mod tests {
     use super::{
-        new_backends, new_healtch_check, new_http_health_check, new_tcp_health_check,
-        HealthCheckConf, State, Upstream, UpstreamConf,
+        get_hash_value, new_backends, new_empty_upstream, new_health_check, new_http_health_check,
+        new_tcp_health_check, HealthCheckConf, State, Upstream, UpstreamConf,
     };
+    use pingora::protocols::ALPN;
     use pingora::proxy::Session;
     use pingora::upstreams::peer::Peer;
+    use pretty_assertions::assert_eq;
     use std::time::Duration;
     use tokio_test::io::Builder;
-
-    use pretty_assertions::assert_eq;
     #[test]
     fn test_health_check_conf() {
         let tcp_check: HealthCheckConf =
@@ -516,21 +520,116 @@ mod tests {
         );
     }
     #[test]
-    fn test_new_healtch_check() {
-        let (_, frequency) = new_healtch_check("upstreamname", "https://upstreamname/ping?connection_timeout=3s&read_timeout=1s&success=2&failure=1&check_frequency=10s&from=nginx&reuse").unwrap();
+    fn test_new_health_check() {
+        let (_, frequency) = new_health_check("upstreamname", "https://upstreamname/ping?connection_timeout=3s&read_timeout=1s&success=2&failure=1&check_frequency=10s&from=nginx&reuse").unwrap();
         assert_eq!(Duration::from_secs(10), frequency);
     }
     #[test]
     fn test_new_backends() {
         let _ = new_backends(
             &[
-                "192.168.1.1:8001".to_string(),
+                "192.168.1.1:8001 10".to_string(),
                 "192.168.1.2:8001".to_string(),
             ],
             false,
             true,
         )
         .unwrap();
+
+        let _ = new_backends(
+            &["192.168.1.1".to_string(), "192.168.1.2:8001".to_string()],
+            true,
+            true,
+        )
+        .unwrap();
+    }
+    #[test]
+    fn test_new_upstream() {
+        let result = Upstream::new(
+            "charts",
+            &UpstreamConf {
+                ..Default::default()
+            },
+        );
+        assert_eq!("Upstream addrs is empty", result.err().unwrap().to_string());
+
+        let up = Upstream::new(
+            "charts",
+            &UpstreamConf {
+                addrs: vec!["192.168.1.1".to_string()],
+                algo: Some("hash:cookie:user-id".to_string()),
+                alpn: Some("h2".to_string()),
+                connection_timeout: Some(Duration::from_secs(5)),
+                total_connection_timeout: Some(Duration::from_secs(10)),
+                read_timeout: Some(Duration::from_secs(3)),
+                idle_timeout: Some(Duration::from_secs(30)),
+                write_timeout: Some(Duration::from_secs(5)),
+                tcp_idle: Some(Duration::from_secs(60)),
+                tcp_probe_count: Some(100),
+                tcp_interval: Some(Duration::from_secs(60)),
+                tcp_recv_buf: Some(1024),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!("cookie", up.hash);
+        assert_eq!("user-id", up.hash_key);
+        assert_eq!(ALPN::H2.to_string(), up.alpn.to_string());
+        assert_eq!("Some(5s)", format!("{:?}", up.connection_timeout));
+        assert_eq!("Some(10s)", format!("{:?}", up.total_connection_timeout));
+        assert_eq!("Some(3s)", format!("{:?}", up.read_timeout));
+        assert_eq!("Some(30s)", format!("{:?}", up.idle_timeout));
+        assert_eq!("Some(5s)", format!("{:?}", up.write_timeout));
+        assert_eq!(
+            "Some(TcpKeepalive { idle: 60s, interval: 60s, count: 100 })",
+            format!("{:?}", up.tcp_keepalive)
+        );
+        assert_eq!("Some(1024)", format!("{:?}", up.tcp_recv_buf));
+        assert_eq!("name:charts hash:cookie hash_key:user-id tls:false sni: connection_timeout:Some(5s) total_connection_timeout:Some(10s) read_timeout:Some(3s) idle_timeout:Some(30s) write_timeout:Some(5s) verify_cert:None alpn:H2", up.to_string());
+        assert_eq!("name: hash: hash_key: tls:false sni: connection_timeout:None total_connection_timeout:None read_timeout:None idle_timeout:None write_timeout:None verify_cert:None alpn:H1", new_empty_upstream().to_string());
+    }
+    #[tokio::test]
+    async fn test_get_hash_key_value() {
+        let headers = [
+            "Host: github.com",
+            "Referer: https://github.com/",
+            "User-Agent: pingap/0.1.1",
+            "Cookie: deviceId=abc",
+            "Accept: application/json",
+            "X-Forwarded-For: 1.1.1.1",
+        ]
+        .join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?id=1234 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let mut ctx = State {
+            ..Default::default()
+        };
+
+        assert_eq!(
+            "/vicanso/pingap?id=1234",
+            get_hash_value("url", "", &session, &ctx)
+        );
+
+        assert_eq!("1.1.1.1", get_hash_value("ip", "", &session, &ctx));
+        ctx.client_ip = Some("2.2.2.2".to_string());
+        assert_eq!("2.2.2.2", get_hash_value("ip", "", &session, &ctx));
+
+        assert_eq!(
+            "pingap/0.1.1",
+            get_hash_value("header", "User-Agent", &session, &ctx)
+        );
+
+        assert_eq!("abc", get_hash_value("cookie", "deviceId", &session, &ctx));
+        assert_eq!("1234", get_hash_value("query", "id", &session, &ctx));
+        assert_eq!(
+            "/vicanso/pingap",
+            get_hash_value("path", "", &session, &ctx)
+        );
     }
     #[tokio::test]
     async fn test_upstream() {
@@ -557,7 +656,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             true,
-            up.new_http_peer(&State::default(), &session).is_some()
+            up.new_http_peer(&session, &State::default(),).is_some()
         );
         assert_eq!(true, up.as_round_robind().is_some());
     }

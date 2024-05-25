@@ -230,7 +230,7 @@ keys = [
             .unwrap(),
         );
         assert_eq!(
-            "Plugin key_auth invalid, message:Auth key is not allowed empty",
+            "Plugin key_auth invalid, message: Auth key is not allowed empty",
             result.err().unwrap().to_string()
         );
 
@@ -248,7 +248,7 @@ keys = [
             .unwrap(),
         );
         assert_eq!(
-            "Plugin key_auth invalid, message:Key auth plugin should be executed at request or proxy upstream step",
+            "Plugin key_auth invalid, message: Key auth plugin should be executed at request or proxy upstream step",
             result.err().unwrap().to_string()
         );
     }

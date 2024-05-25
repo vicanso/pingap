@@ -127,12 +127,39 @@ impl ProxyPlugin for Stats {
 
 #[cfg(test)]
 mod tests {
-    use super::Stats;
+    use super::{Stats, StatsParams};
     use crate::state::State;
     use crate::{config::PluginConf, plugin::ProxyPlugin};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
+
+    #[test]
+    fn test_stats_params() {
+        let params = StatsParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+        path = "/stats"
+    "###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!("/stats", params.path);
+
+        let result = StatsParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+        step = "upstream_response"
+        path = "/stats"
+    "###,
+            )
+            .unwrap(),
+        );
+
+        assert_eq!("Plugin stats invalid, message: Stats plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
+    }
 
     #[tokio::test]
     async fn test_stats() {

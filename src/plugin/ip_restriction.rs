@@ -198,7 +198,7 @@ type = "deny"
             )
             .unwrap(),
         );
-        assert_eq!("Plugin ip_restriction invalid, message:Ip restriction plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
+        assert_eq!("Plugin ip_restriction invalid, message: Ip restriction plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
     }
 
     #[tokio::test]

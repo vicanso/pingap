@@ -133,6 +133,47 @@ mod tests {
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
 
+    #[test]
+    fn test_request_id_params() {
+        let params = RequestId::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+algorithm = "nanoid"
+size = 10
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!("nanoid", params.algorithm);
+        assert_eq!(10, params.size);
+
+        let params = RequestId::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+algorithm = "nanoid"
+size = 10
+header_name = "uid"
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!("uid", params.header_name.unwrap().to_string());
+
+        let result = RequestId::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+step = "upstream_response"
+algorithm = "nanoid"
+size = 10
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!("Plugin request_id invalid, message: Request id should be executed at request or proxy upstream step", result.err().unwrap().to_string());
+    }
+
     #[tokio::test]
     async fn test_request_id() {
         let id = RequestId::new(
@@ -145,6 +186,8 @@ size = 10
             .unwrap(),
         )
         .unwrap();
+        assert_eq!("request_id", id.category().to_string());
+        assert_eq!("request", id.step().to_string());
 
         let headers = ["X-Request-Id: 123"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");

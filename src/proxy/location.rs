@@ -94,13 +94,13 @@ pub struct Location {
 
 impl fmt::Display for Location {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "name:{}", self.name)?;
-        write!(f, "path:{}", self.path)?;
-        write!(f, "hosts:{:?}", self.hosts)?;
-        write!(f, "reg_rewrite:{:?}", self.reg_rewrite)?;
-        write!(f, "proxy_set_headers:{:?}", self.proxy_set_headers)?;
-        write!(f, "proxy_add_headers:{:?}", self.proxy_add_headers)?;
-        write!(f, "plugins:{:?}", self.plugins)?;
+        write!(f, "name:{} ", self.name)?;
+        write!(f, "path:{} ", self.path)?;
+        write!(f, "hosts:{:?} ", self.hosts)?;
+        write!(f, "reg_rewrite:{:?} ", self.reg_rewrite)?;
+        write!(f, "proxy_set_headers:{:?} ", self.proxy_set_headers)?;
+        write!(f, "proxy_add_headers:{:?} ", self.proxy_add_headers)?;
+        write!(f, "plugins:{:?} ", self.plugins)?;
         write!(f, "upstream:{}", self.upstream.name)
     }
 }
@@ -266,12 +266,16 @@ impl Location {
 #[cfg(test)]
 mod tests {
     use super::{format_headers, new_path_selector, Location, PathSelector};
-    use crate::config::{LocationConf, UpstreamConf};
+    use crate::config::{LocationConf, PluginStep, UpstreamConf};
+    use crate::plugin::initialize_test_plugins;
     use crate::proxy::Upstream;
+    use crate::state::State;
     use http::Method;
-    use pingora::http::RequestHeader;
+    use pingora::http::{RequestHeader, ResponseHeader};
+    use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
+    use tokio_test::io::Builder;
 
     #[test]
     fn test_format_headers() {
@@ -322,6 +326,8 @@ mod tests {
         .unwrap();
         assert_eq!(true, lo.matched("pingap", "/api"));
         assert_eq!(true, lo.matched("", ""));
+
+        assert_eq!("name: path: hosts:[] reg_rewrite:None proxy_set_headers:None proxy_add_headers:None plugins:None upstream:charts", lo.to_string());
 
         // host
         let lo = Location::new(
@@ -447,6 +453,7 @@ mod tests {
                 upstream: Some(upstream_name.to_string()),
                 rewrite: Some("^/users/(.*)$ /$1".to_string()),
                 proxy_set_headers: Some(vec!["Cache-Control: no-store".to_string()]),
+                proxy_add_headers: Some(vec!["X-User: pingap".to_string()]),
                 ..Default::default()
             },
             vec![upstream.clone()],
@@ -456,8 +463,111 @@ mod tests {
         let mut req_header = RequestHeader::build_no_case(Method::GET, b"", None).unwrap();
         lo.set_append_proxy_headers(&mut req_header);
         assert_eq!(
-            r###"RequestHeader { base: Parts { method: GET, uri: , version: HTTP/1.1, headers: {"cache-control": "no-store"} }, header_name_map: None, raw_path_fallback: [] }"###,
+            r###"RequestHeader { base: Parts { method: GET, uri: , version: HTTP/1.1, headers: {"cache-control": "no-store", "x-user": "pingap"} }, header_name_map: None, raw_path_fallback: [] }"###,
             format!("{req_header:?}")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_exec_proxy_plugins() {
+        initialize_test_plugins();
+        let upstream_name = "charts";
+        let upstream = Arc::new(
+            Upstream::new(
+                upstream_name,
+                &UpstreamConf {
+                    addrs: vec!["127.0.0.1".to_string()],
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        );
+
+        let lo = Location::new(
+            "",
+            &LocationConf {
+                upstream: Some(upstream_name.to_string()),
+                rewrite: Some("^/users/(.*)$ /$1".to_string()),
+                plugins: Some(vec!["test:mock".to_string()]),
+                ..Default::default()
+            },
+            vec![upstream.clone()],
+        )
+        .unwrap();
+
+        let headers = [""].join("\r\n");
+        let input_header = format!("GET /mock HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let result = lo
+            .exec_proxy_plugins(&mut session, &mut State::default(), PluginStep::Request)
+            .await
+            .unwrap();
+        assert_eq!(true, result);
+
+        let headers = [""].join("\r\n");
+        let input_header = format!("GET /stats HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let result = lo
+            .exec_proxy_plugins(&mut session, &mut State::default(), PluginStep::Request)
+            .await
+            .unwrap();
+        assert_eq!(false, result);
+    }
+
+    #[tokio::test]
+    async fn test_exec_response_plugins() {
+        initialize_test_plugins();
+        let upstream_name = "charts";
+        let upstream = Arc::new(
+            Upstream::new(
+                upstream_name,
+                &UpstreamConf {
+                    addrs: vec!["127.0.0.1".to_string()],
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        );
+
+        let lo = Location::new(
+            "",
+            &LocationConf {
+                upstream: Some(upstream_name.to_string()),
+                rewrite: Some("^/users/(.*)$ /$1".to_string()),
+                plugins: Some(vec!["test:add_headers".to_string()]),
+                ..Default::default()
+            },
+            vec![upstream.clone()],
+        )
+        .unwrap();
+
+        let headers = [""].join("\r\n");
+        let input_header = format!("GET /mock HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let mut upstream_response = ResponseHeader::build(200, Some(4)).unwrap();
+        upstream_response
+            .append_header("Content-Type", "application/json")
+            .unwrap();
+        upstream_response.append_header("X-Server", "abc").unwrap();
+
+        lo.exec_response_plugins(
+            &mut session,
+            &mut State::default(),
+            &mut upstream_response,
+            PluginStep::UpstreamResponse,
+        );
+
+        assert_eq!(
+            r###"{"x-service": "1", "x-service": "2", "x-server": "abc", "x-response-id": "123"}"###,
+            format!("{:?}", upstream_response.headers)
         );
     }
 }

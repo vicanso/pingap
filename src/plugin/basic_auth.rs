@@ -194,7 +194,7 @@ authorizations = [
             .unwrap(),
         );
         assert_eq!(
-            "Plugin basic_auth invalid, message:Basic auth plugin should be executed at request or proxy upstream step",
+            "Plugin basic_auth invalid, message: Basic auth plugin should be executed at request or proxy upstream step",
             result.err().unwrap().to_string()
         );
     }

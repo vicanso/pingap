@@ -246,7 +246,7 @@ max = 10
             )
             .unwrap(),
         );
-        assert_eq!("Plugin limit invalid, message:Limit plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
+        assert_eq!("Plugin limit invalid, message: Limit plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
     }
 
     #[tokio::test]

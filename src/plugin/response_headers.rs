@@ -133,13 +133,68 @@ impl ResponsePlugin for ResponseHeaders {
 
 #[cfg(test)]
 mod tests {
-    use super::ResponseHeaders;
+    use super::{ResponseHeaders, ResponseHeadersParams};
     use crate::state::State;
     use crate::{config::PluginConf, plugin::ResponsePlugin};
     use pingora::http::ResponseHeader;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
+
+    #[test]
+    fn test_response_headers_params() {
+        let params = ResponseHeadersParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+step = "upstream_response"
+add_headers = [
+"X-Service:1",
+"X-Service:2",
+]
+set_headers = [
+"X-Response-Id:123"
+]
+remove_headers = [
+"Content-Type"
+]
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!("upstream_response", params.plugin_step.to_string());
+        assert_eq!(
+            r#"[("x-service", "1"), ("x-service", "2")]"#,
+            format!("{:?}", params.add_headers)
+        );
+        assert_eq!(
+            r#"[("x-response-id", "123")]"#,
+            format!("{:?}", params.set_headers)
+        );
+        assert_eq!(
+            r#"["content-type"]"#,
+            format!("{:?}", params.remove_headers)
+        );
+
+        let result = ResponseHeadersParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+add_headers = [
+"X-Service:1",
+"X-Service:2",
+]
+set_headers = [
+"X-Response-Id:123"
+]
+remove_headers = [
+"Content-Type"
+]
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!("Plugin response_headers invalid, message: Response headers plugin should be executed at upstream response step", result.err().unwrap().to_string());
+    }
 
     #[tokio::test]
     async fn test_response_headers() {
@@ -162,6 +217,10 @@ remove_headers = [
             .unwrap(),
         )
         .unwrap();
+
+        assert_eq!("response_headers", response_headers.category().to_string());
+        assert_eq!("upstream_response", response_headers.step().to_string());
+
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();

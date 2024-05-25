@@ -163,7 +163,7 @@ zstd_level = 6
             )
             .unwrap(),
         );
-        assert_eq!("Plugin compression invalid, message:Compression plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
+        assert_eq!("Plugin compression invalid, message: Compression plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
     }
 
     #[tokio::test]

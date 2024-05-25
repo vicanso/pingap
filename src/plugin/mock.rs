@@ -103,11 +103,49 @@ mod tests {
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
 
+    #[test]
+    fn test_mock_params() {
+        let params = MockResponse::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+path = "/"
+status = 500
+headers = [
+    "Content-Type: application/json"
+]
+data = "{\"message\":\"Mock Service Unavailable\"}"
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!("/", params.path);
+        assert_eq!("request", params.step().to_string());
+        assert_eq!("mock", params.category().to_string());
+
+        let result = MockResponse::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+step = "upstream_response"
+path = "/"
+status = 500
+headers = [
+    "Content-Type: application/json"
+]
+data = "{\"message\":\"Mock Service Unavailable\"}"
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!("Plugin mock invalid, message: Mock plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string())
+    }
+
     #[tokio::test]
     async fn test_mock_response() {
         let params = toml::from_str::<PluginConf>(
             r###"
-path = ""
+path = "/vicanso/pingap"
 status = 500
 headers = [
     "Content-Type: application/json"
@@ -142,5 +180,17 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
             Bytes::from_static(b"{\"message\":\"Mock Service Unavailable\"}"),
             resp.body
         );
+
+        let headers = ["Accept-Encoding: gzip"].join("\r\n");
+        let input_header = format!("GET /vicanso?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let result = mock
+            .handle(&mut session, &mut State::default())
+            .await
+            .unwrap();
+        assert_eq!(true, result.is_none());
     }
 }

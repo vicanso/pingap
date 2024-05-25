@@ -73,11 +73,11 @@ pub struct ServerConf {
 
 impl fmt::Display for ServerConf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "name:{}", self.name)?;
-        write!(f, "addr:{}", self.addr)?;
+        write!(f, "name:{} ", self.name)?;
+        write!(f, "addr:{} ", self.addr)?;
         write!(
             f,
-            "upstreams:{:?}",
+            "upstreams:{:?} ",
             self.upstreams
                 .iter()
                 .map(|(name, _)| name)
@@ -85,7 +85,7 @@ impl fmt::Display for ServerConf {
         )?;
         write!(
             f,
-            "locations:{:?}",
+            "locations:{:?} ",
             self.locations
                 .iter()
                 .map(|(name, _)| name)
@@ -93,7 +93,7 @@ impl fmt::Display for ServerConf {
         )?;
         write!(
             f,
-            "tls:{}",
+            "tls:{} ",
             self.tls_cert.is_some() || self.lets_encrypt.is_some()
         )?;
         write!(f, "http2:{}", self.enbaled_h2)
@@ -566,7 +566,7 @@ impl ProxyHttp for Server {
         ctx: &mut State,
     ) -> pingora::Result<Box<HttpPeer>> {
         let lo = &self.locations[ctx.location_index.unwrap_or_default()];
-        let peer = lo.upstream.new_http_peer(ctx, session).ok_or_else(|| {
+        let peer = lo.upstream.new_http_peer(session, ctx).ok_or_else(|| {
             util::new_internal_error(
                 503,
                 format!("No available upstream({}:{})", lo.name, lo.upstream.name),

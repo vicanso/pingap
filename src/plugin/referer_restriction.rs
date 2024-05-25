@@ -162,6 +162,21 @@ type = "deny"
         assert_eq!("request", params.plugin_step.to_string());
         assert_eq!(".bing.cn", params.prefix_referer_list.join(","));
         assert_eq!("github.com", params.referer_list.join(","));
+
+        let result = RefererRestrictionParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+step = "upstream_response"
+referer_list = [
+    "github.com",
+    "*.bing.cn",
+]
+type = "deny"
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!("Plugin referer_restriction invalid, message: Referer restriction plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
     }
 
     #[tokio::test]
@@ -179,6 +194,9 @@ type = "deny"
             .unwrap(),
         )
         .unwrap();
+        assert_eq!("referer_restriction", deny.category().to_string());
+        assert_eq!("request", deny.step().to_string());
+
         let headers = ["Referer: google.com"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();

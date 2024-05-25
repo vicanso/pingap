@@ -432,19 +432,210 @@ impl Parser {
 
 #[cfg(test)]
 mod tests {
-    use super::Parser;
+    use super::{format_extra_tag, Parser, Tag, TagCategory};
     use crate::state::State;
     use http::Method;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
 
+    #[test]
+    fn test_format_extra_tag() {
+        assert_eq!(true, format_extra_tag(":").is_none());
+
+        let cookie = format_extra_tag("{~deviceId}").unwrap();
+        assert_eq!(TagCategory::Cookie, cookie.category);
+        assert_eq!("deviceId", cookie.data.unwrap());
+
+        let req_header = format_extra_tag("{>X-User}").unwrap();
+        assert_eq!(TagCategory::RequestHeader, req_header.category);
+        assert_eq!("X-User", req_header.data.unwrap());
+
+        let resp_header = format_extra_tag("{<X-Response-Id}").unwrap();
+        assert_eq!(TagCategory::ResponseHeader, resp_header.category);
+        assert_eq!("X-Response-Id", resp_header.data.unwrap());
+
+        let hostname = format_extra_tag("{$HOSTNAME}").unwrap();
+        assert_eq!(TagCategory::Fill, hostname.category);
+        assert_eq!(false, hostname.data.unwrap().is_empty());
+
+        let env = format_extra_tag("{$HOME}").unwrap();
+        assert_eq!(TagCategory::Fill, env.category);
+        assert_eq!(false, env.data.unwrap().is_empty());
+    }
+    #[test]
+    fn test_parse_format() {
+        let tests = [
+            (
+                "{host}",
+                Tag {
+                    category: TagCategory::Host,
+                    data: None,
+                },
+            ),
+            (
+                "{method}",
+                Tag {
+                    category: TagCategory::Method,
+                    data: None,
+                },
+            ),
+            (
+                "{path}",
+                Tag {
+                    category: TagCategory::Path,
+                    data: None,
+                },
+            ),
+            (
+                "{proto}",
+                Tag {
+                    category: TagCategory::Proto,
+                    data: None,
+                },
+            ),
+            (
+                "{query}",
+                Tag {
+                    category: TagCategory::Query,
+                    data: None,
+                },
+            ),
+            (
+                "{remote}",
+                Tag {
+                    category: TagCategory::Remote,
+                    data: None,
+                },
+            ),
+            (
+                "{client_ip}",
+                Tag {
+                    category: TagCategory::ClientIp,
+                    data: None,
+                },
+            ),
+            (
+                "{scheme}",
+                Tag {
+                    category: TagCategory::Scheme,
+                    data: None,
+                },
+            ),
+            (
+                "{uri}",
+                Tag {
+                    category: TagCategory::Uri,
+                    data: None,
+                },
+            ),
+            (
+                "{referer}",
+                Tag {
+                    category: TagCategory::Referer,
+                    data: None,
+                },
+            ),
+            (
+                "{user_agent}",
+                Tag {
+                    category: TagCategory::UserAgent,
+                    data: None,
+                },
+            ),
+            (
+                "{when}",
+                Tag {
+                    category: TagCategory::When,
+                    data: None,
+                },
+            ),
+            (
+                "{when_utc_iso}",
+                Tag {
+                    category: TagCategory::WhenUtcIso,
+                    data: None,
+                },
+            ),
+            (
+                "{when_unix}",
+                Tag {
+                    category: TagCategory::WhenUnix,
+                    data: None,
+                },
+            ),
+            (
+                "{size}",
+                Tag {
+                    category: TagCategory::Size,
+                    data: None,
+                },
+            ),
+            (
+                "{size_human}",
+                Tag {
+                    category: TagCategory::SizeHuman,
+                    data: None,
+                },
+            ),
+            (
+                "{status}",
+                Tag {
+                    category: TagCategory::Status,
+                    data: None,
+                },
+            ),
+            (
+                "{latency}",
+                Tag {
+                    category: TagCategory::Latency,
+                    data: None,
+                },
+            ),
+            (
+                "{latency_human}",
+                Tag {
+                    category: TagCategory::LatencyHuman,
+                    data: None,
+                },
+            ),
+            (
+                "{payload_size}",
+                Tag {
+                    category: TagCategory::PayloadSize,
+                    data: None,
+                },
+            ),
+            (
+                "{payload_size_human}",
+                Tag {
+                    category: TagCategory::PayloadSizeHuman,
+                    data: None,
+                },
+            ),
+            (
+                "{request_id}",
+                Tag {
+                    category: TagCategory::RequestId,
+                    data: None,
+                },
+            ),
+        ];
+
+        for (value, tag) in tests {
+            let p = Parser::from(value);
+            assert_eq!(tag.category, p.tags[0].category);
+        }
+    }
+
     #[tokio::test]
     async fn test_logger() {
         let p: Parser = "{host} {method} {path} {proto} {query} {remote} {client_ip} \
 {scheme} {uri} {referer} {user_agent} {size} \
 {size_human} {status} {payload_size} {payload_size_human} \
-{~deviceId} {>accept} {:reused}"
+{~deviceId} {>accept} {:reused} {:upstream_address} \
+{:processing} {:upstream_connect_time} {:location} \
+{:established} {:tls_version} {request_id}"
             .into();
         let headers = [
             "Host: github.com",
@@ -464,12 +655,18 @@ mod tests {
         let ctx = State {
             response_body_size: 1024,
             reused: true,
+            upstream_address: "192.186.1.1:6188".to_string(),
+            processing: 1,
+            upstream_connect_time: Some(100),
+            location: "test".to_string(),
+            established: 1651852800,
+            tls_version: Some("1.2".to_string()),
+            request_id: Some("nanoid".to_string()),
             ..Default::default()
         };
         let log = p.format(&session, &ctx);
         assert_eq!(
-            "github.com GET /vicanso/pingap HTTP/1.1 size=1   http /vicanso/pingap?size=1 \
-https://github.com/ pingap/0.1.1 1024 1.0KB 0 0 0B abc application/json true",
+            "github.com GET /vicanso/pingap HTTP/1.1 size=1   https /vicanso/pingap?size=1 https://github.com/ pingap/0.1.1 1024 1.0KB 0 0 0B abc application/json true 192.186.1.1:6188 1 100ms test 1651852800 1.2 nanoid",
             log
         );
     }

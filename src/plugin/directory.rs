@@ -433,7 +433,7 @@ download = true
             )
             .unwrap(),
         );
-        assert_eq!("Plugin directory invalid, message:Directory serve plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
+        assert_eq!("Plugin directory invalid, message: Directory serve plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
     }
 
     #[tokio::test]
