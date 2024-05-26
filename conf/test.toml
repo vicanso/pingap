@@ -1,0 +1,20 @@
+[basic]
+threads = 1
+work_stealing = true
+grace_period = "3m"
+
+[upstreams.charts]
+addrs = ["127.0.0.1:5000"]
+
+[locations.lo]
+upstream = "charts"
+path = "/"
+plugins = ["stats"]
+
+[servers.test]
+addr = "0.0.0.0:6188"
+locations = ["lo"]
+
+[plugins.stats]
+category = "stats"
+path = "/stats"

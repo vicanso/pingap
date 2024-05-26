@@ -335,7 +335,7 @@ ttl = "1h"
             .unwrap();
         let binding = resp.headers.unwrap();
         let cookie = binding[1].1.to_str().unwrap();
-        let c = Cookie::from_str(&cookie).unwrap();
+        let c = Cookie::from_str(cookie).unwrap();
         assert_eq!("x-csrf-token", c.name());
         assert_eq!(66, c.value().len());
 

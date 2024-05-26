@@ -419,8 +419,10 @@ mod tests {
     use super::{AdminAsset, AdminServe, AdminServeParams, EmbeddedStaticFile};
     use crate::{config::set_config_path, config::PluginConf, http_extra::HttpResponse};
     use pingora::http::RequestHeader;
+    use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use std::time::Duration;
+    use tokio_test::io::Builder;
 
     #[test]
     fn test_admin_params() {
@@ -529,10 +531,108 @@ authorizations = [
             .unwrap();
         assert_eq!(true, serve.auth_validate(&req_header));
 
-        set_config_path("./conf/pingap.toml");
+        set_config_path("./conf/test.toml");
+
+        // plguin
+        let body = br#"{
+            "category": "stats",
+            "path": "/stats"
+        }"#;
+        let headers = [format!("Content-Length: {}", body.len())].join("\r\n");
+        let input_header = format!("POST / HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new()
+            .read(input_header.as_bytes())
+            .read(body)
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let resp = serve
+            .update_config(&mut session, "plugin", "stats")
+            .await
+            .unwrap();
+        assert_eq!(204, resp.status.as_u16());
+
+        // upstream
+        let body = br#"{
+            "addrs": ["127.0.0.1:5000"]
+        }"#;
+        let headers = [format!("Content-Length: {}", body.len())].join("\r\n");
+        let input_header = format!("POST / HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new()
+            .read(input_header.as_bytes())
+            .read(body)
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let resp = serve
+            .update_config(&mut session, "upstream", "charts")
+            .await
+            .unwrap();
+        assert_eq!(204, resp.status.as_u16());
+
+        // location
+        let body = br#"{
+            "upstream": "charts",
+            "path": "/",
+            "plugins": ["stats"]
+        }"#;
+        let headers = [format!("Content-Length: {}", body.len())].join("\r\n");
+        let input_header = format!("POST / HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new()
+            .read(input_header.as_bytes())
+            .read(body)
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let resp = serve
+            .update_config(&mut session, "location", "lo")
+            .await
+            .unwrap();
+        assert_eq!(204, resp.status.as_u16());
+
+        // server
+        let body = br#"{
+            "addr": "0.0.0.0:6188",
+            "locations": ["lo"]
+        }"#;
+
+        let headers = [format!("Content-Length: {}", body.len())].join("\r\n");
+        let input_header = format!("POST / HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new()
+            .read(input_header.as_bytes())
+            .read(body)
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let resp = serve
+            .update_config(&mut session, "server", "test")
+            .await
+            .unwrap();
+        assert_eq!(204, resp.status.as_u16());
+
+        // basic
+        let body = br#"{
+            "threads": 1,
+            "work_stealing": true,
+            "grace_period": "3m"
+        }"#;
+
+        let headers = [format!("Content-Length: {}", body.len())].join("\r\n");
+        let input_header = format!("POST / HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new()
+            .read(input_header.as_bytes())
+            .read(body)
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let resp = serve
+            .update_config(&mut session, "basic", "")
+            .await
+            .unwrap();
+        assert_eq!(204, resp.status.as_u16());
 
         let conf = serve.load_config().await.unwrap();
-        assert_eq!("71D5A190", conf.hash().unwrap());
+        assert_eq!("E956C5CA", conf.hash().unwrap());
 
         let resp = serve.get_config("upstream").await.unwrap();
         assert_eq!(200, resp.status.as_u16());
@@ -548,5 +648,32 @@ authorizations = [
 
         let resp = serve.get_config("basic").await.unwrap();
         assert_eq!(200, resp.status.as_u16());
+
+        let resp = serve.get_config("toml").await.unwrap();
+
+        assert_eq!(
+            r#"[basic]
+threads = 1
+work_stealing = true
+grace_period = "3m"
+
+[upstreams.charts]
+addrs = ["127.0.0.1:5000"]
+
+[locations.lo]
+upstream = "charts"
+path = "/"
+plugins = ["stats"]
+
+[servers.test]
+addr = "0.0.0.0:6188"
+locations = ["lo"]
+
+[plugins.stats]
+category = "stats"
+path = "/stats"
+"#,
+            std::string::String::from_utf8_lossy(resp.body.as_ref())
+        );
     }
 }

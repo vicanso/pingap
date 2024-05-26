@@ -43,6 +43,10 @@ jobs:
         run: make lint
       - name: Run cargo test
         run: make test
+      - name: Run cargo cov
+        run: |
+          cargo install cargo-llvm-cov
+          cargo llvm-cov
       - name: Run cargo release
         run: |
           make release
