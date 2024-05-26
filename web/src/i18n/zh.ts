@@ -185,4 +185,8 @@ export default {
   "form.mockHeaderName": "Mock响应头名称",
   "form.mockHeaderValue": "Mock响应头值",
   "form.mockData": "Mock响应的数据",
+  "form.csrfTokenPath": "获取csrf令牌的路径",
+  "form.csrfName": "csrf令牌的名称",
+  "form.csrfKey": "生成csrf令牌的密钥",
+  "form.csrfTtl": "csrf令牌的有效期",
 };

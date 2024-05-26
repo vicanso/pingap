@@ -200,11 +200,11 @@ impl ProxyPlugin for Csrf {
             return Ok(Some(self.unauthorized_resp.clone()));
         }
 
-        if !validate_token(
-            &self.key,
-            self.ttl,
-            &std::string::String::from_utf8_lossy(value),
-        ) {
+        let value = std::string::String::from_utf8_lossy(value);
+
+        if value != util::get_cookie_value(session.req_header(), &self.name).unwrap_or_default()
+            || !validate_token(&self.key, self.ttl, &value)
+        {
             return Ok(Some(self.unauthorized_resp.clone()));
         }
 
@@ -214,20 +214,95 @@ impl ProxyPlugin for Csrf {
 
 #[cfg(test)]
 mod tests {
-    use super::{generate_token, validate_token, Csrf};
+    use super::{generate_token, validate_token, Csrf, CsrfParams};
     use crate::config::PluginConf;
-
     use crate::plugin::ProxyPlugin;
     use crate::state::State;
+    use cookie::Cookie;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
+    use std::str::FromStr;
+    use std::time::Duration;
     use tokio_test::io::Builder;
+
+    #[test]
+    fn test_csrf_params() {
+        let params = CsrfParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+token_path = "/csrf-token"
+key = "WjrXUG47wu"
+ttl = "1h"
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!("/csrf-token", params.token_path);
+        assert_eq!("WjrXUG47wu", params.key);
+        assert_eq!(Duration::from_secs(3600), params.ttl.unwrap_or_default());
+
+        let result = CsrfParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+token_path = "/csrf-token"
+key = "WjrXUG47wu"
+ttl = "1a"
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            r#"Plugin csrf invalid, message: unknown time unit "a", supported units: ns, us, ms, sec, min, hours, days, weeks, months, years (and few variations)"#,
+            result.err().unwrap().to_string()
+        );
+
+        let result = CsrfParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+key = "WjrXUG47wu"
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            "Plugin csrf invalid, message: Token path is not allowed empty",
+            result.err().unwrap().to_string()
+        );
+
+        let result = CsrfParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+token_path = "/csrf-token"
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            "Plugin csrf invalid, message: Key is not allowed empty",
+            result.err().unwrap().to_string()
+        );
+
+        let result = CsrfParams::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+step = "upstream_response"
+token_path = "/csrf-token"
+key = "WjrXUG47wu"
+ttl = "1h"
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!("Plugin csrf invalid, message: Csrf plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
+    }
 
     #[test]
     fn test_generate_token() {
         let key = "123";
         let value = generate_token(key);
         assert_eq!(true, validate_token(key, 10, &value));
+        assert_eq!(false, validate_token(key, 10, &format!("{value}:1")));
     }
 
     #[tokio::test]
@@ -244,6 +319,9 @@ ttl = "1h"
         )
         .unwrap();
 
+        assert_eq!("request", csrf.step().to_string());
+        assert_eq!("csrf", csrf.category().to_string());
+
         let headers = [""].join("\r\n");
         let input_header = format!("GET /csrf-token HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
@@ -257,7 +335,38 @@ ttl = "1h"
             .unwrap();
         let binding = resp.headers.unwrap();
         let cookie = binding[1].1.to_str().unwrap();
-        assert_eq!(true, cookie.starts_with("x-csrf-token="));
-        assert_eq!(true, cookie.ends_with("Path=/; Max-Age=3600"));
+        let c = Cookie::from_str(&cookie).unwrap();
+        assert_eq!("x-csrf-token", c.name());
+        assert_eq!(66, c.value().len());
+
+        let headers = [format!("x-csrf-token:{}", "123")].join("\r\n");
+        let input_header = format!("POST / HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let resp = csrf
+            .handle(&mut session, &mut State::default())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(401, resp.status.as_u16());
+
+        let headers = [
+            format!("x-csrf-token: {}", c.value()),
+            format!("Cookie: x-csrf-token={}", c.value()),
+        ]
+        .join("\r\n");
+        let input_header = format!("POST / HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let result = csrf
+            .handle(&mut session, &mut State::default())
+            .await
+            .unwrap();
+
+        assert_eq!(true, result.is_none());
     }
 }

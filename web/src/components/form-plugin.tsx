@@ -30,6 +30,7 @@ export enum PluginCategory {
   PING = "ping",
   RESPONSE_HEADERS = "response_headers",
   REFERER_RESTRICTION = "referer_restriction",
+  CSRF = "csrf",
 }
 
 export function getPluginSteps(category: string) {
@@ -67,6 +68,7 @@ export function getPluginSteps(category: string) {
   pluginSupportSteps[PluginCategory.PING] = [0];
   pluginSupportSteps[PluginCategory.RESPONSE_HEADERS] = [2];
   pluginSupportSteps[PluginCategory.REFERER_RESTRICTION] = [0, 1];
+  pluginSupportSteps[PluginCategory.CSRF] = [0, 1];
 
   const steps = pluginSupportSteps[category];
   if (steps) {
@@ -519,6 +521,44 @@ export function FormPluginField({
           label: t("form.mockData"),
           id: "mock-data",
           span: 12,
+        },
+      );
+      break;
+    }
+    case PluginCategory.CSRF: {
+      // token_path: String,
+      // name: String,
+      // key: String,
+      // ttl: Option<Duration>,
+
+      fields.push(
+        {
+          category: "text",
+          key: "token_path",
+          label: t("form.csrfTokenPath"),
+          id: "csrf-token-path",
+          span: 6,
+        },
+        {
+          category: "text",
+          key: "name",
+          label: t("form.csrfName"),
+          id: "csrf-name",
+          span: 6,
+        },
+        {
+          category: "text",
+          key: "key",
+          label: t("form.csrfKey"),
+          id: "csrf-key",
+          span: 6,
+        },
+        {
+          category: "text",
+          key: "ttl",
+          label: t("form.csrfTtl"),
+          id: "csrf-ttl",
+          span: 6,
         },
       );
       break;

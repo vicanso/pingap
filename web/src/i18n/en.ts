@@ -184,4 +184,8 @@ export default {
   "form.mockHeaderName": "The mock header name",
   "form.mockHeaderValue": "The mock header value",
   "form.mockData": "Response data",
+  "form.csrfTokenPath": "The path for get csrf token",
+  "form.csrfName": "The name of csrf token",
+  "form.csrfKey": "The secret key for csrf",
+  "form.csrfTtl": "The ttl of csrf token",
 };

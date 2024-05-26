@@ -51,6 +51,7 @@ export default function ProxyPluginInfo() {
     PluginCategory.LIMIT,
     PluginCategory.IP_RESTRICTION,
     PluginCategory.REFERER_RESTRICTION,
+    PluginCategory.CSRF,
 
     // response
     PluginCategory.RESPONSE_HEADERS,
