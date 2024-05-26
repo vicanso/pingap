@@ -21,3 +21,4 @@ node_moudles
 dist
 dhat*.json
 default_*
+report.*

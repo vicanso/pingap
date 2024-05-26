@@ -149,9 +149,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_file_storage() {
+        let result = FileStorage::new("");
+        assert_eq!(
+            "Invalid error Config path is empty",
+            result.err().unwrap().to_string()
+        );
+
         let path = format!("/tmp/{}", nanoid!(16));
         tokio::fs::create_dir(&path).await.unwrap();
         let storage = FileStorage::new(&path).unwrap();
+        let result = storage.load_config(false).await;
+        assert_eq!(true, result.is_ok());
+
         let toml_data = include_bytes!("../../conf/pingap.toml");
         let conf = PingapConf::try_from(toml_data.to_vec().as_slice()).unwrap();
 

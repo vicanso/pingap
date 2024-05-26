@@ -63,7 +63,7 @@ Requests/sec:  49862.65
 Transfer/sec:      7.13MB
 ```
 
-### Static serve 8kb html
+### Pingap static serve 8kb html
 
 ```bash
 wrk 'http://127.0.0.1:6188/downloads/index.html' --latency
