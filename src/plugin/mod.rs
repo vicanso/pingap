@@ -27,6 +27,7 @@ mod admin;
 mod basic_auth;
 mod cache;
 mod compression;
+mod csrf;
 mod directory;
 mod ip_restriction;
 mod key_auth;
@@ -214,6 +215,10 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
             PluginCategory::RefererRestriction => {
                 let r = referer_restriction::RefererRestriction::new(conf)?;
                 proxy_plugins.insert(name, Box::new(r));
+            }
+            PluginCategory::Csrf => {
+                let c = csrf::Csrf::new(conf)?;
+                proxy_plugins.insert(name, Box::new(c));
             }
         };
     }

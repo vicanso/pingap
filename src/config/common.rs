@@ -53,6 +53,7 @@ pub enum PluginCategory {
     Ping,
     ResponseHeaders,
     RefererRestriction,
+    Csrf,
 }
 
 impl Serialize for PluginCategory {

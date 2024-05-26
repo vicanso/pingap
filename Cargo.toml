@@ -24,6 +24,7 @@ chrono = { version = "0.4.38", default-features = false, features = [
     "clock",
 ] }
 clap = { version = "4.5.4", features = ["derive"] }
+cookie = "0.18.1"
 crc32fast = "1.4.2"
 crossbeam-channel = "0.5.13"
 dhat = { version = "0.3.3", optional = true }
@@ -65,6 +66,7 @@ reqwest = { version = "0.11.27", features = ["json"] }
 rust-embed = { version = "8.4.0", features = ["mime-guess", "compression"] }
 serde = "1.0.202"
 serde_json = "1.0.116"
+sha2 = "0.10.8"
 snafu = "0.8.2"
 strum = { version = "0.26.2", features = ["derive"] }
 substring = "1.4.5"
