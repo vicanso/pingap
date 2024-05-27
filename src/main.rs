@@ -368,15 +368,15 @@ fn run() -> Result<(), Box<dyn Error>> {
         for (name, plugin) in prox_plugins {
             info!(
                 "Proxy plugin {name}, category:{}, step:{}",
+                plugin.category(),
                 plugin.step(),
-                plugin.category()
             );
         }
         for (name, plugin) in response_plugins {
             info!(
                 "Response plugin {name}, category:{}, step:{}",
+                plugin.category(),
                 plugin.step(),
-                plugin.category()
             );
         }
     }

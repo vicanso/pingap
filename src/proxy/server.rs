@@ -456,7 +456,7 @@ impl ProxyHttp for Server {
             .locations
             .iter()
             .enumerate()
-            .find(|(_, item)| item.matched(&host, path));
+            .find(|(_, item)| item.matched(host, path));
 
         if location_result.is_none() {
             HttpResponse::unknown_error(Bytes::from(format!(

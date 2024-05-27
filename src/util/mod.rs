@@ -203,11 +203,19 @@ pub fn local_ip_list() -> Vec<String> {
     ip_list
 }
 
-pub fn get_host(header: &RequestHeader) -> Option<String> {
-    if let Some(host) = header.headers.get("Host") {
-        return Some(host.to_str().unwrap_or_default().to_string());
+/// Get request host in this order of precedence:
+/// host name from the request line,
+/// or host name from the "Host" request header field
+pub fn get_host(header: &RequestHeader) -> Option<&str> {
+    if let Some(host) = header.uri.host() {
+        return Some(host);
     }
-    header.uri.host().map(|host| host.to_string())
+    if let Some(host) = header.headers.get("Host") {
+        if let Ok(value) = host.to_str().map(|host| host.split(':').next()) {
+            return value;
+        }
+    }
+    None
 }
 
 #[cfg(test)]
