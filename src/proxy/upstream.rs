@@ -26,11 +26,12 @@ use pingora::protocols::l4::ext::TcpKeepalive;
 use pingora::protocols::l4::socket::SocketAddr;
 use pingora::protocols::ALPN;
 use pingora::proxy::Session;
-use pingora::upstreams::peer::{HttpPeer, PeerOptions};
+use pingora::upstreams::peer::{HttpPeer, PeerOptions, Tracer, Tracing};
 use snafu::{ResultExt, Snafu};
 use std::collections::BTreeSet;
 use std::fmt;
 use std::net::ToSocketAddrs;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
@@ -58,6 +59,31 @@ enum SelectionLb {
     Empty,
 }
 
+#[derive(Clone, Debug)]
+struct UpstreamPeerTracer {
+    connected: Arc<AtomicU32>,
+}
+
+impl UpstreamPeerTracer {
+    fn new() -> Self {
+        Self {
+            connected: Arc::new(AtomicU32::new(0)),
+        }
+    }
+}
+
+impl Tracing for UpstreamPeerTracer {
+    fn on_connected(&self) {
+        self.connected.fetch_add(1, Ordering::Relaxed);
+    }
+    fn on_disconnected(&self) {
+        self.connected.fetch_sub(1, Ordering::Relaxed);
+    }
+    fn boxed_clone(&self) -> Box<dyn Tracing> {
+        Box::new(self.clone())
+    }
+}
+
 pub struct Upstream {
     pub name: String,
     hash: String,
@@ -74,6 +100,8 @@ pub struct Upstream {
     alpn: ALPN,
     tcp_keepalive: Option<TcpKeepalive>,
     tcp_recv_buf: Option<usize>,
+    peer_tracer: Option<UpstreamPeerTracer>,
+    tracer: Option<Tracer>,
 }
 
 impl fmt::Display for Upstream {
@@ -114,6 +142,8 @@ pub fn new_empty_upstream() -> Upstream {
         alpn: ALPN::H1,
         tcp_recv_buf: None,
         tcp_keepalive: None,
+        tracer: None,
+        peer_tracer: None,
     }
 }
 
@@ -412,7 +442,15 @@ impl Upstream {
         } else {
             None
         };
-        // ALPN::H1
+
+        let peer_tracer = if conf.enable_tracer.unwrap_or_default() {
+            Some(UpstreamPeerTracer::new())
+        } else {
+            None
+        };
+        let tracer = peer_tracer
+            .as_ref()
+            .map(|peer_tracer| Tracer(Box::new(peer_tracer.clone())));
         let up = Self {
             name: name.to_string(),
             tls,
@@ -429,6 +467,8 @@ impl Upstream {
             verify_cert: conf.verify_cert,
             tcp_recv_buf: conf.tcp_recv_buf,
             tcp_keepalive,
+            peer_tracer,
+            tracer,
         };
         debug!("Upstream {up}");
         Ok(up)
@@ -456,8 +496,16 @@ impl Upstream {
             }
             p.options.tcp_recv_buf = self.tcp_recv_buf;
             p.options.tcp_keepalive.clone_from(&self.tcp_keepalive);
+            p.options.tracer.clone_from(&self.tracer);
             p
         })
+    }
+
+    /// Get the connected count of upstream
+    pub fn connected(&self) -> Option<u32> {
+        self.peer_tracer
+            .as_ref()
+            .map(|tracer| tracer.connected.load(Ordering::Relaxed))
     }
 
     #[inline]

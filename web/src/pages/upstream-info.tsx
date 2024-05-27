@@ -170,10 +170,34 @@ export default function UpstreamInfo() {
       ],
     },
     {
+      id: "enable_tracer",
+      label: t("upstream.enableTracer"),
+      defaultValue: upstream.enable_tracer,
+      span: 4,
+      category: FormItemCategory.CHECKBOX,
+      options: [
+        {
+          label: "Yes",
+          option: 1,
+          value: true,
+        },
+        {
+          label: "No",
+          option: 0,
+          value: false,
+        },
+        {
+          label: "None",
+          option: -1,
+          value: null,
+        },
+      ],
+    },
+    {
       id: "tcp_recv_buf",
       label: t("upstream.tcpRecvBuf"),
       defaultValue: upstream.tcp_recv_buf,
-      span: 8,
+      span: 4,
       category: FormItemCategory.NUMBER,
     },
     {

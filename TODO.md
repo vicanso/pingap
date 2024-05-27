@@ -5,8 +5,10 @@
 - [ ] support validate config before save(web)
 - [ ] http response cache(stroage: tinyufo, file, redis, etc)
 - [ ] client body size limit plugin
-- [ ] csrf plugin
 - [ ] support validate config for plugin
+- [ ] support keepalive for server accept connection
+- [ ] jwt auth plugin
+- [x] csrf plugin
 - [x] referer restriction plugin
 - [x] upstream select algo support more options
 - [x] tls validity checker

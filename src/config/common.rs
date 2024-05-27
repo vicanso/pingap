@@ -115,6 +115,7 @@ pub struct UpstreamConf {
     pub verify_cert: Option<bool>,
     pub health_check: Option<String>,
     pub ipv4_only: Option<bool>,
+    pub enable_tracer: Option<bool>,
     pub alpn: Option<String>,
     #[serde(default)]
     #[serde(with = "humantime_serde")]
@@ -736,11 +737,46 @@ pub fn get_config_hash() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
+        get_app_name, get_config_hash, get_current_config, set_app_name, set_config_hash,
+        set_current_config, BasicConf,
+    };
+    use super::{
         LocationConf, PingapConf, PluginCategory, ServerConf, UpstreamConf, CATEGORY_LOCATION,
         CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
     };
     use pretty_assertions::assert_eq;
     use serde::{Deserialize, Serialize};
+
+    #[test]
+    fn test_app_name() {
+        assert_eq!("Pingap", get_app_name());
+        set_app_name("Pingap-X");
+        assert_eq!("Pingap-X", get_app_name());
+    }
+
+    #[test]
+    fn test_config_hash() {
+        assert_eq!("", get_config_hash());
+        set_config_hash("ABCD");
+        assert_eq!("ABCD", get_config_hash());
+    }
+
+    #[test]
+    fn test_current_config() {
+        let conf = PingapConf {
+            basic: BasicConf {
+                name: Some("Pingap-X".to_string()),
+                threads: Some(5),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        set_current_config(&conf);
+        assert_eq!(
+            conf.hash().unwrap_or_default(),
+            get_current_config().hash().unwrap_or_default()
+        );
+    }
 
     #[test]
     fn test_plugin_category_serde() {

@@ -8,6 +8,7 @@ interface Upstream {
   alpn?: string;
   health_check?: string;
   ipv4_only?: boolean;
+  enable_tracer?: boolean;
   connection_timeout?: string;
   total_connection_timeout?: string;
   read_timeout?: string;

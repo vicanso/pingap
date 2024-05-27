@@ -24,6 +24,7 @@ use pingora::proxy::Session;
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
 use std::fmt;
+use std::sync::atomic::{AtomicI32, AtomicU64};
 use std::sync::Arc;
 use substring::Substring;
 
@@ -89,6 +90,8 @@ pub struct Location {
     proxy_add_headers: Option<Vec<HttpHeader>>,
     proxy_set_headers: Option<Vec<HttpHeader>>,
     plugins: Option<Vec<String>>,
+    pub accepted: AtomicU64,
+    pub processing: AtomicI32,
     pub upstream: Arc<Upstream>,
 }
 
@@ -157,6 +160,8 @@ impl Location {
             upstream: up,
             reg_rewrite,
             plugins: conf.plugins.clone(),
+            accepted: AtomicU64::new(0),
+            processing: AtomicI32::new(0),
             proxy_add_headers: format_headers(&conf.proxy_add_headers)?,
             proxy_set_headers: format_headers(&conf.proxy_set_headers)?,
         };
@@ -260,6 +265,11 @@ impl Location {
                 }
             }
         }
+    }
+
+    /// Get the connected count of upstream
+    pub fn upstream_connected(&self) -> Option<u32> {
+        self.upstream.connected()
     }
 }
 

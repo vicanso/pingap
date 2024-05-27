@@ -416,8 +416,10 @@ impl ProxyPlugin for AdminServe {
 
 #[cfg(test)]
 mod tests {
-    use super::{AdminAsset, AdminServe, AdminServeParams, EmbeddedStaticFile};
+    use super::{get_method_path, AdminAsset, AdminServe, AdminServeParams, EmbeddedStaticFile};
+    use crate::plugin::ProxyPlugin;
     use crate::{config::set_config_path, config::PluginConf, http_extra::HttpResponse};
+    use http::Method;
     use pingora::http::RequestHeader;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -523,6 +525,9 @@ authorizations = [
         )
         .unwrap();
 
+        assert_eq!("admin", serve.category().to_string());
+        assert_eq!("request", serve.step().to_string());
+
         let mut req_header = RequestHeader::build("GET", b"/", None).unwrap();
         req_header.insert_header("Authorization", "123").unwrap();
         assert_eq!(false, serve.auth_validate(&req_header));
@@ -546,6 +551,7 @@ authorizations = [
             .build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
+        assert_eq!((Method::POST, "/".to_string()), get_method_path(&session));
         let resp = serve
             .update_config(&mut session, "plugin", "stats")
             .await

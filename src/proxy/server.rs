@@ -480,6 +480,9 @@ impl ProxyHttp for Server {
         debug!("Location {}", lo.name);
         ctx.location.clone_from(&lo.name);
         ctx.location_index = Some(location_index);
+        ctx.upstream_connected = lo.upstream_connected();
+        ctx.location_accepted = lo.accepted.fetch_add(1, Ordering::Relaxed);
+        ctx.location_processing = lo.processing.fetch_add(1, Ordering::Relaxed);
 
         let done = lo
             .exec_proxy_plugins(session, ctx, PluginStep::Request)
@@ -572,6 +575,7 @@ impl ProxyHttp for Server {
                 format!("No available upstream({}:{})", lo.name, lo.upstream.name),
             )
         })?;
+
         ctx.upstream_connect_time = Some(get_hour_duration());
 
         Ok(Box::new(peer))
@@ -725,7 +729,12 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        self.processing.fetch_add(-1, Ordering::Relaxed);
+        self.processing.fetch_sub(1, Ordering::Relaxed);
+        if let Some(location_index) = ctx.location_index {
+            self.locations[location_index]
+                .processing
+                .fetch_sub(1, Ordering::Relaxed);
+        }
         if ctx.status.is_none() {
             if let Some(header) = session.response_written() {
                 ctx.status = Some(header.status);

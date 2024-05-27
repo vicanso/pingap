@@ -19,6 +19,8 @@ use std::time::{Duration, Instant};
 pub struct State {
     pub processing: i32,
     pub accepted: u64,
+    pub location_processing: i32,
+    pub location_accepted: u64,
     pub created_at: Instant,
     pub tls_version: Option<String>,
     pub status: Option<StatusCode>,
@@ -34,6 +36,7 @@ pub struct State {
     pub cache_prefix: Option<String>,
     pub cache_lock_duration: Option<Duration>,
     pub upstream_connect_time: Option<u32>,
+    pub upstream_connected: Option<u32>,
 }
 
 impl Default for State {
@@ -41,6 +44,8 @@ impl Default for State {
         State {
             processing: 0,
             accepted: 0,
+            location_processing: 0,
+            location_accepted: 0,
             tls_version: None,
             status: None,
             established: 0,
@@ -56,6 +61,7 @@ impl Default for State {
             cache_prefix: None,
             cache_lock_duration: None,
             upstream_connect_time: None,
+            upstream_connected: None,
         }
     }
 }

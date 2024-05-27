@@ -32,12 +32,15 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 struct ServerStats {
     processing: i32,
     accepted: u64,
+    location_processing: i32,
+    location_accepted: u64,
     hostname: String,
     physical_mem_mb: usize,
     physical_mem: String,
     version: String,
     start_time: u64,
     uptime: String,
+    upstream_connected: Option<u32>,
 }
 pub struct Stats {
     path: String,
@@ -106,12 +109,15 @@ impl ProxyPlugin for Stats {
             let buf = serde_json::to_vec(&ServerStats {
                 accepted: ctx.accepted,
                 processing: ctx.processing,
+                location_processing: ctx.location_processing,
+                location_accepted: ctx.location_accepted,
                 hostname: get_hostname(),
                 physical_mem: ByteSize(physical_mem as u64).to_string_as(true),
                 physical_mem_mb: physical_mem / (1024 * 1024),
                 version: VERSION.to_string(),
                 start_time: get_start_time(),
                 uptime: uptime.to_string(),
+                upstream_connected: ctx.upstream_connected,
             })
             .unwrap_or_default();
             return Ok(Some(HttpResponse {
