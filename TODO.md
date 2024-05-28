@@ -7,6 +7,7 @@
 - [ ] client body size limit plugin
 - [ ] support validate config for plugin
 - [ ] support keepalive for server accept connection
+- [ ] secret storage
 - [ ] jwt auth plugin
 - [x] csrf plugin
 - [x] referer restriction plugin

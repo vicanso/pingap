@@ -48,6 +48,7 @@ pub enum PluginCategory {
     IpRestriction,
     KeyAuth,
     BasicAuth,
+    JwtAuth,
     Cache,
     Redirect,
     Ping,

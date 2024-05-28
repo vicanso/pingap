@@ -30,6 +30,7 @@ mod compression;
 mod csrf;
 mod directory;
 mod ip_restriction;
+mod jwt_auth;
 mod key_auth;
 mod limit;
 mod mock;
@@ -219,6 +220,10 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
             PluginCategory::Csrf => {
                 let c = csrf::Csrf::new(conf)?;
                 proxy_plugins.insert(name, Box::new(c));
+            }
+            PluginCategory::JwtAuth => {
+                let j = jwt_auth::JwtAuth::new(conf)?;
+                proxy_plugins.insert(name, Box::new(j));
             }
         };
     }

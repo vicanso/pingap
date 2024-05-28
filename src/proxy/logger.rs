@@ -398,6 +398,11 @@ impl Parser {
                                     );
                                 }
                             }
+                            "upstream_connected" => {
+                                if let Some(value) = &ctx.upstream_connected {
+                                    buf.extend(value.to_string().as_bytes());
+                                }
+                            }
                             "location" => buf.extend(ctx.location.as_bytes()),
                             "established" => buf.extend(ctx.established.to_string().as_bytes()),
                             "tls_version" => {
