@@ -18,8 +18,7 @@ use crate::http_extra::HttpResponse;
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::{engine::general_purpose::URL_SAFE, Engine};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
 use http::StatusCode;
 use log::debug;
@@ -179,7 +178,7 @@ impl ProxyPlugin for JwtAuth {
             return Ok(Some(resp));
         }
         let value: serde_json::Value =
-            serde_json::from_slice(&URL_SAFE.decode(arr[1]).unwrap_or_default())
+            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(arr[1]).unwrap_or_default())
                 .unwrap_or_default();
         if let Some(exp) = value.get("exp") {
             if exp.as_u64().unwrap_or_default() < util::now().as_secs() {

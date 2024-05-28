@@ -53,6 +53,7 @@ pub enum PluginCategory {
     Redirect,
     Ping,
     ResponseHeaders,
+    JwtSign,
     RefererRestriction,
     Csrf,
 }
