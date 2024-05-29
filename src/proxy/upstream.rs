@@ -294,10 +294,7 @@ fn new_health_check(
         );
         check
     } else {
-        let mut health_check_conf: HealthCheckConf = health_check.try_into()?;
-        if health_check_conf.host == name {
-            health_check_conf.host = "".to_string();
-        }
+        let health_check_conf: HealthCheckConf = health_check.try_into()?;
         health_check_frequency = health_check_conf.check_frequency;
         info!("Http health check, conf:{health_check_conf:?}");
         match health_check_conf.schema.as_str() {

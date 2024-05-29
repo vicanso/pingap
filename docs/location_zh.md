@@ -7,13 +7,13 @@ description: Location的详细介绍
 Location主要配置请求的匹配、请求头响应头的插入，以及各种插件的关联，是整个流程中的最重要组成部分。下面是相关参数的详细说明：
 
 - `upstream`: 配置该location对应的upstream，若该location所有的处理均由插件完成，则可不配置。如针对http重定向至https的逻辑，则只需要添加中间件即可
-- `host`: 匹配的域名，如果是多个域名则使用`,`分隔
 - `path`: 匹配的路径，具体使用方法后续内容细说
+- `host`: 匹配的域名，如果是多个域名则使用`,`分隔
 - `proxy_add_headers`: 转发至upstream时添加的请求头
 - `proxy_set_headers`: 转发至upstream时设置的请求头，若该请求头已存在则覆盖
 - `rewrite`: 请求路径的重写规则
-- `plugins`: 添加至该location的插件列表，按顺序执行
 - `weight`: 自定义的权重，可以调整该location的权重，例如mock为服务不可用后，再调整该权重最高，则可禁用所有请求
+- `plugins`: 添加至该location的插件列表，按顺序执行
 
 Location支持配置对应host(支持多个）与path规则，path支持以下的规则，权重由高至低：
 

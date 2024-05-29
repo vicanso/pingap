@@ -37,6 +37,16 @@ RUST_LOG=INFO pingap -c=/opt/proxy -t \
   && RUST_LOG=INFO pingap -c=/opt/proxy -d -u --log=/opt/proxy/pingap.log
 ```
 
+## Auto restart
+
+Watch the configurations, if one of them changes, graceful restart pingap.
+
+```bash
+RUST_LOG=INFO pingap -c=/opt/proxy \
+  && -a -d --log=/opt/proxy/pingap.log
+```
+
+
 ## Config
 
 All toml configurations are as follows [pingap.toml](./conf/pingap.toml).

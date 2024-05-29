@@ -17,10 +17,11 @@ Pingap使用toml来配置相关参数，具体参数说明如下：
 - `grace_period`: 设置优雅退出的等待周期，默认为5分钟
 - `graceful_shutdown_timeout`: 设置优雅退出关闭超时时长，默认为5秒
 - `upstream_keepalive_pool_size`: 设置upstream保持连接的连接池大小，默认为128
-- `webhook_type`: Webhook的类型，支持普通的http形式、`webcom`与`dingtalk`三种类型
 - `webhook`: Webhook的请求路径
+- `webhook_type`: Webhook的类型，支持普通的http形式、`webcom`与`dingtalk`三种类型
+- `webhook_notifications`: Webhook通知的类型，有`backend_unhealthy`，`lets_encrypt`，`diff_config`，`restart`，`restart_fail`以及`tls_validity`
 - `log_level`: 应用日志的输出级别
-- `log_capacity`: 日志缓存区大小，设置后会以`BufWriter`的形式写入日志
+- `log_capacity`: 日志缓存区字节大小，设置后会以`BufWriter`的形式写入日志
 - `sentry`: Sentry的DSN配置
 - `pyroscope`: Pyroscope连接地址，需要注意默认版本并未编译支持pyroscpe，需要使用perf的版本
 - `auto_restart_check_interval`: 检测配置更新的间隔，默认为每90秒检测一次，若配置为小于1秒的值，则不检测

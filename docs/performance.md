@@ -45,6 +45,8 @@ Transfer/sec:     19.34MB
 
 ### Pingap proxy to nginx
 
+Threads: 1
+
 ```bash
 wrk 'http://127.0.0.1:6188/proxy-nginx'  --latency
 
@@ -61,6 +63,46 @@ Running 10s test @ http://127.0.0.1:6188/proxy-nginx
   503591 requests in 10.10s, 72.04MB read
 Requests/sec:  49862.65
 Transfer/sec:      7.13MB
+```
+
+Threads: 2
+
+```bash
+wrk 'http://127.0.0.1:6188/proxy-nginx'  --latency
+
+Running 10s test @ http://127.0.0.1:6188/proxy-nginx
+ 2 threads and 10 connections
+ Thread Stats   Avg      Stdev     Max   +/- Stdev
+   Latency   161.04us  753.69us  19.29ms   99.23%
+   Req/Sec    44.96k     2.73k   48.65k    73.76%
+ Latency Distribution
+    50%  107.00us
+    75%  125.00us
+    90%  143.00us
+    99%  299.00us
+ 903504 requests in 10.10s, 129.25MB read
+Requests/sec:  89449.37
+Transfer/sec:     12.80MB
+```
+
+Threads: 3
+
+```bash
+wrk 'http://127.0.0.1:6188/proxy-nginx'  --latency
+
+Running 10s test @ http://127.0.0.1:6188/proxy-nginx
+  2 threads and 10 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   111.73us  277.33us  10.84ms   99.54%
+    Req/Sec    48.06k     3.35k   74.58k    87.56%
+  Latency Distribution
+     50%   95.00us
+     75%  115.00us
+     90%  134.00us
+     99%  193.00us
+  961184 requests in 10.10s, 137.50MB read
+Requests/sec:  95160.18
+Transfer/sec:     13.61MB
 ```
 
 ### Pingap static serve 8kb html

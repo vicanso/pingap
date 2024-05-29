@@ -151,7 +151,7 @@ prefix = "/api"
 
 ## RequestId
 
-用于在请求头中添加`"X-Request-Id`，若已有则忽略，可指定使用`uuid`或`nanoid`两种形式，`nanoid`可以指定长度。
+用于在请求头中添加`X-Request-Id`(也可指定对应的请求头），若已有则忽略，可指定使用`uuid`或`nanoid`两种形式，`nanoid`可以指定长度。
 
 ```toml
 [plugins.customReqId]
@@ -199,8 +199,7 @@ keys = [
     "KOXQaw",
     "GKvXY2",
 ]
-name = "app"
-type = "query"
+query = "app"
 ```
 
 从header中的X-App字段中获取校验：
@@ -208,12 +207,11 @@ type = "query"
 ```toml
 [plugins.appAuth]
 category = "key_auth"
+header = "X-App"
 keys = [
     "KOXQaw",
     "GKvXY2",
 ]
-name = "X-App"
-type = "header"
 ```
 
 界面配置如图所示，配置key的名称，再配置符合的值即可：

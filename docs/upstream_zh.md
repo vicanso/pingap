@@ -12,12 +12,13 @@ Upstream配置为节点地址列表，配置为域名则会根据解析后的IP�
 - `verify_cert`: 若配置的是https，是否需要校验证书有效性
 - `health_check`: 节点健康检测配置，支持http与tcp形式
 - `ipv4_only`: 若配置为域名时，是否仅添加解析的ipv4节点
+- `enable_tracer`: 是否启用tracer功能，启用后可获取得upstream的连接数
 - `alpn`: 在tls握手时，alpn的配置，默认为H1
 - `connection_timeout`: tcp连接超时，默认为无
 - `total_connection_timeout`: 连接超时，对于https包括tls握手部分，默认为无
 - `read_timeout`: 读取超时，默认为无
-- `write_timeout`: 写超时，默认为无
 - `idle_timeout`: 空闲超时，指定连接空闲多久后会自动回收，如果设置为0，则连接不复用，需要注意有些网络设备对于无数据的tcp连接会过期自动关闭，因此可根据需要设置对应的值。默认为无
+- `write_timeout`: 写超时，默认为无
 - `tcp_idle`: tcp连接keepalive空闲回收时长
 - `tcp_interval`: tcp连接keepavlie检测时长
 - `tcp_probe_count`: tcp连接keepalvie探针检测次数
@@ -27,7 +28,7 @@ Upstream配置为节点地址列表，配置为域名则会根据解析后的IP�
 
 ### 节点健康检测
 
-- `health_check`: 建议配置为health check的形式，根据服务的检测路径配置为`http://upstream名称/路径`，如对于upstream为charts的服务，其检测路径为`/ping`，即可设置为`http://charts/ping`
+- `health_check`: 建议配置为health check的形式，根据服务的检测路径配置为`http://upstream名称/路径`，如对于upstream需要设置Host为test的的服务，其检测路径为`/ping`，即可设置为`http://test/ping`
 
 - `TCP`: tcp://upstreamname?connection_timeout=3s&success=2&failure=1&check_frequency=10s
 - `HTTP(S)`: http://upstreamname/ping?connection_timeout=3s&read_timeout=1s&success=2&failure=1&check_frequency=10s

@@ -7,8 +7,9 @@
 - [ ] client body size limit plugin
 - [ ] support validate config for plugin
 - [ ] support keepalive for server accept connection
+- [ ] jwt sign response plugin
 - [ ] secret storage
-- [ ] jwt auth plugin
+- [ ] jwt auth proxy plugin
 - [x] csrf plugin
 - [x] referer restriction plugin
 - [x] upstream select algo support more options
