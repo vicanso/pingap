@@ -25,6 +25,7 @@ export enum PluginCategory {
   IP_RESTRICTION = "ip_restriction",
   KEY_AUTH = "key_auth",
   BASIC_AUTH = "basic_auth",
+  JWT_AUTH = "jwt_auth",
   CACHE = "cache",
   REDIRECT = "redirect",
   PING = "ping",
@@ -63,6 +64,7 @@ export function getPluginSteps(category: string) {
   pluginSupportSteps[PluginCategory.IP_RESTRICTION] = [0, 1];
   pluginSupportSteps[PluginCategory.KEY_AUTH] = [0, 1];
   pluginSupportSteps[PluginCategory.BASIC_AUTH] = [0, 1];
+  pluginSupportSteps[PluginCategory.JWT_AUTH] = [0, 1];
   pluginSupportSteps[PluginCategory.CACHE] = [0];
   pluginSupportSteps[PluginCategory.REDIRECT] = [0];
   pluginSupportSteps[PluginCategory.PING] = [0];
@@ -174,21 +176,21 @@ export function FormPluginField({
         {
           category: "number",
           key: "gzip_level",
-          label: t("form.gzip"),
+          label: t("form.compressionGzipLevel"),
           id: "compresssion-gzip",
           span: 4,
         },
         {
           category: "number",
           key: "br_level",
-          label: t("form.br"),
+          label: t("form.compressionBrLevel"),
           id: "compresssion-br",
           span: 4,
         },
         {
           category: "number",
           key: "zstd_level",
-          label: t("form.zstd"),
+          label: t("form.compressionZstdLevel"),
           id: "compresssion-zstd",
           span: 4,
         },
@@ -394,29 +396,17 @@ export function FormPluginField({
     case PluginCategory.KEY_AUTH: {
       fields.push(
         {
-          category: "select",
-          key: "type",
-          label: t("form.keyAuthType"),
-          id: "key-auth-type",
+          category: "text",
+          key: "query",
+          label: t("form.keyAuthQuery"),
+          id: "key-auth-query",
           span: 4,
-          options: [
-            {
-              label: "Header",
-              option: 0,
-              value: "header",
-            },
-            {
-              label: "Query",
-              option: 1,
-              value: "query",
-            },
-          ],
         },
         {
           category: "text",
-          key: "name",
-          label: t("form.keyAuthName"),
-          id: "key-auth-name",
+          key: "header",
+          label: t("form.keyAuthHeader"),
+          id: "key-auth-header",
           span: 4,
         },
         {
@@ -455,6 +445,39 @@ export function FormPluginField({
           id: "basic-auth-hide-credentials",
           span: 4,
           options: boolOptions,
+        },
+      );
+      break;
+    }
+    case PluginCategory.JWT_AUTH: {
+      fields.push(
+        {
+          category: "text",
+          key: "header",
+          label: t("form.jwtAuthHeader"),
+          id: "jwt-auth-header",
+          span: 4,
+        },
+        {
+          category: "text",
+          key: "query",
+          label: t("form.jwtAuthQuery"),
+          id: "jwt-auth-query",
+          span: 4,
+        },
+        {
+          category: "text",
+          key: "cookie",
+          label: t("form.jwtAuthCookie"),
+          id: "jwt-auth-cookie",
+          span: 4,
+        },
+        {
+          category: "text",
+          key: "secret",
+          label: t("form.jwtAuthSecret"),
+          id: "jwt-auth-secret",
+          span: 12,
         },
       );
       break;
@@ -526,11 +549,6 @@ export function FormPluginField({
       break;
     }
     case PluginCategory.CSRF: {
-      // token_path: String,
-      // name: String,
-      // key: String,
-      // ttl: Option<Duration>,
-
       fields.push(
         {
           category: "text",

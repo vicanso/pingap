@@ -27,10 +27,9 @@ use pingora::proxy::Session;
 use std::str::FromStr;
 
 pub struct KeyAuth {
-    key_category: String,
     plugin_step: PluginStep,
-    header_name: Option<HeaderName>,
-    query_name: Option<String>,
+    header: Option<HeaderName>,
+    query: Option<String>,
     keys: Vec<Vec<u8>>,
     miss_authorization_resp: HttpResponse,
     unauthorized_resp: HttpResponse,
@@ -38,10 +37,9 @@ pub struct KeyAuth {
 }
 
 struct KeyAuthParams {
-    key_category: String,
     plugin_step: PluginStep,
-    header_name: Option<HeaderName>,
-    query_name: Option<String>,
+    header: Option<HeaderName>,
+    query: Option<String>,
     keys: Vec<Vec<u8>>,
     hide_credentials: bool,
 }
@@ -51,34 +49,35 @@ impl TryFrom<&PluginConf> for KeyAuthParams {
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
 
-        let category = get_str_conf(value, "type");
-        let name = get_str_conf(value, "name");
-        if name.is_empty() {
+        let query_name = get_str_conf(value, "query");
+        let header_name = get_str_conf(value, "header");
+        if query_name.is_empty() && header_name.is_empty() {
             return Err(Error::Invalid {
                 category: PluginCategory::KeyAuth.to_string(),
                 message: "Auth key is not allowed empty".to_string(),
             });
         }
-        let mut query_name = None;
-        let mut header_name = None;
-        if category == "query" {
-            query_name = Some(name);
+        let mut query = None;
+        let mut header = None;
+        if !query_name.is_empty() {
+            query = Some(query_name);
         } else {
-            header_name = Some(HeaderName::from_str(&name).map_err(|e| Error::Invalid {
-                category: PluginCategory::KeyAuth.to_string(),
-                message: format!("invalid header name, {e}"),
-            })?);
+            header = Some(
+                HeaderName::from_str(&header_name).map_err(|e| Error::Invalid {
+                    category: PluginCategory::KeyAuth.to_string(),
+                    message: format!("invalid header name, {e}"),
+                })?,
+            );
         }
         let params = Self {
-            key_category: category,
             keys: get_str_slice_conf(value, "keys")
                 .iter()
                 .map(|item| item.as_bytes().to_vec())
                 .collect(),
             hide_credentials: get_bool_conf(value, "hide_credentials"),
             plugin_step: step,
-            query_name,
-            header_name,
+            query,
+            header,
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {
@@ -97,11 +96,10 @@ impl KeyAuth {
         let params = KeyAuthParams::try_from(params)?;
 
         Ok(Self {
-            key_category: params.key_category,
             keys: params.keys,
             plugin_step: params.plugin_step,
-            query_name: params.query_name,
-            header_name: params.header_name,
+            query: params.query,
+            header: params.header,
             hide_credentials: params.hide_credentials,
             miss_authorization_resp: HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
@@ -133,27 +131,26 @@ impl ProxyPlugin for KeyAuth {
         session: &mut Session,
         _ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
-        let value = if self.key_category == "query" {
-            self.query_name.as_ref().map(|name| {
-                util::get_query_value(session.req_header(), name)
-                    .unwrap_or_default()
-                    .as_bytes()
-            })
+        let value = if let Some(key) = &self.query {
+            util::get_query_value(session.req_header(), key)
+                .unwrap_or_default()
+                .as_bytes()
         } else {
-            self.header_name
+            self.header
                 .as_ref()
                 .map(|v| session.get_header_bytes(v))
+                .unwrap_or_default()
         };
-        if value.is_none() || value.unwrap().is_empty() {
+        if value.is_empty() {
             return Ok(Some(self.miss_authorization_resp.clone()));
         }
-        if !self.keys.contains(&value.unwrap().to_vec()) {
+        if !self.keys.contains(&value.to_vec()) {
             return Ok(Some(self.unauthorized_resp.clone()));
         }
         if self.hide_credentials {
-            if let Some(name) = &self.header_name {
+            if let Some(name) = &self.header {
                 session.req_header_mut().remove_header(name);
-            } else if let Some(name) = &self.query_name {
+            } else if let Some(name) = &self.query {
                 if let Err(e) = util::remove_query_from_header(session.req_header_mut(), name) {
                     error!("Remove query fail, error:{e:?}");
                 }
@@ -177,7 +174,7 @@ mod tests {
         let params = KeyAuthParams::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
-name = "X-User"
+header = "X-User"
 keys = [
     "123",
     "456",
@@ -188,8 +185,8 @@ keys = [
         )
         .unwrap();
         assert_eq!("request", params.plugin_step.to_string());
-        assert_eq!(true, params.header_name.is_some());
-        if let Some(value) = params.header_name {
+        assert_eq!(true, params.header.is_some());
+        if let Some(value) = params.header {
             assert_eq!("x-user", value.to_string());
         }
         assert_eq!(
@@ -201,22 +198,6 @@ keys = [
                 .collect::<Vec<_>>()
                 .join(",")
         );
-
-        let params = KeyAuthParams::try_from(
-            &toml::from_str::<PluginConf>(
-                r###"
-name = "X-User"
-type = "query"
-keys = [
-    "123",
-    "456",
-]
-"###,
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        assert_eq!("query", params.key_category);
 
         let result = KeyAuthParams::try_from(
             &toml::from_str::<PluginConf>(
@@ -238,7 +219,7 @@ keys = [
             &toml::from_str::<PluginConf>(
                 r###"
 step = "upstream_response"
-name = "X-User"
+header = "X-User"
 keys = [
     "123",
     "456",
@@ -258,7 +239,7 @@ keys = [
         let auth = KeyAuth::new(
             &toml::from_str::<PluginConf>(
                 r###"
-name = "X-User"
+header = "X-User"
 keys = [
     "123",
     "456",
@@ -321,8 +302,7 @@ hide_credentials = true
         let auth = KeyAuth::new(
             &toml::from_str::<PluginConf>(
                 r###"
-type = "query"
-name = "user"
+query = "user"
 keys = [
     "123",
     "456",

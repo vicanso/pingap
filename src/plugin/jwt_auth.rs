@@ -29,27 +29,44 @@ use substring::Substring;
 struct JwtAuthParams {
     plugin_step: PluginStep,
     secret: String,
-    key_category: String,
-    key: String,
+    header: Option<String>,
+    query: Option<String>,
+    cookie: Option<String>,
 }
 
 impl TryFrom<&PluginConf> for JwtAuthParams {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
-        let params = Self {
-            plugin_step: step,
-            secret: get_str_conf(value, "secret"),
-            key: get_str_conf(value, "key"),
-            key_category: get_str_conf(value, "type"),
-        };
 
-        if params.key.is_empty() && params.key_category.is_empty() {
+        let header = get_str_conf(value, "header");
+        let query = get_str_conf(value, "query");
+        let cookie = get_str_conf(value, "cookie");
+        if header.is_empty() && query.is_empty() && cookie.is_empty() {
             return Err(Error::Invalid {
                 category: PluginCategory::JwtAuth.to_string(),
                 message: "Jwt key or key type is not allowed empty".to_string(),
             });
         }
+        let header = if header.is_empty() {
+            None
+        } else {
+            Some(header)
+        };
+        let query = if query.is_empty() { None } else { Some(query) };
+        let cookie = if cookie.is_empty() {
+            None
+        } else {
+            Some(cookie)
+        };
+        let params = Self {
+            plugin_step: step,
+            secret: get_str_conf(value, "secret"),
+            header,
+            query,
+            cookie,
+        };
+
         if params.secret.is_empty() {
             return Err(Error::Invalid {
                 category: PluginCategory::JwtAuth.to_string(),
@@ -82,21 +99,13 @@ impl JwtAuth {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!("new jwt auth proxy plugin, params:{params:?}");
         let params = JwtAuthParams::try_from(params)?;
-        let mut header = None;
-        let mut query = None;
-        let mut cookie = None;
-        match params.key_category.as_str() {
-            "cookie" => cookie = Some(params.key),
-            "query" => query = Some(params.key),
-            _ => header = Some(params.key),
-        }
 
         Ok(Self {
             plugin_step: params.plugin_step,
             secret: params.secret,
-            header,
-            query,
-            cookie,
+            header: params.header,
+            query: params.query,
+            cookie: params.cookie,
             unauthorized_resp: HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
                 body: Bytes::from_static(b"Invalid or expired jwt"),
@@ -208,8 +217,7 @@ mod tests {
             &toml::from_str::<PluginConf>(
                 r###"
 secret = "123123"
-type = "cookie"
-key = "jwt"
+cookie = "jwt"
 "###,
             )
             .unwrap(),
@@ -221,8 +229,7 @@ key = "jwt"
                 r###"
 step = "upstream_response"
 secret = "123123"
-type = "cookie"
-key = "jwt"
+cookie = "jwt"
 "###,
             )
             .unwrap(),
@@ -232,15 +239,13 @@ key = "jwt"
             result.err().unwrap().to_string()
         );
 
-        assert_eq!("jwt", params.key);
-        assert_eq!("cookie", params.key_category);
+        assert_eq!("jwt", params.cookie.unwrap_or_default());
         assert_eq!("123123", params.secret);
 
         let result = JwtAuthParams::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
-type = "cookie"
-key = "jwt"
+cookie = "jwt"
 "###,
             )
             .unwrap(),
@@ -272,7 +277,7 @@ secret = "123123"
             &toml::from_str::<PluginConf>(
                 r###"
 secret = "123123"
-key = "Authorization"
+header = "Authorization"
 "###,
             )
             .unwrap(),

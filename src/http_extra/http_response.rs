@@ -166,6 +166,7 @@ impl HttpResponse {
         let size = self.body.len();
         session.write_response_header(Box::new(header)).await?;
         session.write_response_body(self.body).await?;
+        session.finish_body().await?;
         Ok(size)
     }
 }
