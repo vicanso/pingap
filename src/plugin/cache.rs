@@ -40,7 +40,7 @@ static PREDICTOR: Lazy<Predictor<32>> = Lazy::new(|| Predictor::new(128, None));
 const MAX_MEMORY_SIZE: usize = 100 * 1024 * 1024;
 static EVICTION_MANAGER: Lazy<Manager> = Lazy::new(|| {
     let size = if let Some(cache_max_size) = get_current_config().basic.cache_max_size {
-        cache_max_size * 1024 * 1024
+        cache_max_size.as_u64() as usize
     } else {
         MAX_MEMORY_SIZE
     };

@@ -115,7 +115,14 @@ export default function LocationInfo() {
       id: "rewrite",
       label: t("location.rewrite"),
       defaultValue: location.rewrite,
-      span: 12,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
+      id: "client_max_body_size",
+      label: t("location.clientMaxBodySize"),
+      defaultValue: location.client_max_body_size,
+      span: 6,
       category: FormItemCategory.TEXT,
     },
     {

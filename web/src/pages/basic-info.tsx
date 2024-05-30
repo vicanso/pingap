@@ -109,7 +109,7 @@ export default function BasicInfo() {
       label: t("basic.logCapacity"),
       defaultValue: basic.log_capacity,
       span: 6,
-      category: FormItemCategory.NUMBER,
+      category: FormItemCategory.TEXT,
     },
     {
       id: "upstream_keepalive_pool_size",
@@ -130,7 +130,7 @@ export default function BasicInfo() {
       label: t("basic.cacheMaxSize"),
       defaultValue: basic.cache_max_size,
       span: 12,
-      category: FormItemCategory.NUMBER,
+      category: FormItemCategory.TEXT,
     },
     {
       id: "webhook_type",

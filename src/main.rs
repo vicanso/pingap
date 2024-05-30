@@ -219,7 +219,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     );
 
     logger::logger_try_init(logger::LoggerParams {
-        capacity: basic_conf.log_capacity.unwrap_or_default(),
+        capacity: basic_conf.log_capacity.unwrap_or_default().as_u64() as usize,
         file: args.log.clone().unwrap_or_default(),
         level: basic_conf.log_level.clone().unwrap_or_default(),
     })?;

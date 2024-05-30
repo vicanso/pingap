@@ -85,7 +85,7 @@ Requests/sec:  89449.37
 Transfer/sec:     12.80MB
 ```
 
-Threads: 3
+Threads: 3 (test result is bad, there may be something wrong)
 
 ```bash
 wrk 'http://127.0.0.1:6188/proxy-nginx'  --latency

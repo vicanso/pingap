@@ -17,6 +17,7 @@ use crate::plugin::parse_plugins;
 use crate::proxy::Parser;
 use crate::util;
 use base64::{engine::general_purpose::STANDARD, Engine};
+use bytesize::ByteSize;
 use http::{HeaderName, HeaderValue};
 use once_cell::sync::OnceCell;
 use regex::Regex;
@@ -187,6 +188,7 @@ pub struct LocationConf {
     pub rewrite: Option<String>,
     pub weight: Option<u16>,
     pub plugins: Option<Vec<String>>,
+    pub client_max_body_size: Option<ByteSize>,
     pub remark: Option<String>,
 }
 
@@ -275,6 +277,14 @@ pub struct ServerConf {
     pub tls_key: Option<String>,
     pub lets_encrypt: Option<String>,
     pub enabled_h2: Option<bool>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub tcp_idle: Option<Duration>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub tcp_interval: Option<Duration>,
+    pub tcp_probe_count: Option<usize>,
+    pub tcp_fastopen: Option<usize>,
     pub remark: Option<String>,
 }
 
@@ -343,13 +353,13 @@ pub struct BasicConf {
     pub webhook_type: Option<String>,
     pub webhook_notifications: Option<Vec<String>>,
     pub log_level: Option<String>,
-    pub log_capacity: Option<usize>,
+    pub log_capacity: Option<ByteSize>,
     pub sentry: Option<String>,
     pub pyroscope: Option<String>,
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub auto_restart_check_interval: Option<Duration>,
-    pub cache_max_size: Option<usize>,
+    pub cache_max_size: Option<ByteSize>,
 }
 
 #[derive(Deserialize, Debug, Serialize)]

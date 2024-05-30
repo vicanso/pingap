@@ -30,8 +30,9 @@ use pingora::cache::cache_control::CacheControl;
 use pingora::cache::filters::resp_cacheable;
 use pingora::cache::{CacheKey, CacheMetaDefaults, NoCacheReason, RespCacheable};
 use pingora::http::{RequestHeader, ResponseHeader};
-use pingora::listeners::TlsSettings;
+use pingora::listeners::{TcpSocketOptions, TlsSettings};
 use pingora::protocols::http::error_resp;
+use pingora::protocols::l4::ext::TcpKeepalive;
 use pingora::protocols::Digest;
 use pingora::proxy::{http_proxy_service, HttpProxy};
 use pingora::proxy::{ProxyHttp, Session};
@@ -68,6 +69,8 @@ pub struct ServerConf {
     pub threads: Option<usize>,
     pub error_template: String,
     pub lets_encrypt: Option<String>,
+    pub tcp_keepalive: Option<TcpKeepalive>,
+    pub tcp_fastopen: Option<usize>,
     pub enbaled_h2: bool,
 }
 
@@ -174,6 +177,19 @@ impl From<PingapConf> for Vec<ServerConf> {
                 None
             };
 
+            let tcp_keepalive = if item.tcp_idle.is_some()
+                && item.tcp_probe_count.is_some()
+                && item.tcp_interval.is_some()
+            {
+                Some(TcpKeepalive {
+                    idle: item.tcp_idle.unwrap_or_default(),
+                    count: item.tcp_probe_count.unwrap_or_default(),
+                    interval: item.tcp_interval.unwrap_or_default(),
+                })
+            } else {
+                None
+            };
+
             servers.push(ServerConf {
                 name,
                 admin: false,
@@ -186,6 +202,8 @@ impl From<PingapConf> for Vec<ServerConf> {
                 threads,
                 lets_encrypt: item.lets_encrypt,
                 enbaled_h2: item.enabled_h2.unwrap_or(true),
+                tcp_keepalive,
+                tcp_fastopen: item.tcp_fastopen,
                 error_template,
             });
         }
@@ -213,6 +231,7 @@ pub struct Server {
     enbaled_h2: bool,
     lets_encrypt_enabled: bool,
     tls_from_lets_encrypt: bool,
+    tcp_socket_options: Option<TcpSocketOptions>,
 }
 
 pub struct ServerServices {
@@ -261,6 +280,14 @@ impl Server {
         if let Some(access_log) = conf.access_log {
             p = Some(Parser::from(access_log.as_str()));
         }
+        let tcp_socket_options = if conf.tcp_fastopen.is_some() || conf.tcp_keepalive.is_some() {
+            let mut opts = TcpSocketOptions::default();
+            opts.tcp_fastopen = conf.tcp_fastopen;
+            opts.tcp_keepalive = conf.tcp_keepalive;
+            Some(opts)
+        } else {
+            None
+        };
         let s = Server {
             name: conf.name,
             admin: conf.admin,
@@ -275,6 +302,7 @@ impl Server {
             threads: conf.threads,
             lets_encrypt_enabled: false,
             enbaled_h2: conf.enbaled_h2,
+            tcp_socket_options,
             tls_from_lets_encrypt: conf.lets_encrypt.is_some(),
         };
         Ok(s)
@@ -287,6 +315,7 @@ impl Server {
     pub fn run(self, conf: &Arc<configuration::ServerConf>) -> Result<ServerServices> {
         let tls_from_lets_encrypt = self.tls_from_lets_encrypt;
         let addr = self.addr.clone();
+        let tcp_socket_options = self.tcp_socket_options.clone();
         let mut bg_services: Vec<Box<dyn IService>> = vec![];
         let mut exists_background_service = vec![];
         for item in self.locations.iter() {
@@ -366,7 +395,9 @@ impl Server {
                 if let Some(max_version) = tls_settings.max_proto_version() {
                     info!("Tls max proto version:{max_version:?}");
                 }
-                lb.add_tls_with_settings(addr, None, tls_settings);
+                lb.add_tls_with_settings(addr, tcp_socket_options.clone(), tls_settings);
+            } else if let Some(opt) = &tcp_socket_options {
+                lb.add_tcp_with_settings(addr, opt.clone());
             } else {
                 lb.add_tcp(addr);
             }
@@ -604,6 +635,28 @@ impl ProxyHttp for Server {
             ctx.upstream_connect_time = Some(value);
         }
 
+        Ok(())
+    }
+    async fn request_body_filter(
+        &self,
+        _session: &mut Session,
+        body: &mut Option<Bytes>,
+        _end_of_stream: bool,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<()>
+    where
+        Self::CTX: Send + Sync,
+    {
+        if let Some(buf) = body {
+            ctx.payload_size += buf.len();
+            let lo = &self.locations[ctx.location_index.unwrap_or_default()];
+            if lo.client_max_body_size != 0 && ctx.payload_size > lo.client_max_body_size {
+                return Err(util::new_internal_error(
+                    413,
+                    "Request Entity Too Large".to_string(),
+                ));
+            }
+        }
         Ok(())
     }
     async fn upstream_request_filter(

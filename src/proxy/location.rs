@@ -93,6 +93,7 @@ pub struct Location {
     pub accepted: AtomicU64,
     pub processing: AtomicI32,
     pub upstream: Arc<Upstream>,
+    pub client_max_body_size: usize,
 }
 
 impl fmt::Display for Location {
@@ -164,6 +165,7 @@ impl Location {
             processing: AtomicI32::new(0),
             proxy_add_headers: format_headers(&conf.proxy_add_headers)?,
             proxy_set_headers: format_headers(&conf.proxy_set_headers)?,
+            client_max_body_size: conf.client_max_body_size.unwrap_or_default().as_u64() as usize,
         };
         debug!("Location {lo}");
 

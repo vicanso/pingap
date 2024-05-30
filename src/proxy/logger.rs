@@ -374,11 +374,11 @@ impl Parser {
                     }
                 }
                 TagCategory::PayloadSize => {
-                    buf.extend(session.body_bytes_read().to_string().as_bytes());
+                    buf.extend(ctx.payload_size.to_string().as_bytes());
                 }
                 TagCategory::PayloadSizeHuman => {
                     buf.extend(
-                        ByteSize(session.body_bytes_read() as u64)
+                        ByteSize(ctx.payload_size as u64)
                             .to_string()
                             .replace(' ', "")
                             .as_bytes(),

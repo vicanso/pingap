@@ -30,6 +30,7 @@ interface Location {
   proxy_set_headers?: string[];
   proxy_add_headers?: string[];
   rewrite?: string;
+  client_max_body_size?: string;
   plugins?: string[];
   remark?: string;
 }
@@ -63,6 +64,10 @@ interface Server {
   tls_key?: string;
   lets_encrypt?: string;
   enabled_h2?: boolean;
+  tcp_idle?: string;
+  tcp_interval?: string;
+  tcp_probe_count?: number;
+  tcp_fastopen?: number;
   remark?: string;
 }
 

@@ -4,12 +4,12 @@
 - [ ] log rotate
 - [ ] support validate config before save(web)
 - [ ] http response cache(stroage: tinyufo, file, redis, etc)
-- [ ] client body size limit plugin
 - [ ] support validate config for plugin
-- [ ] support keepalive for server accept connection
 - [ ] jwt sign response plugin
 - [ ] secret storage
-- [ ] jwt auth proxy plugin
+- [x] support keepalive for server accept connection
+- [x] jwt auth proxy plugin
+- [x] location supports client body size limit
 - [x] csrf plugin
 - [x] referer restriction plugin
 - [x] upstream select algo support more options
