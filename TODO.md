@@ -3,10 +3,11 @@
 - [ ] better error handler
 - [ ] log rotate
 - [ ] support validate config before save(web)
-- [ ] http response cache(stroage: tinyufo, file, redis, etc)
+- [ ] http response cache(storage: tinyufo, file)
 - [ ] support validate config for plugin
 - [ ] jwt sign response plugin
 - [ ] secret storage
+- [ ] tcp fast open for upstream
 - [x] support keepalive for server accept connection
 - [x] jwt auth proxy plugin
 - [x] location supports client body size limit
