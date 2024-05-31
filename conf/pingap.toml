@@ -17,6 +17,11 @@ total_connection_timeout = "30s"
 read_timeout = "10s"
 idle_timeout = "2m"
 write_timeout = "10s"
+tcp_idle = "2m"
+tcp_interval = "1m"
+tcp_probe_count = 100
+tcp_recv_buf = "4kb"
+
 
 [upstreams.diving]
 addrs = ["127.0.0.1:5001"]
@@ -35,6 +40,10 @@ plugins = ["pingap:requestId", "stats"]
 addr = "0.0.0.0:6188"
 access_log = "tiny"
 locations = ["lo"]
+tcp_idle = "2m"
+tcp_interval = "1m"
+tcp_probe_count = 100
+# tcp_fast_open = 10
 
 [plugins.stats]
 value = "/stats"

@@ -126,6 +126,7 @@ fn get_config(conf: String, admin: bool, s: Sender<Result<PingapConf, config::Er
                 let send = async move {
                     let result = config::load_config(&conf, admin).await;
                     if let Err(e) = s.send(result) {
+                        // use pringln because log is not init
                         println!("sender fail, {e}");
                     }
                 };
@@ -135,6 +136,7 @@ fn get_config(conf: String, admin: bool, s: Sender<Result<PingapConf, config::Er
                 if let Err(e) = s.send(Err(config::Error::Invalid {
                     message: e.to_string(),
                 })) {
+                    // use pringln because log is not init
                     println!("sender fail, {e}");
                 }
             }

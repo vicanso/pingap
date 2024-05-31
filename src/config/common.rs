@@ -142,7 +142,8 @@ pub struct UpstreamConf {
     #[serde(with = "humantime_serde")]
     pub tcp_interval: Option<Duration>,
     pub tcp_probe_count: Option<usize>,
-    pub tcp_recv_buf: Option<usize>,
+    pub tcp_recv_buf: Option<ByteSize>,
+    pub tcp_fast_open: Option<bool>,
     pub remark: Option<String>,
 }
 impl UpstreamConf {
@@ -964,6 +965,9 @@ mod tests {
 access_log = "tiny"
 addr = "0.0.0.0:6188"
 locations = ["lo"]
+tcp_idle = "2m"
+tcp_interval = "1m"
+tcp_probe_count = 100
 "###,
             data
         );
@@ -996,6 +1000,10 @@ connection_timeout = "10s"
 health_check = "http://charts/ping?connection_timeout=3s&pingap"
 idle_timeout = "2m"
 read_timeout = "10s"
+tcp_idle = "2m"
+tcp_interval = "1m"
+tcp_probe_count = 100
+tcp_recv_buf = "4.0 KB"
 total_connection_timeout = "30s"
 write_timeout = "10s"
 
@@ -1031,7 +1039,7 @@ log_level = "info"
             data
         );
 
-        assert_eq!("71D5A190", conf.hash().unwrap());
+        assert_eq!("2304E616", conf.hash().unwrap());
     }
 
     #[test]

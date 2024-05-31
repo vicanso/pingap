@@ -16,9 +16,11 @@ mod dynamic_cert;
 mod location;
 mod logger;
 mod server;
+mod server_conf;
 mod upstream;
 
 pub use location::Location;
 pub use logger::Parser;
 pub use server::*;
+pub use server_conf::ServerConf;
 pub use upstream::Upstream;

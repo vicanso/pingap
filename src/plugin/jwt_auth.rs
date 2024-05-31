@@ -173,7 +173,6 @@ impl ProxyPlugin for JwtAuth {
         let valid = match jwt_header.alg.as_str() {
             "HS512" => {
                 let hash = hmac_sha512::HMAC::mac(content.as_bytes(), secret);
-                println!("{}", URL_SAFE_NO_PAD.encode(hash));
                 URL_SAFE_NO_PAD.encode(hash) == arr[2]
             }
             _ => {
@@ -288,7 +287,7 @@ header = "Authorization"
         assert_eq!("request", auth.step().to_string());
 
         // auth success(hs256)
-        let headers = ["Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoiSm9obiIsImFkbWluIjp0cnVlLCJleHAiOjE3MTcwODQ4MDB9.zz7VHuqt9t6UGLNr5RZdfzvqMDEeiZ4fT9RgmChOu5Q"].join("\r\n");
+        let headers = ["Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoiSm9obiIsImFkbWluIjp0cnVlLCJleHAiOjIzNDgwNTUyNjV9.j6sYJ2dCCSxskwPmvHM7WniGCbkT30z2BrjfsuQLFJc"].join("\r\n");
         let input_header = format!("GET / HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));

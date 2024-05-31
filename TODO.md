@@ -7,7 +7,7 @@
 - [ ] support validate config for plugin
 - [ ] jwt sign response plugin
 - [ ] secret storage
-- [ ] tcp fast open for upstream
+- [x] tcp fast open for upstream
 - [x] support keepalive for server accept connection
 - [x] jwt auth proxy plugin
 - [x] location supports client body size limit

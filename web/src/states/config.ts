@@ -19,6 +19,7 @@ interface Upstream {
   tcp_interval?: string;
   tcp_probe_count?: number;
   tcp_recv_buf?: number;
+  tcp_fast_open?: boolean;
   remark?: string;
 }
 

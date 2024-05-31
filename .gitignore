@@ -18,6 +18,7 @@ target/
 /target
 .vscode
 node_moudles
+dist
 dhat*.json
 default_*
 report.*

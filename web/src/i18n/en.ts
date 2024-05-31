@@ -87,6 +87,7 @@ export default {
   "upstream.verifyCert": "Verify Cert",
   "upstream.ipv4Only": "Ipv4 Only",
   "upstream.enableTracer": "Enable Tracer",
+  "upstream.tcpFastOpen": "Enable tcp fast open",
   "upstream.tcpRecvBuf": "Tcp Recv Buffer Size",
   "upstream.tcpIdle": "Tcp Keepalive Idle Duration",
   "upstream.tcpInterval": "Tcp Keepalive Interval Duration",

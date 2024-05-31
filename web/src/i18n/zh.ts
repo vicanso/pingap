@@ -88,6 +88,7 @@ export default {
   "upstream.verifyCert": "是否校验证书",
   "upstream.ipv4Only": "是否仅Ipv4",
   "upstream.enableTracer": "启用连接跟踪",
+  "upstream.tcpFastOpen": "启用Tcp快速连接",
   "upstream.tcpRecvBuf": "Tcp接收缓冲区大小",
   "upstream.tcpIdle": "Tcp保持连接的空闲时长",
   "upstream.tcpInterval": "Tcp保持连接探针的发送间隔",

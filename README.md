@@ -46,6 +46,14 @@ RUST_LOG=INFO pingap -c=/opt/proxy \
   && -a -d --log=/opt/proxy/pingap.log
 ```
 
+## Dev
+
+```bash
+# generate admin web asset
+make build-web
+make dev
+```
+
 
 ## Config
 

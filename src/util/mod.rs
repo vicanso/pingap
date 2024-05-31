@@ -218,6 +218,16 @@ pub fn get_host(header: &RequestHeader) -> Option<&str> {
     None
 }
 
+/// Get the content length from http request header.
+pub fn get_content_length(header: &RequestHeader) -> Option<usize> {
+    if let Some(content_length) = header.headers.get(http::header::CONTENT_LENGTH) {
+        if let Ok(size) = content_length.to_str().unwrap_or_default().parse::<usize>() {
+            return Some(size);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::{get_pkg_name, get_pkg_version, remove_query_from_header, resolve_path};

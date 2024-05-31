@@ -122,11 +122,19 @@ mod tests {
     use pretty_assertions::assert_eq;
     #[test]
     fn test_convert_headers() {
-        let headers =
-            convert_headers(&["Content-Type: application/octet-stream".to_string()]).unwrap();
-        assert_eq!(1, headers.len());
+        let headers = convert_headers(&[
+            "Content-Type: application/octet-stream".to_string(),
+            "X-Server: $HOSTNAME".to_string(),
+            "X-User: $USER".to_string(),
+        ])
+        .unwrap();
+        assert_eq!(3, headers.len());
         assert_eq!("content-type", headers[0].0.to_string());
         assert_eq!("application/octet-stream", headers[0].1.to_str().unwrap());
+        assert_eq!("x-server", headers[1].0.to_string());
+        assert_eq!(false, headers[1].1.to_str().unwrap().is_empty());
+        assert_eq!("x-user", headers[2].0.to_string());
+        assert_eq!(false, headers[2].1.to_str().unwrap().is_empty());
     }
     #[test]
     fn test_static_value() {

@@ -22,7 +22,7 @@ Upstream配置为节点地址列表，配置为域名则会根据解析后的IP�
 - `tcp_idle`: tcp连接keepalive空闲回收时长
 - `tcp_interval`: tcp连接keepavlie检测时长
 - `tcp_probe_count`: tcp连接keepalvie探针检测次数
-- `tcp_recv_buf`: tcp接收字节缓存区大小
+- `tcp_recv_buf`: tcp接收缓存区大小
 
 需要注意，若要设置tcp的keepalive，`tcp_idle`，`tcp_interval`以及`tcp_probe_count`均需要设置。
 

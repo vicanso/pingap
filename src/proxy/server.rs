@@ -14,15 +14,15 @@
 
 use super::dynamic_cert::DynamicCert;
 use super::logger::Parser;
+use super::ServerConf;
 use super::{Location, Upstream};
 use crate::acme::{get_lets_encrypt_cert, handle_lets_encrypt, parse_x509_validity};
-use crate::config::{LocationConf, PingapConf, PluginStep, UpstreamConf};
+use crate::config::PluginStep;
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use crate::plugin::get_proxy_plugin;
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::Bytes;
 use http::StatusCode;
 use log::{debug, error, info};
@@ -32,7 +32,6 @@ use pingora::cache::{CacheKey, CacheMetaDefaults, NoCacheReason, RespCacheable};
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::listeners::{TcpSocketOptions, TlsSettings};
 use pingora::protocols::http::error_resp;
-use pingora::protocols::l4::ext::TcpKeepalive;
 use pingora::protocols::Digest;
 use pingora::proxy::{http_proxy_service, HttpProxy};
 use pingora::proxy::{ProxyHttp, Session};
@@ -42,12 +41,9 @@ use pingora::services::listening::Service;
 use pingora::services::Service as IService;
 use pingora::upstreams::peer::{HttpPeer, Peer};
 use snafu::Snafu;
-use std::fmt;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
-
-static ERROR_TEMPLATE: &str = include_str!("../../error.html");
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -55,162 +51,6 @@ pub enum Error {
     Common { category: String, message: String },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
-
-#[derive(Debug, Default)]
-pub struct ServerConf {
-    pub admin: bool,
-    pub name: String,
-    pub addr: String,
-    pub access_log: Option<String>,
-    pub upstreams: Vec<(String, UpstreamConf)>,
-    pub locations: Vec<(String, LocationConf)>,
-    pub tls_cert: Option<Vec<u8>>,
-    pub tls_key: Option<Vec<u8>>,
-    pub threads: Option<usize>,
-    pub error_template: String,
-    pub lets_encrypt: Option<String>,
-    pub tcp_keepalive: Option<TcpKeepalive>,
-    pub tcp_fastopen: Option<usize>,
-    pub enbaled_h2: bool,
-}
-
-impl fmt::Display for ServerConf {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "name:{} ", self.name)?;
-        write!(f, "addr:{} ", self.addr)?;
-        write!(
-            f,
-            "upstreams:{:?} ",
-            self.upstreams
-                .iter()
-                .map(|(name, _)| name)
-                .collect::<Vec<_>>()
-        )?;
-        write!(
-            f,
-            "locations:{:?} ",
-            self.locations
-                .iter()
-                .map(|(name, _)| name)
-                .collect::<Vec<_>>()
-        )?;
-        write!(
-            f,
-            "tls:{} ",
-            self.tls_cert.is_some() || self.lets_encrypt.is_some()
-        )?;
-        write!(f, "http2:{}", self.enbaled_h2)
-    }
-}
-
-impl From<PingapConf> for Vec<ServerConf> {
-    fn from(conf: PingapConf) -> Self {
-        let mut upstreams = vec![];
-        for (name, item) in conf.upstreams {
-            upstreams.push((name, item));
-        }
-        let mut locations = vec![];
-        for (name, item) in conf.locations {
-            locations.push((name, item));
-        }
-        // sort location by weight
-        locations.sort_by_key(|b| std::cmp::Reverse(b.1.get_weight()));
-        let mut servers = vec![];
-        for (name, item) in conf.servers {
-            let valid_locations = item.locations.unwrap_or_default();
-            let mut valid_upstreams = vec![];
-            // filter location of server
-            let mut filter_locations = vec![];
-            for item in locations.iter() {
-                if valid_locations.contains(&item.0) {
-                    if item.1.upstream.is_some() {
-                        valid_upstreams.push(item.1.upstream.clone().unwrap_or_default());
-                    }
-                    filter_locations.push(item.clone())
-                }
-            }
-            // filter upstream of server locations
-            let mut filter_upstreams = vec![];
-            for item in upstreams.iter() {
-                if valid_upstreams.contains(&item.0) {
-                    filter_upstreams.push(item.clone())
-                }
-            }
-            let mut tls_cert = None;
-            let mut tls_key = None;
-            // load config validate base64
-            // so ignore error
-            if let Some(value) = &item.tls_cert {
-                if util::is_pem(value) {
-                    tls_cert = Some(value.as_bytes().to_vec());
-                } else {
-                    let buf = STANDARD.decode(value).unwrap_or_default();
-                    tls_cert = Some(buf);
-                }
-            }
-            if let Some(value) = &item.tls_key {
-                if util::is_pem(value) {
-                    tls_key = Some(value.as_bytes().to_vec());
-                } else {
-                    let buf = STANDARD.decode(value).unwrap_or_default();
-                    tls_key = Some(buf);
-                }
-            }
-
-            let mut error_template = conf.basic.error_template.clone().unwrap_or_default();
-            if error_template.is_empty() {
-                error_template = ERROR_TEMPLATE.to_string();
-            }
-
-            let mut threads = item.threads;
-            if threads.is_none() {
-                threads = conf.basic.threads;
-            }
-
-            let threads = if let Some(threads) = threads {
-                if threads > 0 {
-                    Some(threads)
-                } else {
-                    Some(num_cpus::get())
-                }
-            } else {
-                None
-            };
-
-            let tcp_keepalive = if item.tcp_idle.is_some()
-                && item.tcp_probe_count.is_some()
-                && item.tcp_interval.is_some()
-            {
-                Some(TcpKeepalive {
-                    idle: item.tcp_idle.unwrap_or_default(),
-                    count: item.tcp_probe_count.unwrap_or_default(),
-                    interval: item.tcp_interval.unwrap_or_default(),
-                })
-            } else {
-                None
-            };
-
-            servers.push(ServerConf {
-                name,
-                admin: false,
-                tls_cert,
-                tls_key,
-                addr: item.addr,
-                access_log: item.access_log,
-                upstreams: filter_upstreams,
-                locations: filter_locations,
-                threads,
-                lets_encrypt: item.lets_encrypt,
-                enbaled_h2: item.enabled_h2.unwrap_or(true),
-                tcp_keepalive,
-                tcp_fastopen: item.tcp_fastopen,
-                error_template,
-            });
-        }
-
-        servers
-    }
-}
 
 fn get_hour_duration() -> u32 {
     (util::now().as_millis() % (3600 * 1000)) as u32
@@ -499,6 +339,7 @@ impl ProxyHttp for Server {
         }
 
         let (location_index, lo) = location_result.unwrap();
+        debug!("Location {}", lo.name);
         if let Some(mut new_path) = lo.rewrite(path) {
             if let Some(query) = header.uri.query() {
                 new_path = format!("{new_path}?{query}");
@@ -508,7 +349,18 @@ impl ProxyHttp for Server {
                 error!("Location:{}, new path parse error:{e:?}", lo.name);
             }
         }
-        debug!("Location {}", lo.name);
+        // body limit
+        if lo.client_max_body_size > 0 {
+            if let Some(size) = util::get_content_length(session.req_header()) {
+                if size > lo.client_max_body_size {
+                    return Err(util::new_internal_error(
+                        413,
+                        "Request Entity Too Large".to_string(),
+                    ));
+                }
+            }
+        }
+
         ctx.location.clone_from(&lo.name);
         ctx.location_index = Some(location_index);
         ctx.upstream_connected = lo.upstream_connected();

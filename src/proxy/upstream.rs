@@ -100,6 +100,7 @@ pub struct Upstream {
     alpn: ALPN,
     tcp_keepalive: Option<TcpKeepalive>,
     tcp_recv_buf: Option<usize>,
+    tcp_fast_open: Option<bool>,
     peer_tracer: Option<UpstreamPeerTracer>,
     tracer: Option<Tracer>,
 }
@@ -142,6 +143,7 @@ pub fn new_empty_upstream() -> Upstream {
         alpn: ALPN::H1,
         tcp_recv_buf: None,
         tcp_keepalive: None,
+        tcp_fast_open: None,
         tracer: None,
         peer_tracer: None,
     }
@@ -462,8 +464,9 @@ impl Upstream {
             idle_timeout: conf.idle_timeout,
             write_timeout: conf.write_timeout,
             verify_cert: conf.verify_cert,
-            tcp_recv_buf: conf.tcp_recv_buf,
+            tcp_recv_buf: conf.tcp_recv_buf.map(|item| item.as_u64() as usize),
             tcp_keepalive,
+            tcp_fast_open: conf.tcp_fast_open,
             peer_tracer,
             tracer,
         };
@@ -490,6 +493,9 @@ impl Upstream {
             p.options.alpn = self.alpn.clone();
             if let Some(verify_cert) = self.verify_cert {
                 p.options.verify_cert = verify_cert;
+            }
+            if let Some(tcp_fast_open) = self.tcp_fast_open {
+                p.options.tcp_fast_open = tcp_fast_open;
             }
             p.options.tcp_recv_buf = self.tcp_recv_buf;
             p.options.tcp_keepalive.clone_from(&self.tcp_keepalive);
@@ -617,7 +623,7 @@ mod tests {
                 tcp_idle: Some(Duration::from_secs(60)),
                 tcp_probe_count: Some(100),
                 tcp_interval: Some(Duration::from_secs(60)),
-                tcp_recv_buf: Some(1024),
+                tcp_recv_buf: Some(bytesize::ByteSize(1024)),
                 ..Default::default()
             },
         )
