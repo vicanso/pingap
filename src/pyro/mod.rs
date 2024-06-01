@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use async_trait::async_trait;
 use log::info;
+use pingora::server::ShutdownWatch;
+use pingora::services::background::BackgroundService;
 use pyroscope::{pyroscope::PyroscopeAgentRunning, PyroscopeAgent, PyroscopeError};
 use pyroscope_pprofrs::{pprof_backend, PprofConfig};
 use snafu::{ResultExt, Snafu};
@@ -30,7 +33,27 @@ pub enum Error {
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-pub fn start_pyroscope(value: &str) -> Result<PyroscopeAgent<PyroscopeAgentRunning>> {
+pub struct AgentService {
+    url: String,
+}
+
+pub fn new_agent_service(value: &str) -> AgentService {
+    AgentService {
+        url: value.to_string(),
+    }
+}
+
+#[async_trait]
+impl BackgroundService for AgentService {
+    async fn start(&self, mut shutdown: ShutdownWatch) {
+        let agent_running = start_pyroscope(&self.url).unwrap();
+        let _ = shutdown.changed().await;
+        let agent_ready = agent_running.stop().unwrap();
+        agent_ready.shutdown();
+    }
+}
+
+fn start_pyroscope(value: &str) -> Result<PyroscopeAgent<PyroscopeAgentRunning>> {
     let mut connect_url = value.to_string();
     let url_info = Url::parse(value).context(UrlParseSnafu {
         url: value.to_string(),
@@ -61,7 +84,12 @@ pub fn start_pyroscope(value: &str) -> Result<PyroscopeAgent<PyroscopeAgentRunni
         agent = agent.basic_auth(user, password);
     }
     let client = agent
-        .backend(pprof_backend(PprofConfig::new().sample_rate(samplerate)))
+        .backend(pprof_backend(
+            PprofConfig::new()
+                .sample_rate(samplerate)
+                .report_thread_id()
+                .report_thread_name(),
+        ))
         // .tags([("app", "Rust"), ("TagB", "ValueB")].to_vec())
         .build()
         .context(PyroscopeSnafu)?;

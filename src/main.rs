@@ -116,6 +116,8 @@ fn new_server_conf(args: &Args, conf: &PingapConf) -> server::configuration::Ser
         server_conf.work_stealing = work_stealing
     }
 
+    info!("Server config: {server_conf:?}");
+
     server_conf
 }
 
@@ -288,7 +290,10 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     #[cfg(feature = "pyro")]
     if let Some(url) = &conf.basic.pyroscope {
-        let _ = pyro::start_pyroscope(url)?;
+        my_server.add_service(background_service(
+            "Pyroscope agent",
+            pyro::new_agent_service(url),
+        ));
     }
 
     let mut plugin_confs: Vec<(String, PluginConf)> = conf
