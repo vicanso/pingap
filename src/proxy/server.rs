@@ -55,6 +55,20 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 fn get_hour_duration() -> u32 {
     (util::now().as_millis() % (3600 * 1000)) as u32
 }
+fn get_latency(value: &Option<u32>) -> Option<u32> {
+    if let Some(value) = value {
+        let value = value.to_owned();
+        let d = get_hour_duration();
+        let value = if d >= value {
+            d - value
+        } else {
+            d + (3600 * 1000) - value
+        };
+        Some(value)
+    } else {
+        Some(get_hour_duration())
+    }
+}
 
 pub struct Server {
     name: String,
@@ -459,7 +473,7 @@ impl ProxyHttp for Server {
             )
         })?;
 
-        ctx.upstream_connect_time = Some(get_hour_duration());
+        ctx.upstream_connect_time = get_latency(&ctx.upstream_connect_time);
 
         Ok(Box::new(peer))
     }
@@ -477,16 +491,8 @@ impl ProxyHttp for Server {
     {
         ctx.reused = reused;
         ctx.upstream_address = peer.address().to_string();
-        if let Some(value) = ctx.upstream_connect_time {
-            let d = get_hour_duration();
-            let value = if d >= value {
-                d - value
-            } else {
-                d + (3600 * 1000) - value
-            };
-            ctx.upstream_connect_time = Some(value);
-        }
-
+        ctx.upstream_connect_time = get_latency(&ctx.upstream_connect_time);
+        ctx.upstream_processing_time = get_latency(&ctx.upstream_processing_time);
         Ok(())
     }
     async fn request_body_filter(
@@ -549,6 +555,7 @@ impl ProxyHttp for Server {
         if let Some(id) = &ctx.request_id {
             let _ = upstream_response.insert_header(HTTP_HEADER_NAME_X_REQUEST_ID.clone(), id);
         }
+        ctx.upstream_processing_time = get_latency(&ctx.upstream_processing_time);
         let lo = &self.locations[ctx.location_index.unwrap_or_default()];
 
         lo.exec_response_plugins(

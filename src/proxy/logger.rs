@@ -403,6 +403,16 @@ impl Parser {
                                     buf.extend(value.to_string().as_bytes());
                                 }
                             }
+                            "upstream_processing_time" => {
+                                if ctx.status.is_some() {
+                                    if let Some(value) = ctx.upstream_processing_time {
+                                        buf.extend(
+                                            format!("{:?}", Duration::from_millis(value as u64))
+                                                .as_bytes(),
+                                        );
+                                    }
+                                }
+                            }
                             "location" => buf.extend(ctx.location.as_bytes()),
                             "established" => buf.extend(ctx.established.to_string().as_bytes()),
                             "tls_version" => {

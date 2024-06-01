@@ -2151,7 +2151,7 @@ dependencies = [
 [[package]]
 name = "pingora"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=479d9badbfdfe29f1d810299057477250c69c98d#479d9badbfdfe29f1d810299057477250c69c98d"
+source = "git+https://github.com/cloudflare/pingora?rev=216d8e9d92c75d46cba78da9b167fb41dec91ad7#216d8e9d92c75d46cba78da9b167fb41dec91ad7"
 dependencies = [
  "pingora-cache",
  "pingora-core",
@@ -2164,7 +2164,7 @@ dependencies = [
 [[package]]
 name = "pingora-cache"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=479d9badbfdfe29f1d810299057477250c69c98d#479d9badbfdfe29f1d810299057477250c69c98d"
+source = "git+https://github.com/cloudflare/pingora?rev=216d8e9d92c75d46cba78da9b167fb41dec91ad7#216d8e9d92c75d46cba78da9b167fb41dec91ad7"
 dependencies = [
  "ahash 0.8.11",
  "async-trait",
@@ -2197,7 +2197,7 @@ dependencies = [
 [[package]]
 name = "pingora-core"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=479d9badbfdfe29f1d810299057477250c69c98d#479d9badbfdfe29f1d810299057477250c69c98d"
+source = "git+https://github.com/cloudflare/pingora?rev=216d8e9d92c75d46cba78da9b167fb41dec91ad7#216d8e9d92c75d46cba78da9b167fb41dec91ad7"
 dependencies = [
  "ahash 0.8.11",
  "async-trait",
@@ -2244,12 +2244,12 @@ dependencies = [
 [[package]]
 name = "pingora-error"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=479d9badbfdfe29f1d810299057477250c69c98d#479d9badbfdfe29f1d810299057477250c69c98d"
+source = "git+https://github.com/cloudflare/pingora?rev=216d8e9d92c75d46cba78da9b167fb41dec91ad7#216d8e9d92c75d46cba78da9b167fb41dec91ad7"
 
 [[package]]
 name = "pingora-header-serde"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=479d9badbfdfe29f1d810299057477250c69c98d#479d9badbfdfe29f1d810299057477250c69c98d"
+source = "git+https://github.com/cloudflare/pingora?rev=216d8e9d92c75d46cba78da9b167fb41dec91ad7#216d8e9d92c75d46cba78da9b167fb41dec91ad7"
 dependencies = [
  "bytes",
  "http 1.1.0",
@@ -2264,7 +2264,7 @@ dependencies = [
 [[package]]
 name = "pingora-http"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=479d9badbfdfe29f1d810299057477250c69c98d#479d9badbfdfe29f1d810299057477250c69c98d"
+source = "git+https://github.com/cloudflare/pingora?rev=216d8e9d92c75d46cba78da9b167fb41dec91ad7#216d8e9d92c75d46cba78da9b167fb41dec91ad7"
 dependencies = [
  "bytes",
  "http 1.1.0",
@@ -2274,7 +2274,7 @@ dependencies = [
 [[package]]
 name = "pingora-ketama"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=479d9badbfdfe29f1d810299057477250c69c98d#479d9badbfdfe29f1d810299057477250c69c98d"
+source = "git+https://github.com/cloudflare/pingora?rev=216d8e9d92c75d46cba78da9b167fb41dec91ad7#216d8e9d92c75d46cba78da9b167fb41dec91ad7"
 dependencies = [
  "crc32fast",
 ]
@@ -2291,7 +2291,7 @@ dependencies = [
 [[package]]
 name = "pingora-load-balancing"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=479d9badbfdfe29f1d810299057477250c69c98d#479d9badbfdfe29f1d810299057477250c69c98d"
+source = "git+https://github.com/cloudflare/pingora?rev=216d8e9d92c75d46cba78da9b167fb41dec91ad7#216d8e9d92c75d46cba78da9b167fb41dec91ad7"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -2310,7 +2310,7 @@ dependencies = [
 [[package]]
 name = "pingora-lru"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=479d9badbfdfe29f1d810299057477250c69c98d#479d9badbfdfe29f1d810299057477250c69c98d"
+source = "git+https://github.com/cloudflare/pingora?rev=216d8e9d92c75d46cba78da9b167fb41dec91ad7#216d8e9d92c75d46cba78da9b167fb41dec91ad7"
 dependencies = [
  "arrayvec",
  "hashbrown 0.12.3",
@@ -2321,7 +2321,7 @@ dependencies = [
 [[package]]
 name = "pingora-openssl"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=479d9badbfdfe29f1d810299057477250c69c98d#479d9badbfdfe29f1d810299057477250c69c98d"
+source = "git+https://github.com/cloudflare/pingora?rev=216d8e9d92c75d46cba78da9b167fb41dec91ad7#216d8e9d92c75d46cba78da9b167fb41dec91ad7"
 dependencies = [
  "foreign-types",
  "libc",
@@ -2334,7 +2334,7 @@ dependencies = [
 [[package]]
 name = "pingora-pool"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=479d9badbfdfe29f1d810299057477250c69c98d#479d9badbfdfe29f1d810299057477250c69c98d"
+source = "git+https://github.com/cloudflare/pingora?rev=216d8e9d92c75d46cba78da9b167fb41dec91ad7#216d8e9d92c75d46cba78da9b167fb41dec91ad7"
 dependencies = [
  "crossbeam-queue",
  "log",
@@ -2348,7 +2348,7 @@ dependencies = [
 [[package]]
 name = "pingora-proxy"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=479d9badbfdfe29f1d810299057477250c69c98d#479d9badbfdfe29f1d810299057477250c69c98d"
+source = "git+https://github.com/cloudflare/pingora?rev=216d8e9d92c75d46cba78da9b167fb41dec91ad7#216d8e9d92c75d46cba78da9b167fb41dec91ad7"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2370,7 +2370,7 @@ dependencies = [
 [[package]]
 name = "pingora-runtime"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=479d9badbfdfe29f1d810299057477250c69c98d#479d9badbfdfe29f1d810299057477250c69c98d"
+source = "git+https://github.com/cloudflare/pingora?rev=216d8e9d92c75d46cba78da9b167fb41dec91ad7#216d8e9d92c75d46cba78da9b167fb41dec91ad7"
 dependencies = [
  "once_cell",
  "rand",
@@ -2381,7 +2381,7 @@ dependencies = [
 [[package]]
 name = "pingora-timeout"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=479d9badbfdfe29f1d810299057477250c69c98d#479d9badbfdfe29f1d810299057477250c69c98d"
+source = "git+https://github.com/cloudflare/pingora?rev=216d8e9d92c75d46cba78da9b167fb41dec91ad7#216d8e9d92c75d46cba78da9b167fb41dec91ad7"
 dependencies = [
  "futures",
  "once_cell",

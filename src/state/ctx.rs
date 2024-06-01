@@ -37,6 +37,7 @@ pub struct State {
     pub cache_lock_duration: Option<Duration>,
     pub upstream_connect_time: Option<u32>,
     pub upstream_connected: Option<u32>,
+    pub upstream_processing_time: Option<u32>,
     pub payload_size: usize,
 }
 
@@ -63,6 +64,7 @@ impl Default for State {
             cache_lock_duration: None,
             upstream_connect_time: None,
             upstream_connected: None,
+            upstream_processing_time: None,
             payload_size: 0,
         }
     }
