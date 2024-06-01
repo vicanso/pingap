@@ -98,7 +98,7 @@ const META_DEFAULTS: CacheMetaDefaults = CacheMetaDefaults::new(|_| Some(1), 1, 
 
 impl Server {
     /// Create a new server for http proxy.
-    pub fn new(conf: ServerConf) -> Result<Self> {
+    pub fn new(conf: &ServerConf) -> Result<Self> {
         let mut upstreams = vec![];
         let in_used_upstreams: Vec<_> = conf
             .locations
@@ -131,28 +131,28 @@ impl Server {
 
         debug!("Server: {conf}");
         let mut p = None;
-        if let Some(access_log) = conf.access_log {
+        if let Some(access_log) = &conf.access_log {
             p = Some(Parser::from(access_log.as_str()));
         }
         let tcp_socket_options = if conf.tcp_fastopen.is_some() || conf.tcp_keepalive.is_some() {
             let mut opts = TcpSocketOptions::default();
             opts.tcp_fastopen = conf.tcp_fastopen;
-            opts.tcp_keepalive = conf.tcp_keepalive;
+            opts.tcp_keepalive.clone_from(&conf.tcp_keepalive);
             Some(opts)
         } else {
             None
         };
         let s = Server {
-            name: conf.name,
+            name: conf.name.clone(),
             admin: conf.admin,
             accepted: AtomicU64::new(0),
             processing: AtomicI32::new(0),
-            addr: conf.addr,
+            addr: conf.addr.clone(),
             log_parser: p,
             locations,
-            error_template: conf.error_template,
-            tls_key: conf.tls_key,
-            tls_cert: conf.tls_cert,
+            error_template: conf.error_template.clone(),
+            tls_key: conf.tls_key.clone(),
+            tls_cert: conf.tls_cert.clone(),
             threads: conf.threads,
             lets_encrypt_enabled: false,
             enbaled_h2: conf.enbaled_h2,
@@ -334,18 +334,19 @@ impl ProxyHttp for Server {
         }
 
         let header = session.req_header_mut();
-        let path = header.uri.path();
+        // let path = header.uri.path();
         let host = util::get_host(header).unwrap_or_default();
 
         let location_result = self
             .locations
             .iter()
             .enumerate()
-            .find(|(_, item)| item.matched(host, path));
+            .find(|(_, item)| item.matched(host, header.uri.path()));
 
         if location_result.is_none() {
             HttpResponse::unknown_error(Bytes::from(format!(
-                "Location not found, host:{host} path:{path}"
+                "Location not found, host:{host} path:{}",
+                header.uri.path(),
             )))
             .send(session)
             .await?;
@@ -354,25 +355,17 @@ impl ProxyHttp for Server {
 
         let (location_index, lo) = location_result.unwrap();
         debug!("Location {}", lo.name);
-        if let Some(mut new_path) = lo.rewrite(path) {
-            if let Some(query) = header.uri.query() {
-                new_path = format!("{new_path}?{query}");
-            }
-            debug!("New path:{new_path}");
-            if let Err(e) = new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri)) {
-                error!("Location:{}, new path parse error:{e:?}", lo.name);
-            }
-        }
+        lo.rewrite(header);
+
         // body limit
-        if lo.client_max_body_size > 0 {
-            if let Some(size) = util::get_content_length(session.req_header()) {
-                if size > lo.client_max_body_size {
-                    return Err(util::new_internal_error(
-                        413,
-                        "Request Entity Too Large".to_string(),
-                    ));
-                }
-            }
+        if lo.client_max_body_size > 0
+            && util::get_content_length(session.req_header()).unwrap_or_default()
+                > lo.client_max_body_size
+        {
+            return Err(util::new_internal_error(
+                413,
+                "Request Entity Too Large".to_string(),
+            ));
         }
 
         ctx.location.clone_from(&lo.name);
@@ -656,5 +649,85 @@ impl ProxyHttp for Server {
         if let Some(p) = &self.log_parser {
             info!("{}", p.format(session, ctx));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{get_latency, Server};
+    use crate::config::PingapConf;
+    use crate::proxy::server::get_digest_detail;
+    use crate::proxy::ServerConf;
+    use crate::state::State;
+    use pingora::protocols::{ssl::SslDigest, Digest, TimingDigest};
+    use pingora::proxy::{ProxyHttp, Session};
+    use pingora::server::configuration;
+    use pingora::services::Service;
+    use pretty_assertions::assert_eq;
+    use std::sync::Arc;
+    use std::time::{Duration, SystemTime};
+    use tokio_test::io::Builder;
+
+    #[test]
+    fn test_get_latency() {
+        let d = get_latency(&None);
+        assert_eq!(true, d.is_some());
+        assert_eq!(true, get_latency(&d).is_some());
+    }
+
+    #[test]
+    fn test_get_digest_detail() {
+        let digest = Digest {
+            timing_digest: vec![Some(TimingDigest {
+                established_ts: SystemTime::UNIX_EPOCH
+                    .checked_add(Duration::from_secs(10))
+                    .unwrap(),
+            })],
+            ssl_digest: Some(Arc::new(SslDigest {
+                version: "1.3",
+                cipher: "",
+                organization: None,
+                serial_number: None,
+                cert_digest: vec![],
+            })),
+            ..Default::default()
+        };
+        let result = get_digest_detail(&digest);
+        assert_eq!(10000, result.0);
+        assert_eq!("1.3", result.1.unwrap_or_default());
+    }
+
+    fn new_server() -> Server {
+        let toml_data = include_bytes!("../../conf/pingap.toml");
+        let pingap_conf = PingapConf::try_from(toml_data.as_ref()).unwrap();
+        let confs: Vec<ServerConf> = pingap_conf.into();
+        Server::new(&confs[0]).unwrap()
+    }
+
+    #[test]
+    fn test_new_server() {
+        let server = new_server();
+        let services = server
+            .run(&Arc::new(configuration::ServerConf::default()))
+            .unwrap();
+
+        assert_eq!(1, services.bg_services.len());
+        assert_eq!("Pingora HTTP Proxy Service", services.lb.name());
+    }
+
+    #[tokio::test]
+    async fn test_request_filter() {
+        let server = new_server();
+
+        let headers = [""].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let mut ctx = State::default();
+        let done = server.request_filter(&mut session, &mut ctx).await.unwrap();
+        assert_eq!(false, done);
+        assert_eq!("lo", ctx.location);
     }
 }

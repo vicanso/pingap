@@ -187,7 +187,7 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     }
     config::set_config_path(&args.conf);
     let mut my_server = server::Server::new(None)?;
-    let ps = Server::new(server_conf)?;
+    let ps = Server::new(&server_conf)?;
     let services = ps.run(&my_server.configuration)?;
     my_server.add_services(services.bg_services);
     my_server.add_service(services.lb);
@@ -337,7 +337,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     let mut validity_list = vec![];
-    for server_conf in server_conf_list {
+    for server_conf in server_conf_list.iter() {
         let listen_80_port = server_conf.addr.ends_with(":80");
         let name = server_conf.name.clone();
         let mut ps = Server::new(server_conf)?;

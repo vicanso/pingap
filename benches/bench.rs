@@ -6,7 +6,7 @@ use pingap::http_extra::{convert_headers, HttpResponse};
 use pingap::proxy::{Location, Parser, Upstream};
 use pingap::state::State;
 use pingap::util::get_super_ts;
-use pingora::http::ResponseHeader;
+use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
 use std::sync::Arc;
 use tokio_test::io::Builder;
@@ -184,7 +184,8 @@ fn bench_location_rewrite_path(c: &mut Criterion) {
 
     c.bench_function("rewrite path", |b| {
         b.iter(|| {
-            let _ = lo.rewrite("/users/v1/me");
+            let mut req_header = RequestHeader::build("GET", b"/users/v1/me", None).unwrap();
+            let _ = lo.rewrite(&mut req_header);
         })
     });
 }

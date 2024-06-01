@@ -18,7 +18,7 @@ use crate::config::{LocationConf, PluginStep};
 use crate::http_extra::{convert_headers, HttpHeader};
 use crate::plugin::{get_proxy_plugin, get_response_plugin};
 use crate::state::State;
-use log::debug;
+use log::{debug, error};
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
 use regex::Regex;
@@ -192,14 +192,26 @@ impl Location {
 
         self.hosts.iter().any(|item| item == host)
     }
-    /// Rewrite the path by the rule and returns the new path.
-    /// If the rule is not exists, returns `None`.
+    /// Rewrite the path by the rule and returns true.
+    /// If the rule is not exists, returns false.
     #[inline]
-    pub fn rewrite(&self, path: &str) -> Option<String> {
+    pub fn rewrite(&self, header: &mut RequestHeader) -> bool {
         if let Some((re, value)) = &self.reg_rewrite {
-            return Some(re.replace(path, value).to_string());
+            let path = header.uri.path();
+            let mut new_path = re.replace(path, value).to_string();
+            if path == new_path {
+                return false;
+            }
+            if let Some(query) = header.uri.query() {
+                new_path = format!("{new_path}?{query}");
+            }
+            debug!("New path:{new_path}");
+            if let Err(e) = new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri)) {
+                error!("Location:{}, new path parse error:{e:?}", self.name);
+            }
+            return true;
         }
-        None
+        false
     }
     /// Set or append the headers before proxy the request to upstream.
     #[inline]
@@ -441,8 +453,13 @@ mod tests {
             vec![upstream.clone()],
         )
         .unwrap();
-        assert_eq!("/me?abc=1", lo.rewrite("/users/me?abc=1").unwrap());
-        assert_eq!("/api/me", lo.rewrite("/api/me").unwrap());
+        let mut req_header = RequestHeader::build("GET", b"/users/me?abc=1", None).unwrap();
+        assert_eq!(true, lo.rewrite(&mut req_header));
+        assert_eq!("/me?abc=1", req_header.uri.to_string());
+
+        let mut req_header = RequestHeader::build("GET", b"/api/me?abc=1", None).unwrap();
+        assert_eq!(false, lo.rewrite(&mut req_header));
+        assert_eq!("/api/me?abc=1", req_header.uri.to_string());
     }
 
     #[test]
