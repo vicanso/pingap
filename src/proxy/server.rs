@@ -358,7 +358,7 @@ impl ProxyHttp for Server {
         lo.rewrite(header);
 
         // body limit
-        lo.body_size_limit(Some(header), ctx)?;
+        lo.client_body_size_limit(Some(header), ctx)?;
 
         ctx.location.clone_from(&lo.name);
         ctx.location_index = Some(location_index);
@@ -493,7 +493,7 @@ impl ProxyHttp for Server {
         if let Some(buf) = body {
             ctx.payload_size += buf.len();
             let lo = &self.locations[ctx.location_index.unwrap_or_default()];
-            lo.body_size_limit(None, ctx)?;
+            lo.client_body_size_limit(None, ctx)?;
         }
         Ok(())
     }
@@ -646,6 +646,7 @@ mod tests {
     use crate::proxy::server::get_digest_detail;
     use crate::proxy::ServerConf;
     use crate::state::State;
+    use pingora::http::ResponseHeader;
     use pingora::protocols::{ssl::SslDigest, Digest, TimingDigest};
     use pingora::proxy::{ProxyHttp, Session};
     use pingora::server::configuration;
@@ -716,5 +717,103 @@ mod tests {
         let done = server.request_filter(&mut session, &mut ctx).await.unwrap();
         assert_eq!(false, done);
         assert_eq!("lo", ctx.location);
+    }
+
+    #[tokio::test]
+    async fn test_cache_key_callback() {
+        let server = new_server();
+
+        let headers = [""].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let key = server.cache_key_callback(
+            &session,
+            &mut State {
+                cache_prefix: Some("ss:".to_string()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            r#"Ok(CacheKey { namespace: "ss:", primary: "/vicanso/pingap?size=1", variance: None, user_tag: "" })"#,
+            format!("{key:?}")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_response_cache_filter() {
+        let server = new_server();
+
+        let headers = [""].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let mut upstream_response = ResponseHeader::build_no_case(200, None).unwrap();
+        upstream_response
+            .append_header("Content-Type", "application/json")
+            .unwrap();
+        let result = server
+            .response_cache_filter(
+                &session,
+                &upstream_response,
+                &mut State {
+                    cache_prefix: Some("ss:".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(true, result.is_cacheable());
+
+        let mut upstream_response = ResponseHeader::build_no_case(200, None).unwrap();
+        upstream_response
+            .append_header("Cache-Control", "no-cache")
+            .unwrap();
+        let result = server
+            .response_cache_filter(
+                &session,
+                &upstream_response,
+                &mut State {
+                    cache_prefix: Some("ss:".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(false, result.is_cacheable());
+
+        let mut upstream_response = ResponseHeader::build_no_case(200, None).unwrap();
+        upstream_response
+            .append_header("Cache-Control", "no-store")
+            .unwrap();
+        let result = server
+            .response_cache_filter(
+                &session,
+                &upstream_response,
+                &mut State {
+                    cache_prefix: Some("ss:".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(false, result.is_cacheable());
+
+        let mut upstream_response = ResponseHeader::build_no_case(200, None).unwrap();
+        upstream_response
+            .append_header("Cache-Control", "private, max-age=100")
+            .unwrap();
+        let result = server
+            .response_cache_filter(
+                &session,
+                &upstream_response,
+                &mut State {
+                    cache_prefix: Some("ss:".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(false, result.is_cacheable());
     }
 }

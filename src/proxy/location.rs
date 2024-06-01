@@ -194,7 +194,7 @@ impl Location {
         self.hosts.iter().any(|item| item == host)
     }
     #[inline]
-    pub fn body_size_limit(
+    pub fn client_body_size_limit(
         &self,
         header: Option<&RequestHeader>,
         ctx: &State,
@@ -525,7 +525,7 @@ mod tests {
     }
 
     #[test]
-    fn test_body_size_limit() {
+    fn test_client_body_size_limit() {
         let upstream_name = "charts";
         let upstream = Arc::new(
             Upstream::new(
@@ -555,19 +555,19 @@ mod tests {
         req_header
             .insert_header(http::header::CONTENT_LENGTH, "1")
             .unwrap();
-        let result = lo.body_size_limit(Some(&req_header), &State::default());
+        let result = lo.client_body_size_limit(Some(&req_header), &State::default());
         assert_eq!(true, result.is_ok());
 
         req_header
             .insert_header(http::header::CONTENT_LENGTH, "1024")
             .unwrap();
-        let result = lo.body_size_limit(Some(&req_header), &State::default());
+        let result = lo.client_body_size_limit(Some(&req_header), &State::default());
         assert_eq!(
             " HTTPStatus context: Request Entity Too Large cause:  InternalError",
             result.err().unwrap().to_string()
         );
 
-        let result = lo.body_size_limit(
+        let result = lo.client_body_size_limit(
             None,
             &State {
                 payload_size: 2,
@@ -576,7 +576,7 @@ mod tests {
         );
         assert_eq!(true, result.is_ok());
 
-        let result = lo.body_size_limit(
+        let result = lo.client_body_size_limit(
             None,
             &State {
                 payload_size: 20,
