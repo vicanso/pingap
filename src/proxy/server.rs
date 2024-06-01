@@ -358,15 +358,7 @@ impl ProxyHttp for Server {
         lo.rewrite(header);
 
         // body limit
-        if lo.client_max_body_size > 0
-            && util::get_content_length(session.req_header()).unwrap_or_default()
-                > lo.client_max_body_size
-        {
-            return Err(util::new_internal_error(
-                413,
-                "Request Entity Too Large".to_string(),
-            ));
-        }
+        lo.body_size_limit(Some(header), ctx)?;
 
         ctx.location.clone_from(&lo.name);
         ctx.location_index = Some(location_index);
@@ -501,12 +493,7 @@ impl ProxyHttp for Server {
         if let Some(buf) = body {
             ctx.payload_size += buf.len();
             let lo = &self.locations[ctx.location_index.unwrap_or_default()];
-            if lo.client_max_body_size != 0 && ctx.payload_size > lo.client_max_body_size {
-                return Err(util::new_internal_error(
-                    413,
-                    "Request Entity Too Large".to_string(),
-                ));
-            }
+            lo.body_size_limit(None, ctx)?;
         }
         Ok(())
     }

@@ -18,6 +18,7 @@ use crate::config::{LocationConf, PluginStep};
 use crate::http_extra::{convert_headers, HttpHeader};
 use crate::plugin::{get_proxy_plugin, get_response_plugin};
 use crate::state::State;
+use crate::util;
 use log::{debug, error};
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
@@ -93,7 +94,7 @@ pub struct Location {
     pub accepted: AtomicU64,
     pub processing: AtomicI32,
     pub upstream: Arc<Upstream>,
-    pub client_max_body_size: usize,
+    client_max_body_size: usize,
 }
 
 impl fmt::Display for Location {
@@ -191,6 +192,31 @@ impl Location {
         }
 
         self.hosts.iter().any(|item| item == host)
+    }
+    #[inline]
+    pub fn body_size_limit(
+        &self,
+        header: Option<&RequestHeader>,
+        ctx: &State,
+    ) -> pingora::Result<()> {
+        if self.client_max_body_size == 0 {
+            return Ok(());
+        }
+        if let Some(header) = header {
+            if util::get_content_length(header).unwrap_or_default() > self.client_max_body_size {
+                return Err(util::new_internal_error(
+                    413,
+                    "Request Entity Too Large".to_string(),
+                ));
+            }
+        }
+        if ctx.payload_size > self.client_max_body_size {
+            return Err(util::new_internal_error(
+                413,
+                "Request Entity Too Large".to_string(),
+            ));
+        }
+        Ok(())
     }
     /// Rewrite the path by the rule and returns true.
     /// If the rule is not exists, returns false.
@@ -294,6 +320,7 @@ mod tests {
     use crate::plugin::initialize_test_plugins;
     use crate::proxy::Upstream;
     use crate::state::State;
+    use bytesize::ByteSize;
     use http::Method;
     use pingora::http::{RequestHeader, ResponseHeader};
     use pingora::proxy::Session;
@@ -494,6 +521,71 @@ mod tests {
         assert_eq!(
             r###"RequestHeader { base: Parts { method: GET, uri: , version: HTTP/1.1, headers: {"cache-control": "no-store", "x-user": "pingap"} }, header_name_map: None, raw_path_fallback: [] }"###,
             format!("{req_header:?}")
+        );
+    }
+
+    #[test]
+    fn test_body_size_limit() {
+        let upstream_name = "charts";
+        let upstream = Arc::new(
+            Upstream::new(
+                upstream_name,
+                &UpstreamConf {
+                    addrs: vec!["127.0.0.1".to_string()],
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        );
+
+        let lo = Location::new(
+            "",
+            &LocationConf {
+                upstream: Some(upstream_name.to_string()),
+                rewrite: Some("^/users/(.*)$ /$1".to_string()),
+                plugins: Some(vec!["test:mock".to_string()]),
+                client_max_body_size: Some(ByteSize(10)),
+                ..Default::default()
+            },
+            vec![upstream.clone()],
+        )
+        .unwrap();
+
+        let mut req_header = RequestHeader::build("GET", b"/users/v1/me", None).unwrap();
+        req_header
+            .insert_header(http::header::CONTENT_LENGTH, "1")
+            .unwrap();
+        let result = lo.body_size_limit(Some(&req_header), &State::default());
+        assert_eq!(true, result.is_ok());
+
+        req_header
+            .insert_header(http::header::CONTENT_LENGTH, "1024")
+            .unwrap();
+        let result = lo.body_size_limit(Some(&req_header), &State::default());
+        assert_eq!(
+            " HTTPStatus context: Request Entity Too Large cause:  InternalError",
+            result.err().unwrap().to_string()
+        );
+
+        let result = lo.body_size_limit(
+            None,
+            &State {
+                payload_size: 2,
+                ..Default::default()
+            },
+        );
+        assert_eq!(true, result.is_ok());
+
+        let result = lo.body_size_limit(
+            None,
+            &State {
+                payload_size: 20,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            " HTTPStatus context: Request Entity Too Large cause:  InternalError",
+            result.err().unwrap().to_string()
         );
     }
 
