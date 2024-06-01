@@ -29,6 +29,20 @@ Pingap格式化可以使用以下几种默认形式`combined`，`common`，`shor
 - `{~name}`: 从cookie中获取`name`对应的值，如获取cookie中的uid则是`{~uid}`
 - `{>name}`: 请求头中获取`name`对应的值，如获取请求头中的`X-User-Id`则是`{>X-User-Id}`
 - `{<name}`: 响应头中获取`name`对应的值，如获取响应头中的`X-Server`则是`{<X-Server}`
-- `{:name}`: 从context中获取对应的值，暂时仅支持以下属性：`reused`, `upstream_address`, `processing`, `upstream_connect_time`, `upstream_connected`, `location`, `established`, `tls_version`
+- `{:name}`: 从context中获取对应的值，支持的属性可参考后面的说明
 - `{$name}`: 从环境变量中获取`name`对应的值，仅启动时获取对应的值后保存，非实时获取
 - `{$HOSTNAME}`: 获取当前服务器的hostname
+
+## context
+
+现已支持获取context中记录的以下相关属性：
+
+- `established`: 客户端的连接时间
+- `tls_version`: tls的版本(http连接则为空)
+- `processing`: 该服务当前正在处理的请求数
+- `location`: 对应的location
+- `reused`: 与upstream的连接是否为复用请求
+- `upstream_address`: 连接的upstream地址
+- `upstream_connect_time`: 连upstream的连接耗时
+- `upstream_connected`: 当前location与upstream的连接数
+- `upstream_processing_time`: upstream处理请求的时长
