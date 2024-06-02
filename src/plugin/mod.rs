@@ -73,15 +73,17 @@ pub trait ProxyPlugin: Sync + Send {
     }
 }
 
+#[async_trait]
 pub trait ResponsePlugin: Sync + Send {
     fn category(&self) -> PluginCategory;
     fn step(&self) -> PluginStep;
-    fn handle(
+    async fn handle(
         &self,
         _session: &mut Session,
         _ctx: &mut State,
         _upstream_response: &mut ResponseHeader,
-    ) {
+    ) -> pingora::Result<()> {
+        Ok(())
     }
 }
 

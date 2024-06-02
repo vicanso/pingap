@@ -424,6 +424,17 @@ impl ProxyHttp for Server {
             }
         }
 
+        if let Some(index) = ctx.location_index {
+            let lo = &self.locations[index];
+            lo.exec_response_plugins(
+                session,
+                ctx,
+                upstream_response,
+                PluginStep::UpstreamResponse,
+            )
+            .await?;
+        }
+
         Ok(())
     }
 
@@ -525,7 +536,7 @@ impl ProxyHttp for Server {
     }
     fn upstream_response_filter(
         &self,
-        session: &mut Session,
+        _session: &mut Session,
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) {
@@ -536,14 +547,6 @@ impl ProxyHttp for Server {
             let _ = upstream_response.insert_header(HTTP_HEADER_NAME_X_REQUEST_ID.clone(), id);
         }
         ctx.upstream_processing_time = get_latency(&ctx.upstream_processing_time);
-        let lo = &self.locations[ctx.location_index.unwrap_or_default()];
-
-        lo.exec_response_plugins(
-            session,
-            ctx,
-            upstream_response,
-            PluginStep::UpstreamResponse,
-        );
     }
 
     fn upstream_response_body_filter(

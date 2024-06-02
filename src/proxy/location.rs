@@ -287,13 +287,13 @@ impl Location {
     }
     /// Execute all response plugins.
     #[inline]
-    pub fn exec_response_plugins(
+    pub async fn exec_response_plugins(
         &self,
         session: &mut Session,
         ctx: &mut State,
         upstream_response: &mut ResponseHeader,
         step: PluginStep,
-    ) {
+    ) -> pingora::Result<()> {
         if let Some(plugins) = &self.plugins {
             for name in plugins.iter() {
                 if let Some(plugin) = get_response_plugin(name) {
@@ -301,10 +301,11 @@ impl Location {
                         continue;
                     }
                     debug!("Run response plugin {name}");
-                    plugin.handle(session, ctx, upstream_response);
+                    plugin.handle(session, ctx, upstream_response).await?;
                 }
             }
         }
+        Ok(())
     }
 
     /// Get the connected count of upstream
@@ -684,7 +685,9 @@ mod tests {
             &mut State::default(),
             &mut upstream_response,
             PluginStep::UpstreamResponse,
-        );
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             r###"{"x-service": "1", "x-service": "2", "x-server": "abc", "x-response-id": "123"}"###,

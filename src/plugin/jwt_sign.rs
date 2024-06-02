@@ -15,6 +15,7 @@
 use super::{get_step_conf, get_str_conf, Error, ResponsePlugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::state::State;
+use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use log::debug;
 use pingora::http::ResponseHeader;
@@ -74,6 +75,7 @@ impl JwtSign {
     }
 }
 
+#[async_trait]
 impl ResponsePlugin for JwtSign {
     #[inline]
     fn step(&self) -> PluginStep {
@@ -84,12 +86,12 @@ impl ResponsePlugin for JwtSign {
         PluginCategory::ResponseHeaders
     }
     #[inline]
-    fn handle(
+    async fn handle(
         &self,
         _session: &mut Session,
         _ctx: &mut State,
         upstream_response: &mut ResponseHeader,
-    ) {
+    ) -> pingora::Result<()> {
         let is_hs512 = self.algorithm == "HS512";
         let alg = if is_hs512 { "HS512" } else { "HS256" };
         let header =
@@ -105,5 +107,6 @@ impl ResponsePlugin for JwtSign {
             URL_SAFE_NO_PAD.encode(hash)
         };
         let _ = upstream_response.insert_header("X-Jwt", format!("{content}.{sign}"));
+        Ok(())
     }
 }

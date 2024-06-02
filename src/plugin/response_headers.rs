@@ -15,6 +15,7 @@ use super::{get_step_conf, get_str_slice_conf, Error, ResponsePlugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{convert_header, HttpHeader};
 use crate::state::State;
+use async_trait::async_trait;
 use http::header::HeaderName;
 use log::debug;
 use pingora::http::ResponseHeader;
@@ -101,6 +102,7 @@ impl ResponseHeaders {
     }
 }
 
+#[async_trait]
 impl ResponsePlugin for ResponseHeaders {
     #[inline]
     fn step(&self) -> PluginStep {
@@ -111,12 +113,12 @@ impl ResponsePlugin for ResponseHeaders {
         PluginCategory::ResponseHeaders
     }
     #[inline]
-    fn handle(
+    async fn handle(
         &self,
         _session: &mut Session,
         _ctx: &mut State,
         upstream_response: &mut ResponseHeader,
-    ) {
+    ) -> pingora::Result<()> {
         // add --> remove --> set
         // ingore error
         for (name, value) in &self.add_headers {
@@ -128,6 +130,7 @@ impl ResponsePlugin for ResponseHeaders {
         for (name, value) in &self.set_headers {
             let _ = upstream_response.insert_header(name, value);
         }
+        Ok(())
     }
 }
 
@@ -233,7 +236,10 @@ remove_headers = [
             .append_header("Content-Type", "application/json")
             .unwrap();
 
-        response_headers.handle(&mut session, &mut State::default(), &mut upstream_response);
+        response_headers
+            .handle(&mut session, &mut State::default(), &mut upstream_response)
+            .await
+            .unwrap();
 
         assert_eq!(
             r###"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"x-service": "1", "x-service": "2", "x-response-id": "123"} }, header_name_map: None, reason_phrase: None }"###,
