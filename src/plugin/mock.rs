@@ -82,9 +82,13 @@ impl ProxyPlugin for MockResponse {
     /// Sends the mock data to client.
     async fn handle(
         &self,
+        step: PluginStep,
         session: &mut Session,
         _ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        if step != self.plugin_step {
+            return Ok(None);
+        }
         if !self.path.is_empty() && session.req_header().uri.path() != self.path {
             return Ok(None);
         }
@@ -96,7 +100,7 @@ impl ProxyPlugin for MockResponse {
 mod tests {
     use super::MockResponse;
     use crate::state::State;
-    use crate::{config::PluginConf, plugin::ProxyPlugin};
+    use crate::{config::PluginConf, config::PluginStep, plugin::ProxyPlugin};
     use bytes::Bytes;
     use http::StatusCode;
     use pingora::proxy::Session;
@@ -164,7 +168,7 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
         session.read_request().await.unwrap();
 
         let result = mock
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
 
@@ -188,7 +192,7 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
         session.read_request().await.unwrap();
 
         let result = mock
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_none());

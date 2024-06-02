@@ -113,9 +113,13 @@ impl ProxyPlugin for BasicAuth {
     #[inline]
     async fn handle(
         &self,
+        step: PluginStep,
         session: &mut Session,
         _ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        if step != self.plugin_step {
+            return Ok(None);
+        }
         let value = session.get_header_bytes(http::header::AUTHORIZATION);
         if value.is_empty() {
             return Ok(Some(self.miss_authorization_resp.clone()));
@@ -135,7 +139,7 @@ impl ProxyPlugin for BasicAuth {
 #[cfg(test)]
 mod tests {
     use super::{BasicAuth, BasicAuthParams, ProxyPlugin};
-    use crate::config::PluginConf;
+    use crate::config::{PluginConf, PluginStep};
     use crate::state::State;
     use http::StatusCode;
     use pingora::proxy::Session;
@@ -223,7 +227,7 @@ authorizations = [
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = auth
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
@@ -235,7 +239,7 @@ authorizations = [
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = auth
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_some());

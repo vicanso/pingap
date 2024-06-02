@@ -108,9 +108,13 @@ impl ProxyPlugin for RefererRestriction {
     #[inline]
     async fn handle(
         &self,
+        step: PluginStep,
         session: &mut Session,
         _ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        if step != self.plugin_step {
+            return Ok(None);
+        }
         let mut found = false;
         if let Some(value) = session.get_header(http::header::REFERER) {
             let referer = value.to_str().unwrap_or_default().to_string();
@@ -138,7 +142,7 @@ impl ProxyPlugin for RefererRestriction {
 mod tests {
     use super::{RefererRestriction, RefererRestrictionParams};
     use crate::state::State;
-    use crate::{config::PluginConf, plugin::ProxyPlugin};
+    use crate::{config::PluginConf, config::PluginStep, plugin::ProxyPlugin};
     use http::StatusCode;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -204,7 +208,7 @@ type = "deny"
         session.read_request().await.unwrap();
 
         let result = deny
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
@@ -216,7 +220,7 @@ type = "deny"
         session.read_request().await.unwrap();
 
         let result = deny
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_some());
@@ -229,6 +233,7 @@ type = "deny"
         session.read_request().await.unwrap();
         let result = deny
             .handle(
+                PluginStep::Request,
                 &mut session,
                 &mut State {
                     client_ip: Some("1.1.1.2".to_string()),

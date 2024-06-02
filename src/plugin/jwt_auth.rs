@@ -134,9 +134,13 @@ impl ProxyPlugin for JwtAuth {
     #[inline]
     async fn handle(
         &self,
+        step: PluginStep,
         session: &mut Session,
         _ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        if step != self.plugin_step {
+            return Ok(None);
+        }
         let req_header = session.req_header();
         let value = if let Some(key) = &self.header {
             let value = util::get_req_header_value(req_header, key).unwrap_or_default();
@@ -203,7 +207,7 @@ impl ProxyPlugin for JwtAuth {
 #[cfg(test)]
 mod tests {
     use super::{JwtAuth, JwtAuthParams};
-    use crate::config::PluginConf;
+    use crate::config::{PluginConf, PluginStep};
     use crate::plugin::ProxyPlugin;
     use crate::state::State;
     use pingora::proxy::Session;
@@ -293,7 +297,7 @@ header = "Authorization"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = auth
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
 
@@ -306,7 +310,7 @@ header = "Authorization"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = auth
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
 
@@ -319,7 +323,7 @@ header = "Authorization"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let resp = auth
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap()
             .unwrap();
@@ -336,7 +340,7 @@ header = "Authorization"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let resp = auth
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap()
             .unwrap();
@@ -352,7 +356,7 @@ header = "Authorization"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let resp = auth
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap()
             .unwrap();
@@ -369,7 +373,7 @@ header = "Authorization"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let resp = auth
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap()
             .unwrap();

@@ -58,9 +58,13 @@ impl ProxyPlugin for Redirect {
     #[inline]
     async fn handle(
         &self,
+        step: PluginStep,
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        if step != self.plugin_step {
+            return Ok(None);
+        }
         let schema_match = ctx.tls_version.is_some() == self.http_to_https;
         if schema_match && session.req_header().uri.path().starts_with(&self.prefix) {
             return Ok(None);
@@ -84,7 +88,7 @@ impl ProxyPlugin for Redirect {
 mod tests {
     use super::Redirect;
     use crate::state::State;
-    use crate::{config::PluginConf, plugin::ProxyPlugin};
+    use crate::{config::PluginConf, config::PluginStep, plugin::ProxyPlugin};
     use http::StatusCode;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -112,7 +116,7 @@ prefix = "/api"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = redirect
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_some());

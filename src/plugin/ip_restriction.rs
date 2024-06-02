@@ -110,9 +110,13 @@ impl ProxyPlugin for IpRestriction {
     #[inline]
     async fn handle(
         &self,
+        step: PluginStep,
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        if step != self.plugin_step {
+            return Ok(None);
+        }
         let ip = if let Some(ip) = &ctx.client_ip {
             ip.to_string()
         } else {
@@ -148,7 +152,7 @@ impl ProxyPlugin for IpRestriction {
 mod tests {
     use super::{IpRestriction, IpRestrictionParams};
     use crate::state::State;
-    use crate::{config::PluginConf, plugin::ProxyPlugin};
+    use crate::{config::PluginConf, config::PluginStep, plugin::ProxyPlugin};
     use http::StatusCode;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -226,7 +230,7 @@ ip_list = [
         session.read_request().await.unwrap();
 
         let result = deny
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
@@ -238,7 +242,7 @@ ip_list = [
         session.read_request().await.unwrap();
 
         let result = deny
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_some());
@@ -251,6 +255,7 @@ ip_list = [
 
         let result = deny
             .handle(
+                PluginStep::Request,
                 &mut session,
                 &mut State {
                     client_ip: Some("2.1.1.2".to_string()),
@@ -263,6 +268,7 @@ ip_list = [
 
         let result = deny
             .handle(
+                PluginStep::Request,
                 &mut session,
                 &mut State {
                     client_ip: Some("1.1.1.2".to_string()),
@@ -294,7 +300,7 @@ ip_list = [
         session.read_request().await.unwrap();
 
         let result = allow
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_none());

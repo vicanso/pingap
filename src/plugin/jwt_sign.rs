@@ -88,10 +88,14 @@ impl ResponsePlugin for JwtSign {
     #[inline]
     async fn handle(
         &self,
+        step: PluginStep,
         _session: &mut Session,
         _ctx: &mut State,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<()> {
+        if step != self.plugin_step {
+            return Ok(());
+        }
         let is_hs512 = self.algorithm == "HS512";
         let alg = if is_hs512 { "HS512" } else { "HS256" };
         let header =

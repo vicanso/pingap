@@ -168,9 +168,13 @@ impl ProxyPlugin for Limiter {
     #[inline]
     async fn handle(
         &self,
+        step: PluginStep,
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        if step != self.plugin_step {
+            return Ok(None);
+        }
         if let Err(e) = self.incr(session, ctx) {
             return Ok(Some(HttpResponse {
                 status: StatusCode::TOO_MANY_REQUESTS,
@@ -187,6 +191,7 @@ mod tests {
     use super::{LimitTag, Limiter};
     use crate::{
         config::PluginConf,
+        config::PluginStep,
         plugin::{limit::LimiterParams, ProxyPlugin},
         state::State,
     };
@@ -361,7 +366,7 @@ max = 0
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = limiter
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
 
@@ -379,7 +384,7 @@ max = 1
         )
         .unwrap();
         let result = limiter
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
 
@@ -406,21 +411,21 @@ interval = "1s"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = limiter
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
 
         assert_eq!(true, result.is_none());
 
         let _ = limiter
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
 
         tokio::time::sleep(Duration::from_secs(1)).await;
 
         let result = limiter
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_some());
@@ -429,7 +434,7 @@ interval = "1s"
         tokio::time::sleep(Duration::from_secs(1)).await;
 
         let result = limiter
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_none());

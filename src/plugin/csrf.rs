@@ -166,9 +166,13 @@ impl ProxyPlugin for Csrf {
     #[inline]
     async fn handle(
         &self,
+        step: PluginStep,
         session: &mut Session,
         _ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        if step != self.plugin_step {
+            return Ok(None);
+        }
         if session.req_header().uri.path() == self.token_path {
             let token = generate_token(&self.key);
             let mut builder = Cookie::build((&self.name, &token)).path("/");
@@ -215,7 +219,7 @@ impl ProxyPlugin for Csrf {
 #[cfg(test)]
 mod tests {
     use super::{generate_token, validate_token, Csrf, CsrfParams};
-    use crate::config::PluginConf;
+    use crate::config::{PluginConf, PluginStep};
     use crate::plugin::ProxyPlugin;
     use crate::state::State;
     use cookie::Cookie;
@@ -329,7 +333,7 @@ ttl = "1h"
         session.read_request().await.unwrap();
 
         let resp = csrf
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap()
             .unwrap();
@@ -346,7 +350,7 @@ ttl = "1h"
         session.read_request().await.unwrap();
 
         let resp = csrf
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap()
             .unwrap();
@@ -363,7 +367,7 @@ ttl = "1h"
         session.read_request().await.unwrap();
 
         let result = csrf
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
 

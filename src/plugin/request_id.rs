@@ -99,9 +99,13 @@ impl ProxyPlugin for RequestId {
     #[inline]
     async fn handle(
         &self,
+        step: PluginStep,
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        if step != self.plugin_step {
+            return Ok(None);
+        }
         let key = if let Some(header) = &self.header_name {
             header.clone()
         } else {
@@ -128,7 +132,7 @@ impl ProxyPlugin for RequestId {
 mod tests {
     use super::RequestId;
     use crate::state::State;
-    use crate::{config::PluginConf, plugin::ProxyPlugin};
+    use crate::{config::PluginConf, config::PluginStep, plugin::ProxyPlugin};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -196,7 +200,10 @@ size = 10
         session.read_request().await.unwrap();
 
         let mut state = State::default();
-        let result = id.handle(&mut session, &mut state).await.unwrap();
+        let result = id
+            .handle(PluginStep::Request, &mut session, &mut state)
+            .await
+            .unwrap();
         assert_eq!(true, result.is_none());
         assert_eq!("123", state.request_id.unwrap_or_default());
 
@@ -207,7 +214,10 @@ size = 10
         session.read_request().await.unwrap();
 
         let mut state = State::default();
-        let result = id.handle(&mut session, &mut state).await.unwrap();
+        let result = id
+            .handle(PluginStep::Request, &mut session, &mut state)
+            .await
+            .unwrap();
         assert_eq!(true, result.is_none());
         assert_eq!(10, state.request_id.unwrap_or_default().len());
     }

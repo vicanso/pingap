@@ -295,9 +295,13 @@ impl ProxyPlugin for Directory {
     }
     async fn handle(
         &self,
+        step: PluginStep,
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        if step != self.plugin_step {
+            return Ok(None);
+        }
         let mut filename = session.req_header().uri.path().to_string();
         if !self.autoindex && filename.len() <= 1 {
             filename.clone_from(&self.index);
@@ -380,6 +384,7 @@ mod tests {
     use crate::state::State;
     use crate::{
         config::PluginConf,
+        config::PluginStep,
         plugin::{directory::DirectoryParams, ProxyPlugin},
     };
     use pingora::proxy::Session;
@@ -466,7 +471,7 @@ download = true
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = dir
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_some());
@@ -489,7 +494,7 @@ download = true
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = dir
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_some());

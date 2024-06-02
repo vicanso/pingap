@@ -96,9 +96,13 @@ impl ProxyPlugin for Stats {
     #[inline]
     async fn handle(
         &self,
+        step: PluginStep,
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        if step != self.plugin_step {
+            return Ok(None);
+        }
         if session.req_header().uri.path() == self.path {
             let mut physical_mem = 0;
             if let Some(value) = memory_stats() {
@@ -135,7 +139,7 @@ impl ProxyPlugin for Stats {
 mod tests {
     use super::{Stats, StatsParams};
     use crate::state::State;
-    use crate::{config::PluginConf, plugin::ProxyPlugin};
+    use crate::{config::PluginConf, config::PluginStep, plugin::ProxyPlugin};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -186,7 +190,7 @@ mod tests {
         session.read_request().await.unwrap();
 
         let result = stats
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
@@ -198,7 +202,7 @@ mod tests {
         session.read_request().await.unwrap();
 
         let result = stats
-            .handle(&mut session, &mut State::default())
+            .handle(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_some());

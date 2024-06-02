@@ -192,9 +192,13 @@ impl ProxyPlugin for Cache {
     #[inline]
     async fn handle(
         &self,
+        step: PluginStep,
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        if step != self.plugin_step {
+            return Ok(None);
+        }
         if ![Method::GET, Method::HEAD].contains(&session.req_header().method) {
             return Ok(None);
         }

@@ -307,9 +307,13 @@ impl ProxyPlugin for AdminServe {
     }
     async fn handle(
         &self,
+        step: PluginStep,
         session: &mut Session,
         _ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        if step != self.plugin_step {
+            return Ok(None);
+        }
         let ip = util::get_client_ip(session);
         if !self.ip_fail_limit.validate(&ip).await {
             return Ok(Some(HttpResponse {

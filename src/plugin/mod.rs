@@ -66,6 +66,7 @@ pub trait ProxyPlugin: Sync + Send {
     fn step(&self) -> PluginStep;
     async fn handle(
         &self,
+        _step: PluginStep,
         _session: &mut Session,
         _ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
@@ -79,6 +80,7 @@ pub trait ResponsePlugin: Sync + Send {
     fn step(&self) -> PluginStep;
     async fn handle(
         &self,
+        _step: PluginStep,
         _session: &mut Session,
         _ctx: &mut State,
         _upstream_response: &mut ResponseHeader,

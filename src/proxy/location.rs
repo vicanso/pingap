@@ -267,11 +267,8 @@ impl Location {
         if let Some(plugins) = &self.plugins {
             for name in plugins.iter() {
                 if let Some(plugin) = get_proxy_plugin(name) {
-                    if plugin.step() != step {
-                        continue;
-                    }
-                    debug!("Run proxy plugin {name}");
-                    let result = plugin.handle(session, ctx).await?;
+                    debug!("Exec proxy plugin {name}, step:{step}");
+                    let result = plugin.handle(step, session, ctx).await?;
                     if let Some(resp) = result {
                         // ingore http response status >= 900
                         if resp.status.as_u16() < 900 {
@@ -297,11 +294,8 @@ impl Location {
         if let Some(plugins) = &self.plugins {
             for name in plugins.iter() {
                 if let Some(plugin) = get_response_plugin(name) {
-                    if plugin.step() != step {
-                        continue;
-                    }
-                    debug!("Run response plugin {name}");
-                    plugin.handle(session, ctx, upstream_response).await?;
+                    debug!("Exec response plugin {name}: step:{step}");
+                    plugin.handle(step, session, ctx, upstream_response).await?;
                 }
             }
         }

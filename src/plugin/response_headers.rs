@@ -115,10 +115,14 @@ impl ResponsePlugin for ResponseHeaders {
     #[inline]
     async fn handle(
         &self,
+        step: PluginStep,
         _session: &mut Session,
         _ctx: &mut State,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<()> {
+        if step != self.plugin_step {
+            return Ok(());
+        }
         // add --> remove --> set
         // ingore error
         for (name, value) in &self.add_headers {
@@ -138,7 +142,7 @@ impl ResponsePlugin for ResponseHeaders {
 mod tests {
     use super::{ResponseHeaders, ResponseHeadersParams};
     use crate::state::State;
-    use crate::{config::PluginConf, plugin::ResponsePlugin};
+    use crate::{config::PluginConf, config::PluginStep, plugin::ResponsePlugin};
     use pingora::http::ResponseHeader;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -237,7 +241,12 @@ remove_headers = [
             .unwrap();
 
         response_headers
-            .handle(&mut session, &mut State::default(), &mut upstream_response)
+            .handle(
+                PluginStep::UpstreamResponse,
+                &mut session,
+                &mut State::default(),
+                &mut upstream_response,
+            )
             .await
             .unwrap();
 
