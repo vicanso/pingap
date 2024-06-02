@@ -63,7 +63,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 #[async_trait]
 pub trait ProxyPlugin: Sync + Send {
     fn category(&self) -> PluginCategory;
-    fn step(&self) -> PluginStep;
+    fn step(&self) -> String;
     async fn handle(
         &self,
         _step: PluginStep,
@@ -77,7 +77,7 @@ pub trait ProxyPlugin: Sync + Send {
 #[async_trait]
 pub trait ResponsePlugin: Sync + Send {
     fn category(&self) -> PluginCategory;
-    fn step(&self) -> PluginStep;
+    fn step(&self) -> String;
     async fn handle(
         &self,
         _step: PluginStep,

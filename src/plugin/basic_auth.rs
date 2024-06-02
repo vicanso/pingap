@@ -103,8 +103,8 @@ impl BasicAuth {
 #[async_trait]
 impl ProxyPlugin for BasicAuth {
     #[inline]
-    fn step(&self) -> PluginStep {
-        self.plugin_step
+    fn step(&self) -> String {
+        self.plugin_step.to_string()
     }
     #[inline]
     fn category(&self) -> PluginCategory {
