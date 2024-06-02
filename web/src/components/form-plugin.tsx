@@ -47,9 +47,9 @@ export function getPluginSteps(category: string) {
       value: "proxy_upstream",
     },
     {
-      label: "Upstream Response",
+      label: "Response Filter",
       option: 2,
-      value: "upstream_response",
+      value: "response_filter",
     },
   ];
 

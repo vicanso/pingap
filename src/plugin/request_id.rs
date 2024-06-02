@@ -168,7 +168,7 @@ header_name = "uid"
         let result = RequestId::new(
             &toml::from_str::<PluginConf>(
                 r###"
-step = "upstream_response"
+step = "response_filter"
 algorithm = "nanoid"
 size = 10
 "###,

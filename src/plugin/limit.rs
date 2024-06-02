@@ -242,7 +242,7 @@ max = 10
         let result = LimiterParams::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
-step = "upstream_response"
+step = "response_filter"
 type = "inflight"
 tag = "cookie"
 key = "deviceId"

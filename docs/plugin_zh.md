@@ -10,7 +10,7 @@ Pingap中通过Locaton添加各种插件支持更多的应用场景，如鉴权�
 
 - `Request`: 请求的最开始阶段，适用于针对一些权限类的拦截等处理
 - `ProxyUpstream`: 请求转发至上流节点之前，因为此流程是在读取缓存之后，因此若不希望针对缓存前限制，但转发至上游前限制的可配置为此阶段。如限制IP访问频繁，但允许高并发读取缓存数据。
-- `UpstreamResponse`: 上游数据响应之后，用于针对上游响应数据做调整时使用。
+- `ResponseFilter`: 上游数据响应之后，用于针对上游响应数据做调整时使用。
 
 # 转发插件
 
@@ -347,7 +347,7 @@ add_headers = ["X-Server:pingap"]
 category = "response_headers"
 remove_headers = ["X-User"]
 set_headers = ["X-Response-Id:123"]
-step = "upstream_response"
+step = "response_filter"
 ```
 
 界面配置如图所示，按需要配置要设置、添加或删除的响应头，若不需要则不设置即可：

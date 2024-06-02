@@ -426,13 +426,8 @@ impl ProxyHttp for Server {
 
         if let Some(index) = ctx.location_index {
             let lo = &self.locations[index];
-            lo.exec_response_plugins(
-                session,
-                ctx,
-                upstream_response,
-                PluginStep::UpstreamResponse,
-            )
-            .await?;
+            lo.exec_response_plugins(session, ctx, upstream_response, PluginStep::ResponseFilter)
+                .await?;
         }
 
         Ok(())

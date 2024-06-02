@@ -159,7 +159,7 @@ zstd_level = 6
         let result = CompressionParams::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
-step = "upstream_response"
+step = "response_filter"
 gzip_level = 9
 br_level = 8
 zstd_level = 6

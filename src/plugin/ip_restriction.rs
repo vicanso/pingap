@@ -190,7 +190,7 @@ type = "deny"
         let result = IpRestrictionParams::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
-step = "upstream_response"
+step = "response_filter"
 ip_list = [
     "192.168.1.1",
     "10.1.1.1",

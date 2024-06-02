@@ -86,7 +86,7 @@ pub enum PluginStep {
     #[default]
     Request,
     ProxyUpstream,
-    UpstreamResponse,
+    ResponseFilter,
 }
 
 impl Serialize for PluginStep {

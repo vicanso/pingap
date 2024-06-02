@@ -16,6 +16,7 @@ use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{convert_header, HttpHeader};
 use crate::state::State;
 use async_trait::async_trait;
+use bytes::Bytes;
 use http::header::HeaderName;
 use log::debug;
 use pingora::http::ResponseHeader;
@@ -77,10 +78,10 @@ impl TryFrom<&PluginConf> for ResponseHeadersParams {
             remove_headers,
         };
 
-        if params.plugin_step != PluginStep::UpstreamResponse {
+        if params.plugin_step != PluginStep::ResponseFilter {
             return Err(Error::Invalid {
                 category: PluginCategory::ResponseHeaders.to_string(),
-                message: "Response headers plugin should be executed at upstream response step"
+                message: "Response headers plugin should be executed at response filter step"
                     .to_string(),
             });
         }
@@ -119,9 +120,9 @@ impl ResponsePlugin for ResponseHeaders {
         _session: &mut Session,
         _ctx: &mut State,
         upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<()> {
+    ) -> pingora::Result<Option<Bytes>> {
         if step != self.plugin_step {
-            return Ok(());
+            return Ok(None);
         }
         // add --> remove --> set
         // ingore error
@@ -134,7 +135,7 @@ impl ResponsePlugin for ResponseHeaders {
         for (name, value) in &self.set_headers {
             let _ = upstream_response.insert_header(name, value);
         }
-        Ok(())
+        Ok(None)
     }
 }
 
@@ -153,7 +154,7 @@ mod tests {
         let params = ResponseHeadersParams::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
-step = "upstream_response"
+step = "response_filter"
 add_headers = [
 "X-Service:1",
 "X-Service:2",
@@ -169,7 +170,7 @@ remove_headers = [
             .unwrap(),
         )
         .unwrap();
-        assert_eq!("upstream_response", params.plugin_step.to_string());
+        assert_eq!("response_filter", params.plugin_step.to_string());
         assert_eq!(
             r#"[("x-service", "1"), ("x-service", "2")]"#,
             format!("{:?}", params.add_headers)
@@ -200,7 +201,7 @@ remove_headers = [
             )
             .unwrap(),
         );
-        assert_eq!("Plugin response_headers invalid, message: Response headers plugin should be executed at upstream response step", result.err().unwrap().to_string());
+        assert_eq!("Plugin response_headers invalid, message: Response headers plugin should be executed at response filter step", result.err().unwrap().to_string());
     }
 
     #[tokio::test]
@@ -208,7 +209,7 @@ remove_headers = [
         let response_headers = ResponseHeaders::new(
             &toml::from_str::<PluginConf>(
                 r###"
-step = "upstream_response"
+step = "response_filter"
 add_headers = [
     "X-Service:1",
     "X-Service:2",
@@ -226,7 +227,7 @@ remove_headers = [
         .unwrap();
 
         assert_eq!("response_headers", response_headers.category().to_string());
-        assert_eq!("upstream_response", response_headers.step().to_string());
+        assert_eq!("response_filter", response_headers.step().to_string());
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
@@ -242,7 +243,7 @@ remove_headers = [
 
         response_headers
             .handle(
-                PluginStep::UpstreamResponse,
+                PluginStep::ResponseFilter,
                 &mut session,
                 &mut State::default(),
                 &mut upstream_response,

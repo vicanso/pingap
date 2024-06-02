@@ -290,7 +290,7 @@ token_path = "/csrf-token"
         let result = CsrfParams::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
-step = "upstream_response"
+step = "response_filter"
 token_path = "/csrf-token"
 key = "WjrXUG47wu"
 ttl = "1h"

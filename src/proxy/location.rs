@@ -678,7 +678,7 @@ mod tests {
             &mut session,
             &mut State::default(),
             &mut upstream_response,
-            PluginStep::UpstreamResponse,
+            PluginStep::ResponseFilter,
         )
         .await
         .unwrap();

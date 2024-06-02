@@ -222,7 +222,7 @@ keys = [
         let result = KeyAuthParams::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
-step = "upstream_response"
+step = "response_filter"
 header = "X-User"
 keys = [
     "123",

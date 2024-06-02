@@ -17,6 +17,7 @@ use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::state::State;
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use bytes::Bytes;
 use log::debug;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
@@ -44,11 +45,10 @@ impl TryFrom<&PluginConf> for JwtSignParams {
             });
         }
 
-        if ![PluginStep::UpstreamResponse].contains(&params.plugin_step) {
+        if ![PluginStep::ResponseFilter].contains(&params.plugin_step) {
             return Err(Error::Invalid {
                 category: PluginCategory::JwtSign.to_string(),
-                message: "Jwt auth plugin should be executed at request or proxy upstream step"
-                    .to_string(),
+                message: "Jwt auth plugin should be executed at response filter step".to_string(),
             });
         }
 
@@ -92,9 +92,9 @@ impl ResponsePlugin for JwtSign {
         _session: &mut Session,
         _ctx: &mut State,
         upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<()> {
+    ) -> pingora::Result<Option<Bytes>> {
         if step != self.plugin_step {
-            return Ok(());
+            return Ok(None);
         }
         let is_hs512 = self.algorithm == "HS512";
         let alg = if is_hs512 { "HS512" } else { "HS256" };
@@ -111,6 +111,6 @@ impl ResponsePlugin for JwtSign {
             URL_SAFE_NO_PAD.encode(hash)
         };
         let _ = upstream_response.insert_header("X-Jwt", format!("{content}.{sign}"));
-        Ok(())
+        Ok(None)
     }
 }

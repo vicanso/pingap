@@ -16,6 +16,7 @@ use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
+use bytes::Bytes;
 use once_cell::sync::OnceCell;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
@@ -84,8 +85,8 @@ pub trait ResponsePlugin: Sync + Send {
         _session: &mut Session,
         _ctx: &mut State,
         _upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<()> {
-        Ok(())
+    ) -> pingora::Result<Option<Bytes>> {
+        Ok(None)
     }
 }
 
@@ -333,7 +334,7 @@ data = "abc"
             toml::from_str::<PluginConf>(
                 r###"
 category = "response_headers"
-step = "upstream_response"
+step = "response_filter"
 add_headers = [
 "X-Service:1",
 "X-Service:2",
