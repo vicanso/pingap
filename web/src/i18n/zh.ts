@@ -179,6 +179,8 @@ export default {
   "form.jwtAuthCookie": "使用于jwt auth认证的Cookie名称",
   "form.jwtAuthKey": "认证key的名称",
   "form.jwtAuthSecret": "认证的密钥",
+  "form.jwtSignPath": "使用jwt签名的请求路径",
+  "form.jwtSignAlgorithm": "jwt签名的算法",
   "form.cacheStorage": "缓存的配置",
   "form.redirectHttps": "重定向时至https",
   "form.redirectPrefix": "重定向时使用的前缀",

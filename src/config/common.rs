@@ -49,12 +49,11 @@ pub enum PluginCategory {
     IpRestriction,
     KeyAuth,
     BasicAuth,
-    JwtAuth,
+    Jwt,
     Cache,
     Redirect,
     Ping,
     ResponseHeaders,
-    JwtSign,
     RefererRestriction,
     Csrf,
 }

@@ -25,7 +25,7 @@ export enum PluginCategory {
   IP_RESTRICTION = "ip_restriction",
   KEY_AUTH = "key_auth",
   BASIC_AUTH = "basic_auth",
-  JWT_AUTH = "jwt_auth",
+  JWT = "jwt",
   CACHE = "cache",
   REDIRECT = "redirect",
   PING = "ping",
@@ -64,7 +64,7 @@ export function getPluginSteps(category: string) {
   pluginSupportSteps[PluginCategory.IP_RESTRICTION] = [0, 1];
   pluginSupportSteps[PluginCategory.KEY_AUTH] = [0, 1];
   pluginSupportSteps[PluginCategory.BASIC_AUTH] = [0, 1];
-  pluginSupportSteps[PluginCategory.JWT_AUTH] = [0, 1];
+  pluginSupportSteps[PluginCategory.JWT] = [0, 1];
   pluginSupportSteps[PluginCategory.CACHE] = [0];
   pluginSupportSteps[PluginCategory.REDIRECT] = [0];
   pluginSupportSteps[PluginCategory.PING] = [0];
@@ -449,7 +449,7 @@ export function FormPluginField({
       );
       break;
     }
-    case PluginCategory.JWT_AUTH: {
+    case PluginCategory.JWT: {
       fields.push(
         {
           category: "text",
@@ -471,6 +471,32 @@ export function FormPluginField({
           label: t("form.jwtAuthCookie"),
           id: "jwt-auth-cookie",
           span: 4,
+        },
+        {
+          category: "text",
+          key: "auth_path",
+          label: t("form.jwtSignPath"),
+          id: "jwt-sign-path",
+          span: 6,
+        },
+        {
+          category: "checkbox",
+          key: "algorithm",
+          label: t("form.jwtSignAlgorithm"),
+          id: "jwt-sign-algorithm",
+          span: 6,
+          options: [
+            {
+              label: "HS256",
+              option: 1,
+              value: "HS256",
+            },
+            {
+              label: "HS512",
+              option: 2,
+              value: "HS512",
+            },
+          ],
         },
         {
           category: "text",

@@ -5,8 +5,9 @@
 - [ ] support validate config before save(web)
 - [ ] http response cache(storage: tinyufo, file)
 - [ ] support validate config for plugin
-- [ ] jwt sign response plugin
 - [ ] secret storage
+- [x] jwt sign response plugin(sign path)
+- [x] jwt auth ignore path
 - [x] tcp fast open for upstream
 - [x] support keepalive for server accept connection
 - [x] jwt auth proxy plugin

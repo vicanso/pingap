@@ -23,7 +23,7 @@ use crate::plugin::get_proxy_plugin;
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use http::StatusCode;
 use log::{debug, error, info};
 use pingora::cache::cache_control::CacheControl;
@@ -554,6 +554,41 @@ impl ProxyHttp for Server {
         if let Some(body) = body {
             ctx.response_body_size += body.len();
         }
+    }
+    fn response_body_filter(
+        &self,
+        _session: &mut Session,
+        body: &mut Option<Bytes>,
+        end_of_stream: bool,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<Option<std::time::Duration>>
+    where
+        Self::CTX: Send + Sync,
+    {
+        // set modify response body
+        if let Some(modify) = &ctx.modify_response_body {
+            if let Some(ref mut buf) = ctx.response_body {
+                if let Some(b) = body {
+                    buf.extend(&b[..]);
+                    b.clear();
+                }
+            } else {
+                let mut buf = BytesMut::new();
+                if let Some(b) = body {
+                    buf.extend(&b[..]);
+                    b.clear();
+                }
+                ctx.response_body = Some(buf);
+            };
+
+            if end_of_stream {
+                if let Some(ref buf) = ctx.response_body {
+                    *body = Some(modify.handle(Bytes::from(buf.to_owned())));
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     async fn fail_to_proxy(

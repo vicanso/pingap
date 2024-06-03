@@ -31,8 +31,7 @@ mod compression;
 mod csrf;
 mod directory;
 mod ip_restriction;
-mod jwt_auth;
-mod jwt_sign;
+mod jwt;
 mod key_auth;
 mod limit;
 mod mock;
@@ -227,13 +226,12 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
                 let c = csrf::Csrf::new(conf)?;
                 proxy_plugins.insert(name, Box::new(c));
             }
-            PluginCategory::JwtAuth => {
-                let j = jwt_auth::JwtAuth::new(conf)?;
-                proxy_plugins.insert(name, Box::new(j));
-            }
-            PluginCategory::JwtSign => {
-                let j = jwt_sign::JwtSign::new(conf)?;
-                response_plugins.insert(name, Box::new(j));
+            PluginCategory::Jwt => {
+                let (auth, sign) = jwt::new(conf)?;
+                proxy_plugins.insert(name.clone(), Box::new(auth));
+                if let Some(sign) = sign {
+                    response_plugins.insert(name, Box::new(sign));
+                }
             }
         };
     }
@@ -312,6 +310,13 @@ pub(crate) fn get_str_slice_conf(value: &PluginConf, key: &str) -> Vec<String> {
 
 pub(crate) fn get_step_conf(value: &PluginConf) -> PluginStep {
     PluginStep::from_str(get_str_conf(value, "step").as_str()).unwrap_or_default()
+}
+
+pub(crate) fn get_step_list_conf(value: &PluginConf) -> Vec<PluginStep> {
+    get_str_conf(value, "step")
+        .split(',')
+        .map(|item| PluginStep::from_str(item).unwrap_or_default())
+        .collect()
 }
 
 #[test]

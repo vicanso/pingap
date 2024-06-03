@@ -46,7 +46,7 @@ export default function ProxyPluginInfo() {
     // auth
     PluginCategory.KEY_AUTH,
     PluginCategory.BASIC_AUTH,
-    PluginCategory.JWT_AUTH,
+    PluginCategory.JWT,
 
     // limit
     PluginCategory.LIMIT,

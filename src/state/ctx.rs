@@ -12,9 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use bytes::{Bytes, BytesMut};
 use http::StatusCode;
 use pingora_limits::inflight::Guard;
 use std::time::{Duration, Instant};
+
+pub trait ModifyResponseBody: Sync + Send {
+    fn handle(&self, data: Bytes) -> Bytes;
+}
 
 pub struct State {
     pub processing: i32,
@@ -39,6 +44,8 @@ pub struct State {
     pub upstream_connected: Option<u32>,
     pub upstream_processing_time: Option<u32>,
     pub payload_size: usize,
+    pub modify_response_body: Option<Box<dyn ModifyResponseBody>>,
+    pub response_body: Option<BytesMut>,
 }
 
 impl Default for State {
@@ -66,6 +73,8 @@ impl Default for State {
             upstream_connected: None,
             upstream_processing_time: None,
             payload_size: 0,
+            modify_response_body: None,
+            response_body: None,
         }
     }
 }

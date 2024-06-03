@@ -12,39 +12,40 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_conf, Error, ProxyPlugin, Result};
+use super::{get_step_list_conf, get_str_conf, Error, ProxyPlugin, ResponsePlugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
-use crate::http_extra::HttpResponse;
-use crate::state::State;
+use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON};
+use crate::state::{ModifyResponseBody, State};
 use crate::util;
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
 use http::StatusCode;
 use log::debug;
+use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use serde::{Deserialize, Serialize};
 use substring::Substring;
 
-struct JwtAuthParams {
-    plugin_step: PluginStep,
+struct JwtParams {
+    plugin_steps: Vec<PluginStep>,
+    auth_path: String,
     secret: String,
+    algorithm: String,
     header: Option<String>,
     query: Option<String>,
     cookie: Option<String>,
 }
 
-impl TryFrom<&PluginConf> for JwtAuthParams {
+impl TryFrom<&PluginConf> for JwtParams {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
-        let step = get_step_conf(value);
-
         let header = get_str_conf(value, "header");
         let query = get_str_conf(value, "query");
         let cookie = get_str_conf(value, "cookie");
         if header.is_empty() && query.is_empty() && cookie.is_empty() {
             return Err(Error::Invalid {
-                category: PluginCategory::JwtAuth.to_string(),
+                category: PluginCategory::Jwt.to_string(),
                 message: "Jwt key or key type is not allowed empty".to_string(),
             });
         }
@@ -60,8 +61,10 @@ impl TryFrom<&PluginConf> for JwtAuthParams {
             Some(cookie)
         };
         let params = Self {
-            plugin_step: step,
+            plugin_steps: get_step_list_conf(value),
             secret: get_str_conf(value, "secret"),
+            auth_path: get_str_conf(value, "auth_path"),
+            algorithm: get_str_conf(value, "algorithm"),
             header,
             query,
             cookie,
@@ -69,17 +72,25 @@ impl TryFrom<&PluginConf> for JwtAuthParams {
 
         if params.secret.is_empty() {
             return Err(Error::Invalid {
-                category: PluginCategory::JwtAuth.to_string(),
+                category: PluginCategory::Jwt.to_string(),
                 message: "Jwt secret is not allowed empty".to_string(),
             });
         }
 
-        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
-            return Err(Error::Invalid {
-                category: PluginCategory::JwtAuth.to_string(),
-                message: "Jwt auth plugin should be executed at request or proxy upstream step"
-                    .to_string(),
-            });
+        for step in params.plugin_steps.iter() {
+            if ![
+                PluginStep::Request,
+                PluginStep::ProxyUpstream,
+                PluginStep::ResponseFilter,
+            ]
+            .contains(step)
+            {
+                return Err(Error::Invalid {
+                    category: PluginCategory::Jwt.to_string(),
+                    message: "Jwt auth plugin should be executed at request or proxy upstream step"
+                        .to_string(),
+                });
+            }
         }
 
         Ok(params)
@@ -88,6 +99,7 @@ impl TryFrom<&PluginConf> for JwtAuthParams {
 
 pub struct JwtAuth {
     plugin_step: PluginStep,
+    auth_path: String,
     secret: String,
     header: Option<String>,
     query: Option<String>,
@@ -95,13 +107,32 @@ pub struct JwtAuth {
     unauthorized_resp: HttpResponse,
 }
 
+pub fn new(params: &PluginConf) -> Result<(JwtAuth, Option<JwtSign>)> {
+    let auth = JwtAuth::new(params)?;
+
+    let sign = if get_str_conf(params, "auth_path").is_empty() {
+        None
+    } else {
+        Some(JwtSign::new(params)?)
+    };
+
+    Ok((auth, sign))
+}
+
 impl JwtAuth {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!("new jwt auth proxy plugin, params:{params:?}");
-        let params = JwtAuthParams::try_from(params)?;
+        let params = JwtParams::try_from(params)?;
+        let mut step = PluginStep::Request;
+        for item in params.plugin_steps {
+            if item == PluginStep::ProxyUpstream {
+                item.clone_into(&mut step);
+            }
+        }
 
         Ok(Self {
-            plugin_step: params.plugin_step,
+            plugin_step: step,
+            auth_path: params.auth_path,
             secret: params.secret,
             header: params.header,
             query: params.query,
@@ -129,7 +160,7 @@ impl ProxyPlugin for JwtAuth {
     }
     #[inline]
     fn category(&self) -> PluginCategory {
-        PluginCategory::JwtAuth
+        PluginCategory::Jwt
     }
     #[inline]
     async fn handle(
@@ -142,6 +173,9 @@ impl ProxyPlugin for JwtAuth {
             return Ok(None);
         }
         let req_header = session.req_header();
+        if req_header.uri.path() == self.auth_path {
+            return Ok(None);
+        }
         let value = if let Some(key) = &self.header {
             let value = util::get_req_header_value(req_header, key).unwrap_or_default();
             let bearer = "Bearer ";
@@ -204,9 +238,93 @@ impl ProxyPlugin for JwtAuth {
     }
 }
 
+pub struct JwtSign {
+    plugin_step: PluginStep,
+    auth_path: String,
+    secret: String,
+    algorithm: String,
+}
+
+impl JwtSign {
+    pub fn new(params: &PluginConf) -> Result<Self> {
+        debug!("new jwt sign response plugin, params:{params:?}");
+        let params = JwtParams::try_from(params)?;
+
+        Ok(Self {
+            plugin_step: PluginStep::ResponseFilter,
+            auth_path: params.auth_path,
+            secret: params.secret,
+            algorithm: params.algorithm,
+        })
+    }
+}
+
+struct Sign {
+    secret: String,
+    algorithm: String,
+}
+
+impl ModifyResponseBody for Sign {
+    fn handle(&self, data: Bytes) -> Bytes {
+        let is_hs512 = self.algorithm == "HS512";
+        let alg = if is_hs512 { "HS512" } else { "HS256" };
+        let header = URL_SAFE_NO_PAD.encode(r#"{"alg": ""#.to_owned() + alg + r#"","typ": "JWT"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(data);
+        let content = format!("{header}.{payload}");
+        let secret = self.secret.as_bytes();
+        let sign = if is_hs512 {
+            let hash = hmac_sha512::HMAC::mac(content.as_bytes(), secret);
+            URL_SAFE_NO_PAD.encode(hash)
+        } else {
+            let hash = hmac_sha256::HMAC::mac(content.as_bytes(), secret);
+            URL_SAFE_NO_PAD.encode(hash)
+        };
+        let token = format!("{content}.{sign}");
+        Bytes::from(r#"{"token": "{}"}"#.replace("{}", &token))
+    }
+}
+
+#[async_trait]
+impl ResponsePlugin for JwtSign {
+    #[inline]
+    fn step(&self) -> String {
+        self.plugin_step.to_string()
+    }
+    #[inline]
+    fn category(&self) -> PluginCategory {
+        PluginCategory::ResponseHeaders
+    }
+    #[inline]
+    async fn handle(
+        &self,
+        step: PluginStep,
+        session: &mut Session,
+        ctx: &mut State,
+        upstream_response: &mut ResponseHeader,
+    ) -> pingora::Result<Option<Bytes>> {
+        if step != self.plugin_step {
+            return Ok(None);
+        }
+        if session.req_header().uri.path() != self.auth_path {
+            return Ok(None);
+        }
+        upstream_response.remove_header(&http::header::CONTENT_LENGTH);
+        let json = HTTP_HEADER_CONTENT_JSON.clone();
+        let _ = upstream_response.insert_header(json.0, json.1);
+        // no error
+        let _ = upstream_response.insert_header(http::header::TRANSFER_ENCODING, "Chunked");
+        ctx.modify_response_body = Some(Box::new(Sign {
+            algorithm: self.algorithm.clone(),
+            secret: self.secret.clone(),
+        }));
+
+        Ok(None)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{JwtAuth, JwtAuthParams};
+    use super::{JwtAuth, JwtParams};
     use crate::config::{PluginConf, PluginStep};
     use crate::plugin::ProxyPlugin;
     use crate::state::State;
@@ -216,7 +334,7 @@ mod tests {
 
     #[test]
     fn test_jwt_auth_params() {
-        let params = JwtAuthParams::try_from(
+        let params = JwtParams::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 secret = "123123"
@@ -226,26 +344,10 @@ cookie = "jwt"
             .unwrap(),
         )
         .unwrap();
-
-        let result = JwtAuthParams::try_from(
-            &toml::from_str::<PluginConf>(
-                r###"
-step = "response_filter"
-secret = "123123"
-cookie = "jwt"
-"###,
-            )
-            .unwrap(),
-        );
-        assert_eq!(
-            "Plugin jwt_auth invalid, message: Jwt auth plugin should be executed at request or proxy upstream step",
-            result.err().unwrap().to_string()
-        );
-
         assert_eq!("jwt", params.cookie.unwrap_or_default());
         assert_eq!("123123", params.secret);
 
-        let result = JwtAuthParams::try_from(
+        let result = JwtParams::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 cookie = "jwt"
@@ -255,11 +357,11 @@ cookie = "jwt"
         );
 
         assert_eq!(
-            "Plugin jwt_auth invalid, message: Jwt secret is not allowed empty",
+            "Plugin jwt invalid, message: Jwt secret is not allowed empty",
             result.err().unwrap().to_string()
         );
 
-        let result = JwtAuthParams::try_from(
+        let result = JwtParams::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 secret = "123123"
@@ -269,7 +371,7 @@ secret = "123123"
         );
 
         assert_eq!(
-            "Plugin jwt_auth invalid, message: Jwt key or key type is not allowed empty",
+            "Plugin jwt invalid, message: Jwt key or key type is not allowed empty",
             result.err().unwrap().to_string()
         );
     }
@@ -287,7 +389,7 @@ header = "Authorization"
         )
         .unwrap();
 
-        assert_eq!("jwt_auth", auth.category().to_string());
+        assert_eq!("jwt", auth.category().to_string());
         assert_eq!("request", auth.step().to_string());
 
         // auth success(hs256)

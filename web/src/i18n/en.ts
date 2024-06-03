@@ -176,6 +176,8 @@ export default {
   "form.jwtAuthQuery": "The query name for key auth",
   "form.jwtAuthCookie": "The cookie name for key auth",
   "form.jwtAuthSecret": "The secret of jwt auth",
+  "form.jwtSignPath": "The sign path of jwt",
+  "form.jwtSignAlgorithm": "The sign algorithm",
   "form.cacheStorage": "The cache storage url",
   "form.redirectHttps": "Redirect http to https",
   "form.redirectPrefix": "The prefix path of redirect path",
