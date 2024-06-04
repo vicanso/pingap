@@ -12,18 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::upstream::new_empty_upstream;
-use super::Upstream;
+use super::upstream::get_upstream;
 use crate::config::{LocationConf, PluginStep};
 use crate::http_extra::{convert_headers, HttpHeader};
 use crate::plugin::{get_proxy_plugin, get_response_plugin};
 use crate::state::State;
 use crate::util;
+use arc_swap::ArcSwap;
 use log::{debug, error};
+use once_cell::sync::Lazy;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::{AtomicI32, AtomicU64};
 use std::sync::Arc;
@@ -93,7 +95,7 @@ pub struct Location {
     plugins: Option<Vec<String>>,
     pub accepted: AtomicU64,
     pub processing: AtomicI32,
-    pub upstream: Arc<Upstream>,
+    pub upstream: String,
     client_max_body_size: usize,
 }
 
@@ -106,7 +108,7 @@ impl fmt::Display for Location {
         write!(f, "proxy_set_headers:{:?} ", self.proxy_set_headers)?;
         write!(f, "proxy_add_headers:{:?} ", self.proxy_add_headers)?;
         write!(f, "plugins:{:?} ", self.plugins)?;
-        write!(f, "upstream:{}", self.upstream.name)
+        write!(f, "upstream:{}", self.upstream)
     }
 }
 
@@ -123,19 +125,8 @@ fn format_headers(values: &Option<Vec<String>>) -> Result<Option<Vec<HttpHeader>
 
 impl Location {
     /// Create a location from config.
-    pub fn new(name: &str, conf: &LocationConf, upstreams: Vec<Arc<Upstream>>) -> Result<Location> {
+    pub fn new(name: &str, conf: &LocationConf) -> Result<Location> {
         let upstream = conf.upstream.clone().unwrap_or_default();
-        let up = if upstream.is_empty() {
-            Arc::new(new_empty_upstream())
-        } else {
-            upstreams
-                .iter()
-                .find(|item| item.name == upstream)
-                .ok_or(Error::Invalid {
-                    message: format!("Upstream({upstream}) not found"),
-                })?
-                .clone()
-        };
         let mut reg_rewrite = None;
         if let Some(value) = &conf.rewrite {
             let arr: Vec<&str> = value.split(' ').collect();
@@ -159,7 +150,7 @@ impl Location {
             path_selector: new_path_selector(&path)?,
             path,
             hosts,
-            upstream: up,
+            upstream,
             reg_rewrite,
             plugins: conf.plugins.clone(),
             accepted: AtomicU64::new(0),
@@ -304,23 +295,41 @@ impl Location {
 
     /// Get the connected count of upstream
     pub fn upstream_connected(&self) -> Option<u32> {
-        self.upstream.connected()
+        if let Some(up) = get_upstream(&self.upstream) {
+            return up.connected();
+        }
+        None
     }
+}
+
+type Locations = HashMap<String, Arc<Location>>;
+static LOCATION_MAP: Lazy<ArcSwap<Locations>> = Lazy::new(|| ArcSwap::from_pointee(HashMap::new()));
+
+pub fn get_location(name: &str) -> Option<Arc<Location>> {
+    LOCATION_MAP.load().get(name).cloned()
+}
+
+pub fn try_init_locations(confs: &HashMap<String, LocationConf>) -> Result<()> {
+    let mut locations = HashMap::new();
+    for (name, conf) in confs.iter() {
+        let lo = Location::new(name, conf)?;
+        locations.insert(name.to_string(), Arc::new(lo));
+    }
+    LOCATION_MAP.store(Arc::new(locations));
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{format_headers, new_path_selector, Location, PathSelector};
-    use crate::config::{LocationConf, PluginStep, UpstreamConf};
+    use crate::config::{LocationConf, PluginStep};
     use crate::plugin::initialize_test_plugins;
-    use crate::proxy::Upstream;
     use crate::state::State;
     use bytesize::ByteSize;
     use http::Method;
     use pingora::http::{RequestHeader, ResponseHeader};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
-    use std::sync::Arc;
     use tokio_test::io::Builder;
 
     #[test]
@@ -349,16 +358,6 @@ mod tests {
     #[test]
     fn test_path_host_select_location() {
         let upstream_name = "charts";
-        let upstream = Arc::new(
-            Upstream::new(
-                upstream_name,
-                &UpstreamConf {
-                    addrs: vec!["127.0.0.1".to_string()],
-                    ..Default::default()
-                },
-            )
-            .unwrap(),
-        );
 
         // no path, no host
         let lo = Location::new(
@@ -367,7 +366,6 @@ mod tests {
                 upstream: Some(upstream_name.to_string()),
                 ..Default::default()
             },
-            vec![upstream.clone()],
         )
         .unwrap();
         assert_eq!(true, lo.matched("pingap", "/api"));
@@ -383,7 +381,6 @@ mod tests {
                 host: Some("test.com,pingap".to_string()),
                 ..Default::default()
             },
-            vec![upstream.clone()],
         )
         .unwrap();
         assert_eq!(true, lo.matched("pingap", "/api"));
@@ -398,7 +395,6 @@ mod tests {
                 path: Some("~/users".to_string()),
                 ..Default::default()
             },
-            vec![upstream.clone()],
         )
         .unwrap();
         assert_eq!(true, lo.matched("", "/api/users"));
@@ -413,7 +409,6 @@ mod tests {
                 path: Some("~^/api".to_string()),
                 ..Default::default()
             },
-            vec![upstream.clone()],
         )
         .unwrap();
         assert_eq!(true, lo.matched("", "/api/users"));
@@ -428,7 +423,6 @@ mod tests {
                 path: Some("/api".to_string()),
                 ..Default::default()
             },
-            vec![upstream.clone()],
         )
         .unwrap();
         assert_eq!(true, lo.matched("", "/api/users"));
@@ -443,7 +437,6 @@ mod tests {
                 path: Some("=/api".to_string()),
                 ..Default::default()
             },
-            vec![upstream.clone()],
         )
         .unwrap();
         assert_eq!(false, lo.matched("", "/api/users"));
@@ -454,16 +447,6 @@ mod tests {
     #[test]
     fn test_rewrite_path() {
         let upstream_name = "charts";
-        let upstream = Arc::new(
-            Upstream::new(
-                upstream_name,
-                &UpstreamConf {
-                    addrs: vec!["127.0.0.1".to_string()],
-                    ..Default::default()
-                },
-            )
-            .unwrap(),
-        );
 
         let lo = Location::new(
             "",
@@ -472,7 +455,6 @@ mod tests {
                 rewrite: Some("^/users/(.*)$ /$1".to_string()),
                 ..Default::default()
             },
-            vec![upstream.clone()],
         )
         .unwrap();
         let mut req_header = RequestHeader::build("GET", b"/users/me?abc=1", None).unwrap();
@@ -487,16 +469,6 @@ mod tests {
     #[test]
     fn test_insert_header() {
         let upstream_name = "charts";
-        let upstream = Arc::new(
-            Upstream::new(
-                upstream_name,
-                &UpstreamConf {
-                    addrs: vec!["127.0.0.1".to_string()],
-                    ..Default::default()
-                },
-            )
-            .unwrap(),
-        );
 
         let lo = Location::new(
             "",
@@ -507,7 +479,6 @@ mod tests {
                 proxy_add_headers: Some(vec!["X-User: pingap".to_string()]),
                 ..Default::default()
             },
-            vec![upstream.clone()],
         )
         .unwrap();
 
@@ -522,16 +493,6 @@ mod tests {
     #[test]
     fn test_client_body_size_limit() {
         let upstream_name = "charts";
-        let upstream = Arc::new(
-            Upstream::new(
-                upstream_name,
-                &UpstreamConf {
-                    addrs: vec!["127.0.0.1".to_string()],
-                    ..Default::default()
-                },
-            )
-            .unwrap(),
-        );
 
         let lo = Location::new(
             "",
@@ -542,7 +503,6 @@ mod tests {
                 client_max_body_size: Some(ByteSize(10)),
                 ..Default::default()
             },
-            vec![upstream.clone()],
         )
         .unwrap();
 
@@ -588,16 +548,6 @@ mod tests {
     async fn test_exec_proxy_plugins() {
         initialize_test_plugins();
         let upstream_name = "charts";
-        let upstream = Arc::new(
-            Upstream::new(
-                upstream_name,
-                &UpstreamConf {
-                    addrs: vec!["127.0.0.1".to_string()],
-                    ..Default::default()
-                },
-            )
-            .unwrap(),
-        );
 
         let lo = Location::new(
             "",
@@ -607,7 +557,6 @@ mod tests {
                 plugins: Some(vec!["test:mock".to_string()]),
                 ..Default::default()
             },
-            vec![upstream.clone()],
         )
         .unwrap();
 
@@ -639,16 +588,6 @@ mod tests {
     async fn test_exec_response_plugins() {
         initialize_test_plugins();
         let upstream_name = "charts";
-        let upstream = Arc::new(
-            Upstream::new(
-                upstream_name,
-                &UpstreamConf {
-                    addrs: vec!["127.0.0.1".to_string()],
-                    ..Default::default()
-                },
-            )
-            .unwrap(),
-        );
 
         let lo = Location::new(
             "",
@@ -658,7 +597,6 @@ mod tests {
                 plugins: Some(vec!["test:add_headers".to_string()]),
                 ..Default::default()
             },
-            vec![upstream.clone()],
         )
         .unwrap();
 

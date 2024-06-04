@@ -19,8 +19,8 @@ mod server;
 mod server_conf;
 mod upstream;
 
-pub use location::Location;
+pub use location::{try_init_locations, Location};
 pub use logger::Parser;
 pub use server::*;
 pub use server_conf::ServerConf;
-pub use upstream::Upstream;
+pub use upstream::{start_health_check_tasks, try_init_upstreams};

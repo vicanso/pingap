@@ -1,14 +1,13 @@
 use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion};
 use http::{HeaderName, HeaderValue, StatusCode};
-use pingap::config::{LocationConf, UpstreamConf};
+use pingap::config::LocationConf;
 use pingap::http_extra::{convert_headers, HttpResponse};
-use pingap::proxy::{Location, Parser, Upstream};
+use pingap::proxy::{Location, Parser};
 use pingap::state::State;
 use pingap::util::get_super_ts;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
-use std::sync::Arc;
 use tokio_test::io::Builder;
 
 fn bench_insert_bytes_header(c: &mut Criterion) {
@@ -95,16 +94,6 @@ fn bench_get_response_header(c: &mut Criterion) {
 fn bench_location_filter(c: &mut Criterion) {
     let mut group = c.benchmark_group("location filter");
     let upstream_name = "charts";
-    let upstream = Arc::new(
-        Upstream::new(
-            upstream_name,
-            &UpstreamConf {
-                addrs: vec!["127.0.0.1:8001".to_string()],
-                ..Default::default()
-            },
-        )
-        .unwrap(),
-    );
 
     group.bench_function("prefix", |b| {
         let lo = Location::new(
@@ -114,7 +103,6 @@ fn bench_location_filter(c: &mut Criterion) {
                 path: Some("/api".to_string()),
                 ..Default::default()
             },
-            vec![upstream.clone()],
         )
         .unwrap();
         b.iter(|| {
@@ -131,7 +119,6 @@ fn bench_location_filter(c: &mut Criterion) {
                 path: Some("~/api".to_string()),
                 ..Default::default()
             },
-            vec![upstream.clone()],
         )
         .unwrap();
         b.iter(|| {
@@ -147,7 +134,6 @@ fn bench_location_filter(c: &mut Criterion) {
                 path: Some("=/api".to_string()),
                 ..Default::default()
             },
-            vec![upstream.clone()],
         )
         .unwrap();
         b.iter(|| {
@@ -161,16 +147,7 @@ fn bench_location_filter(c: &mut Criterion) {
 
 fn bench_location_rewrite_path(c: &mut Criterion) {
     let upstream_name = "charts";
-    let upstream = Arc::new(
-        Upstream::new(
-            upstream_name,
-            &UpstreamConf {
-                addrs: vec!["127.0.0.1:8001".to_string()],
-                ..Default::default()
-            },
-        )
-        .unwrap(),
-    );
+
     let lo = Location::new(
         "",
         &LocationConf {
@@ -178,7 +155,6 @@ fn bench_location_rewrite_path(c: &mut Criterion) {
             rewrite: Some("^/users/(.*)$ /$1".to_string()),
             ..Default::default()
         },
-        vec![upstream.clone()],
     )
     .unwrap();
 

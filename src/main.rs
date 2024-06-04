@@ -189,7 +189,6 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     let mut my_server = server::Server::new(None)?;
     let ps = Server::new(&server_conf)?;
     let services = ps.run(&my_server.configuration)?;
-    my_server.add_services(services.bg_services);
     my_server.add_service(services.lb);
 
     my_server.bootstrap();
@@ -276,6 +275,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         state::set_restart_process_command(cmd);
     }
 
+    let upstreams = proxy::try_init_upstreams(&conf.upstreams)?;
+    proxy::start_health_check_tasks(upstreams);
+    proxy::try_init_locations(&conf.locations)?;
+
     let opt = Opt {
         upgrade: args.upgrade,
         daemon: args.daemon,
@@ -345,7 +348,6 @@ fn run() -> Result<(), Box<dyn Error>> {
             ps.enable_lets_encrypt();
         }
         let services = ps.run(&my_server.configuration)?;
-        my_server.add_services(services.bg_services);
         my_server.add_service(services.lb);
         if let Some(tls_validity) = services.tls_validity {
             validity_list.push((name, tls_validity));

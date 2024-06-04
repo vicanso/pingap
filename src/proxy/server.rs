@@ -14,12 +14,14 @@
 
 use super::dynamic_cert::DynamicCert;
 use super::logger::Parser;
+use super::upstream::get_upstream;
+use super::Location;
 use super::ServerConf;
-use super::{Location, Upstream};
 use crate::acme::{get_lets_encrypt_cert, handle_lets_encrypt, parse_x509_validity};
 use crate::config::PluginStep;
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use crate::plugin::get_proxy_plugin;
+use crate::proxy::location::get_location;
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
@@ -36,9 +38,7 @@ use pingora::protocols::Digest;
 use pingora::proxy::{http_proxy_service, HttpProxy};
 use pingora::proxy::{ProxyHttp, Session};
 use pingora::server::configuration;
-use pingora::services::background::GenBackgroundService;
 use pingora::services::listening::Service;
-use pingora::services::Service as IService;
 use pingora::upstreams::peer::{HttpPeer, Peer};
 use snafu::Snafu;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
@@ -76,7 +76,7 @@ pub struct Server {
     addr: String,
     accepted: AtomicU64,
     processing: AtomicI32,
-    locations: Vec<Location>,
+    locations: Vec<String>,
     log_parser: Option<Parser>,
     error_template: String,
     threads: Option<usize>,
@@ -91,7 +91,6 @@ pub struct Server {
 pub struct ServerServices {
     pub tls_validity: Option<x509_parser::certificate::Validity>,
     pub lb: Service<HttpProxy<Server>>,
-    pub bg_services: Vec<Box<dyn IService>>,
 }
 
 const META_DEFAULTS: CacheMetaDefaults = CacheMetaDefaults::new(|_| Some(1), 1, 1);
@@ -99,36 +98,6 @@ const META_DEFAULTS: CacheMetaDefaults = CacheMetaDefaults::new(|_| Some(1), 1, 
 impl Server {
     /// Create a new server for http proxy.
     pub fn new(conf: &ServerConf) -> Result<Self> {
-        let mut upstreams = vec![];
-        let in_used_upstreams: Vec<_> = conf
-            .locations
-            .iter()
-            .filter(|item| item.1.upstream.is_some())
-            .map(|item| item.1.upstream.clone().unwrap_or_default())
-            .collect();
-        for item in conf.upstreams.iter() {
-            // ignore not in used
-            if !in_used_upstreams.contains(&item.0) {
-                continue;
-            }
-            let up = Upstream::new(&item.0, &item.1).map_err(|err| Error::Common {
-                category: "upstream".to_string(),
-                message: err.to_string(),
-            })?;
-            upstreams.push(Arc::new(up));
-        }
-        let mut locations = vec![];
-        for item in conf.locations.iter() {
-            locations.push(
-                Location::new(&item.0, &item.1, upstreams.clone()).map_err(|err| {
-                    Error::Common {
-                        category: "location".to_string(),
-                        message: err.to_string(),
-                    }
-                })?,
-            );
-        }
-
         debug!("Server: {conf}");
         let mut p = None;
         if let Some(access_log) = &conf.access_log {
@@ -149,7 +118,7 @@ impl Server {
             processing: AtomicI32::new(0),
             addr: conf.addr.clone(),
             log_parser: p,
-            locations,
+            locations: conf.locations.clone(),
             error_template: conf.error_template.clone(),
             tls_key: conf.tls_key.clone(),
             tls_cert: conf.tls_cert.clone(),
@@ -165,26 +134,19 @@ impl Server {
     pub fn enable_lets_encrypt(&mut self) {
         self.lets_encrypt_enabled = true;
     }
+    fn get_location(&self, index: Option<usize>) -> Option<Arc<Location>> {
+        if let Some(index) = index {
+            get_location(&self.locations[index])
+        } else {
+            None
+        }
+    }
     /// New all background services and add a TCP/TLS listening endpoint.
     pub fn run(self, conf: &Arc<configuration::ServerConf>) -> Result<ServerServices> {
         let tls_from_lets_encrypt = self.tls_from_lets_encrypt;
         let addr = self.addr.clone();
         let tcp_socket_options = self.tcp_socket_options.clone();
-        let mut bg_services: Vec<Box<dyn IService>> = vec![];
-        let mut exists_background_service = vec![];
-        for item in self.locations.iter() {
-            let name = format!("BG {}", item.upstream.name);
-            if exists_background_service.contains(&name) {
-                continue;
-            }
-            exists_background_service.push(name.clone());
-            if let Some(up) = item.upstream.as_round_robind() {
-                bg_services.push(Box::new(GenBackgroundService::new(name.clone(), up)));
-            }
-            if let Some(up) = item.upstream.as_consistent() {
-                bg_services.push(Box::new(GenBackgroundService::new(name, up)));
-            }
-        }
+
         // tls
         let mut tls_cert = self.tls_cert.clone();
         let mut tls_key = self.tls_key.clone();
@@ -259,7 +221,7 @@ impl Server {
         Ok(ServerServices {
             tls_validity,
             lb,
-            bg_services,
+            // bg_services,
         })
     }
     async fn serve_admin(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<()> {
@@ -337,13 +299,19 @@ impl ProxyHttp for Server {
         // let path = header.uri.path();
         let host = util::get_host(header).unwrap_or_default();
 
-        let location_result = self
-            .locations
-            .iter()
-            .enumerate()
-            .find(|(_, item)| item.matched(host, header.uri.path()));
+        let mut location_index = None;
+        let mut location = None;
+        for (index, name) in self.locations.iter().enumerate() {
+            if let Some(lo) = get_location(name) {
+                if lo.matched(host, header.uri.path()) {
+                    location_index = Some(index);
+                    location = Some(lo);
+                    break;
+                }
+            }
+        }
 
-        if location_result.is_none() {
+        if location_index.is_none() {
             HttpResponse::unknown_error(Bytes::from(format!(
                 "Location not found, host:{host} path:{}",
                 header.uri.path(),
@@ -352,8 +320,8 @@ impl ProxyHttp for Server {
             .await?;
             return Ok(true);
         }
+        let lo = location.unwrap();
 
-        let (location_index, lo) = location_result.unwrap();
         debug!("Location {}", lo.name);
         lo.rewrite(header);
 
@@ -361,7 +329,7 @@ impl ProxyHttp for Server {
         lo.client_body_size_limit(Some(header), ctx)?;
 
         ctx.location.clone_from(&lo.name);
-        ctx.location_index = Some(location_index);
+        ctx.location_index = location_index;
         ctx.upstream_connected = lo.upstream_connected();
         ctx.location_accepted = lo.accepted.fetch_add(1, Ordering::Relaxed);
         ctx.location_processing = lo.processing.fetch_add(1, Ordering::Relaxed);
@@ -424,8 +392,7 @@ impl ProxyHttp for Server {
             }
         }
 
-        if let Some(index) = ctx.location_index {
-            let lo = &self.locations[index];
+        if let Some(lo) = self.get_location(ctx.location_index) {
             lo.exec_response_plugins(session, ctx, upstream_response, PluginStep::ResponseFilter)
                 .await?;
         }
@@ -441,12 +408,13 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        let lo = &self.locations[ctx.location_index.unwrap_or_default()];
-        let done = lo
-            .exec_proxy_plugins(session, ctx, PluginStep::ProxyUpstream)
-            .await?;
-        if done {
-            return Ok(false);
+        if let Some(lo) = self.get_location(ctx.location_index) {
+            let done = lo
+                .exec_proxy_plugins(session, ctx, PluginStep::ProxyUpstream)
+                .await?;
+            if done {
+                return Ok(false);
+            }
         }
         Ok(true)
     }
@@ -456,13 +424,16 @@ impl ProxyHttp for Server {
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Box<HttpPeer>> {
-        let lo = &self.locations[ctx.location_index.unwrap_or_default()];
-        let peer = lo.upstream.new_http_peer(session, ctx).ok_or_else(|| {
-            util::new_internal_error(
+        let peer = if let Some(lo) = self.get_location(ctx.location_index) {
+            let up = get_upstream(&lo.upstream).ok_or(util::new_internal_error(
                 503,
-                format!("No available upstream({}:{})", lo.name, lo.upstream.name),
-            )
-        })?;
+                format!("No upstream({}:{})", lo.name, lo.upstream),
+            ))?;
+            up.new_http_peer(session, ctx)
+        } else {
+            None
+        }
+        .ok_or_else(|| util::new_internal_error(503, "No available upstream".to_string()))?;
 
         ctx.upstream_connect_time = get_latency(&ctx.upstream_connect_time);
 
@@ -498,8 +469,9 @@ impl ProxyHttp for Server {
     {
         if let Some(buf) = body {
             ctx.payload_size += buf.len();
-            let lo = &self.locations[ctx.location_index.unwrap_or_default()];
-            lo.client_body_size_limit(None, ctx)?;
+            if let Some(lo) = self.get_location(ctx.location_index) {
+                lo.client_body_size_limit(None, ctx)?;
+            }
         }
         Ok(())
     }
@@ -524,8 +496,9 @@ impl ProxyHttp for Server {
             let _ =
                 upstream_response.insert_header(util::HTTP_HEADER_X_FORWARDED_FOR.clone(), value);
         }
-        let lo = &self.locations[ctx.location_index.unwrap_or_default()];
-        lo.set_append_proxy_headers(upstream_response);
+        if let Some(lo) = self.get_location(ctx.location_index) {
+            lo.set_append_proxy_headers(upstream_response);
+        }
 
         Ok(())
     }
@@ -655,10 +628,8 @@ impl ProxyHttp for Server {
         Self::CTX: Send + Sync,
     {
         self.processing.fetch_sub(1, Ordering::Relaxed);
-        if let Some(location_index) = ctx.location_index {
-            self.locations[location_index]
-                .processing
-                .fetch_sub(1, Ordering::Relaxed);
+        if let Some(lo) = self.get_location(ctx.location_index) {
+            lo.processing.fetch_sub(1, Ordering::Relaxed);
         }
         if ctx.status.is_none() {
             if let Some(header) = session.response_written() {
@@ -677,7 +648,7 @@ mod tests {
     use super::{get_latency, Server};
     use crate::config::PingapConf;
     use crate::proxy::server::get_digest_detail;
-    use crate::proxy::ServerConf;
+    use crate::proxy::{try_init_locations, try_init_upstreams, ServerConf};
     use crate::state::State;
     use pingora::http::ResponseHeader;
     use pingora::protocols::{ssl::SslDigest, Digest, TimingDigest};
@@ -721,6 +692,8 @@ mod tests {
     fn new_server() -> Server {
         let toml_data = include_bytes!("../../conf/pingap.toml");
         let pingap_conf = PingapConf::try_from(toml_data.as_ref()).unwrap();
+        try_init_upstreams(&pingap_conf.upstreams).unwrap();
+        try_init_locations(&pingap_conf.locations).unwrap();
         let confs: Vec<ServerConf> = pingap_conf.into();
         Server::new(&confs[0]).unwrap()
     }
@@ -732,7 +705,6 @@ mod tests {
             .run(&Arc::new(configuration::ServerConf::default()))
             .unwrap();
 
-        assert_eq!(1, services.bg_services.len());
         assert_eq!("Pingora HTTP Proxy Service", services.lb.name());
     }
 

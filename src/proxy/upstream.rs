@@ -15,9 +15,11 @@
 use crate::config::UpstreamConf;
 use crate::state::State;
 use crate::util;
+use arc_swap::ArcSwap;
 use futures_util::FutureExt;
 use humantime::parse_duration;
 use log::{debug, error, info};
+use once_cell::sync::Lazy;
 use pingora::http::RequestHeader;
 use pingora::lb::health_check::{HealthCheck, HttpHealthCheck, TcpHealthCheck};
 use pingora::lb::selection::{Consistent, RoundRobin};
@@ -29,9 +31,10 @@ use pingora::proxy::Session;
 use pingora::upstreams::peer::{HttpPeer, PeerOptions, Tracer, Tracing};
 use snafu::{ResultExt, Snafu};
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 use std::fmt;
 use std::net::ToSocketAddrs;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
@@ -56,7 +59,6 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 enum SelectionLb {
     RoundRobin(Arc<LoadBalancer<RoundRobin>>),
     Consistent(Arc<LoadBalancer<Consistent>>),
-    Empty,
 }
 
 #[derive(Clone, Debug)]
@@ -91,6 +93,7 @@ pub struct Upstream {
     tls: bool,
     sni: String,
     lb: SelectionLb,
+    running: AtomicBool,
     connection_timeout: Option<Duration>,
     total_connection_timeout: Option<Duration>,
     read_timeout: Option<Duration>,
@@ -123,29 +126,6 @@ impl fmt::Display for Upstream {
         write!(f, "write_timeout:{:?} ", self.write_timeout)?;
         write!(f, "verify_cert:{:?} ", self.verify_cert)?;
         write!(f, "alpn:{:?}", self.alpn)
-    }
-}
-
-pub fn new_empty_upstream() -> Upstream {
-    Upstream {
-        name: "".to_string(),
-        hash: "".to_string(),
-        hash_key: "".to_string(),
-        tls: false,
-        sni: "".to_string(),
-        lb: SelectionLb::Empty,
-        connection_timeout: None,
-        total_connection_timeout: None,
-        read_timeout: None,
-        idle_timeout: None,
-        write_timeout: None,
-        verify_cert: None,
-        alpn: ALPN::H1,
-        tcp_recv_buf: None,
-        tcp_keepalive: None,
-        tcp_fast_open: None,
-        tracer: None,
-        peer_tracer: None,
     }
 }
 
@@ -286,7 +266,7 @@ fn new_health_check(
     name: &str,
     health_check: &str,
 ) -> Result<(Box<dyn HealthCheck + Send + Sync + 'static>, Duration)> {
-    let mut health_check_frequency = Duration::from_secs(5);
+    let mut health_check_frequency = Duration::from_secs(30);
     let hc: Box<dyn HealthCheck + Send + Sync + 'static> = if health_check.is_empty() {
         let mut check = TcpHealthCheck::new();
         check.peer_template.options.connection_timeout = Some(Duration::from_secs(3));
@@ -367,6 +347,45 @@ fn get_hash_value(hash: &str, hash_key: &str, session: &Session, ctx: &State) ->
             .to_string(),
         // default: path
         _ => session.req_header().uri.path().to_string(),
+    }
+}
+
+pub fn start_health_check_tasks(upstreams: Vec<Arc<Upstream>>) {
+    for up in upstreams {
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .enable_io()
+                .build()
+                .expect("Health check runtime");
+            let health_check_frequency = if let Some(lb) = up.as_round_robind() {
+                lb.health_check_frequency
+            } else if let Some(lb) = up.as_consistent() {
+                lb.health_check_frequency
+            } else {
+                None
+            };
+            runtime.block_on(async move {
+                let mut period = tokio::time::interval(
+                    health_check_frequency.unwrap_or(Duration::from_secs(30)),
+                );
+                loop {
+                    if !up.running.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    period.tick().await;
+                    if let Some(lb) = up.as_round_robind() {
+                        lb.backends()
+                            .run_health_check(lb.parallel_health_check)
+                            .await;
+                    } else if let Some(lb) = up.as_consistent() {
+                        lb.backends()
+                            .run_health_check(lb.parallel_health_check)
+                            .await;
+                    }
+                }
+            });
+        });
     }
 }
 
@@ -468,11 +487,13 @@ impl Upstream {
             tcp_keepalive,
             tcp_fast_open: conf.tcp_fast_open,
             peer_tracer,
+            running: AtomicBool::new(true),
             tracer,
         };
         debug!("Upstream {up}");
         Ok(up)
     }
+
     /// Returns a new http peer, if there is no healthy backend, it will return `None`.
     pub fn new_http_peer(&self, session: &Session, ctx: &State) -> Option<HttpPeer> {
         let upstream = match &self.lb {
@@ -481,7 +502,6 @@ impl Upstream {
                 let value = get_hash_value(&self.hash, &self.hash_key, session, ctx);
                 lb.select(value.as_bytes(), 256)
             }
-            _ => None,
         };
         upstream.map(|upstream| {
             let mut p = HttpPeer::new(upstream, self.tls, self.sni.clone());
@@ -527,10 +547,34 @@ impl Upstream {
     }
 }
 
+type Upstreams = HashMap<String, Arc<Upstream>>;
+static UPSTREAM_MAP: Lazy<ArcSwap<Upstreams>> = Lazy::new(|| ArcSwap::from_pointee(HashMap::new()));
+
+pub fn get_upstream(name: &str) -> Option<Arc<Upstream>> {
+    UPSTREAM_MAP.load().get(name).cloned()
+}
+
+pub fn try_init_upstreams(confs: &HashMap<String, UpstreamConf>) -> Result<Vec<Arc<Upstream>>> {
+    let mut upstreams = HashMap::new();
+    let mut list = vec![];
+    for (name, conf) in confs.iter() {
+        let up = Arc::new(Upstream::new(name, conf)?);
+        list.push(up.clone());
+        upstreams.insert(name.to_string(), up);
+    }
+    let old_map = UPSTREAM_MAP.swap(Arc::new(upstreams));
+    for (_, up) in old_map.iter() {
+        up.running.store(false, Ordering::Relaxed);
+    }
+
+    drop(old_map);
+    Ok(list)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        get_hash_value, new_backends, new_empty_upstream, new_health_check, new_http_health_check,
+        get_hash_value, new_backends, new_health_check, new_http_health_check,
         new_tcp_health_check, HealthCheckConf, State, Upstream, UpstreamConf,
     };
     use pingora::protocols::ALPN;
@@ -643,7 +687,6 @@ mod tests {
         );
         assert_eq!("Some(1024)", format!("{:?}", up.tcp_recv_buf));
         assert_eq!("name:charts hash:cookie hash_key:user-id tls:false sni: connection_timeout:Some(5s) total_connection_timeout:Some(10s) read_timeout:Some(3s) idle_timeout:Some(30s) write_timeout:Some(5s) verify_cert:None alpn:H2", up.to_string());
-        assert_eq!("name: hash: hash_key: tls:false sni: connection_timeout:None total_connection_timeout:None read_timeout:None idle_timeout:None write_timeout:None verify_cert:None alpn:H1", new_empty_upstream().to_string());
     }
     #[tokio::test]
     async fn test_get_hash_key_value() {

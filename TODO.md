@@ -6,6 +6,7 @@
 - [ ] http response cache(storage: tinyufo, file)
 - [ ] support validate config for plugin
 - [ ] secret storage
+- [ ] hot reload upstream and location config
 - [x] jwt sign response plugin(sign path)
 - [x] jwt auth ignore path
 - [x] tcp fast open for upstream

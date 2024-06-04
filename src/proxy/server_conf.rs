@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config::{LocationConf, PingapConf, UpstreamConf};
+use crate::config::PingapConf;
 use crate::util;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use pingora::protocols::l4::ext::TcpKeepalive;
@@ -26,8 +26,7 @@ pub struct ServerConf {
     pub name: String,
     pub addr: String,
     pub access_log: Option<String>,
-    pub upstreams: Vec<(String, UpstreamConf)>,
-    pub locations: Vec<(String, LocationConf)>,
+    pub locations: Vec<String>,
     pub tls_cert: Option<Vec<u8>>,
     pub tls_key: Option<Vec<u8>>,
     pub threads: Option<usize>,
@@ -42,22 +41,7 @@ impl fmt::Display for ServerConf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "name:{} ", self.name)?;
         write!(f, "addr:{} ", self.addr)?;
-        write!(
-            f,
-            "upstreams:{:?} ",
-            self.upstreams
-                .iter()
-                .map(|(name, _)| name)
-                .collect::<Vec<_>>()
-        )?;
-        write!(
-            f,
-            "locations:{:?} ",
-            self.locations
-                .iter()
-                .map(|(name, _)| name)
-                .collect::<Vec<_>>()
-        )?;
+        write!(f, "locations:{:?} ", self.locations)?;
         write!(
             f,
             "tls:{} ",
@@ -94,16 +78,10 @@ impl From<PingapConf> for Vec<ServerConf> {
                     if item.1.upstream.is_some() {
                         valid_upstreams.push(item.1.upstream.clone().unwrap_or_default());
                     }
-                    filter_locations.push(item.clone())
+                    filter_locations.push(item.0.clone());
                 }
             }
-            // filter upstream of server locations
-            let mut filter_upstreams = vec![];
-            for item in upstreams.iter() {
-                if valid_upstreams.contains(&item.0) {
-                    filter_upstreams.push(item.clone())
-                }
-            }
+
             let mut tls_cert = None;
             let mut tls_key = None;
             // load config validate base64
@@ -165,7 +143,6 @@ impl From<PingapConf> for Vec<ServerConf> {
                 tls_key,
                 addr: item.addr,
                 access_log: item.access_log,
-                upstreams: filter_upstreams,
                 locations: filter_locations,
                 threads,
                 lets_encrypt: item.lets_encrypt,
@@ -183,7 +160,7 @@ impl From<PingapConf> for Vec<ServerConf> {
 #[cfg(test)]
 mod tests {
     use super::ServerConf;
-    use crate::config::{LocationConf, PingapConf, UpstreamConf};
+    use crate::config::PingapConf;
     use pingora::protocols::l4::ext::TcpKeepalive;
     use pretty_assertions::assert_eq;
     use std::time::Duration;
@@ -194,18 +171,8 @@ mod tests {
             name: "pingap".to_string(),
             addr: "127.0.0.1:3000,127.0.0.1:3001".to_string(),
             access_log: Some("combined".to_string()),
-            upstreams: vec![(
-                "charts-upstream".to_string(),
-                UpstreamConf {
-                    ..Default::default()
-                },
-            )],
-            locations: vec![(
-                "charts-location".to_string(),
-                LocationConf {
-                    ..Default::default()
-                },
-            )],
+
+            locations: vec!["charts-location".to_string()],
             threads: Some(4),
             error_template: "<html></html>".to_string(),
             lets_encrypt: Some("pingap".to_string()),
@@ -220,7 +187,7 @@ mod tests {
         };
 
         assert_eq!(
-            r#"name:pingap addr:127.0.0.1:3000,127.0.0.1:3001 upstreams:["charts-upstream"] locations:["charts-location"] tls:true threads:Some(4) lets_encrypt:Some("pingap") tcp_keepalive:Some(TcpKeepalive { idle: 10s, interval: 5s, count: 10 }) tcp_fastopen:Some(10) http2:true"#,
+            r#"name:pingap addr:127.0.0.1:3000,127.0.0.1:3001 locations:["charts-location"] tls:true threads:Some(4) lets_encrypt:Some("pingap") tcp_keepalive:Some(TcpKeepalive { idle: 10s, interval: 5s, count: 10 }) tcp_fastopen:Some(10) http2:true"#,
             conf.to_string()
         );
     }
@@ -235,7 +202,6 @@ mod tests {
         assert_eq!("test", server.name);
         assert_eq!("0.0.0.0:6188", server.addr);
         assert_eq!("tiny", server.access_log.clone().unwrap_or_default());
-        assert_eq!(1, server.upstreams.len());
         assert_eq!(1, server.locations.len());
         assert_eq!(1, server.threads.unwrap_or_default());
     }
