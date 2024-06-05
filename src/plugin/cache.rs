@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    get_int_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error, ProxyPlugin, Result,
-};
+use super::{get_step_conf, get_str_conf, get_str_slice_conf, Error, ProxyPlugin, Result};
 use crate::config::{get_current_config, PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -22,6 +20,7 @@ use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
 use bytesize::ByteSize;
 use http::Method;
+use humantime::parse_duration;
 use log::debug;
 use once_cell::sync::Lazy;
 use pingora::cache::eviction::simple_lru::Manager;
@@ -31,7 +30,7 @@ use pingora::cache::predictor::{CacheablePredictor, Predictor};
 use pingora::cache::{MemCache, Storage};
 use pingora::proxy::Session;
 use std::str::FromStr;
-use url::Url;
+use std::time::Duration;
 
 // TODO mem cache is for test
 static MEM_BACKEND: Lazy<MemCache> = Lazy::new(MemCache::new);
@@ -78,78 +77,46 @@ impl TryFrom<&PluginConf> for CacheParams {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
-        let all_params = get_str_conf(value, "value");
-        let params = if !all_params.is_empty() {
-            let url_info = Url::parse(&all_params).map_err(|e| Error::Invalid {
+
+        let lock = get_str_conf(value, "lock");
+
+        let lock = if !lock.is_empty() {
+            parse_duration(&lock).map_err(|e| Error::Invalid {
                 category: PluginCategory::Cache.to_string(),
                 message: e.to_string(),
-            })?;
-            let mut lock = 0;
-            let mut eviction = false;
-            let mut predictor = false;
-            let mut max_file_size = 100 * 1024;
-            let mut namespace = None;
-            let mut headers = None;
-            for (key, value) in url_info.query_pairs().into_iter() {
-                match key.as_ref() {
-                    "lock" => {
-                        if let Ok(d) = value.parse::<u8>() {
-                            lock = d;
-                        }
-                    }
-                    "max_file_size" => {
-                        if let Ok(v) = ByteSize::from_str(&value) {
-                            max_file_size = v.0 as usize;
-                        }
-                    }
-                    "eviction" => eviction = true,
-                    "predictor" => predictor = true,
-                    "namespace" => namespace = Some(value.to_string()),
-                    "headers" => {
-                        headers = Some(
-                            value
-                                .trim()
-                                .split(',')
-                                .map(|item| item.to_string())
-                                .collect(),
-                        )
-                    }
-                    _ => {}
-                }
-            }
-            Self {
-                plpugin_step: step,
-                eviction,
-                predictor,
-                lock,
-                max_file_size,
-                namespace,
-                headers,
-            }
+            })?
         } else {
-            let lock = get_int_conf(value, "lock") as u8;
-            let max_file_size = get_int_conf(value, "max_file_size") as usize;
-            let namespace = get_str_conf(value, "namespace");
-            let namespace = if namespace.is_empty() {
-                None
-            } else {
-                Some(namespace)
-            };
-            let headers = get_str_slice_conf(value, "headers");
-            let headers = if headers.is_empty() {
-                None
-            } else {
-                Some(headers)
-            };
-            Self {
-                plpugin_step: step,
-                eviction: value.contains_key("eviction"),
-                predictor: value.contains_key("predictor"),
-                lock: lock.max(1),
-                max_file_size: max_file_size.max(5 * 1024 * 1024),
-                namespace,
-                headers,
-            }
+            Duration::from_secs(1)
+        };
+        let max_file_size = get_str_conf(value, "max_file_size");
+        let max_file_size = if !max_file_size.is_empty() {
+            ByteSize::from_str(&max_file_size).map_err(|e| Error::Invalid {
+                category: PluginCategory::Cache.to_string(),
+                message: e.to_string(),
+            })?
+        } else {
+            ByteSize::mb(50)
+        };
+        let namespace = get_str_conf(value, "namespace");
+        let namespace = if namespace.is_empty() {
+            None
+        } else {
+            Some(namespace)
+        };
+        let headers = get_str_slice_conf(value, "headers");
+        let headers = if headers.is_empty() {
+            None
+        } else {
+            Some(headers)
+        };
+        let params = Self {
+            plpugin_step: step,
+            eviction: value.contains_key("eviction"),
+            predictor: value.contains_key("predictor"),
+            lock: lock.as_secs().max(1) as u8,
+            max_file_size: max_file_size.as_u64().max(5 * 1024 * 1024) as usize,
+            namespace,
+            headers,
         };
         if params.plpugin_step != PluginStep::Request {
             return Err(Error::Invalid {

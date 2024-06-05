@@ -33,6 +33,7 @@ diff = "0.1.13"
 dirs = "5.0.1"
 env_logger = "0.11.3"
 etcd-client = "0.12.4"
+futures = "0.3.30"
 futures-util = "0.3.30"
 glob = "0.3.1"
 hex = "0.4.3"
@@ -66,6 +67,7 @@ pingora = { git = "https://github.com/cloudflare/pingora", rev = "216d8e9d92c75d
 #     "cache",
 # ] }
 pingora-limits = "0.2.0"
+pingora-runtime = "0.2.0"
 pyroscope = { version = "0.5.7", optional = true }
 pyroscope_pprofrs = { version = "0.2.7", optional = true }
 rcgen = "0.12.1"

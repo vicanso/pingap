@@ -12,13 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config::{
-    get_config_hash, get_config_path, get_current_config, load_config, PingapConf,
-};
-use crate::service::{CommonServiceTask, ServiceTask};
 use crate::util;
 use crate::webhook;
-use async_trait::async_trait;
 use log::{error, info};
 use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
@@ -62,49 +57,6 @@ impl RestartProcessCommand {
             .env("RUST_LOG", &self.log_level)
             .args(&self.args)
             .output()
-    }
-}
-
-async fn validate_restart() -> Result<(bool, PingapConf), Box<dyn std::error::Error>> {
-    let conf = load_config(&get_config_path(), false).await?;
-    conf.validate()?;
-    if conf.hash().unwrap_or_default() != get_config_hash() {
-        return Ok((true, conf));
-    }
-    Ok((false, conf))
-}
-
-struct AutoRestart {}
-
-pub fn new_auto_restart_service(interval: Duration) -> CommonServiceTask {
-    CommonServiceTask::new("Auto restart checker", interval, AutoRestart {})
-}
-
-#[async_trait]
-impl ServiceTask for AutoRestart {
-    async fn run(&self) -> Option<bool> {
-        match validate_restart().await {
-            Ok((should_restart, conf)) => {
-                if should_restart {
-                    let diff_result = get_current_config().diff(conf);
-                    if !diff_result.is_empty() {
-                        webhook::send(webhook::SendNotificationParams {
-                            level: webhook::NotificationLevel::Info,
-                            category: webhook::NotificationCategory::DiffConfig,
-                            msg: diff_result.join("\n"),
-                        });
-                    }
-                    restart();
-                }
-            }
-            Err(e) => {
-                error!("Auto restart validate fail, {e}");
-            }
-        }
-        None
-    }
-    fn description(&self) -> String {
-        "pingap will be restart if config changed".to_string()
     }
 }
 

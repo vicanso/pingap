@@ -69,19 +69,6 @@ impl From<PingapConf> for Vec<ServerConf> {
         locations.sort_by_key(|b| std::cmp::Reverse(b.1.get_weight()));
         let mut servers = vec![];
         for (name, item) in conf.servers {
-            let valid_locations = item.locations.unwrap_or_default();
-            let mut valid_upstreams = vec![];
-            // filter location of server
-            let mut filter_locations = vec![];
-            for item in locations.iter() {
-                if valid_locations.contains(&item.0) {
-                    if item.1.upstream.is_some() {
-                        valid_upstreams.push(item.1.upstream.clone().unwrap_or_default());
-                    }
-                    filter_locations.push(item.0.clone());
-                }
-            }
-
             let mut tls_cert = None;
             let mut tls_key = None;
             // load config validate base64
@@ -143,7 +130,7 @@ impl From<PingapConf> for Vec<ServerConf> {
                 tls_key,
                 addr: item.addr,
                 access_log: item.access_log,
-                locations: filter_locations,
+                locations: item.locations.unwrap_or_default(),
                 threads,
                 lets_encrypt: item.lets_encrypt,
                 enbaled_h2: item.enabled_h2.unwrap_or(true),

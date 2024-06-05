@@ -2102,6 +2102,7 @@ dependencies = [
  "dirs",
  "env_logger",
  "etcd-client",
+ "futures",
  "futures-util",
  "glob",
  "hex",
@@ -2126,6 +2127,7 @@ dependencies = [
  "path-absolutize",
  "pingora",
  "pingora-limits",
+ "pingora-runtime 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "pretty_assertions",
  "pyroscope",
  "pyroscope_pprofrs",
@@ -2225,7 +2227,7 @@ dependencies = [
  "pingora-http",
  "pingora-openssl",
  "pingora-pool",
- "pingora-runtime",
+ "pingora-runtime 0.2.0 (git+https://github.com/cloudflare/pingora?rev=216d8e9d92c75d46cba78da9b167fb41dec91ad7)",
  "pingora-timeout",
  "prometheus",
  "rand",
@@ -2303,7 +2305,7 @@ dependencies = [
  "pingora-error",
  "pingora-http",
  "pingora-ketama",
- "pingora-runtime",
+ "pingora-runtime 0.2.0 (git+https://github.com/cloudflare/pingora?rev=216d8e9d92c75d46cba78da9b167fb41dec91ad7)",
  "rand",
  "tokio",
 ]
@@ -2365,6 +2367,18 @@ dependencies = [
  "pingora-http",
  "pingora-timeout",
  "regex",
+ "tokio",
+]
+
+[[package]]
+name = "pingora-runtime"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8b3220ffd0b1ccb1f65765318615a7c9358ba79c90fe52860f09f8899b499ea"
+dependencies = [
+ "once_cell",
+ "rand",
+ "thread_local",
  "tokio",
 ]
 

@@ -18,16 +18,19 @@ use super::upstream::get_upstream;
 use super::Location;
 use super::ServerConf;
 use crate::acme::{get_lets_encrypt_cert, handle_lets_encrypt, parse_x509_validity};
+use crate::config;
 use crate::config::PluginStep;
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use crate::plugin::get_proxy_plugin;
 use crate::proxy::location::get_location;
 use crate::state::State;
 use crate::util;
+use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
 use log::{debug, error, info};
+use once_cell::sync::Lazy;
 use pingora::cache::cache_control::CacheControl;
 use pingora::cache::filters::resp_cacheable;
 use pingora::cache::{CacheKey, CacheMetaDefaults, NoCacheReason, RespCacheable};
@@ -41,6 +44,7 @@ use pingora::server::configuration;
 use pingora::services::listening::Service;
 use pingora::upstreams::peer::{HttpPeer, Peer};
 use snafu::Snafu;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -70,13 +74,48 @@ fn get_latency(value: &Option<u32>) -> Option<u32> {
     }
 }
 
+type ServerLocations = HashMap<String, Arc<Vec<String>>>;
+static LOCATION_MAP: Lazy<ArcSwap<ServerLocations>> =
+    Lazy::new(|| ArcSwap::from_pointee(HashMap::new()));
+
+pub fn try_init_server_locations(
+    servers: &HashMap<String, config::ServerConf>,
+    locations: &HashMap<String, config::LocationConf>,
+) -> Result<()> {
+    let mut location_weights = HashMap::new();
+    for (name, item) in locations.iter() {
+        location_weights.insert(name.to_string(), item.get_weight());
+    }
+    let mut server_locations = HashMap::new();
+    for (name, server) in servers.iter() {
+        if let Some(items) = &server.locations {
+            let mut items = items.clone();
+            items.sort_by_key(|item| {
+                let weight = if let Some(weight) = location_weights.get(item.as_str()) {
+                    weight.to_owned()
+                } else {
+                    0
+                };
+                std::cmp::Reverse(weight)
+            });
+            server_locations.insert(name.to_string(), Arc::new(items));
+        }
+    }
+    LOCATION_MAP.store(Arc::new(server_locations));
+    Ok(())
+}
+
+fn get_server_locations(name: &str) -> Option<Arc<Vec<String>>> {
+    LOCATION_MAP.load().get(name).cloned()
+}
+
 pub struct Server {
     name: String,
     admin: bool,
     addr: String,
     accepted: AtomicU64,
     processing: AtomicI32,
-    locations: Vec<String>,
+    // locations: Vec<String>,
     log_parser: Option<Parser>,
     error_template: String,
     threads: Option<usize>,
@@ -118,7 +157,7 @@ impl Server {
             processing: AtomicI32::new(0),
             addr: conf.addr.clone(),
             log_parser: p,
-            locations: conf.locations.clone(),
+            // locations: conf.locations.clone(),
             error_template: conf.error_template.clone(),
             tls_key: conf.tls_key.clone(),
             tls_cert: conf.tls_cert.clone(),
@@ -135,11 +174,12 @@ impl Server {
         self.lets_encrypt_enabled = true;
     }
     fn get_location(&self, index: Option<usize>) -> Option<Arc<Location>> {
-        if let Some(index) = index {
-            get_location(&self.locations[index])
-        } else {
-            None
+        if let Some(locations) = get_server_locations(&self.name) {
+            if let Some(index) = index {
+                return get_location(&locations[index]);
+            }
         }
+        None
     }
     /// New all background services and add a TCP/TLS listening endpoint.
     pub fn run(self, conf: &Arc<configuration::ServerConf>) -> Result<ServerServices> {
@@ -301,12 +341,14 @@ impl ProxyHttp for Server {
 
         let mut location_index = None;
         let mut location = None;
-        for (index, name) in self.locations.iter().enumerate() {
-            if let Some(lo) = get_location(name) {
-                if lo.matched(host, header.uri.path()) {
-                    location_index = Some(index);
-                    location = Some(lo);
-                    break;
+        if let Some(locations) = get_server_locations(&self.name) {
+            for (index, name) in locations.iter().enumerate() {
+                if let Some(lo) = get_location(name) {
+                    if lo.matched(host, header.uri.path()) {
+                        location_index = Some(index);
+                        location = Some(lo);
+                        break;
+                    }
                 }
             }
         }
@@ -648,7 +690,9 @@ mod tests {
     use super::{get_latency, Server};
     use crate::config::PingapConf;
     use crate::proxy::server::get_digest_detail;
-    use crate::proxy::{try_init_locations, try_init_upstreams, ServerConf};
+    use crate::proxy::{
+        try_init_locations, try_init_server_locations, try_init_upstreams, ServerConf,
+    };
     use crate::state::State;
     use pingora::http::ResponseHeader;
     use pingora::protocols::{ssl::SslDigest, Digest, TimingDigest};
@@ -694,6 +738,7 @@ mod tests {
         let pingap_conf = PingapConf::try_from(toml_data.as_ref()).unwrap();
         try_init_upstreams(&pingap_conf.upstreams).unwrap();
         try_init_locations(&pingap_conf.locations).unwrap();
+        try_init_server_locations(&pingap_conf.servers, &pingap_conf.locations).unwrap();
         let confs: Vec<ServerConf> = pingap_conf.into();
         Server::new(&confs[0]).unwrap()
     }

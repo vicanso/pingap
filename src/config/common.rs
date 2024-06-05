@@ -16,13 +16,16 @@ use super::{Error, Result};
 use crate::plugin::parse_plugins;
 use crate::proxy::Parser;
 use crate::util;
+use arc_swap::ArcSwap;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use bytesize::ByteSize;
 use http::{HeaderName, HeaderValue};
+use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
 use regex::Regex;
 use serde::{Deserialize, Serialize, Serializer};
 use std::net::ToSocketAddrs;
+use std::sync::Arc;
 use std::time::Duration;
 use std::{collections::HashMap, str::FromStr};
 use strum::EnumString;
@@ -486,6 +489,7 @@ impl TryFrom<&[u8]> for PingapConf {
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 struct Description {
+    category: String,
     name: String,
     data: String,
 }
@@ -517,9 +521,15 @@ impl PingapConf {
     }
     /// Generate the content hash of config.
     pub fn hash(&self) -> Result<String> {
-        let data = toml::to_string_pretty(self).map_err(|e| Error::Ser { source: e })?;
-        let mut lines: Vec<&str> = data.split('\n').collect();
-        lines.sort();
+        let mut lines = vec![];
+        for desc in self.descriptions() {
+            lines.push(desc.category);
+            lines.push(desc.name);
+            lines.push(desc.data);
+        }
+        // let data = toml::to_string_pretty(self).map_err(|e| Error::Ser { source: e })?;
+        // let mut lines: Vec<&str> = data.split('\n').collect();
+        // lines.sort();
         let hash = crc32fast::hash(lines.join("\n").as_bytes());
         Ok(format!("{:X}", hash))
     }
@@ -581,24 +591,28 @@ impl PingapConf {
         let mut descriptions = vec![];
         for (name, data) in value.servers.iter() {
             descriptions.push(Description {
+                category: CATEGORY_SERVER.to_string(),
                 name: format!("server:{name}"),
                 data: toml::to_string_pretty(data).unwrap_or_default(),
             });
         }
         for (name, data) in value.locations.iter() {
             descriptions.push(Description {
+                category: CATEGORY_LOCATION.to_string(),
                 name: format!("location:{name}"),
                 data: toml::to_string_pretty(data).unwrap_or_default(),
             });
         }
         for (name, data) in value.upstreams.iter() {
             descriptions.push(Description {
+                category: CATEGORY_UPSTREAM.to_string(),
                 name: format!("upstream:{name}"),
                 data: toml::to_string_pretty(data).unwrap_or_default(),
             });
         }
         for (name, data) in value.plugins.iter() {
             descriptions.push(Description {
+                category: CATEGORY_PLUGIN.to_string(),
                 name: format!("plugin:{name}"),
                 data: toml::to_string_pretty(data).unwrap_or_default(),
             });
@@ -608,6 +622,7 @@ impl PingapConf {
         value.upstreams = HashMap::new();
         value.plugins = HashMap::new();
         descriptions.push(Description {
+            category: CATEGORY_BASIC.to_string(),
             name: CATEGORY_BASIC.to_string(),
             data: toml::to_string_pretty(&value).unwrap_or_default(),
         });
@@ -615,7 +630,9 @@ impl PingapConf {
         descriptions
     }
     /// Get the different content of two config.
-    pub fn diff(&self, other: PingapConf) -> Vec<String> {
+    pub fn diff(&self, other: &PingapConf) -> (Vec<String>, Vec<String>) {
+        let mut category_list = vec![];
+
         let current_descriptions = self.descriptions();
         let new_descriptions = other.descriptions();
         let mut diff_result = vec![];
@@ -632,6 +649,7 @@ impl PingapConf {
             if !found {
                 exists_remove = true;
                 diff_result.push(format!("--{}", item.name));
+                category_list.push(item.category.clone());
             }
         }
         if exists_remove {
@@ -650,6 +668,7 @@ impl PingapConf {
             if !found {
                 exists_add = true;
                 diff_result.push(format!("++{}", new_item.name));
+                category_list.push(new_item.category.clone());
             }
         }
         if exists_add {
@@ -673,11 +692,12 @@ impl PingapConf {
                     diff_result.push(item.name.clone());
                     diff_result.extend(item_diff_result);
                     diff_result.push("\n".to_string());
+                    category_list.push(item.category.clone());
                 }
             }
         }
 
-        diff_result
+        (category_list, diff_result)
     }
 }
 
@@ -695,25 +715,17 @@ pub fn get_config_path() -> String {
     }
 }
 
-static CURRENT_CONFIG: OnceCell<PingapConf> = OnceCell::new();
+// static CURRENT_CONFIG: OnceCell<PingapConf> = OnceCell::new();
+static CURRENT_CONFIG: Lazy<ArcSwap<PingapConf>> =
+    Lazy::new(|| ArcSwap::from_pointee(PingapConf::default()));
 /// Set current config of pingap.
 pub fn set_current_config(value: &PingapConf) {
-    CURRENT_CONFIG.get_or_init(|| value.clone());
+    CURRENT_CONFIG.store(Arc::new(value.clone()));
 }
 
 /// Get the running pingap config.
-pub fn get_current_config() -> PingapConf {
-    if let Some(value) = CURRENT_CONFIG.get() {
-        value.clone()
-    } else {
-        PingapConf::default()
-    }
-}
-
-static CONFIG_HASH: OnceCell<String> = OnceCell::new();
-/// Sets pingap running config's crc hash
-pub fn set_config_hash(version: &str) {
-    CONFIG_HASH.get_or_init(|| version.to_string());
+pub fn get_current_config() -> Arc<PingapConf> {
+    CURRENT_CONFIG.load().clone()
 }
 
 static DEFAULT_APP_NAME: &str = "Pingap";
@@ -739,19 +751,12 @@ pub fn get_app_name() -> String {
 
 /// Returns current running pingap's config crc hash
 pub fn get_config_hash() -> String {
-    if let Some(value) = CONFIG_HASH.get() {
-        value.to_string()
-    } else {
-        "".to_string()
-    }
+    get_current_config().hash().unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        get_app_name, get_config_hash, get_current_config, set_app_name, set_config_hash,
-        set_current_config, BasicConf,
-    };
+    use super::{get_app_name, get_config_hash, set_app_name, set_current_config, BasicConf};
     use super::{
         LocationConf, PingapConf, PluginCategory, ServerConf, UpstreamConf, CATEGORY_LOCATION,
         CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
@@ -767,13 +772,6 @@ mod tests {
     }
 
     #[test]
-    fn test_config_hash() {
-        assert_eq!("", get_config_hash());
-        set_config_hash("ABCD");
-        assert_eq!("ABCD", get_config_hash());
-    }
-
-    #[test]
     fn test_current_config() {
         let conf = PingapConf {
             basic: BasicConf {
@@ -784,10 +782,7 @@ mod tests {
             ..Default::default()
         };
         set_current_config(&conf);
-        assert_eq!(
-            conf.hash().unwrap_or_default(),
-            get_current_config().hash().unwrap_or_default()
-        );
+        assert_eq!("5A7EF0E3", get_config_hash());
     }
 
     #[test]
@@ -1037,8 +1032,6 @@ log_level = "info"
 "###,
             data
         );
-
-        assert_eq!("2304E616", conf.hash().unwrap());
     }
 
     #[test]
@@ -1058,7 +1051,7 @@ log_level = "info"
         other.remove(CATEGORY_UPSTREAM, "diving").unwrap();
         other.basic.threads = Some(5);
 
-        let value = conf.diff(other);
+        let value = conf.diff(&other);
 
         assert_eq!(
             r###"--upstream:diving
@@ -1070,7 +1063,7 @@ basic
 +threads = 5
 
 "###,
-            value.join("\n")
+            value.1.join("\n")
         );
     }
 

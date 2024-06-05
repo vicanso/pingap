@@ -13,9 +13,11 @@
 // limitations under the License.
 
 use crate::config::UpstreamConf;
+use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::State;
 use crate::util;
 use arc_swap::ArcSwap;
+use async_trait::async_trait;
 use futures_util::FutureExt;
 use humantime::parse_duration;
 use log::{debug, error, info};
@@ -34,7 +36,7 @@ use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::fmt;
 use std::net::ToSocketAddrs;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
@@ -93,7 +95,6 @@ pub struct Upstream {
     tls: bool,
     sni: String,
     lb: SelectionLb,
-    running: AtomicBool,
     connection_timeout: Option<Duration>,
     total_connection_timeout: Option<Duration>,
     read_timeout: Option<Duration>,
@@ -350,45 +351,6 @@ fn get_hash_value(hash: &str, hash_key: &str, session: &Session, ctx: &State) ->
     }
 }
 
-pub fn start_health_check_tasks(upstreams: Vec<Arc<Upstream>>) {
-    for up in upstreams {
-        std::thread::spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_time()
-                .enable_io()
-                .build()
-                .expect("Health check runtime");
-            let health_check_frequency = if let Some(lb) = up.as_round_robind() {
-                lb.health_check_frequency
-            } else if let Some(lb) = up.as_consistent() {
-                lb.health_check_frequency
-            } else {
-                None
-            };
-            runtime.block_on(async move {
-                let mut period = tokio::time::interval(
-                    health_check_frequency.unwrap_or(Duration::from_secs(30)),
-                );
-                loop {
-                    if !up.running.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    period.tick().await;
-                    if let Some(lb) = up.as_round_robind() {
-                        lb.backends()
-                            .run_health_check(lb.parallel_health_check)
-                            .await;
-                    } else if let Some(lb) = up.as_consistent() {
-                        lb.backends()
-                            .run_health_check(lb.parallel_health_check)
-                            .await;
-                    }
-                }
-            });
-        });
-    }
-}
-
 impl Upstream {
     /// Creates a new upstream from config.
     pub fn new(name: &str, conf: &UpstreamConf) -> Result<Self> {
@@ -487,7 +449,6 @@ impl Upstream {
             tcp_keepalive,
             tcp_fast_open: conf.tcp_fast_open,
             peer_tracer,
-            running: AtomicBool::new(true),
             tracer,
         };
         debug!("Upstream {up}");
@@ -554,21 +515,86 @@ pub fn get_upstream(name: &str) -> Option<Arc<Upstream>> {
     UPSTREAM_MAP.load().get(name).cloned()
 }
 
-pub fn try_init_upstreams(confs: &HashMap<String, UpstreamConf>) -> Result<Vec<Arc<Upstream>>> {
+pub fn try_init_upstreams(confs: &HashMap<String, UpstreamConf>) -> Result<()> {
     let mut upstreams = HashMap::new();
-    let mut list = vec![];
     for (name, conf) in confs.iter() {
         let up = Arc::new(Upstream::new(name, conf)?);
-        list.push(up.clone());
         upstreams.insert(name.to_string(), up);
     }
-    let old_map = UPSTREAM_MAP.swap(Arc::new(upstreams));
-    for (_, up) in old_map.iter() {
-        up.running.store(false, Ordering::Relaxed);
-    }
+    UPSTREAM_MAP.store(Arc::new(upstreams));
 
-    drop(old_map);
-    Ok(list)
+    Ok(())
+}
+
+#[async_trait]
+impl ServiceTask for HealthCheckTask {
+    async fn run(&self) -> Option<bool> {
+        let check_count = self.count.fetch_add(1, Ordering::Relaxed);
+        let upstreams = {
+            let mut upstreams = vec![];
+            for (name, up) in UPSTREAM_MAP.load().iter() {
+                upstreams.push((name.to_string(), up.clone()));
+            }
+            upstreams
+        };
+        let interval = self.interval.as_secs();
+
+        let jobs = upstreams.into_iter().map(|(name, up)| {
+            let runtime = pingora_runtime::current_handle();
+            runtime.spawn(async move {
+                let health_check_frequency = if let Some(lb) = up.as_round_robind() {
+                    lb.health_check_frequency
+                } else if let Some(lb) = up.as_consistent() {
+                    lb.health_check_frequency
+                } else {
+                    None
+                }
+                .unwrap_or_default()
+                .as_secs();
+                let mut count = (health_check_frequency / interval) as u32;
+                if health_check_frequency % interval != 0 {
+                    count += 1;
+                }
+                if check_count % count != 0 {
+                    return;
+                }
+
+                info!("Health check running, upstream: {name}");
+                if let Some(lb) = up.as_round_robind() {
+                    lb.backends()
+                        .run_health_check(lb.parallel_health_check)
+                        .await;
+                } else if let Some(lb) = up.as_consistent() {
+                    lb.backends()
+                        .run_health_check(lb.parallel_health_check)
+                        .await;
+                }
+                info!("Health check done, upstream: {name}");
+            })
+        });
+        futures::future::join_all(jobs).await;
+        None
+    }
+    fn description(&self) -> String {
+        "Upstream health check task".to_string()
+    }
+}
+
+struct HealthCheckTask {
+    interval: Duration,
+    count: AtomicU32,
+}
+
+pub fn new_upstream_health_check_task(interval: Duration) -> CommonServiceTask {
+    let interval = interval.max(Duration::from_secs(10));
+    CommonServiceTask::new(
+        "Upstream health check task",
+        interval,
+        HealthCheckTask {
+            interval,
+            count: AtomicU32::new(0),
+        },
+    )
 }
 
 #[cfg(test)]

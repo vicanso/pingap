@@ -642,7 +642,7 @@ authorizations = [
         assert_eq!(204, resp.status.as_u16());
 
         let conf = serve.load_config().await.unwrap();
-        assert_eq!("E956C5CA", conf.hash().unwrap());
+        assert_eq!("CA8FBAC3", conf.hash().unwrap());
 
         let resp = serve.get_config("upstream").await.unwrap();
         assert_eq!(200, resp.status.as_u16());

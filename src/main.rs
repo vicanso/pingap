@@ -14,7 +14,7 @@
 
 use crate::acme::{new_lets_encrypt_service, new_tls_validity_service};
 use crate::config::ETCD_PROTOCOL;
-use crate::state::new_auto_restart_service;
+use crate::service::new_auto_restart_service;
 use clap::Parser;
 use config::{PingapConf, PluginConf};
 use crossbeam_channel::Sender;
@@ -22,7 +22,7 @@ use log::{error, info};
 use pingora::server;
 use pingora::server::configuration::Opt;
 use pingora::services::background::background_service;
-use proxy::{Server, ServerConf};
+use proxy::{new_upstream_health_check_task, Server, ServerConf};
 use state::get_start_time;
 use std::error::Error;
 use std::sync::Arc;
@@ -241,7 +241,6 @@ fn run() -> Result<(), Box<dyn Error>> {
     info!("Enable feature perf");
 
     config::set_config_path(&args.conf);
-    config::set_config_hash(&conf.hash().unwrap_or_default());
 
     if let Ok(exec_path) = std::env::current_exe() {
         let mut cmd = state::RestartProcessCommand {
@@ -275,9 +274,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         state::set_restart_process_command(cmd);
     }
 
-    let upstreams = proxy::try_init_upstreams(&conf.upstreams)?;
-    proxy::start_health_check_tasks(upstreams);
+    proxy::try_init_upstreams(&conf.upstreams)?;
     proxy::try_init_locations(&conf.locations)?;
+    proxy::try_init_server_locations(&conf.servers, &conf.locations)?;
 
     let opt = Opt {
         upgrade: args.upgrade,
@@ -372,6 +371,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             new_tls_validity_service(validity_list),
         ));
     }
+    my_server.add_service(background_service(
+        "Upstream health check",
+        new_upstream_health_check_task(Duration::from_secs(10)),
+    ));
 
     if let Some((prox_plugins, response_plugins)) = plugin::list_plugins() {
         for (name, plugin) in prox_plugins {
