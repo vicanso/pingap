@@ -204,4 +204,11 @@ export default {
   "form.csrfName": "csrf令牌的名称",
   "form.csrfKey": "生成csrf令牌的密钥",
   "form.csrfTtl": "csrf令牌的有效期",
+  "form.cacheLock": "相同请求时的等待时长",
+  "form.cacheMaxFileSize": "缓存时的最大文件长度",
+  "form.cacheNamespace": "缓存生成key的命名空间",
+  "form.cacheHeaders": "用于生成缓存key的请求头",
+  "form.cacheHeadersAdd": "添加更多的请求头",
+  "form.cacheEviction": "是否启用缓存清除方式",
+  "form.cachePredictor": "是否启用缓存预测方式",
 };

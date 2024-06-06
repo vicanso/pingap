@@ -641,6 +641,56 @@ export function FormPluginField({
       );
       break;
     }
+    case PluginCategory.CACHE: {
+      fields.push(
+        {
+          category: "text",
+          key: "lock",
+          label: t("form.cacheLock"),
+          id: "cache-lock",
+          span: 6,
+        },
+        {
+          category: "text",
+          key: "max_file_size",
+          label: t("form.cacheMaxFileSize"),
+          id: "cache-max-file-size",
+          span: 6,
+        },
+        {
+          category: "text",
+          key: "namespace",
+          label: t("form.cacheNamespace"),
+          id: "cache-namespace",
+          span: 4,
+        },
+        {
+          category: "checkbox",
+          key: "eviction",
+          label: t("form.cacheEviction"),
+          id: "cache-eviction",
+          span: 4,
+          options: boolOptions,
+        },
+        {
+          category: "checkbox",
+          key: "predictor",
+          label: t("form.cachePredictor"),
+          id: "cache-predictor",
+          span: 4,
+          options: boolOptions,
+        },
+        {
+          category: "textlist",
+          key: "headers",
+          label: t("form.cacheHeaders"),
+          id: "cache-headers",
+          addLabel: t("form.cacheHeadersAdd"),
+          span: 12,
+        },
+      );
+      break;
+    }
     default: {
       fields.push({
         category: "text",

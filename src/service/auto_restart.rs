@@ -21,9 +21,12 @@ use crate::state::restart;
 use crate::{proxy, webhook};
 use async_trait::async_trait;
 use log::{error, info};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-async fn hot_reload() -> Result<(bool, Vec<String>), Box<dyn std::error::Error>> {
+async fn hot_reload(
+    hot_reload_only: bool,
+) -> Result<(bool, Vec<String>), Box<dyn std::error::Error>> {
     let conf = load_config(&get_config_path(), false).await?;
     conf.validate()?;
     let mut current_conf: PingapConf = get_current_config().as_ref().clone();
@@ -37,6 +40,10 @@ async fn hot_reload() -> Result<(bool, Vec<String>), Box<dyn std::error::Error>>
         }
     }
     let (updated_category_list, diff_result) = current_conf.diff(&conf);
+    if !should_reload_server_location && updated_category_list.is_empty() {
+        return Ok((false, vec![]));
+    }
+
     let mut should_reload_upstream = false;
     let mut should_reload_location = false;
     let mut should_restart = false;
@@ -47,9 +54,7 @@ async fn hot_reload() -> Result<(bool, Vec<String>), Box<dyn std::error::Error>>
             _ => should_restart = true,
         };
     }
-    if should_restart {
-        return Ok((true, diff_result));
-    }
+
     if should_reload_upstream {
         match proxy::try_init_upstreams(&conf.upstreams) {
             Err(e) => {
@@ -80,21 +85,56 @@ async fn hot_reload() -> Result<(bool, Vec<String>), Box<dyn std::error::Error>>
             }
         };
     }
+
+    if hot_reload_only {
+        // update current config only hot reload config updated
+        // the next check will not trigger hot reload
+        if !should_restart {
+            config::set_current_config(&conf);
+        }
+        return Ok((false, vec![]));
+    }
+
     config::set_current_config(&conf);
+    if should_restart {
+        return Ok((true, diff_result));
+    }
 
     Ok((false, vec![]))
 }
 
-struct AutoRestart {}
+struct AutoRestart {
+    restart_unit: u32,
+    count: AtomicU32,
+}
 
 pub fn new_auto_restart_service(interval: Duration) -> CommonServiceTask {
-    CommonServiceTask::new("Auto restart checker", interval, AutoRestart {})
+    let mut restart_unit = 1_u32;
+    let unit = Duration::from_secs(10);
+    if interval > unit {
+        restart_unit = (interval.as_secs() / unit.as_secs()) as u32;
+    }
+
+    CommonServiceTask::new(
+        "Auto restart checker",
+        interval.min(unit),
+        AutoRestart {
+            restart_unit,
+            count: AtomicU32::new(0),
+        },
+    )
 }
 
 #[async_trait]
 impl ServiceTask for AutoRestart {
     async fn run(&self) -> Option<bool> {
-        match hot_reload().await {
+        let count = self.count.fetch_add(1, Ordering::Relaxed);
+        let hot_reload_only = if count > 0 && self.restart_unit > 1 {
+            count % self.restart_unit != 0
+        } else {
+            true
+        };
+        match hot_reload(hot_reload_only).await {
             Ok((should_restart, diff_result)) => {
                 if should_restart {
                     webhook::send(webhook::SendNotificationParams {

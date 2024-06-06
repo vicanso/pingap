@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::state::{get_hostname, State, HOST_NAME_TAG};
+use crate::http_extra::HOST_NAME_TAG;
+use crate::state::{get_hostname, State};
 use crate::util;
 use bytes::BytesMut;
 use bytesize::ByteSize;
@@ -285,7 +286,7 @@ impl Parser {
                     }
                 }
                 TagCategory::Remote => {
-                    if let Some(addr) = util::get_remote_addr(session) {
+                    if let Some(addr) = &ctx.remote_addr {
                         buf.extend(addr.as_bytes());
                     }
                 }

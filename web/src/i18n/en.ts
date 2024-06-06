@@ -201,4 +201,12 @@ export default {
   "form.csrfName": "The name of csrf token",
   "form.csrfKey": "The secret key for csrf",
   "form.csrfTtl": "The ttl of csrf token",
+  "form.cacheLock":
+    "Lock time which handles concurrent lookups to the same asset",
+  "form.cacheMaxFileSize": "The max file size of cache",
+  "form.cacheNamespace": "The name space of cache",
+  "form.cacheHeaders": "The headers use for cache key",
+  "form.cacheHeadersAdd": "Add more header for cache key",
+  "form.cacheEviction": "Enable evicted from storage",
+  "form.cachePredictor": "Enable predictor",
 };

@@ -39,6 +39,7 @@ export default function ProxyPluginInfo() {
     PluginCategory.DIRECTORY,
     PluginCategory.MOCK,
     PluginCategory.REDIRECT,
+    PluginCategory.CACHE,
 
     PluginCategory.REQUEST_ID,
     PluginCategory.COMPRESSION,

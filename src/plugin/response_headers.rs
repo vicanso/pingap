@@ -13,7 +13,7 @@
 // limitations under the License.
 use super::{get_step_conf, get_str_slice_conf, Error, ResponsePlugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
-use crate::http_extra::{convert_header, HttpHeader};
+use crate::http_extra::{convert_header, convert_header_value, HttpHeader};
 use crate::state::State;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -117,8 +117,8 @@ impl ResponsePlugin for ResponseHeaders {
     async fn handle(
         &self,
         step: PluginStep,
-        _session: &mut Session,
-        _ctx: &mut State,
+        session: &mut Session,
+        ctx: &mut State,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<Option<Bytes>> {
         if step != self.plugin_step {
@@ -127,13 +127,21 @@ impl ResponsePlugin for ResponseHeaders {
         // add --> remove --> set
         // ingore error
         for (name, value) in &self.add_headers {
-            let _ = upstream_response.append_header(name, value);
+            if let Some(value) = convert_header_value(value, session, ctx) {
+                let _ = upstream_response.append_header(name, value);
+            } else {
+                let _ = upstream_response.append_header(name, value);
+            }
         }
         for name in &self.remove_headers {
             let _ = upstream_response.remove_header(name);
         }
         for (name, value) in &self.set_headers {
-            let _ = upstream_response.insert_header(name, value);
+            if let Some(value) = convert_header_value(value, session, ctx) {
+                let _ = upstream_response.insert_header(name, value);
+            } else {
+                let _ = upstream_response.insert_header(name, value);
+            }
         }
         Ok(None)
     }

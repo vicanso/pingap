@@ -14,7 +14,7 @@
 
 use super::upstream::get_upstream;
 use crate::config::{LocationConf, PluginStep};
-use crate::http_extra::{convert_headers, HttpHeader};
+use crate::http_extra::{convert_header_value, convert_headers, HttpHeader};
 use crate::plugin::{get_proxy_plugin, get_response_plugin};
 use crate::state::State;
 use crate::util;
@@ -232,17 +232,32 @@ impl Location {
     }
     /// Set or append the headers before proxy the request to upstream.
     #[inline]
-    pub fn set_append_proxy_headers(&self, header: &mut RequestHeader) {
+    pub fn set_append_proxy_headers(
+        &self,
+        session: &Session,
+        ctx: &State,
+        header: &mut RequestHeader,
+    ) {
         if let Some(arr) = &self.proxy_set_headers {
             for (k, v) in arr {
-                // v validate for HeaderValue, so always no error
-                let _ = header.insert_header(k, v);
+                if let Some(v) = convert_header_value(v, session, ctx) {
+                    // v validate for HeaderValue, so always no error
+                    let _ = header.insert_header(k, v);
+                } else {
+                    // v validate for HeaderValue, so always no error
+                    let _ = header.insert_header(k, v);
+                }
             }
         }
         if let Some(arr) = &self.proxy_add_headers {
             for (k, v) in arr {
-                // v validate for HeaderValue, so always no error
-                let _ = header.append_header(k, v);
+                if let Some(v) = convert_header_value(v, session, ctx) {
+                    // v validate for HeaderValue, so always no error
+                    let _ = header.append_header(k, v);
+                } else {
+                    // v validate for HeaderValue, so always no error
+                    let _ = header.append_header(k, v);
+                }
             }
         }
     }
@@ -466,8 +481,8 @@ mod tests {
         assert_eq!("/api/me?abc=1", req_header.uri.to_string());
     }
 
-    #[test]
-    fn test_insert_header() {
+    #[tokio::test]
+    async fn test_insert_header() {
         let upstream_name = "charts";
 
         let lo = Location::new(
@@ -482,8 +497,14 @@ mod tests {
         )
         .unwrap();
 
+        let headers = [""].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
         let mut req_header = RequestHeader::build_no_case(Method::GET, b"", None).unwrap();
-        lo.set_append_proxy_headers(&mut req_header);
+        lo.set_append_proxy_headers(&session, &State::default(), &mut req_header);
         assert_eq!(
             r###"RequestHeader { base: Parts { method: GET, uri: , version: HTTP/1.1, headers: {"cache-control": "no-store", "x-user": "pingap"} }, header_name_map: None, raw_path_fallback: [] }"###,
             format!("{req_header:?}")

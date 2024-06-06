@@ -323,6 +323,7 @@ impl ProxyHttp for Server {
         };
         ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed);
         ctx.accepted = self.accepted.fetch_add(1, Ordering::Relaxed);
+        ctx.remote_addr = util::get_remote_addr(session);
         if self.admin {
             self.serve_admin(session, ctx).await?;
             return Ok(true);
@@ -526,22 +527,9 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        // add x-forwarded-for
-        if let Some(addr) = util::get_remote_addr(session) {
-            let value = if let Some(value) =
-                session.get_header(util::HTTP_HEADER_X_FORWARDED_FOR.clone())
-            {
-                format!("{}, {}", value.to_str().unwrap_or_default(), addr)
-            } else {
-                addr.to_string()
-            };
-            let _ =
-                upstream_response.insert_header(util::HTTP_HEADER_X_FORWARDED_FOR.clone(), value);
-        }
         if let Some(lo) = self.get_location(ctx.location_index) {
-            lo.set_append_proxy_headers(upstream_response);
+            lo.set_append_proxy_headers(session, ctx, upstream_response);
         }
-
         Ok(())
     }
     fn upstream_response_filter(

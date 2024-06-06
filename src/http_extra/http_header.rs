@@ -12,13 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::state::{get_hostname, HOST_NAME_TAG};
+use crate::state::{get_hostname, State};
+use crate::util;
 use http::header;
 use http::{HeaderName, HeaderValue};
 use once_cell::sync::Lazy;
+use pingora::proxy::Session;
 use snafu::{ResultExt, Snafu};
 use std::str::FromStr;
 use substring::Substring;
+
+pub static HOST_NAME_TAG: &str = "$HOSTNAME";
+static REMOTE_ADDR_TAG: &str = "$remote_addr";
+static PROXY_ADD_FORWARDED_TAG: &str = "$proxy_add_x_forwarded_for";
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -54,6 +60,35 @@ pub fn convert_header(value: &str) -> Result<Option<HttpHeader>> {
     } else {
         Ok(None)
     }
+}
+
+pub fn convert_header_value(
+    value: &HeaderValue,
+    session: &Session,
+    ctx: &State,
+) -> Option<HeaderValue> {
+    let buf = value.as_bytes();
+    if buf == REMOTE_ADDR_TAG.as_bytes() {
+        if let Some(remote_addr) = &ctx.remote_addr {
+            if let Ok(value) = HeaderValue::from_str(remote_addr) {
+                return Some(value);
+            }
+        }
+    } else if buf == PROXY_ADD_FORWARDED_TAG.as_bytes() {
+        if let Some(remote_addr) = &ctx.remote_addr {
+            let value = if let Some(value) =
+                session.get_header(util::HTTP_HEADER_X_FORWARDED_FOR.clone())
+            {
+                format!("{}, {}", value.to_str().unwrap_or_default(), remote_addr)
+            } else {
+                remote_addr.to_string()
+            };
+            if let Ok(value) = HeaderValue::from_str(&value) {
+                return Some(value);
+            }
+        }
+    }
+    None
 }
 
 /// Convert string slice to http headers.
