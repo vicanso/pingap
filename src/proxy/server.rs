@@ -115,7 +115,6 @@ pub struct Server {
     addr: String,
     accepted: AtomicU64,
     processing: AtomicI32,
-    // locations: Vec<String>,
     log_parser: Option<Parser>,
     error_template: String,
     threads: Option<usize>,
@@ -157,7 +156,6 @@ impl Server {
             processing: AtomicI32::new(0),
             addr: conf.addr.clone(),
             log_parser: p,
-            // locations: conf.locations.clone(),
             error_template: conf.error_template.clone(),
             tls_key: conf.tls_key.clone(),
             tls_cert: conf.tls_cert.clone(),
@@ -321,8 +319,8 @@ impl ProxyHttp for Server {
             ctx.established = established;
             ctx.tls_version = tls_version;
         };
-        ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed);
-        ctx.accepted = self.accepted.fetch_add(1, Ordering::Relaxed);
+        ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
+        ctx.accepted = self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
         ctx.remote_addr = util::get_remote_addr(session);
         if self.admin {
             self.serve_admin(session, ctx).await?;
@@ -337,15 +335,15 @@ impl ProxyHttp for Server {
         }
 
         let header = session.req_header_mut();
-        // let path = header.uri.path();
         let host = util::get_host(header).unwrap_or_default();
 
         let mut location_index = None;
         let mut location = None;
         if let Some(locations) = get_server_locations(&self.name) {
+            let path = header.uri.path();
             for (index, name) in locations.iter().enumerate() {
                 if let Some(lo) = get_location(name) {
-                    if lo.matched(host, header.uri.path()) {
+                    if lo.matched(host, path) {
                         location_index = Some(index);
                         location = Some(lo);
                         break;
@@ -365,7 +363,7 @@ impl ProxyHttp for Server {
         }
         let lo = location.unwrap();
 
-        debug!("Location {}", lo.name);
+        debug!("Location {} is matched", lo.name);
         lo.rewrite(header);
 
         // body limit
@@ -374,8 +372,8 @@ impl ProxyHttp for Server {
         ctx.location.clone_from(&lo.name);
         ctx.location_index = location_index;
         ctx.upstream_connected = lo.upstream_connected();
-        ctx.location_accepted = lo.accepted.fetch_add(1, Ordering::Relaxed);
-        ctx.location_processing = lo.processing.fetch_add(1, Ordering::Relaxed);
+        ctx.location_accepted = lo.accepted.fetch_add(1, Ordering::Relaxed) + 1;
+        ctx.location_processing = lo.processing.fetch_add(1, Ordering::Relaxed) + 1;
 
         let done = lo
             .exec_proxy_plugins(session, ctx, PluginStep::Request)
@@ -385,62 +383,6 @@ impl ProxyHttp for Server {
         }
 
         Ok(false)
-    }
-
-    fn cache_key_callback(
-        &self,
-        session: &Session,
-        ctx: &mut Self::CTX,
-    ) -> pingora::Result<CacheKey> {
-        Ok(CacheKey::new(
-            ctx.cache_prefix.clone().unwrap_or_default(),
-            format!("{}", session.req_header().uri),
-            "".to_string(),
-        ))
-    }
-
-    fn response_cache_filter(
-        &self,
-        _session: &Session,
-        resp: &ResponseHeader,
-        _ctx: &mut Self::CTX,
-    ) -> pingora::Result<RespCacheable> {
-        let cc = CacheControl::from_resp_headers(resp);
-        if let Some(c) = &cc {
-            if c.no_cache() || c.no_store() || c.private() {
-                return Ok(RespCacheable::Uncacheable(NoCacheReason::OriginNotCache));
-            }
-        }
-
-        Ok(resp_cacheable(cc.as_ref(), resp, false, &META_DEFAULTS))
-    }
-
-    async fn response_filter(
-        &self,
-        session: &mut Session,
-        upstream_response: &mut ResponseHeader,
-        ctx: &mut Self::CTX,
-    ) -> pingora::Result<()>
-    where
-        Self::CTX: Send + Sync,
-    {
-        if session.cache.enabled() {
-            // ignore insert header error
-            let _ =
-                upstream_response.insert_header("X-Cache-Status", session.cache.phase().as_str());
-            if let Some(d) = session.cache.lock_duration() {
-                let _ =
-                    upstream_response.insert_header("X-Cache-Lock", format!("{}ms", d.as_millis()));
-                ctx.cache_lock_duration = Some(d);
-            }
-        }
-
-        if let Some(lo) = self.get_location(ctx.location_index) {
-            lo.exec_response_plugins(session, ctx, upstream_response, PluginStep::ResponseFilter)
-                .await?;
-        }
-
-        Ok(())
     }
 
     async fn proxy_upstream_filter(
@@ -532,6 +474,63 @@ impl ProxyHttp for Server {
         }
         Ok(())
     }
+
+    fn cache_key_callback(
+        &self,
+        session: &Session,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<CacheKey> {
+        Ok(CacheKey::new(
+            ctx.cache_prefix.clone().unwrap_or_default(),
+            format!("{}", session.req_header().uri),
+            "".to_string(),
+        ))
+    }
+
+    fn response_cache_filter(
+        &self,
+        _session: &Session,
+        resp: &ResponseHeader,
+        _ctx: &mut Self::CTX,
+    ) -> pingora::Result<RespCacheable> {
+        let cc = CacheControl::from_resp_headers(resp);
+        if let Some(c) = &cc {
+            if c.no_cache() || c.no_store() || c.private() {
+                return Ok(RespCacheable::Uncacheable(NoCacheReason::OriginNotCache));
+            }
+        }
+
+        Ok(resp_cacheable(cc.as_ref(), resp, false, &META_DEFAULTS))
+    }
+
+    async fn response_filter(
+        &self,
+        session: &mut Session,
+        upstream_response: &mut ResponseHeader,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<()>
+    where
+        Self::CTX: Send + Sync,
+    {
+        if session.cache.enabled() {
+            // ignore insert header error
+            let _ =
+                upstream_response.insert_header("X-Cache-Status", session.cache.phase().as_str());
+            if let Some(d) = session.cache.lock_duration() {
+                let _ =
+                    upstream_response.insert_header("X-Cache-Lock", format!("{}ms", d.as_millis()));
+                ctx.cache_lock_duration = Some(d);
+            }
+        }
+
+        if let Some(lo) = self.get_location(ctx.location_index) {
+            lo.exec_response_plugins(session, ctx, upstream_response, PluginStep::ResponseFilter)
+                .await?;
+        }
+
+        Ok(())
+    }
+
     fn upstream_response_filter(
         &self,
         _session: &mut Session,
@@ -558,6 +557,7 @@ impl ProxyHttp for Server {
             ctx.response_body_size += body.len();
         }
     }
+
     fn response_body_filter(
         &self,
         _session: &mut Session,

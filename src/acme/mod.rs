@@ -12,23 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::util;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Instant error {source}"))]
+    #[snafu(display("Instant error, {source}"))]
     Instant { source: instant_acme::Error },
-    #[snafu(display("Rcgen error {source}"))]
+    #[snafu(display("Rcgen error, {source}"))]
     Rcgen { source: rcgen::Error },
     #[snafu(display("Challenge not found error, {message}"))]
     NotFound { message: String },
     #[snafu(display("Lets encrypt fail, {message}"))]
     Fail { message: String },
-    #[snafu(display("Io error {source}"))]
+    #[snafu(display("Io error, {source}"))]
     Io { source: std::io::Error },
-    #[snafu(display("Serde json error {source}"))]
+    #[snafu(display("Serde json error, {source}"))]
     SerdeJson { source: serde_json::Error },
     #[snafu(display("X509 error, {message}"))]
     X509 { message: String },
@@ -79,8 +80,6 @@ mod validity_checker;
 
 pub use lets_encrypt::{get_lets_encrypt_cert, handle_lets_encrypt, new_lets_encrypt_service};
 pub use validity_checker::new_tls_validity_service;
-
-use crate::util;
 
 #[cfg(test)]
 mod tests {

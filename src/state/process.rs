@@ -103,7 +103,7 @@ pub fn restart() {
         if count == PROCESS_RESTAR_COUNT.load(Ordering::Relaxed) {
             match restart_now() {
                 Err(e) => {
-                    error!("Restart fail: {e}");
+                    error!("Restart fail, error: {e}");
                     webhook::send(webhook::SendNotificationParams {
                         level: webhook::NotificationLevel::Error,
                         category: webhook::NotificationCategory::RestartFail,

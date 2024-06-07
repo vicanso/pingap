@@ -30,14 +30,14 @@ fn validity_check(validity_list: &[(String, Validity)], time_offset: i64) -> Opt
     for (name, validity) in validity_list.iter() {
         if now > validity.not_after.timestamp() - time_offset {
             let message = format!(
-                "{name} cert will be expired, expired date:{:?}",
+                "{name} cert will be expired, expired date: {:?}",
                 validity.not_after
             );
             return Some(message);
         }
         if now < validity.not_before.timestamp() {
             let message = format!(
-                "{name} cert is not valid, valid date:{:?}",
+                "{name} cert is not valid, valid date: {:?}",
                 validity.not_before
             );
             return Some(message);
@@ -62,7 +62,7 @@ impl ServiceTask for ValidityChecker {
     fn description(&self) -> String {
         let offset_human: humantime::Duration = Duration::from_secs(self.time_offset as u64).into();
         format!(
-            "offset:{offset_human}, validity_list:{:?}",
+            "offset: {offset_human}, validity_list: {:?}",
             self.validity_list
         )
     }
@@ -101,7 +101,7 @@ mod tests {
             7 * 24 * 3600,
         );
         assert_eq!(
-            "Pingap cert will be expired, expired date:ASN1Time(2022-05-06 16:00:00.0 +00:00:00)",
+            "Pingap cert will be expired, expired date: ASN1Time(2022-05-06 16:00:00.0 +00:00:00)",
             result.unwrap_or_default().to_string()
         );
 
@@ -116,7 +116,7 @@ mod tests {
             7 * 24 * 3600,
         );
         assert_eq!(
-            "Pingap cert is not valid, valid date:ASN1Time(2054-01-12 17:46:40.0 +00:00:00)",
+            "Pingap cert is not valid, valid date: ASN1Time(2054-01-12 17:46:40.0 +00:00:00)",
             result.unwrap_or_default().to_string()
         );
     }
@@ -140,7 +140,7 @@ mod tests {
             time_offset: 7 * 24 * 3600_i64,
         };
         assert_eq!(
-            r#"offset:7days, validity_list:[("Pingap", Validity { not_before: ASN1Time(2054-01-12 17:46:40.0 +00:00:00), not_after: ASN1Time(2054-01-12 17:46:40.0 +00:00:00) })]"#,
+            r#"offset: 7days, validity_list: [("Pingap", Validity { not_before: ASN1Time(2054-01-12 17:46:40.0 +00:00:00), not_after: ASN1Time(2054-01-12 17:46:40.0 +00:00:00) })]"#,
             checker.description()
         );
         let result = checker.run().await;

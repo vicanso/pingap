@@ -31,7 +31,7 @@ Pingap格式化可以使用以下几种默认形式`combined`，`common`，`shor
 - `{<name}`: 响应头中获取`name`对应的值，如获取响应头中的`X-Server`则是`{<X-Server}`
 - `{:name}`: 从context中获取对应的值，支持的属性可参考后面的说明
 - `{$name}`: 从环境变量中获取`name`对应的值，仅启动时获取对应的值后保存，非实时获取
-- `{$HOSTNAME}`: 获取当前服务器的hostname
+- `{$hostname}`: 获取当前服务器的hostname
 
 ## context
 

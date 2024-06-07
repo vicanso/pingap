@@ -222,9 +222,9 @@ impl Location {
             if let Some(query) = header.uri.query() {
                 new_path = format!("{new_path}?{query}");
             }
-            debug!("New path:{new_path}");
+            debug!("New path: {new_path}");
             if let Err(e) = new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri)) {
-                error!("Location:{}, new path parse error:{e:?}", self.name);
+                error!("Location: {}, new path parse error: {e:?}", self.name);
             }
             return true;
         }
@@ -273,7 +273,7 @@ impl Location {
         if let Some(plugins) = &self.plugins {
             for name in plugins.iter() {
                 if let Some(plugin) = get_proxy_plugin(name) {
-                    debug!("Exec proxy plugin {name}, step:{step}");
+                    debug!("Exec proxy plugin {name}, step: {step}");
                     let result = plugin.handle(step, session, ctx).await?;
                     if let Some(resp) = result {
                         // ingore http response status >= 900
@@ -300,7 +300,7 @@ impl Location {
         if let Some(plugins) = &self.plugins {
             for name in plugins.iter() {
                 if let Some(plugin) = get_response_plugin(name) {
-                    debug!("Exec response plugin {name}: step:{step}");
+                    debug!("Exec response plugin {name}, step: {step}");
                     plugin.handle(step, session, ctx, upstream_response).await?;
                 }
             }

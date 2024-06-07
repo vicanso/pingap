@@ -339,7 +339,7 @@ pub trait ResponsePlugin: Sync + Send {
 
 ## ResponseHeaders
 
-响应头的插件主要是设置、添加以及删除请求头。若响应头的值设置为`$HOSTNAME`表示获取机器的hostname，若以`$`开头的则表示从环境变量中获取对应的值。
+响应头的插件主要是设置、添加以及删除请求头。若响应头的值设置为`$hostname`表示获取机器的hostname，若以`$`开头的则表示从环境变量中获取对应的值。
 
 ```toml
 [plugins.commonResponseHeaders]

@@ -205,20 +205,20 @@ impl LocationConf {
                     let arr = header.split_once(':').map(|(k, v)| (k.trim(), v.trim()));
                     if arr.is_none() {
                         return Err(Error::Invalid {
-                            message: format!("Header {header} is invalid(location:{name})"),
+                            message: format!("header {header} is invalid(location:{name})"),
                         });
                     }
                     let (header_name, header_value) = arr.unwrap();
                     HeaderName::from_bytes(header_name.as_bytes()).map_err(|err| {
                         Error::Invalid {
                             message: format!(
-                                "Header name({header_name}) is invalid, {err}(location:{name})"
+                                "header name({header_name}) is invalid, error: {err}(location:{name})"
                             ),
                         }
                     })?;
                     HeaderValue::from_str(header_value).map_err(|err| Error::Invalid {
                         message: format!(
-                            "Header value({header_value}) is invalid, {err}(location:{name})"
+                            "header value({header_value}) is invalid, error: {err}(location:{name})"
                         ),
                     })?;
                 }
@@ -327,7 +327,7 @@ impl ServerConf {
             let logger = Parser::from(access_log.as_str());
             if logger.tags.is_empty() {
                 return Err(Error::Invalid {
-                    message: "Access log format is invalid".to_string(),
+                    message: "access log format is invalid".to_string(),
                 });
             }
         }
@@ -544,7 +544,7 @@ impl PingapConf {
                     .collect();
                 if upstreams.contains(&name.to_string()) {
                     return Err(Error::Invalid {
-                        message: format!("Upstream({name}) is in used"),
+                        message: format!("upstream({name}) is in used"),
                     });
                 }
 
@@ -559,7 +559,7 @@ impl PingapConf {
                         .contains(&name.to_string())
                     {
                         return Err(Error::Invalid {
-                            message: format!("Location({name}) is in used"),
+                            message: format!("location({name}) is in used"),
                         });
                     }
                 }
@@ -577,7 +577,7 @@ impl PingapConf {
                 }
                 if all_plugins.contains(&name.to_string()) {
                     return Err(Error::Invalid {
-                        message: format!("Proxy plugin({name}) is in used"),
+                        message: format!("proxy plugin({name}) is in used"),
                     });
                 }
                 self.plugins.remove(name);
@@ -855,7 +855,7 @@ mod tests {
         let result = conf.validate("lo", &upstream_names);
         assert_eq!(true, result.is_err());
         assert_eq!(
-            "Invalid error Header X-Request-Id is invalid(location:lo)",
+            "Invalid error header X-Request-Id is invalid(location:lo)",
             result.expect_err("").to_string()
         );
 
@@ -863,7 +863,7 @@ mod tests {
         let result = conf.validate("lo", &upstream_names);
         assert_eq!(true, result.is_err());
         assert_eq!(
-            "Invalid error Header name(请求) is invalid, invalid HTTP header name(location:lo)",
+            "Invalid error header name(请求) is invalid, error: invalid HTTP header name(location:lo)",
             result.expect_err("").to_string()
         );
 
@@ -1074,19 +1074,19 @@ basic
 
         let result = conf.remove("plugin", "stats");
         assert_eq!(
-            "Invalid error Proxy plugin(stats) is in used",
+            "Invalid error proxy plugin(stats) is in used",
             result.err().unwrap().to_string()
         );
 
         let result = conf.remove("upstream", "charts");
         assert_eq!(
-            "Invalid error Upstream(charts) is in used",
+            "Invalid error upstream(charts) is in used",
             result.err().unwrap().to_string()
         );
 
         let result = conf.remove("location", "lo");
         assert_eq!(
-            "Invalid error Location(lo) is in used",
+            "Invalid error location(lo) is in used",
             result.err().unwrap().to_string()
         );
 

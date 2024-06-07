@@ -47,11 +47,12 @@ struct LetsEncryptService {
 
 pub fn new_lets_encrypt_service(domains: Vec<String>) -> CommonServiceTask {
     let mut domains = domains;
+    // sort domain order
     domains.sort();
 
     CommonServiceTask::new(
         "Lets encrypt",
-        Duration::from_secs(10 * 60),
+        Duration::from_secs(30 * 60),
         LetsEncryptService { domains },
     )
 }
@@ -60,27 +61,27 @@ pub fn new_lets_encrypt_service(domains: Vec<String>) -> CommonServiceTask {
 impl ServiceTask for LetsEncryptService {
     async fn run(&self) -> Option<bool> {
         let domains = &self.domains;
-        let should_fresh_now = if let Ok(cert) = get_lets_encrypt_cert() {
+        let should_renew_now = if let Ok(cert) = get_lets_encrypt_cert() {
             !cert.valid() || domains.join(",") != cert.domains.join(",")
         } else {
             true
         };
-        if should_fresh_now {
+        if should_renew_now {
             info!("Should renew cert from lets encrypt");
             match new_lets_encrypt(domains).await {
                 Ok(()) => {
                     info!("Renew cert success");
                     if let Err(e) = restart_now() {
-                        error!("Restart fail: {e}");
+                        error!("Restart fail, error: {e}");
                     }
                 }
-                Err(e) => error!("Renew cert fail, {e}"),
+                Err(e) => error!("Renew cert fail, error: {e}"),
             };
         }
         None
     }
     fn description(&self) -> String {
-        format!("domains {:?}", self.domains)
+        format!("domains: {:?}", self.domains)
     }
 }
 
@@ -133,7 +134,7 @@ async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
     domains.sort();
     let path = get_lets_encrypt_cert_file();
     info!(
-        "Lets encrypt start generate acme, domains:{}",
+        "Lets encrypt start generate acme, domains: {}",
         domains.join(",")
     );
     let (account, _) = Account::create(
@@ -162,7 +163,7 @@ async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
     let state = order.state();
     if !matches!(state.status, OrderStatus::Pending) {
         return Err(Error::Fail {
-            message: format!("state status is not pending, {:?}", state.status),
+            message: format!("order is not pending, staus: {:?}", state.status),
         });
     }
 
@@ -173,7 +174,7 @@ async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
     let mut challenges = Vec::with_capacity(authorizations.len());
 
     for authz in &authorizations {
-        info!("Lets encrypt authz status:{:?}", authz.status);
+        info!("Lets encrypt authz status: {:?}", authz.status);
         match authz.status {
             instant_acme::AuthorizationStatus::Pending => {}
             instant_acme::AuthorizationStatus::Valid => continue,
@@ -271,6 +272,7 @@ async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
     };
     let mut not_before = cert.get_params().not_before.unix_timestamp();
     let now = util::now().as_secs() as i64;
+    // default expired time set 90 days
     let mut not_after = now + 90 * 24 * 3600;
     if let Ok(validity) = parse_x509_validity(cert_chain_pem.as_bytes()) {
         not_before = validity.not_before.timestamp();
@@ -293,7 +295,7 @@ async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
     };
     let buf = serde_json::to_vec(&info).map_err(|e| Error::SerdeJson { source: e })?;
     f.write(&buf).await.map_err(|e| Error::Io { source: e })?;
-    info!("Write cert success, {path:?}");
+    info!("Write cert success, path: {path:?}");
     webhook::send(webhook::SendNotificationParams {
         level: webhook::NotificationLevel::Info,
         category: webhook::NotificationCategory::LetsEncrypt,

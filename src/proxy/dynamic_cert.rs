@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use async_trait::async_trait;
+use log::debug;
 use pingora::tls::ext;
 use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::x509::X509;
@@ -49,5 +50,6 @@ impl pingora::listeners::TlsAccept for DynamicCert {
         // TODO add more debug log
         ext::ssl_use_certificate(ssl, &self.cert).unwrap();
         ext::ssl_use_private_key(ssl, &self.key).unwrap();
+        debug!("ssl: {ssl:?}");
     }
 }

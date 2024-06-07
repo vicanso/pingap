@@ -17,7 +17,7 @@ use crate::util;
 use async_trait::async_trait;
 use futures_util::TryFutureExt;
 use glob::glob;
-use log::info;
+use log::debug;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Duration;
@@ -99,7 +99,7 @@ impl ConfigStorage for FileStorage {
                     source: e,
                     file: f.to_string_lossy().to_string(),
                 })?;
-                info!("Load config from:{:?}", f.file_name());
+                debug!("Load config from: {:?}", f.file_name());
                 data.append(&mut buf);
                 data.push(0x0a);
             }

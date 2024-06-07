@@ -48,7 +48,7 @@ impl TtlLruLimit {
         let mut valid = false;
 
         if let Some(value) = g.peek(key) {
-            debug!("Ttl lru limit, key:{key}, value:{value:?}");
+            debug!("Ttl lru limit, key: {key}, value: {value:?}");
             // validate expired first
             if util::now() - value.created_at > self.ttl {
                 valid = true;

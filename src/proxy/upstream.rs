@@ -559,7 +559,7 @@ impl ServiceTask for HealthCheckTask {
                     return;
                 }
 
-                info!("Health check running, upstream: {name}");
+                debug!("Health check running, upstream: {name}");
                 if let Some(lb) = up.as_round_robind() {
                     lb.backends()
                         .run_health_check(lb.parallel_health_check)
@@ -569,7 +569,7 @@ impl ServiceTask for HealthCheckTask {
                         .run_health_check(lb.parallel_health_check)
                         .await;
                 }
-                info!("Health check done, upstream: {name}");
+                debug!("Health check done, upstream: {name}");
             })
         });
         futures::future::join_all(jobs).await;

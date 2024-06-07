@@ -22,7 +22,7 @@ use snafu::{ResultExt, Snafu};
 use std::str::FromStr;
 use substring::Substring;
 
-pub static HOST_NAME_TAG: &str = "$HOSTNAME";
+pub static HOST_NAME_TAG: &str = "$hostname";
 static REMOTE_ADDR_TAG: &str = "$remote_addr";
 static PROXY_ADD_FORWARDED_TAG: &str = "$proxy_add_x_forwarded_for";
 
