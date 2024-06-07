@@ -129,7 +129,14 @@ export default function BasicInfo() {
       id: "cache_max_size",
       label: t("basic.cacheMaxSize"),
       defaultValue: basic.cache_max_size,
-      span: 12,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
+      id: "certificate_file",
+      label: t("basic.certificateFile"),
+      defaultValue: basic.certificate_file,
+      span: 6,
       category: FormItemCategory.TEXT,
     },
     {

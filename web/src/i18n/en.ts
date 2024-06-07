@@ -40,6 +40,7 @@ export default {
   "basic.sentry": "Sentry",
   "basic.pyroscope": "Pyroscope",
   "basic.errorTemplate": "Error Template",
+  "basic.certificateFile": "The Https Certificate File",
   // server info
   "server.title": "Modify server configuration",
   "server.description": "Change the server configuration",

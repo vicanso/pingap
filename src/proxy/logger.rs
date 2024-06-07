@@ -462,7 +462,7 @@ mod tests {
         assert_eq!(TagCategory::ResponseHeader, resp_header.category);
         assert_eq!("X-Response-Id", resp_header.data.unwrap());
 
-        let hostname = format_extra_tag("{$HOSTNAME}").unwrap();
+        let hostname = format_extra_tag("{$hostname}").unwrap();
         assert_eq!(TagCategory::Fill, hostname.category);
         assert_eq!(false, hostname.data.unwrap().is_empty());
 

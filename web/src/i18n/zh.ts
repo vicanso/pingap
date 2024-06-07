@@ -39,6 +39,7 @@ export default {
   "basic.sentry": "Sentry地址",
   "basic.pyroscope": "Pyroscope地址",
   "basic.errorTemplate": "错误模板",
+  "basic.certificateFile": "保存https证书的文件",
   // server info
   "server.title": "监听服务的相关配置",
   "server.description": "修改监听服务的各相关配置",

@@ -363,6 +363,7 @@ pub struct BasicConf {
     #[serde(with = "humantime_serde")]
     pub auto_restart_check_interval: Option<Duration>,
     pub cache_max_size: Option<ByteSize>,
+    pub certificate_file: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Serialize)]

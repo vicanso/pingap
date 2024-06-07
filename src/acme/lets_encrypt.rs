@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::{parse_x509_validity, Cert, Error, Result};
+use crate::config::get_current_config;
 use crate::http_extra::HttpResponse;
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::{restart_now, State};
@@ -86,8 +87,11 @@ impl ServiceTask for LetsEncryptService {
 }
 
 fn get_lets_encrypt_cert_file() -> PathBuf {
-    // TODO save the cert to etcd
-    env::temp_dir().join("pingap-lets-encrypt.json")
+    if let Some(file) = &get_current_config().basic.certificate_file {
+        util::resolve_path(file).into()
+    } else {
+        env::temp_dir().join("pingap-lets-encrypt.json")
+    }
 }
 
 /// Get the cert from file

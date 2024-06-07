@@ -88,6 +88,7 @@ interface Basic {
   log_level?: string;
   auto_restart_check_interval?: string;
   cache_max_size?: number;
+  certificate_file?: string;
   sentry?: string;
   pyroscope?: string;
   webhook?: string;
