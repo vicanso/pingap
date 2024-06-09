@@ -154,7 +154,7 @@ export default function BasicInfo() {
       span: 6,
       category: FormItemCategory.WEBHOOK_NOTIFICATIONS,
       options: [
-        "backend_unhealthy",
+        "backend_status",
         "lets_encrypt",
         "diff_config",
         "restart",

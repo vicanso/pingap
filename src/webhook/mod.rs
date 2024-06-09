@@ -38,7 +38,7 @@ pub enum NotificationLevel {
 #[derive(PartialEq, Debug, Clone, EnumString, strum::Display)]
 #[strum(serialize_all = "snake_case")]
 pub enum NotificationCategory {
-    BackendUnhealthy,
+    BackendStatus,
     LetsEncrypt,
     DiffConfig,
     Restart,

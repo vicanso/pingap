@@ -304,11 +304,13 @@ impl ProxyHttp for Server {
         let host = util::get_host(header).unwrap_or_default();
 
         let mut location_index = None;
+        let mut location = None;
         if let Some(locations) = get_server_locations(&self.name) {
             let path = header.uri.path();
             for (index, name) in locations.iter().enumerate() {
                 if let Some(lo) = get_location(name) {
                     if lo.matched(host, path) {
+                        location = Some(lo);
                         location_index = Some(index);
                         break;
                     }
@@ -316,7 +318,7 @@ impl ProxyHttp for Server {
             }
         }
         ctx.location_index = location_index;
-        if let Some(lo) = self.get_location(location_index) {
+        if let Some(lo) = location {
             let _ = lo
                 .exec_proxy_plugins(session, ctx, PluginStep::EarlyRequest)
                 .await?;

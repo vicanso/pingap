@@ -12,7 +12,7 @@ Pingap是类似于nginx的反向代理，基于[pingora](https://github.com/clou
 - 访问日志的模板化配置
 - WEB形式的管理后台界面
 - 可通过`let's encrypt`生成tls相关证书，简单易用
-- 支持各种事件的推送：`lets_encrypt`, `backend_unhealthy`, `diff_config`, `restart`等等
+- 支持各种事件的推送：`lets_encrypt`, `backend_status`, `diff_config`, `restart`等等
 - 丰富的http转发插件：`compression`, `static serve`, `limit`, `stats`, `mock`, 等等
 
 ## 使用手册

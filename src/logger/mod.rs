@@ -60,7 +60,7 @@ pub fn logger_try_init(params: LoggerParams) -> Result<(), Box<dyn Error>> {
         if record.level() == Level::Warn && msg.contains("becomes unhealthy") {
             webhook::send(webhook::SendNotificationParams {
                 level: webhook::NotificationLevel::Warn,
-                category: webhook::NotificationCategory::BackendUnhealthy,
+                category: webhook::NotificationCategory::BackendStatus,
                 msg: format!("{}", record.args()),
             });
         }
