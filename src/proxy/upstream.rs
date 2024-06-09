@@ -456,6 +456,7 @@ impl Upstream {
     }
 
     /// Returns a new http peer, if there is no healthy backend, it will return `None`.
+    #[inline]
     pub fn new_http_peer(&self, session: &Session, ctx: &State) -> Option<HttpPeer> {
         let upstream = match &self.lb {
             SelectionLb::RoundRobin(lb) => lb.select(b"", 256),
@@ -486,6 +487,7 @@ impl Upstream {
     }
 
     /// Get the connected count of upstream
+    #[inline]
     pub fn connected(&self) -> Option<u32> {
         self.peer_tracer
             .as_ref()

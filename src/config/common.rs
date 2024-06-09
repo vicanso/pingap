@@ -529,9 +529,6 @@ impl PingapConf {
             lines.push(desc.name);
             lines.push(desc.data);
         }
-        // let data = toml::to_string_pretty(self).map_err(|e| Error::Ser { source: e })?;
-        // let mut lines: Vec<&str> = data.split('\n').collect();
-        // lines.sort();
         let hash = crc32fast::hash(lines.join("\n").as_bytes());
         Ok(format!("{:X}", hash))
     }

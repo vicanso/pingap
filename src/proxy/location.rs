@@ -309,6 +309,7 @@ impl Location {
     }
 
     /// Get the connected count of upstream
+    #[inline]
     pub fn upstream_connected(&self) -> Option<u32> {
         if let Some(up) = get_upstream(&self.upstream) {
             return up.connected();

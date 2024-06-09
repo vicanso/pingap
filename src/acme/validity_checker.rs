@@ -71,11 +71,13 @@ impl ServiceTask for ValidityChecker {
 pub fn new_tls_validity_service(validity_list: Vec<(String, Validity)>) -> CommonServiceTask {
     let checker = ValidityChecker {
         validity_list,
+        // cert will be expired 7 days later
         time_offset: 7 * 24 * 3600_i64,
     };
     CommonServiceTask::new(
         "Tls validity checker",
-        Duration::from_secs(60 * 60),
+        // check interval: one day
+        Duration::from_secs(24 * 60 * 60),
         checker,
     )
 }

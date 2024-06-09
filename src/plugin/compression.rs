@@ -99,6 +99,7 @@ impl ProxyPlugin for Compression {
             if accept_encoding.is_empty() {
                 return Ok(None);
             }
+            // compression order, zstd > br > gzip
             let level = if self.zstd_level > 0 && accept_encoding.contains("zstd") {
                 let _ = header.insert_header(http::header::ACCEPT_ENCODING, ZSTD_ENCODING.clone());
                 self.zstd_level
@@ -117,6 +118,7 @@ impl ProxyPlugin for Compression {
                     .downstream_modules_ctx
                     .get_mut::<ResponseCompression>()
                 {
+                    // TODO support to set decompression from config
                     c.adjust_decompression(true);
                     c.adjust_level(level);
                 }
