@@ -12,9 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_bool_conf, get_int_conf, get_step_conf, get_str_conf, Error, ProxyPlugin, Result};
+use super::{
+    get_bool_conf, get_int_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error,
+    ProxyPlugin, Result,
+};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
-use crate::http_extra::{HttpChunkResponse, HttpHeader, HttpResponse};
+use crate::http_extra::{convert_headers, HttpChunkResponse, HttpHeader, HttpResponse};
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
@@ -109,6 +112,8 @@ pub struct Directory {
     // charset for text file
     charset: Option<String>,
     plugin_step: PluginStep,
+    // headers for http response
+    headers: Option<Vec<HttpHeader>>,
     // support download
     download: bool,
 }
@@ -169,6 +174,7 @@ struct DirectoryParams {
     plugin_step: PluginStep,
     // support download
     download: bool,
+    headers: Option<Vec<HttpHeader>>,
 }
 
 impl TryFrom<&PluginConf> for DirectoryParams {
@@ -194,6 +200,12 @@ impl TryFrom<&PluginConf> for DirectoryParams {
         } else {
             None
         };
+        let headers =
+            convert_headers(&get_str_slice_conf(value, "headers")).map_err(|e| Error::Invalid {
+                category: PluginCategory::Directory.to_string(),
+                message: e.to_string(),
+            })?;
+
         let cache_private = get_bool_conf(value, "private");
         let cache_private = if cache_private { Some(true) } else { None };
         let params = Self {
@@ -206,6 +218,7 @@ impl TryFrom<&PluginConf> for DirectoryParams {
             cache_private,
             plugin_step: step,
             download: get_bool_conf(value, "download"),
+            headers: Some(headers),
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {
@@ -234,6 +247,7 @@ impl Directory {
             cache_private: params.cache_private,
             plugin_step: params.plugin_step,
             download: params.download,
+            headers: params.headers,
         })
     }
 }
@@ -333,6 +347,9 @@ impl ProxyPlugin for Directory {
                     )) {
                         headers.push((header::CONTENT_DISPOSITION, value));
                     }
+                }
+                if let Some(arr) = &self.headers {
+                    headers.extend(arr.clone());
                 }
                 let chunk_size = self.chunk_size.unwrap_or_default().max(4096);
                 if size <= chunk_size {

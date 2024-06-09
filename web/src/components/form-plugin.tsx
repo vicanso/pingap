@@ -285,6 +285,16 @@ export function FormPluginField({
           span: 6,
           options: boolOptions,
         },
+        {
+          category: "textlist",
+          key: "headers",
+          label: t("form.dirHeaderName"),
+          valueLabel: t("form.dirHeaderValue"),
+          id: "dir-headers",
+          span: 12,
+          divide: ":",
+          addLabel: t("form.dirHeaderAdd"),
+        },
       );
       break;
     }
