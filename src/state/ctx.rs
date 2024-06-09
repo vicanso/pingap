@@ -22,10 +22,15 @@ pub trait ModifyResponseBody: Sync + Send {
 }
 
 pub struct CompressionStat {
-    pub algorithm: String,
     pub in_bytes: usize,
     pub out_bytes: usize,
     pub duration: Duration,
+}
+
+impl CompressionStat {
+    pub fn ratio(&self) -> f64 {
+        (self.in_bytes as f64) / (self.out_bytes as f64)
+    }
 }
 
 pub struct State {

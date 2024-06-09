@@ -6,7 +6,7 @@
 - [ ] http response cache(storage: tinyufo, file)
 - [ ] support validate config for plugin
 - [ ] secret storage
-- [ ] support set header for static serve
+- [x] support set header for static serve
 - [x] set header support `remote_addr`
 - [x] hot reload upstream and location config
 - [x] jwt sign response plugin(sign path)

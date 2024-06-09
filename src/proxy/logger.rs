@@ -424,6 +424,11 @@ impl Parser {
                                     buf.extend(format!("{:?}", value.duration).as_bytes());
                                 }
                             }
+                            "compression_ratio" => {
+                                if let Some(value) = &ctx.compression_stat {
+                                    buf.extend(format!("{:.1}", value.ratio()).as_bytes());
+                                }
+                            }
                             _ => {}
                         }
                     }
