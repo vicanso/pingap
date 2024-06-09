@@ -429,6 +429,16 @@ impl Parser {
                                     buf.extend(format!("{:.1}", value.ratio()).as_bytes());
                                 }
                             }
+                            "cache_lookup_time" => {
+                                if let Some(d) = ctx.cache_lookup_duration {
+                                    buf.extend(format!("{:?}", d).as_bytes());
+                                }
+                            }
+                            "cache_lock_time" => {
+                                if let Some(d) = ctx.cache_lock_duration {
+                                    buf.extend(format!("{:?}", d).as_bytes());
+                                }
+                            }
                             _ => {}
                         }
                     }

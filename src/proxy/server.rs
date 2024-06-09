@@ -518,6 +518,11 @@ impl ProxyHttp for Server {
             // ignore insert header error
             let _ =
                 upstream_response.insert_header("X-Cache-Status", session.cache.phase().as_str());
+            if let Some(d) = session.cache.lookup_duration() {
+                let _ = upstream_response
+                    .insert_header("X-Cache-Lookup", format!("{}ms", d.as_millis()));
+                ctx.cache_lookup_duration = Some(d)
+            }
             if let Some(d) = session.cache.lock_duration() {
                 let _ =
                     upstream_response.insert_header("X-Cache-Lock", format!("{}ms", d.as_millis()));
