@@ -21,6 +21,13 @@ pub trait ModifyResponseBody: Sync + Send {
     fn handle(&self, data: Bytes) -> Bytes;
 }
 
+pub struct CompressionStat {
+    pub algorithm: String,
+    pub in_bytes: usize,
+    pub out_bytes: usize,
+    pub duration: Duration,
+}
+
 pub struct State {
     pub processing: i32,
     pub accepted: u64,
@@ -45,6 +52,7 @@ pub struct State {
     pub upstream_connected: Option<u32>,
     pub upstream_processing_time: Option<u32>,
     pub payload_size: usize,
+    pub compression_stat: Option<CompressionStat>,
     pub modify_response_body: Option<Box<dyn ModifyResponseBody>>,
     pub response_body: Option<BytesMut>,
 }
@@ -75,8 +83,22 @@ impl Default for State {
             upstream_connected: None,
             upstream_processing_time: None,
             payload_size: 0,
+            compression_stat: None,
             modify_response_body: None,
             response_body: None,
         }
+    }
+}
+
+impl State {
+    pub fn get_upstream_connect_time(&self) -> Option<u32> {
+        if self.upstream_address.is_empty() {
+            return None;
+        }
+        self.upstream_connect_time
+    }
+    pub fn get_upstream_processing_time(&self) -> Option<u32> {
+        self.status?;
+        self.upstream_processing_time
     }
 }

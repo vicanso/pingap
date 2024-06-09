@@ -23,6 +23,7 @@ use crate::config::PluginStep;
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use crate::plugin::get_proxy_plugin;
 use crate::proxy::location::get_location;
+use crate::state::CompressionStat;
 use crate::state::State;
 use crate::util;
 use arc_swap::ArcSwap;
@@ -36,6 +37,7 @@ use pingora::cache::filters::resp_cacheable;
 use pingora::cache::{CacheKey, CacheMetaDefaults, NoCacheReason, RespCacheable};
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::listeners::{TcpSocketOptions, TlsSettings};
+use pingora::modules::http::compression::ResponseCompression;
 use pingora::protocols::http::error_resp;
 use pingora::protocols::Digest;
 use pingora::proxy::{http_proxy_service, HttpProxy};
@@ -55,24 +57,6 @@ pub enum Error {
     Common { category: String, message: String },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
-
-fn get_hour_duration() -> u32 {
-    (util::now().as_millis() % (3600 * 1000)) as u32
-}
-fn get_latency(value: &Option<u32>) -> Option<u32> {
-    if let Some(value) = value {
-        let value = value.to_owned();
-        let d = get_hour_duration();
-        let value = if d >= value {
-            d - value
-        } else {
-            d + (3600 * 1000) - value
-        };
-        Some(value)
-    } else {
-        Some(get_hour_duration())
-    }
-}
 
 type ServerLocations = HashMap<String, Arc<Vec<String>>>;
 static LOCATION_MAP: Lazy<ArcSwap<ServerLocations>> =
@@ -438,7 +422,7 @@ impl ProxyHttp for Server {
         }
         .ok_or_else(|| util::new_internal_error(503, "No available upstream".to_string()))?;
 
-        ctx.upstream_connect_time = get_latency(&ctx.upstream_connect_time);
+        ctx.upstream_connect_time = util::get_latency(&ctx.upstream_connect_time);
 
         Ok(Box::new(peer))
     }
@@ -456,8 +440,8 @@ impl ProxyHttp for Server {
     {
         ctx.reused = reused;
         ctx.upstream_address = peer.address().to_string();
-        ctx.upstream_connect_time = get_latency(&ctx.upstream_connect_time);
-        ctx.upstream_processing_time = get_latency(&ctx.upstream_processing_time);
+        ctx.upstream_connect_time = util::get_latency(&ctx.upstream_connect_time);
+        ctx.upstream_processing_time = util::get_latency(&ctx.upstream_processing_time);
         Ok(())
     }
     async fn request_body_filter(
@@ -561,7 +545,7 @@ impl ProxyHttp for Server {
         if let Some(id) = &ctx.request_id {
             let _ = upstream_response.insert_header(HTTP_HEADER_NAME_X_REQUEST_ID.clone(), id);
         }
-        ctx.upstream_processing_time = get_latency(&ctx.upstream_processing_time);
+        ctx.upstream_processing_time = util::get_latency(&ctx.upstream_processing_time);
     }
 
     fn upstream_response_body_filter(
@@ -684,6 +668,16 @@ impl ProxyHttp for Server {
                 ctx.status = Some(header.status);
             }
         }
+        if let Some(c) = session.downstream_modules_ctx.get::<ResponseCompression>() {
+            if let Some((name, in_bytes, out_bytes, took)) = c.get_info() {
+                ctx.compression_stat = Some(CompressionStat {
+                    algorithm: name.to_string(),
+                    in_bytes,
+                    out_bytes,
+                    duration: took,
+                });
+            }
+        }
 
         if let Some(p) = &self.log_parser {
             info!("{}", p.format(session, ctx));
@@ -693,7 +687,7 @@ impl ProxyHttp for Server {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_latency, Server};
+    use super::Server;
     use crate::config::PingapConf;
     use crate::proxy::server::get_digest_detail;
     use crate::proxy::{
@@ -709,13 +703,6 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, SystemTime};
     use tokio_test::io::Builder;
-
-    #[test]
-    fn test_get_latency() {
-        let d = get_latency(&None);
-        assert_eq!(true, d.is_some());
-        assert_eq!(true, get_latency(&d).is_some());
-    }
 
     #[test]
     fn test_get_digest_detail() {

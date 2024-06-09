@@ -392,7 +392,7 @@ impl Parser {
                             "upstream_address" => buf.extend(ctx.upstream_address.as_bytes()),
                             "processing" => buf.extend(ctx.processing.to_string().as_bytes()),
                             "upstream_connect_time" => {
-                                if let Some(value) = ctx.upstream_connect_time {
+                                if let Some(value) = ctx.get_upstream_connect_time() {
                                     buf.extend(
                                         format!("{:?}", Duration::from_millis(value as u64))
                                             .as_bytes(),
@@ -405,13 +405,11 @@ impl Parser {
                                 }
                             }
                             "upstream_processing_time" => {
-                                if ctx.status.is_some() {
-                                    if let Some(value) = ctx.upstream_processing_time {
-                                        buf.extend(
-                                            format!("{:?}", Duration::from_millis(value as u64))
-                                                .as_bytes(),
-                                        );
-                                    }
+                                if let Some(value) = ctx.get_upstream_processing_time() {
+                                    buf.extend(
+                                        format!("{:?}", Duration::from_millis(value as u64))
+                                            .as_bytes(),
+                                    );
                                 }
                             }
                             "location" => buf.extend(ctx.location.as_bytes()),
@@ -419,6 +417,11 @@ impl Parser {
                             "tls_version" => {
                                 if let Some(value) = &ctx.tls_version {
                                     buf.extend(value.as_bytes());
+                                }
+                            }
+                            "compression_time" => {
+                                if let Some(value) = &ctx.compression_stat {
+                                    buf.extend(format!("{:?}", value.duration).as_bytes());
                                 }
                             }
                             _ => {}

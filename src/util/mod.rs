@@ -228,9 +228,30 @@ pub fn get_content_length(header: &RequestHeader) -> Option<usize> {
     None
 }
 
+fn get_hour_duration() -> u32 {
+    (now().as_millis() % (3600 * 1000)) as u32
+}
+#[inline]
+pub fn get_latency(value: &Option<u32>) -> Option<u32> {
+    if let Some(value) = value {
+        let value = value.to_owned();
+        let d = get_hour_duration();
+        let value = if d >= value {
+            d - value
+        } else {
+            d + (3600 * 1000) - value
+        };
+        Some(value)
+    } else {
+        Some(get_hour_duration())
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{get_pkg_name, get_pkg_version, remove_query_from_header, resolve_path};
+    use super::{
+        get_latency, get_pkg_name, get_pkg_version, remove_query_from_header, resolve_path,
+    };
     use pingora::http::RequestHeader;
     use pretty_assertions::assert_eq;
     #[test]
@@ -256,5 +277,12 @@ mod tests {
             dirs::home_dir().unwrap().to_string_lossy(),
             resolve_path("~/")
         );
+    }
+
+    #[test]
+    fn test_get_latency() {
+        let d = get_latency(&None);
+        assert_eq!(true, d.is_some());
+        assert_eq!(true, get_latency(&d).is_some());
     }
 }
