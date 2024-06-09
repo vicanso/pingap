@@ -232,13 +232,14 @@ where
                 error!("Read data fail: {e}");
                 util::new_internal_error(400, e.to_string())
             })?;
+            let end = size < chunk_size;
             session
-                .write_response_body(Some(Bytes::copy_from_slice(&buffer[..size])), size == 0)
+                .write_response_body(Some(Bytes::copy_from_slice(&buffer[..size])), end)
                 .await?;
-            if size == 0 {
+            sent += size;
+            if end {
                 break;
             }
-            sent += size;
         }
         session.finish_body().await?;
 

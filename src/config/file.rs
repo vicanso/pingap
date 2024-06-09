@@ -18,39 +18,8 @@ use async_trait::async_trait;
 use futures_util::TryFutureExt;
 use glob::glob;
 use log::debug;
-use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::time::Duration;
 use tokio::fs;
-use toml::{map::Map, Value};
-
-#[derive(Deserialize, Debug, Serialize)]
-struct TomlConfig {
-    name: Option<String>,
-    servers: Option<Map<String, Value>>,
-    upstreams: Option<Map<String, Value>>,
-    locations: Option<Map<String, Value>>,
-    plugins: Option<Map<String, Value>>,
-    error_template: Option<String>,
-    pid_file: Option<String>,
-    upgrade_sock: Option<String>,
-    user: Option<String>,
-    group: Option<String>,
-    threads: Option<usize>,
-    work_stealing: Option<bool>,
-    #[serde(default)]
-    #[serde(with = "humantime_serde")]
-    pub grace_period: Option<Duration>,
-    #[serde(default)]
-    #[serde(with = "humantime_serde")]
-    pub graceful_shutdown_timeout: Option<Duration>,
-    pub upstream_keepalive_pool_size: Option<usize>,
-    pub webhook: Option<String>,
-    pub webhook_type: Option<String>,
-    pub log_level: Option<String>,
-    pub sentry: Option<String>,
-    pub pyroscope: Option<String>,
-}
 
 pub struct FileStorage {
     path: String,

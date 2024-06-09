@@ -149,17 +149,22 @@ pub static HTTP_HEADER_NAME_X_REQUEST_ID: Lazy<HeaderName> =
 
 #[cfg(test)]
 mod tests {
+    use crate::state::State;
+
     use super::{
-        convert_headers, HTTP_HEADER_CONTENT_HTML, HTTP_HEADER_CONTENT_JSON,
+        convert_header_value, convert_headers, HTTP_HEADER_CONTENT_HTML, HTTP_HEADER_CONTENT_JSON,
         HTTP_HEADER_NAME_X_REQUEST_ID, HTTP_HEADER_NO_CACHE, HTTP_HEADER_NO_STORE,
         HTTP_HEADER_TRANSFER_CHUNKED, HTTP_HEADER_WWW_AUTHENTICATE,
     };
+    use http::HeaderValue;
+    use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
+    use tokio_test::io::Builder;
     #[test]
     fn test_convert_headers() {
         let headers = convert_headers(&[
             "Content-Type: application/octet-stream".to_string(),
-            "X-Server: $HOSTNAME".to_string(),
+            "X-Server: $hostname".to_string(),
             "X-User: $USER".to_string(),
         ])
         .unwrap();
@@ -171,6 +176,61 @@ mod tests {
         assert_eq!("x-user", headers[2].0.to_string());
         assert_eq!(false, headers[2].1.to_str().unwrap().is_empty());
     }
+
+    #[tokio::test]
+    async fn test_convert_header_value() {
+        let headers = [""].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let value = convert_header_value(
+            &HeaderValue::from_str("$remote_addr").unwrap(),
+            &session,
+            &State {
+                remote_addr: Some("10.1.1.1".to_string()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(true, value.is_some());
+        assert_eq!("10.1.1.1", value.unwrap().to_str().unwrap());
+
+        let headers = ["X-Forwarded-For: 1.1.1.1, 2.2.2.2"].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let value = convert_header_value(
+            &HeaderValue::from_str("$proxy_add_x_forwarded_for").unwrap(),
+            &session,
+            &State {
+                remote_addr: Some("10.1.1.1".to_string()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(true, value.is_some());
+        assert_eq!(
+            "1.1.1.1, 2.2.2.2, 10.1.1.1",
+            value.unwrap().to_str().unwrap()
+        );
+
+        let headers = [""].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let value = convert_header_value(
+            &HeaderValue::from_str("$proxy_add_x_forwarded_for").unwrap(),
+            &session,
+            &State {
+                remote_addr: Some("10.1.1.1".to_string()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(true, value.is_some());
+        assert_eq!("10.1.1.1", value.unwrap().to_str().unwrap());
+    }
+
     #[test]
     fn test_static_value() {
         assert_eq!(

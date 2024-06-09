@@ -292,7 +292,7 @@ impl ResponsePlugin for JwtSign {
     }
     #[inline]
     fn category(&self) -> PluginCategory {
-        PluginCategory::ResponseHeaders
+        PluginCategory::Jwt
     }
     #[inline]
     async fn handle(
@@ -324,10 +324,12 @@ impl ResponsePlugin for JwtSign {
 
 #[cfg(test)]
 mod tests {
-    use super::{JwtAuth, JwtParams};
+    use super::{new, JwtAuth, JwtParams, JwtSign};
     use crate::config::{PluginConf, PluginStep};
-    use crate::plugin::ProxyPlugin;
+    use crate::plugin::{ProxyPlugin, ResponsePlugin};
     use crate::state::State;
+    use bytes::Bytes;
+    use pingora::http::ResponseHeader;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -374,6 +376,34 @@ secret = "123123"
             "Plugin jwt invalid, message: Jwt key or key type is not allowed empty",
             result.err().unwrap().to_string()
         );
+    }
+
+    #[test]
+    fn test_new_jwt() {
+        let (auth, sigin) = new(&toml::from_str::<PluginConf>(
+            r###"
+secret = "123123"
+cookie = "jwt"
+"###,
+        )
+        .unwrap())
+        .unwrap();
+
+        assert_eq!("jwt", auth.cookie.unwrap());
+        assert_eq!(true, sigin.is_none());
+
+        let (auth, sigin) = new(&toml::from_str::<PluginConf>(
+            r###"
+secret = "123123"
+cookie = "jwt"
+auth_path = "/login"
+"###,
+        )
+        .unwrap())
+        .unwrap();
+        assert_eq!("jwt", auth.cookie.unwrap());
+        assert_eq!("/login", auth.auth_path);
+        assert_eq!(true, sigin.is_some());
     }
 
     #[tokio::test]
@@ -484,5 +514,54 @@ header = "Authorization"
             "Jwt authorization is expired",
             std::string::String::from_utf8_lossy(resp.body.as_ref())
         );
+    }
+
+    #[tokio::test]
+    async fn test_jwt_sign() {
+        let sign = JwtSign::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+secret = "123123"
+header = "Authorization"
+auth_path = "/login"
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!("jwt", sign.category().to_string());
+        assert_eq!("response", sign.step());
+
+        let headers = [""].join("\r\n");
+        let input_header = format!("GET /login HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let mut ctx = State::default();
+        let mut upstream_response = ResponseHeader::build_no_case(200, None).unwrap();
+        sign.handle(
+            PluginStep::Response,
+            &mut session,
+            &mut ctx,
+            &mut upstream_response,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            r#"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"content-type": "application/json; charset=utf-8", "transfer-encoding": "Chunked"} }, header_name_map: None, reason_phrase: None }"#,
+            format!("{upstream_response:?}")
+        );
+        assert_eq!(true, ctx.modify_response_body.is_some());
+        if let Some(modify) = ctx.modify_response_body {
+            let data = modify.handle(Bytes::from_static(b"Pingap"));
+            assert_eq!(
+                r#"{"token": "eyJhbGciOiAiSFMyNTYiLCJ0eXAiOiAiSldUIn0.UGluZ2Fw.wRLT2HhM1R-J4rVz3XCWADNIrmeInLtRGQzfJZaz-qI"}"#,
+                std::string::String::from_utf8_lossy(&data)
+                    .to_string()
+                    .as_str()
+            );
+        }
     }
 }
