@@ -47,16 +47,16 @@ export function getPluginSteps(category: string) {
       value: "proxy_upstream",
     },
     {
-      label: "Response Filter",
+      label: "Response",
       option: 2,
-      value: "response_filter",
+      value: "response",
     },
   ];
 
   const pluginSupportSteps: Record<string, number[]> = {};
   pluginSupportSteps[PluginCategory.STATS] = [0, 1];
   pluginSupportSteps[PluginCategory.LIMIT] = [0, 1];
-  pluginSupportSteps[PluginCategory.COMPRESSION] = [0, 1];
+  pluginSupportSteps[PluginCategory.COMPRESSION] = [];
   pluginSupportSteps[PluginCategory.ADMIN] = [0, 1];
   pluginSupportSteps[PluginCategory.DIRECTORY] = [0, 1];
   pluginSupportSteps[PluginCategory.MOCK] = [0, 1];

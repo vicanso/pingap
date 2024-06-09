@@ -81,7 +81,7 @@ impl TryFrom<&PluginConf> for JwtParams {
             if ![
                 PluginStep::Request,
                 PluginStep::ProxyUpstream,
-                PluginStep::ResponseFilter,
+                PluginStep::Response,
             ]
             .contains(step)
             {
@@ -251,7 +251,7 @@ impl JwtSign {
         let params = JwtParams::try_from(params)?;
 
         Ok(Self {
-            plugin_step: PluginStep::ResponseFilter,
+            plugin_step: PluginStep::Response,
             auth_path: params.auth_path,
             secret: params.secret,
             algorithm: params.algorithm,

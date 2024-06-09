@@ -130,7 +130,7 @@ prefix = "/api"
         let params = Redirect::new(
             &toml::from_str::<PluginConf>(
                 r###"
-step = "response_filter"
+step = "response"
 http_to_https = true
 prefix = "/api"
 "###,

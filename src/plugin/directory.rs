@@ -425,7 +425,7 @@ download = true
         let result = DirectoryParams::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
-step = "response_filter"
+step = "response"
 path = "~/Downloads"
 index = "/index.html"
 autoindex = true

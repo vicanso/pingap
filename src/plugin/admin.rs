@@ -479,7 +479,7 @@ mod tests {
         let result = AdminServeParams::try_from(
             &toml::from_str::<PluginConf>(
                 r#"
-    step = "response_filter"
+    step = "response"
     category = "admin"
     path = "/"
     authorizations = [

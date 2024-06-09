@@ -78,11 +78,10 @@ impl TryFrom<&PluginConf> for ResponseHeadersParams {
             remove_headers,
         };
 
-        if params.plugin_step != PluginStep::ResponseFilter {
+        if params.plugin_step != PluginStep::Response {
             return Err(Error::Invalid {
                 category: PluginCategory::ResponseHeaders.to_string(),
-                message: "Response headers plugin should be executed at response filter step"
-                    .to_string(),
+                message: "Response headers plugin should be executed at response step".to_string(),
             });
         }
         Ok(params)
@@ -162,7 +161,7 @@ mod tests {
         let params = ResponseHeadersParams::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
-step = "response_filter"
+step = "response"
 add_headers = [
 "X-Service:1",
 "X-Service:2",
@@ -178,7 +177,7 @@ remove_headers = [
             .unwrap(),
         )
         .unwrap();
-        assert_eq!("response_filter", params.plugin_step.to_string());
+        assert_eq!("response", params.plugin_step.to_string());
         assert_eq!(
             r#"[("x-service", "1"), ("x-service", "2")]"#,
             format!("{:?}", params.add_headers)
@@ -209,7 +208,7 @@ remove_headers = [
             )
             .unwrap(),
         );
-        assert_eq!("Plugin response_headers invalid, message: Response headers plugin should be executed at response filter step", result.err().unwrap().to_string());
+        assert_eq!("Plugin response_headers invalid, message: Response headers plugin should be executed at response step", result.err().unwrap().to_string());
     }
 
     #[tokio::test]
@@ -217,7 +216,7 @@ remove_headers = [
         let response_headers = ResponseHeaders::new(
             &toml::from_str::<PluginConf>(
                 r###"
-step = "response_filter"
+step = "response"
 add_headers = [
     "X-Service:1",
     "X-Service:2",
@@ -235,7 +234,7 @@ remove_headers = [
         .unwrap();
 
         assert_eq!("response_headers", response_headers.category().to_string());
-        assert_eq!("response_filter", response_headers.step().to_string());
+        assert_eq!("response", response_headers.step().to_string());
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
@@ -251,7 +250,7 @@ remove_headers = [
 
         response_headers
             .handle(
-                PluginStep::ResponseFilter,
+                PluginStep::Response,
                 &mut session,
                 &mut State::default(),
                 &mut upstream_response,

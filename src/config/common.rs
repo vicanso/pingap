@@ -85,10 +85,11 @@ impl<'de> Deserialize<'de> for PluginCategory {
 #[derive(PartialEq, Debug, Default, Clone, Copy, EnumString, strum::Display)]
 #[strum(serialize_all = "snake_case")]
 pub enum PluginStep {
+    EarlyRequest,
     #[default]
     Request,
     ProxyUpstream,
-    ResponseFilter,
+    Response,
 }
 
 impl Serialize for PluginStep {

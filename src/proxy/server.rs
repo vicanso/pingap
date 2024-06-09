@@ -105,6 +105,7 @@ pub fn try_init_server_locations(
     Ok(())
 }
 
+#[inline]
 fn get_server_locations(name: &str) -> Option<Arc<Vec<String>>> {
     LOCATION_MAP.load().get(name).cloned()
 }
@@ -171,6 +172,7 @@ impl Server {
     pub fn enable_lets_encrypt(&mut self) {
         self.lets_encrypt_enabled = true;
     }
+    #[inline]
     fn get_location(&self, index: Option<usize>) -> Option<Arc<Location>> {
         if let Some(locations) = get_server_locations(&self.name) {
             if let Some(index) = index {
@@ -306,6 +308,37 @@ impl ProxyHttp for Server {
             ..Default::default()
         }
     }
+    async fn early_request_filter(
+        &self,
+        session: &mut Session,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<()>
+    where
+        Self::CTX: Send + Sync,
+    {
+        let header = session.req_header_mut();
+        let host = util::get_host(header).unwrap_or_default();
+
+        let mut location_index = None;
+        if let Some(locations) = get_server_locations(&self.name) {
+            let path = header.uri.path();
+            for (index, name) in locations.iter().enumerate() {
+                if let Some(lo) = get_location(name) {
+                    if lo.matched(host, path) {
+                        location_index = Some(index);
+                        break;
+                    }
+                }
+            }
+        }
+        ctx.location_index = location_index;
+        if let Some(lo) = self.get_location(location_index) {
+            let _ = lo
+                .exec_proxy_plugins(session, ctx, PluginStep::EarlyRequest)
+                .await?;
+        }
+        Ok(())
+    }
     async fn request_filter(
         &self,
         session: &mut Session,
@@ -337,22 +370,8 @@ impl ProxyHttp for Server {
         let header = session.req_header_mut();
         let host = util::get_host(header).unwrap_or_default();
 
-        let mut location_index = None;
-        let mut location = None;
-        if let Some(locations) = get_server_locations(&self.name) {
-            let path = header.uri.path();
-            for (index, name) in locations.iter().enumerate() {
-                if let Some(lo) = get_location(name) {
-                    if lo.matched(host, path) {
-                        location_index = Some(index);
-                        location = Some(lo);
-                        break;
-                    }
-                }
-            }
-        }
-
-        if location_index.is_none() {
+        let location = self.get_location(ctx.location_index);
+        if location.is_none() {
             HttpResponse::unknown_error(Bytes::from(format!(
                 "Location not found, host:{host} path:{}",
                 header.uri.path(),
@@ -370,7 +389,6 @@ impl ProxyHttp for Server {
         lo.client_body_size_limit(Some(header), ctx)?;
 
         ctx.location.clone_from(&lo.name);
-        ctx.location_index = location_index;
         ctx.upstream_connected = lo.upstream_connected();
         ctx.location_accepted = lo.accepted.fetch_add(1, Ordering::Relaxed) + 1;
         ctx.location_processing = lo.processing.fetch_add(1, Ordering::Relaxed) + 1;
@@ -524,7 +542,7 @@ impl ProxyHttp for Server {
         }
 
         if let Some(lo) = self.get_location(ctx.location_index) {
-            lo.exec_response_plugins(session, ctx, upstream_response, PluginStep::ResponseFilter)
+            lo.exec_response_plugins(session, ctx, upstream_response, PluginStep::Response)
                 .await?;
         }
 
@@ -650,7 +668,7 @@ impl ProxyHttp for Server {
                 error!("failed to send error response to downstream: {e}");
             });
 
-        let _ = server_session.write_response_body(buf).await;
+        let _ = server_session.write_response_body(buf, true).await;
         code
     }
     async fn logging(&self, session: &mut Session, _e: Option<&pingora::Error>, ctx: &mut Self::CTX)
@@ -742,7 +760,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_request_filter() {
+    async fn test_early_request_filter() {
         let server = new_server();
 
         let headers = [""].join("\r\n");
@@ -752,6 +770,27 @@ mod tests {
         session.read_request().await.unwrap();
 
         let mut ctx = State::default();
+        server
+            .early_request_filter(&mut session, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(0, ctx.location_index.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_request_filter() {
+        let server = new_server();
+
+        let headers = [""].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let mut ctx = State {
+            location_index: Some(0),
+            ..Default::default()
+        };
         let done = server.request_filter(&mut session, &mut ctx).await.unwrap();
         assert_eq!(false, done);
         assert_eq!("lo", ctx.location);
@@ -775,7 +814,7 @@ mod tests {
             },
         );
         assert_eq!(
-            r#"Ok(CacheKey { namespace: "ss:", primary: "/vicanso/pingap?size=1", variance: None, user_tag: "" })"#,
+            r#"Ok(CacheKey { namespace: "ss:", primary: "/vicanso/pingap?size=1", primary_bin_override: None, variance: None, user_tag: "" })"#,
             format!("{key:?}")
         );
     }

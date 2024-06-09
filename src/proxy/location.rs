@@ -587,7 +587,14 @@ mod tests {
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = lo
-            .exec_proxy_plugins(&mut session, &mut State::default(), PluginStep::Request)
+            .exec_proxy_plugins(
+                &mut session,
+                &mut State {
+                    location_index: Some(0),
+                    ..Default::default()
+                },
+                PluginStep::Request,
+            )
             .await
             .unwrap();
         assert_eq!(true, result);
@@ -637,7 +644,7 @@ mod tests {
             &mut session,
             &mut State::default(),
             &mut upstream_response,
-            PluginStep::ResponseFilter,
+            PluginStep::Response,
         )
         .await
         .unwrap();

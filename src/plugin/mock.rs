@@ -131,7 +131,7 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
         let result = MockResponse::new(
             &toml::from_str::<PluginConf>(
                 r###"
-step = "response_filter"
+step = "response"
 path = "/"
 status = 500
 headers = [

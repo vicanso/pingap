@@ -161,7 +161,7 @@ mod tests {
         let result = StatsParams::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
-        step = "response_filter"
+        step = "response"
         path = "/stats"
     "###,
             )

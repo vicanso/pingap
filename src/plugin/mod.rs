@@ -96,6 +96,7 @@ pub fn get_builtin_proxy_plugins() -> Vec<(String, PluginConf)> {
             "pingap:compression".to_string(),
             toml::from_str::<PluginConf>(
                 r###"
+step = "early_request"
 category = "compression"
 gzip_level = 6
 br_level = 6
@@ -321,7 +322,7 @@ pub(crate) fn get_step_list_conf(value: &PluginConf) -> Vec<PluginStep> {
 
 #[test]
 pub fn initialize_test_plugins() {
-    let _ = init_plugins(vec![
+    init_plugins(vec![
         (
             "test:mock".to_string(),
             toml::from_str::<PluginConf>(
@@ -339,7 +340,7 @@ data = "abc"
             toml::from_str::<PluginConf>(
                 r###"
 category = "response_headers"
-step = "response_filter"
+step = "response"
 add_headers = [
 "X-Service:1",
 "X-Service:2",
@@ -354,5 +355,6 @@ remove_headers = [
             )
             .unwrap(),
         ),
-    ]);
+    ])
+    .unwrap();
 }

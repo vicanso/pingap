@@ -164,8 +164,10 @@ impl HttpResponse {
     pub async fn send(self, session: &mut Session) -> pingora::Result<usize> {
         let header = self.get_response_header()?;
         let size = self.body.len();
-        session.write_response_header(Box::new(header)).await?;
-        session.write_response_body(self.body).await?;
+        session
+            .write_response_header(Box::new(header), false)
+            .await?;
+        session.write_response_body(Some(self.body), true).await?;
         session.finish_body().await?;
         Ok(size)
     }
@@ -218,7 +220,9 @@ where
     /// Send the chunk data to client until the end of reader, return how many bytes were sent.
     pub async fn send(&mut self, session: &mut Session) -> pingora::Result<usize> {
         let header = self.get_response_header()?;
-        session.write_response_header(Box::new(header)).await?;
+        session
+            .write_response_header(Box::new(header), false)
+            .await?;
 
         let mut sent = 0;
         let chunk_size = self.chunk_size.max(512);
@@ -228,16 +232,13 @@ where
                 error!("Read data fail: {e}");
                 util::new_internal_error(400, e.to_string())
             })?;
+            session
+                .write_response_body(Some(Bytes::copy_from_slice(&buffer[..size])), size == 0)
+                .await?;
             if size == 0 {
                 break;
             }
-            session
-                .write_response_body(Bytes::copy_from_slice(&buffer[..size]))
-                .await?;
             sent += size;
-            if size < chunk_size {
-                break;
-            }
         }
         session.finish_body().await?;
 

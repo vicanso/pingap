@@ -118,7 +118,7 @@ path = "/ping"
         let result = Ping::new(
             &toml::from_str::<PluginConf>(
                 r###"
-step = "response_filter"
+step = "response"
 path = "/ping"
 "###,
             )

@@ -170,7 +170,7 @@ type = "deny"
         let result = RefererRestrictionParams::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
-step = "response_filter"
+step = "response"
 referer_list = [
     "github.com",
     "*.bing.cn",

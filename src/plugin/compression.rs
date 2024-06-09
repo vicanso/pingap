@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_int_conf, get_step_conf, Error, ProxyPlugin, Result};
+use super::{get_int_conf, Error, ProxyPlugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use http::HeaderValue;
 use log::debug;
 use once_cell::sync::Lazy;
+use pingora::modules::http::compression::ResponseCompression;
 use pingora::proxy::Session;
 
 static ZSTD_ENCODING: Lazy<HeaderValue> = Lazy::new(|| "zstd".try_into().unwrap());
@@ -44,20 +45,12 @@ struct CompressionParams {
 impl TryFrom<&PluginConf> for CompressionParams {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
-        let step = get_step_conf(value);
         let params = Self {
             gzip_level: get_int_conf(value, "gzip_level") as u32,
             br_level: get_int_conf(value, "br_level") as u32,
             zstd_level: get_int_conf(value, "zstd_level") as u32,
-            plugin_step: step,
+            plugin_step: PluginStep::EarlyRequest,
         };
-        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
-            return Err(Error::Invalid {
-                category: PluginCategory::Compression.to_string(),
-                message: "Compression plugin should be executed at request or proxy upstream step"
-                    .to_string(),
-            });
-        }
         Ok(params)
     }
 }
@@ -120,8 +113,13 @@ impl ProxyPlugin for Compression {
             };
             debug!("Compression level:{level}");
             if level > 0 {
-                session.downstream_compression.adjust_decompression(true);
-                session.downstream_compression.adjust_level(level);
+                if let Some(c) = session
+                    .downstream_modules_ctx
+                    .get_mut::<ResponseCompression>()
+                {
+                    c.adjust_decompression(true);
+                    c.adjust_level(level);
+                }
             }
         }
         Ok(None)
@@ -134,6 +132,8 @@ mod tests {
     use crate::plugin::compression::CompressionParams;
     use crate::state::State;
     use crate::{config::PluginConf, config::PluginStep, plugin::ProxyPlugin};
+    use pingora::modules::http::compression::{ResponseCompression, ResponseCompressionBuilder};
+    use pingora::modules::http::HttpModules;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -143,6 +143,7 @@ mod tests {
         let params = CompressionParams::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
+step = "early_request"
 gzip_level = 9
 br_level = 8
 zstd_level = 6
@@ -151,23 +152,10 @@ zstd_level = 6
             .unwrap(),
         )
         .unwrap();
-        assert_eq!("request", params.plugin_step.to_string());
+        assert_eq!("early_request", params.plugin_step.to_string());
         assert_eq!(9, params.gzip_level);
         assert_eq!(8, params.br_level);
         assert_eq!(6, params.zstd_level);
-
-        let result = CompressionParams::try_from(
-            &toml::from_str::<PluginConf>(
-                r###"
-step = "response_filter"
-gzip_level = 9
-br_level = 8
-zstd_level = 6
-"###,
-            )
-            .unwrap(),
-        );
-        assert_eq!("Plugin compression invalid, message: Compression plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
     }
 
     #[tokio::test]
@@ -175,6 +163,7 @@ zstd_level = 6
         let compression = Compression::new(
             &toml::from_str::<PluginConf>(
                 r###"
+step = "early_request"
 gzip_level = 9
 br_level = 8
 zstd_level = 7
@@ -185,58 +174,110 @@ zstd_level = 7
         .unwrap();
 
         assert_eq!("compression", compression.category().to_string());
-        assert_eq!("request", compression.step().to_string());
+        assert_eq!("early_request", compression.step().to_string());
 
         // gzip
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
+        let mut modules = HttpModules::new();
+        modules.add_module(ResponseCompressionBuilder::enable(0));
+        let mut session = Session::new_h1_with_modules(Box::new(mock_io), &modules);
         session.read_request().await.unwrap();
         let result = compression
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle(
+                PluginStep::EarlyRequest,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
-        assert_eq!(true, session.downstream_compression.is_enabled());
+        assert_eq!(
+            true,
+            session
+                .downstream_modules_ctx
+                .get::<ResponseCompression>()
+                .unwrap()
+                .is_enabled()
+        );
 
         // brotli
         let headers = ["Accept-Encoding: br"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
+        let mut modules = HttpModules::new();
+        modules.add_module(ResponseCompressionBuilder::enable(0));
+        let mut session = Session::new_h1_with_modules(Box::new(mock_io), &modules);
         session.read_request().await.unwrap();
         let result = compression
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle(
+                PluginStep::EarlyRequest,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
-        assert_eq!(true, session.downstream_compression.is_enabled());
+        assert_eq!(
+            true,
+            session
+                .downstream_modules_ctx
+                .get::<ResponseCompression>()
+                .unwrap()
+                .is_enabled()
+        );
 
         // zstd
         let headers = ["Accept-Encoding: zstd"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
+        let mut modules = HttpModules::new();
+        modules.add_module(ResponseCompressionBuilder::enable(0));
+        let mut session = Session::new_h1_with_modules(Box::new(mock_io), &modules);
         session.read_request().await.unwrap();
         let result = compression
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle(
+                PluginStep::EarlyRequest,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
-        assert_eq!(true, session.downstream_compression.is_enabled());
+        assert_eq!(
+            true,
+            session
+                .downstream_modules_ctx
+                .get::<ResponseCompression>()
+                .unwrap()
+                .is_enabled()
+        );
 
         // not support compression
         let headers = ["Accept-Encoding: none"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
+        let mut modules = HttpModules::new();
+        modules.add_module(ResponseCompressionBuilder::enable(0));
+        let mut session = Session::new_h1_with_modules(Box::new(mock_io), &modules);
         session.read_request().await.unwrap();
         let result = compression
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle(
+                PluginStep::EarlyRequest,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
-        assert_eq!(false, session.downstream_compression.is_enabled());
+        assert_eq!(
+            false,
+            session
+                .downstream_modules_ctx
+                .get::<ResponseCompression>()
+                .unwrap()
+                .is_enabled()
+        );
     }
 }
