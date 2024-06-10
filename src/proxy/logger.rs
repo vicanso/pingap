@@ -385,6 +385,11 @@ impl Parser {
                             .as_bytes(),
                     );
                 }
+                TagCategory::RequestId => {
+                    if let Some(key) = &ctx.request_id {
+                        buf.extend(key.as_bytes());
+                    }
+                }
                 TagCategory::Context => {
                     if let Some(key) = &tag.data {
                         match key.as_str() {
@@ -441,11 +446,6 @@ impl Parser {
                             }
                             _ => {}
                         }
-                    }
-                }
-                TagCategory::RequestId => {
-                    if let Some(key) = &ctx.request_id {
-                        buf.extend(key.as_bytes());
                     }
                 }
             };

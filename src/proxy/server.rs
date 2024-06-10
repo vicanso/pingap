@@ -300,11 +300,10 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        let header = session.req_header_mut();
-        let host = util::get_host(header).unwrap_or_default();
-
         let mut location_index = None;
         let mut location = None;
+        let header = session.req_header_mut();
+        let host = util::get_host(header).unwrap_or_default();
         if let Some(locations) = get_server_locations(&self.name) {
             let path = header.uri.path();
             for (index, name) in locations.iter().enumerate() {

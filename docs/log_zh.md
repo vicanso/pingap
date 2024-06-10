@@ -37,12 +37,16 @@ Pingap格式化可以使用以下几种默认形式`combined`，`common`，`shor
 
 现已支持获取context中记录的以下相关属性：
 
-- `established`: 客户端的连接时间
-- `tls_version`: tls的版本(http连接则为空)
-- `processing`: 该服务当前正在处理的请求数
-- `location`: 对应的location
 - `reused`: 与upstream的连接是否为复用请求
 - `upstream_address`: 连接的upstream地址
+- `processing`: 该服务当前正在处理的请求数
 - `upstream_connect_time`: 连upstream的连接耗时
 - `upstream_connected`: 当前location与upstream的连接数
 - `upstream_processing_time`: upstream处理请求的时长
+- `location`: 对应的location
+- `established`: 客户端的连接时间
+- `tls_version`: tls的版本(http连接则为空)
+- `compression_time`: 数据压缩的耗时
+- `compression_ratio`: 数据压缩比
+- `cache_lookup_time`: 缓存的查询耗时
+- `cache_lock_time`: 缓存的锁定耗时

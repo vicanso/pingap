@@ -9,18 +9,18 @@ Location主要配置请求的匹配、请求头响应头的插入，以及各种
 - `upstream`: 配置该location对应的upstream，若该location所有的处理均由插件完成，则可不配置。如针对http重定向至https的逻辑，则只需要添加中间件即可
 - `path`: 匹配的路径，具体使用方法后续内容细说
 - `host`: 匹配的域名，如果是多个域名则使用`,`分隔
-- `proxy_add_headers`: 转发至upstream时添加的请求头
 - `proxy_set_headers`: 转发至upstream时设置的请求头，若该请求头已存在则覆盖
+- `proxy_add_headers`: 转发至upstream时添加的请求头
 - `rewrite`: 请求路径的重写规则
 - `weight`: 自定义的权重，可以调整该location的权重，例如mock为服务不可用后，再调整该权重最高，则可禁用所有请求
 - `plugins`: 添加至该location的插件列表，按顺序执行
+- `client_max_body_size`: 客户端请求的body最大长度
 
 Location支持配置对应host(支持多个）与path规则，path支持以下的规则，权重由高至低：
 
 - 全等模式，配置以`=`开始，如`=/api`表示匹配path等于`/api`的请求
 - 正则模式，配置以`~`开始，如`~^/(api|rest)`表示匹配path以`/api`或`/rest`开始请求
 - 前缀模式，如`/api`表示匹配path为`/api`开始的请求
-- 空模式，若未指定path则表示所有的path均匹配，一般建议配置一个`/`的前缀模式即可，无需使用空模式
 
 在server中会根据所添加的所有location列表，计算对应的权重重新排序，也可自定义权重，location的计算权限逻辑如下：
 
@@ -66,6 +66,6 @@ pub fn get_weight(&self) -> u16 {
 - `^/(\S*?)/ /api/$1/`: 表示在请求路径添加前缀`/api`
 - `^/(\S*?)/api/ /$1`: 表示将请求路径中的`/api`部分删除
 
-### 请求插件
+### 插件
 
 Location可根据需要添加对应的插件，需要注意插件是按顺序执行的，因此要配置时要保证其顺序(若在web上配置则勾选后调整顺序即可)，通过插件可支持各种不同的应用场景，具体查看[细说插件体系](./plugin_zh.md)。

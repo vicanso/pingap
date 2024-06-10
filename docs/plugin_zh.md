@@ -93,6 +93,7 @@ remark = "管理后台"
 - `charset`: 指定charset类型，默认无
 - `autoindex`: 是否允许目录以浏览形式展示
 - `download`: 是否支持下载，指定该参数后响应时会设置响应头`Content-Disposition`
+- `headers`:  需要添加的http响应头列表
 
 ```toml
 [plugins.downloadsServe]
@@ -178,7 +179,7 @@ gzip_level = 6
 zstd_level = 5
 ```
 
-需要注意三种压缩算法的压缩级别不太可以，按需选择即可，也可使用自带的`pingap:compression`，它的压缩级别配置为`gzip_level = 6`, `br_level = 6`, `zstd_level = 3`。
+需要注意三种压缩算法的压缩级别不一样，按需选择即可，也可使用自带的`pingap:compression`，它的压缩级别配置为`gzip_level = 6`, `br_level = 6`, `zstd_level = 3`。
 
 界面配置如图所示，按需分别配置对应的压缩级别即可，若不想启用该压缩算法则配置为0：
 
@@ -296,7 +297,7 @@ type = "rate"
 
 ## IpRestriction
 
-Ip限制分为两种模式，允许，禁止，ip可支持配置为单ip或ip组，配置如下：
+Ip限制分为两种模式，允许或禁止，ip可支持配置为单ip或ip组，配置如下：
 
 ```toml
 [plugins.ipDeny]
@@ -314,6 +315,26 @@ type = "deny"
 <p align="center">
     <img src="../asset/plugin-ip-restriction.jpg" alt="plugin-ip-restriction">
 </p>
+
+## RefererRestriction
+
+Referer限制分为两种模式，允许或禁止，配置时可使用*前缀匹配，配置如下：
+
+```toml
+[plugins.referer]
+category = "referer_restriction"
+message = ""
+referer_list = ["*.github.com"]
+type = "allow"
+```
+
+界面配置如图所示，配置Referer列表后，填写是允许还是禁止即可：
+
+
+<p align="center">
+    <img src="../asset/plugin-referer-restriction.jpg" alt="plugin-referer-restriction">
+</p>
+
 
 ## Cache
 

@@ -21,10 +21,10 @@ A reverse proxy like nginx, built on [pingora](https://github.com/cloudflare/pin
 
 ## Start
 
-Loads all configurations from `/opt/proxy` and run in the background. Log appends to `/opt/proxy/pingap.log`.
+Loads all configurations from `/opt/pingap/conf` and run in the background. Log appends to `/opt/pingap/pingap.log`.
 
 ```bash
-RUST_LOG=INFO pingap -c=/opt/proxy -d --log=/opt/proxy/pingap.log
+RUST_LOG=INFO pingap -c=/opt/pingap/conf -d --log=/opt/proxy/pingap.log
 ```
 
 ## Graceful restart
@@ -32,9 +32,9 @@ RUST_LOG=INFO pingap -c=/opt/proxy -d --log=/opt/proxy/pingap.log
 Validate the configurations, send quit signal to pingap, then start a new process to handle all requests.
 
 ```bash
-RUST_LOG=INFO pingap -c=/opt/proxy -t \
+RUST_LOG=INFO pingap -c=/opt/pingap/conf -t \
   && pkill -SIGQUIT pingap \
-  && RUST_LOG=INFO pingap -c=/opt/proxy -d -u --log=/opt/proxy/pingap.log
+  && RUST_LOG=INFO pingap -c=/opt/pingap/conf -d -u --log=/opt/pingap/pingap.log
 ```
 
 ## Auto restart
@@ -42,8 +42,8 @@ RUST_LOG=INFO pingap -c=/opt/proxy -t \
 Watch the configurations, if one of them changes, graceful restart pingap.
 
 ```bash
-RUST_LOG=INFO pingap -c=/opt/proxy \
-  && -a -d --log=/opt/proxy/pingap.log
+RUST_LOG=INFO pingap -c=/opt/pingap/conf \
+  && -a -d --log=/opt/pingap/pingap.log
 ```
 
 ## Dev

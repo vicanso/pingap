@@ -118,13 +118,18 @@ impl ProxyPlugin for RefererRestriction {
         let mut found = false;
         if let Some(value) = session.get_header(http::header::REFERER) {
             let referer = value.to_str().unwrap_or_default().to_string();
-            if self.referer_list.contains(&referer) {
+            let host = if let Ok(info) = url::Url::parse(&referer) {
+                info.host_str().unwrap_or_default().to_string()
+            } else {
+                "".to_string()
+            };
+            if self.referer_list.contains(&host) {
                 found = true;
             } else {
                 found = self
                     .prefix_referer_list
                     .iter()
-                    .any(|item| referer.ends_with(item));
+                    .any(|item| host.ends_with(item));
             }
         }
         let allow = if self.restriction_category == "deny" {
@@ -201,7 +206,7 @@ type = "deny"
         assert_eq!("referer_restriction", deny.category().to_string());
         assert_eq!("request", deny.step().to_string());
 
-        let headers = ["Referer: google.com"].join("\r\n");
+        let headers = ["Referer: https://google.com/"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
@@ -213,7 +218,7 @@ type = "deny"
             .unwrap();
         assert_eq!(true, result.is_none());
 
-        let headers = ["Referer: github.com"].join("\r\n");
+        let headers = ["Referer: https://github.com/"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
@@ -226,7 +231,7 @@ type = "deny"
         assert_eq!(true, result.is_some());
         assert_eq!(StatusCode::FORBIDDEN, result.unwrap().status);
 
-        let headers = ["Referer: test.bing.cn"].join("\r\n");
+        let headers = ["Referer: https://test.bing.cn/"].join("\r\n");
         let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
