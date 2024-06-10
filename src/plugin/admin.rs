@@ -22,6 +22,7 @@ use crate::config::{
 use crate::config::{
     PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
 };
+use crate::http_extra::convert_headers;
 use crate::http_extra::{HttpResponse, HTTP_HEADER_WWW_AUTHENTICATE};
 use crate::limit::TtlLruLimit;
 use crate::state::get_start_time;
@@ -336,6 +337,14 @@ impl ProxyPlugin for AdminServe {
         }
         let path = header.uri.path();
         let mut new_path = path.substring(self.path.len(), path.len()).to_string();
+        if new_path.is_empty() {
+            let location = format!("Location: {path}/",);
+            return Ok(Some(HttpResponse {
+                status: StatusCode::TEMPORARY_REDIRECT,
+                headers: Some(convert_headers(&[location]).unwrap_or_default()),
+                ..Default::default()
+            }));
+        }
         if let Some(query) = header.uri.query() {
             new_path = format!("{new_path}?{query}");
         }
