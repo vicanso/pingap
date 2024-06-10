@@ -213,4 +213,5 @@ export default {
   "form.cacheHeadersAdd": "Add more header for cache key",
   "form.cacheEviction": "Enable evicted from storage",
   "form.cachePredictor": "Enable predictor",
+  "form.cacheMaxTtl": "Max ttl of cache",
 };

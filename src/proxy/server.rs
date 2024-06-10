@@ -33,6 +33,8 @@ use http::StatusCode;
 use log::{debug, error, info};
 use once_cell::sync::Lazy;
 use pingora::cache::cache_control::CacheControl;
+use pingora::cache::cache_control::DirectiveValue;
+use pingora::cache::cache_control::InterpretCacheControl;
 use pingora::cache::filters::resp_cacheable;
 use pingora::cache::{CacheKey, CacheMetaDefaults, NoCacheReason, RespCacheable};
 use pingora::http::{RequestHeader, ResponseHeader};
@@ -494,12 +496,23 @@ impl ProxyHttp for Server {
         &self,
         _session: &Session,
         resp: &ResponseHeader,
-        _ctx: &mut Self::CTX,
+        ctx: &mut Self::CTX,
     ) -> pingora::Result<RespCacheable> {
-        let cc = CacheControl::from_resp_headers(resp);
-        if let Some(c) = &cc {
+        let mut cc = CacheControl::from_resp_headers(resp);
+        if let Some(ref mut c) = &mut cc {
             if c.no_cache() || c.no_store() || c.private() {
                 return Ok(RespCacheable::Uncacheable(NoCacheReason::OriginNotCache));
+            }
+            // adjust cache ttl
+            if let Some(d) = ctx.cache_max_ttl {
+                if c.fresh_sec().unwrap_or_default() > d.as_secs() as u32 {
+                    c.directives.insert(
+                        "s-maxage".to_string(),
+                        Some(DirectiveValue(
+                            format!("{}", d.as_secs()).as_bytes().to_vec(),
+                        )),
+                    );
+                }
             }
         }
 

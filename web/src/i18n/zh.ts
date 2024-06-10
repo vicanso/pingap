@@ -215,4 +215,5 @@ export default {
   "form.cacheHeadersAdd": "添加更多的请求头",
   "form.cacheEviction": "是否启用缓存清除方式",
   "form.cachePredictor": "是否启用缓存预测方式",
+  "form.cacheMaxTtl": "缓存的最长有效期",
 };

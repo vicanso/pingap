@@ -672,14 +672,21 @@ export function FormPluginField({
           key: "namespace",
           label: t("form.cacheNamespace"),
           id: "cache-namespace",
-          span: 4,
+          span: 6,
+        },
+        {
+          category: "text",
+          key: "max_ttl",
+          label: t("form.cacheMaxTtl"),
+          id: "cache-max-ttl",
+          span: 6,
         },
         {
           category: "checkbox",
           key: "eviction",
           label: t("form.cacheEviction"),
           id: "cache-eviction",
-          span: 4,
+          span: 6,
           options: boolOptions,
         },
         {
@@ -687,7 +694,7 @@ export function FormPluginField({
           key: "predictor",
           label: t("form.cachePredictor"),
           id: "cache-predictor",
-          span: 4,
+          span: 6,
           options: boolOptions,
         },
         {

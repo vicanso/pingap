@@ -6,6 +6,7 @@
 - [ ] http response cache(storage: tinyufo, file)
 - [ ] support validate config for plugin
 - [ ] secret storage
+- [x] support setting max ttl of cache
 - [x] support set header for static serve
 - [x] set header support `remote_addr`
 - [x] hot reload upstream and location config

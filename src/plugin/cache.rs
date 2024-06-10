@@ -59,6 +59,7 @@ pub struct Cache {
     lock: u8,
     storage: &'static (dyn Storage + Sync),
     max_file_size: usize,
+    max_ttl: Option<Duration>,
     namespace: Option<String>,
     headers: Option<Vec<String>>,
 }
@@ -69,6 +70,7 @@ struct CacheParams {
     predictor: bool,
     lock: u8,
     max_file_size: usize,
+    max_ttl: Option<Duration>,
     namespace: Option<String>,
     headers: Option<Vec<String>>,
 }
@@ -79,7 +81,6 @@ impl TryFrom<&PluginConf> for CacheParams {
         let step = get_step_conf(value);
 
         let lock = get_str_conf(value, "lock");
-
         let lock = if !lock.is_empty() {
             parse_duration(&lock).map_err(|e| Error::Invalid {
                 category: PluginCategory::Cache.to_string(),
@@ -88,6 +89,17 @@ impl TryFrom<&PluginConf> for CacheParams {
         } else {
             Duration::from_secs(1)
         };
+
+        let max_ttl = get_str_conf(value, "max_ttl");
+        let max_ttl = if !max_ttl.is_empty() {
+            Some(parse_duration(&max_ttl).map_err(|e| Error::Invalid {
+                category: PluginCategory::Cache.to_string(),
+                message: e.to_string(),
+            })?)
+        } else {
+            None
+        };
+
         let max_file_size = get_str_conf(value, "max_file_size");
         let max_file_size = if !max_file_size.is_empty() {
             ByteSize::from_str(&max_file_size).map_err(|e| Error::Invalid {
@@ -114,6 +126,7 @@ impl TryFrom<&PluginConf> for CacheParams {
             eviction: value.contains_key("eviction"),
             predictor: value.contains_key("predictor"),
             lock: lock.as_secs().max(1) as u8,
+            max_ttl,
             max_file_size: max_file_size.as_u64().max(5 * 1024 * 1024) as usize,
             namespace,
             headers,
@@ -138,6 +151,7 @@ impl Cache {
             plugin_step: params.plpugin_step,
             eviction: params.eviction,
             lock: params.lock,
+            max_ttl: params.max_ttl,
             max_file_size: params.max_file_size,
             namespace: params.namespace,
             headers: params.headers,
@@ -169,6 +183,7 @@ impl ProxyPlugin for Cache {
         if ![Method::GET, Method::HEAD].contains(&session.req_header().method) {
             return Ok(None);
         }
+        ctx.cache_max_ttl = self.max_ttl;
         let eviction = if self.eviction {
             None
         } else {
