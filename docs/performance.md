@@ -131,4 +131,30 @@ TODO
 
 ### Cache
 
-TODO
+Threads: 1
+
+```bash
+wrk -H 'Accept-Encoding: gzip, deflate, br, zstd' 'http://localhost:6118/cache'
+Running 10s test @ http://localhost:6118/cache
+  2 threads and 10 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   183.82us   62.06us   2.30ms   86.60%
+    Req/Sec    27.27k   554.92    28.68k    92.57%
+  548062 requests in 10.10s, 2.07GB read
+Requests/sec:  54263.03
+Transfer/sec:    209.89MB
+```
+
+Threads: 2
+
+```bash
+wrk -H 'Accept-Encoding: gzip, deflate, br, zstd' 'http://localhost:6118/cache'
+Running 10s test @ http://localhost:6118/cache
+  2 threads and 10 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    98.40us   47.66us   2.52ms   79.75%
+    Req/Sec    50.40k     4.23k   53.03k    91.58%
+  1013154 requests in 10.10s, 3.83GB read
+Requests/sec: 100318.26
+Transfer/sec:    388.01MB
+```
