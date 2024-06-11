@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{parse_x509_validity, Cert, Error, Result};
+use super::{get_cert_info, Cert, Error, Result};
 use crate::config::get_current_config;
 use crate::http_extra::HttpResponse;
 use crate::service::{CommonServiceTask, ServiceTask};
@@ -278,9 +278,9 @@ async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
     let now = util::now().as_secs() as i64;
     // default expired time set 90 days
     let mut not_after = now + 90 * 24 * 3600;
-    if let Ok(validity) = parse_x509_validity(cert_chain_pem.as_bytes()) {
-        not_before = validity.not_before.timestamp();
-        not_after = validity.not_after.timestamp();
+    if let Ok(info) = get_cert_info(cert_chain_pem.as_bytes()) {
+        not_before = info.not_before;
+        not_after = info.not_after;
     }
 
     let mut f = fs::OpenOptions::new()

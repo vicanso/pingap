@@ -30,11 +30,13 @@ jobs:
         run: |
           cargo build --release --target=aarch64-apple-darwin
           mv target/aarch64-apple-darwin/release/pingap ./pingap-darwin-aarch64
-          ./.github/workflows/upload_asset.sh ./pingap-darwin-aarch64 $GITHUB_TOKEN
+          tar -czvf pingap-darwin-aarch64.tar.gz pingap-darwin-aarch64
+          ./.github/workflows/upload_asset.sh ./pingap-darwin-aarch64.tar.gz $GITHUB_TOKEN
 
           cargo build --release --target=x86_64-apple-darwin
           mv target/x86_64-apple-darwin/release/pingap ./pingap-darwin-x86
-          ./.github/workflows/upload_asset.sh ./pingap-darwin-x86 $GITHUB_TOKEN
+          tar -czvf pingap-darwin-x86.tar.gz pingap-darwin-x86
+          ./.github/workflows/upload_asset.sh ./pingap-darwin-x86.tar.gz $GITHUB_TOKEN
 
   linux:
     runs-on: ubuntu-latest
@@ -56,7 +58,8 @@ jobs:
             mv target/x86_64-unknown-linux-musl/release/pingap ./pingap-linux-x86
       - name: Upload Assets
         run: |
-          ./.github/workflows/upload_asset.sh ./pingap-linux-x86 $GITHUB_TOKEN
+          tar -czvf pingap-linux-x86.tar.gz pingap-linux-x86
+          ./.github/workflows/upload_asset.sh ./pingap-linux-x86.tar.gz $GITHUB_TOKEN
 
   linux-aarch64:
     runs-on: ubuntu-latest
@@ -78,7 +81,8 @@ jobs:
             mv target/aarch64-unknown-linux-musl/release/pingap ./pingap-linux-aarch64
       - name: Upload Assets
         run: |
-          ./.github/workflows/upload_asset.sh ./pingap-linux-aarch64 $GITHUB_TOKEN
+          tar -czvf pingap-linux-aarch64.tar.gz pingap-linux-aarch64
+          ./.github/workflows/upload_asset.sh ./pingap-linux-aarch64.tar.gz $GITHUB_TOKEN
   docker:
     runs-on: ubuntu-latest
     timeout-minutes: 3600

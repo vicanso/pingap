@@ -338,7 +338,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         });
     }
 
-    let mut validity_list = vec![];
+    let mut tls_cert_info_list = vec![];
     for server_conf in server_conf_list.iter() {
         let listen_80_port = server_conf.addr.ends_with(":80");
         let name = server_conf.name.clone();
@@ -348,8 +348,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         let services = ps.run(&my_server.configuration)?;
         my_server.add_service(services.lb);
-        if let Some(tls_validity) = services.tls_validity {
-            validity_list.push((name, tls_validity));
+        if let Some(tls_cert_info) = services.tls_cert_info {
+            tls_cert_info_list.push((name, tls_cert_info));
         }
     }
 
@@ -365,10 +365,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             new_lets_encrypt_service(domains),
         ));
     }
-    if !validity_list.is_empty() {
+    if !tls_cert_info_list.is_empty() {
         my_server.add_service(background_service(
             "Tls cert validity checker",
-            new_tls_validity_service(validity_list),
+            new_tls_validity_service(tls_cert_info_list),
         ));
     }
     my_server.add_service(background_service(

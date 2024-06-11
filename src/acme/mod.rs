@@ -37,7 +37,14 @@ pub enum Error {
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-pub fn parse_x509_validity(data: &[u8]) -> Result<x509_parser::certificate::Validity> {
+#[derive(Debug)]
+pub struct CertInfo {
+    pub not_after: i64,
+    pub not_before: i64,
+    pub issuer: String,
+}
+
+pub fn get_cert_info(data: &[u8]) -> Result<CertInfo> {
     let (_, pem) = x509_parser::pem::parse_x509_pem(data).map_err(|e| Error::X509 {
         message: e.to_string(),
     })?;
@@ -45,7 +52,13 @@ pub fn parse_x509_validity(data: &[u8]) -> Result<x509_parser::certificate::Vali
         message: e.to_string(),
     })?;
 
-    Ok(x509.validity().to_owned())
+    let validity = x509.validity();
+
+    Ok(CertInfo {
+        not_before: validity.not_before.timestamp(),
+        not_after: validity.not_after.timestamp(),
+        issuer: x509.issuer().to_string(),
+    })
 }
 
 #[derive(Debug, Deserialize, Serialize, Default)]

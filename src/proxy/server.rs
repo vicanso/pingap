@@ -17,7 +17,9 @@ use super::logger::Parser;
 use super::upstream::get_upstream;
 use super::Location;
 use super::ServerConf;
-use crate::acme::{get_lets_encrypt_cert, handle_lets_encrypt, parse_x509_validity};
+use crate::acme::get_cert_info;
+use crate::acme::CertInfo;
+use crate::acme::{get_lets_encrypt_cert, handle_lets_encrypt};
 use crate::config;
 use crate::config::PluginStep;
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
@@ -107,6 +109,8 @@ pub struct Server {
     threads: Option<usize>,
     tls_cert: Option<Vec<u8>>,
     tls_key: Option<Vec<u8>>,
+    tls_cipher_list: Option<String>,
+    tls_ciphersuites: Option<String>,
     enbaled_h2: bool,
     lets_encrypt_enabled: bool,
     tls_from_lets_encrypt: bool,
@@ -114,7 +118,7 @@ pub struct Server {
 }
 
 pub struct ServerServices {
-    pub tls_validity: Option<x509_parser::certificate::Validity>,
+    pub tls_cert_info: Option<CertInfo>,
     pub lb: Service<HttpProxy<Server>>,
 }
 
@@ -146,6 +150,8 @@ impl Server {
             error_template: conf.error_template.clone(),
             tls_key: conf.tls_key.clone(),
             tls_cert: conf.tls_cert.clone(),
+            tls_cipher_list: conf.tls_cipher_list.clone(),
+            tls_ciphersuites: conf.tls_ciphersuites.clone(),
             threads: conf.threads,
             lets_encrypt_enabled: false,
             enbaled_h2: conf.enbaled_h2,
@@ -186,11 +192,11 @@ impl Server {
             };
         }
         let is_tls = tls_cert.is_some();
-        let mut tls_validity = None;
+        let mut tls_cert_info = None;
         let dynamic_cert = if is_tls {
             let cert = tls_cert.unwrap_or_default();
-            if let Ok(validity) = parse_x509_validity(&cert) {
-                tls_validity = Some(validity)
+            if let Ok(info) = get_cert_info(&cert) {
+                tls_cert_info = Some(info)
             }
 
             Some(
@@ -214,6 +220,8 @@ impl Server {
             "Server({}) is linsten on:{addr}, threads:{threads:?}, tls:{is_tls}",
             &self.name
         );
+        let cipher_list = self.tls_cipher_list.clone();
+        let ciphersuites = self.tls_ciphersuites.clone();
         let mut lb = http_proxy_service(conf, self);
         lb.threads = threads;
         // support listen multi adddress
@@ -231,11 +239,21 @@ impl Server {
                 if enbaled_h2 {
                     tls_settings.enable_h2();
                 }
+                if let Some(cipher_list) = &cipher_list {
+                    if let Err(e) = tls_settings.set_cipher_list(cipher_list) {
+                        error!("Set cipher list fail, error:{e:?}");
+                    }
+                }
+                if let Some(ciphersuites) = &ciphersuites {
+                    if let Err(e) = tls_settings.set_ciphersuites(ciphersuites) {
+                        error!("Set ciphersuites fail, error:{e:?}");
+                    }
+                }
                 if let Some(min_version) = tls_settings.min_proto_version() {
-                    info!("Tls min proto version:{min_version:?}");
+                    info!("Tls min proto version: {min_version:?}");
                 }
                 if let Some(max_version) = tls_settings.max_proto_version() {
-                    info!("Tls max proto version:{max_version:?}");
+                    info!("Tls max proto version: {max_version:?}");
                 }
                 lb.add_tls_with_settings(addr, tcp_socket_options.clone(), tls_settings);
             } else if let Some(opt) = &tcp_socket_options {
@@ -244,11 +262,7 @@ impl Server {
                 lb.add_tcp(addr);
             }
         }
-        Ok(ServerServices {
-            tls_validity,
-            lb,
-            // bg_services,
-        })
+        Ok(ServerServices { tls_cert_info, lb })
     }
     async fn serve_admin(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<()> {
         if let Some(plugin) = get_proxy_plugin(util::ADMIN_SERVER_PLUGIN.as_str()) {

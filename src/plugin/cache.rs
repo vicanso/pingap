@@ -143,7 +143,7 @@ impl TryFrom<&PluginConf> for CacheParams {
 
 impl Cache {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!("new cache storage proxy plugin, params:{params:?}");
+        debug!("new cache storage proxy plugin, params: {params:?}");
         let params = CacheParams::try_from(params)?;
 
         Ok(Self {
@@ -223,7 +223,7 @@ impl ProxyPlugin for Cache {
         }
         if !keys.is_empty() {
             let prefix = std::string::String::from_utf8_lossy(&keys).to_string();
-            debug!("Cache prefix:{prefix}");
+            debug!("Cache prefix: {prefix}");
             ctx.cache_prefix = Some(prefix);
         }
 

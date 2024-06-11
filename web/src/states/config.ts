@@ -65,6 +65,8 @@ interface Server {
   tls_key?: string;
   lets_encrypt?: string;
   enabled_h2?: boolean;
+  tls_cipher_list?: string;
+  tls_ciphersuites?: string;
   tcp_idle?: string;
   tcp_interval?: string;
   tcp_probe_count?: number;
