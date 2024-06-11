@@ -54,6 +54,8 @@ export default {
   "server.enabledH2": "Enable Http2",
   "server.tlsCipherList": "Tls ciphers for protocols before TLSv1.3",
   "server.tlsCiphersuites": "Tls ciphers for protocols TLSv1.3",
+  "server.tlsMinVersion": "Tls min proto version",
+  "server.tlsMaxVersion": "Tls max proto version",
   "server.tcpFastOpen": "The backlog size of tcp fast open",
   "server.tcpIdle": "Tcp Keepalive Idle Duration",
   "server.tcpInterval": "Tcp Keepalive Interval Duration",

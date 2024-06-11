@@ -48,6 +48,7 @@ use pingora::proxy::{http_proxy_service, HttpProxy};
 use pingora::proxy::{ProxyHttp, Session};
 use pingora::server::configuration;
 use pingora::services::listening::Service;
+use pingora::tls::ssl::SslVersion;
 use pingora::upstreams::peer::{HttpPeer, Peer};
 use snafu::Snafu;
 use std::collections::HashMap;
@@ -111,10 +112,26 @@ pub struct Server {
     tls_key: Option<Vec<u8>>,
     tls_cipher_list: Option<String>,
     tls_ciphersuites: Option<String>,
+    tls_min_version: Option<String>,
+    tls_max_version: Option<String>,
     enbaled_h2: bool,
     lets_encrypt_enabled: bool,
     tls_from_lets_encrypt: bool,
     tcp_socket_options: Option<TcpSocketOptions>,
+}
+
+fn convert_tls_version(version: &Option<String>) -> Option<SslVersion> {
+    if let Some(version) = &version {
+        let version = match version.as_str() {
+            "sslv3" => SslVersion::SSL3,
+            "tlsv1.0" => SslVersion::TLS1,
+            "tlsv1.1" => SslVersion::TLS1_1,
+            "tlsv1.3" => SslVersion::TLS1_3,
+            _ => SslVersion::TLS1_2,
+        };
+        return Some(version);
+    }
+    None
 }
 
 pub struct ServerServices {
@@ -152,6 +169,8 @@ impl Server {
             tls_cert: conf.tls_cert.clone(),
             tls_cipher_list: conf.tls_cipher_list.clone(),
             tls_ciphersuites: conf.tls_ciphersuites.clone(),
+            tls_min_version: conf.tls_min_version.clone(),
+            tls_max_version: conf.tls_max_version.clone(),
             threads: conf.threads,
             lets_encrypt_enabled: false,
             enbaled_h2: conf.enbaled_h2,
@@ -222,6 +241,8 @@ impl Server {
         );
         let cipher_list = self.tls_cipher_list.clone();
         let ciphersuites = self.tls_ciphersuites.clone();
+        let tls_min_version = self.tls_min_version.clone();
+        let tls_max_version = self.tls_max_version.clone();
         let mut lb = http_proxy_service(conf, self);
         lb.threads = threads;
         // support listen multi adddress
@@ -249,6 +270,19 @@ impl Server {
                         error!("Set ciphersuites fail, error:{e:?}");
                     }
                 }
+
+                if let Some(version) = convert_tls_version(&tls_min_version) {
+                    if let Err(e) = tls_settings.set_min_proto_version(Some(version)) {
+                        error!("Set tls min proto version fail, error:{e:?}");
+                    }
+                }
+                if let Some(version) = convert_tls_version(&tls_max_version) {
+                    if let Err(e) = tls_settings.set_max_proto_version(Some(version)) {
+                        error!("Set tls max proto version fail, error:{e:?}");
+                    }
+                }
+
+                // tls_settings.set_min_proto_version(version)
                 if let Some(min_version) = tls_settings.min_proto_version() {
                     info!("Tls min proto version: {min_version:?}");
                 }

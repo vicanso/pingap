@@ -53,6 +53,8 @@ export default {
   "server.enabledH2": "是否启用http2",
   "server.tlsCipherList": "指定tls1.3之前版本使用的加密套件",
   "server.tlsCiphersuites": "指定tls1.3版本使用的加密套件",
+  "server.tlsMinVersion": "Tls支持最低版本",
+  "server.tlsMaxVersion": "Tls支持最高版本",
   "server.tcpFastOpen": "Tcp快速连接的backlog大小",
   "server.tcpIdle": "Tcp保持连接的空闲时长",
   "server.tcpInterval": "Tcp保持连接探针的发送间隔",

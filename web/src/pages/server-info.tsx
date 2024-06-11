@@ -41,6 +41,34 @@ export default function ServerInfo() {
     return getWeight(b) - getWeight(a);
   });
 
+  const tlsVersions = [
+    {
+      label: "tlsv1.3",
+      option: 1,
+      value: "tlsv1.3",
+    },
+    {
+      label: "tlsv1.2",
+      option: 2,
+      value: "tlsv1.2",
+    },
+    {
+      label: "tlsv1.1",
+      option: 3,
+      value: "tlsv1.1",
+    },
+    {
+      label: "tlsv1.0",
+      option: 4,
+      value: "tlsv1.0",
+    },
+    {
+      label: "sslv3",
+      option: 5,
+      value: "sslv3",
+    },
+  ];
+
   const arr: FormItem[] = [
     {
       id: "addr",
@@ -99,7 +127,6 @@ export default function ServerInfo() {
       span: 12,
       category: FormItemCategory.TEXT,
     },
-
     {
       id: "tls_cert",
       label: t("server.tlsCert"),
@@ -158,6 +185,22 @@ export default function ServerInfo() {
       defaultValue: server.tls_ciphersuites,
       span: 6,
       category: FormItemCategory.TEXT,
+    },
+    {
+      id: "tls_min_version",
+      label: t("server.tlsMinVersion"),
+      defaultValue: server.tls_min_version,
+      span: 6,
+      category: FormItemCategory.CHECKBOX,
+      options: tlsVersions,
+    },
+    {
+      id: "tls_max_version",
+      label: t("server.tlsMaxVersion"),
+      defaultValue: server.tls_max_version,
+      span: 6,
+      category: FormItemCategory.CHECKBOX,
+      options: tlsVersions,
     },
     {
       id: "remark",

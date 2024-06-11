@@ -281,6 +281,8 @@ pub struct ServerConf {
     pub tls_key: Option<String>,
     pub tls_cipher_list: Option<String>,
     pub tls_ciphersuites: Option<String>,
+    pub tls_min_version: Option<String>,
+    pub tls_max_version: Option<String>,
     pub lets_encrypt: Option<String>,
     pub enabled_h2: Option<bool>,
     #[serde(default)]

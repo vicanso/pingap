@@ -67,6 +67,8 @@ interface Server {
   enabled_h2?: boolean;
   tls_cipher_list?: string;
   tls_ciphersuites?: string;
+  tls_min_version?: string;
+  tls_max_version?: string;
   tcp_idle?: string;
   tcp_interval?: string;
   tcp_probe_count?: number;
