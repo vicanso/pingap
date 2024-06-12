@@ -19,7 +19,11 @@ mod server;
 mod server_conf;
 mod upstream;
 
-pub use location::{try_init_locations, Location};
+// for bench
+#[allow(unused_imports)]
+pub use location::Location;
+
+pub use location::try_init_locations;
 pub use logger::Parser;
 pub use server::*;
 pub use server_conf::ServerConf;

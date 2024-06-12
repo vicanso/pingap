@@ -85,9 +85,8 @@ pub fn new_tls_validity_service(tls_cert_info_list: Vec<(String, CertInfo)>) -> 
 
 #[cfg(test)]
 mod tests {
-    use crate::{acme::CertInfo, service::ServiceTask};
-
     use super::{new_tls_validity_service, validity_check, ValidityChecker};
+    use crate::{acme::CertInfo, service::ServiceTask};
     use pretty_assertions::assert_eq;
     use x509_parser::time::ASN1Time;
 

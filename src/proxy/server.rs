@@ -15,7 +15,6 @@
 use super::dynamic_cert::DynamicCert;
 use super::logger::Parser;
 use super::upstream::get_upstream;
-use super::Location;
 use super::ServerConf;
 use crate::acme::get_cert_info;
 use crate::acme::CertInfo;
@@ -183,15 +182,7 @@ impl Server {
     pub fn enable_lets_encrypt(&mut self) {
         self.lets_encrypt_enabled = true;
     }
-    #[inline]
-    fn get_location(&self, index: Option<usize>) -> Option<Arc<Location>> {
-        if let Some(locations) = get_server_locations(&self.name) {
-            if let Some(index) = index {
-                return get_location(&locations[index]);
-            }
-        }
-        None
-    }
+
     /// New all background services and add a TCP/TLS listening endpoint.
     pub fn run(self, conf: &Arc<configuration::ServerConf>) -> Result<ServerServices> {
         let tls_from_lets_encrypt = self.tls_from_lets_encrypt;
@@ -350,23 +341,21 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        let mut location_index = None;
         let mut location = None;
         let header = session.req_header_mut();
         let host = util::get_host(header).unwrap_or_default();
         if let Some(locations) = get_server_locations(&self.name) {
             let path = header.uri.path();
-            for (index, name) in locations.iter().enumerate() {
+            for name in locations.iter() {
                 if let Some(lo) = get_location(name) {
                     if lo.matched(host, path) {
                         location = Some(lo);
-                        location_index = Some(index);
+                        ctx.location = name.to_string();
                         break;
                     }
                 }
             }
         }
-        ctx.location_index = location_index;
         if let Some(lo) = location {
             let _ = lo
                 .exec_proxy_plugins(session, ctx, PluginStep::EarlyRequest)
@@ -405,7 +394,7 @@ impl ProxyHttp for Server {
         let header = session.req_header_mut();
         let host = util::get_host(header).unwrap_or_default();
 
-        let location = self.get_location(ctx.location_index);
+        let location = get_location(&ctx.location);
         if location.is_none() {
             HttpResponse::unknown_error(Bytes::from(format!(
                 "Location not found, host:{host} path:{}",
@@ -424,7 +413,6 @@ impl ProxyHttp for Server {
         lo.client_body_size_limit(Some(header), ctx)?;
 
         ctx.location.clone_from(&lo.name);
-        ctx.upstream_connected = lo.upstream_connected();
         ctx.location_accepted = lo.accepted.fetch_add(1, Ordering::Relaxed) + 1;
         ctx.location_processing = lo.processing.fetch_add(1, Ordering::Relaxed) + 1;
 
@@ -446,7 +434,7 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        if let Some(lo) = self.get_location(ctx.location_index) {
+        if let Some(lo) = get_location(&ctx.location) {
             let done = lo
                 .exec_proxy_plugins(session, ctx, PluginStep::ProxyUpstream)
                 .await?;
@@ -462,11 +450,12 @@ impl ProxyHttp for Server {
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Box<HttpPeer>> {
-        let peer = if let Some(lo) = self.get_location(ctx.location_index) {
+        let peer = if let Some(lo) = get_location(&ctx.location) {
             let up = get_upstream(&lo.upstream).ok_or(util::new_internal_error(
                 503,
                 format!("No upstream({}:{})", lo.name, lo.upstream),
             ))?;
+            ctx.upstream_connected = up.connected();
             up.new_http_peer(session, ctx)
         } else {
             None
@@ -507,7 +496,7 @@ impl ProxyHttp for Server {
     {
         if let Some(buf) = body {
             ctx.payload_size += buf.len();
-            if let Some(lo) = self.get_location(ctx.location_index) {
+            if let Some(lo) = get_location(&ctx.location) {
                 lo.client_body_size_limit(None, ctx)?;
             }
         }
@@ -522,7 +511,7 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        if let Some(lo) = self.get_location(ctx.location_index) {
+        if let Some(lo) = get_location(&ctx.location) {
             lo.set_append_proxy_headers(session, ctx, upstream_response);
         }
         Ok(())
@@ -592,7 +581,7 @@ impl ProxyHttp for Server {
             }
         }
 
-        if let Some(lo) = self.get_location(ctx.location_index) {
+        if let Some(lo) = get_location(&ctx.location) {
             lo.exec_response_plugins(session, ctx, upstream_response, PluginStep::Response)
                 .await?;
         }
@@ -727,7 +716,7 @@ impl ProxyHttp for Server {
         Self::CTX: Send + Sync,
     {
         self.processing.fetch_sub(1, Ordering::Relaxed);
-        if let Some(lo) = self.get_location(ctx.location_index) {
+        if let Some(lo) = get_location(&ctx.location) {
             lo.processing.fetch_sub(1, Ordering::Relaxed);
         }
         if ctx.status.is_none() {
@@ -827,7 +816,7 @@ mod tests {
             .early_request_filter(&mut session, &mut ctx)
             .await
             .unwrap();
-        assert_eq!(0, ctx.location_index.unwrap());
+        assert_eq!("lo", ctx.location);
     }
 
     #[tokio::test]
@@ -841,12 +830,11 @@ mod tests {
         session.read_request().await.unwrap();
 
         let mut ctx = State {
-            location_index: Some(0),
+            location: "lo".to_string(),
             ..Default::default()
         };
         let done = server.request_filter(&mut session, &mut ctx).await.unwrap();
         assert_eq!(false, done);
-        assert_eq!("lo", ctx.location);
     }
 
     #[tokio::test]

@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::upstream::get_upstream;
 use crate::config::{LocationConf, PluginStep};
 use crate::http_extra::{convert_header_value, convert_headers, HttpHeader};
 use crate::plugin::{get_proxy_plugin, get_response_plugin};
@@ -126,6 +125,11 @@ fn format_headers(values: &Option<Vec<String>>) -> Result<Option<Vec<HttpHeader>
 impl Location {
     /// Create a location from config.
     pub fn new(name: &str, conf: &LocationConf) -> Result<Location> {
+        if name.is_empty() {
+            return Err(Error::Invalid {
+                message: "Name is required".to_string(),
+            });
+        }
         let upstream = conf.upstream.clone().unwrap_or_default();
         let mut reg_rewrite = None;
         if let Some(value) = &conf.rewrite {
@@ -307,21 +311,15 @@ impl Location {
         }
         Ok(())
     }
-
-    /// Get the connected count of upstream
-    #[inline]
-    pub fn upstream_connected(&self) -> Option<u32> {
-        if let Some(up) = get_upstream(&self.upstream) {
-            return up.connected();
-        }
-        None
-    }
 }
 
 type Locations = HashMap<String, Arc<Location>>;
 static LOCATION_MAP: Lazy<ArcSwap<Locations>> = Lazy::new(|| ArcSwap::from_pointee(HashMap::new()));
 
 pub fn get_location(name: &str) -> Option<Arc<Location>> {
+    if name.is_empty() {
+        return None;
+    }
     LOCATION_MAP.load().get(name).cloned()
 }
 
@@ -377,7 +375,7 @@ mod tests {
 
         // no path, no host
         let lo = Location::new(
-            "",
+            "lo",
             &LocationConf {
                 upstream: Some(upstream_name.to_string()),
                 ..Default::default()
@@ -387,11 +385,11 @@ mod tests {
         assert_eq!(true, lo.matched("pingap", "/api"));
         assert_eq!(true, lo.matched("", ""));
 
-        assert_eq!("name: path: hosts:[] reg_rewrite:None proxy_set_headers:None proxy_add_headers:None plugins:None upstream:charts", lo.to_string());
+        assert_eq!("name:lo path: hosts:[] reg_rewrite:None proxy_set_headers:None proxy_add_headers:None plugins:None upstream:charts", lo.to_string());
 
         // host
         let lo = Location::new(
-            "",
+            "lo",
             &LocationConf {
                 upstream: Some(upstream_name.to_string()),
                 host: Some("test.com,pingap".to_string()),
@@ -405,7 +403,7 @@ mod tests {
 
         // regex
         let lo = Location::new(
-            "",
+            "lo",
             &LocationConf {
                 upstream: Some(upstream_name.to_string()),
                 path: Some("~/users".to_string()),
@@ -419,7 +417,7 @@ mod tests {
 
         // regex ^/api
         let lo = Location::new(
-            "",
+            "lo",
             &LocationConf {
                 upstream: Some(upstream_name.to_string()),
                 path: Some("~^/api".to_string()),
@@ -433,7 +431,7 @@ mod tests {
 
         // prefix
         let lo = Location::new(
-            "",
+            "lo",
             &LocationConf {
                 upstream: Some(upstream_name.to_string()),
                 path: Some("/api".to_string()),
@@ -447,7 +445,7 @@ mod tests {
 
         // equal
         let lo = Location::new(
-            "",
+            "lo",
             &LocationConf {
                 upstream: Some(upstream_name.to_string()),
                 path: Some("=/api".to_string()),
@@ -465,7 +463,7 @@ mod tests {
         let upstream_name = "charts";
 
         let lo = Location::new(
-            "",
+            "lo",
             &LocationConf {
                 upstream: Some(upstream_name.to_string()),
                 rewrite: Some("^/users/(.*)$ /$1".to_string()),
@@ -487,7 +485,7 @@ mod tests {
         let upstream_name = "charts";
 
         let lo = Location::new(
-            "",
+            "lo",
             &LocationConf {
                 upstream: Some(upstream_name.to_string()),
                 rewrite: Some("^/users/(.*)$ /$1".to_string()),
@@ -517,7 +515,7 @@ mod tests {
         let upstream_name = "charts";
 
         let lo = Location::new(
-            "",
+            "lo",
             &LocationConf {
                 upstream: Some(upstream_name.to_string()),
                 rewrite: Some("^/users/(.*)$ /$1".to_string()),
@@ -572,7 +570,7 @@ mod tests {
         let upstream_name = "charts";
 
         let lo = Location::new(
-            "",
+            "lo",
             &LocationConf {
                 upstream: Some(upstream_name.to_string()),
                 rewrite: Some("^/users/(.*)$ /$1".to_string()),
@@ -591,7 +589,7 @@ mod tests {
             .exec_proxy_plugins(
                 &mut session,
                 &mut State {
-                    location_index: Some(0),
+                    location: "lo".to_string(),
                     ..Default::default()
                 },
                 PluginStep::Request,
@@ -619,7 +617,7 @@ mod tests {
         let upstream_name = "charts";
 
         let lo = Location::new(
-            "",
+            "lo",
             &LocationConf {
                 upstream: Some(upstream_name.to_string()),
                 rewrite: Some("^/users/(.*)$ /$1".to_string()),

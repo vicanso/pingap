@@ -97,7 +97,7 @@ fn bench_location_filter(c: &mut Criterion) {
 
     group.bench_function("prefix", |b| {
         let lo = Location::new(
-            "",
+            "lo",
             &LocationConf {
                 upstream: Some(upstream_name.to_string()),
                 path: Some("/api".to_string()),
@@ -113,7 +113,7 @@ fn bench_location_filter(c: &mut Criterion) {
 
     group.bench_function("regex", |b| {
         let lo = Location::new(
-            "",
+            "lo",
             &LocationConf {
                 upstream: Some(upstream_name.to_string()),
                 path: Some("~/api".to_string()),
@@ -128,7 +128,7 @@ fn bench_location_filter(c: &mut Criterion) {
     });
     group.bench_function("equal", |b| {
         let lo = Location::new(
-            "",
+            "lo",
             &LocationConf {
                 upstream: Some(upstream_name.to_string()),
                 path: Some("=/api".to_string()),
