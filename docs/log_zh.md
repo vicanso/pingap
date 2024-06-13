@@ -38,7 +38,7 @@ Pingap格式化可以使用以下几种默认形式`combined`，`common`，`shor
 现已支持获取context中记录的以下相关属性：
 
 - `reused`: 与upstream的连接是否为复用请求
-- `upstream_address`: 连接的upstream地址
+- `upstream_addr`: 连接的upstream地址
 - `processing`: 该服务当前正在处理的请求数
 - `upstream_connect_time`: 连upstream的连接耗时
 - `upstream_connected`: 当前location与upstream的连接数

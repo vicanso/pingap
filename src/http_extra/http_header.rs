@@ -26,6 +26,7 @@ pub const HOST_NAME_TAG: &[u8] = b"$hostname";
 const REMOTE_ADDR_TAG: &[u8] = b"$remote_addr";
 const PROXY_ADD_FORWARDED_TAG: &[u8] = b"$proxy_add_x_forwarded_for";
 const HTTP_ORIGIN_TAG: &[u8] = b"$http_origin";
+const UPSTREAM_ADDR_TAG: &[u8] = b"$upstream_addr";
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -73,6 +74,13 @@ pub fn convert_header_value(
         REMOTE_ADDR_TAG => {
             if let Some(remote_addr) = &ctx.remote_addr {
                 if let Ok(value) = HeaderValue::from_str(remote_addr) {
+                    return Some(value);
+                }
+            }
+        }
+        UPSTREAM_ADDR_TAG => {
+            if !ctx.upstream_address.is_empty() {
+                if let Ok(value) = HeaderValue::from_str(&ctx.upstream_address) {
                     return Some(value);
                 }
             }

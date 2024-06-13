@@ -394,7 +394,7 @@ impl Parser {
                     if let Some(key) = &tag.data {
                         match key.as_str() {
                             "reused" => buf.extend(ctx.reused.to_string().as_bytes()),
-                            "upstream_address" => buf.extend(ctx.upstream_address.as_bytes()),
+                            "upstream_addr" => buf.extend(ctx.upstream_address.as_bytes()),
                             "processing" => buf.extend(ctx.processing.to_string().as_bytes()),
                             "upstream_connect_time" => {
                                 if let Some(value) = ctx.get_upstream_connect_time() {
@@ -658,7 +658,7 @@ mod tests {
         let p: Parser = "{host} {method} {path} {proto} {query} {remote} {client_ip} \
 {scheme} {uri} {referer} {user_agent} {size} \
 {size_human} {status} {payload_size} {payload_size_human} \
-{~deviceId} {>accept} {:reused} {:upstream_address} \
+{~deviceId} {>accept} {:reused} {:upstream_addr} \
 {:processing} {:upstream_connect_time} {:location} \
 {:established} {:tls_version} {request_id}"
             .into();
