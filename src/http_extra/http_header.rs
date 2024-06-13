@@ -22,9 +22,10 @@ use snafu::{ResultExt, Snafu};
 use std::str::FromStr;
 use substring::Substring;
 
-pub static HOST_NAME_TAG: &str = "$hostname";
-static REMOTE_ADDR_TAG: &str = "$remote_addr";
-static PROXY_ADD_FORWARDED_TAG: &str = "$proxy_add_x_forwarded_for";
+pub const HOST_NAME_TAG: &[u8] = b"$hostname";
+const REMOTE_ADDR_TAG: &[u8] = b"$remote_addr";
+const PROXY_ADD_FORWARDED_TAG: &[u8] = b"$proxy_add_x_forwarded_for";
+const HTTP_ORIGIN_TAG: &[u8] = b"$http_origin";
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -46,7 +47,7 @@ pub fn convert_header(value: &str) -> Result<Option<HttpHeader>> {
     if let Some((k, v)) = value.split_once(':').map(|(k, v)| (k.trim(), v.trim())) {
         let name = HeaderName::from_str(k).context(InvalidHeaderNameSnafu { value: k })?;
         let key = if v.starts_with('$') {
-            if v == HOST_NAME_TAG {
+            if v.as_bytes() == HOST_NAME_TAG {
                 get_hostname()
             } else {
                 std::env::var(v.substring(1, v.len())).unwrap_or_else(|_| v.to_string())
@@ -68,26 +69,36 @@ pub fn convert_header_value(
     ctx: &State,
 ) -> Option<HeaderValue> {
     let buf = value.as_bytes();
-    if buf == REMOTE_ADDR_TAG.as_bytes() {
-        if let Some(remote_addr) = &ctx.remote_addr {
-            if let Ok(value) = HeaderValue::from_str(remote_addr) {
-                return Some(value);
+    match buf {
+        REMOTE_ADDR_TAG => {
+            if let Some(remote_addr) = &ctx.remote_addr {
+                if let Ok(value) = HeaderValue::from_str(remote_addr) {
+                    return Some(value);
+                }
             }
         }
-    } else if buf == PROXY_ADD_FORWARDED_TAG.as_bytes() {
-        if let Some(remote_addr) = &ctx.remote_addr {
-            let value = if let Some(value) =
-                session.get_header(util::HTTP_HEADER_X_FORWARDED_FOR.clone())
-            {
-                format!("{}, {}", value.to_str().unwrap_or_default(), remote_addr)
-            } else {
-                remote_addr.to_string()
-            };
-            if let Ok(value) = HeaderValue::from_str(&value) {
-                return Some(value);
+        PROXY_ADD_FORWARDED_TAG => {
+            if let Some(remote_addr) = &ctx.remote_addr {
+                let value = if let Some(value) =
+                    session.get_header(util::HTTP_HEADER_X_FORWARDED_FOR.clone())
+                {
+                    format!("{}, {}", value.to_str().unwrap_or_default(), remote_addr)
+                } else {
+                    remote_addr.to_string()
+                };
+                if let Ok(value) = HeaderValue::from_str(&value) {
+                    return Some(value);
+                }
             }
         }
-    }
+        HTTP_ORIGIN_TAG => {
+            if let Some(origin) = session.get_header("origin") {
+                return Some(origin.clone());
+            }
+        }
+        _ => {}
+    };
+
     None
 }
 

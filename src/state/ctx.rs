@@ -98,12 +98,14 @@ impl Default for State {
 }
 
 impl State {
+    #[inline]
     pub fn get_upstream_connect_time(&self) -> Option<u32> {
         if self.upstream_address.is_empty() {
             return None;
         }
         self.upstream_connect_time
     }
+    #[inline]
     pub fn get_upstream_processing_time(&self) -> Option<u32> {
         self.status?;
         self.upstream_processing_time

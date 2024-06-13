@@ -110,7 +110,7 @@ struct AutoRestart {
 
 pub fn new_auto_restart_service(interval: Duration) -> CommonServiceTask {
     let mut restart_unit = 1_u32;
-    let unit = Duration::from_secs(10);
+    let unit = Duration::from_secs(30);
     if interval > unit {
         restart_unit = (interval.as_secs() / unit.as_secs()) as u32;
     }
