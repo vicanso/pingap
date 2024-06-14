@@ -1,10 +1,12 @@
+use std::time::{Duration, Instant};
+
 use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion};
 use http::{HeaderName, HeaderValue, StatusCode};
 use pingap::config::LocationConf;
 use pingap::http_extra::{convert_headers, HttpResponse};
 use pingap::proxy::{Location, Parser};
-use pingap::state::State;
+use pingap::state::{CompressionStat, State};
 use pingap::util::get_super_ts;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
@@ -185,6 +187,7 @@ fn get_logger_session(s: crossbeam_channel::Sender<Option<Session>>) {
                         "user-agent: pingap/0.1.1",
                         "Cookie: deviceId=abc",
                         "Accept: application/json",
+                        "X-Forwarded-For: 1.1.1.1, 2.2.2.2",
                     ]
                     .join("\r\n");
                     let input_header =
@@ -210,13 +213,39 @@ fn bench_logger_format(c: &mut Criterion) {
     let session = r.recv().unwrap().unwrap();
     c.bench_function("logger format", |b| {
         let p: Parser = "{host} {method} {path} {proto} {query} {remote} {client_ip} \
-{scheme} {uri} {referer} {user_agent} {size} \
-{size_human} {status} {payload_size} {payload_size_human} \
+{scheme} {uri} {referer} {user_agent} {when} {when_utc_iso} \
+{when_unix} {size} {size_human} {status} {latency} \
+{payload_size} {latency_human} {payload_size} \
+{payload_size_human} {request_id} \
+{:reused} {:upstream_addr} {:processing} {:upstream_connect_time} \
+{:upstream_connected} {:upstream_processing_time} {:upstream_response_time} \
+{:location} {:established} {:tls_version} {:compression_time} \
+{:compression_ratio} {:cache_lookup_time} {:cache_lock_time} \
 {~deviceId} {>accept} {:reused}"
             .into();
         let ctx = State {
             response_body_size: 1024,
+            payload_size: 512,
             reused: true,
+            status: Some(StatusCode::OK),
+            created_at: Instant::now(),
+            request_id: Some("AMwBhEil".to_string()),
+            upstream_address: "192.168.1.1:5000".to_string(),
+            upstream_connect_time: Some(30),
+            upstream_connected: Some(10),
+            upstream_processing_time: Some(50),
+            upstream_response_time: Some(5),
+            location: "lo".to_string(),
+            established: 1718369903,
+            tls_version: Some("tls1.2".to_string()),
+            processing: 10,
+            compression_stat: Some(CompressionStat {
+                in_bytes: 50 * 1024,
+                out_bytes: 12 * 1024,
+                duration: Duration::from_millis(8),
+            }),
+            cache_lookup_time: Some(3),
+            cache_lock_time: Some(8),
             ..Default::default()
         };
         b.iter(|| {

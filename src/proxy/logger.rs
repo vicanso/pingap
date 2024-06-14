@@ -324,10 +324,18 @@ impl Parser {
                     buf.extend(chrono::Utc::now().to_rfc3339().as_bytes());
                 }
                 TagCategory::WhenUnix => {
-                    buf.extend(chrono::Utc::now().timestamp_millis().to_string().as_bytes());
+                    buf.extend(
+                        itoa::Buffer::new()
+                            .format(chrono::Utc::now().timestamp_millis())
+                            .as_bytes(),
+                    );
                 }
                 TagCategory::Size => {
-                    buf.extend(ctx.response_body_size.to_string().as_bytes());
+                    buf.extend(
+                        itoa::Buffer::new()
+                            .format(ctx.response_body_size)
+                            .as_bytes(),
+                    );
                 }
                 TagCategory::SizeHuman => {
                     buf.extend(
@@ -346,7 +354,7 @@ impl Parser {
                 }
                 TagCategory::Latency => {
                     let d = Instant::now().duration_since(ctx.created_at);
-                    buf.extend(d.as_millis().to_string().as_bytes())
+                    buf.extend(itoa::Buffer::new().format(d.as_millis()).as_bytes())
                 }
                 TagCategory::LatencyHuman => {
                     let ms = Instant::now().duration_since(ctx.created_at).as_millis();
@@ -375,7 +383,7 @@ impl Parser {
                     }
                 }
                 TagCategory::PayloadSize => {
-                    buf.extend(ctx.payload_size.to_string().as_bytes());
+                    buf.extend(itoa::Buffer::new().format(ctx.payload_size).as_bytes());
                 }
                 TagCategory::PayloadSizeHuman => {
                     buf.extend(
@@ -393,9 +401,17 @@ impl Parser {
                 TagCategory::Context => {
                     if let Some(key) = &tag.data {
                         match key.as_str() {
-                            "reused" => buf.extend(ctx.reused.to_string().as_bytes()),
+                            "reused" => {
+                                if ctx.reused {
+                                    buf.extend(b"true");
+                                } else {
+                                    buf.extend(b"false");
+                                }
+                            }
                             "upstream_addr" => buf.extend(ctx.upstream_address.as_bytes()),
-                            "processing" => buf.extend(ctx.processing.to_string().as_bytes()),
+                            "processing" => {
+                                buf.extend(itoa::Buffer::new().format(ctx.processing).as_bytes())
+                            }
                             "upstream_connect_time" => {
                                 if let Some(value) = ctx.get_upstream_connect_time() {
                                     buf.extend(
@@ -404,8 +420,8 @@ impl Parser {
                                 }
                             }
                             "upstream_connected" => {
-                                if let Some(value) = &ctx.upstream_connected {
-                                    buf.extend(value.to_string().as_bytes());
+                                if let Some(value) = ctx.upstream_connected {
+                                    buf.extend(itoa::Buffer::new().format(value).as_bytes());
                                 }
                             }
                             "upstream_processing_time" => {
