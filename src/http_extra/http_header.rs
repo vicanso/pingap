@@ -248,6 +248,35 @@ mod tests {
         );
         assert_eq!(true, value.is_some());
         assert_eq!("10.1.1.1", value.unwrap().to_str().unwrap());
+
+        let headers = [""].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let value = convert_header_value(
+            &HeaderValue::from_str("$upstream_addr").unwrap(),
+            &session,
+            &State {
+                upstream_address: "10.1.1.1:8001".to_string(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(true, value.is_some());
+        assert_eq!("10.1.1.1:8001", value.unwrap().to_str().unwrap());
+
+        let headers = ["Origin: https://github.com"].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let value = convert_header_value(
+            &HeaderValue::from_str("$http_origin").unwrap(),
+            &session,
+            &State::default(),
+        );
+        assert_eq!(true, value.is_some());
+        assert_eq!("https://github.com", value.unwrap().to_str().unwrap());
     }
 
     #[test]

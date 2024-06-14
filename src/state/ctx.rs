@@ -51,12 +51,13 @@ pub struct State {
     pub guard: Option<Guard>,
     pub request_id: Option<String>,
     pub cache_prefix: Option<String>,
-    pub cache_lookup_duration: Option<Duration>,
-    pub cache_lock_duration: Option<Duration>,
+    pub cache_lookup_time: Option<u64>,
+    pub cache_lock_time: Option<u64>,
     pub cache_max_ttl: Option<Duration>,
-    pub upstream_connect_time: Option<u32>,
+    pub upstream_connect_time: Option<u64>,
     pub upstream_connected: Option<u32>,
-    pub upstream_processing_time: Option<u32>,
+    pub upstream_processing_time: Option<u64>,
+    pub upstream_response_time: Option<u64>,
     pub payload_size: usize,
     pub compression_stat: Option<CompressionStat>,
     pub modify_response_body: Option<Box<dyn ModifyResponseBody>>,
@@ -83,12 +84,13 @@ impl Default for State {
             guard: None,
             request_id: None,
             cache_prefix: None,
-            cache_lock_duration: None,
-            cache_lookup_duration: None,
+            cache_lookup_time: None,
+            cache_lock_time: None,
             cache_max_ttl: None,
             upstream_connect_time: None,
             upstream_connected: None,
             upstream_processing_time: None,
+            upstream_response_time: None,
             payload_size: 0,
             compression_stat: None,
             modify_response_body: None,
@@ -97,17 +99,34 @@ impl Default for State {
     }
 }
 
+const ONE_HOUR_MS: u64 = 60 * 60 * 1000;
+
 impl State {
     #[inline]
-    pub fn get_upstream_connect_time(&self) -> Option<u32> {
-        if self.upstream_address.is_empty() {
-            return None;
+    pub fn get_upstream_response_time(&self) -> Option<u64> {
+        if let Some(value) = self.upstream_response_time {
+            if value < ONE_HOUR_MS {
+                return Some(value);
+            }
         }
-        self.upstream_connect_time
+        None
     }
     #[inline]
-    pub fn get_upstream_processing_time(&self) -> Option<u32> {
-        self.status?;
-        self.upstream_processing_time
+    pub fn get_upstream_connect_time(&self) -> Option<u64> {
+        if let Some(value) = self.upstream_connect_time {
+            if value < ONE_HOUR_MS {
+                return Some(value);
+            }
+        }
+        None
+    }
+    #[inline]
+    pub fn get_upstream_processing_time(&self) -> Option<u64> {
+        if let Some(value) = self.upstream_processing_time {
+            if value < ONE_HOUR_MS {
+                return Some(value);
+            }
+        }
+        None
     }
 }

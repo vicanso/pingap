@@ -15,6 +15,7 @@
 use http::HeaderName;
 use once_cell::sync::Lazy;
 use path_absolutize::*;
+use pingora::tls::ssl::SslVersion;
 use pingora::{http::RequestHeader, proxy::Session};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{path::Path, str::FromStr};
@@ -228,31 +229,37 @@ pub fn get_content_length(header: &RequestHeader) -> Option<usize> {
     None
 }
 
-fn get_hour_duration() -> u32 {
-    (now().as_millis() % (3600 * 1000)) as u32
-}
 #[inline]
-pub fn get_latency(value: &Option<u32>) -> Option<u32> {
+pub fn get_latency(value: &Option<u64>) -> Option<u64> {
+    let current = now().as_millis() as u64;
     if let Some(value) = value {
-        let value = value.to_owned();
-        let d = get_hour_duration();
-        let value = if d >= value {
-            d - value
-        } else {
-            d + (3600 * 1000) - value
-        };
-        Some(value)
+        Some(current - value)
     } else {
-        Some(get_hour_duration())
+        Some(current)
     }
+}
+
+pub fn convert_tls_version(version: &Option<String>) -> Option<SslVersion> {
+    if let Some(version) = &version {
+        let version = match version.as_str() {
+            "sslv3" => SslVersion::SSL3,
+            "tlsv1.0" => SslVersion::TLS1,
+            "tlsv1.1" => SslVersion::TLS1_1,
+            "tlsv1.3" => SslVersion::TLS1_3,
+            _ => SslVersion::TLS1_2,
+        };
+        return Some(version);
+    }
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        get_latency, get_pkg_name, get_pkg_version, remove_query_from_header, resolve_path,
+        convert_tls_version, get_latency, get_pkg_name, get_pkg_version, local_ip_list,
+        remove_query_from_header, resolve_path,
     };
-    use pingora::http::RequestHeader;
+    use pingora::{http::RequestHeader, tls::ssl::SslVersion};
     use pretty_assertions::assert_eq;
     #[test]
     fn test_remove_query_from_header() {
@@ -284,5 +291,32 @@ mod tests {
         let d = get_latency(&None);
         assert_eq!(true, d.is_some());
         assert_eq!(true, get_latency(&d).is_some());
+    }
+    #[test]
+    fn test_convert_tls_version() {
+        assert_eq!(
+            SslVersion::SSL3,
+            convert_tls_version(&Some("sslv3".to_string())).unwrap()
+        );
+        assert_eq!(
+            SslVersion::TLS1,
+            convert_tls_version(&Some("tlsv1.0".to_string())).unwrap()
+        );
+        assert_eq!(
+            SslVersion::TLS1_1,
+            convert_tls_version(&Some("tlsv1.1".to_string())).unwrap()
+        );
+        assert_eq!(
+            SslVersion::TLS1_2,
+            convert_tls_version(&Some("tlsv1.2".to_string())).unwrap()
+        );
+        assert_eq!(
+            SslVersion::TLS1_3,
+            convert_tls_version(&Some("tlsv1.3".to_string())).unwrap()
+        );
+    }
+    #[test]
+    fn test_local_ip_list() {
+        assert_eq!(false, local_ip_list().is_empty());
     }
 }

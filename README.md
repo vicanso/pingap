@@ -18,6 +18,7 @@ A reverse proxy like nginx, built on [pingora](https://github.com/cloudflare/pin
 - Genrate TLS certificates from let's encrypt
 - Notification events: `lets_encrypt`, `backend_status`, `diff_config`, `restart`, etc.
 - Http proxy plugins: `compression`, `static serve`, `limit`, `stats`, `mock`, etc.
+- Statistics at different stages: `upstream_connect_time`, `upstream_processing_time`, `compression_time`, `cache_lookup_time` and `cache_lock_time`.
 
 ## Start
 

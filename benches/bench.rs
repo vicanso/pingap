@@ -149,7 +149,7 @@ fn bench_location_rewrite_path(c: &mut Criterion) {
     let upstream_name = "charts";
 
     let lo = Location::new(
-        "",
+        "lo",
         &LocationConf {
             upstream: Some(upstream_name.to_string()),
             rewrite: Some("^/users/(.*)$ /$1".to_string()),

@@ -47,7 +47,6 @@ use pingora::proxy::{http_proxy_service, HttpProxy};
 use pingora::proxy::{ProxyHttp, Session};
 use pingora::server::configuration;
 use pingora::services::listening::Service;
-use pingora::tls::ssl::SslVersion;
 use pingora::upstreams::peer::{HttpPeer, Peer};
 use snafu::Snafu;
 use std::collections::HashMap;
@@ -117,20 +116,6 @@ pub struct Server {
     lets_encrypt_enabled: bool,
     tls_from_lets_encrypt: bool,
     tcp_socket_options: Option<TcpSocketOptions>,
-}
-
-fn convert_tls_version(version: &Option<String>) -> Option<SslVersion> {
-    if let Some(version) = &version {
-        let version = match version.as_str() {
-            "sslv3" => SslVersion::SSL3,
-            "tlsv1.0" => SslVersion::TLS1,
-            "tlsv1.1" => SslVersion::TLS1_1,
-            "tlsv1.3" => SslVersion::TLS1_3,
-            _ => SslVersion::TLS1_2,
-        };
-        return Some(version);
-    }
-    None
 }
 
 pub struct ServerServices {
@@ -262,12 +247,12 @@ impl Server {
                     }
                 }
 
-                if let Some(version) = convert_tls_version(&tls_min_version) {
+                if let Some(version) = util::convert_tls_version(&tls_min_version) {
                     if let Err(e) = tls_settings.set_min_proto_version(Some(version)) {
                         error!("Set tls min proto version fail, error:{e:?}");
                     }
                 }
-                if let Some(version) = convert_tls_version(&tls_max_version) {
+                if let Some(version) = util::convert_tls_version(&tls_max_version) {
                     if let Err(e) = tls_settings.set_max_proto_version(Some(version)) {
                         error!("Set tls max proto version fail, error:{e:?}");
                     }
@@ -572,12 +557,12 @@ impl ProxyHttp for Server {
             if let Some(d) = session.cache.lookup_duration() {
                 let _ = upstream_response
                     .insert_header("X-Cache-Lookup", format!("{}ms", d.as_millis()));
-                ctx.cache_lookup_duration = Some(d)
+                ctx.cache_lookup_time = Some(d.as_millis() as u64);
             }
             if let Some(d) = session.cache.lock_duration() {
                 let _ =
                     upstream_response.insert_header("X-Cache-Lock", format!("{}ms", d.as_millis()));
-                ctx.cache_lock_duration = Some(d);
+                ctx.cache_lock_time = Some(d.as_millis() as u64);
             }
         }
 
@@ -597,6 +582,7 @@ impl ProxyHttp for Server {
     ) {
         if ctx.status.is_none() {
             ctx.status = Some(upstream_response.status);
+            ctx.upstream_response_time = util::get_latency(&ctx.upstream_response_time);
         }
         if let Some(id) = &ctx.request_id {
             let _ = upstream_response.insert_header(HTTP_HEADER_NAME_X_REQUEST_ID.clone(), id);
@@ -608,11 +594,14 @@ impl ProxyHttp for Server {
         &self,
         _session: &mut Session,
         body: &mut Option<bytes::Bytes>,
-        _end_of_stream: bool,
+        end_of_stream: bool,
         ctx: &mut Self::CTX,
     ) {
         if let Some(body) = body {
             ctx.response_body_size += body.len();
+        }
+        if end_of_stream {
+            ctx.upstream_response_time = util::get_latency(&ctx.upstream_response_time);
         }
     }
 

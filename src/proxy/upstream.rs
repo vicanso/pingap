@@ -430,7 +430,7 @@ impl Upstream {
         };
         let tracer = peer_tracer
             .as_ref()
-            .map(|peer_tracer| Tracer(Box::new(peer_tracer.clone())));
+            .map(|peer_tracer| Tracer(Box::new(peer_tracer.to_owned())));
         let up = Self {
             name: name.to_string(),
             tls,

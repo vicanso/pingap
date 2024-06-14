@@ -399,8 +399,7 @@ impl Parser {
                             "upstream_connect_time" => {
                                 if let Some(value) = ctx.get_upstream_connect_time() {
                                     buf.extend(
-                                        format!("{:?}", Duration::from_millis(value as u64))
-                                            .as_bytes(),
+                                        format!("{:?}", Duration::from_millis(value)).as_bytes(),
                                     );
                                 }
                             }
@@ -412,8 +411,14 @@ impl Parser {
                             "upstream_processing_time" => {
                                 if let Some(value) = ctx.get_upstream_processing_time() {
                                     buf.extend(
-                                        format!("{:?}", Duration::from_millis(value as u64))
-                                            .as_bytes(),
+                                        format!("{:?}", Duration::from_millis(value)).as_bytes(),
+                                    );
+                                }
+                            }
+                            "upstream_response_time" => {
+                                if let Some(value) = ctx.get_upstream_response_time() {
+                                    buf.extend(
+                                        format!("{:?}", Duration::from_millis(value)).as_bytes(),
                                     );
                                 }
                             }
@@ -435,13 +440,17 @@ impl Parser {
                                 }
                             }
                             "cache_lookup_time" => {
-                                if let Some(d) = ctx.cache_lookup_duration {
-                                    buf.extend(format!("{:?}", d).as_bytes());
+                                if let Some(value) = ctx.cache_lookup_time {
+                                    buf.extend(
+                                        format!("{:?}", Duration::from_millis(value)).as_bytes(),
+                                    );
                                 }
                             }
                             "cache_lock_time" => {
-                                if let Some(d) = ctx.cache_lock_duration {
-                                    buf.extend(format!("{:?}", d).as_bytes());
+                                if let Some(value) = ctx.cache_lock_time {
+                                    buf.extend(
+                                        format!("{:?}", Duration::from_millis(value)).as_bytes(),
+                                    );
                                 }
                             }
                             _ => {}
