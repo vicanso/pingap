@@ -23,9 +23,13 @@ use once_cell::sync::Lazy;
 use pingora::modules::http::compression::ResponseCompression;
 use pingora::proxy::Session;
 
-static ZSTD_ENCODING: Lazy<HeaderValue> = Lazy::new(|| "zstd".try_into().unwrap());
-static BR_ENCODING: Lazy<HeaderValue> = Lazy::new(|| "br".try_into().unwrap());
-static GZIP_ENCODING: Lazy<HeaderValue> = Lazy::new(|| "gzip".try_into().unwrap());
+const ZSTD: &str = "zstd";
+const BR: &str = "br";
+const GZIP: &str = "gzip";
+
+static ZSTD_ENCODING: Lazy<HeaderValue> = Lazy::new(|| ZSTD.try_into().unwrap());
+static BR_ENCODING: Lazy<HeaderValue> = Lazy::new(|| BR.try_into().unwrap());
+static GZIP_ENCODING: Lazy<HeaderValue> = Lazy::new(|| GZIP.try_into().unwrap());
 
 pub struct Compression {
     gzip_level: u32,
@@ -108,13 +112,13 @@ impl ProxyPlugin for Compression {
                 return Ok(None);
             }
             // compression order, zstd > br > gzip
-            let level = if self.zstd_level > 0 && accept_encoding.contains("zstd") {
+            let level = if self.zstd_level > 0 && accept_encoding.contains(ZSTD) {
                 let _ = header.insert_header(http::header::ACCEPT_ENCODING, ZSTD_ENCODING.clone());
                 self.zstd_level
-            } else if self.br_level > 0 && accept_encoding.contains("br") {
+            } else if self.br_level > 0 && accept_encoding.contains(BR) {
                 let _ = header.insert_header(http::header::ACCEPT_ENCODING, BR_ENCODING.clone());
                 self.br_level
-            } else if self.gzip_level > 0 && accept_encoding.contains("gzip") {
+            } else if self.gzip_level > 0 && accept_encoding.contains(GZIP) {
                 let _ = header.insert_header(http::header::ACCEPT_ENCODING, GZIP_ENCODING.clone());
                 self.gzip_level
             } else {

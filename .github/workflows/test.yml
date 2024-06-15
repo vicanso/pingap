@@ -23,6 +23,9 @@ jobs:
         ports:
           - 2379:2379
     steps:
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        platforms: arm64
       - uses: actions/checkout@v4
       - name: setup node
         uses: actions/setup-node@v4
