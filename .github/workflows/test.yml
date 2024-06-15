@@ -10,10 +10,14 @@ env:
 
 jobs:
   linux:
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         toolchain: [stable]
-    runs-on: ubuntu-latest
+        image:
+          - tonistiigi/binfmt:latest
+        platforms:
+          - arm64
     services:
       etcd:
         image: quay.io/coreos/etcd:v3.5.5
@@ -24,6 +28,12 @@ jobs:
           - 2379:2379
     steps:
       - uses: actions/checkout@v4
+      - name: Set up QEMU
+        id: qemu
+        uses: docker/setup-qemu-action@v3
+        with:
+          image: ${{ matrix.image }}
+          platforms: ${{ matrix.platforms }}
       - name: setup node
         uses: actions/setup-node@v4
       - name: build-web
