@@ -135,6 +135,7 @@ export default {
   "form.compressionGzipLevel": "Gzip Level",
   "form.compressionBrLevel": "Br Level",
   "form.compressionZstdLevel": "Zstd Level",
+  "form.compressionDecompression": "Support decompression",
   "form.adminPath": "Admin Path",
   "form.adminIpFailLimit": "Auth fail ip limit count",
   "form.adminAuthorization": "Basic auth(base64(user:pass))",

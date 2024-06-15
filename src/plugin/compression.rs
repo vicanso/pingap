@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_int_conf, Error, ProxyPlugin, Result};
+use super::{get_bool_conf, get_int_conf, Error, ProxyPlugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -32,6 +32,7 @@ pub struct Compression {
     br_level: u32,
     zstd_level: u32,
     support_compression: bool,
+    decompression: Option<bool>,
     plugin_step: PluginStep,
 }
 
@@ -39,16 +40,22 @@ struct CompressionParams {
     gzip_level: u32,
     br_level: u32,
     zstd_level: u32,
+    decompression: Option<bool>,
     plugin_step: PluginStep,
 }
 
 impl TryFrom<&PluginConf> for CompressionParams {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
+        let mut decompression = None;
+        if value.contains_key("decompression") {
+            decompression = Some(get_bool_conf(value, "decompression"));
+        }
         let params = Self {
             gzip_level: get_int_conf(value, "gzip_level") as u32,
             br_level: get_int_conf(value, "br_level") as u32,
             zstd_level: get_int_conf(value, "zstd_level") as u32,
+            decompression,
             plugin_step: PluginStep::EarlyRequest,
         };
         Ok(params)
@@ -65,6 +72,7 @@ impl Compression {
             gzip_level: params.gzip_level,
             br_level: params.br_level,
             zstd_level: params.zstd_level,
+            decompression: params.decompression,
             support_compression,
         })
     }
@@ -118,8 +126,9 @@ impl ProxyPlugin for Compression {
                     .downstream_modules_ctx
                     .get_mut::<ResponseCompression>()
                 {
-                    // TODO support to set decompression from config
-                    c.adjust_decompression(true);
+                    if let Some(decompression) = self.decompression {
+                        c.adjust_decompression(decompression);
+                    }
                     c.adjust_level(level);
                 }
             }

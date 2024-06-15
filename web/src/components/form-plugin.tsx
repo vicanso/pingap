@@ -194,6 +194,14 @@ export function FormPluginField({
           id: "compresssion-zstd",
           span: 4,
         },
+        {
+          category: "checkbox",
+          key: "decompression",
+          label: t("form.compressionDecompression"),
+          id: "compresssion-decompression",
+          options: boolOptions,
+          span: 6,
+        },
       );
       break;
     }

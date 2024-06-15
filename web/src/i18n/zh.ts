@@ -135,6 +135,7 @@ export default {
   "form.compressionGzipLevel": "Gzip的压缩级别",
   "form.compressionBrLevel": "Br的压缩级别",
   "form.compressionZstdLevel": "Zstd的压缩级别",
+  "form.compressionDecompression": "支持解压",
   "form.adminPath": "管理后台的路径",
   "form.adminIpFailLimit": "认证失败的IP限制次数",
   "form.adminAuthorization": "Basic auth，base64处理后的值，base64(user:pass)",
