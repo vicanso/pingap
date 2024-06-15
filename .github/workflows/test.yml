@@ -13,6 +13,8 @@ jobs:
     strategy:
       matrix:
         toolchain: [stable]
+        platforms:
+          - arm64
     runs-on: ubuntu-latest
     services:
       etcd:
