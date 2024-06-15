@@ -15,7 +15,9 @@
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
 use pingora_limits::inflight::Guard;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::util;
 
 pub trait ModifyResponseBody: Sync + Send {
     fn handle(&self, data: Bytes) -> Bytes;
@@ -38,7 +40,7 @@ pub struct State {
     pub accepted: u64,
     pub location_processing: i32,
     pub location_accepted: u64,
-    pub created_at: Instant,
+    pub created_at: u64,
     pub tls_version: Option<String>,
     pub status: Option<StatusCode>,
     pub established: u64,
@@ -74,7 +76,7 @@ impl Default for State {
             tls_version: None,
             status: None,
             established: 0,
-            created_at: Instant::now(),
+            created_at: util::now().as_millis() as u64,
             response_body_size: 0,
             reused: false,
             location: "".to_string(),

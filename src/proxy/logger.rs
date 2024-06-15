@@ -16,11 +16,10 @@ use crate::http_extra::HOST_NAME_TAG;
 use crate::state::{get_hostname, State};
 use crate::util;
 use bytes::BytesMut;
-use bytesize::ByteSize;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::Regex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use substring::Substring;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -104,6 +103,46 @@ fn format_extra_tag(key: &str) -> Option<Tag> {
         }
         _ => None,
     }
+}
+
+const B_100: usize = 100;
+const KB: usize = 1_000;
+const KB_100: usize = 100 * KB;
+const MB: usize = 1_000_000;
+const MB_100: usize = 100 * MB;
+const GB: usize = 1_000_000_000;
+
+#[inline]
+fn format_byte_size(mut buf: BytesMut, size: usize) -> BytesMut {
+    if size < KB {
+        buf.extend(itoa::Buffer::new().format(size).as_bytes());
+        buf.extend(b"B");
+    } else if size < MB {
+        buf.extend(itoa::Buffer::new().format(size / KB).as_bytes());
+        let value = (size % KB) / B_100;
+        if value != 0 {
+            buf.extend(b".");
+            buf.extend(itoa::Buffer::new().format(value).as_bytes());
+        }
+        buf.extend(b"KB");
+    } else if size < GB {
+        buf.extend(itoa::Buffer::new().format(size / MB).as_bytes());
+        let value = (size % MB) / KB_100;
+        if value != 0 {
+            buf.extend(b".");
+            buf.extend(itoa::Buffer::new().format(value).as_bytes());
+        }
+        buf.extend(b"MB");
+    } else {
+        buf.extend(itoa::Buffer::new().format(size / GB).as_bytes());
+        let value = (size % GB) / MB_100;
+        if value != 0 {
+            buf.extend(b".");
+            buf.extend(itoa::Buffer::new().format(value).as_bytes());
+        }
+        buf.extend(b"GB");
+    }
+    buf
 }
 
 static COMBINED: &str =
@@ -338,12 +377,7 @@ impl Parser {
                     );
                 }
                 TagCategory::SizeHuman => {
-                    buf.extend(
-                        ByteSize(ctx.response_body_size as u64)
-                            .to_string()
-                            .replace(' ', "")
-                            .as_bytes(),
-                    );
+                    buf = format_byte_size(buf, ctx.response_body_size);
                 }
                 TagCategory::Status => {
                     if let Some(status) = ctx.status {
@@ -353,12 +387,12 @@ impl Parser {
                     }
                 }
                 TagCategory::Latency => {
-                    let d = Instant::now().duration_since(ctx.created_at);
-                    buf.extend(itoa::Buffer::new().format(d.as_millis()).as_bytes())
+                    let ms = (util::now().as_millis() as u64) - ctx.created_at;
+                    buf.extend(itoa::Buffer::new().format(ms).as_bytes())
                 }
                 TagCategory::LatencyHuman => {
-                    let ms = Instant::now().duration_since(ctx.created_at).as_millis();
-                    buf.extend(format!("{:?}", Duration::from_millis(ms as u64)).as_bytes());
+                    let ms = (util::now().as_millis() as u64) - ctx.created_at;
+                    buf.extend(format!("{:?}", Duration::from_millis(ms)).as_bytes());
                 }
                 TagCategory::Cookie => {
                     if let Some(value) =
@@ -386,12 +420,7 @@ impl Parser {
                     buf.extend(itoa::Buffer::new().format(ctx.payload_size).as_bytes());
                 }
                 TagCategory::PayloadSizeHuman => {
-                    buf.extend(
-                        ByteSize(ctx.payload_size as u64)
-                            .to_string()
-                            .replace(' ', "")
-                            .as_bytes(),
-                    );
+                    buf = format_byte_size(buf, ctx.payload_size);
                 }
                 TagCategory::RequestId => {
                     if let Some(key) = &ctx.request_id {
@@ -482,12 +511,65 @@ impl Parser {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_extra_tag, Parser, Tag, TagCategory};
+    use super::{format_byte_size, format_extra_tag, Parser, Tag, TagCategory};
     use crate::state::State;
+    use bytes::BytesMut;
     use http::Method;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
+
+    #[test]
+    fn test_format_byte_size() {
+        let mut buf = BytesMut::with_capacity(1024);
+        buf = format_byte_size(buf, 512);
+        assert_eq!(
+            "512B",
+            std::string::String::from_utf8_lossy(&buf).to_string()
+        );
+
+        buf.clear();
+        buf = format_byte_size(buf, 1024);
+        assert_eq!(
+            "1KB",
+            std::string::String::from_utf8_lossy(&buf).to_string()
+        );
+
+        buf.clear();
+        buf = format_byte_size(buf, 1124);
+        assert_eq!(
+            "1.1KB",
+            std::string::String::from_utf8_lossy(&buf).to_string()
+        );
+
+        buf.clear();
+        buf = format_byte_size(buf, 1020 * 1000);
+        assert_eq!(
+            "1MB",
+            std::string::String::from_utf8_lossy(&buf).to_string()
+        );
+
+        buf.clear();
+        buf = format_byte_size(buf, 1220 * 1000);
+        assert_eq!(
+            "1.2MB",
+            std::string::String::from_utf8_lossy(&buf).to_string()
+        );
+
+        buf.clear();
+        buf = format_byte_size(buf, 122220 * 1000);
+        assert_eq!(
+            "122.2MB",
+            std::string::String::from_utf8_lossy(&buf).to_string()
+        );
+
+        buf.clear();
+        buf = format_byte_size(buf, 1000 * 1000 * 1000 + 500 * 1000 * 1000);
+        assert_eq!(
+            "1.5GB",
+            std::string::String::from_utf8_lossy(&buf).to_string()
+        );
+    }
 
     #[test]
     fn test_format_extra_tag() {
@@ -703,7 +785,7 @@ mod tests {
         assert_eq!(Method::GET, session.req_header().method);
 
         let ctx = State {
-            response_body_size: 1024,
+            response_body_size: 1100,
             reused: true,
             upstream_address: "192.186.1.1:6188".to_string(),
             processing: 1,
@@ -716,7 +798,7 @@ mod tests {
         };
         let log = p.format(&session, &ctx);
         assert_eq!(
-            "github.com GET /vicanso/pingap HTTP/1.1 size=1   https /vicanso/pingap?size=1 https://github.com/ pingap/0.1.1 1024 1.0KB 0 0 0B abc application/json true 192.186.1.1:6188 1 100ms test 1651852800 1.2 nanoid",
+            "github.com GET /vicanso/pingap HTTP/1.1 size=1   https /vicanso/pingap?size=1 https://github.com/ pingap/0.1.1 1100 1.1KB 0 0 0B abc application/json true 192.186.1.1:6188 1 100ms test 1651852800 1.2 nanoid",
             log
         );
     }
