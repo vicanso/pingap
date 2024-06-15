@@ -19,7 +19,6 @@ use bytes::BytesMut;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::Regex;
-use std::time::Duration;
 use substring::Substring;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -141,6 +140,25 @@ fn format_byte_size(mut buf: BytesMut, size: usize) -> BytesMut {
             buf.extend(itoa::Buffer::new().format(value).as_bytes());
         }
         buf.extend(b"GB");
+    }
+    buf
+}
+
+const SEC: u64 = 1_000;
+
+#[inline]
+fn format_duration(mut buf: BytesMut, ms: u64) -> BytesMut {
+    if ms < 1000 {
+        buf.extend(itoa::Buffer::new().format(ms).as_bytes());
+        buf.extend(b"ms");
+    } else {
+        buf.extend(itoa::Buffer::new().format(ms / SEC).as_bytes());
+        let value = (ms % SEC) / 100;
+        if value != 0 {
+            buf.extend(b".");
+            buf.extend(itoa::Buffer::new().format(value).as_bytes());
+        }
+        buf.extend(b"s");
     }
     buf
 }
@@ -392,7 +410,8 @@ impl Parser {
                 }
                 TagCategory::LatencyHuman => {
                     let ms = (util::now().as_millis() as u64) - ctx.created_at;
-                    buf.extend(format!("{:?}", Duration::from_millis(ms)).as_bytes());
+                    buf = format_duration(buf, ms);
+                    // buf.extend(format!("{:?}", Duration::from_millis(ms)).as_bytes());
                 }
                 TagCategory::Cookie => {
                     if let Some(value) =
@@ -442,10 +461,8 @@ impl Parser {
                                 buf.extend(itoa::Buffer::new().format(ctx.processing).as_bytes())
                             }
                             "upstream_connect_time" => {
-                                if let Some(value) = ctx.get_upstream_connect_time() {
-                                    buf.extend(
-                                        format!("{:?}", Duration::from_millis(value)).as_bytes(),
-                                    );
+                                if let Some(ms) = ctx.get_upstream_connect_time() {
+                                    buf = format_duration(buf, ms);
                                 }
                             }
                             "upstream_connected" => {
@@ -454,17 +471,13 @@ impl Parser {
                                 }
                             }
                             "upstream_processing_time" => {
-                                if let Some(value) = ctx.get_upstream_processing_time() {
-                                    buf.extend(
-                                        format!("{:?}", Duration::from_millis(value)).as_bytes(),
-                                    );
+                                if let Some(ms) = ctx.get_upstream_processing_time() {
+                                    buf = format_duration(buf, ms);
                                 }
                             }
                             "upstream_response_time" => {
-                                if let Some(value) = ctx.get_upstream_response_time() {
-                                    buf.extend(
-                                        format!("{:?}", Duration::from_millis(value)).as_bytes(),
-                                    );
+                                if let Some(ms) = ctx.get_upstream_response_time() {
+                                    buf = format_duration(buf, ms);
                                 }
                             }
                             "location" => buf.extend(ctx.location.as_bytes()),
@@ -485,17 +498,13 @@ impl Parser {
                                 }
                             }
                             "cache_lookup_time" => {
-                                if let Some(value) = ctx.cache_lookup_time {
-                                    buf.extend(
-                                        format!("{:?}", Duration::from_millis(value)).as_bytes(),
-                                    );
+                                if let Some(ms) = ctx.cache_lookup_time {
+                                    buf = format_duration(buf, ms);
                                 }
                             }
                             "cache_lock_time" => {
-                                if let Some(value) = ctx.cache_lock_time {
-                                    buf.extend(
-                                        format!("{:?}", Duration::from_millis(value)).as_bytes(),
-                                    );
+                                if let Some(ms) = ctx.cache_lock_time {
+                                    buf = format_duration(buf, ms);
                                 }
                             }
                             _ => {}
@@ -511,7 +520,7 @@ impl Parser {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_byte_size, format_extra_tag, Parser, Tag, TagCategory};
+    use super::{format_byte_size, format_duration, format_extra_tag, Parser, Tag, TagCategory};
     use crate::state::State;
     use bytes::BytesMut;
     use http::Method;
@@ -567,6 +576,23 @@ mod tests {
         buf = format_byte_size(buf, 1000 * 1000 * 1000 + 500 * 1000 * 1000);
         assert_eq!(
             "1.5GB",
+            std::string::String::from_utf8_lossy(&buf).to_string()
+        );
+    }
+
+    #[test]
+    fn test_format_duration() {
+        let mut buf = BytesMut::with_capacity(1024);
+        buf = format_duration(buf, 100);
+        assert_eq!(
+            "100ms",
+            std::string::String::from_utf8_lossy(&buf).to_string()
+        );
+
+        buf.clear();
+        buf = format_duration(buf, 12400);
+        assert_eq!(
+            "12.4s",
             std::string::String::from_utf8_lossy(&buf).to_string()
         );
     }
