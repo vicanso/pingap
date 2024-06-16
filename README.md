@@ -1,5 +1,7 @@
 # pingap
 
+![Pingap Logo](./asset/pingap-logo.png)
+
 ## What is Pingap
 
 A reverse proxy like nginx, built on [pingora](https://github.com/cloudflare/pingora), simple and efficient.
