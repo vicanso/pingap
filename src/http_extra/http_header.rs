@@ -20,7 +20,6 @@ use once_cell::sync::Lazy;
 use pingora::proxy::Session;
 use snafu::{ResultExt, Snafu};
 use std::str::FromStr;
-use substring::Substring;
 
 pub const HOST_NAME_TAG: &[u8] = b"$hostname";
 const REMOTE_ADDR_TAG: &[u8] = b"$remote_addr";
@@ -47,17 +46,7 @@ pub type HttpHeader = (HeaderName, HeaderValue);
 pub fn convert_header(value: &str) -> Result<Option<HttpHeader>> {
     if let Some((k, v)) = value.split_once(':').map(|(k, v)| (k.trim(), v.trim())) {
         let name = HeaderName::from_str(k).context(InvalidHeaderNameSnafu { value: k })?;
-        let key = if v.starts_with('$') {
-            if v.as_bytes() == HOST_NAME_TAG {
-                get_hostname()
-            } else {
-                std::env::var(v.substring(1, v.len())).unwrap_or_else(|_| v.to_string())
-            }
-        } else {
-            v.to_string()
-        };
-
-        let value = HeaderValue::from_str(&key).context(InvalidHeaderValueSnafu { value: v })?;
+        let value = HeaderValue::from_str(v).context(InvalidHeaderValueSnafu { value: v })?;
         Ok(Some((name, value)))
     } else {
         Ok(None)
@@ -71,6 +60,11 @@ pub fn convert_header_value(
 ) -> Option<HeaderValue> {
     let buf = value.as_bytes();
     match buf {
+        HOST_NAME_TAG => {
+            if let Ok(value) = HeaderValue::from_str(&get_hostname()) {
+                return Some(value);
+            }
+        }
         REMOTE_ADDR_TAG => {
             if let Some(remote_addr) = &ctx.remote_addr {
                 if let Ok(value) = HeaderValue::from_str(remote_addr) {
@@ -104,7 +98,18 @@ pub fn convert_header_value(
                 return Some(origin.clone());
             }
         }
-        _ => {}
+        _ => {
+            if buf.starts_with(b"$") {
+                if let Ok(value) = std::env::var(
+                    std::string::String::from_utf8_lossy(&buf[1..buf.len()]).to_string(),
+                ) {
+                    if let Ok(value) = HeaderValue::from_str(&value) {
+                        return Some(value);
+                    }
+                }
+                return Some(value.to_owned());
+            }
+        }
     };
 
     None
