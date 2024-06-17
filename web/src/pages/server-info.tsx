@@ -145,7 +145,14 @@ export default function ServerInfo() {
       id: "lets_encrypt",
       label: t("server.letsEncrypt"),
       defaultValue: server.lets_encrypt,
-      span: 8,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
+      id: "certificate_file",
+      label: t("server.certificateFile"),
+      defaultValue: server.certificate_file,
+      span: 6,
       category: FormItemCategory.TEXT,
     },
     {
@@ -176,14 +183,14 @@ export default function ServerInfo() {
       id: "tls_cipher_list",
       label: t("server.tlsCipherList"),
       defaultValue: server.tls_cipher_list,
-      span: 6,
+      span: 4,
       category: FormItemCategory.TEXT,
     },
     {
       id: "tls_ciphersuites",
       label: t("server.tlsCiphersuites"),
       defaultValue: server.tls_ciphersuites,
-      span: 6,
+      span: 4,
       category: FormItemCategory.TEXT,
     },
     {

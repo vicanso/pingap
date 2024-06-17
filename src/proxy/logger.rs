@@ -411,13 +411,12 @@ impl Parser {
                 TagCategory::LatencyHuman => {
                     let ms = (util::now().as_millis() as u64) - ctx.created_at;
                     buf = format_duration(buf, ms);
-                    // buf.extend(format!("{:?}", Duration::from_millis(ms)).as_bytes());
                 }
                 TagCategory::Cookie => {
-                    if let Some(value) =
-                        util::get_cookie_value(req_header, &tag.data.clone().unwrap_or_default())
-                    {
-                        buf.extend(value.as_bytes());
+                    if let Some(cookie) = &tag.data {
+                        if let Some(value) = util::get_cookie_value(req_header, cookie) {
+                            buf.extend(value.as_bytes());
+                        }
                     }
                 }
                 TagCategory::RequestHeader => {
@@ -489,7 +488,7 @@ impl Parser {
                             }
                             "compression_time" => {
                                 if let Some(value) = &ctx.compression_stat {
-                                    buf.extend(format!("{:?}", value.duration).as_bytes());
+                                    buf = format_duration(buf, value.duration.as_millis() as u64);
                                 }
                             }
                             "compression_ratio" => {
@@ -514,7 +513,7 @@ impl Parser {
             };
         }
 
-        std::string::String::from_utf8_lossy(&buf).to_string()
+        std::string::String::from_utf8(buf.into()).unwrap_or_default()
     }
 }
 

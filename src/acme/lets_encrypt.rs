@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use super::{get_cert_info, Cert, Error, Result};
-use crate::config::get_current_config;
 use crate::http_extra::HttpResponse;
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::{restart_now, State};
@@ -30,7 +29,6 @@ use once_cell::sync::OnceCell;
 use pingora::proxy::Session;
 use rcgen::{Certificate, CertificateParams, DistinguishedName};
 use std::collections::HashMap;
-use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::fs;
@@ -43,10 +41,14 @@ fn get_lets_encrypt() -> &'static Mutex<HashMap<String, String>> {
     LETS_ENCRYPT.get_or_init(|| Mutex::new(HashMap::new()))
 }
 struct LetsEncryptService {
+    certificate_file: PathBuf,
     domains: Vec<String>,
 }
 
-pub fn new_lets_encrypt_service(domains: Vec<String>) -> CommonServiceTask {
+pub fn new_lets_encrypt_service(
+    certificate_file: PathBuf,
+    domains: Vec<String>,
+) -> CommonServiceTask {
     let mut domains = domains;
     // sort domain order
     domains.sort();
@@ -54,7 +56,10 @@ pub fn new_lets_encrypt_service(domains: Vec<String>) -> CommonServiceTask {
     CommonServiceTask::new(
         "Lets encrypt",
         Duration::from_secs(30 * 60),
-        LetsEncryptService { domains },
+        LetsEncryptService {
+            certificate_file,
+            domains,
+        },
     )
 }
 
@@ -62,14 +67,14 @@ pub fn new_lets_encrypt_service(domains: Vec<String>) -> CommonServiceTask {
 impl ServiceTask for LetsEncryptService {
     async fn run(&self) -> Option<bool> {
         let domains = &self.domains;
-        let should_renew_now = if let Ok(cert) = get_lets_encrypt_cert() {
+        let should_renew_now = if let Ok(cert) = get_lets_encrypt_cert(&self.certificate_file) {
             !cert.valid() || domains.join(",") != cert.domains.join(",")
         } else {
             true
         };
         if should_renew_now {
             info!("Should renew cert from lets encrypt");
-            match new_lets_encrypt(domains).await {
+            match new_lets_encrypt(&self.certificate_file, domains).await {
                 Ok(()) => {
                     info!("Renew cert success");
                     if let Err(e) = restart_now() {
@@ -86,23 +91,14 @@ impl ServiceTask for LetsEncryptService {
     }
 }
 
-fn get_lets_encrypt_cert_file() -> PathBuf {
-    if let Some(file) = &get_current_config().basic.certificate_file {
-        util::resolve_path(file).into()
-    } else {
-        env::temp_dir().join("pingap-lets-encrypt.json")
-    }
-}
-
 /// Get the cert from file
-pub fn get_lets_encrypt_cert() -> Result<Cert> {
-    let path = get_lets_encrypt_cert_file();
+pub fn get_lets_encrypt_cert(path: &PathBuf) -> Result<Cert> {
     if !path.exists() {
         return Err(Error::NotFound {
             message: "cert file not found".to_string(),
         });
     }
-    let buf = std::fs::read(&path).map_err(|e| Error::Io { source: e })?;
+    let buf = std::fs::read(path).map_err(|e| Error::Io { source: e })?;
     let cert: Cert = serde_json::from_slice(&buf).map_err(|e| Error::SerdeJson { source: e })?;
     Ok(cert)
 }
@@ -133,10 +129,9 @@ pub async fn handle_lets_encrypt(session: &mut Session, ctx: &mut State) -> ping
 
 /// Get the new cert from lets encrypt for all domains.
 /// The cert will be saved if success.
-async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
+async fn new_lets_encrypt(certificate_file: &PathBuf, domains: &[String]) -> Result<()> {
     let mut domains: Vec<String> = domains.to_vec();
     domains.sort();
-    let path = get_lets_encrypt_cert_file();
     info!(
         "Lets encrypt start generate acme, domains: {}",
         domains.join(",")
@@ -287,7 +282,7 @@ async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
         .create(true)
         .write(true)
         .truncate(true)
-        .open(&path)
+        .open(certificate_file)
         .await
         .map_err(|e| Error::Io { source: e })?;
     let info = Cert {
@@ -299,7 +294,7 @@ async fn new_lets_encrypt(domains: &[String]) -> Result<()> {
     };
     let buf = serde_json::to_vec(&info).map_err(|e| Error::SerdeJson { source: e })?;
     f.write(&buf).await.map_err(|e| Error::Io { source: e })?;
-    info!("Write cert success, path: {path:?}");
+    info!("Write cert success, path: {certificate_file:?}");
     webhook::send(webhook::SendNotificationParams {
         level: webhook::NotificationLevel::Info,
         category: webhook::NotificationCategory::LetsEncrypt,

@@ -472,15 +472,15 @@ impl Upstream {
             p.options.read_timeout = self.read_timeout;
             p.options.idle_timeout = self.idle_timeout;
             p.options.write_timeout = self.write_timeout;
-            p.options.alpn = self.alpn.clone();
             if let Some(verify_cert) = self.verify_cert {
                 p.options.verify_cert = verify_cert;
             }
+            p.options.alpn = self.alpn.clone();
+            p.options.tcp_keepalive.clone_from(&self.tcp_keepalive);
+            p.options.tcp_recv_buf = self.tcp_recv_buf;
             if let Some(tcp_fast_open) = self.tcp_fast_open {
                 p.options.tcp_fast_open = tcp_fast_open;
             }
-            p.options.tcp_recv_buf = self.tcp_recv_buf;
-            p.options.tcp_keepalive.clone_from(&self.tcp_keepalive);
             p.options.tracer.clone_from(&self.tracer);
             p
         })

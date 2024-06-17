@@ -314,23 +314,23 @@ fn run() -> Result<(), Box<dyn Error>> {
     if let Err(e) = plugin::init_plugins(plugin_confs) {
         error!("init plugins fail, {e}");
     }
-    let mut domains = vec![];
+    let mut enabled_lets_encrypt = false;
     let mut exits_80_server = false;
     for serve_conf in server_conf_list.iter() {
         if serve_conf.addr.ends_with(":80") {
             exits_80_server = true;
         }
         if let Some(value) = &serve_conf.lets_encrypt {
-            value.split(',').for_each(|item| {
-                let v = item.trim().to_string();
-                if !v.is_empty() && !domains.contains(&v) {
-                    domains.push(v);
-                }
-            });
+            enabled_lets_encrypt = true;
+            let domains: Vec<String> = value.split(',').map(|item| item.to_string()).collect();
+            my_server.add_service(background_service(
+                &format!("Lets encrypt:{}", serve_conf.name),
+                new_lets_encrypt_service(serve_conf.get_certificate_file(), domains),
+            ));
         }
     }
     // no server listen 80 and lets encrypt domains is not empty
-    if !exits_80_server && !domains.is_empty() {
+    if !exits_80_server && enabled_lets_encrypt {
         server_conf_list.push(ServerConf {
             name: "lets encrypt".to_string(),
             addr: "0.0.0.0:80".to_string(),
@@ -343,7 +343,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         let listen_80_port = server_conf.addr.ends_with(":80");
         let name = server_conf.name.clone();
         let mut ps = Server::new(server_conf)?;
-        if !domains.is_empty() && listen_80_port {
+        if enabled_lets_encrypt && listen_80_port {
             ps.enable_lets_encrypt();
         }
         let services = ps.run(&my_server.configuration)?;
@@ -359,12 +359,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             new_auto_restart_service(auto_restart_check_interval),
         ));
     }
-    if !domains.is_empty() {
-        my_server.add_service(background_service(
-            "Lets encrypt",
-            new_lets_encrypt_service(domains),
-        ));
-    }
+
     if !tls_cert_info_list.is_empty() {
         my_server.add_service(background_service(
             "Tls cert validity checker",

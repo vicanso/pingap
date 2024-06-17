@@ -50,6 +50,7 @@ use pingora::services::listening::Service;
 use pingora::upstreams::peer::{HttpPeer, Peer};
 use snafu::Snafu;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -114,6 +115,7 @@ pub struct Server {
     tls_max_version: Option<String>,
     enbaled_h2: bool,
     lets_encrypt_enabled: bool,
+    certificate_file: PathBuf,
     tls_from_lets_encrypt: bool,
     tcp_socket_options: Option<TcpSocketOptions>,
 }
@@ -157,6 +159,7 @@ impl Server {
             tls_max_version: conf.tls_max_version.clone(),
             threads: conf.threads,
             lets_encrypt_enabled: false,
+            certificate_file: conf.get_certificate_file(),
             enbaled_h2: conf.enbaled_h2,
             tcp_socket_options,
             tls_from_lets_encrypt: conf.lets_encrypt.is_some(),
@@ -177,8 +180,9 @@ impl Server {
         // tls
         let mut tls_cert = self.tls_cert.clone();
         let mut tls_key = self.tls_key.clone();
+
         if tls_cert.is_none() && tls_from_lets_encrypt {
-            match get_lets_encrypt_cert() {
+            match get_lets_encrypt_cert(&self.certificate_file) {
                 Ok(cert_info) => {
                     tls_cert = Some(cert_info.get_cert());
                     tls_key = Some(cert_info.get_key());

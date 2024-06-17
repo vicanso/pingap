@@ -16,7 +16,7 @@ use crate::config::PingapConf;
 use crate::util;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use pingora::protocols::l4::ext::TcpKeepalive;
-use std::fmt;
+use std::{fmt, path::PathBuf};
 
 static ERROR_TEMPLATE: &str = include_str!("../../error.html");
 
@@ -36,9 +36,20 @@ pub struct ServerConf {
     pub threads: Option<usize>,
     pub error_template: String,
     pub lets_encrypt: Option<String>,
+    pub certificate_file: Option<String>,
     pub tcp_keepalive: Option<TcpKeepalive>,
     pub tcp_fastopen: Option<usize>,
     pub enbaled_h2: bool,
+}
+
+impl ServerConf {
+    pub fn get_certificate_file(&self) -> PathBuf {
+        if let Some(file) = &self.certificate_file {
+            util::resolve_path(file).into()
+        } else {
+            std::env::temp_dir().join(format!("pingap-certificates-server-{}.json", self.name))
+        }
+    }
 }
 
 impl fmt::Display for ServerConf {
@@ -141,6 +152,7 @@ impl From<PingapConf> for Vec<ServerConf> {
                 locations: item.locations.unwrap_or_default(),
                 threads,
                 lets_encrypt: item.lets_encrypt,
+                certificate_file: item.certificate_file,
                 enbaled_h2: item.enabled_h2.unwrap_or(true),
                 tcp_keepalive,
                 tcp_fastopen: item.tcp_fastopen,

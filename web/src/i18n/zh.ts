@@ -39,7 +39,6 @@ export default {
   "basic.sentry": "Sentry地址",
   "basic.pyroscope": "Pyroscope地址",
   "basic.errorTemplate": "错误模板",
-  "basic.certificateFile": "保存https证书的文件",
   // server info
   "server.title": "监听服务的相关配置",
   "server.description": "修改监听服务的各相关配置",
@@ -50,6 +49,7 @@ export default {
   "server.tlsCert": "Tls证书(Pem格式)",
   "server.tlsKey": "Tls密钥(Pem格式)",
   "server.letsEncrypt": "使用let's encrypt的域名列表",
+  "server.certificateFile": "保存https证书的文件",
   "server.enabledH2": "是否启用http2",
   "server.tlsCipherList": "指定tls1.3之前版本使用的加密套件",
   "server.tlsCiphersuites": "指定tls1.3版本使用的加密套件",

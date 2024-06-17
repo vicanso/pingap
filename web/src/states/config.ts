@@ -64,6 +64,7 @@ interface Server {
   tls_cert?: string;
   tls_key?: string;
   lets_encrypt?: string;
+  certificate_file?: string;
   enabled_h2?: boolean;
   tls_cipher_list?: string;
   tls_ciphersuites?: string;
@@ -92,7 +93,6 @@ interface Basic {
   log_level?: string;
   auto_restart_check_interval?: string;
   cache_max_size?: number;
-  certificate_file?: string;
   sentry?: string;
   pyroscope?: string;
   webhook?: string;

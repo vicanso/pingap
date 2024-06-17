@@ -40,7 +40,6 @@ export default {
   "basic.sentry": "Sentry",
   "basic.pyroscope": "Pyroscope",
   "basic.errorTemplate": "Error Template",
-  "basic.certificateFile": "The Https Certificate File",
   // server info
   "server.title": "Modify server configuration",
   "server.description": "Change the server configuration",
@@ -51,6 +50,7 @@ export default {
   "server.tlsCert": "Tls Cert Pem",
   "server.tlsKey": "Tls Key Pem",
   "server.letsEncrypt": "Let's encrypt domain list",
+  "server.certificateFile": "The Https Certificate File",
   "server.enabledH2": "Enable Http2",
   "server.tlsCipherList": "Tls ciphers for protocols before TLSv1.3",
   "server.tlsCiphersuites": "Tls ciphers for protocols TLSv1.3",

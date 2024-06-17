@@ -8,7 +8,7 @@
 - [ ] secret storage
 - [ ] different servers avoid listening to the same address
 - [ ] support include comnand for configuraion
-- [ ] upstream_response_time
+- [x] upstream_response_time
 - [x] support set_cipher_list and set_ciphersuites
 - [x] support setting max ttl of cache
 - [x] support set header for static serve

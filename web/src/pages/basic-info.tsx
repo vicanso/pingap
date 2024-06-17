@@ -133,13 +133,6 @@ export default function BasicInfo() {
       category: FormItemCategory.TEXT,
     },
     {
-      id: "certificate_file",
-      label: t("basic.certificateFile"),
-      defaultValue: basic.certificate_file,
-      span: 6,
-      category: FormItemCategory.TEXT,
-    },
-    {
       id: "webhook_type",
       label: t("basic.webhookType"),
       defaultValue: basic.webhook_type,
