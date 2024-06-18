@@ -107,8 +107,8 @@ pub fn convert_header_value(
                         return Some(value);
                     }
                 }
-                return Some(value.to_owned());
             }
+            return Some(value.to_owned());
         }
     };
 
@@ -282,6 +282,43 @@ mod tests {
         );
         assert_eq!(true, value.is_some());
         assert_eq!("https://github.com", value.unwrap().to_str().unwrap());
+
+        let headers = ["Origin: https://github.com"].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let value = convert_header_value(
+            &HeaderValue::from_str("$hostname").unwrap(),
+            &session,
+            &State::default(),
+        );
+        assert_eq!(true, value.is_some());
+
+        let headers = ["Origin: https://github.com"].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let value = convert_header_value(
+            &HeaderValue::from_str("$HOME").unwrap(),
+            &session,
+            &State::default(),
+        );
+        assert_eq!(true, value.is_some());
+
+        let headers = ["Origin: https://github.com"].join("\r\n");
+        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let value = convert_header_value(
+            &HeaderValue::from_str("UUID").unwrap(),
+            &session,
+            &State::default(),
+        );
+        assert_eq!(true, value.is_some());
+        assert_eq!("UUID", value.unwrap().to_str().unwrap());
     }
 
     #[test]

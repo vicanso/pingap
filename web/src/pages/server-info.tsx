@@ -57,16 +57,6 @@ export default function ServerInfo() {
       option: 3,
       value: "tlsv1.1",
     },
-    {
-      label: "tlsv1.0",
-      option: 4,
-      value: "tlsv1.0",
-    },
-    {
-      label: "sslv3",
-      option: 5,
-      value: "sslv3",
-    },
   ];
 
   const arr: FormItem[] = [

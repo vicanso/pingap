@@ -240,6 +240,7 @@ impl Server {
                 if enbaled_h2 {
                     tls_settings.enable_h2();
                 }
+
                 if let Some(cipher_list) = &cipher_list {
                     if let Err(e) = tls_settings.set_cipher_list(cipher_list) {
                         error!("Set cipher list fail, error:{e:?}");
@@ -254,6 +255,10 @@ impl Server {
                 if let Some(version) = util::convert_tls_version(&tls_min_version) {
                     if let Err(e) = tls_settings.set_min_proto_version(Some(version)) {
                         error!("Set tls min proto version fail, error:{e:?}");
+                    }
+                    if version == pingora::tls::ssl::SslVersion::TLS1_1 {
+                        tls_settings.set_security_level(0);
+                        tls_settings.clear_options(pingora::tls::ssl::SslOptions::NO_TLSV1_1);
                     }
                 }
                 if let Some(version) = util::convert_tls_version(&tls_max_version) {
@@ -330,16 +335,27 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
+        if let Some(digest) = session.digest() {
+            let (established, tls_version) = get_digest_detail(digest);
+            ctx.connection_time = util::now().as_millis() as u64 - established;
+            ctx.tls_version = tls_version;
+        };
+        ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
+        ctx.accepted = self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
+        ctx.remote_addr = util::get_remote_addr(session);
+
         let mut location = None;
-        let header = session.req_header_mut();
-        let host = util::get_host(header).unwrap_or_default();
         if let Some(locations) = get_server_locations(&self.name) {
+            let header = session.req_header_mut();
+            let host = util::get_host(header).unwrap_or_default();
             let path = header.uri.path();
             for name in locations.iter() {
                 if let Some(lo) = get_location(name) {
                     if lo.matched(host, path) {
-                        location = Some(lo);
+                        ctx.location_accepted = lo.accepted.fetch_add(1, Ordering::Relaxed) + 1;
+                        ctx.location_processing = lo.processing.fetch_add(1, Ordering::Relaxed) + 1;
                         ctx.location = name.to_string();
+                        location = Some(lo);
                         break;
                     }
                 }
@@ -360,14 +376,6 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        if let Some(digest) = session.digest() {
-            let (established, tls_version) = get_digest_detail(digest);
-            ctx.established = established;
-            ctx.tls_version = tls_version;
-        };
-        ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
-        ctx.accepted = self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
-        ctx.remote_addr = util::get_remote_addr(session);
         if self.admin {
             self.serve_admin(session, ctx).await?;
             return Ok(true);
@@ -382,10 +390,9 @@ impl ProxyHttp for Server {
 
         let header = session.req_header_mut();
         let host = util::get_host(header).unwrap_or_default();
-
         let location = get_location(&ctx.location);
         if location.is_none() {
-            HttpResponse::unknown_error(Bytes::from(format!(
+            ctx.response_body_size = HttpResponse::unknown_error(Bytes::from(format!(
                 "Location not found, host:{host} path:{}",
                 header.uri.path(),
             )))
@@ -400,10 +407,6 @@ impl ProxyHttp for Server {
 
         // body limit
         lo.client_body_size_limit(Some(header), ctx)?;
-
-        ctx.location.clone_from(&lo.name);
-        ctx.location_accepted = lo.accepted.fetch_add(1, Ordering::Relaxed) + 1;
-        ctx.location_processing = lo.processing.fetch_add(1, Ordering::Relaxed) + 1;
 
         let done = lo
             .exec_proxy_plugins(session, ctx, PluginStep::Request)
@@ -440,16 +443,21 @@ impl ProxyHttp for Server {
         ctx: &mut State,
     ) -> pingora::Result<Box<HttpPeer>> {
         let peer = if let Some(lo) = get_location(&ctx.location) {
-            let up = get_upstream(&lo.upstream).ok_or(util::new_internal_error(
-                503,
-                format!("No upstream({}:{})", lo.name, lo.upstream),
-            ))?;
-            ctx.upstream_connected = up.connected();
-            up.new_http_peer(session, ctx)
+            if let Some(up) = get_upstream(&lo.upstream) {
+                ctx.upstream_connected = up.connected();
+                up.new_http_peer(session, ctx)
+            } else {
+                None
+            }
         } else {
             None
         }
-        .ok_or_else(|| util::new_internal_error(503, "No available upstream".to_string()))?;
+        .ok_or_else(|| {
+            util::new_internal_error(
+                503,
+                format!("No available upstream, location:{}", ctx.location),
+            )
+        })?;
 
         ctx.upstream_connect_time = util::get_latency(&ctx.upstream_connect_time);
 
@@ -535,7 +543,7 @@ impl ProxyHttp for Server {
                     c.directives.insert(
                         "s-maxage".to_string(),
                         Some(DirectiveValue(
-                            format!("{}", d.as_secs()).as_bytes().to_vec(),
+                            itoa::Buffer::new().format(d.as_secs()).as_bytes().to_vec(),
                         )),
                     );
                 }
@@ -559,14 +567,14 @@ impl ProxyHttp for Server {
             let _ =
                 upstream_response.insert_header("X-Cache-Status", session.cache.phase().as_str());
             if let Some(d) = session.cache.lookup_duration() {
-                let _ = upstream_response
-                    .insert_header("X-Cache-Lookup", format!("{}ms", d.as_millis()));
-                ctx.cache_lookup_time = Some(d.as_millis() as u64);
+                let ms = d.as_millis() as u64;
+                let _ = upstream_response.insert_header("X-Cache-Lookup", format!("{ms}ms"));
+                ctx.cache_lookup_time = Some(ms);
             }
             if let Some(d) = session.cache.lock_duration() {
-                let _ =
-                    upstream_response.insert_header("X-Cache-Lock", format!("{}ms", d.as_millis()));
-                ctx.cache_lock_time = Some(d.as_millis() as u64);
+                let ms = d.as_millis() as u64;
+                let _ = upstream_response.insert_header("X-Cache-Lock", format!("{ms}ms"));
+                ctx.cache_lock_time = Some(ms);
             }
         }
 

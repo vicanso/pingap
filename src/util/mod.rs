@@ -242,8 +242,6 @@ pub fn get_latency(value: &Option<u64>) -> Option<u64> {
 pub fn convert_tls_version(version: &Option<String>) -> Option<SslVersion> {
     if let Some(version) = &version {
         let version = match version.as_str() {
-            "sslv3" => SslVersion::SSL3,
-            "tlsv1.0" => SslVersion::TLS1,
             "tlsv1.1" => SslVersion::TLS1_1,
             "tlsv1.3" => SslVersion::TLS1_3,
             _ => SslVersion::TLS1_2,
@@ -294,14 +292,6 @@ mod tests {
     }
     #[test]
     fn test_convert_tls_version() {
-        assert_eq!(
-            SslVersion::SSL3,
-            convert_tls_version(&Some("sslv3".to_string())).unwrap()
-        );
-        assert_eq!(
-            SslVersion::TLS1,
-            convert_tls_version(&Some("tlsv1.0".to_string())).unwrap()
-        );
         assert_eq!(
             SslVersion::TLS1_1,
             convert_tls_version(&Some("tlsv1.1".to_string())).unwrap()

@@ -235,7 +235,7 @@ fn bench_logger_format(c: &mut Criterion) {
             upstream_processing_time: Some(50),
             upstream_response_time: Some(5),
             location: "lo".to_string(),
-            established: 1718369903,
+            connection_time: 300,
             tls_version: Some("tls1.2".to_string()),
             processing: 10,
             compression_stat: Some(CompressionStat {

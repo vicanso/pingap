@@ -480,7 +480,7 @@ impl Parser {
                                 }
                             }
                             "location" => buf.extend(ctx.location.as_bytes()),
-                            "established" => buf.extend(ctx.established.to_string().as_bytes()),
+                            "connection_time" => buf = format_duration(buf, ctx.connection_time),
                             "tls_version" => {
                                 if let Some(value) = &ctx.tls_version {
                                     buf.extend(value.as_bytes());
@@ -792,7 +792,7 @@ mod tests {
 {size_human} {status} {payload_size} {payload_size_human} \
 {~deviceId} {>accept} {:reused} {:upstream_addr} \
 {:processing} {:upstream_connect_time} {:location} \
-{:established} {:tls_version} {request_id}"
+{:connection_time} {:tls_version} {request_id}"
             .into();
         let headers = [
             "Host: github.com",
@@ -816,14 +816,14 @@ mod tests {
             processing: 1,
             upstream_connect_time: Some(100),
             location: "test".to_string(),
-            established: 1651852800,
+            connection_time: 300,
             tls_version: Some("1.2".to_string()),
             request_id: Some("nanoid".to_string()),
             ..Default::default()
         };
         let log = p.format(&session, &ctx);
         assert_eq!(
-            "github.com GET /vicanso/pingap HTTP/1.1 size=1   https /vicanso/pingap?size=1 https://github.com/ pingap/0.1.1 1100 1.1KB 0 0 0B abc application/json true 192.186.1.1:6188 1 100ms test 1651852800 1.2 nanoid",
+            "github.com GET /vicanso/pingap HTTP/1.1 size=1   https /vicanso/pingap?size=1 https://github.com/ pingap/0.1.1 1100 1.1KB 0 0 0B abc application/json true 192.186.1.1:6188 1 100ms test 300ms 1.2 nanoid",
             log
         );
     }
