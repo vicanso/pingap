@@ -25,13 +25,21 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           marginTop: navTop,
         }}
       >
-        <Grid item xs={"auto"}>
+        <Grid
+          item
+          sm={"auto"}
+          xl={"auto"}
+          display={{
+            sm: "block",
+            xs: "none",
+          }}
+        >
           <div
             style={{
               width: navWidth,
             }}
           >
-            <MainNav navWidth={navWidth} navTop={navTop} />
+            <MainNav fixed={true} navWidth={navWidth} navTop={navTop} />
           </div>
         </Grid>
         <Grid item xs={true}>

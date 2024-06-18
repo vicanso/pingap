@@ -44,9 +44,11 @@ interface NavItem {
 export default function MainNav({
   navWidth,
   navTop,
+  fixed,
 }: {
   navWidth: string;
   navTop: string;
+  fixed: boolean;
 }) {
   const { t } = useTranslation();
 
@@ -217,18 +219,22 @@ export default function MainNav({
       );
     }
   });
+  let style: React.CSSProperties = {
+    width: "100%",
+  };
+  if (fixed) {
+    style = {
+      position: "fixed",
+      left: 0,
+      width: navWidth,
+      bottom: 0,
+      top: navTop,
+      overflowY: "scroll",
+    };
+  }
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        left: 0,
-        width: navWidth,
-        bottom: 0,
-        top: navTop,
-        overflowY: "scroll",
-      }}
-    >
+    <div style={style}>
       <List
         sx={{ width: navWidth, bgcolor: "background.paper" }}
         component="nav"

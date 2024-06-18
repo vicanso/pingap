@@ -455,7 +455,7 @@ export default function FormEditor({
       }
     }
     return (
-      <Grid item xs={item.span} key={item.id}>
+      <Grid item xs={12} sm={12} md={item.span} key={item.id}>
         <FormControl fullWidth={true}>{formItem}</FormControl>
       </Grid>
     );

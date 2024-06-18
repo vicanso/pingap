@@ -21,6 +21,9 @@ import useBasicStore from "../states/basic";
 import request from "../helpers/request";
 import { goToTomlPrevew } from "../router";
 import Logo from "../../assets/pingap.png";
+import Drawer from "@mui/material/Drawer";
+import MainNav from "./main-nav";
+import MenuOpenIcon from "@mui/icons-material/MenuOpen";
 
 function formatDuraion(ts: number) {
   const seconds = Math.floor(Date.now() / 1000) - ts;
@@ -61,6 +64,11 @@ export default function MainHeader() {
   ]);
   const [showSetting, setShowSetting] = React.useState(false);
   const [showRestartDialog, setShowRestartDialog] = React.useState(false);
+  const [open, setOpen] = React.useState(false);
+
+  const toggleDrawer = (flag: boolean) => {
+    setOpen(flag);
+  };
 
   useAsync(async () => {
     try {
@@ -81,6 +89,23 @@ export default function MainHeader() {
   };
   const box = (
     <React.Fragment>
+      <Box
+        display={{
+          xs: "block",
+          sm: "none",
+        }}
+      >
+        <IconButton
+          style={{
+            marginRight: "15px",
+          }}
+          onClick={() => {
+            toggleDrawer(true);
+          }}
+        >
+          <MenuOpenIcon />
+        </IconButton>
+      </Box>
       <IconButton
         aria-label="toml-preview"
         style={{
@@ -182,11 +207,7 @@ export default function MainHeader() {
   return (
     <AppBar component="nav">
       <Toolbar>
-        <Typography
-          variant="h6"
-          component="div"
-          sx={{ flexGrow: 1, display: { xs: "none", sm: "block" } }}
-        >
+        <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
           <img
             style={{
               float: "left",
@@ -201,6 +222,9 @@ export default function MainHeader() {
           </Typography>
         </Typography>
         {box}
+        <Drawer open={open} onClose={() => toggleDrawer(false)} anchor="top">
+          <MainNav fixed={false} navWidth={"100%"} navTop={"0px"} />
+        </Drawer>
       </Toolbar>
     </AppBar>
   );
