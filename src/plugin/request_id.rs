@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_int_conf, get_step_conf, get_str_conf, Error, ProxyPlugin, Result};
+use super::{get_int_conf, get_step_conf, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::http_extra::HTTP_HEADER_NAME_X_REQUEST_ID;
@@ -87,7 +87,7 @@ impl RequestId {
 }
 
 #[async_trait]
-impl ProxyPlugin for RequestId {
+impl Plugin for RequestId {
     #[inline]
     fn step(&self) -> String {
         self.plugin_step.to_string()
@@ -97,7 +97,7 @@ impl ProxyPlugin for RequestId {
         PluginCategory::RequestId
     }
     #[inline]
-    async fn handle(
+    async fn handle_request(
         &self,
         step: PluginStep,
         session: &mut Session,
@@ -132,7 +132,7 @@ impl ProxyPlugin for RequestId {
 mod tests {
     use super::RequestId;
     use crate::state::State;
-    use crate::{config::PluginConf, config::PluginStep, plugin::ProxyPlugin};
+    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -201,7 +201,7 @@ size = 10
 
         let mut state = State::default();
         let result = id
-            .handle(PluginStep::Request, &mut session, &mut state)
+            .handle_request(PluginStep::Request, &mut session, &mut state)
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
@@ -215,7 +215,7 @@ size = 10
 
         let mut state = State::default();
         let result = id
-            .handle(PluginStep::Request, &mut session, &mut state)
+            .handle_request(PluginStep::Request, &mut session, &mut state)
             .await
             .unwrap();
         assert_eq!(true, result.is_none());

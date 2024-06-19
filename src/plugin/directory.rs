@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_int_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error,
-    ProxyPlugin, Result,
+    get_bool_conf, get_int_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error, Plugin,
+    Result,
 };
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{convert_headers, HttpChunkResponse, HttpHeader, HttpResponse};
@@ -298,7 +298,7 @@ fn get_autoindex_html(path: &Path) -> Result<String, String> {
 }
 
 #[async_trait]
-impl ProxyPlugin for Directory {
+impl Plugin for Directory {
     #[inline]
     fn step(&self) -> String {
         self.plugin_step.to_string()
@@ -307,7 +307,7 @@ impl ProxyPlugin for Directory {
     fn category(&self) -> PluginCategory {
         PluginCategory::Directory
     }
-    async fn handle(
+    async fn handle_request(
         &self,
         step: PluginStep,
         session: &mut Session,
@@ -402,7 +402,7 @@ mod tests {
     use crate::{
         config::PluginConf,
         config::PluginStep,
-        plugin::{directory::DirectoryParams, ProxyPlugin},
+        plugin::{directory::DirectoryParams, Plugin},
     };
     use pingora::proxy::Session;
     use pretty_assertions::{assert_eq, assert_ne};
@@ -488,7 +488,7 @@ download = true
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = dir
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_some());
@@ -511,7 +511,7 @@ download = true
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = dir
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_some());

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_conf, Error, ProxyPlugin, Result};
+use super::{get_step_conf, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NO_STORE};
 use crate::state::State;
@@ -154,7 +154,7 @@ fn validate_token(key: &str, ttl: u64, value: &str) -> bool {
 }
 
 #[async_trait]
-impl ProxyPlugin for Csrf {
+impl Plugin for Csrf {
     #[inline]
     fn step(&self) -> String {
         self.plugin_step.to_string()
@@ -164,7 +164,7 @@ impl ProxyPlugin for Csrf {
         PluginCategory::Csrf
     }
     #[inline]
-    async fn handle(
+    async fn handle_request(
         &self,
         step: PluginStep,
         session: &mut Session,
@@ -220,7 +220,7 @@ impl ProxyPlugin for Csrf {
 mod tests {
     use super::{generate_token, validate_token, Csrf, CsrfParams};
     use crate::config::{PluginConf, PluginStep};
-    use crate::plugin::ProxyPlugin;
+    use crate::plugin::Plugin;
     use crate::state::State;
     use cookie::Cookie;
     use pingora::proxy::Session;
@@ -333,7 +333,7 @@ ttl = "1h"
         session.read_request().await.unwrap();
 
         let resp = csrf
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap()
             .unwrap();
@@ -350,7 +350,7 @@ ttl = "1h"
         session.read_request().await.unwrap();
 
         let resp = csrf
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap()
             .unwrap();
@@ -367,7 +367,7 @@ ttl = "1h"
         session.read_request().await.unwrap();
 
         let result = csrf
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
 

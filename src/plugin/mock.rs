@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_conf, Error, ProxyPlugin, Result};
+use super::{get_step_conf, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{convert_headers, HttpResponse};
 use crate::plugin::{get_int_conf, get_str_slice_conf};
@@ -69,7 +69,7 @@ impl MockResponse {
 }
 
 #[async_trait]
-impl ProxyPlugin for MockResponse {
+impl Plugin for MockResponse {
     #[inline]
     fn step(&self) -> String {
         self.plugin_step.to_string()
@@ -80,7 +80,7 @@ impl ProxyPlugin for MockResponse {
     }
     #[inline]
     /// Sends the mock data to client.
-    async fn handle(
+    async fn handle_request(
         &self,
         step: PluginStep,
         session: &mut Session,
@@ -100,7 +100,7 @@ impl ProxyPlugin for MockResponse {
 mod tests {
     use super::MockResponse;
     use crate::state::State;
-    use crate::{config::PluginConf, config::PluginStep, plugin::ProxyPlugin};
+    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use bytes::Bytes;
     use http::StatusCode;
     use pingora::proxy::Session;
@@ -168,7 +168,7 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
         session.read_request().await.unwrap();
 
         let result = mock
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
 
@@ -192,7 +192,7 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
         session.read_request().await.unwrap();
 
         let result = mock
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_none());

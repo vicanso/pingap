@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error, ProxyPlugin, Result,
+    get_bool_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error, Plugin, Result,
 };
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
@@ -116,7 +116,7 @@ impl KeyAuth {
 }
 
 #[async_trait]
-impl ProxyPlugin for KeyAuth {
+impl Plugin for KeyAuth {
     #[inline]
     fn step(&self) -> String {
         self.plugin_step.to_string()
@@ -126,7 +126,7 @@ impl ProxyPlugin for KeyAuth {
         PluginCategory::KeyAuth
     }
     #[inline]
-    async fn handle(
+    async fn handle_request(
         &self,
         step: PluginStep,
         session: &mut Session,
@@ -168,7 +168,7 @@ impl ProxyPlugin for KeyAuth {
 mod tests {
     use super::{KeyAuth, KeyAuthParams};
     use crate::state::State;
-    use crate::{config::PluginConf, config::PluginStep, plugin::ProxyPlugin};
+    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -265,7 +265,7 @@ hide_credentials = true
         session.read_request().await.unwrap();
         assert_eq!(false, session.get_header_bytes("X-User").is_empty());
         let result = auth
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
@@ -277,7 +277,7 @@ hide_credentials = true
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = auth
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         let resp = result.unwrap();
@@ -293,7 +293,7 @@ hide_credentials = true
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = auth
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         let resp = result.unwrap();
@@ -328,7 +328,7 @@ hide_credentials = true
             session.req_header().uri.to_string()
         );
         let result = auth
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_none());

@@ -22,7 +22,7 @@ use crate::acme::{get_lets_encrypt_cert, handle_lets_encrypt};
 use crate::config;
 use crate::config::PluginStep;
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
-use crate::plugin::get_proxy_plugin;
+use crate::plugin::get_plugins;
 use crate::proxy::location::get_location;
 use crate::state::CompressionStat;
 use crate::state::State;
@@ -284,16 +284,20 @@ impl Server {
         Ok(ServerServices { tls_cert_info, lb })
     }
     async fn serve_admin(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<()> {
-        if let Some(plugin) = get_proxy_plugin(util::ADMIN_SERVER_PLUGIN.as_str()) {
-            let result = plugin.handle(PluginStep::Request, session, ctx).await?;
-            if let Some(resp) = result {
-                ctx.status = Some(resp.status);
-                ctx.response_body_size = resp.send(session).await?;
-            } else {
-                return Err(util::new_internal_error(
-                    500,
-                    "Admin server is unavailable".to_string(),
-                ));
+        if let Some(plugins) = get_plugins() {
+            if let Some(plugin) = plugins.get(util::ADMIN_SERVER_PLUGIN.as_str()) {
+                let result = plugin
+                    .handle_request(PluginStep::Request, session, ctx)
+                    .await?;
+                if let Some(resp) = result {
+                    ctx.status = Some(resp.status);
+                    ctx.response_body_size = resp.send(session).await?;
+                } else {
+                    return Err(util::new_internal_error(
+                        500,
+                        "Admin server is unavailable".to_string(),
+                    ));
+                }
             }
         }
         Ok(())
@@ -363,7 +367,7 @@ impl ProxyHttp for Server {
         }
         if let Some(lo) = location {
             let _ = lo
-                .exec_proxy_plugins(session, ctx, PluginStep::EarlyRequest)
+                .handle_request_plugin(PluginStep::EarlyRequest, session, ctx)
                 .await?;
         }
         Ok(())
@@ -409,8 +413,9 @@ impl ProxyHttp for Server {
         lo.client_body_size_limit(Some(header), ctx)?;
 
         let done = lo
-            .exec_proxy_plugins(session, ctx, PluginStep::Request)
+            .handle_request_plugin(PluginStep::Request, session, ctx)
             .await?;
+
         if done {
             return Ok(true);
         }
@@ -428,7 +433,7 @@ impl ProxyHttp for Server {
     {
         if let Some(lo) = get_location(&ctx.location) {
             let done = lo
-                .exec_proxy_plugins(session, ctx, PluginStep::ProxyUpstream)
+                .handle_request_plugin(PluginStep::ProxyUpstream, session, ctx)
                 .await?;
             if done {
                 return Ok(false);
@@ -481,6 +486,20 @@ impl ProxyHttp for Server {
         ctx.upstream_processing_time = util::get_latency(&ctx.upstream_processing_time);
         Ok(())
     }
+    async fn upstream_request_filter(
+        &self,
+        session: &mut Session,
+        upstream_response: &mut RequestHeader,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<()>
+    where
+        Self::CTX: Send + Sync,
+    {
+        if let Some(lo) = get_location(&ctx.location) {
+            lo.set_append_proxy_headers(session, ctx, upstream_response);
+        }
+        Ok(())
+    }
     async fn request_body_filter(
         &self,
         _session: &mut Session,
@@ -499,21 +518,6 @@ impl ProxyHttp for Server {
         }
         Ok(())
     }
-    async fn upstream_request_filter(
-        &self,
-        session: &mut Session,
-        upstream_response: &mut RequestHeader,
-        ctx: &mut Self::CTX,
-    ) -> pingora::Result<()>
-    where
-        Self::CTX: Send + Sync,
-    {
-        if let Some(lo) = get_location(&ctx.location) {
-            lo.set_append_proxy_headers(session, ctx, upstream_response);
-        }
-        Ok(())
-    }
-
     fn cache_key_callback(
         &self,
         session: &Session,
@@ -579,7 +583,8 @@ impl ProxyHttp for Server {
         }
 
         if let Some(lo) = get_location(&ctx.location) {
-            lo.exec_response_plugins(session, ctx, upstream_response, PluginStep::Response)
+            let _ = lo
+                .handle_response_plugin(PluginStep::Response, session, ctx, upstream_response)
                 .await?;
         }
 
@@ -726,12 +731,14 @@ impl ProxyHttp for Server {
             }
         }
         if let Some(c) = session.downstream_modules_ctx.get::<ResponseCompression>() {
-            if let Some((_, in_bytes, out_bytes, took)) = c.get_info() {
-                ctx.compression_stat = Some(CompressionStat {
-                    in_bytes,
-                    out_bytes,
-                    duration: took,
-                });
+            if c.is_enabled() {
+                if let Some((_, in_bytes, out_bytes, took)) = c.get_info() {
+                    ctx.compression_stat = Some(CompressionStat {
+                        in_bytes,
+                        out_bytes,
+                        duration: took,
+                    });
+                }
             }
         }
 

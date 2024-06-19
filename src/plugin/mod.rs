@@ -59,12 +59,11 @@ pub enum Error {
     },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
-
 #[async_trait]
-pub trait ProxyPlugin: Sync + Send {
+pub trait Plugin: Sync + Send {
     fn category(&self) -> PluginCategory;
     fn step(&self) -> String;
-    async fn handle(
+    async fn handle_request(
         &self,
         _step: PluginStep,
         _session: &mut Session,
@@ -72,13 +71,7 @@ pub trait ProxyPlugin: Sync + Send {
     ) -> pingora::Result<Option<HttpResponse>> {
         Ok(None)
     }
-}
-
-#[async_trait]
-pub trait ResponsePlugin: Sync + Send {
-    fn category(&self) -> PluginCategory;
-    fn step(&self) -> String;
-    async fn handle(
+    async fn handle_response(
         &self,
         _step: PluginStep,
         _session: &mut Session,
@@ -141,16 +134,11 @@ remark = "Generate a request id for service"
     ]
 }
 
-type Plugins = (
-    HashMap<String, Box<dyn ProxyPlugin>>,
-    HashMap<String, Box<dyn ResponsePlugin>>,
-);
-
+type Plugins = HashMap<String, Box<dyn Plugin>>;
 static PLUGINS: OnceCell<Plugins> = OnceCell::new();
 
 pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
-    let mut proxy_plugins: HashMap<String, Box<dyn ProxyPlugin>> = HashMap::new();
-    let mut response_plugins: HashMap<String, Box<dyn ResponsePlugin>> = HashMap::new();
+    let mut plguins: Plugins = HashMap::new();
     for (name, conf) in confs.iter() {
         let name = name.to_string();
         let category = conf.get("category");
@@ -165,111 +153,90 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
         match category {
             PluginCategory::Limit => {
                 let l = limit::Limiter::new(conf)?;
-                proxy_plugins.insert(name, Box::new(l));
+                plguins.insert(name, Box::new(l));
             }
             PluginCategory::Compression => {
                 let c = compression::Compression::new(conf)?;
-                proxy_plugins.insert(name, Box::new(c));
+                plguins.insert(name, Box::new(c));
             }
             PluginCategory::Stats => {
                 let s = stats::Stats::new(conf)?;
-                proxy_plugins.insert(name, Box::new(s));
+                plguins.insert(name, Box::new(s));
             }
             PluginCategory::Admin => {
                 let a = admin::AdminServe::new(conf)?;
-                proxy_plugins.insert(name, Box::new(a));
+                plguins.insert(name, Box::new(a));
             }
             PluginCategory::Directory => {
                 let d = directory::Directory::new(conf)?;
-                proxy_plugins.insert(name, Box::new(d));
+                plguins.insert(name, Box::new(d));
             }
             PluginCategory::Mock => {
                 let m = mock::MockResponse::new(conf)?;
-                proxy_plugins.insert(name, Box::new(m));
+                plguins.insert(name, Box::new(m));
             }
             PluginCategory::RequestId => {
                 let r = request_id::RequestId::new(conf)?;
-                proxy_plugins.insert(name, Box::new(r));
+                plguins.insert(name, Box::new(r));
             }
             PluginCategory::IpRestriction => {
                 let l = ip_restriction::IpRestriction::new(conf)?;
-                proxy_plugins.insert(name, Box::new(l));
+                plguins.insert(name, Box::new(l));
             }
             PluginCategory::KeyAuth => {
                 let k = key_auth::KeyAuth::new(conf)?;
-                proxy_plugins.insert(name, Box::new(k));
+                plguins.insert(name, Box::new(k));
             }
             PluginCategory::BasicAuth => {
                 let b = basic_auth::BasicAuth::new(conf)?;
-                proxy_plugins.insert(name, Box::new(b));
+                plguins.insert(name, Box::new(b));
             }
             PluginCategory::Cache => {
                 let c = cache::Cache::new(conf)?;
-                proxy_plugins.insert(name, Box::new(c));
+                plguins.insert(name, Box::new(c));
             }
             PluginCategory::Redirect => {
                 let r = redirect::Redirect::new(conf)?;
-                proxy_plugins.insert(name, Box::new(r));
+                plguins.insert(name, Box::new(r));
             }
             PluginCategory::Ping => {
                 let p = ping::Ping::new(conf)?;
-                proxy_plugins.insert(name, Box::new(p));
+                plguins.insert(name, Box::new(p));
             }
             PluginCategory::ResponseHeaders => {
                 let r = response_headers::ResponseHeaders::new(conf)?;
-                response_plugins.insert(name, Box::new(r));
+                plguins.insert(name, Box::new(r));
             }
             PluginCategory::RefererRestriction => {
                 let r = referer_restriction::RefererRestriction::new(conf)?;
-                proxy_plugins.insert(name, Box::new(r));
+                plguins.insert(name, Box::new(r));
             }
             PluginCategory::Csrf => {
                 let c = csrf::Csrf::new(conf)?;
-                proxy_plugins.insert(name, Box::new(c));
+                plguins.insert(name, Box::new(c));
             }
             PluginCategory::Jwt => {
-                let (auth, sign) = jwt::new(conf)?;
-                proxy_plugins.insert(name.clone(), Box::new(auth));
-                if let Some(sign) = sign {
-                    response_plugins.insert(name, Box::new(sign));
-                }
+                let auth = jwt::new(conf)?;
+                plguins.insert(name.clone(), Box::new(auth));
             }
         };
     }
 
-    Ok((proxy_plugins, response_plugins))
+    Ok(plguins)
 }
 
 pub fn init_plugins(confs: Vec<(String, PluginConf)>) -> Result<()> {
     PLUGINS.get_or_try_init(|| {
         let data = &mut confs.clone();
         data.extend(get_builtin_proxy_plugins());
-        parse_plugins(data.to_vec())
+        let plugins = parse_plugins(data.to_vec())?;
+
+        Ok(plugins)
     })?;
     Ok(())
 }
 
-#[inline]
-pub fn get_proxy_plugin(name: &str) -> Option<&dyn ProxyPlugin> {
-    if let Some((proxy_plugins, _)) = PLUGINS.get() {
-        if let Some(plugin) = proxy_plugins.get(name) {
-            return Some(plugin.as_ref());
-        }
-    }
-    None
-}
-
-#[inline]
-pub fn get_response_plugin(name: &str) -> Option<&dyn ResponsePlugin> {
-    if let Some((_, response_plugins)) = PLUGINS.get() {
-        if let Some(plugin) = response_plugins.get(name) {
-            return Some(plugin.as_ref());
-        }
-    }
-    None
-}
-
-pub fn list_plugins() -> Option<&'static Plugins> {
+pub fn get_plugins() -> Option<&'static Plugins> {
     PLUGINS.get()
 }
 

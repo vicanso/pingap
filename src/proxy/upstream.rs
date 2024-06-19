@@ -267,7 +267,7 @@ fn new_health_check(
     name: &str,
     health_check: &str,
 ) -> Result<(Box<dyn HealthCheck + Send + Sync + 'static>, Duration)> {
-    let mut health_check_frequency = Duration::from_secs(30);
+    let mut health_check_frequency = Duration::from_secs(10);
     let hc: Box<dyn HealthCheck + Send + Sync + 'static> = if health_check.is_empty() {
         let mut check = TcpHealthCheck::new();
         check.peer_template.options.connection_timeout = Some(Duration::from_secs(3));

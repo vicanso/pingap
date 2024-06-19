@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use super::{get_step_conf, get_str_slice_conf, Error, ResponsePlugin, Result};
+use super::{get_step_conf, get_str_slice_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{convert_header, convert_header_value, HttpHeader};
 use crate::state::State;
@@ -103,7 +103,7 @@ impl ResponseHeaders {
 }
 
 #[async_trait]
-impl ResponsePlugin for ResponseHeaders {
+impl Plugin for ResponseHeaders {
     #[inline]
     fn step(&self) -> String {
         self.plugin_step.to_string()
@@ -113,7 +113,7 @@ impl ResponsePlugin for ResponseHeaders {
         PluginCategory::ResponseHeaders
     }
     #[inline]
-    async fn handle(
+    async fn handle_response(
         &self,
         step: PluginStep,
         session: &mut Session,
@@ -150,7 +150,7 @@ impl ResponsePlugin for ResponseHeaders {
 mod tests {
     use super::{ResponseHeaders, ResponseHeadersParams};
     use crate::state::State;
-    use crate::{config::PluginConf, config::PluginStep, plugin::ResponsePlugin};
+    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use pingora::http::ResponseHeader;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -249,7 +249,7 @@ remove_headers = [
             .unwrap();
 
         response_headers
-            .handle(
+            .handle_response(
                 PluginStep::Response,
                 &mut session,
                 &mut State::default(),

@@ -14,10 +14,11 @@
 
 use crate::config::{LocationConf, PluginStep};
 use crate::http_extra::{convert_header_value, convert_headers, HttpHeader};
-use crate::plugin::{get_proxy_plugin, get_response_plugin};
+use crate::plugin::get_plugins;
 use crate::state::State;
 use crate::util;
 use arc_swap::ArcSwap;
+use bytes::Bytes;
 use log::{debug, error};
 use once_cell::sync::Lazy;
 use pingora::http::{RequestHeader, ResponseHeader};
@@ -265,51 +266,62 @@ impl Location {
             }
         }
     }
-    /// Execute all proxy plugins. If one plugin return true,
-    /// that means http request processing is complete.
     #[inline]
-    pub async fn exec_proxy_plugins(
+    pub async fn handle_request_plugin(
         &self,
+        step: PluginStep,
         session: &mut Session,
         ctx: &mut State,
-        step: PluginStep,
     ) -> pingora::Result<bool> {
-        if let Some(plugins) = &self.plugins {
-            for name in plugins.iter() {
-                if let Some(plugin) = get_proxy_plugin(name) {
-                    debug!("Exec proxy plugin {name}, step: {step}");
-                    let result = plugin.handle(step, session, ctx).await?;
-                    if let Some(resp) = result {
-                        // ingore http response status >= 900
-                        if resp.status.as_u16() < 900 {
-                            ctx.status = Some(resp.status);
-                            ctx.response_body_size = resp.send(session).await?;
-                        }
-                        return Ok(true);
+        let Some(plugins) = self.plugins.as_ref() else {
+            return Ok(false);
+        };
+        let Some(global_plugins) = get_plugins() else {
+            return Ok(false);
+        };
+
+        for name in plugins.iter() {
+            if let Some(plugin) = global_plugins.get(name) {
+                debug!("Handle request plugin {name}, step: {step}");
+                let result = plugin.handle_request(step, session, ctx).await?;
+                if let Some(resp) = result {
+                    // ingore http response status >= 900
+                    if resp.status.as_u16() < 900 {
+                        ctx.status = Some(resp.status);
+                        ctx.response_body_size = resp.send(session).await?;
                     }
+                    return Ok(true);
                 }
             }
         }
         Ok(false)
     }
-    /// Execute all response plugins.
     #[inline]
-    pub async fn exec_response_plugins(
+    pub async fn handle_response_plugin(
         &self,
+        step: PluginStep,
         session: &mut Session,
         ctx: &mut State,
         upstream_response: &mut ResponseHeader,
-        step: PluginStep,
-    ) -> pingora::Result<()> {
-        if let Some(plugins) = &self.plugins {
-            for name in plugins.iter() {
-                if let Some(plugin) = get_response_plugin(name) {
-                    debug!("Exec response plugin {name}, step: {step}");
-                    plugin.handle(step, session, ctx, upstream_response).await?;
+    ) -> pingora::Result<Option<Bytes>> {
+        let Some(plugins) = self.plugins.as_ref() else {
+            return Ok(None);
+        };
+        let Some(global_plugins) = get_plugins() else {
+            return Ok(None);
+        };
+        for name in plugins.iter() {
+            if let Some(plugin) = global_plugins.get(name) {
+                debug!("Handle response plugin {name}, step: {step}");
+                let data = plugin
+                    .handle_response(step, session, ctx, upstream_response)
+                    .await?;
+                if data.is_some() {
+                    return Ok(data);
                 }
             }
         }
-        Ok(())
+        Ok(None)
     }
 }
 
@@ -586,13 +598,13 @@ mod tests {
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = lo
-            .exec_proxy_plugins(
+            .handle_request_plugin(
+                PluginStep::Request,
                 &mut session,
                 &mut State {
                     location: "lo".to_string(),
                     ..Default::default()
                 },
-                PluginStep::Request,
             )
             .await
             .unwrap();
@@ -605,7 +617,7 @@ mod tests {
         session.read_request().await.unwrap();
 
         let result = lo
-            .exec_proxy_plugins(&mut session, &mut State::default(), PluginStep::Request)
+            .handle_request_plugin(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(false, result);
@@ -639,11 +651,11 @@ mod tests {
             .unwrap();
         upstream_response.append_header("X-Server", "abc").unwrap();
 
-        lo.exec_response_plugins(
+        lo.handle_response_plugin(
+            PluginStep::Response,
             &mut session,
             &mut State::default(),
             &mut upstream_response,
-            PluginStep::Response,
         )
         .await
         .unwrap();

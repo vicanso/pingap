@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_list_conf, get_str_conf, Error, ProxyPlugin, ResponsePlugin, Result};
+use super::{get_step_list_conf, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON};
 use crate::state::{ModifyResponseBody, State};
@@ -104,19 +104,12 @@ pub struct JwtAuth {
     header: Option<String>,
     query: Option<String>,
     cookie: Option<String>,
+    algorithm: String,
     unauthorized_resp: HttpResponse,
 }
 
-pub fn new(params: &PluginConf) -> Result<(JwtAuth, Option<JwtSign>)> {
-    let auth = JwtAuth::new(params)?;
-
-    let sign = if get_str_conf(params, "auth_path").is_empty() {
-        None
-    } else {
-        Some(JwtSign::new(params)?)
-    };
-
-    Ok((auth, sign))
+pub fn new(params: &PluginConf) -> Result<JwtAuth> {
+    JwtAuth::new(params)
 }
 
 impl JwtAuth {
@@ -137,6 +130,7 @@ impl JwtAuth {
             header: params.header,
             query: params.query,
             cookie: params.cookie,
+            algorithm: params.algorithm,
             unauthorized_resp: HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
                 body: Bytes::from_static(b"Invalid or expired jwt"),
@@ -153,7 +147,7 @@ struct JwtHeader {
 }
 
 #[async_trait]
-impl ProxyPlugin for JwtAuth {
+impl Plugin for JwtAuth {
     #[inline]
     fn step(&self) -> String {
         self.plugin_step.to_string()
@@ -163,7 +157,7 @@ impl ProxyPlugin for JwtAuth {
         PluginCategory::Jwt
     }
     #[inline]
-    async fn handle(
+    async fn handle_request(
         &self,
         step: PluginStep,
         session: &mut Session,
@@ -236,26 +230,31 @@ impl ProxyPlugin for JwtAuth {
 
         Ok(None)
     }
-}
+    #[inline]
+    async fn handle_response(
+        &self,
+        step: PluginStep,
+        session: &mut Session,
+        ctx: &mut State,
+        upstream_response: &mut ResponseHeader,
+    ) -> pingora::Result<Option<Bytes>> {
+        if step != PluginStep::Response || self.auth_path.is_empty() {
+            return Ok(None);
+        }
+        if session.req_header().uri.path() != self.auth_path {
+            return Ok(None);
+        }
+        upstream_response.remove_header(&http::header::CONTENT_LENGTH);
+        let json = HTTP_HEADER_CONTENT_JSON.clone();
+        let _ = upstream_response.insert_header(json.0, json.1);
+        // no error
+        let _ = upstream_response.insert_header(http::header::TRANSFER_ENCODING, "Chunked");
+        ctx.modify_response_body = Some(Box::new(Sign {
+            algorithm: self.algorithm.clone(),
+            secret: self.secret.clone(),
+        }));
 
-pub struct JwtSign {
-    plugin_step: PluginStep,
-    auth_path: String,
-    secret: String,
-    algorithm: String,
-}
-
-impl JwtSign {
-    pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!("new jwt sign response plugin, params:{params:?}");
-        let params = JwtParams::try_from(params)?;
-
-        Ok(Self {
-            plugin_step: PluginStep::Response,
-            auth_path: params.auth_path,
-            secret: params.secret,
-            algorithm: params.algorithm,
-        })
+        Ok(None)
     }
 }
 
@@ -284,49 +283,11 @@ impl ModifyResponseBody for Sign {
     }
 }
 
-#[async_trait]
-impl ResponsePlugin for JwtSign {
-    #[inline]
-    fn step(&self) -> String {
-        self.plugin_step.to_string()
-    }
-    #[inline]
-    fn category(&self) -> PluginCategory {
-        PluginCategory::Jwt
-    }
-    #[inline]
-    async fn handle(
-        &self,
-        step: PluginStep,
-        session: &mut Session,
-        ctx: &mut State,
-        upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<Option<Bytes>> {
-        if step != self.plugin_step {
-            return Ok(None);
-        }
-        if session.req_header().uri.path() != self.auth_path {
-            return Ok(None);
-        }
-        upstream_response.remove_header(&http::header::CONTENT_LENGTH);
-        let json = HTTP_HEADER_CONTENT_JSON.clone();
-        let _ = upstream_response.insert_header(json.0, json.1);
-        // no error
-        let _ = upstream_response.insert_header(http::header::TRANSFER_ENCODING, "Chunked");
-        ctx.modify_response_body = Some(Box::new(Sign {
-            algorithm: self.algorithm.clone(),
-            secret: self.secret.clone(),
-        }));
-
-        Ok(None)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{new, JwtAuth, JwtParams, JwtSign};
+    use super::{new, JwtAuth, JwtParams};
     use crate::config::{PluginConf, PluginStep};
-    use crate::plugin::{ProxyPlugin, ResponsePlugin};
+    use crate::plugin::Plugin;
     use crate::state::State;
     use bytes::Bytes;
     use pingora::http::ResponseHeader;
@@ -380,7 +341,7 @@ secret = "123123"
 
     #[test]
     fn test_new_jwt() {
-        let (auth, sigin) = new(&toml::from_str::<PluginConf>(
+        let auth = new(&toml::from_str::<PluginConf>(
             r###"
 secret = "123123"
 cookie = "jwt"
@@ -390,9 +351,8 @@ cookie = "jwt"
         .unwrap();
 
         assert_eq!("jwt", auth.cookie.unwrap());
-        assert_eq!(true, sigin.is_none());
 
-        let (auth, sigin) = new(&toml::from_str::<PluginConf>(
+        let auth = new(&toml::from_str::<PluginConf>(
             r###"
 secret = "123123"
 cookie = "jwt"
@@ -403,7 +363,6 @@ auth_path = "/login"
         .unwrap();
         assert_eq!("jwt", auth.cookie.unwrap());
         assert_eq!("/login", auth.auth_path);
-        assert_eq!(true, sigin.is_some());
     }
 
     #[tokio::test]
@@ -429,7 +388,7 @@ header = "Authorization"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = auth
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
 
@@ -442,7 +401,7 @@ header = "Authorization"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = auth
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
 
@@ -455,7 +414,7 @@ header = "Authorization"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let resp = auth
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap()
             .unwrap();
@@ -472,7 +431,7 @@ header = "Authorization"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let resp = auth
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap()
             .unwrap();
@@ -488,7 +447,7 @@ header = "Authorization"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let resp = auth
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap()
             .unwrap();
@@ -505,7 +464,7 @@ header = "Authorization"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let resp = auth
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap()
             .unwrap();
@@ -518,7 +477,7 @@ header = "Authorization"
 
     #[tokio::test]
     async fn test_jwt_sign() {
-        let sign = JwtSign::new(
+        let auth = JwtAuth::new(
             &toml::from_str::<PluginConf>(
                 r###"
 secret = "123123"
@@ -529,8 +488,7 @@ auth_path = "/login"
             .unwrap(),
         )
         .unwrap();
-        assert_eq!("jwt", sign.category().to_string());
-        assert_eq!("response", sign.step());
+        assert_eq!("jwt", auth.category().to_string());
 
         let headers = [""].join("\r\n");
         let input_header = format!("GET /login HTTP/1.1\r\n{headers}\r\n\r\n");
@@ -540,7 +498,7 @@ auth_path = "/login"
 
         let mut ctx = State::default();
         let mut upstream_response = ResponseHeader::build_no_case(200, None).unwrap();
-        sign.handle(
+        auth.handle_response(
             PluginStep::Response,
             &mut session,
             &mut ctx,

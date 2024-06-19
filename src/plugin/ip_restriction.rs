@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_conf, get_str_slice_conf, Error, ProxyPlugin, Result};
+use super::{get_step_conf, get_str_conf, get_str_slice_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -98,7 +98,7 @@ impl IpRestriction {
 }
 
 #[async_trait]
-impl ProxyPlugin for IpRestriction {
+impl Plugin for IpRestriction {
     #[inline]
     fn step(&self) -> String {
         self.plugin_step.to_string()
@@ -108,7 +108,7 @@ impl ProxyPlugin for IpRestriction {
         PluginCategory::IpRestriction
     }
     #[inline]
-    async fn handle(
+    async fn handle_request(
         &self,
         step: PluginStep,
         session: &mut Session,
@@ -152,7 +152,7 @@ impl ProxyPlugin for IpRestriction {
 mod tests {
     use super::{IpRestriction, IpRestrictionParams};
     use crate::state::State;
-    use crate::{config::PluginConf, config::PluginStep, plugin::ProxyPlugin};
+    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use http::StatusCode;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -230,7 +230,7 @@ ip_list = [
         session.read_request().await.unwrap();
 
         let result = deny
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
@@ -242,7 +242,7 @@ ip_list = [
         session.read_request().await.unwrap();
 
         let result = deny
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_some());
@@ -254,7 +254,7 @@ ip_list = [
         session.read_request().await.unwrap();
 
         let result = deny
-            .handle(
+            .handle_request(
                 PluginStep::Request,
                 &mut session,
                 &mut State {
@@ -267,7 +267,7 @@ ip_list = [
         assert_eq!(true, result.is_none());
 
         let result = deny
-            .handle(
+            .handle_request(
                 PluginStep::Request,
                 &mut session,
                 &mut State {
@@ -300,7 +300,7 @@ ip_list = [
         session.read_request().await.unwrap();
 
         let result = allow
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_none());

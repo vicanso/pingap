@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_bool_conf, get_int_conf, Error, ProxyPlugin, Result};
+use super::{get_bool_conf, get_int_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -83,7 +83,7 @@ impl Compression {
 }
 
 #[async_trait]
-impl ProxyPlugin for Compression {
+impl Plugin for Compression {
     #[inline]
     fn step(&self) -> String {
         self.plugin_step.to_string()
@@ -93,7 +93,7 @@ impl ProxyPlugin for Compression {
         PluginCategory::Compression
     }
     #[inline]
-    async fn handle(
+    async fn handle_request(
         &self,
         step: PluginStep,
         session: &mut Session,
@@ -146,7 +146,7 @@ mod tests {
     use super::Compression;
     use crate::plugin::compression::CompressionParams;
     use crate::state::State;
-    use crate::{config::PluginConf, config::PluginStep, plugin::ProxyPlugin};
+    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use pingora::modules::http::compression::{ResponseCompression, ResponseCompressionBuilder};
     use pingora::modules::http::HttpModules;
     use pingora::proxy::Session;
@@ -200,7 +200,7 @@ zstd_level = 7
         let mut session = Session::new_h1_with_modules(Box::new(mock_io), &modules);
         session.read_request().await.unwrap();
         let result = compression
-            .handle(
+            .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
                 &mut State::default(),
@@ -226,7 +226,7 @@ zstd_level = 7
         let mut session = Session::new_h1_with_modules(Box::new(mock_io), &modules);
         session.read_request().await.unwrap();
         let result = compression
-            .handle(
+            .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
                 &mut State::default(),
@@ -252,7 +252,7 @@ zstd_level = 7
         let mut session = Session::new_h1_with_modules(Box::new(mock_io), &modules);
         session.read_request().await.unwrap();
         let result = compression
-            .handle(
+            .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
                 &mut State::default(),
@@ -278,7 +278,7 @@ zstd_level = 7
         let mut session = Session::new_h1_with_modules(Box::new(mock_io), &modules);
         session.read_request().await.unwrap();
         let result = compression
-            .handle(
+            .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
                 &mut State::default(),

@@ -371,17 +371,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         new_upstream_health_check_task(Duration::from_secs(10)),
     ));
 
-    if let Some((prox_plugins, response_plugins)) = plugin::list_plugins() {
-        for (name, plugin) in prox_plugins {
+    if let Some(plugins) = plugin::get_plugins() {
+        for (name, plugin) in plugins {
             info!(
-                "Proxy plugin {name}, category:{}, step:{}",
-                plugin.category(),
-                plugin.step(),
-            );
-        }
-        for (name, plugin) in response_plugins {
-            info!(
-                "Response plugin {name}, category:{}, step:{}",
+                "plugin {name}, category:{}, step:{}",
                 plugin.category(),
                 plugin.step(),
             );

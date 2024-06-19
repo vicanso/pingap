@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_bool_conf, get_step_conf, get_str_slice_conf, Error, ProxyPlugin, Result};
+use super::{get_bool_conf, get_step_conf, get_str_slice_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -101,7 +101,7 @@ impl BasicAuth {
 }
 
 #[async_trait]
-impl ProxyPlugin for BasicAuth {
+impl Plugin for BasicAuth {
     #[inline]
     fn step(&self) -> String {
         self.plugin_step.to_string()
@@ -111,7 +111,7 @@ impl ProxyPlugin for BasicAuth {
         PluginCategory::BasicAuth
     }
     #[inline]
-    async fn handle(
+    async fn handle_request(
         &self,
         step: PluginStep,
         session: &mut Session,
@@ -138,7 +138,7 @@ impl ProxyPlugin for BasicAuth {
 
 #[cfg(test)]
 mod tests {
-    use super::{BasicAuth, BasicAuthParams, ProxyPlugin};
+    use super::{BasicAuth, BasicAuthParams, Plugin};
     use crate::config::{PluginConf, PluginStep};
     use crate::state::State;
     use http::StatusCode;
@@ -227,7 +227,7 @@ authorizations = [
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = auth
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
@@ -239,7 +239,7 @@ authorizations = [
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = auth
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_some());

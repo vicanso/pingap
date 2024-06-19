@@ -8,6 +8,7 @@
 - [ ] secret storage
 - [ ] different servers avoid listening to the same address
 - [ ] support include comnand for configuraion
+- [ ] admin web expand common configuration items by default
 - [ ] csrf plugin
 - [x] upstream_response_time
 - [x] support set_cipher_list and set_ciphersuites

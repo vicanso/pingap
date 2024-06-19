@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_conf, Error, ProxyPlugin, Result};
+use super::{get_step_conf, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON};
 use crate::state::{get_hostname, get_start_time, State};
@@ -84,7 +84,7 @@ impl Stats {
 }
 
 #[async_trait]
-impl ProxyPlugin for Stats {
+impl Plugin for Stats {
     #[inline]
     fn step(&self) -> String {
         self.plugin_step.to_string()
@@ -94,7 +94,7 @@ impl ProxyPlugin for Stats {
         PluginCategory::Stats
     }
     #[inline]
-    async fn handle(
+    async fn handle_request(
         &self,
         step: PluginStep,
         session: &mut Session,
@@ -139,7 +139,7 @@ impl ProxyPlugin for Stats {
 mod tests {
     use super::{Stats, StatsParams};
     use crate::state::State;
-    use crate::{config::PluginConf, config::PluginStep, plugin::ProxyPlugin};
+    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -190,7 +190,7 @@ mod tests {
         session.read_request().await.unwrap();
 
         let result = stats
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
@@ -202,7 +202,7 @@ mod tests {
         session.read_request().await.unwrap();
 
         let result = stats
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_some());

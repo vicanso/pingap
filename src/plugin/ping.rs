@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_conf, Error, ProxyPlugin, Result};
+use super::{get_step_conf, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -49,7 +49,7 @@ impl Ping {
 }
 
 #[async_trait]
-impl ProxyPlugin for Ping {
+impl Plugin for Ping {
     #[inline]
     fn step(&self) -> String {
         self.plugin_step.to_string()
@@ -59,7 +59,7 @@ impl ProxyPlugin for Ping {
         PluginCategory::Ping
     }
     #[inline]
-    async fn handle(
+    async fn handle_request(
         &self,
         step: PluginStep,
         session: &mut Session,
@@ -79,7 +79,7 @@ impl ProxyPlugin for Ping {
 mod tests {
     use super::Ping;
     use crate::state::State;
-    use crate::{config::PluginConf, config::PluginStep, plugin::ProxyPlugin};
+    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -106,7 +106,7 @@ path = "/ping"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = ping
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
 

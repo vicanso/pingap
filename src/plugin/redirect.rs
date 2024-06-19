@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_bool_conf, get_step_conf, get_str_conf, Error, ProxyPlugin, Result};
+use super::{get_bool_conf, get_step_conf, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::convert_headers;
 use crate::http_extra::HttpResponse;
@@ -46,7 +46,7 @@ impl Redirect {
 }
 
 #[async_trait]
-impl ProxyPlugin for Redirect {
+impl Plugin for Redirect {
     #[inline]
     fn step(&self) -> String {
         self.plugin_step.to_string()
@@ -56,7 +56,7 @@ impl ProxyPlugin for Redirect {
         PluginCategory::Redirect
     }
     #[inline]
-    async fn handle(
+    async fn handle_request(
         &self,
         step: PluginStep,
         session: &mut Session,
@@ -88,7 +88,7 @@ impl ProxyPlugin for Redirect {
 mod tests {
     use super::Redirect;
     use crate::state::State;
-    use crate::{config::PluginConf, config::PluginStep, plugin::ProxyPlugin};
+    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use http::StatusCode;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -116,7 +116,7 @@ prefix = "/api"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = redirect
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_some());

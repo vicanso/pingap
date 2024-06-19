@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_int_conf, get_step_conf, get_str_conf, Error, ProxyPlugin, Result};
+use super::{get_int_conf, get_step_conf, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -156,7 +156,7 @@ impl Limiter {
     }
 }
 #[async_trait]
-impl ProxyPlugin for Limiter {
+impl Plugin for Limiter {
     #[inline]
     fn step(&self) -> String {
         self.plugin_step.to_string()
@@ -166,7 +166,7 @@ impl ProxyPlugin for Limiter {
         PluginCategory::Limit
     }
     #[inline]
-    async fn handle(
+    async fn handle_request(
         &self,
         step: PluginStep,
         session: &mut Session,
@@ -192,7 +192,7 @@ mod tests {
     use crate::{
         config::PluginConf,
         config::PluginStep,
-        plugin::{limit::LimiterParams, ProxyPlugin},
+        plugin::{limit::LimiterParams, Plugin},
         state::State,
     };
     use http::StatusCode;
@@ -366,7 +366,7 @@ max = 0
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = limiter
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
 
@@ -384,7 +384,7 @@ max = 1
         )
         .unwrap();
         let result = limiter
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
 
@@ -411,21 +411,21 @@ interval = "1s"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = limiter
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
 
         assert_eq!(true, result.is_none());
 
         let _ = limiter
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
 
         tokio::time::sleep(Duration::from_secs(1)).await;
 
         let result = limiter
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_some());
@@ -434,7 +434,7 @@ interval = "1s"
         tokio::time::sleep(Duration::from_secs(1)).await;
 
         let result = limiter
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_none());

@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    get_int_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error, ProxyPlugin, Result,
-};
+use super::{get_int_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error, Plugin, Result};
 use crate::config::{
     self, save_config, BasicConf, LocationConf, PluginCategory, PluginConf, PluginStep, ServerConf,
     UpstreamConf,
@@ -296,7 +294,7 @@ fn get_method_path(session: &Session) -> (Method, String) {
 }
 
 #[async_trait]
-impl ProxyPlugin for AdminServe {
+impl Plugin for AdminServe {
     #[inline]
     fn step(&self) -> String {
         self.plugin_step.to_string()
@@ -305,13 +303,13 @@ impl ProxyPlugin for AdminServe {
     fn category(&self) -> PluginCategory {
         PluginCategory::Admin
     }
-    async fn handle(
+    async fn handle_request(
         &self,
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
-        if step != self.plugin_step {
+        if self.plugin_step != step {
             return Ok(None);
         }
         let ip = util::get_client_ip(session);
@@ -421,7 +419,7 @@ impl ProxyPlugin for AdminServe {
 #[cfg(test)]
 mod tests {
     use super::{get_method_path, AdminAsset, AdminServe, AdminServeParams, EmbeddedStaticFile};
-    use crate::plugin::ProxyPlugin;
+    use crate::plugin::Plugin;
     use crate::{config::set_config_path, config::PluginConf, http_extra::HttpResponse};
     use http::Method;
     use pingora::http::RequestHeader;

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_conf, get_str_slice_conf, Error, ProxyPlugin, Result};
+use super::{get_step_conf, get_str_conf, get_str_slice_conf, Error, Plugin, Result};
 use crate::config::{get_current_config, PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -161,7 +161,7 @@ impl Cache {
 }
 
 #[async_trait]
-impl ProxyPlugin for Cache {
+impl Plugin for Cache {
     #[inline]
     fn step(&self) -> String {
         self.plugin_step.to_string()
@@ -171,7 +171,7 @@ impl ProxyPlugin for Cache {
         PluginCategory::Cache
     }
     #[inline]
-    async fn handle(
+    async fn handle_request(
         &self,
         step: PluginStep,
         session: &mut Session,

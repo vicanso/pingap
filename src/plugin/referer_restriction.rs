@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_conf, get_str_slice_conf, Error, ProxyPlugin, Result};
+use super::{get_step_conf, get_str_conf, get_str_slice_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -96,7 +96,7 @@ impl RefererRestriction {
 }
 
 #[async_trait]
-impl ProxyPlugin for RefererRestriction {
+impl Plugin for RefererRestriction {
     #[inline]
     fn step(&self) -> String {
         self.plugin_step.to_string()
@@ -106,7 +106,7 @@ impl ProxyPlugin for RefererRestriction {
         PluginCategory::RefererRestriction
     }
     #[inline]
-    async fn handle(
+    async fn handle_request(
         &self,
         step: PluginStep,
         session: &mut Session,
@@ -147,7 +147,7 @@ impl ProxyPlugin for RefererRestriction {
 mod tests {
     use super::{RefererRestriction, RefererRestrictionParams};
     use crate::state::State;
-    use crate::{config::PluginConf, config::PluginStep, plugin::ProxyPlugin};
+    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use http::StatusCode;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -213,7 +213,7 @@ type = "deny"
         session.read_request().await.unwrap();
 
         let result = deny
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
@@ -225,7 +225,7 @@ type = "deny"
         session.read_request().await.unwrap();
 
         let result = deny
-            .handle(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(PluginStep::Request, &mut session, &mut State::default())
             .await
             .unwrap();
         assert_eq!(true, result.is_some());
@@ -237,7 +237,7 @@ type = "deny"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = deny
-            .handle(
+            .handle_request(
                 PluginStep::Request,
                 &mut session,
                 &mut State {
