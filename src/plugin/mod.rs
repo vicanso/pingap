@@ -28,6 +28,7 @@ mod admin;
 mod basic_auth;
 mod cache;
 mod compression;
+mod cors;
 mod csrf;
 mod directory;
 mod ip_restriction;
@@ -216,8 +217,12 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
                 plguins.insert(name, Box::new(c));
             }
             PluginCategory::Jwt => {
-                let auth = jwt::new(conf)?;
+                let auth = jwt::JwtAuth::new(conf)?;
                 plguins.insert(name.clone(), Box::new(auth));
+            }
+            PluginCategory::Cors => {
+                let cors = cors::Cors::new(conf)?;
+                plguins.insert(name.clone(), Box::new(cors));
             }
         };
     }

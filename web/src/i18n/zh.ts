@@ -221,4 +221,12 @@ export default {
   "form.cacheEviction": "是否启用缓存清除方式",
   "form.cachePredictor": "是否启用缓存预测方式",
   "form.cacheMaxTtl": "缓存的最长有效期",
+  // cors
+  "form.corsPath": "设置支持cors的正则路径(可选)",
+  "form.corsAllowOrigin": "允许的来源",
+  "form.corsAllowMethods": "允许的请求方法",
+  "form.corsAllowHeaders": "允许的请求头",
+  "form.corsMaxAge": "预检请求的缓存有效期",
+  "form.corsAllowCredentials": "是否允许 HTTP 跨源请求携带凭据",
+  "form.corsExposeHeaders": "允许可以暴露给客户端的响应头",
 };

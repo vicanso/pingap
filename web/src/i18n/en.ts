@@ -219,4 +219,12 @@ export default {
   "form.cacheEviction": "Enable evicted from storage",
   "form.cachePredictor": "Enable predictor",
   "form.cacheMaxTtl": "Max ttl of cache",
+  // cors
+  "form.corsPath": "The regexp path for cors(optional)",
+  "form.corsAllowOrigin": "The allow origin",
+  "form.corsAllowMethods": "The allow methods",
+  "form.corsAllowHeaders": "The allow headers",
+  "form.corsMaxAge": "The cache max age",
+  "form.corsAllowCredentials": "Allow Credentials",
+  "form.corsExposeHeaders": "The expose headers",
 };

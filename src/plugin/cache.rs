@@ -65,7 +65,7 @@ pub struct Cache {
 }
 
 struct CacheParams {
-    plpugin_step: PluginStep,
+    plugin_step: PluginStep,
     eviction: bool,
     predictor: bool,
     lock: u8,
@@ -122,7 +122,7 @@ impl TryFrom<&PluginConf> for CacheParams {
             Some(headers)
         };
         let params = Self {
-            plpugin_step: step,
+            plugin_step: step,
             eviction: value.contains_key("eviction"),
             predictor: value.contains_key("predictor"),
             lock: lock.as_secs().max(1) as u8,
@@ -131,7 +131,7 @@ impl TryFrom<&PluginConf> for CacheParams {
             namespace,
             headers,
         };
-        if params.plpugin_step != PluginStep::Request {
+        if params.plugin_step != PluginStep::Request {
             return Err(Error::Invalid {
                 category: PluginCategory::Cache.to_string(),
                 message: "Cache plugin should be executed at request step".to_string(),
@@ -148,7 +148,7 @@ impl Cache {
 
         Ok(Self {
             storage: &*MEM_BACKEND,
-            plugin_step: params.plpugin_step,
+            plugin_step: params.plugin_step,
             eviction: params.eviction,
             lock: params.lock,
             max_ttl: params.max_ttl,

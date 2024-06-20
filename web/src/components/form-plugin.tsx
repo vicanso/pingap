@@ -32,6 +32,7 @@ export enum PluginCategory {
   RESPONSE_HEADERS = "response_headers",
   REFERER_RESTRICTION = "referer_restriction",
   CSRF = "csrf",
+  CORS = "cors",
 }
 
 export function getPluginSteps(category: string) {
@@ -71,6 +72,7 @@ export function getPluginSteps(category: string) {
   pluginSupportSteps[PluginCategory.RESPONSE_HEADERS] = [2];
   pluginSupportSteps[PluginCategory.REFERER_RESTRICTION] = [0, 1];
   pluginSupportSteps[PluginCategory.CSRF] = [0, 1];
+  pluginSupportSteps[PluginCategory.CORS] = [0, 1];
 
   const steps = pluginSupportSteps[category];
   if (steps) {
@@ -711,6 +713,61 @@ export function FormPluginField({
           label: t("form.cacheHeaders"),
           id: "cache-headers",
           addLabel: t("form.cacheHeadersAdd"),
+          span: 12,
+        },
+      );
+      break;
+    }
+    case PluginCategory.CORS: {
+      fields.push(
+        {
+          category: "text",
+          key: "path",
+          label: t("form.corsPath"),
+          id: "cors-path",
+          span: 6,
+        },
+        {
+          category: "text",
+          key: "allow_origin",
+          label: t("form.corsAllowOrigin"),
+          id: "cors-allow-origin",
+          span: 6,
+        },
+        {
+          category: "text",
+          key: "allow_methods",
+          label: t("form.corsAllowMethods"),
+          id: "cors-allow-methods",
+          span: 6,
+        },
+        {
+          category: "text",
+          key: "allow_headers",
+          label: t("form.corsAllowHeaders"),
+          id: "cors-allow-headers",
+          span: 6,
+        },
+        {
+          category: "checkbox",
+          key: "allow_credentials",
+          label: t("form.corsAllowCredentials"),
+          id: "cors-allow-credentials",
+          span: 6,
+          options: boolOptions,
+        },
+        {
+          category: "text",
+          key: "max_age",
+          label: t("form.corsMaxAge"),
+          id: "cors-max-age",
+          span: 6,
+        },
+        {
+          category: "text",
+          key: "expose_headers",
+          label: t("form.corsExposeHeaders"),
+          id: "cors-expose-headers",
           span: 12,
         },
       );

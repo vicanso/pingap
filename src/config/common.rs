@@ -22,6 +22,8 @@ use bytesize::ByteSize;
 use http::{HeaderName, HeaderValue};
 use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
+use pingora::tls::pkey::PKey;
+use pingora::tls::x509::X509;
 use regex::Regex;
 use serde::{Deserialize, Serialize, Serializer};
 use std::net::ToSocketAddrs;
@@ -59,6 +61,7 @@ pub enum PluginCategory {
     ResponseHeaders,
     RefererRestriction,
     Csrf,
+    Cors,
 }
 
 impl Serialize for PluginCategory {
@@ -316,18 +319,29 @@ impl ServerConf {
             }
         }
         if let Some(value) = &self.tls_key {
-            if !util::is_pem(value) {
-                let _ = STANDARD
+            let buf = if !util::is_pem(value) {
+                STANDARD
                     .decode(value)
-                    .map_err(|e| Error::Base64Decode { source: e })?;
-            }
+                    .map_err(|e| Error::Base64Decode { source: e })?
+            } else {
+                value.as_bytes().to_vec()
+            };
+
+            let _ = PKey::private_key_from_pem(&buf).map_err(|e| Error::Invalid {
+                message: e.to_string(),
+            })?;
         }
         if let Some(value) = &self.tls_cert {
-            if !util::is_pem(value) {
-                let _ = STANDARD
+            let buf = if !util::is_pem(value) {
+                STANDARD
                     .decode(value)
-                    .map_err(|e| Error::Base64Decode { source: e })?;
-            }
+                    .map_err(|e| Error::Base64Decode { source: e })?
+            } else {
+                value.as_bytes().to_vec()
+            };
+            let _ = X509::from_pem(&buf).map_err(|e| Error::Invalid {
+                message: e.to_string(),
+            })?;
         }
         if let Some(access_log) = &self.access_log {
             let logger = Parser::from(access_log.as_str());
@@ -943,11 +957,6 @@ mod tests {
             "Base64 decode error Invalid padding",
             result.expect_err("").to_string()
         );
-
-        conf.tls_key = Some("YWJj".to_string());
-        conf.tls_cert = Some("YWJj".to_string());
-        let result = conf.validate("test", &location_names);
-        assert_eq!(true, result.is_ok());
     }
 
     #[test]

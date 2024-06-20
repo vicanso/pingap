@@ -108,10 +108,6 @@ pub struct JwtAuth {
     unauthorized_resp: HttpResponse,
 }
 
-pub fn new(params: &PluginConf) -> Result<JwtAuth> {
-    JwtAuth::new(params)
-}
-
 impl JwtAuth {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!("new jwt auth proxy plugin, params:{params:?}");
@@ -285,7 +281,7 @@ impl ModifyResponseBody for Sign {
 
 #[cfg(test)]
 mod tests {
-    use super::{new, JwtAuth, JwtParams};
+    use super::{JwtAuth, JwtParams};
     use crate::config::{PluginConf, PluginStep};
     use crate::plugin::Plugin;
     use crate::state::State;
@@ -341,25 +337,29 @@ secret = "123123"
 
     #[test]
     fn test_new_jwt() {
-        let auth = new(&toml::from_str::<PluginConf>(
-            r###"
+        let auth = JwtAuth::new(
+            &toml::from_str::<PluginConf>(
+                r###"
 secret = "123123"
 cookie = "jwt"
 "###,
+            )
+            .unwrap(),
         )
-        .unwrap())
         .unwrap();
 
         assert_eq!("jwt", auth.cookie.unwrap());
 
-        let auth = new(&toml::from_str::<PluginConf>(
-            r###"
+        let auth = JwtAuth::new(
+            &toml::from_str::<PluginConf>(
+                r###"
 secret = "123123"
 cookie = "jwt"
 auth_path = "/login"
 "###,
+            )
+            .unwrap(),
         )
-        .unwrap())
         .unwrap();
         assert_eq!("jwt", auth.cookie.unwrap());
         assert_eq!("/login", auth.auth_path);
