@@ -108,11 +108,10 @@ pub fn convert_header_value(
                     }
                 }
             }
-            return Some(value.to_owned());
         }
     };
 
-    None
+    Some(value.to_owned())
 }
 
 /// Convert string slice to http headers.

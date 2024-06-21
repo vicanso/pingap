@@ -732,7 +732,6 @@ pub fn get_config_path() -> String {
     }
 }
 
-// static CURRENT_CONFIG: OnceCell<PingapConf> = OnceCell::new();
 static CURRENT_CONFIG: Lazy<ArcSwap<PingapConf>> =
     Lazy::new(|| ArcSwap::from_pointee(PingapConf::default()));
 /// Set current config of pingap.

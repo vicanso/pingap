@@ -172,7 +172,7 @@ export default {
   "form.refererRestrictionMode": "限制模式，允许或禁止",
   "form.refererRestrictionAllow": "允许",
   "form.refererRestrictionDeny": "禁止",
-  "form.refererList": "Referer列表",
+  "form.refererList": "Referer域名列表",
   "form.refererRestrictionAdd": "添加更多的Referer",
   "form.refererRestrictionMessage": "不符合时的出错提示",
   "form.keyAuthQuery": "使用于key auth认证的Query名称",

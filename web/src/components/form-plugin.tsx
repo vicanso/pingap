@@ -274,7 +274,7 @@ export function FormPluginField({
         },
         {
           category: "checkbox",
-          key: "cache_private",
+          key: "private",
           label: t("form.dirCachePrivate"),
           id: "dir-cache-private",
           span: 6,

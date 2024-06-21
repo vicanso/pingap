@@ -189,6 +189,9 @@ impl Location {
 
         self.hosts.iter().any(|item| item == host)
     }
+    /// Sets the maximum allowed size of the client request body.
+    /// If the size in a request exceeds the configured value, the 413 (Request Entity Too Large) error
+    /// is returned to the client.
     #[inline]
     pub fn client_body_size_limit(
         &self,

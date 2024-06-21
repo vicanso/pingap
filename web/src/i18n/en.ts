@@ -170,7 +170,7 @@ export default {
   "form.refererRestrictionMode": "The restriction mode, allow or deny",
   "form.refererRestrictionAllow": "Allow",
   "form.refererRestrictionDeny": "Deny",
-  "form.refererList": "Referer list",
+  "form.refererList": "Referer host list",
   "form.refererRestrictionAdd": "Add more referer",
   "form.refererRestrictionMessage": "Error message for invalid",
   "form.keyAuthQuery": "The query name for key auth",

@@ -82,6 +82,9 @@ struct Args {
     /// Whether this server should try to auto restart
     #[arg(short, long)]
     autorestart: bool,
+    /// Whether this server should try to auto reload configuration
+    #[arg(long)]
+    autoreload: bool,
 }
 
 fn new_server_conf(args: &Args, conf: &PingapConf) -> server::configuration::ServerConf {
@@ -293,7 +296,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "pyro")]
     if let Some(url) = &conf.basic.pyroscope {
         my_server.add_service(background_service(
-            "Pyroscope agent",
+            "PyroAgent",
             pyro::new_agent_service(url),
         ));
     }
@@ -324,7 +327,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             enabled_lets_encrypt = true;
             let domains: Vec<String> = value.split(',').map(|item| item.to_string()).collect();
             my_server.add_service(background_service(
-                &format!("Lets encrypt:{}", serve_conf.name),
+                &format!("LetsEncrypt: {}", serve_conf.name),
                 new_lets_encrypt_service(serve_conf.get_certificate_file(), domains),
             ));
         }
@@ -353,21 +356,21 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    if args.autorestart {
+    if args.autorestart || args.autoreload {
         my_server.add_service(background_service(
-            "Auto Restart",
-            new_auto_restart_service(auto_restart_check_interval),
+            "AutoRestart",
+            new_auto_restart_service(auto_restart_check_interval, args.autoreload),
         ));
     }
 
     if !tls_cert_info_list.is_empty() {
         my_server.add_service(background_service(
-            "Tls cert validity checker",
+            "TlsValidity",
             new_tls_validity_service(tls_cert_info_list),
         ));
     }
     my_server.add_service(background_service(
-        "Upstream health check",
+        "UpstreamHc",
         new_upstream_health_check_task(Duration::from_secs(10)),
     ));
 
@@ -382,7 +385,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
     #[cfg(feature = "perf")]
     {
-        my_server.add_service(background_service("Dhat heap", perf::DhatHeapService {}));
+        my_server.add_service(background_service("DhatHeap", perf::DhatHeapService {}));
     }
 
     info!("Server is running");

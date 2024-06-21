@@ -105,10 +105,11 @@ async fn hot_reload(
 
 struct AutoRestart {
     restart_unit: u32,
+    only_hot_reload: bool,
     count: AtomicU32,
 }
 
-pub fn new_auto_restart_service(interval: Duration) -> CommonServiceTask {
+pub fn new_auto_restart_service(interval: Duration, only_hot_reload: bool) -> CommonServiceTask {
     let mut restart_unit = 1_u32;
     let unit = Duration::from_secs(30);
     if interval > unit {
@@ -119,6 +120,7 @@ pub fn new_auto_restart_service(interval: Duration) -> CommonServiceTask {
         "Auto restart checker",
         interval.min(unit),
         AutoRestart {
+            only_hot_reload,
             restart_unit,
             count: AtomicU32::new(0),
         },
@@ -129,7 +131,9 @@ pub fn new_auto_restart_service(interval: Duration) -> CommonServiceTask {
 impl ServiceTask for AutoRestart {
     async fn run(&self) -> Option<bool> {
         let count = self.count.fetch_add(1, Ordering::Relaxed);
-        let hot_reload_only = if count > 0 && self.restart_unit > 1 {
+        let hot_reload_only = if self.only_hot_reload {
+            true
+        } else if count > 0 && self.restart_unit > 1 {
             count % self.restart_unit != 0
         } else {
             true

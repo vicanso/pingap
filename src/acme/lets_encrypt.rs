@@ -54,7 +54,7 @@ pub fn new_lets_encrypt_service(
     domains.sort();
 
     CommonServiceTask::new(
-        "Lets encrypt",
+        "LetsEncrypt",
         Duration::from_secs(30 * 60),
         LetsEncryptService {
             certificate_file,

@@ -393,9 +393,9 @@ impl ProxyHttp for Server {
         }
 
         let header = session.req_header_mut();
-        let host = util::get_host(header).unwrap_or_default();
         let location = get_location(&ctx.location);
         if location.is_none() {
+            let host = util::get_host(header).unwrap_or_default();
             ctx.response_body_size = HttpResponse::unknown_error(Bytes::from(format!(
                 "Location not found, host:{host} path:{}",
                 header.uri.path(),
@@ -696,7 +696,12 @@ impl ProxyHttp for Server {
         let buf = Bytes::from(content);
         ctx.status = Some(StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR));
         ctx.response_body_size = buf.len();
-        let _ = resp.insert_header(http::header::CONTENT_TYPE, "text/html; charset=utf-8");
+        let content_type = if buf.starts_with(b"{") {
+            "application/json; charset=utf-8"
+        } else {
+            "text/html; charset=utf-8"
+        };
+        let _ = resp.insert_header(http::header::CONTENT_TYPE, content_type);
         let _ = resp.insert_header(http::header::CONTENT_LENGTH, buf.len().to_string());
 
         // TODO: we shouldn't be closing downstream connections on internally generated errors

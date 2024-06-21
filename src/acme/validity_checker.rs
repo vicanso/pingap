@@ -29,6 +29,7 @@ struct ValidityChecker {
 fn validity_check(validity_list: &[(String, CertInfo)], time_offset: i64) -> Option<String> {
     let now = util::now().as_secs() as i64;
     for (name, cert) in validity_list.iter() {
+        // will expire check
         if now > cert.not_after - time_offset {
             let message = format!(
                 "{name} cert will be expired, issuer: {}, expired date: {:?}",
@@ -36,6 +37,7 @@ fn validity_check(validity_list: &[(String, CertInfo)], time_offset: i64) -> Opt
             );
             return Some(message);
         }
+        // not valid check
         if now < cert.not_before {
             let message = format!(
                 "{name} cert is not valid, issuer: {}, valid date: {:?}",
