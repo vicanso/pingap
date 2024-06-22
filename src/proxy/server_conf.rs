@@ -153,7 +153,7 @@ impl From<PingapConf> for Vec<ServerConf> {
                 threads,
                 lets_encrypt: item.lets_encrypt,
                 certificate_file: item.certificate_file,
-                enbaled_h2: item.enabled_h2.unwrap_or(true),
+                enbaled_h2: item.enabled_h2.unwrap_or_default(),
                 tcp_keepalive,
                 tcp_fastopen: item.tcp_fastopen,
                 error_template,
