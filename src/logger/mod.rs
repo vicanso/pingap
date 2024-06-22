@@ -15,7 +15,7 @@
 use crate::util;
 use std::error::Error;
 use std::path::Path;
-use tracing::Level;
+use tracing::{info, Level};
 
 pub struct LoggerParams {
     pub file: String,
@@ -92,6 +92,11 @@ pub fn logger_try_init(
             .with_writer(non_blocking)
             .init();
     }
+    info!(
+        buffered_lines,
+        utc_offset = chrono::Local::now().offset().to_string(),
+        "init tracing subscriber success",
+    );
 
     // // TODO get the status change from event callback
     // builder.format(move |buf, record| {

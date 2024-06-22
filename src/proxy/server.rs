@@ -763,7 +763,7 @@ impl ProxyHttp for Server {
         }
 
         if let Some(p) = &self.log_parser {
-            info!(log = p.format(session, ctx));
+            info!("{}", p.format(session, ctx));
         }
     }
 }
