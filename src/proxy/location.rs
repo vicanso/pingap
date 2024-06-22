@@ -19,7 +19,6 @@ use crate::state::State;
 use crate::util;
 use arc_swap::ArcSwap;
 use bytes::Bytes;
-use log::{debug, error};
 use once_cell::sync::Lazy;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
@@ -30,6 +29,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicI32, AtomicU64};
 use std::sync::Arc;
 use substring::Substring;
+use tracing::{debug, error};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -150,7 +150,7 @@ impl Location {
 
         let path = conf.path.clone().unwrap_or_default();
 
-        let lo = Location {
+        let location = Location {
             name: name.to_string(),
             path_selector: new_path_selector(&path)?,
             path,
@@ -164,9 +164,9 @@ impl Location {
             proxy_set_headers: format_headers(&conf.proxy_set_headers)?,
             client_max_body_size: conf.client_max_body_size.unwrap_or_default().as_u64() as usize,
         };
-        debug!("Location {lo}");
+        debug!(location = location.to_string(), "create a new location");
 
-        Ok(lo)
+        Ok(location)
     }
     /// Return `true` if the host and path match location.
     #[inline]
@@ -230,9 +230,13 @@ impl Location {
             if let Some(query) = header.uri.query() {
                 new_path = format!("{new_path}?{query}");
             }
-            debug!("New path: {new_path}");
+            debug!(new_path, "rewrite path");
             if let Err(e) = new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri)) {
-                error!("Location: {}, new path parse error: {e:?}", self.name);
+                error!(
+                    error = e.to_string(),
+                    location = self.name,
+                    "new path parse fail"
+                );
             }
             return true;
         }
@@ -285,7 +289,7 @@ impl Location {
 
         for name in plugins.iter() {
             if let Some(plugin) = global_plugins.get(name) {
-                debug!("Handle request plugin {name}, step: {step}");
+                debug!(name, step = step.to_string(), "handle request plugin");
                 let result = plugin.handle_request(step, session, ctx).await?;
                 if let Some(resp) = result {
                     // ingore http response status >= 900
@@ -315,7 +319,7 @@ impl Location {
         };
         for name in plugins.iter() {
             if let Some(plugin) = global_plugins.get(name) {
-                debug!("Handle response plugin {name}, step: {step}");
+                debug!(name, step = step.to_string(), "handle response plugin");
                 let data = plugin
                     .handle_response(step, session, ctx, upstream_response)
                     .await?;

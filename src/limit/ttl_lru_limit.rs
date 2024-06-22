@@ -13,11 +13,11 @@
 // limitations under the License.
 
 use crate::util;
-use log::debug;
 use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::time::Duration;
 use tokio::sync::RwLock;
+use tracing::debug;
 
 #[derive(Debug)]
 struct TtlLimit {
@@ -48,7 +48,7 @@ impl TtlLruLimit {
         let mut valid = false;
 
         if let Some(value) = g.peek(key) {
-            debug!("Ttl lru limit, key: {key}, value: {value:?}");
+            debug!(key, value = format!("{value:?}"), "ttl lru limit");
             // validate expired first
             if util::now() - value.created_at > self.ttl {
                 valid = true;

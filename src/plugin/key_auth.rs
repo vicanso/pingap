@@ -22,9 +22,9 @@ use crate::util;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::{HeaderName, StatusCode};
-use log::{debug, error};
 use pingora::proxy::Session;
 use std::str::FromStr;
+use tracing::{debug, error};
 
 pub struct KeyAuth {
     plugin_step: PluginStep,
@@ -92,7 +92,7 @@ impl TryFrom<&PluginConf> for KeyAuthParams {
 
 impl KeyAuth {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!("new key auth proxy plugin, params:{params:?}");
+        debug!(params = params.to_string(), "new key auth plugin");
         let params = KeyAuthParams::try_from(params)?;
 
         Ok(Self {
@@ -156,7 +156,7 @@ impl Plugin for KeyAuth {
                 session.req_header_mut().remove_header(name);
             } else if let Some(name) = &self.query {
                 if let Err(e) = util::remove_query_from_header(session.req_header_mut(), name) {
-                    error!("Remove query fail, error:{e:?}");
+                    error!(error = e.to_string(), "remove query fail");
                 }
             }
         }

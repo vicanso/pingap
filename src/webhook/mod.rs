@@ -14,11 +14,11 @@
 
 use crate::util;
 use crate::{config::get_app_name, state};
-use log::{error, info};
 use once_cell::sync::OnceCell;
 use serde_json::{Map, Value};
 use std::{fmt::Display, time::Duration};
 use strum::EnumString;
+use tracing::{error, info};
 
 static WEBHOOK_URL: OnceCell<String> = OnceCell::new();
 static WEBHOOK_CATEGORY: OnceCell<String> = OnceCell::new();
@@ -65,8 +65,9 @@ pub struct SendNotificationParams {
 
 pub fn send(params: SendNotificationParams) {
     info!(
-        "Webhook notification, category:{}, message:{}",
-        params.category, params.msg
+        category = params.category.to_string(),
+        message = params.msg,
+        "webhook notification"
     );
     let webhook_type = if let Some(value) = WEBHOOK_CATEGORY.get() {
         value.to_string()
@@ -145,13 +146,13 @@ pub fn send(params: SendNotificationParams) {
                 {
                     Ok(res) => {
                         if res.status().as_u16() < 400 {
-                            info!("Send webhook success");
+                            info!("send webhook success");
                         } else {
-                            error!("Send webhook fail, status:{}", res.status());
+                            error!(status = res.status().to_string(), "send webhook fail");
                         }
                     }
                     Err(e) => {
-                        error!("Send webhook fail, {e}");
+                        error!(error = e.to_string(), "send webhook fail");
                     }
                 };
             };

@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use async_trait::async_trait;
-use log::info;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
 use std::time::Duration;
 use tokio::time::interval;
+use tracing::info;
 
 #[async_trait]
 pub trait ServiceTask: Sync + Send {
@@ -48,9 +48,10 @@ impl BackgroundService for CommonServiceTask {
         let period_human: humantime::Duration = self.interval.into();
 
         info!(
-            "{} background servcie is runing, interval: {period_human}, description: {}",
-            self.name,
-            self.task.description()
+            name = self.name,
+            description = self.task.description(),
+            interval = period_human.to_string(),
+            "background service is running",
         );
 
         let mut period = interval(self.interval);

@@ -19,9 +19,9 @@ use crate::state::State;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
-use log::debug;
 use pingora::proxy::Session;
 use substring::Substring;
+use tracing::debug;
 
 pub struct RefererRestriction {
     plugin_step: PluginStep,
@@ -75,7 +75,10 @@ impl TryFrom<&PluginConf> for RefererRestrictionParams {
 
 impl RefererRestriction {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!("new referer restriction proxy plugin, params:{params:?}");
+        debug!(
+            params = params.to_string(),
+            "new referer restriction plugin"
+        );
         let params = RefererRestrictionParams::try_from(params)?;
         let mut message = params.message;
         if message.is_empty() {

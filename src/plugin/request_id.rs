@@ -19,10 +19,10 @@ use crate::http_extra::HTTP_HEADER_NAME_X_REQUEST_ID;
 use crate::state::State;
 use async_trait::async_trait;
 use http::HeaderName;
-use log::debug;
 use nanoid::nanoid;
 use pingora::proxy::Session;
 use std::str::FromStr;
+use tracing::debug;
 use uuid::Uuid;
 
 pub struct RequestId {
@@ -74,7 +74,7 @@ impl TryFrom<&PluginConf> for RequestIdParams {
 
 impl RequestId {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!("new request id proxy plugin, params:{params:?}");
+        debug!(params = params.to_string(), "new request id plugin");
         let params = RequestIdParams::try_from(params)?;
 
         Ok(Self {

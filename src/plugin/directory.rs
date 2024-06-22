@@ -25,7 +25,6 @@ use bytesize::ByteSize;
 use glob::glob;
 use http::{header, HeaderValue, StatusCode};
 use humantime::parse_duration;
-use log::{debug, error};
 use once_cell::sync::Lazy;
 use pingora::proxy::Session;
 use std::fs::Metadata;
@@ -35,6 +34,7 @@ use std::time::UNIX_EPOCH;
 use substring::Substring;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
+use tracing::{debug, error};
 use urlencoding::decode;
 
 static WEB_HTML: &str = r###"<!doctype html>
@@ -235,7 +235,7 @@ impl TryFrom<&PluginConf> for DirectoryParams {
 impl Directory {
     /// Creates a new directory upstream, which will serve static file of directory.
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!("new serve static file proxy plugin, params:{params:?}");
+        debug!(params = params.to_string(), "new serve static file plugin");
         let params = DirectoryParams::try_from(params)?;
         Ok(Self {
             autoindex: params.autoindex,
@@ -325,7 +325,7 @@ impl Plugin for Directory {
         }
         // convert to relative path
         let file = self.path.join(filename.substring(1, filename.len()));
-        debug!("Static serve {file:?}");
+        debug!(file = format!("{file:?}"), "static file serve");
         if self.autoindex && file.is_dir() {
             let resp = match get_autoindex_html(&file) {
                 Ok(html) => HttpResponse::html(html.into()),
@@ -364,7 +364,7 @@ impl Plugin for Directory {
                             ..Default::default()
                         },
                         Err(e) => {
-                            error!("Read data fail: {e}");
+                            error!(error = e.to_string(), "read data fail");
                             HttpResponse::bad_request(e.to_string().into())
                         }
                     }

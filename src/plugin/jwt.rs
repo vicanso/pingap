@@ -21,11 +21,11 @@ use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
 use http::StatusCode;
-use log::debug;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use serde::{Deserialize, Serialize};
 use substring::Substring;
+use tracing::debug;
 
 struct JwtParams {
     plugin_steps: Vec<PluginStep>,
@@ -110,7 +110,7 @@ pub struct JwtAuth {
 
 impl JwtAuth {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!("new jwt auth proxy plugin, params:{params:?}");
+        debug!(params = params.to_string(), "new jwt auth plugin");
         let params = JwtParams::try_from(params)?;
         let mut step = PluginStep::Request;
         for item in params.plugin_steps {

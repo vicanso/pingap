@@ -18,7 +18,6 @@ use crate::service::new_auto_restart_service;
 use clap::Parser;
 use config::{PingapConf, PluginConf};
 use crossbeam_channel::Sender;
-use log::{error, info};
 use pingora::server;
 use pingora::server::configuration::Opt;
 use pingora::services::background::background_service;
@@ -27,6 +26,7 @@ use state::get_start_time;
 use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::{error, info};
 
 mod acme;
 mod config;
@@ -119,8 +119,6 @@ fn new_server_conf(args: &Args, conf: &PingapConf) -> server::configuration::Ser
         server_conf.work_stealing = work_stealing
     }
 
-    info!("Server config: {server_conf:?}");
-
     server_conf
 }
 
@@ -186,7 +184,7 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
         parse_admin_proxy_plugin(&args.admin.unwrap_or_default());
 
     if let Err(e) = plugin::init_plugins(vec![(name, proxy_plugin_info)]) {
-        error!("init plugins fail, {e}");
+        error!(error = e.to_string(), "init plugins fail",);
     }
     config::set_config_path(&args.conf);
     let mut my_server = server::Server::new(None)?;
@@ -224,7 +222,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         &conf.basic.webhook_notifications.clone().unwrap_or_default(),
     );
 
-    logger::logger_try_init(logger::LoggerParams {
+    let _guard = logger::logger_try_init(logger::LoggerParams {
         capacity: basic_conf.log_capacity.unwrap_or_default().as_u64() as usize,
         file: args.log.clone().unwrap_or_default(),
         level: basic_conf.log_level.clone().unwrap_or_default(),
@@ -315,7 +313,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     if let Err(e) = plugin::init_plugins(plugin_confs) {
-        error!("init plugins fail, {e}");
+        error!(error = e.to_string(), "init plugins fail",);
     }
     let mut enabled_lets_encrypt = false;
     let mut exits_80_server = false;
@@ -377,9 +375,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     if let Some(plugins) = plugin::get_plugins() {
         for (name, plugin) in plugins {
             info!(
-                "plugin {name}, category:{}, step:{}",
-                plugin.category(),
-                plugin.step(),
+                name,
+                category = plugin.category().to_string(),
+                step = plugin.step(),
             );
         }
     }
@@ -398,6 +396,6 @@ fn run() -> Result<(), Box<dyn Error>> {
 fn main() {
     if let Err(e) = run() {
         println!("{e}");
-        error!("{e}");
+        error!(error = e.to_string());
     }
 }

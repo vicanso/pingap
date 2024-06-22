@@ -21,7 +21,6 @@ use bytes::{BufMut, BytesMut};
 use bytesize::ByteSize;
 use http::Method;
 use humantime::parse_duration;
-use log::debug;
 use once_cell::sync::Lazy;
 use pingora::cache::eviction::simple_lru::Manager;
 use pingora::cache::eviction::EvictionManager;
@@ -31,6 +30,7 @@ use pingora::cache::{MemCache, Storage};
 use pingora::proxy::Session;
 use std::str::FromStr;
 use std::time::Duration;
+use tracing::debug;
 
 // TODO mem cache is for test
 static MEM_BACKEND: Lazy<MemCache> = Lazy::new(MemCache::new);
@@ -143,7 +143,7 @@ impl TryFrom<&PluginConf> for CacheParams {
 
 impl Cache {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!("new cache storage proxy plugin, params: {params:?}");
+        debug!(params = params.to_string(), "new http cache plugin");
         let params = CacheParams::try_from(params)?;
 
         Ok(Self {

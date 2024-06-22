@@ -16,8 +16,8 @@ use crate::service::{CommonServiceTask, ServiceTask};
 use crate::util;
 use crate::webhook;
 use async_trait::async_trait;
-use log::warn;
 use std::time::Duration;
+use tracing::warn;
 
 use super::CertInfo;
 
@@ -53,7 +53,7 @@ fn validity_check(validity_list: &[(String, CertInfo)], time_offset: i64) -> Opt
 impl ServiceTask for ValidityChecker {
     async fn run(&self) -> Option<bool> {
         if let Some(message) = validity_check(&self.tls_cert_info_list, self.time_offset) {
-            warn!("{message}");
+            warn!(message);
             webhook::send(webhook::SendNotificationParams {
                 level: webhook::NotificationLevel::Warn,
                 category: webhook::NotificationCategory::TlsValidity,

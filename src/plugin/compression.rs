@@ -18,11 +18,11 @@ use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
 use http::HeaderValue;
-use log::debug;
 use once_cell::sync::Lazy;
 use pingora::modules::http::compression::ResponseCompression;
 use pingora::protocols::http::compression::Algorithm;
 use pingora::proxy::Session;
+use tracing::debug;
 
 const ZSTD: &str = "zstd";
 const BR: &str = "br";
@@ -69,7 +69,7 @@ impl TryFrom<&PluginConf> for CompressionParams {
 
 impl Compression {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!("new compresson proxy plugin, params:{params:?}");
+        debug!(params = params.to_string(), "new compresson plugin");
         let params = CompressionParams::try_from(params)?;
         let support_compression = params.gzip_level + params.br_level + params.zstd_level > 0;
         Ok(Self {
@@ -126,7 +126,7 @@ impl Plugin for Compression {
             } else {
                 0
             };
-            debug!("Compression level:{level}");
+            debug!(level, "compression level");
             if level > 0 {
                 if let Some(c) = session
                     .downstream_modules_ctx

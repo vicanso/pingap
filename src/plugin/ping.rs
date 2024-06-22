@@ -21,6 +21,7 @@ use bytes::Bytes;
 use http::StatusCode;
 use once_cell::sync::Lazy;
 use pingora::proxy::Session;
+use tracing::debug;
 
 pub struct Ping {
     path: String,
@@ -34,6 +35,7 @@ static PONG_RESPONSE: Lazy<HttpResponse> = Lazy::new(|| HttpResponse {
 
 impl Ping {
     pub fn new(params: &PluginConf) -> Result<Self> {
+        debug!(params = params.to_string(), "new ping plugin");
         let step = get_step_conf(params);
         if step != PluginStep::Request {
             return Err(Error::Invalid {

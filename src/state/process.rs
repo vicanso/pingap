@@ -14,7 +14,6 @@
 
 use crate::util;
 use crate::webhook;
-use log::{error, info};
 use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
 use std::io;
@@ -23,6 +22,7 @@ use std::process;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
+use tracing::{error, info};
 
 static START_TIME: Lazy<Duration> = Lazy::new(util::now);
 
@@ -70,13 +70,13 @@ static PROCESS_RESTARTING: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false
 pub fn restart_now() -> io::Result<process::Output> {
     let restarting = PROCESS_RESTARTING.swap(true, Ordering::Relaxed);
     if restarting {
-        error!("Pingap is restarting now");
+        error!("pingap is restarting now");
         return Err(std::io::Error::new(
             io::ErrorKind::InvalidInput,
             "Pingap is restarting",
         ));
     }
-    info!("Pingap will restart");
+    info!("pingap will restart");
     webhook::send(webhook::SendNotificationParams {
         level: webhook::NotificationLevel::Info,
         category: webhook::NotificationCategory::Restart,
@@ -103,7 +103,7 @@ pub fn restart() {
         if count == PROCESS_RESTAR_COUNT.load(Ordering::Relaxed) {
             match restart_now() {
                 Err(e) => {
-                    error!("Restart fail, error: {e}");
+                    error!(error = e.to_string(), "restart fail");
                     webhook::send(webhook::SendNotificationParams {
                         level: webhook::NotificationLevel::Error,
                         category: webhook::NotificationCategory::RestartFail,

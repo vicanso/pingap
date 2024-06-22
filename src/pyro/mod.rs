@@ -13,12 +13,12 @@
 // limitations under the License.
 
 use async_trait::async_trait;
-use log::info;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
 use pyroscope::{pyroscope::PyroscopeAgentRunning, PyroscopeAgent, PyroscopeError};
 use pyroscope_pprofrs::{pprof_backend, PprofConfig};
 use snafu::{ResultExt, Snafu};
+use tracing::info;
 use url::Url;
 
 #[derive(Debug, Snafu)]
@@ -93,6 +93,6 @@ fn start_pyroscope(value: &str) -> Result<PyroscopeAgent<PyroscopeAgentRunning>>
         // .tags([("app", "Rust"), ("TagB", "ValueB")].to_vec())
         .build()
         .context(PyroscopeSnafu)?;
-    info!("Connect to pyroscope, app:{application_name}, url:{connect_url}");
+    info!("connect to pyroscope, app:{application_name}, url:{connect_url}");
     client.start().context(PyroscopeSnafu)
 }

@@ -20,11 +20,11 @@ use crate::util;
 use async_trait::async_trait;
 use http::StatusCode;
 use humantime::parse_duration;
-use log::debug;
 use pingora::proxy::Session;
 use pingora_limits::inflight::Inflight;
 use pingora_limits::rate::Rate;
 use std::time::Duration;
+use tracing::debug;
 
 #[derive(PartialEq, Debug)]
 pub enum LimitTag {
@@ -93,7 +93,7 @@ impl TryFrom<&PluginConf> for LimiterParams {
 
 impl Limiter {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!("new limit proxy plugin, params:{params:?}");
+        debug!(params = params.to_string(), "new limit plugin");
         let params = LimiterParams::try_from(params)?;
         let mut inflight = None;
         let mut rate = None;

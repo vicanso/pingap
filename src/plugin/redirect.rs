@@ -21,6 +21,7 @@ use crate::util;
 use async_trait::async_trait;
 use http::StatusCode;
 use pingora::proxy::Session;
+use tracing::debug;
 
 pub struct Redirect {
     prefix: String,
@@ -30,6 +31,7 @@ pub struct Redirect {
 
 impl Redirect {
     pub fn new(params: &PluginConf) -> Result<Self> {
+        debug!(params = params.to_string(), "new redirect plugin");
         let step = get_step_conf(params);
         if step != PluginStep::Request {
             return Err(Error::Invalid {

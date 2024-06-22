@@ -21,10 +21,10 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
 use ipnet::IpNet;
-use log::debug;
 use pingora::proxy::Session;
 use std::net::IpAddr;
 use std::str::FromStr;
+use tracing::debug;
 
 pub struct IpRestriction {
     plugin_step: PluginStep,
@@ -77,7 +77,7 @@ impl TryFrom<&PluginConf> for IpRestrictionParams {
 
 impl IpRestriction {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!("new ip restriction proxy plugin, params:{params:?}");
+        debug!(params = params.to_string(), "new ip restriction plugin");
         let params = IpRestrictionParams::try_from(params)?;
         let mut message = params.message;
         if message.is_empty() {

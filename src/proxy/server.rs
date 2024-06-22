@@ -31,7 +31,6 @@ use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
-use log::{debug, error, info};
 use once_cell::sync::Lazy;
 use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::CacheControl;
@@ -55,6 +54,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
+use tracing::{debug, error, info};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -131,7 +131,7 @@ const META_DEFAULTS: CacheMetaDefaults = CacheMetaDefaults::new(|_| Some(1), 1, 
 impl Server {
     /// Create a new server for http proxy.
     pub fn new(conf: &ServerConf) -> Result<Self> {
-        debug!("Server: {conf}");
+        debug!(config = conf.to_string(), "new server",);
         let mut p = None;
         if let Some(access_log) = &conf.access_log {
             p = Some(Parser::from(access_log.as_str()));
@@ -188,7 +188,7 @@ impl Server {
                     tls_cert = Some(cert_info.get_cert());
                     tls_key = Some(cert_info.get_key());
                 }
-                Err(e) => error!("get lets encrypt cert fail, {e}"),
+                Err(e) => error!(error = e.to_string(), "get lets encrypt cert fail"),
             };
         }
         let is_tls = tls_cert.is_some();
@@ -217,8 +217,11 @@ impl Server {
             threads = Some(1);
         }
         info!(
-            "Server({}) is linsten on:{addr}, threads:{threads:?}, tls:{is_tls}",
-            &self.name
+            name = self.name,
+            addr,
+            threads = format!("{threads:?}"),
+            is_tls,
+            "server is listening"
         );
         let cipher_list = self.tls_cipher_list.clone();
         let ciphersuites = self.tls_ciphersuites.clone();
@@ -252,18 +255,18 @@ impl Server {
 
                 if let Some(cipher_list) = &cipher_list {
                     if let Err(e) = tls_settings.set_cipher_list(cipher_list) {
-                        error!("Set cipher list fail, error:{e:?}");
+                        error!(error = e.to_string(), "set cipher list fail");
                     }
                 }
                 if let Some(ciphersuites) = &ciphersuites {
                     if let Err(e) = tls_settings.set_ciphersuites(ciphersuites) {
-                        error!("Set ciphersuites fail, error:{e:?}");
+                        error!(error = e.to_string(), "set ciphersuites fail");
                     }
                 }
 
                 if let Some(version) = util::convert_tls_version(&tls_min_version) {
                     if let Err(e) = tls_settings.set_min_proto_version(Some(version)) {
-                        error!("Set tls min proto version fail, error:{e:?}");
+                        error!(error = e.to_string(), "set  tls min proto version fail");
                     }
                     if version == pingora::tls::ssl::SslVersion::TLS1_1 {
                         tls_settings.set_security_level(0);
@@ -272,16 +275,16 @@ impl Server {
                 }
                 if let Some(version) = util::convert_tls_version(&tls_max_version) {
                     if let Err(e) = tls_settings.set_max_proto_version(Some(version)) {
-                        error!("Set tls max proto version fail, error:{e:?}");
+                        error!(error = e.to_string(), "set  tls max proto version fail");
                     }
                 }
 
                 // tls_settings.set_min_proto_version(version)
                 if let Some(min_version) = tls_settings.min_proto_version() {
-                    info!("Tls min proto version: {min_version:?}");
+                    info!(min_version = format!("{min_version:?}"), "tls proto");
                 }
                 if let Some(max_version) = tls_settings.max_proto_version() {
-                    info!("Tls max proto version: {max_version:?}");
+                    info!(max_version = format!("{max_version:?}"), "tls proto");
                 }
                 lb.add_tls_with_settings(addr, tcp_socket_options.clone(), tls_settings);
             } else if let Some(opt) = &tcp_socket_options {
@@ -415,7 +418,7 @@ impl ProxyHttp for Server {
         }
         let lo = location.unwrap();
 
-        debug!("Location {} is matched", lo.name);
+        debug!(name = lo.name, "location is matched");
         lo.rewrite(header);
 
         // body limit
@@ -725,7 +728,10 @@ impl ProxyHttp for Server {
             .write_response_header(Box::new(resp))
             .await
             .unwrap_or_else(|e| {
-                error!("failed to send error response to downstream: {e}");
+                error!(
+                    error = e.to_string(),
+                    "send error response to downstream fail"
+                );
             });
 
         let _ = server_session.write_response_body(buf, true).await;
@@ -757,7 +763,7 @@ impl ProxyHttp for Server {
         }
 
         if let Some(p) = &self.log_parser {
-            info!("{}", p.format(session, ctx));
+            info!(log = p.format(session, ctx), "access log");
         }
     }
 }

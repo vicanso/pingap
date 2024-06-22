@@ -19,8 +19,8 @@ use crate::plugin::{get_int_conf, get_str_slice_conf};
 use crate::state::State;
 use async_trait::async_trait;
 use http::StatusCode;
-use log::debug;
 use pingora::proxy::Session;
+use tracing::debug;
 
 pub struct MockResponse {
     pub path: String,
@@ -31,7 +31,7 @@ pub struct MockResponse {
 impl MockResponse {
     /// Creates a new mock response upstream, which will return a mock data.
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!("new mock proxy plugin, params:{params:?}");
+        debug!(params = params.to_string(), "new mock plugin");
         let step = get_step_conf(params);
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&step) {
             return Err(Error::Invalid {

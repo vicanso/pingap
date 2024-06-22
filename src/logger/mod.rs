@@ -12,11 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::webhook;
-use log::Level;
+use crate::util;
 use std::error::Error;
-use std::io::{BufWriter, Write};
-use std::os::unix::fs::OpenOptionsExt;
+use std::path::Path;
+use tracing::Level;
 
 pub struct LoggerParams {
     pub file: String,
@@ -24,55 +23,78 @@ pub struct LoggerParams {
     pub capacity: usize,
 }
 
-pub fn logger_try_init(params: LoggerParams) -> Result<(), Box<dyn Error>> {
-    let mut builder = env_logger::Builder::from_env(env_logger::Env::default());
-    if !params.level.is_empty() {
+pub fn logger_try_init(
+    params: LoggerParams,
+) -> Result<tracing_appender::non_blocking::WorkerGuard, Box<dyn Error>> {
+    let level = if !params.level.is_empty() {
         match params.level.to_lowercase().as_str() {
-            "error" => builder.filter_level(log::LevelFilter::Error),
-            "warn" => builder.filter_level(log::LevelFilter::Warn),
-            "debug" => builder.filter_level(log::LevelFilter::Debug),
-            _ => builder.filter_level(log::LevelFilter::Info),
-        };
-    } else if std::env::var(env_logger::DEFAULT_FILTER_ENV).is_err() {
-        builder.filter_level(log::LevelFilter::Error);
+            "error" => Level::ERROR,
+            "warn" => Level::WARN,
+            "debug" => Level::DEBUG,
+            _ => Level::INFO,
+        }
+    } else {
+        Level::INFO
+    };
+    let mut builder = tracing_appender::non_blocking::NonBlockingBuilder::default();
+    let mut buffered_lines = params.capacity / (1024 * 2) * 2;
+    if buffered_lines < 16 {
+        buffered_lines = 16;
     }
-    if !params.file.is_empty() {
-        let capacity = params.capacity;
-        let file = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            // open read() in case there are no readers
-            // available otherwise we will panic with
-            .read(true)
-            .custom_flags(libc::O_NONBLOCK)
-            .open(&params.file)?;
-        if capacity > 512 {
-            let w = BufWriter::with_capacity(capacity, file);
-            builder.target(env_logger::Target::Pipe(Box::new(w)));
+    builder = builder.buffered_lines_limit(buffered_lines);
+    builder = builder.thread_name("pingap");
+    let (non_blocking, guard) = if params.file.is_empty() {
+        builder.finish(std::io::stdout())
+    } else {
+        let file = util::resolve_path(&params.file);
+        let file = Path::new(&file);
+        let filename = if let Some(filename) = file.file_name() {
+            filename.to_string_lossy().to_string()
         } else {
-            builder.target(env_logger::Target::Pipe(Box::new(file)));
-        }
-    }
+            "pingap.log".to_string()
+        };
+        let dir = file.parent().ok_or(util::new_internal_error(
+            400,
+            "log path is invalid".to_string(),
+        ))?;
 
-    // TODO get the status change from event callback
-    builder.format(move |buf, record| {
-        let msg = format!("{}", record.args());
-        if record.level() == Level::Warn && msg.contains("becomes unhealthy") {
-            webhook::send(webhook::SendNotificationParams {
-                level: webhook::NotificationLevel::Warn,
-                category: webhook::NotificationCategory::BackendStatus,
-                msg: format!("{}", record.args()),
-            });
-        }
+        let file_appender =
+            tracing_appender::rolling::daily(dir.to_string_lossy().to_string(), filename);
+        builder.finish(file_appender)
+    };
+    let seconds = chrono::Local::now().offset().local_minus_utc();
+    let hours = (seconds / 3600) as i8;
+    let minutes = ((seconds % 3600) / 60) as i8;
 
-        writeln!(
-            buf,
-            "{} {} {msg}",
-            record.level(),
-            chrono::Local::now().to_rfc3339(),
-        )
-    });
+    tracing_subscriber::fmt()
+        .with_max_level(level)
+        .with_ansi(cfg!(debug_assertions))
+        .with_timer(tracing_subscriber::fmt::time::OffsetTime::new(
+            time::UtcOffset::from_hms(hours, minutes, 0).unwrap(),
+            time::format_description::well_known::Rfc3339,
+        ))
+        .with_writer(non_blocking)
+        .init();
 
-    builder.try_init()?;
-    Ok(())
+    // // TODO get the status change from event callback
+    // builder.format(move |buf, record| {
+    //     let msg = format!("{}", record.args());
+    //     if record.level() == Level::Warn && msg.contains("becomes unhealthy") {
+    //         webhook::send(webhook::SendNotificationParams {
+    //             level: webhook::NotificationLevel::Warn,
+    //             category: webhook::NotificationCategory::BackendStatus,
+    //             msg: format!("{}", record.args()),
+    //         });
+    //     }
+
+    //     writeln!(
+    //         buf,
+    //         "{} {} {msg}",
+    //         record.level(),
+    //         chrono::Local::now().to_rfc3339(),
+    //     )
+    // });
+
+    // builder.try_init()?;
+    Ok(guard)
 }

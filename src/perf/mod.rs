@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use async_trait::async_trait;
-use log::info;
 use pingora::{server::ShutdownWatch, services::background::BackgroundService};
+use tracing::info;
 
 pub struct DhatHeapService {}
 
@@ -21,9 +21,9 @@ pub struct DhatHeapService {}
 impl BackgroundService for DhatHeapService {
     /// The lets encrypt servier checks the cert, it will get news cert if current is invalid.
     async fn start(&self, mut shutdown: ShutdownWatch) {
-        info!("Dhat heap service is running");
+        info!("dhat heap service is running");
         let _profiler = dhat::Profiler::new_heap();
         let _ = shutdown.changed().await;
-        info!("Dhat heap service is stopping");
+        info!("dhat heap service is stopping");
     }
 }

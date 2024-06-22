@@ -23,11 +23,11 @@ use bytes::Bytes;
 use cookie::Cookie;
 use http::{header, HeaderValue, Method, StatusCode};
 use humantime::parse_duration;
-use log::debug;
 use nanoid::nanoid;
 use pingora::proxy::Session;
 use sha2::{Digest, Sha256};
 use std::time::Duration;
+use tracing::debug;
 
 pub struct Csrf {
     plugin_step: PluginStep,
@@ -97,7 +97,7 @@ impl TryFrom<&PluginConf> for CsrfParams {
 
 impl Csrf {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!("new csrf plugin, params:{params:?}");
+        debug!(params = params.to_string(), "new csrf plugin");
         let params = CsrfParams::try_from(params)?;
         let ttl = if let Some(ttl) = params.ttl {
             ttl.as_secs()

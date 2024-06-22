@@ -20,9 +20,9 @@ use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::restart;
 use crate::{proxy, webhook};
 use async_trait::async_trait;
-use log::{error, info};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
+use tracing::{error, info};
 
 async fn hot_reload(
     hot_reload_only: bool,
@@ -58,30 +58,30 @@ async fn hot_reload(
     if should_reload_upstream {
         match proxy::try_init_upstreams(&conf.upstreams) {
             Err(e) => {
-                error!("Reload upstream fail, error: {e:?}");
+                error!(error = e.to_string(), "reload upstream fail");
             }
             Ok(()) => {
-                info!("Reload upstream success");
+                info!("reload upstream success");
             }
         };
     }
     if should_reload_location {
         match proxy::try_init_locations(&conf.locations) {
             Err(e) => {
-                error!("Reload location fail, error: {e:?}");
+                error!(error = e.to_string(), "reload location fail");
             }
             Ok(()) => {
-                info!("Reload location success");
+                info!("reload location success");
             }
         };
     }
     if should_reload_server_location {
         match proxy::try_init_server_locations(&conf.servers, &conf.locations) {
             Err(e) => {
-                error!("Reload server location fail, error: {e:?}");
+                error!(error = e.to_string(), "reload server fail");
             }
             Ok(()) => {
-                info!("Reload server location success");
+                info!("reload server location success");
             }
         };
     }
@@ -150,7 +150,7 @@ impl ServiceTask for AutoRestart {
                 }
             }
             Err(e) => {
-                error!("Auto restart validate fail, {e}");
+                error!(error = e.to_string(), "auto restart validate fail");
             }
         }
         None

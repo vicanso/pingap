@@ -20,7 +20,6 @@ use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use futures_util::FutureExt;
 use humantime::parse_duration;
-use log::{debug, error, info};
 use once_cell::sync::Lazy;
 use pingora::http::RequestHeader;
 use pingora::lb::health_check::{HealthCheck, HttpHealthCheck, TcpHealthCheck};
@@ -39,6 +38,7 @@ use std::net::ToSocketAddrs;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::{debug, error, info};
 use url::Url;
 
 #[derive(Debug, Snafu)]
@@ -251,13 +251,14 @@ fn new_http_health_check(conf: &HealthCheckConf) -> HttpHealthCheck {
             // 忽略append header fail
             if let Err(e) = req.append_header("Host", &conf.host) {
                 error!(
-                    "Http health check append host fail, host:{}, error:{e:?}",
-                    conf.host
+                    error = e.to_string(),
+                    host = conf.host,
+                    "http health check append host fail"
                 );
             }
             check.req = req;
         }
-        Err(e) => error!("Http health check error:{e:?}"),
+        Err(e) => error!(error = e.to_string(), "http health check fail"),
     }
 
     check
@@ -272,14 +273,19 @@ fn new_health_check(
         let mut check = TcpHealthCheck::new();
         check.peer_template.options.connection_timeout = Some(Duration::from_secs(3));
         info!(
-            "Tcp health check, name: {name}, options:{:?}",
-            check.peer_template.options
+            name,
+            options = format!("{:?}", check.peer_template.options),
+            "new health check"
         );
         check
     } else {
         let health_check_conf: HealthCheckConf = health_check.try_into()?;
         health_check_frequency = health_check_conf.check_frequency;
-        info!("Http health check, conf:{health_check_conf:?}");
+        info!(
+            name,
+            health_check_conf = format!("{health_check_conf:?}"),
+            "new http health check"
+        );
         match health_check_conf.schema.as_str() {
             "http" | "https" => Box::new(new_http_health_check(&health_check_conf)),
             _ => Box::new(new_tcp_health_check(&health_check_conf)),
@@ -451,7 +457,7 @@ impl Upstream {
             peer_tracer,
             tracer,
         };
-        debug!("Upstream {up}");
+        debug!(upstream = up.to_string(), "new upstream");
         Ok(up)
     }
 
@@ -561,7 +567,7 @@ impl ServiceTask for HealthCheckTask {
                     return;
                 }
 
-                debug!("Health check running, upstream: {name}");
+                debug!(name, "health check is running",);
                 if let Some(lb) = up.as_round_robind() {
                     lb.backends()
                         .run_health_check(lb.parallel_health_check)
@@ -571,7 +577,7 @@ impl ServiceTask for HealthCheckTask {
                         .run_health_check(lb.parallel_health_check)
                         .await;
                 }
-                debug!("Health check done, upstream: {name}");
+                debug!(name, "health check is done",);
             })
         });
         futures::future::join_all(jobs).await;

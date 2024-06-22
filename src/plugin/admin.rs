@@ -33,7 +33,6 @@ use bytesize::ByteSize;
 use hex::encode;
 use http::Method;
 use http::{header, HeaderValue, StatusCode};
-use log::{debug, error};
 use memory_stats::memory_stats;
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
@@ -42,6 +41,7 @@ use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use substring::Substring;
+use tracing::{debug, error};
 
 #[derive(RustEmbed)]
 #[folder = "dist/"]
@@ -155,7 +155,7 @@ impl TryFrom<&PluginConf> for AdminServeParams {
 
 impl AdminServe {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!("new admin server proxy plugin, params:{params:?}");
+        debug!(params = params.to_string(), "new admin server plugin");
         let params = AdminServeParams::try_from(params)?;
 
         Ok(Self {
@@ -216,13 +216,13 @@ impl AdminServe {
     async fn remove_config(&self, category: &str, name: &str) -> pingora::Result<HttpResponse> {
         let mut conf = self.load_config().await?;
         conf.remove(category, name).map_err(|e| {
-            error!("failed to validate config: {e}");
+            error!(error = e.to_string(), "validate config fail");
             util::new_internal_error(400, e.to_string())
         })?;
         save_config(&config::get_config_path(), &conf, category)
             .await
             .map_err(|e| {
-                error!("failed to save config: {e}");
+                error!(error = e.to_string(), "save config fail");
                 util::new_internal_error(400, e.to_string())
             })?;
         Ok(HttpResponse::no_content())
@@ -242,35 +242,35 @@ impl AdminServe {
         match category {
             CATEGORY_UPSTREAM => {
                 let upstream: UpstreamConf = serde_json::from_slice(&buf).map_err(|e| {
-                    error!("failed to deserialize upstream: {e}");
+                    error!(error = e.to_string(), "descrialize upstream fail");
                     util::new_internal_error(400, e.to_string())
                 })?;
                 conf.upstreams.insert(key, upstream);
             }
             CATEGORY_LOCATION => {
                 let location: LocationConf = serde_json::from_slice(&buf).map_err(|e| {
-                    error!("failed to deserialize location: {e}");
+                    error!(error = e.to_string(), "descrialize location fail");
                     util::new_internal_error(400, e.to_string())
                 })?;
                 conf.locations.insert(key, location);
             }
             CATEGORY_SERVER => {
                 let server: ServerConf = serde_json::from_slice(&buf).map_err(|e| {
-                    error!("failed to deserialize server: {e}");
+                    error!(error = e.to_string(), "descrialize server fail");
                     util::new_internal_error(400, e.to_string())
                 })?;
                 conf.servers.insert(key, server);
             }
             CATEGORY_PLUGIN => {
                 let plugin: PluginConf = serde_json::from_slice(&buf).map_err(|e| {
-                    error!("failed to deserialize proxy plugin: {e}");
+                    error!(error = e.to_string(), "descrialize plugin fail");
                     util::new_internal_error(400, e.to_string())
                 })?;
                 conf.plugins.insert(key, plugin);
             }
             _ => {
                 let basic_conf: BasicConf = serde_json::from_slice(&buf).map_err(|e| {
-                    error!("failed to basic info: {e}");
+                    error!(error = e.to_string(), "descrialize basic fail");
                     util::new_internal_error(400, e.to_string())
                 })?;
                 conf.basic = basic_conf;
@@ -279,7 +279,7 @@ impl AdminServe {
         save_config(&config::get_config_path(), &conf, category)
             .await
             .map_err(|e| {
-                error!("failed to save config: {e}");
+                error!(error = e.to_string(), "save config fail");
                 util::new_internal_error(400, e.to_string())
             })?;
         Ok(HttpResponse::no_content())

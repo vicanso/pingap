@@ -18,10 +18,10 @@ use crate::state::State;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::header::HeaderName;
-use log::debug;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use std::str::FromStr;
+use tracing::debug;
 
 pub struct ResponseHeaders {
     plugin_step: PluginStep,
@@ -90,7 +90,7 @@ impl TryFrom<&PluginConf> for ResponseHeadersParams {
 
 impl ResponseHeaders {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!("new stats proxy plugin, params:{params:?}");
+        debug!(params = params.to_string(), "new stats plugin");
         let params = ResponseHeadersParams::try_from(params)?;
 
         Ok(Self {

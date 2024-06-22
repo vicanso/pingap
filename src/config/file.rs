@@ -17,9 +17,9 @@ use crate::util;
 use async_trait::async_trait;
 use futures_util::TryFutureExt;
 use glob::glob;
-use log::debug;
 use std::path::Path;
 use tokio::fs;
+use tracing::debug;
 
 pub struct FileStorage {
     path: String,
@@ -68,7 +68,7 @@ impl ConfigStorage for FileStorage {
                     source: e,
                     file: f.to_string_lossy().to_string(),
                 })?;
-                debug!("Load config from: {:?}", f.file_name());
+                debug!(filename = format!("{f:?}"), "load config");
                 data.append(&mut buf);
                 data.push(0x0a);
             }

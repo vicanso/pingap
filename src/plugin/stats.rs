@@ -20,11 +20,11 @@ use crate::util;
 use async_trait::async_trait;
 use bytesize::ByteSize;
 use http::StatusCode;
-use log::debug;
 use memory_stats::memory_stats;
 use pingora::proxy::Session;
 use serde::Serialize;
 use std::time::Duration;
+use tracing::debug;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -73,7 +73,7 @@ impl TryFrom<&PluginConf> for StatsParams {
 
 impl Stats {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!("new stats proxy plugin, params:{params:?}");
+        debug!(params = params.to_string(), "new stats plugin");
         let params = StatsParams::try_from(params)?;
 
         Ok(Self {

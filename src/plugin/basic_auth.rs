@@ -21,8 +21,8 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::Bytes;
 use http::HeaderValue;
 use http::StatusCode;
-use log::debug;
 use pingora::proxy::Session;
+use tracing::debug;
 
 struct BasicAuthParams {
     plugin_step: PluginStep,
@@ -69,7 +69,7 @@ pub struct BasicAuth {
 
 impl BasicAuth {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!("new basic auth proxy plugin, params:{params:?}");
+        debug!(params = params.to_string(), "new basic auth plugin");
         let params = BasicAuthParams::try_from(params)?;
 
         Ok(Self {

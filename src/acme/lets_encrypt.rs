@@ -24,7 +24,6 @@ use http::StatusCode;
 use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder, OrderStatus,
 };
-use log::{error, info};
 use once_cell::sync::OnceCell;
 use pingora::proxy::Session;
 use rcgen::{Certificate, CertificateParams, DistinguishedName};
@@ -34,6 +33,7 @@ use std::time::Duration;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
+use tracing::{error, info};
 
 static LETS_ENCRYPT: OnceCell<Mutex<HashMap<String, String>>> = OnceCell::new();
 
@@ -78,10 +78,10 @@ impl ServiceTask for LetsEncryptService {
                 Ok(()) => {
                     info!("Renew cert success");
                     if let Err(e) = restart_now() {
-                        error!("Restart fail, error: {e}");
+                        error!(error = e.to_string(), "restart fail");
                     }
                 }
-                Err(e) => error!("Renew cert fail, error: {e}"),
+                Err(e) => error!(error = e.to_string(), "renew cert fail"),
             };
         }
         None
@@ -132,10 +132,7 @@ pub async fn handle_lets_encrypt(session: &mut Session, ctx: &mut State) -> ping
 async fn new_lets_encrypt(certificate_file: &PathBuf, domains: &[String]) -> Result<()> {
     let mut domains: Vec<String> = domains.to_vec();
     domains.sort();
-    info!(
-        "Lets encrypt start generate acme, domains: {}",
-        domains.join(",")
-    );
+    info!(domains = domains.join(","), "acme form let's encrypt");
     let (account, _) = Account::create(
         &NewAccount {
             contact: &[],
@@ -173,7 +170,10 @@ async fn new_lets_encrypt(certificate_file: &PathBuf, domains: &[String]) -> Res
     let mut challenges = Vec::with_capacity(authorizations.len());
 
     for authz in &authorizations {
-        info!("Lets encrypt authz status: {:?}", authz.status);
+        info!(
+            status = format!("{:?}", authz.status),
+            "acme from let's encrypt"
+        );
         match authz.status {
             instant_acme::AuthorizationStatus::Pending => {}
             instant_acme::AuthorizationStatus::Valid => continue,
@@ -194,7 +194,7 @@ async fn new_lets_encrypt(certificate_file: &PathBuf, domains: &[String]) -> Res
 
         // http://<你的域名>/.well-known/acme-challenge/<TOKEN>
         let well_known_path = format!("/.well-known/acme-challenge/{}", challenge.token);
-        info!("Lets encrypt well known path: {well_known_path}");
+        info!(well_known_path, "let's encrypt well known path",);
 
         let mut map = get_lets_encrypt().lock().await;
         map.insert(well_known_path, key_auth.as_str().to_string());
@@ -215,7 +215,7 @@ async fn new_lets_encrypt(certificate_file: &PathBuf, domains: &[String]) -> Res
 
     let state = loop {
         let state = order.state();
-        info!("Order state: {:?}", state.status);
+        info!(status = format!("{:?}", state.status), "get order status");
         if let OrderStatus::Ready | OrderStatus::Invalid | OrderStatus::Valid = state.status {
             break state;
         }
@@ -227,7 +227,7 @@ async fn new_lets_encrypt(certificate_file: &PathBuf, domains: &[String]) -> Res
         delay *= 2;
         tries += 1;
         match tries < 10 {
-            true => info!("Order is not ready, waiting {delay:?}"),
+            true => info!(delay = format!("{delay:?}"), "Order is not ready, waiting"),
             false => {
                 return Err(Error::Fail {
                     message: format!(
@@ -294,7 +294,10 @@ async fn new_lets_encrypt(certificate_file: &PathBuf, domains: &[String]) -> Res
     };
     let buf = serde_json::to_vec(&info).map_err(|e| Error::SerdeJson { source: e })?;
     f.write(&buf).await.map_err(|e| Error::Io { source: e })?;
-    info!("Write cert success, path: {certificate_file:?}");
+    info!(
+        certificate_file = format!("{certificate_file:?}"),
+        "write certificate success"
+    );
     webhook::send(webhook::SendNotificationParams {
         level: webhook::NotificationLevel::Info,
         category: webhook::NotificationCategory::LetsEncrypt,

@@ -20,12 +20,12 @@ use crate::util;
 use bytes::Bytes;
 use http::header;
 use http::StatusCode;
-use log::error;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use serde::Serialize;
 use std::pin::Pin;
 use tokio::io::AsyncReadExt;
+use tracing::error;
 
 fn get_cache_control(max_age: Option<u32>, cache_private: Option<bool>) -> HttpHeader {
     if let Some(max_age) = max_age {
@@ -122,7 +122,7 @@ impl HttpResponse {
         T: ?Sized + Serialize,
     {
         let buf = serde_json::to_vec(value).map_err(|e| {
-            error!("To json fail: {e}");
+            error!(error = e.to_string(), "to json fail");
             util::new_internal_error(400, e.to_string())
         })?;
         Ok(HttpResponse {
@@ -229,7 +229,7 @@ where
         let mut buffer = vec![0; chunk_size];
         loop {
             let size = self.reader.read(&mut buffer).await.map_err(|e| {
-                error!("Read data fail: {e}");
+                error!(error = e.to_string(), "read data fail");
                 util::new_internal_error(400, e.to_string())
             })?;
             let end = size < chunk_size;

@@ -21,11 +21,11 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use http::{header, HeaderValue};
 use humantime::parse_duration;
-use log::debug;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::Regex;
 use std::time::Duration;
+use tracing::debug;
 
 pub struct Cors {
     plugin_step: PluginStep,
@@ -92,7 +92,7 @@ impl TryFrom<&PluginConf> for CorsParams {
 
 impl Cors {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!("new cors plugin, params: {params:?}");
+        debug!(params = params.to_string(), "new cors plugin");
         let params = CorsParams::try_from(params)?;
         let allow_origin = if params.allow_origin.is_empty() {
             "*".to_string()
