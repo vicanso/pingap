@@ -222,7 +222,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         &conf.basic.webhook_notifications.clone().unwrap_or_default(),
     );
 
-    let _guard = logger::logger_try_init(logger::LoggerParams {
+    let logger_guard = logger::logger_try_init(logger::LoggerParams {
         capacity: basic_conf.log_buffered_lines.unwrap_or_default(),
         file: args.log.clone().unwrap_or_default(),
         level: basic_conf.log_level.clone().unwrap_or_default(),
@@ -291,6 +291,14 @@ fn run() -> Result<(), Box<dyn Error>> {
     my_server.configuration = Arc::new(new_server_conf(&args, &conf));
     my_server.sentry.clone_from(&basic_conf.sentry);
     my_server.bootstrap();
+
+    // daemon mode should hold logger_guard
+    if args.daemon {
+        my_server.add_service(background_service(
+            "LoggerGuard",
+            logger::new_guard_task(logger_guard),
+        ));
+    }
 
     #[cfg(feature = "pyro")]
     if let Some(url) = &conf.basic.pyroscope {

@@ -13,9 +13,13 @@
 // limitations under the License.
 
 use crate::util;
+use async_trait::async_trait;
+use pingora::server::ShutdownWatch;
+use pingora::services::background::BackgroundService;
 use std::error::Error;
 use std::path::Path;
 use tracing::{info, Level};
+use tracing_appender::non_blocking::WorkerGuard;
 
 pub struct LoggerParams {
     pub file: String,
@@ -119,4 +123,22 @@ pub fn logger_try_init(
 
     // builder.try_init()?;
     Ok(guard)
+}
+
+pub struct LoggerGuardTask {
+    guard: WorkerGuard,
+}
+
+pub fn new_guard_task(guard: WorkerGuard) -> LoggerGuardTask {
+    LoggerGuardTask { guard }
+}
+
+#[async_trait]
+impl BackgroundService for LoggerGuardTask {
+    async fn start(&self, mut shutdown: ShutdownWatch) {
+        info!("logger worker guard");
+        // just hold self
+        let _ = shutdown.changed().await;
+        let _ = self.guard;
+    }
 }
