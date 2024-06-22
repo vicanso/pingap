@@ -23,7 +23,7 @@ EXPOSE 7001
 COPY --from=builder /pingap/target/release/pingap /usr/local/bin/pingap
 COPY --from=builder /pingap/entrypoint.sh /entrypoint.sh
 
-RUN mkdir /opt/pingap/conf
+RUN mkdir -p /opt/pingap/conf
 
 CMD ["pingap", "-c", "/home/pingap/conf"]
 
