@@ -33,6 +33,7 @@ use bytes::{Bytes, BytesMut};
 use http::StatusCode;
 use log::{debug, error, info};
 use once_cell::sync::Lazy;
+use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::CacheControl;
 use pingora::cache::cache_control::DirectiveValue;
 use pingora::cache::cache_control::InterpretCacheControl;
@@ -224,6 +225,14 @@ impl Server {
         let tls_min_version = self.tls_min_version.clone();
         let tls_max_version = self.tls_max_version.clone();
         let mut lb = http_proxy_service(conf, self);
+        // use h2c if not tls and enable http2
+        if !is_tls && enbaled_h2 {
+            if let Some(http_logic) = lb.app_logic_mut() {
+                let mut http_server_options = HttpServerOptions::default();
+                http_server_options.h2c = true;
+                http_logic.server_options = Some(http_server_options);
+            }
+        }
         lb.threads = threads;
         // support listen multi adddress
         for addr in addr.split(',') {

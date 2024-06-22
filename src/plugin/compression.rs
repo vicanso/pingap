@@ -21,6 +21,7 @@ use http::HeaderValue;
 use log::debug;
 use once_cell::sync::Lazy;
 use pingora::modules::http::compression::ResponseCompression;
+use pingora::protocols::http::compression::Algorithm;
 use pingora::proxy::Session;
 
 const ZSTD: &str = "zstd";
@@ -112,6 +113,7 @@ impl Plugin for Compression {
                 return Ok(None);
             }
             // compression order, zstd > br > gzip
+            // Wait for pingora support to specify the order
             let level = if self.zstd_level > 0 && accept_encoding.contains(ZSTD) {
                 let _ = header.insert_header(http::header::ACCEPT_ENCODING, ZSTD_ENCODING.clone());
                 self.zstd_level
@@ -133,7 +135,15 @@ impl Plugin for Compression {
                     if let Some(decompression) = self.decompression {
                         c.adjust_decompression(decompression);
                     }
-                    c.adjust_level(level);
+                    if self.zstd_level > 0 {
+                        c.adjust_algorithm_level(Algorithm::Zstd, self.zstd_level);
+                    }
+                    if self.br_level > 0 {
+                        c.adjust_algorithm_level(Algorithm::Brotli, self.br_level);
+                    }
+                    if self.gzip_level > 0 {
+                        c.adjust_algorithm_level(Algorithm::Gzip, self.gzip_level);
+                    }
                 }
             }
         }
