@@ -20,14 +20,11 @@ FROM ubuntu:22.04
 
 EXPOSE 7001
 
-
 COPY --from=builder /pingap/target/release/pingap /usr/local/bin/pingap
 COPY --from=builder /pingap/entrypoint.sh /entrypoint.sh
 
-USER ubuntu
+RUN mkdir /opt/pingap/conf
 
-WORKDIR /home/ubuntu
-
-CMD ["pingap", "-c", "/home/rust/pingap/conf"]
+CMD ["pingap", "-c", "/home/pingap/conf"]
 
 ENTRYPOINT ["/entrypoint.sh"]
