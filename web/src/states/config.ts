@@ -90,7 +90,7 @@ interface Basic {
   graceful_shutdown_timeout?: string;
   upstream_keepalive_pool_size?: number;
   log_buffered_lines?: number;
-  log_format_json?: bool;
+  log_format_json?: boolean;
   log_level?: string;
   auto_restart_check_interval?: string;
   cache_max_size?: number;
