@@ -105,11 +105,35 @@ export default function BasicInfo() {
       category: FormItemCategory.TEXT,
     },
     {
-      id: "log_capacity",
-      label: t("basic.logCapacity"),
-      defaultValue: basic.log_capacity,
+      id: "log_buffered_lines",
+      label: t("basic.logBufferedLines"),
+      defaultValue: basic.log_buffered_lines,
       span: 6,
       category: FormItemCategory.TEXT,
+    },
+    {
+      id: "log_format_json",
+      label: t("basic.logFormatJson"),
+      defaultValue: basic.log_format_json,
+      span: 6,
+      category: FormItemCategory.CHECKBOX,
+      options: [
+        {
+          label: "Yes",
+          option: 1,
+          value: true,
+        },
+        {
+          label: "No",
+          option: 0,
+          value: false,
+        },
+        {
+          label: "None",
+          option: -1,
+          value: null,
+        },
+      ],
     },
     {
       id: "upstream_keepalive_pool_size",

@@ -21,7 +21,7 @@ Pingap使用toml来配置相关参数，具体参数说明如下：
 - `webhook_type`: Webhook的类型，支持普通的http形式、`webcom`与`dingtalk`三种类型
 - `webhook_notifications`: Webhook通知的类型，有`backend_status`，`lets_encrypt`，`diff_config`，`restart`，`restart_fail`以及`tls_validity`
 - `log_level`: 应用日志的输出级别
-- `log_capacity`: 日志缓存区字节大小，设置后会以`BufWriter`的形式写入日志
+- `log_buffered_lines`: 日志缓存区行数大小
 - `sentry`: Sentry的DSN配置
 - `pyroscope`: Pyroscope连接地址，需要注意默认版本并未编译支持pyroscpe，需要使用perf的版本
 - `auto_restart_check_interval`: 检测配置更新的间隔，默认为每90秒检测一次，若配置为小于1秒的值，则不检测

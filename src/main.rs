@@ -223,9 +223,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     );
 
     let _guard = logger::logger_try_init(logger::LoggerParams {
-        capacity: basic_conf.log_capacity.unwrap_or_default().as_u64() as usize,
+        capacity: basic_conf.log_buffered_lines.unwrap_or_default(),
         file: args.log.clone().unwrap_or_default(),
         level: basic_conf.log_level.clone().unwrap_or_default(),
+        json: basic_conf.log_format_json.unwrap_or_default(),
     })?;
 
     // return if test mode

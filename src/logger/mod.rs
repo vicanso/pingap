@@ -21,6 +21,7 @@ pub struct LoggerParams {
     pub file: String,
     pub level: String,
     pub capacity: usize,
+    pub json: bool,
 }
 
 pub fn logger_try_init(
@@ -37,7 +38,7 @@ pub fn logger_try_init(
         Level::INFO
     };
     let mut builder = tracing_appender::non_blocking::NonBlockingBuilder::default();
-    let mut buffered_lines = params.capacity / (1024 * 2) * 2;
+    let mut buffered_lines = params.capacity / 2 * 2;
     if buffered_lines < 16 {
         buffered_lines = 16;
     }
@@ -65,16 +66,32 @@ pub fn logger_try_init(
     let seconds = chrono::Local::now().offset().local_minus_utc();
     let hours = (seconds / 3600) as i8;
     let minutes = ((seconds % 3600) / 60) as i8;
+    let is_dev = cfg!(debug_assertions);
 
-    tracing_subscriber::fmt()
-        .with_max_level(level)
-        .with_ansi(cfg!(debug_assertions))
-        .with_timer(tracing_subscriber::fmt::time::OffsetTime::new(
-            time::UtcOffset::from_hms(hours, minutes, 0).unwrap(),
-            time::format_description::well_known::Rfc3339,
-        ))
-        .with_writer(non_blocking)
-        .init();
+    if params.json {
+        tracing_subscriber::fmt()
+            .event_format(tracing_subscriber::fmt::format::json())
+            .with_max_level(level)
+            .with_ansi(is_dev)
+            .with_timer(tracing_subscriber::fmt::time::OffsetTime::new(
+                time::UtcOffset::from_hms(hours, minutes, 0).unwrap(),
+                time::format_description::well_known::Rfc3339,
+            ))
+            .with_target(is_dev)
+            .with_writer(non_blocking)
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_max_level(level)
+            .with_ansi(is_dev)
+            .with_timer(tracing_subscriber::fmt::time::OffsetTime::new(
+                time::UtcOffset::from_hms(hours, minutes, 0).unwrap(),
+                time::format_description::well_known::Rfc3339,
+            ))
+            .with_target(is_dev)
+            .with_writer(non_blocking)
+            .init();
+    }
 
     // // TODO get the status change from event callback
     // builder.format(move |buf, record| {

@@ -87,7 +87,7 @@ tokio = { version = "1.37.0", features = ["fs"] }
 toml = "0.8.13"
 tracing = "0.1.40"
 tracing-appender = "0.2.3"
-tracing-subscriber = { version = "0.3.18", features = ["local-time"] }
+tracing-subscriber = { version = "0.3.18", features = ["local-time", "json"] }
 url = "2.5.0"
 urlencoding = "2.1.3"
 uuid = { version = "1.8.0", features = ["v7", "fast-rng"] }
