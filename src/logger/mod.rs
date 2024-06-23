@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use std::error::Error;
+use std::os::unix::fs::OpenOptionsExt;
 use tracing::{info, Level};
 
 pub struct LoggerParams {
@@ -66,39 +67,42 @@ pub fn logger_try_init(params: LoggerParams) -> Result<(), Box<dyn Error>> {
     let minutes = ((seconds % 3600) / 60) as i8;
     let is_dev = cfg!(debug_assertions);
 
-    if params.json {
-        tracing_subscriber::fmt()
-            .event_format(tracing_subscriber::fmt::format::json())
-            .with_max_level(level)
-            .with_ansi(is_dev)
-            .with_timer(tracing_subscriber::fmt::time::OffsetTime::new(
-                time::UtcOffset::from_hms(hours, minutes, 0).unwrap(),
-                time::format_description::well_known::Rfc3339,
-            ))
-            .with_target(is_dev)
-            .with_writer(
-                std::fs::OpenOptions::new()
-                    .append(true)
-                    .create(true)
-                    // open read() in case there are no readers
-                    // available otherwise we will panic with
-                    .read(true)
-                    // .custom_flags(libc::O_NONBLOCK)
-                    .open(&params.file)?,
-            )
-            .init();
+    let builder = tracing_subscriber::fmt()
+        .with_max_level(level)
+        .with_ansi(is_dev)
+        .with_timer(tracing_subscriber::fmt::time::OffsetTime::new(
+            time::UtcOffset::from_hms(hours, minutes, 0).unwrap(),
+            time::format_description::well_known::Rfc3339,
+        ))
+        .with_target(is_dev);
+    if !params.file.is_empty() {
+        let file = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            // open read() in case there are no readers
+            // available otherwise we will panic with
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&params.file)?;
+        if params.json {
+            builder
+                .event_format(tracing_subscriber::fmt::format::json())
+                .with_writer(file)
+                .init();
+        } else {
+            builder.with_writer(file).init();
+        }
     } else {
-        tracing_subscriber::fmt()
-            .with_max_level(level)
-            .with_ansi(is_dev)
-            .with_timer(tracing_subscriber::fmt::time::OffsetTime::new(
-                time::UtcOffset::from_hms(hours, minutes, 0).unwrap(),
-                time::format_description::well_known::Rfc3339,
-            ))
-            .with_target(is_dev)
-            .with_writer(std::io::stderr)
-            .init();
+        if params.json {
+            builder
+                .event_format(tracing_subscriber::fmt::format::json())
+                .with_writer(std::io::stderr)
+                .init();
+        } else {
+            builder.with_writer(std::io::stderr).init();
+        }
     }
+
     info!(
         capacity = params.capacity,
         utc_offset = chrono::Local::now().offset().to_string(),
