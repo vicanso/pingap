@@ -51,7 +51,7 @@ jobs:
         run: |
           make release
           ldd target/release/pingap
-  docker:
+  linux-aarch:
     runs-on: ubuntu-latest
     timeout-minutes: 3600
     steps:
@@ -95,20 +95,73 @@ jobs:
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@v3
-      - name: Available platforms
-        run: echo ${{ steps.buildx.outputs.platforms }}
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
+      - name: Build and export
+        uses: docker/build-push-action@v6
         with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
-      - name: Build and push
-        id: docker_build
-        uses: docker/build-push-action@v5
-        with:
-          platforms: linux/amd64, linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-      - name: Image digest
+          outputs: type=local,dest=/tmp/pingap
+      - name: Copy pingap program
+        shell: bash
         run: |
-          echo ${{ steps.docker_build.outputs.digest }}
+          ls -lh /tmp/pingap/target
+          ldd /tmp/pingap/target/release/pingap
+  # docker:
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 3600
+  #   steps:
+  #     - name: Change Swap Space
+  #       run: |
+  #         swapon --show=NAME | tail -n 1
+  #         df -lh
+  #         du -sh /usr/share/dotnet
+  #         sudo rm -rf /usr/share/dotnet
+  #         du -sh /usr/local/lib/android
+  #         sudo rm -rf /usr/local/lib/android
+  #         export SWAP_FILE=$(swapon --show=NAME | tail -n 1)
+  #         sudo swapoff $SWAP_FILE
+  #         sudo rm $SWAP_FILE
+  #         export SWAP_FILE=/swapfile
+  #         sudo fallocate -l 16G $SWAP_FILE
+  #         sudo chmod 600 $SWAP_FILE
+  #         sudo mkswap $SWAP_FILE
+  #         sudo swapon $SWAP_FILE
+  #     - name: Swap space report after modification
+  #       shell: bash
+  #       run: |
+  #         echo "Memory and swap:"
+  #         free -h
+  #         echo
+  #         swapon --show
+  #         df -lh
+  #         echo
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+  #     - name: Docker meta
+  #       id: meta
+  #       uses: docker/metadata-action@v4
+  #       with:
+  #         images: |
+  #           vicanso/pingap
+  #         tags: |
+  #           type=raw,value=latest
+  #     - name: Set up QEMU
+  #       uses: docker/setup-qemu-action@v3
+  #     - name: Set up Docker Buildx
+  #       id: buildx
+  #       uses: docker/setup-buildx-action@v3
+  #     - name: Available platforms
+  #       run: echo ${{ steps.buildx.outputs.platforms }}
+  #     - name: Login to Docker Hub
+  #       uses: docker/login-action@v3
+  #       with:
+  #         username: ${{ secrets.DOCKER_HUB_USERNAME }}
+  #         password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+  #     - name: Build and push
+  #       id: docker_build
+  #       uses: docker/build-push-action@v5
+  #       with:
+  #         platforms: linux/amd64, linux/arm64
+  #         push: true
+  #         tags: ${{ steps.meta.outputs.tags }}
+  #     - name: Image digest
+  #       run: |
+  #         echo ${{ steps.docker_build.outputs.digest }}
