@@ -15,6 +15,7 @@
 use std::error::Error;
 use std::os::unix::fs::OpenOptionsExt;
 use tracing::{info, Level};
+use tracing_subscriber::fmt::writer::BoxMakeWriter;
 
 pub struct LoggerParams {
     pub file: String,
@@ -35,33 +36,6 @@ pub fn logger_try_init(params: LoggerParams) -> Result<(), Box<dyn Error>> {
         Level::INFO
     };
 
-    // let mut builder = tracing_appender::non_blocking::NonBlockingBuilder::default();
-    // let mut buffered_lines = params.capacity / 2 * 2;
-    // if buffered_lines < 16 {
-    //     buffered_lines = 16;
-    // }
-    // builder = builder.buffered_lines_limit(buffered_lines);
-    // builder = builder.thread_name("pingap");
-    // let (non_blocking, guard) = if params.file.is_empty() {
-    //     builder.finish(std::io::stdout())
-    // } else {
-    //     let file = util::resolve_path(&params.file);
-    //     let file = Path::new(&file);
-    //     let filename = if let Some(filename) = file.file_name() {
-    //         filename.to_string_lossy().to_string()
-    //     } else {
-    //         "pingap.log".to_string()
-    //     };
-    //     let dir = file.parent().ok_or(util::new_internal_error(
-    //         400,
-    //         "log path is invalid".to_string(),
-    //     ))?;
-
-    //     let file_appender =
-    //         tracing_appender::rolling::daily(dir.to_string_lossy().to_string(), filename);
-    //     builder.finish(file_appender)
-    // };
-
     let seconds = chrono::Local::now().offset().local_minus_utc();
     let hours = (seconds / 3600) as i8;
     let minutes = ((seconds % 3600) / 60) as i8;
@@ -75,7 +49,9 @@ pub fn logger_try_init(params: LoggerParams) -> Result<(), Box<dyn Error>> {
             time::format_description::well_known::Rfc3339,
         ))
         .with_target(is_dev);
-    if !params.file.is_empty() {
+    let writer = if params.file.is_empty() {
+        BoxMakeWriter::new(std::io::stderr)
+    } else {
         let file = std::fs::OpenOptions::new()
             .append(true)
             .create(true)
@@ -84,23 +60,16 @@ pub fn logger_try_init(params: LoggerParams) -> Result<(), Box<dyn Error>> {
             .read(true)
             .custom_flags(libc::O_NONBLOCK)
             .open(&params.file)?;
-        if params.json {
-            builder
-                .event_format(tracing_subscriber::fmt::format::json())
-                .with_writer(file)
-                .init();
-        } else {
-            builder.with_writer(file).init();
-        }
+        BoxMakeWriter::new(file)
+    };
+    // better performance for logger
+    if params.json {
+        builder
+            .event_format(tracing_subscriber::fmt::format::json())
+            .with_writer(writer)
+            .init();
     } else {
-        if params.json {
-            builder
-                .event_format(tracing_subscriber::fmt::format::json())
-                .with_writer(std::io::stderr)
-                .init();
-        } else {
-            builder.with_writer(std::io::stderr).init();
-        }
+        builder.with_writer(writer).init();
     }
 
     info!(

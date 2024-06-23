@@ -147,7 +147,7 @@ fn get_config(conf: String, admin: bool, s: Sender<Result<PingapConf, config::Er
     });
 }
 
-fn parse_admin_proxy_plugin(addr: &str) -> (ServerConf, String, PluginConf) {
+fn parse_admin_plugin(addr: &str) -> (ServerConf, String, PluginConf) {
     let arr: Vec<&str> = addr.split('@').collect();
     let mut addr = arr[0].to_string();
     let mut authorization = "".to_string();
@@ -181,7 +181,7 @@ remark = "Admin serve"
 fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     env_logger::Builder::from_env(env_logger::Env::default()).try_init()?;
     let (server_conf, name, proxy_plugin_info) =
-        parse_admin_proxy_plugin(&args.admin.unwrap_or_default());
+        parse_admin_plugin(&args.admin.unwrap_or_default());
 
     if let Err(e) = plugin::init_plugins(vec![(name, proxy_plugin_info)]) {
         error!(error = e.to_string(), "init plugins fail",);
@@ -308,7 +308,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let mut server_conf_list: Vec<ServerConf> = conf.into();
     if let Some(addr) = args.admin {
-        let (server_conf, name, proxy_plugin_info) = parse_admin_proxy_plugin(&addr);
+        let (server_conf, name, proxy_plugin_info) = parse_admin_plugin(&addr);
         plugin_confs.push((name, proxy_plugin_info));
         server_conf_list.push(server_conf);
     }
