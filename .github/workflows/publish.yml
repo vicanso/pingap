@@ -38,7 +38,7 @@ jobs:
           tar -czvf pingap-darwin-x86.tar.gz pingap-darwin-x86
           ./.github/workflows/upload_asset.sh ./pingap-darwin-x86.tar.gz $GITHUB_TOKEN
 
-  linux:
+  linux-musl-x86:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -55,13 +55,13 @@ jobs:
             apt-get update
             apt-get install protobuf-compiler -y
             make release
-            mv target/x86_64-unknown-linux-musl/release/pingap ./pingap-linux-x86
+            mv target/x86_64-unknown-linux-musl/release/pingap ./pingap-linux-musl-x86
       - name: Upload Assets
         run: |
-          tar -czvf pingap-linux-x86.tar.gz pingap-linux-x86
-          ./.github/workflows/upload_asset.sh ./pingap-linux-x86.tar.gz $GITHUB_TOKEN
+          tar -czvf pingap-linux-musl-x86.tar.gz pingap-linux-musl-x86
+          ./.github/workflows/upload_asset.sh ./pingap-linux-musl-x86.tar.gz $GITHUB_TOKEN
 
-  linux-aarch64:
+  linux-musl-aarch64:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -78,11 +78,11 @@ jobs:
             apt-get update
             apt-get install protobuf-compiler -y
             make release
-            mv target/aarch64-unknown-linux-musl/release/pingap ./pingap-linux-aarch64
+            mv target/aarch64-unknown-linux-musl/release/pingap ./pingap-linux-musl-aarch64
       - name: Upload Assets
         run: |
-          tar -czvf pingap-linux-aarch64.tar.gz pingap-linux-aarch64
-          ./.github/workflows/upload_asset.sh ./pingap-linux-aarch64.tar.gz $GITHUB_TOKEN
+          tar -czvf pingap-linux-musl-aarch64.tar.gz pingap-linux-musl-aarch64
+          ./.github/workflows/upload_asset.sh ./pingap-linux-musl-aarch64.tar.gz $GITHUB_TOKEN
   docker:
     runs-on: ubuntu-latest
     timeout-minutes: 3600

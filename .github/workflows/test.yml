@@ -51,7 +51,7 @@ jobs:
         run: |
           make release
           ldd target/release/pingap
-  linux-aarch:
+  linux-gnu-x86:
     runs-on: ubuntu-latest
     timeout-minutes: 3600
     steps:
@@ -98,14 +98,14 @@ jobs:
       - name: Build and export
         uses: docker/build-push-action@v6
         with:
-          platforms: linux/arm64
+          platforms: linux/amd64
           outputs: type=local,dest=/tmp/pingap
       - name: Copy pingap program
         shell: bash
         run: |
           ls -lh /tmp/pingap
-          ls -lh /tmp/pingap/target
-          ldd /tmp/pingap/target/release/pingap
+          ls -lh /tmp/pingap/usr/local/bin/pingap
+          ldd /tmp/pingap/usr/local/bin/pingap
   # docker:
   #   runs-on: ubuntu-latest
   #   timeout-minutes: 3600
