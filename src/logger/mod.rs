@@ -12,14 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util;
-use async_trait::async_trait;
-use pingora::server::ShutdownWatch;
-use pingora::services::background::BackgroundService;
 use std::error::Error;
-use std::path::Path;
 use tracing::{info, Level};
-use tracing_appender::non_blocking::WorkerGuard;
 
 pub struct LoggerParams {
     pub file: String,
@@ -28,9 +22,7 @@ pub struct LoggerParams {
     pub json: bool,
 }
 
-pub fn logger_try_init(
-    params: LoggerParams,
-) -> Result<tracing_appender::non_blocking::WorkerGuard, Box<dyn Error>> {
+pub fn logger_try_init(params: LoggerParams) -> Result<(), Box<dyn Error>> {
     let level = if !params.level.is_empty() {
         match params.level.to_lowercase().as_str() {
             "error" => Level::ERROR,
@@ -41,32 +33,34 @@ pub fn logger_try_init(
     } else {
         Level::INFO
     };
-    let mut builder = tracing_appender::non_blocking::NonBlockingBuilder::default();
-    let mut buffered_lines = params.capacity / 2 * 2;
-    if buffered_lines < 16 {
-        buffered_lines = 16;
-    }
-    builder = builder.buffered_lines_limit(buffered_lines);
-    builder = builder.thread_name("pingap");
-    let (non_blocking, guard) = if params.file.is_empty() {
-        builder.finish(std::io::stdout())
-    } else {
-        let file = util::resolve_path(&params.file);
-        let file = Path::new(&file);
-        let filename = if let Some(filename) = file.file_name() {
-            filename.to_string_lossy().to_string()
-        } else {
-            "pingap.log".to_string()
-        };
-        let dir = file.parent().ok_or(util::new_internal_error(
-            400,
-            "log path is invalid".to_string(),
-        ))?;
 
-        let file_appender =
-            tracing_appender::rolling::daily(dir.to_string_lossy().to_string(), filename);
-        builder.finish(file_appender)
-    };
+    // let mut builder = tracing_appender::non_blocking::NonBlockingBuilder::default();
+    // let mut buffered_lines = params.capacity / 2 * 2;
+    // if buffered_lines < 16 {
+    //     buffered_lines = 16;
+    // }
+    // builder = builder.buffered_lines_limit(buffered_lines);
+    // builder = builder.thread_name("pingap");
+    // let (non_blocking, guard) = if params.file.is_empty() {
+    //     builder.finish(std::io::stdout())
+    // } else {
+    //     let file = util::resolve_path(&params.file);
+    //     let file = Path::new(&file);
+    //     let filename = if let Some(filename) = file.file_name() {
+    //         filename.to_string_lossy().to_string()
+    //     } else {
+    //         "pingap.log".to_string()
+    //     };
+    //     let dir = file.parent().ok_or(util::new_internal_error(
+    //         400,
+    //         "log path is invalid".to_string(),
+    //     ))?;
+
+    //     let file_appender =
+    //         tracing_appender::rolling::daily(dir.to_string_lossy().to_string(), filename);
+    //     builder.finish(file_appender)
+    // };
+
     let seconds = chrono::Local::now().offset().local_minus_utc();
     let hours = (seconds / 3600) as i8;
     let minutes = ((seconds % 3600) / 60) as i8;
@@ -82,7 +76,16 @@ pub fn logger_try_init(
                 time::format_description::well_known::Rfc3339,
             ))
             .with_target(is_dev)
-            .with_writer(non_blocking)
+            .with_writer(
+                std::fs::OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    // open read() in case there are no readers
+                    // available otherwise we will panic with
+                    .read(true)
+                    // .custom_flags(libc::O_NONBLOCK)
+                    .open(&params.file)?,
+            )
             .init();
     } else {
         tracing_subscriber::fmt()
@@ -93,11 +96,11 @@ pub fn logger_try_init(
                 time::format_description::well_known::Rfc3339,
             ))
             .with_target(is_dev)
-            .with_writer(non_blocking)
+            .with_writer(std::io::stderr)
             .init();
     }
     info!(
-        buffered_lines,
+        capacity = params.capacity,
         utc_offset = chrono::Local::now().offset().to_string(),
         "init tracing subscriber success",
     );
@@ -122,23 +125,5 @@ pub fn logger_try_init(
     // });
 
     // builder.try_init()?;
-    Ok(guard)
-}
-
-pub struct LoggerGuardTask {
-    guard: WorkerGuard,
-}
-
-pub fn new_guard_task(guard: WorkerGuard) -> LoggerGuardTask {
-    LoggerGuardTask { guard }
-}
-
-#[async_trait]
-impl BackgroundService for LoggerGuardTask {
-    async fn start(&self, mut shutdown: ShutdownWatch) {
-        info!("logger worker guard");
-        // just hold self
-        let _ = shutdown.changed().await;
-        let _ = self.guard;
-    }
+    Ok(())
 }
