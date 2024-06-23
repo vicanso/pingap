@@ -98,10 +98,12 @@ jobs:
       - name: Build and export
         uses: docker/build-push-action@v6
         with:
+          platforms: linux/arm64
           outputs: type=local,dest=/tmp/pingap
       - name: Copy pingap program
         shell: bash
         run: |
+          ls -lh /tmp/pingap
           ls -lh /tmp/pingap/target
           ldd /tmp/pingap/target/release/pingap
   # docker:
