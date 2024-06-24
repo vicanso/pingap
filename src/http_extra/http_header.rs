@@ -53,6 +53,7 @@ pub fn convert_header(value: &str) -> Result<Option<HttpHeader>> {
     }
 }
 
+#[inline]
 pub fn convert_header_value(
     value: &HeaderValue,
     session: &Session,
@@ -110,8 +111,8 @@ pub fn convert_header_value(
             }
         }
     };
-
-    Some(value.to_owned())
+    // not match return nono
+    None
 }
 
 /// Convert string slice to http headers.
@@ -316,8 +317,7 @@ mod tests {
             &session,
             &State::default(),
         );
-        assert_eq!(true, value.is_some());
-        assert_eq!("UUID", value.unwrap().to_str().unwrap());
+        assert_eq!(false, value.is_some());
     }
 
     #[test]

@@ -47,11 +47,7 @@ pub struct Stats {
     plugin_step: PluginStep,
 }
 
-struct StatsParams {
-    path: String,
-    plugin_step: PluginStep,
-}
-impl TryFrom<&PluginConf> for StatsParams {
+impl TryFrom<&PluginConf> for Stats {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
@@ -74,12 +70,7 @@ impl TryFrom<&PluginConf> for StatsParams {
 impl Stats {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new stats plugin");
-        let params = StatsParams::try_from(params)?;
-
-        Ok(Self {
-            plugin_step: params.plugin_step,
-            path: params.path,
-        })
+        Self::try_from(params)
     }
 }
 
@@ -137,7 +128,7 @@ impl Plugin for Stats {
 
 #[cfg(test)]
 mod tests {
-    use super::{Stats, StatsParams};
+    use super::Stats;
     use crate::state::State;
     use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use pingora::proxy::Session;
@@ -146,7 +137,7 @@ mod tests {
 
     #[test]
     fn test_stats_params() {
-        let params = StatsParams::try_from(
+        let params = Stats::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
         path = "/stats"
@@ -158,7 +149,7 @@ mod tests {
 
         assert_eq!("/stats", params.path);
 
-        let result = StatsParams::try_from(
+        let result = Stats::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
         step = "response"

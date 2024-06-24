@@ -34,15 +34,7 @@ pub struct IpRestriction {
     forbidden_resp: HttpResponse,
 }
 
-struct IpRestrictionParams {
-    plugin_step: PluginStep,
-    ip_net_list: Vec<IpNet>,
-    ip_list: Vec<String>,
-    restriction_category: String,
-    message: String,
-}
-
-impl TryFrom<&PluginConf> for IpRestrictionParams {
+impl TryFrom<&PluginConf> for IpRestriction {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
@@ -56,12 +48,20 @@ impl TryFrom<&PluginConf> for IpRestrictionParams {
                 ip_list.push(item);
             }
         }
+        let mut message = get_str_conf(value, "message");
+        if message.is_empty() {
+            message = "Request is forbidden".to_string();
+        }
         let params = Self {
             plugin_step: step,
             ip_list,
             ip_net_list,
             restriction_category: get_str_conf(value, "type"),
-            message: get_str_conf(value, "message"),
+            forbidden_resp: HttpResponse {
+                status: StatusCode::FORBIDDEN,
+                body: Bytes::from(message),
+                ..Default::default()
+            },
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {
@@ -78,22 +78,7 @@ impl TryFrom<&PluginConf> for IpRestrictionParams {
 impl IpRestriction {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new ip restriction plugin");
-        let params = IpRestrictionParams::try_from(params)?;
-        let mut message = params.message;
-        if message.is_empty() {
-            message = "Request is forbidden".to_string();
-        }
-        Ok(Self {
-            plugin_step: params.plugin_step,
-            ip_list: params.ip_list,
-            ip_net_list: params.ip_net_list,
-            restriction_category: params.restriction_category,
-            forbidden_resp: HttpResponse {
-                status: StatusCode::FORBIDDEN,
-                body: Bytes::from(message),
-                ..Default::default()
-            },
-        })
+        Self::try_from(params)
     }
 }
 
@@ -150,7 +135,7 @@ impl Plugin for IpRestriction {
 
 #[cfg(test)]
 mod tests {
-    use super::{IpRestriction, IpRestrictionParams};
+    use super::IpRestriction;
     use crate::state::State;
     use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use http::StatusCode;
@@ -160,7 +145,7 @@ mod tests {
 
     #[test]
     fn test_ip_limit_params() {
-        let params = IpRestrictionParams::try_from(
+        let params = IpRestriction::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 ip_list = [
@@ -187,7 +172,7 @@ type = "deny"
                 .join(",")
         );
 
-        let result = IpRestrictionParams::try_from(
+        let result = IpRestriction::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 step = "response"

@@ -9,6 +9,7 @@
 - [ ] different servers avoid listening to the same address
 - [ ] support include comnand for configuraion
 - [ ] admin web expand common configuration items by default
+- [ ] support tracing-appender
 - [ ] build gnu and musl versions
 - [x] json log
 - [x] cors plugin

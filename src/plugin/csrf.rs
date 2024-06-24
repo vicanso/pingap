@@ -26,7 +26,6 @@ use humantime::parse_duration;
 use nanoid::nanoid;
 use pingora::proxy::Session;
 use sha2::{Digest, Sha256};
-use std::time::Duration;
 use tracing::debug;
 
 pub struct Csrf {
@@ -39,15 +38,7 @@ pub struct Csrf {
     unauthorized_resp: HttpResponse,
 }
 
-struct CsrfParams {
-    plugin_step: PluginStep,
-    token_path: String,
-    name: String,
-    key: String,
-    ttl: Option<Duration>,
-}
-
-impl TryFrom<&PluginConf> for CsrfParams {
+impl TryFrom<&PluginConf> for Csrf {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
@@ -57,17 +48,23 @@ impl TryFrom<&PluginConf> for CsrfParams {
             name: get_str_conf(value, "name"),
             token_path: get_str_conf(value, "token_path"),
             key: get_str_conf(value, "key"),
-            ttl: None,
+            ttl: 0,
+            unauthorized_resp: HttpResponse {
+                status: StatusCode::UNAUTHORIZED,
+                body: Bytes::from("Csrf token is empty or invalid"),
+                ..Default::default()
+            },
         };
         if params.name.is_empty() {
             params.name = "x-csrf-token".to_string();
         }
         let ttl = get_str_conf(value, "ttl");
         if !ttl.is_empty() {
-            params.ttl = Some(parse_duration(&ttl).map_err(|e| Error::Invalid {
+            let ttl = parse_duration(&ttl).map_err(|e| Error::Invalid {
                 category: PluginCategory::Csrf.to_string(),
                 message: e.to_string(),
-            })?);
+            })?;
+            params.ttl = ttl.as_secs();
         }
 
         if params.token_path.is_empty() {
@@ -83,7 +80,7 @@ impl TryFrom<&PluginConf> for CsrfParams {
             });
         }
 
-        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
+        if ![PluginStep::Request].contains(&params.plugin_step) {
             return Err(Error::Invalid {
                 category: PluginCategory::Csrf.to_string(),
                 message: "Csrf plugin should be executed at request or proxy upstream step"
@@ -98,25 +95,7 @@ impl TryFrom<&PluginConf> for CsrfParams {
 impl Csrf {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new csrf plugin");
-        let params = CsrfParams::try_from(params)?;
-        let ttl = if let Some(ttl) = params.ttl {
-            ttl.as_secs()
-        } else {
-            0
-        };
-
-        Ok(Self {
-            plugin_step: params.plugin_step,
-            token_path: params.token_path,
-            name: params.name,
-            key: params.key,
-            ttl,
-            unauthorized_resp: HttpResponse {
-                status: StatusCode::UNAUTHORIZED,
-                body: Bytes::from("Csrf token is empty or invalid"),
-                ..Default::default()
-            },
-        })
+        Csrf::try_from(params)
     }
 }
 
@@ -218,7 +197,7 @@ impl Plugin for Csrf {
 
 #[cfg(test)]
 mod tests {
-    use super::{generate_token, validate_token, Csrf, CsrfParams};
+    use super::{generate_token, validate_token, Csrf};
     use crate::config::{PluginConf, PluginStep};
     use crate::plugin::Plugin;
     use crate::state::State;
@@ -226,12 +205,11 @@ mod tests {
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use std::str::FromStr;
-    use std::time::Duration;
     use tokio_test::io::Builder;
 
     #[test]
     fn test_csrf_params() {
-        let params = CsrfParams::try_from(
+        let params = Csrf::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 token_path = "/csrf-token"
@@ -244,9 +222,9 @@ ttl = "1h"
         .unwrap();
         assert_eq!("/csrf-token", params.token_path);
         assert_eq!("WjrXUG47wu", params.key);
-        assert_eq!(Duration::from_secs(3600), params.ttl.unwrap_or_default());
+        assert_eq!(3600, params.ttl);
 
-        let result = CsrfParams::try_from(
+        let result = Csrf::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 token_path = "/csrf-token"
@@ -261,7 +239,7 @@ ttl = "1a"
             result.err().unwrap().to_string()
         );
 
-        let result = CsrfParams::try_from(
+        let result = Csrf::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 key = "WjrXUG47wu"
@@ -274,7 +252,7 @@ key = "WjrXUG47wu"
             result.err().unwrap().to_string()
         );
 
-        let result = CsrfParams::try_from(
+        let result = Csrf::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 token_path = "/csrf-token"
@@ -287,7 +265,7 @@ token_path = "/csrf-token"
             result.err().unwrap().to_string()
         );
 
-        let result = CsrfParams::try_from(
+        let result = Csrf::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 step = "response"

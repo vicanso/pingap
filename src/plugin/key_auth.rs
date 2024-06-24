@@ -36,15 +36,7 @@ pub struct KeyAuth {
     hide_credentials: bool,
 }
 
-struct KeyAuthParams {
-    plugin_step: PluginStep,
-    header: Option<HeaderName>,
-    query: Option<String>,
-    keys: Vec<Vec<u8>>,
-    hide_credentials: bool,
-}
-
-impl TryFrom<&PluginConf> for KeyAuthParams {
+impl TryFrom<&PluginConf> for KeyAuth {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
@@ -78,6 +70,16 @@ impl TryFrom<&PluginConf> for KeyAuthParams {
             plugin_step: step,
             query,
             header,
+            miss_authorization_resp: HttpResponse {
+                status: StatusCode::UNAUTHORIZED,
+                body: Bytes::from_static(b"Key missing"),
+                ..Default::default()
+            },
+            unauthorized_resp: HttpResponse {
+                status: StatusCode::UNAUTHORIZED,
+                body: Bytes::from_static(b"Key auth fail"),
+                ..Default::default()
+            },
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {
@@ -93,25 +95,7 @@ impl TryFrom<&PluginConf> for KeyAuthParams {
 impl KeyAuth {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new key auth plugin");
-        let params = KeyAuthParams::try_from(params)?;
-
-        Ok(Self {
-            keys: params.keys,
-            plugin_step: params.plugin_step,
-            query: params.query,
-            header: params.header,
-            hide_credentials: params.hide_credentials,
-            miss_authorization_resp: HttpResponse {
-                status: StatusCode::UNAUTHORIZED,
-                body: Bytes::from_static(b"Key missing"),
-                ..Default::default()
-            },
-            unauthorized_resp: HttpResponse {
-                status: StatusCode::UNAUTHORIZED,
-                body: Bytes::from_static(b"Key auth fail"),
-                ..Default::default()
-            },
-        })
+        Self::try_from(params)
     }
 }
 
@@ -166,7 +150,7 @@ impl Plugin for KeyAuth {
 
 #[cfg(test)]
 mod tests {
-    use super::{KeyAuth, KeyAuthParams};
+    use super::KeyAuth;
     use crate::state::State;
     use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use pingora::proxy::Session;
@@ -175,7 +159,7 @@ mod tests {
 
     #[test]
     fn test_key_auth_params() {
-        let params = KeyAuthParams::try_from(
+        let params = KeyAuth::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 header = "X-User"
@@ -203,7 +187,7 @@ keys = [
                 .join(",")
         );
 
-        let result = KeyAuthParams::try_from(
+        let result = KeyAuth::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 keys = [
@@ -219,7 +203,7 @@ keys = [
             result.err().unwrap().to_string()
         );
 
-        let result = KeyAuthParams::try_from(
+        let result = KeyAuth::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 step = "response"

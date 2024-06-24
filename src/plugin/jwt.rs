@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_list_conf, get_str_conf, Error, Plugin, Result};
+use super::{get_step_conf, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON};
 use crate::state::{ModifyResponseBody, State};
@@ -27,17 +27,18 @@ use serde::{Deserialize, Serialize};
 use substring::Substring;
 use tracing::debug;
 
-struct JwtParams {
-    plugin_steps: Vec<PluginStep>,
+pub struct JwtAuth {
+    plugin_step: PluginStep,
     auth_path: String,
     secret: String,
-    algorithm: String,
     header: Option<String>,
     query: Option<String>,
     cookie: Option<String>,
+    algorithm: String,
+    unauthorized_resp: HttpResponse,
 }
 
-impl TryFrom<&PluginConf> for JwtParams {
+impl TryFrom<&PluginConf> for JwtAuth {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let header = get_str_conf(value, "header");
@@ -61,13 +62,18 @@ impl TryFrom<&PluginConf> for JwtParams {
             Some(cookie)
         };
         let params = Self {
-            plugin_steps: get_step_list_conf(value),
+            plugin_step: get_step_conf(value),
             secret: get_str_conf(value, "secret"),
             auth_path: get_str_conf(value, "auth_path"),
             algorithm: get_str_conf(value, "algorithm"),
             header,
             query,
             cookie,
+            unauthorized_resp: HttpResponse {
+                status: StatusCode::UNAUTHORIZED,
+                body: Bytes::from_static(b"Invalid or expired jwt"),
+                ..Default::default()
+            },
         };
 
         if params.secret.is_empty() {
@@ -77,62 +83,22 @@ impl TryFrom<&PluginConf> for JwtParams {
             });
         }
 
-        for step in params.plugin_steps.iter() {
-            if ![
-                PluginStep::Request,
-                PluginStep::ProxyUpstream,
-                PluginStep::Response,
-            ]
-            .contains(step)
-            {
-                return Err(Error::Invalid {
-                    category: PluginCategory::Jwt.to_string(),
-                    message: "Jwt auth plugin should be executed at request or proxy upstream step"
-                        .to_string(),
-                });
-            }
+        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
+            return Err(Error::Invalid {
+                category: PluginCategory::IpRestriction.to_string(),
+                message: "Jwt auth plugin should be executed at request or proxy upstream step"
+                    .to_string(),
+            });
         }
 
         Ok(params)
     }
 }
 
-pub struct JwtAuth {
-    plugin_step: PluginStep,
-    auth_path: String,
-    secret: String,
-    header: Option<String>,
-    query: Option<String>,
-    cookie: Option<String>,
-    algorithm: String,
-    unauthorized_resp: HttpResponse,
-}
-
 impl JwtAuth {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new jwt auth plugin");
-        let params = JwtParams::try_from(params)?;
-        let mut step = PluginStep::Request;
-        for item in params.plugin_steps {
-            if item == PluginStep::ProxyUpstream {
-                item.clone_into(&mut step);
-            }
-        }
-
-        Ok(Self {
-            plugin_step: step,
-            auth_path: params.auth_path,
-            secret: params.secret,
-            header: params.header,
-            query: params.query,
-            cookie: params.cookie,
-            algorithm: params.algorithm,
-            unauthorized_resp: HttpResponse {
-                status: StatusCode::UNAUTHORIZED,
-                body: Bytes::from_static(b"Invalid or expired jwt"),
-                ..Default::default()
-            },
-        })
+        Self::try_from(params)
     }
 }
 
@@ -281,7 +247,7 @@ impl ModifyResponseBody for Sign {
 
 #[cfg(test)]
 mod tests {
-    use super::{JwtAuth, JwtParams};
+    use super::JwtAuth;
     use crate::config::{PluginConf, PluginStep};
     use crate::plugin::Plugin;
     use crate::state::State;
@@ -293,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_jwt_auth_params() {
-        let params = JwtParams::try_from(
+        let params = JwtAuth::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 secret = "123123"
@@ -306,7 +272,7 @@ cookie = "jwt"
         assert_eq!("jwt", params.cookie.unwrap_or_default());
         assert_eq!("123123", params.secret);
 
-        let result = JwtParams::try_from(
+        let result = JwtAuth::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 cookie = "jwt"
@@ -320,7 +286,7 @@ cookie = "jwt"
             result.err().unwrap().to_string()
         );
 
-        let result = JwtParams::try_from(
+        let result = JwtAuth::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 secret = "123123"

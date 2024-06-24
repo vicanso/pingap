@@ -12,14 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::CertInfo;
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::util;
 use crate::webhook;
 use async_trait::async_trait;
 use std::time::Duration;
 use tracing::warn;
-
-use super::CertInfo;
 
 struct ValidityChecker {
     time_offset: i64,

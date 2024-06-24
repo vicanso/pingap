@@ -181,6 +181,7 @@ impl Server {
         // tls
         let mut tls_cert = self.tls_cert.clone();
         let mut tls_key = self.tls_key.clone();
+        let name = self.name.clone();
 
         if tls_cert.is_none() && tls_from_lets_encrypt {
             match get_lets_encrypt_cert(&self.certificate_file) {
@@ -188,7 +189,7 @@ impl Server {
                     tls_cert = Some(cert_info.get_cert());
                     tls_key = Some(cert_info.get_key());
                 }
-                Err(e) => error!(error = e.to_string(), "get lets encrypt cert fail"),
+                Err(e) => error!(error = e.to_string(), name, "get lets encrypt cert fail"),
             };
         }
         let is_tls = tls_cert.is_some();
@@ -217,7 +218,7 @@ impl Server {
             threads = Some(1);
         }
         info!(
-            name = self.name,
+            name,
             addr,
             threads = format!("{threads:?}"),
             is_tls,
@@ -255,18 +256,21 @@ impl Server {
 
                 if let Some(cipher_list) = &cipher_list {
                     if let Err(e) = tls_settings.set_cipher_list(cipher_list) {
-                        error!(error = e.to_string(), "set cipher list fail");
+                        error!(error = e.to_string(), name, "set cipher list fail");
                     }
                 }
                 if let Some(ciphersuites) = &ciphersuites {
                     if let Err(e) = tls_settings.set_ciphersuites(ciphersuites) {
-                        error!(error = e.to_string(), "set ciphersuites fail");
+                        error!(error = e.to_string(), name, "set ciphersuites fail");
                     }
                 }
 
                 if let Some(version) = util::convert_tls_version(&tls_min_version) {
                     if let Err(e) = tls_settings.set_min_proto_version(Some(version)) {
-                        error!(error = e.to_string(), "set  tls min proto version fail");
+                        error!(
+                            error = e.to_string(),
+                            name, "set tls min proto version fail"
+                        );
                     }
                     if version == pingora::tls::ssl::SslVersion::TLS1_1 {
                         tls_settings.set_security_level(0);
@@ -275,7 +279,10 @@ impl Server {
                 }
                 if let Some(version) = util::convert_tls_version(&tls_max_version) {
                     if let Err(e) = tls_settings.set_max_proto_version(Some(version)) {
-                        error!(error = e.to_string(), "set  tls max proto version fail");
+                        error!(
+                            error = e.to_string(),
+                            name, "set tls max proto version fail"
+                        );
                     }
                 }
 
@@ -368,8 +375,6 @@ impl ProxyHttp for Server {
             for name in locations.iter() {
                 if let Some(lo) = get_location(name) {
                     if lo.matched(host, path) {
-                        ctx.location_accepted = lo.accepted.fetch_add(1, Ordering::Relaxed) + 1;
-                        ctx.location_processing = lo.processing.fetch_add(1, Ordering::Relaxed) + 1;
                         ctx.location = name.to_string();
                         location = Some(lo);
                         break;
@@ -378,6 +383,8 @@ impl ProxyHttp for Server {
             }
         }
         if let Some(lo) = location {
+            ctx.location_accepted = lo.accepted.fetch_add(1, Ordering::Relaxed) + 1;
+            ctx.location_processing = lo.processing.fetch_add(1, Ordering::Relaxed) + 1;
             let _ = lo
                 .handle_request_plugin(PluginStep::EarlyRequest, session, ctx)
                 .await?;
@@ -405,8 +412,7 @@ impl ProxyHttp for Server {
         }
 
         let header = session.req_header_mut();
-        let location = get_location(&ctx.location);
-        if location.is_none() {
+        let Some(location) = get_location(&ctx.location) else {
             let host = util::get_host(header).unwrap_or_default();
             ctx.response_body_size = HttpResponse::unknown_error(Bytes::from(format!(
                 "Location not found, host:{host} path:{}",
@@ -415,16 +421,15 @@ impl ProxyHttp for Server {
             .send(session)
             .await?;
             return Ok(true);
-        }
-        let lo = location.unwrap();
+        };
 
-        debug!(name = lo.name, "location is matched");
-        lo.rewrite(header);
+        debug!(name = location.name, "location is matched");
+        location.rewrite(header);
 
         // body limit
-        lo.client_body_size_limit(Some(header), ctx)?;
+        location.client_body_size_limit(Some(header), ctx)?;
 
-        let done = lo
+        let done = location
             .handle_request_plugin(PluginStep::Request, session, ctx)
             .await?;
 
@@ -443,8 +448,8 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        if let Some(lo) = get_location(&ctx.location) {
-            let done = lo
+        if let Some(location) = get_location(&ctx.location) {
+            let done = location
                 .handle_request_plugin(PluginStep::ProxyUpstream, session, ctx)
                 .await?;
             if done {
@@ -459,8 +464,8 @@ impl ProxyHttp for Server {
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Box<HttpPeer>> {
-        let peer = if let Some(lo) = get_location(&ctx.location) {
-            if let Some(up) = get_upstream(&lo.upstream) {
+        let peer = if let Some(location) = get_location(&ctx.location) {
+            if let Some(up) = get_upstream(&location.upstream) {
                 ctx.upstream_connected = up.connected();
                 up.new_http_peer(session, ctx)
             } else {
@@ -507,8 +512,8 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        if let Some(lo) = get_location(&ctx.location) {
-            lo.set_append_proxy_headers(session, ctx, upstream_response);
+        if let Some(location) = get_location(&ctx.location) {
+            location.set_append_proxy_headers(session, ctx, upstream_response);
         }
         Ok(())
     }
@@ -594,8 +599,8 @@ impl ProxyHttp for Server {
             }
         }
 
-        if let Some(lo) = get_location(&ctx.location) {
-            let _ = lo
+        if let Some(location) = get_location(&ctx.location) {
+            let _ = location
                 .handle_response_plugin(PluginStep::Response, session, ctx, upstream_response)
                 .await?;
         }
@@ -742,8 +747,8 @@ impl ProxyHttp for Server {
         Self::CTX: Send + Sync,
     {
         self.processing.fetch_sub(1, Ordering::Relaxed);
-        if let Some(lo) = get_location(&ctx.location) {
-            lo.processing.fetch_sub(1, Ordering::Relaxed);
+        if let Some(location) = get_location(&ctx.location) {
+            location.processing.fetch_sub(1, Ordering::Relaxed);
         }
         if ctx.status.is_none() {
             if let Some(header) = session.response_written() {

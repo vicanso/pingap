@@ -32,14 +32,7 @@ pub struct RequestId {
     size: usize,
 }
 
-struct RequestIdParams {
-    plugin_step: PluginStep,
-    algorithm: String,
-    header_name: Option<HeaderName>,
-    size: usize,
-}
-
-impl TryFrom<&PluginConf> for RequestIdParams {
+impl TryFrom<&PluginConf> for RequestId {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
@@ -75,14 +68,7 @@ impl TryFrom<&PluginConf> for RequestIdParams {
 impl RequestId {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new request id plugin");
-        let params = RequestIdParams::try_from(params)?;
-
-        Ok(Self {
-            size: params.size,
-            plugin_step: params.plugin_step,
-            algorithm: params.algorithm,
-            header_name: params.header_name,
-        })
+        Self::try_from(params)
     }
 }
 

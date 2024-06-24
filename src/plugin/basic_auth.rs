@@ -24,13 +24,15 @@ use http::StatusCode;
 use pingora::proxy::Session;
 use tracing::debug;
 
-struct BasicAuthParams {
+pub struct BasicAuth {
     plugin_step: PluginStep,
     authorizations: Vec<Vec<u8>>,
     hide_credentials: bool,
+    miss_authorization_resp: HttpResponse,
+    unauthorized_resp: HttpResponse,
 }
 
-impl TryFrom<&PluginConf> for BasicAuthParams {
+impl TryFrom<&PluginConf> for BasicAuth {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
@@ -47,35 +49,6 @@ impl TryFrom<&PluginConf> for BasicAuthParams {
             plugin_step: step,
             hide_credentials: get_bool_conf(value, "hide_credentials"),
             authorizations,
-        };
-        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
-            return Err(Error::Invalid {
-                category: PluginCategory::BasicAuth.to_string(),
-                message: "Basic auth plugin should be executed at request or proxy upstream step"
-                    .to_string(),
-            });
-        }
-        Ok(params)
-    }
-}
-
-pub struct BasicAuth {
-    plugin_step: PluginStep,
-    authorizations: Vec<Vec<u8>>,
-    hide_credentials: bool,
-    miss_authorization_resp: HttpResponse,
-    unauthorized_resp: HttpResponse,
-}
-
-impl BasicAuth {
-    pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new basic auth plugin");
-        let params = BasicAuthParams::try_from(params)?;
-
-        Ok(Self {
-            plugin_step: params.plugin_step,
-            authorizations: params.authorizations,
-            hide_credentials: params.hide_credentials,
             miss_authorization_resp: HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
                 headers: Some(vec![(
@@ -96,7 +69,21 @@ impl BasicAuth {
                 body: Bytes::from_static(b"Invalid user or password"),
                 ..Default::default()
             },
-        })
+        };
+        if ![PluginStep::Request].contains(&params.plugin_step) {
+            return Err(Error::Invalid {
+                category: PluginCategory::BasicAuth.to_string(),
+                message: "Basic auth plugin should be executed at request step".to_string(),
+            });
+        }
+        Ok(params)
+    }
+}
+
+impl BasicAuth {
+    pub fn new(params: &PluginConf) -> Result<Self> {
+        debug!(params = params.to_string(), "new basic auth plugin");
+        Self::try_from(params)
     }
 }
 
@@ -138,7 +125,7 @@ impl Plugin for BasicAuth {
 
 #[cfg(test)]
 mod tests {
-    use super::{BasicAuth, BasicAuthParams, Plugin};
+    use super::{BasicAuth, Plugin};
     use crate::config::{PluginConf, PluginStep};
     use crate::state::State;
     use http::StatusCode;
@@ -148,7 +135,7 @@ mod tests {
 
     #[test]
     fn test_basic_auth_params() {
-        let params = BasicAuthParams::try_from(
+        let params = BasicAuth::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 authorizations = [
@@ -171,7 +158,7 @@ authorizations = [
                 .join(","),
         );
 
-        let result = BasicAuthParams::try_from(
+        let result = BasicAuth::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 authorizations = [
@@ -186,7 +173,7 @@ authorizations = [
             result.err().unwrap().to_string()
         );
 
-        let result = BasicAuthParams::try_from(
+        let result = BasicAuth::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 step = "response"
@@ -198,7 +185,7 @@ authorizations = [
             .unwrap(),
         );
         assert_eq!(
-            "Plugin basic_auth invalid, message: Basic auth plugin should be executed at request or proxy upstream step",
+            "Plugin basic_auth invalid, message: Basic auth plugin should be executed at request step",
             result.err().unwrap().to_string()
         );
     }

@@ -30,14 +30,7 @@ pub struct ResponseHeaders {
     set_headers: Vec<HttpHeader>,
 }
 
-struct ResponseHeadersParams {
-    plugin_step: PluginStep,
-    add_headers: Vec<HttpHeader>,
-    remove_headers: Vec<HeaderName>,
-    set_headers: Vec<HttpHeader>,
-}
-
-impl TryFrom<&PluginConf> for ResponseHeadersParams {
+impl TryFrom<&PluginConf> for ResponseHeaders {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
@@ -91,14 +84,7 @@ impl TryFrom<&PluginConf> for ResponseHeadersParams {
 impl ResponseHeaders {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new stats plugin");
-        let params = ResponseHeadersParams::try_from(params)?;
-
-        Ok(Self {
-            plugin_step: params.plugin_step,
-            add_headers: params.add_headers,
-            remove_headers: params.remove_headers,
-            set_headers: params.set_headers,
-        })
+        Self::try_from(params)
     }
 }
 
@@ -148,7 +134,7 @@ impl Plugin for ResponseHeaders {
 
 #[cfg(test)]
 mod tests {
-    use super::{ResponseHeaders, ResponseHeadersParams};
+    use super::ResponseHeaders;
     use crate::state::State;
     use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use pingora::http::ResponseHeader;
@@ -158,7 +144,7 @@ mod tests {
 
     #[test]
     fn test_response_headers_params() {
-        let params = ResponseHeadersParams::try_from(
+        let params = ResponseHeaders::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 step = "response"
@@ -191,7 +177,7 @@ remove_headers = [
             format!("{:?}", params.remove_headers)
         );
 
-        let result = ResponseHeadersParams::try_from(
+        let result = ResponseHeaders::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 add_headers = [

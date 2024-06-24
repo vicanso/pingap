@@ -41,28 +41,27 @@ pub struct Compression {
     plugin_step: PluginStep,
 }
 
-struct CompressionParams {
-    gzip_level: u32,
-    br_level: u32,
-    zstd_level: u32,
-    decompression: Option<bool>,
-    plugin_step: PluginStep,
-}
-
-impl TryFrom<&PluginConf> for CompressionParams {
+impl TryFrom<&PluginConf> for Compression {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let mut decompression = None;
         if value.contains_key("decompression") {
             decompression = Some(get_bool_conf(value, "decompression"));
         }
+        let gzip_level = get_int_conf(value, "gzip_level") as u32;
+        let br_level = get_int_conf(value, "br_level") as u32;
+        let zstd_level = get_int_conf(value, "zstd_level") as u32;
+        let support_compression = gzip_level + br_level + zstd_level > 0;
+
         let params = Self {
-            gzip_level: get_int_conf(value, "gzip_level") as u32,
-            br_level: get_int_conf(value, "br_level") as u32,
-            zstd_level: get_int_conf(value, "zstd_level") as u32,
+            gzip_level,
+            br_level,
+            zstd_level,
             decompression,
+            support_compression,
             plugin_step: PluginStep::EarlyRequest,
         };
+
         Ok(params)
     }
 }
@@ -70,16 +69,7 @@ impl TryFrom<&PluginConf> for CompressionParams {
 impl Compression {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new compresson plugin");
-        let params = CompressionParams::try_from(params)?;
-        let support_compression = params.gzip_level + params.br_level + params.zstd_level > 0;
-        Ok(Self {
-            plugin_step: params.plugin_step,
-            gzip_level: params.gzip_level,
-            br_level: params.br_level,
-            zstd_level: params.zstd_level,
-            decompression: params.decompression,
-            support_compression,
-        })
+        Self::try_from(params)
     }
 }
 
@@ -154,7 +144,6 @@ impl Plugin for Compression {
 #[cfg(test)]
 mod tests {
     use super::Compression;
-    use crate::plugin::compression::CompressionParams;
     use crate::state::State;
     use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use pingora::modules::http::compression::{ResponseCompression, ResponseCompressionBuilder};
@@ -165,7 +154,7 @@ mod tests {
 
     #[test]
     fn test_compression_params() {
-        let params = CompressionParams::try_from(
+        let params = Compression::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 step = "early_request"

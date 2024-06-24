@@ -64,18 +64,7 @@ pub struct Cache {
     headers: Option<Vec<String>>,
 }
 
-struct CacheParams {
-    plugin_step: PluginStep,
-    eviction: bool,
-    predictor: bool,
-    lock: u8,
-    max_file_size: usize,
-    max_ttl: Option<Duration>,
-    namespace: Option<String>,
-    headers: Option<Vec<String>>,
-}
-
-impl TryFrom<&PluginConf> for CacheParams {
+impl TryFrom<&PluginConf> for Cache {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
@@ -122,6 +111,7 @@ impl TryFrom<&PluginConf> for CacheParams {
             Some(headers)
         };
         let params = Self {
+            storage: &*MEM_BACKEND,
             plugin_step: step,
             eviction: value.contains_key("eviction"),
             predictor: value.contains_key("predictor"),
@@ -144,19 +134,7 @@ impl TryFrom<&PluginConf> for CacheParams {
 impl Cache {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new http cache plugin");
-        let params = CacheParams::try_from(params)?;
-
-        Ok(Self {
-            storage: &*MEM_BACKEND,
-            plugin_step: params.plugin_step,
-            eviction: params.eviction,
-            lock: params.lock,
-            max_ttl: params.max_ttl,
-            max_file_size: params.max_file_size,
-            namespace: params.namespace,
-            headers: params.headers,
-            predictor: params.predictor,
-        })
+        Self::try_from(params)
     }
 }
 

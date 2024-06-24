@@ -73,15 +73,23 @@ impl ServiceTask for LetsEncryptService {
             true
         };
         if should_renew_now {
-            info!("Should renew cert from lets encrypt");
+            info!(domains = domains.join(","), "renew cert from let's encrypt");
             match new_lets_encrypt(&self.certificate_file, domains).await {
                 Ok(()) => {
-                    info!("Renew cert success");
+                    info!(domains = domains.join(","), "renew cert success");
                     if let Err(e) = restart_now() {
-                        error!(error = e.to_string(), "restart fail");
+                        error!(
+                            error = e.to_string(),
+                            domains = domains.join(","),
+                            "restart fail"
+                        );
                     }
                 }
-                Err(e) => error!(error = e.to_string(), "renew cert fail"),
+                Err(e) => error!(
+                    error = e.to_string(),
+                    domains = domains.join(","),
+                    "renew cert fail"
+                ),
             };
         }
         None
@@ -114,14 +122,13 @@ pub async fn handle_lets_encrypt(session: &mut Session, ctx: &mut State) -> ping
                 .ok_or_else(|| util::new_internal_error(400, "token not found".to_string()))?;
             v.clone()
         };
-        let size = HttpResponse {
+        ctx.response_body_size = HttpResponse {
             status: StatusCode::OK,
             body: value.into(),
             ..Default::default()
         }
         .send(session)
         .await?;
-        ctx.response_body_size = size;
         return Ok(true);
     }
     Ok(false)

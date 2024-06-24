@@ -43,16 +43,7 @@ pub struct Limiter {
     plugin_step: PluginStep,
 }
 
-struct LimiterParams {
-    limit_category: String,
-    tag: LimitTag,
-    max: isize,
-    key: String,
-    interval: Duration,
-    plugin_step: PluginStep,
-}
-
-impl TryFrom<&PluginConf> for LimiterParams {
+impl TryFrom<&PluginConf> for Limiter {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
@@ -72,12 +63,20 @@ impl TryFrom<&PluginConf> for LimiterParams {
         } else {
             Duration::from_secs(10)
         };
+        let mut inflight = None;
+        let mut rate = None;
+        if get_str_conf(value, "type") == "inflight" {
+            inflight = Some(Inflight::new());
+        } else {
+            rate = Some(Rate::new(interval));
+        }
+
         let params = Self {
             tag,
-            limit_category: get_str_conf(value, "type"),
             key: get_str_conf(value, "key"),
             max: get_int_conf(value, "max") as isize,
-            interval,
+            inflight,
+            rate,
             plugin_step: step,
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
@@ -94,23 +93,7 @@ impl TryFrom<&PluginConf> for LimiterParams {
 impl Limiter {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new limit plugin");
-        let params = LimiterParams::try_from(params)?;
-        let mut inflight = None;
-        let mut rate = None;
-        if params.limit_category == "inflight" {
-            inflight = Some(Inflight::new());
-        } else {
-            rate = Some(Rate::new(params.interval));
-        }
-
-        Ok(Self {
-            tag: params.tag,
-            plugin_step: params.plugin_step,
-            max: params.max,
-            key: params.key,
-            inflight,
-            rate,
-        })
+        Self::try_from(params)
     }
     /// Increment `key` by 1. If value gt max, an error will be return.
     /// Otherwise returns a Guard. It may set the client ip to context.
@@ -189,12 +172,7 @@ impl Plugin for Limiter {
 #[cfg(test)]
 mod tests {
     use super::{LimitTag, Limiter};
-    use crate::{
-        config::PluginConf,
-        config::PluginStep,
-        plugin::{limit::LimiterParams, Plugin},
-        state::State,
-    };
+    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin, state::State};
     use http::StatusCode;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -221,7 +199,7 @@ mod tests {
 
     #[test]
     fn test_limit_params() {
-        let params = LimiterParams::try_from(
+        let params = Limiter::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 type = "inflight"
@@ -234,12 +212,11 @@ max = 10
         )
         .unwrap();
         assert_eq!("request", params.plugin_step.to_string());
-        assert_eq!("inflight", params.limit_category);
+        assert_eq!(true, params.inflight.is_some());
         assert_eq!(LimitTag::Cookie, params.tag);
         assert_eq!("deviceId", params.key);
-        assert_eq!(Duration::from_secs(10), params.interval);
 
-        let result = LimiterParams::try_from(
+        let result = Limiter::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 step = "response"

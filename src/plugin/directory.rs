@@ -160,24 +160,7 @@ fn get_cacheable_and_headers_from_meta(
     (cacheable, size, headers)
 }
 
-struct DirectoryParams {
-    path: String,
-    index: String,
-    autoindex: bool,
-    chunk_size: Option<usize>,
-    // max age of http response
-    max_age: Option<u32>,
-    // private for cache control
-    cache_private: Option<bool>,
-    // charset for text file
-    charset: Option<String>,
-    plugin_step: PluginStep,
-    // support download
-    download: bool,
-    headers: Option<Vec<HttpHeader>>,
-}
-
-impl TryFrom<&PluginConf> for DirectoryParams {
+impl TryFrom<&PluginConf> for Directory {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
@@ -211,7 +194,7 @@ impl TryFrom<&PluginConf> for DirectoryParams {
         let params = Self {
             autoindex: get_bool_conf(value, "autoindex"),
             index: get_str_conf(value, "index"),
-            path: get_str_conf(value, "path"),
+            path: Path::new(&util::resolve_path(&get_str_conf(value, "path"))).to_path_buf(),
             chunk_size,
             max_age,
             charset,
@@ -236,19 +219,7 @@ impl Directory {
     /// Creates a new directory upstream, which will serve static file of directory.
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new serve static file plugin");
-        let params = DirectoryParams::try_from(params)?;
-        Ok(Self {
-            autoindex: params.autoindex,
-            index: params.index,
-            path: Path::new(&util::resolve_path(&params.path)).to_path_buf(),
-            chunk_size: params.chunk_size,
-            max_age: params.max_age,
-            charset: params.charset,
-            cache_private: params.cache_private,
-            plugin_step: params.plugin_step,
-            download: params.download,
-            headers: params.headers,
-        })
+        Self::try_from(params)
     }
 }
 
@@ -399,11 +370,7 @@ impl Plugin for Directory {
 mod tests {
     use super::{get_cacheable_and_headers_from_meta, get_data, Directory};
     use crate::state::State;
-    use crate::{
-        config::PluginConf,
-        config::PluginStep,
-        plugin::{directory::DirectoryParams, Plugin},
-    };
+    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use pingora::proxy::Session;
     use pretty_assertions::{assert_eq, assert_ne};
     use std::{os::unix::fs::MetadataExt, path::Path};
@@ -411,7 +378,7 @@ mod tests {
 
     #[test]
     fn test_directory_params() {
-        let params = DirectoryParams::try_from(
+        let params = Directory::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 step = "proxy_upstream"
@@ -429,7 +396,7 @@ download = true
         )
         .unwrap();
         assert_eq!("proxy_upstream", params.plugin_step.to_string());
-        assert_eq!("~/Downloads", params.path);
+        assert_eq!(true, params.path.to_str().unwrap().ends_with("/Downloads"));
         assert_eq!("/index.html", params.index);
         assert_eq!(true, params.autoindex);
         assert_eq!(1024, params.chunk_size.unwrap_or_default());
@@ -439,7 +406,7 @@ download = true
         assert_eq!("utf8", params.charset.unwrap_or_default());
         assert_eq!(true, params.download);
 
-        let result = DirectoryParams::try_from(
+        let result = Directory::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 step = "response"

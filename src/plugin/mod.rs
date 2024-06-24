@@ -285,13 +285,6 @@ pub(crate) fn get_step_conf(value: &PluginConf) -> PluginStep {
     PluginStep::from_str(get_str_conf(value, "step").as_str()).unwrap_or_default()
 }
 
-pub(crate) fn get_step_list_conf(value: &PluginConf) -> Vec<PluginStep> {
-    get_str_conf(value, "step")
-        .split(',')
-        .map(|item| PluginStep::from_str(item).unwrap_or_default())
-        .collect()
-}
-
 #[test]
 pub fn initialize_test_plugins() {
     init_plugins(vec![

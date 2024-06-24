@@ -31,15 +31,7 @@ pub struct RefererRestriction {
     forbidden_resp: HttpResponse,
 }
 
-struct RefererRestrictionParams {
-    plugin_step: PluginStep,
-    referer_list: Vec<String>,
-    prefix_referer_list: Vec<String>,
-    restriction_category: String,
-    message: String,
-}
-
-impl TryFrom<&PluginConf> for RefererRestrictionParams {
+impl TryFrom<&PluginConf> for RefererRestriction {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
@@ -53,12 +45,20 @@ impl TryFrom<&PluginConf> for RefererRestrictionParams {
             }
         }
 
+        let mut message = get_str_conf(value, "message");
+        if message.is_empty() {
+            message = "Request is forbidden".to_string();
+        }
         let params = Self {
             plugin_step: step,
             prefix_referer_list,
             referer_list,
             restriction_category: get_str_conf(value, "type"),
-            message: get_str_conf(value, "message"),
+            forbidden_resp: HttpResponse {
+                status: StatusCode::FORBIDDEN,
+                body: Bytes::from(message),
+                ..Default::default()
+            },
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
             return Err(Error::Invalid {
@@ -79,22 +79,7 @@ impl RefererRestriction {
             params = params.to_string(),
             "new referer restriction plugin"
         );
-        let params = RefererRestrictionParams::try_from(params)?;
-        let mut message = params.message;
-        if message.is_empty() {
-            message = "Request is forbidden".to_string();
-        }
-        Ok(Self {
-            plugin_step: params.plugin_step,
-            referer_list: params.referer_list,
-            prefix_referer_list: params.prefix_referer_list,
-            restriction_category: params.restriction_category,
-            forbidden_resp: HttpResponse {
-                status: StatusCode::FORBIDDEN,
-                body: Bytes::from(message),
-                ..Default::default()
-            },
-        })
+        Self::try_from(params)
     }
 }
 
@@ -148,7 +133,7 @@ impl Plugin for RefererRestriction {
 }
 #[cfg(test)]
 mod tests {
-    use super::{RefererRestriction, RefererRestrictionParams};
+    use super::RefererRestriction;
     use crate::state::State;
     use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use http::StatusCode;
@@ -158,7 +143,7 @@ mod tests {
 
     #[test]
     fn test_referer_restriction_params() {
-        let params = RefererRestrictionParams::try_from(
+        let params = RefererRestriction::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 referer_list = [
@@ -175,7 +160,7 @@ type = "deny"
         assert_eq!(".bing.cn", params.prefix_referer_list.join(","));
         assert_eq!("github.com", params.referer_list.join(","));
 
-        let result = RefererRestrictionParams::try_from(
+        let result = RefererRestriction::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 step = "response"
