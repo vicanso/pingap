@@ -406,7 +406,7 @@ impl Upstream {
         };
 
         let alpn = if let Some(alpn) = &conf.alpn {
-            match alpn.to_lowercase().as_str() {
+            match alpn.to_uppercase().as_str() {
                 "H2H1" => ALPN::H2H1,
                 "H2" => ALPN::H2,
                 _ => ALPN::H1,
