@@ -10,7 +10,7 @@
 - [ ] support include comnand for configuraion
 - [ ] admin web expand common configuration items by default
 - [ ] support tracing-appender
-- [ ] build gnu and musl versions
+- [x] build gnu and musl versions
 - [x] json log
 - [x] cors plugin
 - [x] upstream_response_time

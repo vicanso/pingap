@@ -172,7 +172,7 @@ impl Server {
         self.lets_encrypt_enabled = true;
     }
 
-    /// New all background services and add a TCP/TLS listening endpoint.
+    /// Add TCP/TLS listening endpoint.
     pub fn run(self, conf: &Arc<configuration::ServerConf>) -> Result<ServerServices> {
         let tls_from_lets_encrypt = self.tls_from_lets_encrypt;
         let addr = self.addr.clone();
@@ -222,6 +222,7 @@ impl Server {
             addr,
             threads = format!("{threads:?}"),
             is_tls,
+            h2 = enbaled_h2,
             "server is listening"
         );
         let cipher_list = self.tls_cipher_list.clone();
@@ -288,10 +289,10 @@ impl Server {
 
                 // tls_settings.set_min_proto_version(version)
                 if let Some(min_version) = tls_settings.min_proto_version() {
-                    info!(min_version = format!("{min_version:?}"), "tls proto");
+                    info!(name, min_version = format!("{min_version:?}"), "tls proto");
                 }
                 if let Some(max_version) = tls_settings.max_proto_version() {
-                    info!(max_version = format!("{max_version:?}"), "tls proto");
+                    info!(name, max_version = format!("{max_version:?}"), "tls proto");
                 }
                 lb.add_tls_with_settings(addr, tcp_socket_options.clone(), tls_settings);
             } else if let Some(opt) = &tcp_socket_options {
@@ -368,17 +369,19 @@ impl ProxyHttp for Server {
         ctx.remote_addr = util::get_remote_addr(session);
 
         let mut location = None;
-        if let Some(locations) = get_server_locations(&self.name) {
-            let header = session.req_header_mut();
-            let host = util::get_host(header).unwrap_or_default();
-            let path = header.uri.path();
-            for name in locations.iter() {
-                if let Some(lo) = get_location(name) {
-                    if lo.matched(host, path) {
-                        ctx.location = name.to_string();
-                        location = Some(lo);
-                        break;
-                    }
+        // location not found
+        let Some(locations) = get_server_locations(&self.name) else {
+            return Ok(());
+        };
+        let header = session.req_header_mut();
+        let host = util::get_host(header).unwrap_or_default();
+        let path = header.uri.path();
+        for name in locations.iter() {
+            if let Some(lo) = get_location(name) {
+                if lo.matched(host, path) {
+                    ctx.location = name.to_string();
+                    location = Some(lo);
+                    break;
                 }
             }
         }

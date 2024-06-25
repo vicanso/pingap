@@ -15,6 +15,7 @@
 use crate::http_extra::HOST_NAME_TAG;
 use crate::state::{get_hostname, State};
 use crate::util;
+use crate::util::{format_byte_size, format_duration};
 use bytes::BytesMut;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
@@ -102,65 +103,6 @@ fn format_extra_tag(key: &str) -> Option<Tag> {
         }
         _ => None,
     }
-}
-
-const B_100: usize = 100;
-const KB: usize = 1_000;
-const KB_100: usize = 100 * KB;
-const MB: usize = 1_000_000;
-const MB_100: usize = 100 * MB;
-const GB: usize = 1_000_000_000;
-
-#[inline]
-fn format_byte_size(mut buf: BytesMut, size: usize) -> BytesMut {
-    if size < KB {
-        buf.extend(itoa::Buffer::new().format(size).as_bytes());
-        buf.extend(b"B");
-    } else if size < MB {
-        buf.extend(itoa::Buffer::new().format(size / KB).as_bytes());
-        let value = (size % KB) / B_100;
-        if value != 0 {
-            buf.extend(b".");
-            buf.extend(itoa::Buffer::new().format(value).as_bytes());
-        }
-        buf.extend(b"KB");
-    } else if size < GB {
-        buf.extend(itoa::Buffer::new().format(size / MB).as_bytes());
-        let value = (size % MB) / KB_100;
-        if value != 0 {
-            buf.extend(b".");
-            buf.extend(itoa::Buffer::new().format(value).as_bytes());
-        }
-        buf.extend(b"MB");
-    } else {
-        buf.extend(itoa::Buffer::new().format(size / GB).as_bytes());
-        let value = (size % GB) / MB_100;
-        if value != 0 {
-            buf.extend(b".");
-            buf.extend(itoa::Buffer::new().format(value).as_bytes());
-        }
-        buf.extend(b"GB");
-    }
-    buf
-}
-
-const SEC: u64 = 1_000;
-
-#[inline]
-fn format_duration(mut buf: BytesMut, ms: u64) -> BytesMut {
-    if ms < 1000 {
-        buf.extend(itoa::Buffer::new().format(ms).as_bytes());
-        buf.extend(b"ms");
-    } else {
-        buf.extend(itoa::Buffer::new().format(ms / SEC).as_bytes());
-        let value = (ms % SEC) / 100;
-        if value != 0 {
-            buf.extend(b".");
-            buf.extend(itoa::Buffer::new().format(value).as_bytes());
-        }
-        buf.extend(b"s");
-    }
-    buf
 }
 
 static COMBINED: &str =
@@ -447,67 +389,7 @@ impl Parser {
                 }
                 TagCategory::Context => {
                     if let Some(key) = &tag.data {
-                        match key.as_str() {
-                            "reused" => {
-                                if ctx.reused {
-                                    buf.extend(b"true");
-                                } else {
-                                    buf.extend(b"false");
-                                }
-                            }
-                            "upstream_addr" => buf.extend(ctx.upstream_address.as_bytes()),
-                            "processing" => {
-                                buf.extend(itoa::Buffer::new().format(ctx.processing).as_bytes())
-                            }
-                            "upstream_connect_time" => {
-                                if let Some(ms) = ctx.get_upstream_connect_time() {
-                                    buf = format_duration(buf, ms);
-                                }
-                            }
-                            "upstream_connected" => {
-                                if let Some(value) = ctx.upstream_connected {
-                                    buf.extend(itoa::Buffer::new().format(value).as_bytes());
-                                }
-                            }
-                            "upstream_processing_time" => {
-                                if let Some(ms) = ctx.get_upstream_processing_time() {
-                                    buf = format_duration(buf, ms);
-                                }
-                            }
-                            "upstream_response_time" => {
-                                if let Some(ms) = ctx.get_upstream_response_time() {
-                                    buf = format_duration(buf, ms);
-                                }
-                            }
-                            "location" => buf.extend(ctx.location.as_bytes()),
-                            "connection_time" => buf = format_duration(buf, ctx.connection_time),
-                            "tls_version" => {
-                                if let Some(value) = &ctx.tls_version {
-                                    buf.extend(value.as_bytes());
-                                }
-                            }
-                            "compression_time" => {
-                                if let Some(value) = &ctx.compression_stat {
-                                    buf = format_duration(buf, value.duration.as_millis() as u64);
-                                }
-                            }
-                            "compression_ratio" => {
-                                if let Some(value) = &ctx.compression_stat {
-                                    buf.extend(format!("{:.1}", value.ratio()).as_bytes());
-                                }
-                            }
-                            "cache_lookup_time" => {
-                                if let Some(ms) = ctx.cache_lookup_time {
-                                    buf = format_duration(buf, ms);
-                                }
-                            }
-                            "cache_lock_time" => {
-                                if let Some(ms) = ctx.cache_lock_time {
-                                    buf = format_duration(buf, ms);
-                                }
-                            }
-                            _ => {}
-                        }
+                        buf = ctx.append_value(buf, key.as_str());
                     }
                 }
             };
@@ -519,82 +401,12 @@ impl Parser {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_byte_size, format_duration, format_extra_tag, Parser, Tag, TagCategory};
+    use super::{format_extra_tag, Parser, Tag, TagCategory};
     use crate::state::State;
-    use bytes::BytesMut;
     use http::Method;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
-
-    #[test]
-    fn test_format_byte_size() {
-        let mut buf = BytesMut::with_capacity(1024);
-        buf = format_byte_size(buf, 512);
-        assert_eq!(
-            "512B",
-            std::string::String::from_utf8_lossy(&buf).to_string()
-        );
-
-        buf.clear();
-        buf = format_byte_size(buf, 1024);
-        assert_eq!(
-            "1KB",
-            std::string::String::from_utf8_lossy(&buf).to_string()
-        );
-
-        buf.clear();
-        buf = format_byte_size(buf, 1124);
-        assert_eq!(
-            "1.1KB",
-            std::string::String::from_utf8_lossy(&buf).to_string()
-        );
-
-        buf.clear();
-        buf = format_byte_size(buf, 1020 * 1000);
-        assert_eq!(
-            "1MB",
-            std::string::String::from_utf8_lossy(&buf).to_string()
-        );
-
-        buf.clear();
-        buf = format_byte_size(buf, 1220 * 1000);
-        assert_eq!(
-            "1.2MB",
-            std::string::String::from_utf8_lossy(&buf).to_string()
-        );
-
-        buf.clear();
-        buf = format_byte_size(buf, 122220 * 1000);
-        assert_eq!(
-            "122.2MB",
-            std::string::String::from_utf8_lossy(&buf).to_string()
-        );
-
-        buf.clear();
-        buf = format_byte_size(buf, 1000 * 1000 * 1000 + 500 * 1000 * 1000);
-        assert_eq!(
-            "1.5GB",
-            std::string::String::from_utf8_lossy(&buf).to_string()
-        );
-    }
-
-    #[test]
-    fn test_format_duration() {
-        let mut buf = BytesMut::with_capacity(1024);
-        buf = format_duration(buf, 100);
-        assert_eq!(
-            "100ms",
-            std::string::String::from_utf8_lossy(&buf).to_string()
-        );
-
-        buf.clear();
-        buf = format_duration(buf, 12400);
-        assert_eq!(
-            "12.4s",
-            std::string::String::from_utf8_lossy(&buf).to_string()
-        );
-    }
 
     #[test]
     fn test_format_extra_tag() {

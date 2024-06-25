@@ -25,6 +25,8 @@ struct ValidityChecker {
     tls_cert_info_list: Vec<(String, CertInfo)>,
 }
 
+// Verify the validity period of the https certificate,
+// include not after and not before.
 fn validity_check(validity_list: &[(String, CertInfo)], time_offset: i64) -> Option<String> {
     let now = util::now().as_secs() as i64;
     for (name, cert) in validity_list.iter() {

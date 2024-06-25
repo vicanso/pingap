@@ -45,6 +45,7 @@ struct LetsEncryptService {
     domains: Vec<String>,
 }
 
+/// Create a Let's Encrypt service to periodically detect and update https certificates
 pub fn new_lets_encrypt_service(
     certificate_file: PathBuf,
     domains: Vec<String>,
@@ -99,7 +100,7 @@ impl ServiceTask for LetsEncryptService {
     }
 }
 
-/// Get the cert from file
+/// Get the cert from filea and convert it to cert struct.
 pub fn get_lets_encrypt_cert(path: &PathBuf) -> Result<Cert> {
     if !path.exists() {
         return Err(Error::NotFound {

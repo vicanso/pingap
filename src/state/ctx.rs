@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::util;
+use crate::util::format_duration;
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
 use pingora_limits::inflight::Guard;
 use std::time::Duration;
-
-use crate::util;
 
 pub trait ModifyResponseBody: Sync + Send {
     fn handle(&self, data: Bytes) -> Bytes;
@@ -130,5 +130,68 @@ impl State {
             }
         }
         None
+    }
+    #[inline]
+    pub fn append_value(&self, mut buf: BytesMut, key: &str) -> BytesMut {
+        match key {
+            "reused" => {
+                if self.reused {
+                    buf.extend(b"true");
+                } else {
+                    buf.extend(b"false");
+                }
+            }
+            "upstream_addr" => buf.extend(self.upstream_address.as_bytes()),
+            "processing" => buf.extend(itoa::Buffer::new().format(self.processing).as_bytes()),
+            "upstream_connect_time" => {
+                if let Some(ms) = self.get_upstream_connect_time() {
+                    buf = format_duration(buf, ms);
+                }
+            }
+            "upstream_connected" => {
+                if let Some(value) = self.upstream_connected {
+                    buf.extend(itoa::Buffer::new().format(value).as_bytes());
+                }
+            }
+            "upstream_processing_time" => {
+                if let Some(ms) = self.get_upstream_processing_time() {
+                    buf = format_duration(buf, ms);
+                }
+            }
+            "upstream_response_time" => {
+                if let Some(ms) = self.get_upstream_response_time() {
+                    buf = format_duration(buf, ms);
+                }
+            }
+            "location" => buf.extend(self.location.as_bytes()),
+            "connection_time" => buf = format_duration(buf, self.connection_time),
+            "tls_version" => {
+                if let Some(value) = &self.tls_version {
+                    buf.extend(value.as_bytes());
+                }
+            }
+            "compression_time" => {
+                if let Some(value) = &self.compression_stat {
+                    buf = format_duration(buf, value.duration.as_millis() as u64);
+                }
+            }
+            "compression_ratio" => {
+                if let Some(value) = &self.compression_stat {
+                    buf.extend(format!("{:.1}", value.ratio()).as_bytes());
+                }
+            }
+            "cache_lookup_time" => {
+                if let Some(ms) = self.cache_lookup_time {
+                    buf = format_duration(buf, ms);
+                }
+            }
+            "cache_lock_time" => {
+                if let Some(ms) = self.cache_lock_time {
+                    buf = format_duration(buf, ms);
+                }
+            }
+            _ => {}
+        }
+        buf
     }
 }

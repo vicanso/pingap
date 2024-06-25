@@ -14,6 +14,7 @@
 
 use crate::state::{get_hostname, State};
 use crate::util;
+use bytes::BytesMut;
 use http::header;
 use http::{HeaderName, HeaderValue};
 use once_cell::sync::Lazy;
@@ -62,22 +63,16 @@ pub fn convert_header_value(
     let buf = value.as_bytes();
     match buf {
         HOST_NAME_TAG => {
-            if let Ok(value) = HeaderValue::from_str(&get_hostname()) {
-                return Some(value);
-            }
+            return HeaderValue::from_str(&get_hostname()).ok();
         }
         REMOTE_ADDR_TAG => {
             if let Some(remote_addr) = &ctx.remote_addr {
-                if let Ok(value) = HeaderValue::from_str(remote_addr) {
-                    return Some(value);
-                }
+                return HeaderValue::from_str(remote_addr).ok();
             }
         }
         UPSTREAM_ADDR_TAG => {
             if !ctx.upstream_address.is_empty() {
-                if let Ok(value) = HeaderValue::from_str(&ctx.upstream_address) {
-                    return Some(value);
-                }
+                return HeaderValue::from_str(&ctx.upstream_address).ok();
             }
         }
         PROXY_ADD_FORWARDED_TAG => {
@@ -89,24 +84,29 @@ pub fn convert_header_value(
                 } else {
                     remote_addr.to_string()
                 };
-                if let Ok(value) = HeaderValue::from_str(&value) {
-                    return Some(value);
-                }
+                return HeaderValue::from_str(&value).ok();
             }
         }
         HTTP_ORIGIN_TAG => {
-            if let Some(origin) = session.get_header("origin") {
-                return Some(origin.clone());
-            }
+            return session.get_header("origin").cloned();
         }
         _ => {
             if buf.starts_with(b"$") {
                 if let Ok(value) = std::env::var(
                     std::string::String::from_utf8_lossy(&buf[1..buf.len()]).to_string(),
                 ) {
-                    if let Ok(value) = HeaderValue::from_str(&value) {
-                        return Some(value);
-                    }
+                    return HeaderValue::from_str(&value).ok();
+                }
+            } else if buf.starts_with(b":") {
+                let mut value = BytesMut::with_capacity(20);
+                value = ctx.append_value(
+                    value,
+                    std::string::String::from_utf8_lossy(&buf[1..buf.len()])
+                        .to_string()
+                        .as_str(),
+                );
+                if !value.is_empty() {
+                    return HeaderValue::from_bytes(&value).ok();
                 }
             }
         }

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use bytes::BytesMut;
 use http::HeaderName;
 use once_cell::sync::Lazy;
 use path_absolutize::*;
@@ -251,12 +252,72 @@ pub fn convert_tls_version(version: &Option<String>) -> Option<SslVersion> {
     None
 }
 
+const B_100: usize = 100;
+const KB: usize = 1_000;
+const KB_100: usize = 100 * KB;
+const MB: usize = 1_000_000;
+const MB_100: usize = 100 * MB;
+const GB: usize = 1_000_000_000;
+
+#[inline]
+pub fn format_byte_size(mut buf: BytesMut, size: usize) -> BytesMut {
+    if size < KB {
+        buf.extend(itoa::Buffer::new().format(size).as_bytes());
+        buf.extend(b"B");
+    } else if size < MB {
+        buf.extend(itoa::Buffer::new().format(size / KB).as_bytes());
+        let value = (size % KB) / B_100;
+        if value != 0 {
+            buf.extend(b".");
+            buf.extend(itoa::Buffer::new().format(value).as_bytes());
+        }
+        buf.extend(b"KB");
+    } else if size < GB {
+        buf.extend(itoa::Buffer::new().format(size / MB).as_bytes());
+        let value = (size % MB) / KB_100;
+        if value != 0 {
+            buf.extend(b".");
+            buf.extend(itoa::Buffer::new().format(value).as_bytes());
+        }
+        buf.extend(b"MB");
+    } else {
+        buf.extend(itoa::Buffer::new().format(size / GB).as_bytes());
+        let value = (size % GB) / MB_100;
+        if value != 0 {
+            buf.extend(b".");
+            buf.extend(itoa::Buffer::new().format(value).as_bytes());
+        }
+        buf.extend(b"GB");
+    }
+    buf
+}
+
+const SEC: u64 = 1_000;
+
+#[inline]
+pub fn format_duration(mut buf: BytesMut, ms: u64) -> BytesMut {
+    if ms < 1000 {
+        buf.extend(itoa::Buffer::new().format(ms).as_bytes());
+        buf.extend(b"ms");
+    } else {
+        buf.extend(itoa::Buffer::new().format(ms / SEC).as_bytes());
+        let value = (ms % SEC) / 100;
+        if value != 0 {
+            buf.extend(b".");
+            buf.extend(itoa::Buffer::new().format(value).as_bytes());
+        }
+        buf.extend(b"s");
+    }
+    buf
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        convert_tls_version, get_latency, get_pkg_name, get_pkg_version, local_ip_list,
-        remove_query_from_header, resolve_path,
+        convert_tls_version, format_byte_size, format_duration, get_latency, get_pkg_name,
+        get_pkg_version, local_ip_list, remove_query_from_header, resolve_path,
     };
+    use bytes::BytesMut;
     use pingora::{http::RequestHeader, tls::ssl::SslVersion};
     use pretty_assertions::assert_eq;
     #[test]
@@ -308,5 +369,74 @@ mod tests {
     #[test]
     fn test_local_ip_list() {
         assert_eq!(false, local_ip_list().is_empty());
+    }
+
+    #[test]
+    fn test_format_byte_size() {
+        let mut buf = BytesMut::with_capacity(1024);
+        buf = format_byte_size(buf, 512);
+        assert_eq!(
+            "512B",
+            std::string::String::from_utf8_lossy(&buf).to_string()
+        );
+
+        buf.clear();
+        buf = format_byte_size(buf, 1024);
+        assert_eq!(
+            "1KB",
+            std::string::String::from_utf8_lossy(&buf).to_string()
+        );
+
+        buf.clear();
+        buf = format_byte_size(buf, 1124);
+        assert_eq!(
+            "1.1KB",
+            std::string::String::from_utf8_lossy(&buf).to_string()
+        );
+
+        buf.clear();
+        buf = format_byte_size(buf, 1020 * 1000);
+        assert_eq!(
+            "1MB",
+            std::string::String::from_utf8_lossy(&buf).to_string()
+        );
+
+        buf.clear();
+        buf = format_byte_size(buf, 1220 * 1000);
+        assert_eq!(
+            "1.2MB",
+            std::string::String::from_utf8_lossy(&buf).to_string()
+        );
+
+        buf.clear();
+        buf = format_byte_size(buf, 122220 * 1000);
+        assert_eq!(
+            "122.2MB",
+            std::string::String::from_utf8_lossy(&buf).to_string()
+        );
+
+        buf.clear();
+        buf = format_byte_size(buf, 1000 * 1000 * 1000 + 500 * 1000 * 1000);
+        assert_eq!(
+            "1.5GB",
+            std::string::String::from_utf8_lossy(&buf).to_string()
+        );
+    }
+
+    #[test]
+    fn test_format_duration() {
+        let mut buf = BytesMut::with_capacity(1024);
+        buf = format_duration(buf, 100);
+        assert_eq!(
+            "100ms",
+            std::string::String::from_utf8_lossy(&buf).to_string()
+        );
+
+        buf.clear();
+        buf = format_duration(buf, 12400);
+        assert_eq!(
+            "12.4s",
+            std::string::String::from_utf8_lossy(&buf).to_string()
+        );
     }
 }

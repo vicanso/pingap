@@ -405,17 +405,16 @@ impl Upstream {
             }
         };
 
-        let alpn = match conf
-            .alpn
-            .clone()
-            .unwrap_or_default()
-            .to_uppercase()
-            .as_str()
-        {
-            "H2H1" => ALPN::H2H1,
-            "H2" => ALPN::H2,
-            _ => ALPN::H1,
+        let alpn = if let Some(alpn) = &conf.alpn {
+            match alpn.to_lowercase().as_str() {
+                "H2H1" => ALPN::H2H1,
+                "H2" => ALPN::H2,
+                _ => ALPN::H1,
+            }
+        } else {
+            ALPN::H1
         };
+
         let tcp_keepalive = if conf.tcp_idle.is_some()
             && conf.tcp_probe_count.is_some()
             && conf.tcp_interval.is_some()

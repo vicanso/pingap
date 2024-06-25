@@ -14,12 +14,11 @@
 
 use super::{get_step_conf, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
-use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON};
+use crate::http_extra::HttpResponse;
 use crate::state::{get_hostname, get_start_time, State};
 use crate::util;
 use async_trait::async_trait;
 use bytesize::ByteSize;
-use http::StatusCode;
 use memory_stats::memory_stats;
 use pingora::proxy::Session;
 use serde::Serialize;
@@ -40,7 +39,6 @@ struct ServerStats {
     version: String,
     start_time: u64,
     uptime: String,
-    upstream_connected: Option<u32>,
 }
 pub struct Stats {
     path: String,
@@ -101,7 +99,7 @@ impl Plugin for Stats {
             }
             let uptime: humantime::Duration =
                 Duration::from_secs(util::now().as_secs() - get_start_time()).into();
-            let buf = serde_json::to_vec(&ServerStats {
+            let resp = HttpResponse::try_from_json(&ServerStats {
                 accepted: ctx.accepted,
                 processing: ctx.processing,
                 location_processing: ctx.location_processing,
@@ -112,15 +110,9 @@ impl Plugin for Stats {
                 version: VERSION.to_string(),
                 start_time: get_start_time(),
                 uptime: uptime.to_string(),
-                upstream_connected: ctx.upstream_connected,
             })
-            .unwrap_or_default();
-            return Ok(Some(HttpResponse {
-                status: StatusCode::OK,
-                body: buf.into(),
-                headers: Some(vec![HTTP_HEADER_CONTENT_JSON.clone()]),
-                ..Default::default()
-            }));
+            .map_err(|e| util::new_internal_error(500, e.to_string()))?;
+            return Ok(Some(resp));
         }
         Ok(None)
     }

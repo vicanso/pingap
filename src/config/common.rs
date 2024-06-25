@@ -154,6 +154,8 @@ pub struct UpstreamConf {
 }
 impl UpstreamConf {
     /// Validate the options of upstream config.
+    /// 1. The address list can't be empty, and can be converted to socket addr.
+    /// 2. The health check url can be parsed to Url if it exists.
     pub fn validate(&self, name: &str) -> Result<()> {
         if self.addrs.is_empty() {
             return Err(Error::Invalid {
@@ -201,6 +203,8 @@ pub struct LocationConf {
 
 impl LocationConf {
     /// Validate the options of location config.
+    /// 1. Convert add and set headers to (HeaderName, HeaderValue).
+    /// 2. Parse rewrite path to regexp if it exists.
     fn validate(&self, name: &str, upstream_names: &[String]) -> Result<()> {
         // validate header for http
         let validate = |headers: &Option<Vec<String>>| -> Result<()> {
@@ -246,7 +250,7 @@ impl LocationConf {
 
         Ok(())
     }
-    /// Get weight of location.
+    /// Get weight of location, which is calculated from the domain name, path and path length
     pub fn get_weight(&self) -> u16 {
         if let Some(weight) = self.weight {
             return weight;
@@ -302,6 +306,11 @@ pub struct ServerConf {
 
 impl ServerConf {
     /// Validate the options of server config.
+    /// 1. Parse listen addr to socket addr.
+    /// 2. Check the locations are exists.
+    /// 3. Parse tls key to `Pkey` success.
+    /// 4. Parse tls cert to `X509` success.
+    /// 5. Parse access log layout success.
     fn validate(&self, name: &str, location_names: &[String]) -> Result<()> {
         for addr in self.addr.split(',') {
             let _ = addr.to_socket_addrs().map_err(|e| Error::Io {
