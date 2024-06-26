@@ -14,6 +14,7 @@ import AccountTreeIcon from "@mui/icons-material/AccountTree";
 import AltRouteIcon from "@mui/icons-material/AltRoute";
 import ExtensionIcon from "@mui/icons-material/Extension";
 import Button from "@mui/material/Button";
+import SecurityIcon from "@mui/icons-material/Security";
 import { useTranslation } from "react-i18next";
 import { useAsync } from "react-async-hook";
 import useConfigStore from "../states/config";
@@ -23,6 +24,7 @@ import {
   goToLoationInfo,
   goToUpstreamInfo,
   goToPluginInfo,
+  goToCertificateInfo,
 } from "../router";
 import { formatError } from "../helpers/util";
 
@@ -32,6 +34,7 @@ enum NavCategory {
   LocationInfo,
   UpstreamInfo,
   ProxyPluginInfo,
+  CertificateInfo,
 }
 
 interface NavItem {
@@ -108,6 +111,15 @@ export default function MainNav({
         icon: <ExtensionIcon />,
         children: proxyPluins,
         category: NavCategory.ProxyPluginInfo,
+      });
+
+      const certificates = Object.keys(config.certificates || {}).sort();
+      certificates.push(addTag);
+      items.push({
+        name: t("nav.certificate"),
+        icon: <SecurityIcon />,
+        children: certificates,
+        category: NavCategory.CertificateInfo,
       });
       setNavItems(items);
     } catch (err) {
@@ -196,6 +208,10 @@ export default function MainNav({
                 }
                 case NavCategory.ProxyPluginInfo: {
                   goToPluginInfo(name);
+                  break;
+                }
+                case NavCategory.CertificateInfo: {
+                  goToCertificateInfo(name);
                   break;
                 }
               }

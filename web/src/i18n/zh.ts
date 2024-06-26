@@ -5,6 +5,8 @@ export default {
   "nav.location": "Location配置",
   "nav.upstream": "上游服务配置",
   "nav.plugin": "插件配置",
+  "nav.certificate": "证书配置",
+
   // header
   "header.title": "应用信息",
   "header.startTime": "启动时间：",
@@ -100,6 +102,15 @@ export default {
   "upstream.tcpInterval": "Tcp保持连接探针的发送间隔",
   "upstream.tcpProbeCount": "Tcp保持连接探针发送的最大次数",
   "upstream.remark": "备注",
+  // certificate
+  "certificate.title": "用于https加密的证书",
+  "certificate.description": "证书相关配置",
+  "certificate.domains": "该域名对应的域名列表",
+  "certificate.tlsCert": "Tls证书(Pem格式)",
+  "certificate.tlsKey": "Tls密钥(Pem格式)",
+  "certificate.certificateFile": "保存https证书的文件",
+  "certificate.acme": "选择使用acme生成证书的服务",
+
   // plugin info
   "plugin.title": "各类插件的配置",
   "plugin.description": "添加配置各类插件，可便于后续服务使用",

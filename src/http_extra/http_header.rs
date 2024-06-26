@@ -111,7 +111,7 @@ pub fn convert_header_value(
             }
         }
     };
-    // not match return nono
+    // not match return none
     None
 }
 

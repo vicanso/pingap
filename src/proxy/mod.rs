@@ -23,6 +23,7 @@ mod upstream;
 #[allow(unused_imports)]
 pub use location::Location;
 
+pub use dynamic_cert::try_init_certificates;
 pub use location::try_init_locations;
 pub use logger::Parser;
 pub use server::*;

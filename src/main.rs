@@ -279,6 +279,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     proxy::try_init_upstreams(&conf.upstreams)?;
     proxy::try_init_locations(&conf.locations)?;
     proxy::try_init_server_locations(&conf.servers, &conf.locations)?;
+    // TODO global certs
+    proxy::try_init_certificates(vec![])?;
 
     let opt = Opt {
         upgrade: args.upgrade,

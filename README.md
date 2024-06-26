@@ -52,9 +52,17 @@ RUST_LOG=INFO pingap -c=/opt/pingap/conf \
 ## Dev
 
 ```bash
-# generate admin web asset
-make build-web
 make dev
+```
+
+If you need a web admin, you should install nodejs and build web asssets.
+
+```bash
+# generate admin web asset
+cd web
+yarn install
+cd ..
+make build-web
 ```
 
 

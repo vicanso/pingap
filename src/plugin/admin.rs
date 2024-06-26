@@ -14,8 +14,8 @@
 
 use super::{get_int_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error, Plugin, Result};
 use crate::config::{
-    self, save_config, BasicConf, LocationConf, PluginCategory, PluginConf, PluginStep, ServerConf,
-    UpstreamConf,
+    self, save_config, BasicConf, CertificateConf, LocationConf, PluginCategory, PluginConf,
+    PluginStep, ServerConf, UpstreamConf, CATEGORY_CERTIFICATE,
 };
 use crate::config::{
     PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
@@ -208,6 +208,7 @@ impl AdminServe {
             CATEGORY_LOCATION => HttpResponse::try_from_json(&conf.locations)?,
             CATEGORY_SERVER => HttpResponse::try_from_json(&conf.servers)?,
             CATEGORY_PLUGIN => HttpResponse::try_from_json(&conf.plugins)?,
+            CATEGORY_CERTIFICATE => HttpResponse::try_from_json(&conf.certificates)?,
             _ => HttpResponse::try_from_json(&conf)?,
         };
         Ok(resp)
@@ -267,6 +268,13 @@ impl AdminServe {
                     util::new_internal_error(400, e.to_string())
                 })?;
                 conf.plugins.insert(key, plugin);
+            }
+            CATEGORY_CERTIFICATE => {
+                let certificate: CertificateConf = serde_json::from_slice(&buf).map_err(|e| {
+                    error!(error = e.to_string(), "descrialize certificate fail");
+                    util::new_internal_error(400, e.to_string())
+                })?;
+                conf.certificates.insert(key, certificate);
             }
             _ => {
                 let basic_conf: BasicConf = serde_json::from_slice(&buf).map_err(|e| {

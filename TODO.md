@@ -10,6 +10,7 @@
 - [ ] support include comnand for configuraion
 - [ ] admin web expand common configuration items by default
 - [ ] support tracing-appender
+- [ ] support different sni on the same listen address
 - [x] build gnu and musl versions
 - [x] json log
 - [x] cors plugin

@@ -77,6 +77,15 @@ interface Server {
   remark?: string;
 }
 
+interface Certificate {
+  domains?: string;
+  tls_cert?: string;
+  tls_key?: string;
+  certificate_file?: string;
+  acme?: string;
+  remark?: string;
+}
+
 interface Basic {
   error_template?: string;
   name?: string;
@@ -107,6 +116,7 @@ interface Config {
   locations?: Record<string, Location>;
   servers?: Record<string, Server>;
   plugins?: Record<string, Record<string, unknown>>;
+  certificates?: Record<string, Certificate>;
 }
 
 interface ConfigState {

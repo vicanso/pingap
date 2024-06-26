@@ -5,6 +5,7 @@ export default {
   "nav.location": "Location",
   "nav.upstream": "Upstream",
   "nav.plugin": "Plugin",
+  "nav.certificate": "Certificate",
   // header
   "header.title": "Informations",
   "header.startTime": " Start Time:",
@@ -99,6 +100,14 @@ export default {
   "upstream.tcpInterval": "Tcp Keepalive Interval Duration",
   "upstream.tcpProbeCount": "Tcp Keepalive Probe Max Number",
   "upstream.remark": "Remark",
+  // certificate info
+  "certificate.title": "Certificate for https",
+  "certificate.description": "The setting of certificate",
+  "certificate.domains": "The domain list fo certificate",
+  "certificate.tlsCert": "Tls Cert Pem",
+  "certificate.tlsKey": "Tls Key Pem",
+  "certificate.certificateFile": "The Https Certificate File",
+  "certificate.acme": "The acme for generate certificate",
   // plugin info
   "plugin.title": "Modify plugin configuration",
   "plugin.description": "Change the plugin configuration",

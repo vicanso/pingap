@@ -34,6 +34,7 @@ use strum::EnumString;
 use toml::{map::Map, Value};
 use url::Url;
 
+pub const CATEGORY_CERTIFICATE: &str = "certificate";
 pub const CATEGORY_UPSTREAM: &str = "upstream";
 pub const CATEGORY_LOCATION: &str = "location";
 pub const CATEGORY_SERVER: &str = "server";
@@ -113,6 +114,48 @@ impl<'de> Deserialize<'de> for PluginStep {
         let category = PluginStep::from_str(&value).unwrap_or(PluginStep::default());
 
         Ok(category)
+    }
+}
+
+#[derive(Debug, Default, Deserialize, Clone, Serialize)]
+pub struct CertificateConf {
+    pub domains: Option<String>,
+    pub tls_cert: Option<String>,
+    pub tls_key: Option<String>,
+    pub certificate_file: Option<String>,
+    pub acme: Option<String>,
+    pub remark: Option<String>,
+}
+
+impl CertificateConf {
+    /// Validate the options of certificate config.
+    pub fn validate(&self) -> Result<()> {
+        if let Some(value) = &self.tls_key {
+            let buf = if !util::is_pem(value) {
+                STANDARD
+                    .decode(value)
+                    .map_err(|e| Error::Base64Decode { source: e })?
+            } else {
+                value.as_bytes().to_vec()
+            };
+
+            let _ = PKey::private_key_from_pem(&buf).map_err(|e| Error::Invalid {
+                message: e.to_string(),
+            })?;
+        }
+        if let Some(value) = &self.tls_cert {
+            let buf = if !util::is_pem(value) {
+                STANDARD
+                    .decode(value)
+                    .map_err(|e| Error::Base64Decode { source: e })?
+            } else {
+                value.as_bytes().to_vec()
+            };
+            let _ = X509::from_pem(&buf).map_err(|e| Error::Invalid {
+                message: e.to_string(),
+            })?;
+        }
+        Ok(())
     }
 }
 
@@ -402,6 +445,7 @@ struct TomlConfig {
     upstreams: Option<Map<String, Value>>,
     locations: Option<Map<String, Value>>,
     plugins: Option<Map<String, Value>>,
+    certificates: Option<Map<String, Value>>,
 }
 
 fn format_toml(value: &Value) -> String {
@@ -421,6 +465,7 @@ pub struct PingapConf {
     pub locations: HashMap<String, LocationConf>,
     pub servers: HashMap<String, ServerConf>,
     pub plugins: HashMap<String, PluginConf>,
+    pub certificates: HashMap<String, CertificateConf>,
 }
 
 impl PingapConf {
@@ -464,6 +509,15 @@ impl PingapConf {
                 );
                 let value = toml::to_string_pretty(&m).map_err(|e| Error::Ser { source: e })?;
                 ("/plugins.toml".to_string(), value)
+            }
+            CATEGORY_CERTIFICATE => {
+                let mut m = Map::new();
+                let _ = m.insert(
+                    "certificates".to_string(),
+                    toml::Value::Table(data.certificates.unwrap_or_default()),
+                );
+                let value = toml::to_string_pretty(&m).map_err(|e| Error::Ser { source: e })?;
+                ("/certificates.toml".to_string(), value)
             }
             _ => {
                 data.servers = None;
@@ -513,6 +567,12 @@ impl TryFrom<&[u8]> for PingapConf {
             conf.plugins.insert(name, plugin);
         }
 
+        for (name, value) in data.certificates.unwrap_or_default() {
+            let certificate: CertificateConf = toml::from_str(format_toml(&value).as_str())
+                .map_err(|e| Error::De { source: e })?;
+            conf.certificates.insert(name, certificate);
+        }
+
         Ok(conf)
     }
 }
@@ -546,6 +606,9 @@ impl PingapConf {
                     message: e.to_string(),
                 }
             })?;
+        }
+        for (_, certificate) in self.certificates.iter() {
+            certificate.validate()?;
         }
         Ok(())
     }
@@ -609,6 +672,9 @@ impl PingapConf {
                 }
                 self.plugins.remove(name);
             }
+            CATEGORY_CERTIFICATE => {
+                self.certificates.remove(name);
+            }
             _ => {}
         };
         Ok(())
@@ -644,10 +710,18 @@ impl PingapConf {
                 data: toml::to_string_pretty(data).unwrap_or_default(),
             });
         }
+        for (name, data) in value.certificates.iter() {
+            descriptions.push(Description {
+                category: CATEGORY_CERTIFICATE.to_string(),
+                name: format!("certificate:{name}"),
+                data: toml::to_string_pretty(data).unwrap_or_default(),
+            });
+        }
         value.servers = HashMap::new();
         value.locations = HashMap::new();
         value.upstreams = HashMap::new();
         value.plugins = HashMap::new();
+        value.certificates = HashMap::new();
         descriptions.push(Description {
             category: CATEGORY_BASIC.to_string(),
             name: CATEGORY_BASIC.to_string(),
