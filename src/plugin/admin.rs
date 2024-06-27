@@ -648,7 +648,7 @@ authorizations = [
         assert_eq!(204, resp.status.as_u16());
 
         let conf = serve.load_config().await.unwrap();
-        assert_eq!("CA8FBAC3", conf.hash().unwrap());
+        assert_eq!("F0F60723", conf.hash().unwrap());
 
         let resp = serve.get_config("upstream").await.unwrap();
         assert_eq!(200, resp.status.as_u16());
@@ -688,6 +688,8 @@ locations = ["lo"]
 [plugins.stats]
 category = "stats"
 path = "/stats"
+
+[certificates]
 "#,
             std::string::String::from_utf8_lossy(resp.body.as_ref())
         );

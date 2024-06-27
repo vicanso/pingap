@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::BytesMut;
 use http::HeaderName;
 use once_cell::sync::Lazy;
@@ -248,6 +249,18 @@ pub fn convert_tls_version(version: &Option<String>) -> Option<SslVersion> {
             _ => SslVersion::TLS1_2,
         };
         return Some(version);
+    }
+    None
+}
+
+pub fn convert_certificate_bytes(value: &Option<String>) -> Option<Vec<u8>> {
+    if let Some(value) = value {
+        if is_pem(value) {
+            return Some(value.as_bytes().to_vec());
+        } else {
+            let buf = STANDARD.decode(value).unwrap_or_default();
+            return Some(buf);
+        }
     }
     None
 }

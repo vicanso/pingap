@@ -24,6 +24,7 @@ use pingora::services::background::background_service;
 use proxy::{new_upstream_health_check_task, Server, ServerConf};
 use state::get_start_time;
 use std::error::Error;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info};
@@ -279,8 +280,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     proxy::try_init_upstreams(&conf.upstreams)?;
     proxy::try_init_locations(&conf.locations)?;
     proxy::try_init_server_locations(&conf.servers, &conf.locations)?;
-    // TODO global certs
-    proxy::try_init_certificates(vec![])?;
+    let certificates = conf.certificates.clone();
 
     let opt = Opt {
         upgrade: args.upgrade,
@@ -333,6 +333,26 @@ fn run() -> Result<(), Box<dyn Error>> {
             ));
         }
     }
+    for (name, certificate) in certificates.iter() {
+        let acme = certificate.acme.clone().unwrap_or_default();
+        let domains = certificate.domains.clone().unwrap_or_default();
+        let certificate_file = certificate.certificate_file.clone().unwrap_or_default();
+        if acme.is_empty() || domains.is_empty() || certificate_file.is_empty() {
+            continue;
+        }
+        let file = Path::new(&util::resolve_path(&certificate_file)).to_path_buf();
+        // now supports lets encrypt only
+        enabled_lets_encrypt = true;
+        my_server.add_service(background_service(
+            &format!("LetsEncrypt: {name}"),
+            new_lets_encrypt_service(
+                file,
+                domains.split(',').map(|item| item.to_string()).collect(),
+            ),
+        ));
+    }
+    let mut certificate_info_list = proxy::try_init_certificates(&certificates)?;
+
     // no server listen 80 and lets encrypt domains is not empty
     if !exits_80_server && enabled_lets_encrypt {
         server_conf_list.push(ServerConf {
@@ -342,7 +362,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         });
     }
 
-    let mut tls_cert_info_list = vec![];
     for server_conf in server_conf_list.iter() {
         let listen_80_port = server_conf.addr.ends_with(":80");
         let name = server_conf.name.clone();
@@ -353,7 +372,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         let services = ps.run(&my_server.configuration)?;
         my_server.add_service(services.lb);
         if let Some(tls_cert_info) = services.tls_cert_info {
-            tls_cert_info_list.push((name, tls_cert_info));
+            certificate_info_list.push((name, tls_cert_info));
         }
     }
 
@@ -364,10 +383,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         ));
     }
 
-    if !tls_cert_info_list.is_empty() {
+    if !certificate_info_list.is_empty() {
         my_server.add_service(background_service(
             "TlsValidity",
-            new_tls_validity_service(tls_cert_info_list),
+            new_tls_validity_service(certificate_info_list),
         ));
     }
     my_server.add_service(background_service(

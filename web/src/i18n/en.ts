@@ -51,6 +51,7 @@ export default {
   "server.accessLog": "Access Log",
   "server.tlsCert": "Tls Cert Pem",
   "server.tlsKey": "Tls Key Pem",
+  "server.globalCertificates": "Use the global certificates",
   "server.letsEncrypt": "Let's encrypt domain list",
   "server.certificateFile": "The Https Certificate File",
   "server.enabledH2": "Enable Http2",

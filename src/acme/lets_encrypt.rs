@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_cert_info, Cert, Error, Result};
+use super::{get_certificate_info, Cert, Error, Result};
 use crate::http_extra::HttpResponse;
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::{restart_now, State};
@@ -281,7 +281,7 @@ async fn new_lets_encrypt(certificate_file: &PathBuf, domains: &[String]) -> Res
     let now = util::now().as_secs() as i64;
     // default expired time set 90 days
     let mut not_after = now + 90 * 24 * 3600;
-    if let Ok(info) = get_cert_info(cert_chain_pem.as_bytes()) {
+    if let Ok(info) = get_certificate_info(cert_chain_pem.as_bytes()) {
         not_before = info.not_before;
         not_after = info.not_after;
     }

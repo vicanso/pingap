@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod dynamic_cert;
+mod dynamic_certificate;
 mod location;
 mod logger;
 mod server;
@@ -23,7 +23,7 @@ mod upstream;
 #[allow(unused_imports)]
 pub use location::Location;
 
-pub use dynamic_cert::try_init_certificates;
+pub use dynamic_certificate::try_init_certificates;
 pub use location::try_init_locations;
 pub use logger::Parser;
 pub use server::*;

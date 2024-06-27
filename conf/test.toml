@@ -18,3 +18,5 @@ locations = ["lo"]
 [plugins.stats]
 category = "stats"
 path = "/stats"
+
+[certificates]

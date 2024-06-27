@@ -66,6 +66,7 @@ interface Server {
   lets_encrypt?: string;
   certificate_file?: string;
   enabled_h2?: boolean;
+  global_certificates?: boolean;
   tls_cipher_list?: string;
   tls_ciphersuites?: string;
   tls_min_version?: string;

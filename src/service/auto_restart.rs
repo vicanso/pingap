@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use crate::config::{
-    self, get_config_path, get_current_config, load_config, PingapConf, CATEGORY_LOCATION,
-    CATEGORY_UPSTREAM,
+    get_config_path, get_current_config, load_config, set_current_config, PingapConf,
+    CATEGORY_LOCATION, CATEGORY_UPSTREAM,
 };
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::restart;
@@ -90,12 +90,12 @@ async fn hot_reload(
         // update current config only hot reload config updated
         // the next check will not trigger hot reload
         if !should_restart {
-            config::set_current_config(&conf);
+            set_current_config(&conf);
         }
         return Ok((false, vec![]));
     }
 
-    config::set_current_config(&conf);
+    set_current_config(&conf);
     if should_restart {
         return Ok((true, diff_result));
     }

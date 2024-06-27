@@ -149,7 +149,7 @@ export default function ServerInfo() {
       id: "enabled_h2",
       label: t("server.enabledH2"),
       defaultValue: server.enabled_h2,
-      span: 4,
+      span: 6,
       category: FormItemCategory.CHECKBOX,
       options: [
         {
@@ -170,17 +170,41 @@ export default function ServerInfo() {
       ],
     },
     {
+      id: "global_certificates",
+      label: t("server.globalCertificates"),
+      defaultValue: server.global_certificates,
+      span: 6,
+      category: FormItemCategory.CHECKBOX,
+      options: [
+        {
+          label: "Yes",
+          option: 1,
+          value: true,
+        },
+        {
+          label: "No",
+          option: 2,
+          value: false,
+        },
+        {
+          label: "None",
+          option: -1,
+          value: null,
+        },
+      ],
+    },
+    {
       id: "tls_cipher_list",
       label: t("server.tlsCipherList"),
       defaultValue: server.tls_cipher_list,
-      span: 4,
+      span: 6,
       category: FormItemCategory.TEXT,
     },
     {
       id: "tls_ciphersuites",
       label: t("server.tlsCiphersuites"),
       defaultValue: server.tls_ciphersuites,
-      span: 4,
+      span: 6,
       category: FormItemCategory.TEXT,
     },
     {

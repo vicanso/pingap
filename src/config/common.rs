@@ -335,6 +335,7 @@ pub struct ServerConf {
     pub tls_max_version: Option<String>,
     pub lets_encrypt: Option<String>,
     pub certificate_file: Option<String>,
+    pub global_certificates: Option<bool>,
     pub enabled_h2: Option<bool>,
     #[serde(default)]
     #[serde(with = "humantime_serde")]
@@ -524,6 +525,7 @@ impl PingapConf {
                 data.locations = None;
                 data.upstreams = None;
                 data.plugins = None;
+                data.certificates = None;
                 let value = toml::to_string_pretty(&data).map_err(|e| Error::Ser { source: e })?;
                 ("/basic.toml".to_string(), value)
             }
@@ -882,7 +884,7 @@ mod tests {
             ..Default::default()
         };
         set_current_config(&conf);
-        assert_eq!("5A7EF0E3", get_config_hash());
+        assert_eq!("3605BCA7", get_config_hash());
     }
 
     #[test]

@@ -14,7 +14,6 @@
 
 use crate::config::PingapConf;
 use crate::util;
-use base64::{engine::general_purpose::STANDARD, Engine};
 use pingora::protocols::l4::ext::TcpKeepalive;
 use std::{fmt, path::PathBuf};
 
@@ -39,6 +38,7 @@ pub struct ServerConf {
     pub certificate_file: Option<String>,
     pub tcp_keepalive: Option<TcpKeepalive>,
     pub tcp_fastopen: Option<usize>,
+    pub global_certificates: bool,
     pub enbaled_h2: bool,
 }
 
@@ -84,26 +84,10 @@ impl From<PingapConf> for Vec<ServerConf> {
         locations.sort_by_key(|b| std::cmp::Reverse(b.1.get_weight()));
         let mut servers = vec![];
         for (name, item) in conf.servers {
-            let mut tls_cert = None;
-            let mut tls_key = None;
             // load config validate base64
             // so ignore error
-            if let Some(value) = &item.tls_cert {
-                if util::is_pem(value) {
-                    tls_cert = Some(value.as_bytes().to_vec());
-                } else {
-                    let buf = STANDARD.decode(value).unwrap_or_default();
-                    tls_cert = Some(buf);
-                }
-            }
-            if let Some(value) = &item.tls_key {
-                if util::is_pem(value) {
-                    tls_key = Some(value.as_bytes().to_vec());
-                } else {
-                    let buf = STANDARD.decode(value).unwrap_or_default();
-                    tls_key = Some(buf);
-                }
-            }
+            let tls_cert = util::convert_certificate_bytes(&item.tls_cert);
+            let tls_key = util::convert_certificate_bytes(&item.tls_key);
 
             let mut error_template = conf.basic.error_template.clone().unwrap_or_default();
             if error_template.is_empty() {
@@ -152,6 +136,7 @@ impl From<PingapConf> for Vec<ServerConf> {
                 locations: item.locations.unwrap_or_default(),
                 threads,
                 lets_encrypt: item.lets_encrypt,
+                global_certificates: item.global_certificates.unwrap_or_default(),
                 certificate_file: item.certificate_file,
                 enbaled_h2: item.enabled_h2.unwrap_or_default(),
                 tcp_keepalive,

@@ -51,6 +51,7 @@ export default {
   "server.accessLog": "访问日志格式化",
   "server.tlsCert": "Tls证书(Pem格式)",
   "server.tlsKey": "Tls密钥(Pem格式)",
+  "server.globalCertificates": "使用应用的全局证书",
   "server.letsEncrypt": "使用let's encrypt的域名列表",
   "server.certificateFile": "保存https证书的文件",
   "server.enabledH2": "是否启用http2",

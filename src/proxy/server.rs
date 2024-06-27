@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::dynamic_cert::DynamicCert;
+use super::dynamic_certificate::DynamicCertificate;
 use super::logger::Parser;
 use super::upstream::get_upstream;
 use super::ServerConf;
-use crate::acme::get_cert_info;
-use crate::acme::CertInfo;
+use crate::acme::get_certificate_info;
+use crate::acme::CertificateInfo;
 use crate::acme::{get_lets_encrypt_cert, handle_lets_encrypt};
 use crate::config;
 use crate::config::PluginStep;
@@ -116,13 +116,14 @@ pub struct Server {
     tls_max_version: Option<String>,
     enbaled_h2: bool,
     lets_encrypt_enabled: bool,
+    global_certificates: bool,
     certificate_file: PathBuf,
     tls_from_lets_encrypt: bool,
     tcp_socket_options: Option<TcpSocketOptions>,
 }
 
 pub struct ServerServices {
-    pub tls_cert_info: Option<CertInfo>,
+    pub tls_cert_info: Option<CertificateInfo>,
     pub lb: Service<HttpProxy<Server>>,
 }
 
@@ -161,6 +162,7 @@ impl Server {
             threads: conf.threads,
             lets_encrypt_enabled: false,
             certificate_file: conf.get_certificate_file(),
+            global_certificates: conf.global_certificates,
             enbaled_h2: conf.enbaled_h2,
             tcp_socket_options,
             tls_from_lets_encrypt: conf.lets_encrypt.is_some(),
@@ -178,39 +180,43 @@ impl Server {
         let addr = self.addr.clone();
         let tcp_socket_options = self.tcp_socket_options.clone();
 
-        // tls
-        let mut tls_cert = self.tls_cert.clone();
-        let mut tls_key = self.tls_key.clone();
         let name = self.name.clone();
+        let mut dynamic_cert = None;
+        let mut tls_cert_info = None;
+        // tls
+        if self.global_certificates {
+            dynamic_cert = Some(DynamicCertificate::new_global());
+        } else {
+            let mut tls_cert = self.tls_cert.clone();
+            let mut tls_key = self.tls_key.clone();
 
-        if tls_cert.is_none() && tls_from_lets_encrypt {
-            match get_lets_encrypt_cert(&self.certificate_file) {
-                Ok(cert_info) => {
-                    tls_cert = Some(cert_info.get_cert());
-                    tls_key = Some(cert_info.get_key());
+            if tls_cert.is_none() && tls_from_lets_encrypt {
+                match get_lets_encrypt_cert(&self.certificate_file) {
+                    Ok(cert_info) => {
+                        tls_cert = Some(cert_info.get_cert());
+                        tls_key = Some(cert_info.get_key());
+                    }
+                    Err(e) => error!(error = e.to_string(), name, "get lets encrypt cert fail"),
+                };
+            }
+            if tls_cert.is_some() {
+                let cert = tls_cert.unwrap_or_default();
+                if let Ok(info) = get_certificate_info(&cert) {
+                    tls_cert_info = Some(info)
                 }
-                Err(e) => error!(error = e.to_string(), name, "get lets encrypt cert fail"),
+
+                let d =
+                    DynamicCertificate::new(&cert, &tls_key.unwrap_or_default()).map_err(|e| {
+                        Error::Common {
+                            category: "tls".to_string(),
+                            message: e.to_string(),
+                        }
+                    })?;
+                dynamic_cert = Some(d);
             };
         }
-        let is_tls = tls_cert.is_some();
-        let mut tls_cert_info = None;
-        let dynamic_cert = if is_tls {
-            let cert = tls_cert.unwrap_or_default();
-            if let Ok(info) = get_cert_info(&cert) {
-                tls_cert_info = Some(info)
-            }
 
-            Some(
-                DynamicCert::new(&cert, &tls_key.unwrap_or_default()).map_err(|e| {
-                    Error::Common {
-                        category: "tls".to_string(),
-                        message: e.to_string(),
-                    }
-                })?,
-            )
-        } else {
-            None
-        };
+        let is_tls = dynamic_cert.is_some();
 
         let enbaled_h2 = self.enbaled_h2;
         let mut threads = self.threads;
@@ -243,12 +249,10 @@ impl Server {
         for addr in addr.split(',') {
             // tls
             if let Some(dynamic_cert) = &dynamic_cert {
-                let mut tls_settings =
-                    TlsSettings::with_callbacks(dynamic_cert.clone()).map_err(|e| {
-                        Error::Common {
-                            category: "tls".to_string(),
-                            message: e.to_string(),
-                        }
+                let mut tls_settings = TlsSettings::with_callbacks(Box::new(dynamic_cert.clone()))
+                    .map_err(|e| Error::Common {
+                        category: "tls".to_string(),
+                        message: e.to_string(),
                     })?;
 
                 if enbaled_h2 {

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::CertInfo;
+use super::CertificateInfo;
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::util;
 use crate::webhook;
@@ -22,12 +22,12 @@ use tracing::warn;
 
 struct ValidityChecker {
     time_offset: i64,
-    tls_cert_info_list: Vec<(String, CertInfo)>,
+    tls_cert_info_list: Vec<(String, CertificateInfo)>,
 }
 
 // Verify the validity period of the https certificate,
 // include not after and not before.
-fn validity_check(validity_list: &[(String, CertInfo)], time_offset: i64) -> Option<String> {
+fn validity_check(validity_list: &[(String, CertificateInfo)], time_offset: i64) -> Option<String> {
     let now = util::now().as_secs() as i64;
     for (name, cert) in validity_list.iter() {
         // will expire check
@@ -72,7 +72,9 @@ impl ServiceTask for ValidityChecker {
     }
 }
 
-pub fn new_tls_validity_service(tls_cert_info_list: Vec<(String, CertInfo)>) -> CommonServiceTask {
+pub fn new_tls_validity_service(
+    tls_cert_info_list: Vec<(String, CertificateInfo)>,
+) -> CommonServiceTask {
     let checker = ValidityChecker {
         tls_cert_info_list,
         // cert will be expired 7 days later
@@ -89,7 +91,7 @@ pub fn new_tls_validity_service(tls_cert_info_list: Vec<(String, CertInfo)>) -> 
 #[cfg(test)]
 mod tests {
     use super::{new_tls_validity_service, validity_check, ValidityChecker};
-    use crate::{acme::CertInfo, service::ServiceTask};
+    use crate::{acme::CertificateInfo, service::ServiceTask};
     use pretty_assertions::assert_eq;
     use x509_parser::time::ASN1Time;
 
@@ -98,7 +100,7 @@ mod tests {
         let result = validity_check(
             &[(
                 "Pingap".to_string(),
-                CertInfo {
+                CertificateInfo {
                     not_after: ASN1Time::from_timestamp(2651852800).unwrap().timestamp(),
                     not_before: ASN1Time::from_timestamp(2651852800).unwrap().timestamp(),
                     issuer: "pingap".to_string(),
@@ -114,7 +116,7 @@ mod tests {
         let result = validity_check(
             &[(
                 "Pingap".to_string(),
-                CertInfo {
+                CertificateInfo {
                     not_after: ASN1Time::from_timestamp(2651852800).unwrap().timestamp(),
                     not_before: ASN1Time::from_timestamp(2651852800).unwrap().timestamp(),
                     issuer: "pingap".to_string(),
@@ -131,7 +133,7 @@ mod tests {
     async fn test_validity_service() {
         let _ = new_tls_validity_service(vec![(
             "Pingap".to_string(),
-            CertInfo {
+            CertificateInfo {
                 not_after: ASN1Time::from_timestamp(2651852800).unwrap().timestamp(),
                 not_before: ASN1Time::from_timestamp(2651852800).unwrap().timestamp(),
                 issuer: "".to_string(),
@@ -140,7 +142,7 @@ mod tests {
         let checker = ValidityChecker {
             tls_cert_info_list: vec![(
                 "Pingap".to_string(),
-                CertInfo {
+                CertificateInfo {
                     not_after: ASN1Time::from_timestamp(2651852800).unwrap().timestamp(),
                     not_before: ASN1Time::from_timestamp(2651852800).unwrap().timestamp(),
                     issuer: "".to_string(),
@@ -149,7 +151,7 @@ mod tests {
             time_offset: 7 * 24 * 3600_i64,
         };
         assert_eq!(
-            r#"offset: 7days, tls_cert_info_list: [("Pingap", CertInfo { not_after: 2651852800, not_before: 2651852800, issuer: "" })]"#,
+            r#"offset: 7days, tls_cert_info_list: [("Pingap", CertificateInfo { not_after: 2651852800, not_before: 2651852800, issuer: "" })]"#,
             checker.description()
         );
         let result = checker.run().await;
