@@ -599,7 +599,16 @@ impl PingapConf {
             location.validate(name, &upstream_names)?;
             location_names.push(name.to_string());
         }
+        let mut listen_addr_list = vec![];
         for (name, server) in self.servers.iter() {
+            for addr in server.addr.split(',') {
+                if listen_addr_list.contains(&addr.to_string()) {
+                    return Err(Error::Invalid {
+                        message: format!("{addr} is inused by other server"),
+                    });
+                }
+                listen_addr_list.push(addr.to_string());
+            }
             server.validate(name, &location_names)?;
         }
         for (name, plugin) in self.plugins.iter() {

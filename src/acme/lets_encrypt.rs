@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_certificate_info, Cert, Error, Result};
+use super::{get_certificate_info, Certificate, Error, Result};
 use crate::http_extra::HttpResponse;
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::{restart_now, State};
@@ -26,7 +26,7 @@ use instant_acme::{
 };
 use once_cell::sync::OnceCell;
 use pingora::proxy::Session;
-use rcgen::{Certificate, CertificateParams, DistinguishedName};
+use rcgen::{CertificateParams, DistinguishedName};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -41,11 +41,14 @@ fn get_lets_encrypt() -> &'static Mutex<HashMap<String, String>> {
     LETS_ENCRYPT.get_or_init(|| Mutex::new(HashMap::new()))
 }
 struct LetsEncryptService {
+    // the file for saving certificate
     certificate_file: PathBuf,
+    // the domains list, they should be the same primary domain name
     domains: Vec<String>,
 }
 
-/// Create a Let's Encrypt service to periodically detect and update https certificates
+/// Create a Let's Encrypt service to generate the certificate,
+/// and regenerate if the certificate is invalid or will be expired.
 pub fn new_lets_encrypt_service(
     certificate_file: PathBuf,
     domains: Vec<String>,
@@ -100,15 +103,16 @@ impl ServiceTask for LetsEncryptService {
     }
 }
 
-/// Get the cert from filea and convert it to cert struct.
-pub fn get_lets_encrypt_cert(path: &PathBuf) -> Result<Cert> {
+/// Get the cert from file and convert it to cert struct.
+pub fn get_lets_encrypt_cert(path: &PathBuf) -> Result<Certificate> {
     if !path.exists() {
         return Err(Error::NotFound {
             message: "cert file not found".to_string(),
         });
     }
     let buf = std::fs::read(path).map_err(|e| Error::Io { source: e })?;
-    let cert: Cert = serde_json::from_slice(&buf).map_err(|e| Error::SerdeJson { source: e })?;
+    let cert: Certificate =
+        serde_json::from_slice(&buf).map_err(|e| Error::SerdeJson { source: e })?;
     Ok(cert)
 }
 
@@ -258,7 +262,7 @@ async fn new_lets_encrypt(certificate_file: &PathBuf, domains: &[String]) -> Res
 
     let mut params = CertificateParams::new(names.clone());
     params.distinguished_name = DistinguishedName::new();
-    let cert = Certificate::from_params(params).map_err(|e| Error::Rcgen { source: e })?;
+    let cert = rcgen::Certificate::from_params(params).map_err(|e| Error::Rcgen { source: e })?;
     let csr = cert
         .serialize_request_der()
         .map_err(|e| Error::Rcgen { source: e })?;
@@ -293,7 +297,7 @@ async fn new_lets_encrypt(certificate_file: &PathBuf, domains: &[String]) -> Res
         .open(certificate_file)
         .await
         .map_err(|e| Error::Io { source: e })?;
-    let info = Cert {
+    let info = Certificate {
         domains: domains.to_vec(),
         not_after,
         not_before,

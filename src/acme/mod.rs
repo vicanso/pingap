@@ -44,6 +44,7 @@ pub struct CertificateInfo {
     pub issuer: String,
 }
 
+/// Get the information of certificate.
 pub fn get_certificate_info(data: &[u8]) -> Result<CertificateInfo> {
     let (_, pem) = x509_parser::pem::parse_x509_pem(data).map_err(|e| Error::X509 {
         message: e.to_string(),
@@ -62,14 +63,14 @@ pub fn get_certificate_info(data: &[u8]) -> Result<CertificateInfo> {
 }
 
 #[derive(Debug, Deserialize, Serialize, Default)]
-pub struct Cert {
+pub struct Certificate {
     pub domains: Vec<String>,
     pub not_after: i64,
     pub not_before: i64,
     pub pem: String,
     pub key: String,
 }
-impl Cert {
+impl Certificate {
     /// Validate the cert is within the expiration date.
     pub fn valid(&self) -> bool {
         let ts = util::now().as_secs() as i64;
@@ -96,7 +97,7 @@ pub use validity_checker::new_tls_validity_service;
 
 #[cfg(test)]
 mod tests {
-    use super::Cert;
+    use super::Certificate;
     use pretty_assertions::assert_eq;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -106,7 +107,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
-        let mut cert = Cert {
+        let mut cert = Certificate {
             not_before: ts - 10,
             not_after: ts + 3 * 24 * 3600,
             ..Default::default()

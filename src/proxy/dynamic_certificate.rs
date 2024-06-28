@@ -14,7 +14,7 @@
 
 use crate::acme::{get_certificate_info, get_lets_encrypt_cert, CertificateInfo};
 use crate::config::CertificateConf;
-use crate::util;
+use crate::{util, webhook};
 use async_trait::async_trait;
 use once_cell::sync::OnceCell;
 use pingora::tls::ext;
@@ -24,6 +24,7 @@ use pingora::tls::x509::X509;
 use snafu::Snafu;
 use std::collections::HashMap;
 use std::path::Path;
+use substring::Substring;
 use tracing::{debug, error, info};
 
 #[derive(Debug, Snafu)]
@@ -104,8 +105,12 @@ pub fn try_init_certificates(
                     certificate_info_list.push((name.to_string(), certificate_info));
                 }
                 Err(e) => {
-                    // TODO send webhook notification
                     error!(error = e.to_string(), name, "parse certificate fail");
+                    webhook::send(webhook::SendNotificationParams {
+                        category: webhook::NotificationCategory::ParseCertificateFail,
+                        level: webhook::NotificationLevel::Error,
+                        msg: e.to_string(),
+                    });
                 }
             };
         }
@@ -172,8 +177,23 @@ impl pingora::listeners::TlsAccept for DynamicCertificate {
             error!(ssl = format!("{ssl:?}"), "get dynamic cert map fail");
             return;
         };
-        let Some(d) = m.get(sni) else {
-            error!(sni, "get dynamic cert fail");
+        let mut dynamic_certificate = None;
+        if let Some(d) = m.get(sni) {
+            dynamic_certificate = Some(d);
+        } else {
+            for (name, d) in m.iter() {
+                // not wildcard
+                if !name.starts_with("*.") {
+                    continue;
+                }
+                if sni.ends_with(name.substring(2, name.len())) {
+                    dynamic_certificate = Some(d);
+                    break;
+                }
+            }
+        }
+        let Some(d) = dynamic_certificate else {
+            error!(sni, ssl = format!("{ssl:?}"), "no match certificate");
             return;
         };
         if let Some((cert, key)) = &d.certificate {

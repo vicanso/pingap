@@ -6,10 +6,10 @@
 - [ ] http response cache(storage: tinyufo, file)
 - [ ] support validate config for plugin
 - [ ] secret storage
-- [ ] different servers avoid listening to the same address
 - [ ] support include comnand for configuraion
 - [ ] admin web expand common configuration items by default
 - [ ] support tracing-appender
+- [x] different servers avoid listening to the same address
 - [x] support different sni on the same listen address
 - [x] build gnu and musl versions
 - [x] json log

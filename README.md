@@ -49,6 +49,17 @@ RUST_LOG=INFO pingap -c=/opt/pingap/conf \
   && -a -d --log=/opt/pingap/pingap.log
 ```
 
+## Docker
+
+`cGluZ2FwOjEyMzEyMw==` is base64("pingap:123123")
+
+```bash
+docker run -it -d --restart=always \
+  -v $PWD/pingap:/opt/pingap \
+  -p 3018:3018 \
+  vicanso/pingap -c /opt/pingap --admin=cGluZ2FwOjEyMzEyMw==@0.0.0.0:3018
+```
+
 ## Dev
 
 ```bash

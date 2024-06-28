@@ -44,6 +44,7 @@ pub enum NotificationCategory {
     Restart,
     RestartFail,
     TlsValidity,
+    ParseCertificateFail,
 }
 
 impl Display for NotificationLevel {

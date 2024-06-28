@@ -25,7 +25,7 @@ struct ValidityChecker {
     tls_cert_info_list: Vec<(String, CertificateInfo)>,
 }
 
-// Verify the validity period of the https certificate,
+// Verify the validity period of tls certificate,
 // include not after and not before.
 fn validity_check(validity_list: &[(String, CertificateInfo)], time_offset: i64) -> Option<String> {
     let now = util::now().as_secs() as i64;
@@ -72,6 +72,9 @@ impl ServiceTask for ValidityChecker {
     }
 }
 
+/// Create a tls certificate validity checker service,
+/// if the certificate will be expired or not valid,
+/// it will send webhook notificateion message.
 pub fn new_tls_validity_service(
     tls_cert_info_list: Vec<(String, CertificateInfo)>,
 ) -> CommonServiceTask {

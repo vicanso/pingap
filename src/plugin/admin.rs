@@ -56,14 +56,12 @@ impl From<EmbeddedStaticFile> for HttpResponse {
         }
         // value 0 is some
         let file = value.0.unwrap();
-        // hash为基于内容生成
+        // generate content hash
         let str = &encode(file.metadata.sha256_hash())[0..8];
         let mime_type = file.metadata.mimetype();
-        // 长度+hash的一部分
+        // cut hash and file length as etag
         let entity_tag = format!(r#""{:x}-{str}""#, file.data.len());
-        // 因为html对于网页是入口，避免缓存后更新不及时
-        // 因此设置为0
-        // 其它js,css会添加版本号，因此无影响
+        // html set no-cache
         let max_age = if mime_type.contains("text/html") {
             0
         } else {

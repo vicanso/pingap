@@ -53,7 +53,7 @@ export default {
   "server.tlsKey": "Tls Key Pem",
   "server.globalCertificates": "Use the global certificates",
   "server.letsEncrypt": "Let's encrypt domain list",
-  "server.certificateFile": "The Https Certificate File",
+  "server.certificateFile": "The File For Saving Certificate",
   "server.enabledH2": "Enable Http2",
   "server.tlsCipherList": "Tls ciphers for protocols before TLSv1.3",
   "server.tlsCiphersuites": "Tls ciphers for protocols TLSv1.3",
@@ -107,7 +107,7 @@ export default {
   "certificate.domains": "The domain list fo certificate",
   "certificate.tlsCert": "Tls Cert Pem",
   "certificate.tlsKey": "Tls Key Pem",
-  "certificate.certificateFile": "The Https Certificate File",
+  "certificate.certificateFile": "The File For Saving Certificate",
   "certificate.acme": "The acme for generate certificate",
   // plugin info
   "plugin.title": "Modify plugin configuration",
