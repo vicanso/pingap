@@ -16,7 +16,7 @@ use crate::acme::{get_certificate_info, get_lets_encrypt_cert, CertificateInfo};
 use crate::config::CertificateConf;
 use crate::{util, webhook};
 use async_trait::async_trait;
-use once_cell::sync::OnceCell;
+use once_cell::sync::{Lazy, OnceCell};
 use pingora::tls::ext;
 use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::ssl::NameType;
@@ -36,6 +36,12 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 type DynamicCertificates = HashMap<String, DynamicCertificate>;
 static DYNAMIC_CERT_MAP: OnceCell<DynamicCertificates> = OnceCell::new();
+const E6: &[u8] = include_bytes!("../assets/e6.pem");
+const E5: &[u8] = include_bytes!("../assets/e5.pem");
+
+// TODO not after validate
+static E5_CERTIFICATE: Lazy<Option<X509>> = Lazy::new(|| X509::from_pem(E5).ok());
+static E6_CERTIFICATE: Lazy<Option<X509>> = Lazy::new(|| X509::from_pem(E6).ok());
 
 fn parse_certificate(
     certificate_config: &CertificateConf,
@@ -61,6 +67,13 @@ fn parse_certificate(
     let info = get_certificate_info(&cert).map_err(|e| Error::Invalid {
         message: e.to_string(),
     })?;
+
+    // TODO only supports for let's encrypt
+    let chain_certificate = match info.get_issuer_common_name().as_str() {
+        "E5" => E5_CERTIFICATE.clone(),
+        "E6" => E6_CERTIFICATE.clone(),
+        _ => None,
+    };
     let cert = X509::from_pem(&cert).map_err(|e| Error::Invalid {
         message: e.to_string(),
     })?;
@@ -76,6 +89,7 @@ fn parse_certificate(
         message: e.to_string(),
     })?;
     let d = DynamicCertificate {
+        chain_certificate,
         certificate: Some((cert, key)),
     };
     Ok((domains, d, info))
@@ -121,12 +135,16 @@ pub fn try_init_certificates(
 
 #[derive(Debug, Clone, Default)]
 pub struct DynamicCertificate {
+    chain_certificate: Option<X509>,
     certificate: Option<(X509, PKey<Private>)>,
 }
 
 impl DynamicCertificate {
     pub fn new_global() -> Self {
-        DynamicCertificate { certificate: None }
+        DynamicCertificate {
+            chain_certificate: None,
+            certificate: None,
+        }
     }
     pub fn new(cert: &[u8], key: &[u8]) -> Result<Self> {
         let cert = X509::from_pem(cert).map_err(|e| Error::Invalid {
@@ -145,18 +163,29 @@ impl DynamicCertificate {
             message: e.to_string(),
         })?;
         Ok(DynamicCertificate {
+            chain_certificate: None,
             certificate: Some((cert, key)),
         })
     }
 }
 
 #[inline]
-fn ssl_certificate(ssl: &mut pingora::tls::ssl::SslRef, cert: &X509, key: &PKey<Private>) {
+fn ssl_certificate(
+    ssl: &mut pingora::tls::ssl::SslRef,
+    cert: &X509,
+    key: &PKey<Private>,
+    chain_certificate: &Option<X509>,
+) {
     if let Err(e) = ext::ssl_use_certificate(ssl, cert) {
         error!(error = e.to_string(), "ssl use certificate fail");
     }
     if let Err(e) = ext::ssl_use_private_key(ssl, key) {
         error!(error = e.to_string(), "ssl use private key fail");
+    }
+    if let Some(chain) = chain_certificate {
+        if let Err(e) = ext::ssl_add_chain_cert(ssl, chain) {
+            error!(error = e.to_string(), "ssl add chain cert fail");
+        }
     }
 }
 
@@ -166,7 +195,7 @@ impl pingora::listeners::TlsAccept for DynamicCertificate {
         // TODO add more debug log
         debug!(ssl = format!("{ssl:?}"));
         if let Some((cert, key)) = &self.certificate {
-            ssl_certificate(ssl, cert, key);
+            ssl_certificate(ssl, cert, key, &self.chain_certificate);
             return;
         }
         let Some(sni) = ssl.servername(NameType::HOST_NAME) else {
@@ -197,7 +226,7 @@ impl pingora::listeners::TlsAccept for DynamicCertificate {
             return;
         };
         if let Some((cert, key)) = &d.certificate {
-            ssl_certificate(ssl, cert, key);
+            ssl_certificate(ssl, cert, key, &d.chain_certificate);
         }
     }
 }

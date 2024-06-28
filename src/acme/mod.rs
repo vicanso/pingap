@@ -44,6 +44,16 @@ pub struct CertificateInfo {
     pub issuer: String,
 }
 
+impl CertificateInfo {
+    pub fn get_issuer_common_name(&self) -> String {
+        let re = regex::Regex::new(r"CN=(?P<CN>\S+)").unwrap();
+        if let Some(caps) = re.captures(&self.issuer) {
+            return caps["CN"].to_string();
+        }
+        "".to_string()
+    }
+}
+
 /// Get the information of certificate.
 pub fn get_certificate_info(data: &[u8]) -> Result<CertificateInfo> {
     let (_, pem) = x509_parser::pem::parse_x509_pem(data).map_err(|e| Error::X509 {
