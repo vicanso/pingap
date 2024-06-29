@@ -13,9 +13,13 @@
 // limitations under the License.
 
 use std::error::Error;
+use std::fs;
 use std::os::unix::fs::OpenOptionsExt;
+use std::path::Path;
 use tracing::{info, Level};
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
+
+use crate::util;
 
 #[derive(Default, Debug)]
 pub struct LoggerParams {
@@ -53,6 +57,11 @@ pub fn logger_try_init(params: LoggerParams) -> Result<(), Box<dyn Error>> {
     let writer = if params.file.is_empty() {
         BoxMakeWriter::new(std::io::stderr)
     } else {
+        let file = util::resolve_path(&params.file);
+        let filepath = Path::new(&file);
+        if let Some(dir) = filepath.parent() {
+            fs::create_dir_all(dir)?;
+        }
         let file = std::fs::OpenOptions::new()
             .append(true)
             .create(true)
@@ -60,7 +69,7 @@ pub fn logger_try_init(params: LoggerParams) -> Result<(), Box<dyn Error>> {
             // available otherwise we will panic with
             .read(true)
             .custom_flags(libc::O_NONBLOCK)
-            .open(&params.file)?;
+            .open(filepath)?;
         BoxMakeWriter::new(file)
     };
     // better performance for logger
