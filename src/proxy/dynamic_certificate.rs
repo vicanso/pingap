@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use once_cell::sync::{Lazy, OnceCell};
 use pingora::tls::ext;
 use pingora::tls::pkey::{PKey, Private};
-use pingora::tls::ssl::NameType;
+use pingora::tls::ssl::{NameType, SslRef};
 use pingora::tls::x509::X509;
 use snafu::Snafu;
 use std::collections::HashMap;
@@ -174,11 +174,12 @@ pub struct DynamicCertificate {
 
 impl DynamicCertificate {
     pub fn new_global() -> Self {
-        DynamicCertificate {
+        Self {
             chain_certificate: None,
             certificate: None,
         }
     }
+
     pub fn new(cert: &[u8], key: &[u8]) -> Result<Self> {
         let cert = X509::from_pem(cert).map_err(|e| Error::Invalid {
             message: e.to_string(),
@@ -196,7 +197,7 @@ impl DynamicCertificate {
             PKey::private_key_from_pem(key).map_err(|e| Error::Invalid {
                 message: e.to_string(),
             })?;
-        Ok(DynamicCertificate {
+        Ok(Self {
             chain_certificate: None,
             certificate: Some((cert, key)),
         })
@@ -205,7 +206,7 @@ impl DynamicCertificate {
 
 #[inline]
 fn ssl_certificate(
-    ssl: &mut pingora::tls::ssl::SslRef,
+    ssl: &mut SslRef,
     cert: &X509,
     key: &PKey<Private>,
     chain_certificate: &Option<X509>,
@@ -225,7 +226,7 @@ fn ssl_certificate(
 
 #[async_trait]
 impl pingora::listeners::TlsAccept for DynamicCertificate {
-    async fn certificate_callback(&self, ssl: &mut pingora::tls::ssl::SslRef) {
+    async fn certificate_callback(&self, ssl: &mut SslRef) {
         // TODO add more debug log
         debug!(ssl = format!("{ssl:?}"));
         if let Some((cert, key)) = &self.certificate {

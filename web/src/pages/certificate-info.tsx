@@ -45,13 +45,6 @@ export default function CertificateInfo() {
   // "certificate.acme": "The acme for generate certificate",
   const arr: FormItem[] = [
     {
-      id: "domains",
-      label: t("certificate.domains"),
-      defaultValue: certificate.domains,
-      span: 12,
-      category: FormItemCategory.TEXT,
-    },
-    {
       id: "tls_cert",
       label: t("certificate.tlsCert"),
       defaultValue: certificate.tls_cert,
@@ -71,6 +64,13 @@ export default function CertificateInfo() {
       defaultValue: certificate.tls_chain,
       span: 12,
       category: FormItemCategory.TEXTAREA,
+    },
+    {
+      id: "domains",
+      label: t("certificate.domains"),
+      defaultValue: certificate.domains,
+      span: 12,
+      category: FormItemCategory.TEXT,
     },
     {
       id: "certificate_file",
