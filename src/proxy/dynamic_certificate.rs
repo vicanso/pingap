@@ -38,20 +38,26 @@ type DynamicCertificates = HashMap<String, DynamicCertificate>;
 static DYNAMIC_CERT_MAP: OnceCell<DynamicCertificates> = OnceCell::new();
 const E6: &[u8] = include_bytes!("../assets/e6.pem");
 const E5: &[u8] = include_bytes!("../assets/e5.pem");
+const R10: &[u8] = include_bytes!("../assets/r10.pem");
+const R11: &[u8] = include_bytes!("../assets/r11.pem");
 
 // TODO not after validate
 static E5_CERTIFICATE: Lazy<Option<X509>> = Lazy::new(|| X509::from_pem(E5).ok());
 static E6_CERTIFICATE: Lazy<Option<X509>> = Lazy::new(|| X509::from_pem(E6).ok());
+static R10_CERTIFICATE: Lazy<Option<X509>> = Lazy::new(|| X509::from_pem(R10).ok());
+static R11_CERTIFICATE: Lazy<Option<X509>> = Lazy::new(|| X509::from_pem(R11).ok());
+
+static LETS_ENCRYPT: &str = "lets_encrypt";
 
 fn parse_certificate(
     certificate_config: &CertificateConf,
 ) -> Result<(Vec<String>, DynamicCertificate, CertificateInfo)> {
-    let (cert, key) = if let Some(file) = &certificate_config.certificate_file {
+    let (cert, key, category) = if let Some(file) = &certificate_config.certificate_file {
         let cert = get_lets_encrypt_cert(&Path::new(&util::resolve_path(file)).to_path_buf())
             .map_err(|e| Error::Invalid {
                 message: e.to_string(),
             })?;
-        (cert.get_cert(), cert.get_key())
+        (cert.get_cert(), cert.get_key(), LETS_ENCRYPT)
     } else {
         (
             util::convert_certificate_bytes(&certificate_config.tls_cert).ok_or(
@@ -62,18 +68,23 @@ fn parse_certificate(
             util::convert_certificate_bytes(&certificate_config.tls_key).ok_or(Error::Invalid {
                 message: "Convert certificate key fail".to_string(),
             })?,
+            "",
         )
     };
     let info = get_certificate_info(&cert).map_err(|e| Error::Invalid {
         message: e.to_string(),
     })?;
 
-    // TODO only supports for let's encrypt
-    let chain_certificate = match info.get_issuer_common_name().as_str() {
-        "E5" => E5_CERTIFICATE.clone(),
-        "E6" => E6_CERTIFICATE.clone(),
-        _ => None,
-    };
+    let mut chain_certificate = None;
+    if category == LETS_ENCRYPT {
+        chain_certificate = match info.get_issuer_common_name().as_str() {
+            "E5" => E5_CERTIFICATE.clone(),
+            "E6" => E6_CERTIFICATE.clone(),
+            "R10" => R10_CERTIFICATE.clone(),
+            "R11" => R11_CERTIFICATE.clone(),
+            _ => None,
+        };
+    }
     let cert = X509::from_pem(&cert).map_err(|e| Error::Invalid {
         message: e.to_string(),
     })?;
