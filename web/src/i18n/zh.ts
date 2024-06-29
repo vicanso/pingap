@@ -109,7 +109,8 @@ export default {
   "certificate.domains": "该域名对应的域名列表",
   "certificate.tlsCert": "Tls证书(Pem格式)",
   "certificate.tlsKey": "Tls密钥(Pem格式)",
-  "certificate.certificateFile": "保存https证书的文件",
+  "certificate.tlsChain": "Tls证书链(Pem格式)",
+  "certificate.certificateFile": "保存tls证书的文件",
   "certificate.acme": "选择使用acme生成证书的服务",
 
   // plugin info

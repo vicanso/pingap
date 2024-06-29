@@ -76,7 +76,10 @@ fn parse_certificate(
     })?;
 
     let mut chain_certificate = None;
-    if category == LETS_ENCRYPT {
+    let tls_chain = util::convert_certificate_bytes(&certificate_config.tls_chain);
+    if let Some(value) = &tls_chain {
+        chain_certificate = X509::from_pem(value).ok();
+    } else if category == LETS_ENCRYPT {
         chain_certificate = match info.get_issuer_common_name().as_str() {
             "E5" => E5_CERTIFICATE.clone(),
             "E6" => E6_CERTIFICATE.clone(),

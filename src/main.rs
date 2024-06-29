@@ -180,7 +180,11 @@ remark = "Admin serve"
 }
 
 fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
-    env_logger::Builder::from_env(env_logger::Env::default()).try_init()?;
+    let level = std::env::var("RUST_LOG").unwrap_or("INFO".to_string());
+    logger::logger_try_init(logger::LoggerParams {
+        level,
+        ..Default::default()
+    })?;
     let (server_conf, name, proxy_plugin_info) =
         parse_admin_plugin(&args.admin.unwrap_or_default());
 

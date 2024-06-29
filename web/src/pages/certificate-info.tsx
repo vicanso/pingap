@@ -66,6 +66,13 @@ export default function CertificateInfo() {
       category: FormItemCategory.TEXTAREA,
     },
     {
+      id: "tls_chain",
+      label: t("certificate.tlsChain"),
+      defaultValue: certificate.tls_chain,
+      span: 12,
+      category: FormItemCategory.TEXTAREA,
+    },
+    {
       id: "certificate_file",
       label: t("certificate.certificateFile"),
       defaultValue: certificate.certificate_file,

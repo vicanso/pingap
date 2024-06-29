@@ -107,7 +107,8 @@ export default {
   "certificate.domains": "The domain list fo certificate",
   "certificate.tlsCert": "Tls Cert Pem",
   "certificate.tlsKey": "Tls Key Pem",
-  "certificate.certificateFile": "The File For Saving Certificate",
+  "certificate.tlsChain": "Tls chain Pem",
+  "certificate.certificateFile": "The File For Saving Tls Certificate",
   "certificate.acme": "The acme for generate certificate",
   // plugin info
   "plugin.title": "Modify plugin configuration",

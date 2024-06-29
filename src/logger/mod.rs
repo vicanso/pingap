@@ -17,6 +17,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use tracing::{info, Level};
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 
+#[derive(Default, Debug)]
 pub struct LoggerParams {
     pub file: String,
     pub level: String,

@@ -122,6 +122,7 @@ pub struct CertificateConf {
     pub domains: Option<String>,
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
+    pub tls_chain: Option<String>,
     pub certificate_file: Option<String>,
     pub acme: Option<String>,
     pub remark: Option<String>,
@@ -144,6 +145,18 @@ impl CertificateConf {
             })?;
         }
         if let Some(value) = &self.tls_cert {
+            let buf = if !util::is_pem(value) {
+                STANDARD
+                    .decode(value)
+                    .map_err(|e| Error::Base64Decode { source: e })?
+            } else {
+                value.as_bytes().to_vec()
+            };
+            let _ = X509::from_pem(&buf).map_err(|e| Error::Invalid {
+                message: e.to_string(),
+            })?;
+        }
+        if let Some(value) = &self.tls_chain {
             let buf = if !util::is_pem(value) {
                 STANDARD
                     .decode(value)
