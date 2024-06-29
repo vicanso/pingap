@@ -45,9 +45,13 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 pub type HttpHeader = (HeaderName, HeaderValue);
 
 pub fn convert_header(value: &str) -> Result<Option<HttpHeader>> {
-    if let Some((k, v)) = value.split_once(':').map(|(k, v)| (k.trim(), v.trim())) {
-        let name = HeaderName::from_str(k).context(InvalidHeaderNameSnafu { value: k })?;
-        let value = HeaderValue::from_str(v).context(InvalidHeaderValueSnafu { value: v })?;
+    if let Some((k, v)) =
+        value.split_once(':').map(|(k, v)| (k.trim(), v.trim()))
+    {
+        let name = HeaderName::from_str(k)
+            .context(InvalidHeaderNameSnafu { value: k })?;
+        let value = HeaderValue::from_str(v)
+            .context(InvalidHeaderValueSnafu { value: v })?;
         Ok(Some((name, value)))
     } else {
         Ok(None)
@@ -64,36 +68,41 @@ pub fn convert_header_value(
     match buf {
         HOST_NAME_TAG => {
             return HeaderValue::from_str(&get_hostname()).ok();
-        }
+        },
         REMOTE_ADDR_TAG => {
             if let Some(remote_addr) = &ctx.remote_addr {
                 return HeaderValue::from_str(remote_addr).ok();
             }
-        }
+        },
         UPSTREAM_ADDR_TAG => {
             if !ctx.upstream_address.is_empty() {
                 return HeaderValue::from_str(&ctx.upstream_address).ok();
             }
-        }
+        },
         PROXY_ADD_FORWARDED_TAG => {
             if let Some(remote_addr) = &ctx.remote_addr {
-                let value = if let Some(value) =
-                    session.get_header(util::HTTP_HEADER_X_FORWARDED_FOR.clone())
+                let value = if let Some(value) = session
+                    .get_header(util::HTTP_HEADER_X_FORWARDED_FOR.clone())
                 {
-                    format!("{}, {}", value.to_str().unwrap_or_default(), remote_addr)
+                    format!(
+                        "{}, {}",
+                        value.to_str().unwrap_or_default(),
+                        remote_addr
+                    )
                 } else {
                     remote_addr.to_string()
                 };
                 return HeaderValue::from_str(&value).ok();
             }
-        }
+        },
         HTTP_ORIGIN_TAG => {
             return session.get_header("origin").cloned();
-        }
+        },
         _ => {
             if buf.starts_with(b"$") {
                 if let Ok(value) = std::env::var(
-                    std::string::String::from_utf8_lossy(&buf[1..buf.len()]).to_string(),
+                    std::string::String::from_utf8_lossy(&buf[1..buf.len()])
+                        .to_string(),
                 ) {
                     return HeaderValue::from_str(&value).ok();
                 }
@@ -109,7 +118,7 @@ pub fn convert_header_value(
                     return HeaderValue::from_bytes(&value).ok();
                 }
             }
-        }
+        },
     };
     // not match return none
     None
@@ -176,8 +185,9 @@ mod tests {
     use crate::state::State;
 
     use super::{
-        convert_header_value, convert_headers, HTTP_HEADER_CONTENT_HTML, HTTP_HEADER_CONTENT_JSON,
-        HTTP_HEADER_NAME_X_REQUEST_ID, HTTP_HEADER_NO_CACHE, HTTP_HEADER_NO_STORE,
+        convert_header_value, convert_headers, HTTP_HEADER_CONTENT_HTML,
+        HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_NAME_X_REQUEST_ID,
+        HTTP_HEADER_NO_CACHE, HTTP_HEADER_NO_STORE,
         HTTP_HEADER_TRANSFER_CHUNKED, HTTP_HEADER_WWW_AUTHENTICATE,
     };
     use http::HeaderValue;
@@ -204,7 +214,8 @@ mod tests {
     #[tokio::test]
     async fn test_convert_header_value() {
         let headers = [""].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
@@ -220,7 +231,8 @@ mod tests {
         assert_eq!("10.1.1.1", value.unwrap().to_str().unwrap());
 
         let headers = ["X-Forwarded-For: 1.1.1.1, 2.2.2.2"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
@@ -239,7 +251,8 @@ mod tests {
         );
 
         let headers = [""].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
@@ -255,7 +268,8 @@ mod tests {
         assert_eq!("10.1.1.1", value.unwrap().to_str().unwrap());
 
         let headers = [""].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
@@ -271,7 +285,8 @@ mod tests {
         assert_eq!("10.1.1.1:8001", value.unwrap().to_str().unwrap());
 
         let headers = ["Origin: https://github.com"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
@@ -284,7 +299,8 @@ mod tests {
         assert_eq!("https://github.com", value.unwrap().to_str().unwrap());
 
         let headers = ["Origin: https://github.com"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
@@ -296,7 +312,8 @@ mod tests {
         assert_eq!(true, value.is_some());
 
         let headers = ["Origin: https://github.com"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
@@ -308,7 +325,8 @@ mod tests {
         assert_eq!(true, value.is_some());
 
         let headers = ["Origin: https://github.com"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();

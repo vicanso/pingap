@@ -36,8 +36,7 @@ impl MockResponse {
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&step) {
             return Err(Error::Invalid {
                 category: PluginCategory::Mock.to_string(),
-                message: "Mock plugin should be executed at request or proxy upstream step"
-                    .to_string(),
+                message: "Mock plugin should be executed at request or proxy upstream step".to_string(),
             });
         }
 
@@ -52,7 +51,8 @@ impl MockResponse {
             ..Default::default()
         };
         if status > 0 {
-            resp.status = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
+            resp.status =
+                StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
         }
         if !headers.is_empty() {
             if let Ok(headers) = convert_headers(&headers) {
@@ -89,7 +89,8 @@ impl Plugin for MockResponse {
         if step != self.plugin_step {
             return Ok(None);
         }
-        if !self.path.is_empty() && session.req_header().uri.path() != self.path {
+        if !self.path.is_empty() && session.req_header().uri.path() != self.path
+        {
             return Ok(None);
         }
         Ok(Some(self.resp.clone()))
@@ -142,7 +143,10 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
             )
             .unwrap(),
         );
-        assert_eq!("Plugin mock invalid, message: Mock plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string())
+        assert_eq!(
+            "Plugin mock invalid, message: Mock plugin should be executed at request or proxy upstream step",
+            result.err().unwrap().to_string()
+        )
     }
 
     #[tokio::test]
@@ -162,13 +166,18 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
         let mock = MockResponse::new(&params).unwrap();
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
         let result = mock
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
 
@@ -186,13 +195,18 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
         );
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
-        let input_header = format!("GET /vicanso?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
         let result = mock
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         assert_eq!(true, result.is_none());

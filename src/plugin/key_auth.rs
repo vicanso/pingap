@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error, Plugin, Result,
+    get_bool_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error,
+    Plugin, Result,
 };
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
@@ -54,12 +55,12 @@ impl TryFrom<&PluginConf> for KeyAuth {
         if !query_name.is_empty() {
             query = Some(query_name);
         } else {
-            header = Some(
-                HeaderName::from_str(&header_name).map_err(|e| Error::Invalid {
+            header = Some(HeaderName::from_str(&header_name).map_err(|e| {
+                Error::Invalid {
                     category: PluginCategory::KeyAuth.to_string(),
                     message: format!("invalid header name, {e}"),
-                })?,
-            );
+                }
+            })?);
         }
         let params = Self {
             keys: get_str_slice_conf(value, "keys")
@@ -81,11 +82,12 @@ impl TryFrom<&PluginConf> for KeyAuth {
                 ..Default::default()
             },
         };
-        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
+        if ![PluginStep::Request, PluginStep::ProxyUpstream]
+            .contains(&params.plugin_step)
+        {
             return Err(Error::Invalid {
                 category: PluginCategory::KeyAuth.to_string(),
-                message: "Key auth plugin should be executed at request or proxy upstream step"
-                    .to_string(),
+                message: "Key auth plugin should be executed at request or proxy upstream step".to_string(),
             });
         }
         Ok(params)
@@ -139,7 +141,10 @@ impl Plugin for KeyAuth {
             if let Some(name) = &self.header {
                 session.req_header_mut().remove_header(name);
             } else if let Some(name) = &self.query {
-                if let Err(e) = util::remove_query_from_header(session.req_header_mut(), name) {
+                if let Err(e) = util::remove_query_from_header(
+                    session.req_header_mut(),
+                    name,
+                ) {
                     error!(error = e.to_string(), "remove query fail");
                 }
             }
@@ -243,25 +248,35 @@ hide_credentials = true
         assert_eq!("request", auth.step().to_string());
 
         let headers = ["X-User: 123"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         assert_eq!(false, session.get_header_bytes("X-User").is_empty());
         let result = auth
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
         assert_eq!(true, session.get_header_bytes("X-User").is_empty());
 
         let headers = ["X-User: 12"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = auth
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         let resp = result.unwrap();
@@ -272,12 +287,17 @@ hide_credentials = true
         );
 
         let headers = [""].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = auth
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         let resp = result.unwrap();
@@ -302,8 +322,9 @@ hide_credentials = true
         )
         .unwrap();
         let headers = [""].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?user=123&type=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header = format!(
+            "GET /vicanso/pingap?user=123&type=1 HTTP/1.1\r\n{headers}\r\n\r\n"
+        );
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
@@ -312,7 +333,11 @@ hide_credentials = true
             session.req_header().uri.to_string()
         );
         let result = auth
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         assert_eq!(true, result.is_none());

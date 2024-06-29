@@ -59,10 +59,14 @@ impl ConfigStorage for FileStorage {
 
         let mut data = vec![];
         if dir.is_dir() {
-            for entry in glob(&format!("{filepath}/**/*.toml")).map_err(|e| Error::Pattern {
-                source: e,
-                path: filepath,
-            })? {
+            for entry in
+                glob(&format!("{filepath}/**/*.toml")).map_err(|e| {
+                    Error::Pattern {
+                        source: e,
+                        path: filepath,
+                    }
+                })?
+            {
                 let f = entry.map_err(|e| Error::Glob { source: e })?;
                 let mut buf = fs::read(&f).await.map_err(|e| Error::Io {
                     source: e,
@@ -82,17 +86,22 @@ impl ConfigStorage for FileStorage {
         PingapConf::try_from(data.as_slice())
     }
     /// Save config to file by category.
-    async fn save_config(&self, conf: &PingapConf, category: &str) -> Result<()> {
+    async fn save_config(
+        &self,
+        conf: &PingapConf,
+        category: &str,
+    ) -> Result<()> {
         let filepath = self.path.clone();
         conf.validate()?;
         if Path::new(&filepath).is_file() {
-            let ping_conf = toml::to_string_pretty(&conf).map_err(|e| Error::Ser { source: e })?;
-            return fs::write(&filepath, ping_conf)
-                .await
-                .map_err(|e| Error::Io {
+            let ping_conf = toml::to_string_pretty(&conf)
+                .map_err(|e| Error::Ser { source: e })?;
+            return fs::write(&filepath, ping_conf).await.map_err(|e| {
+                Error::Io {
                     source: e,
                     file: filepath,
-                });
+                }
+            });
         }
 
         let (path, toml_value) = conf.get_toml(category)?;
@@ -110,8 +119,8 @@ impl ConfigStorage for FileStorage {
 mod tests {
     use super::FileStorage;
     use crate::config::{
-        ConfigStorage, PingapConf, CATEGORY_BASIC, CATEGORY_LOCATION, CATEGORY_PLUGIN,
-        CATEGORY_SERVER, CATEGORY_UPSTREAM,
+        ConfigStorage, PingapConf, CATEGORY_BASIC, CATEGORY_LOCATION,
+        CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
     };
     use nanoid::nanoid;
     use pretty_assertions::assert_eq;

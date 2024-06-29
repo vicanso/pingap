@@ -54,11 +54,12 @@ impl TryFrom<&PluginConf> for Stats {
             plugin_step: step,
             path: get_str_conf(value, "path"),
         };
-        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
+        if ![PluginStep::Request, PluginStep::ProxyUpstream]
+            .contains(&params.plugin_step)
+        {
             return Err(Error::Invalid {
                 category: PluginCategory::Stats.to_string(),
-                message: "Stats plugin should be executed at request or proxy upstream step"
-                    .to_string(),
+                message: "Stats plugin should be executed at request or proxy upstream step".to_string(),
             });
         }
         Ok(params)
@@ -98,7 +99,8 @@ impl Plugin for Stats {
                 physical_mem = value.physical_mem;
             }
             let uptime: humantime::Duration =
-                Duration::from_secs(util::now().as_secs() - get_start_time()).into();
+                Duration::from_secs(util::now().as_secs() - get_start_time())
+                    .into();
             let resp = HttpResponse::try_from_json(&ServerStats {
                 accepted: ctx.accepted,
                 processing: ctx.processing,
@@ -151,7 +153,10 @@ mod tests {
             .unwrap(),
         );
 
-        assert_eq!("Plugin stats invalid, message: Stats plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
+        assert_eq!(
+            "Plugin stats invalid, message: Stats plugin should be executed at request or proxy upstream step",
+            result.err().unwrap().to_string()
+        );
     }
 
     #[tokio::test]
@@ -167,13 +172,18 @@ mod tests {
         .unwrap();
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
         let result = stats
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
@@ -185,7 +195,11 @@ mod tests {
         session.read_request().await.unwrap();
 
         let result = stats
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         assert_eq!(true, result.is_some());

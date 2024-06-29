@@ -47,7 +47,8 @@ impl ServerConf {
         if let Some(file) = &self.certificate_file {
             util::resolve_path(file).into()
         } else {
-            std::env::temp_dir().join(format!("pingap-certificates-server-{}.json", self.name))
+            std::env::temp_dir()
+                .join(format!("pingap-certificates-server-{}.json", self.name))
         }
     }
 }
@@ -89,7 +90,8 @@ impl From<PingapConf> for Vec<ServerConf> {
             let tls_cert = util::convert_certificate_bytes(&item.tls_cert);
             let tls_key = util::convert_certificate_bytes(&item.tls_key);
 
-            let mut error_template = conf.basic.error_template.clone().unwrap_or_default();
+            let mut error_template =
+                conf.basic.error_template.clone().unwrap_or_default();
             if error_template.is_empty() {
                 error_template = ERROR_TEMPLATE.to_string();
             }
@@ -136,7 +138,9 @@ impl From<PingapConf> for Vec<ServerConf> {
                 locations: item.locations.unwrap_or_default(),
                 threads,
                 lets_encrypt: item.lets_encrypt,
-                global_certificates: item.global_certificates.unwrap_or_default(),
+                global_certificates: item
+                    .global_certificates
+                    .unwrap_or_default(),
                 certificate_file: item.certificate_file,
                 enbaled_h2: item.enabled_h2.unwrap_or_default(),
                 tcp_keepalive,

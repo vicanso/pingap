@@ -56,9 +56,10 @@ impl CertificateInfo {
 
 /// Get the information of certificate.
 pub fn get_certificate_info(data: &[u8]) -> Result<CertificateInfo> {
-    let (_, pem) = x509_parser::pem::parse_x509_pem(data).map_err(|e| Error::X509 {
-        message: e.to_string(),
-    })?;
+    let (_, pem) =
+        x509_parser::pem::parse_x509_pem(data).map_err(|e| Error::X509 {
+            message: e.to_string(),
+        })?;
     let x509 = pem.parse_x509().map_err(|e| Error::X509 {
         message: e.to_string(),
     })?;
@@ -102,7 +103,9 @@ impl Certificate {
 mod lets_encrypt;
 mod validity_checker;
 
-pub use lets_encrypt::{get_lets_encrypt_cert, handle_lets_encrypt, new_lets_encrypt_service};
+pub use lets_encrypt::{
+    get_lets_encrypt_cert, handle_lets_encrypt, new_lets_encrypt_service,
+};
 pub use validity_checker::new_tls_validity_service;
 
 #[cfg(test)]

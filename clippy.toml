@@ -1,0 +1,3 @@
+allow-unwrap-in-tests = true
+cognitive-complexity-threshold = 10
+msrv = "1.74.0"

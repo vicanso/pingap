@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_bool_conf, get_step_conf, get_str_conf, Error, Plugin, Result};
+use super::{
+    get_bool_conf, get_step_conf, get_str_conf, Error, Plugin, Result,
+};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{convert_header_value, HttpHeader, HttpResponse};
 use crate::state::State;
@@ -66,7 +68,8 @@ impl TryFrom<&PluginConf> for Cors {
         let mut allow_methods = get_str_conf(value, "allow_methods");
 
         if allow_methods.is_empty() {
-            allow_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"].join(", ");
+            allow_methods =
+                ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"].join(", ");
         };
 
         let format_header_value = |value: &str| -> Result<HeaderValue> {
@@ -121,7 +124,8 @@ impl TryFrom<&PluginConf> for Cors {
         if params.plugin_step != PluginStep::Request {
             return Err(Error::Invalid {
                 category: PluginCategory::Cors.to_string(),
-                message: "Cors plugin should be executed at request step".to_string(),
+                message: "Cors plugin should be executed at request step"
+                    .to_string(),
             });
         }
 
@@ -134,9 +138,13 @@ impl Cors {
         debug!(params = params.to_string(), "new cors plugin");
         Self::try_from(params)
     }
-    fn get_headers(&self, session: &mut Session, ctx: &mut State) -> Result<Vec<HttpHeader>> {
-        let origin =
-            convert_header_value(&self.allow_origin, session, ctx).ok_or(Error::Invalid {
+    fn get_headers(
+        &self,
+        session: &mut Session,
+        ctx: &mut State,
+    ) -> Result<Vec<HttpHeader>> {
+        let origin = convert_header_value(&self.allow_origin, session, ctx)
+            .ok_or(Error::Invalid {
                 category: PluginCategory::Cors.to_string(),
                 message: "Allow origin is invalid".to_string(),
             })?;
@@ -252,7 +260,8 @@ max_age = "60m"
     #[tokio::test]
     async fn test_cors() {
         let headers = ["X-User: 123", "Origin: https://pingap.io"].join("\r\n");
-        let input_header = format!("OPTIONS /api/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("OPTIONS /api/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
@@ -277,7 +286,11 @@ max_age = "60m"
         assert_eq!("cors", cors.category().to_string());
 
         let resp = cors
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap()
             .unwrap();

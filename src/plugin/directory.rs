@@ -13,11 +13,13 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_int_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error, Plugin,
-    Result,
+    get_bool_conf, get_int_conf, get_step_conf, get_str_conf,
+    get_str_slice_conf, Error, Plugin, Result,
 };
 use crate::config::{PluginCategory, PluginConf, PluginStep};
-use crate::http_extra::{convert_headers, HttpChunkResponse, HttpHeader, HttpResponse};
+use crate::http_extra::{
+    convert_headers, HttpChunkResponse, HttpHeader, HttpResponse,
+};
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
@@ -118,7 +120,9 @@ pub struct Directory {
     download: bool,
 }
 
-async fn get_data(file: &PathBuf) -> std::io::Result<(std::fs::Metadata, fs::File)> {
+async fn get_data(
+    file: &PathBuf,
+) -> std::io::Result<(std::fs::Metadata, fs::File)> {
     let meta = fs::metadata(file).await?;
 
     if meta.is_dir() {
@@ -183,8 +187,8 @@ impl TryFrom<&PluginConf> for Directory {
         } else {
             None
         };
-        let headers =
-            convert_headers(&get_str_slice_conf(value, "headers")).map_err(|e| Error::Invalid {
+        let headers = convert_headers(&get_str_slice_conf(value, "headers"))
+            .map_err(|e| Error::Invalid {
                 category: PluginCategory::Directory.to_string(),
                 message: e.to_string(),
             })?;
@@ -194,7 +198,8 @@ impl TryFrom<&PluginConf> for Directory {
         let params = Self {
             autoindex: get_bool_conf(value, "autoindex"),
             index: get_str_conf(value, "index"),
-            path: Path::new(&util::resolve_path(&get_str_conf(value, "path"))).to_path_buf(),
+            path: Path::new(&util::resolve_path(&get_str_conf(value, "path")))
+                .to_path_buf(),
             chunk_size,
             max_age,
             charset,
@@ -203,12 +208,12 @@ impl TryFrom<&PluginConf> for Directory {
             download: get_bool_conf(value, "download"),
             headers: Some(headers),
         };
-        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
+        if ![PluginStep::Request, PluginStep::ProxyUpstream]
+            .contains(&params.plugin_step)
+        {
             return Err(Error::Invalid {
                 category: PluginCategory::Directory.to_string(),
-                message:
-                    "Directory serve plugin should be executed at request or proxy upstream step"
-                        .to_string(),
+                message: "Directory serve plugin should be executed at request or proxy upstream step".to_string(),
             });
         }
         Ok(params)
@@ -241,9 +246,10 @@ fn get_autoindex_html(path: &Path) -> Result<String, String> {
             is_file = true;
             let _ = f.metadata().map(|meta| {
                 size = ByteSize(meta.size()).to_string();
-                last_modified = chrono::DateTime::from_timestamp(meta.mtime(), 0)
-                    .unwrap_or_default()
-                    .to_string();
+                last_modified =
+                    chrono::DateTime::from_timestamp(meta.mtime(), 0)
+                        .unwrap_or_default()
+                        .to_string();
             });
         }
 
@@ -252,7 +258,8 @@ fn get_autoindex_html(path: &Path) -> Result<String, String> {
             continue;
         }
 
-        let mut target = format!("./{}", filepath.split('/').last().unwrap_or_default());
+        let mut target =
+            format!("./{}", filepath.split('/').last().unwrap_or_default());
         if !is_file {
             target += "/";
         }
@@ -310,7 +317,11 @@ impl Plugin for Directory {
         let resp = match get_data(&file).await {
             Ok((meta, mut f)) => {
                 let (cacheable, size, mut headers) =
-                    get_cacheable_and_headers_from_meta(&file, &meta, &self.charset);
+                    get_cacheable_and_headers_from_meta(
+                        &file,
+                        &meta,
+                        &self.charset,
+                    );
                 if self.download {
                     if let Ok(value) = HeaderValue::from_str(&format!(
                         r###"attachment; filename="{}""###,
@@ -337,7 +348,7 @@ impl Plugin for Directory {
                         Err(e) => {
                             error!(error = e.to_string(), "read data fail");
                             HttpResponse::bad_request(e.to_string().into())
-                        }
+                        },
                     }
                 } else {
                     let mut resp = HttpChunkResponse::new(&mut f);
@@ -352,14 +363,14 @@ impl Plugin for Directory {
                     // TODO better way to handle chunk response
                     IGNORE_RESPONSE.clone()
                 }
-            }
+            },
             Err(err) => {
                 if err.kind() == std::io::ErrorKind::NotFound {
                     HttpResponse::not_found("Not Found".into())
                 } else {
                     HttpResponse::unknown_error("Get file data fail".into())
                 }
-            }
+            },
         };
 
         Ok(Some(resp))
@@ -450,12 +461,17 @@ download = true
         assert_eq!("request", dir.step().to_string());
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
-        let input_header = format!("GET /error.html?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /error.html?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = dir
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         assert_eq!(true, result.is_some());
@@ -478,7 +494,11 @@ download = true
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = dir
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         assert_eq!(true, result.is_some());
@@ -490,7 +510,8 @@ download = true
         );
         assert_eq!(
             true,
-            std::string::String::from_utf8_lossy(resp.body.as_ref()).contains("Cargo.toml")
+            std::string::String::from_utf8_lossy(resp.body.as_ref())
+                .contains("Cargo.toml")
         );
     }
 
@@ -501,12 +522,17 @@ download = true
 
         assert_ne!(0, meta.size());
 
-        let (cacheable, _, headers) =
-            get_cacheable_and_headers_from_meta(&file, &meta, &Some("utf-8".to_string()));
+        let (cacheable, _, headers) = get_cacheable_and_headers_from_meta(
+            &file,
+            &meta,
+            &Some("utf-8".to_string()),
+        );
         assert_eq!(false, cacheable);
         assert_eq!(
             true,
-            format!("{headers:?}").contains(r###"("content-type", "text/html; charset=utf-8")"###)
+            format!("{headers:?}").contains(
+                r###"("content-type", "text/html; charset=utf-8")"###
+            )
         );
     }
 }

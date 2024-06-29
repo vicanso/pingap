@@ -40,12 +40,12 @@ impl TryFrom<&PluginConf> for RequestId {
         let header_name = if header_name.is_empty() {
             None
         } else {
-            Some(
-                HeaderName::from_str(&header_name).map_err(|e| Error::Invalid {
+            Some(HeaderName::from_str(&header_name).map_err(|e| {
+                Error::Invalid {
                     category: "header_name".to_string(),
                     message: e.to_string(),
-                })?,
-            )
+                }
+            })?)
         };
 
         let params = Self {
@@ -54,11 +54,12 @@ impl TryFrom<&PluginConf> for RequestId {
             size: get_int_conf(value, "size") as usize,
             header_name,
         };
-        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
+        if ![PluginStep::Request, PluginStep::ProxyUpstream]
+            .contains(&params.plugin_step)
+        {
             return Err(Error::Invalid {
                 category: PluginCategory::RequestId.to_string(),
-                message: "Request id should be executed at request or proxy upstream step"
-                    .to_string(),
+                message: "Request id should be executed at request or proxy upstream step".to_string(),
             });
         }
         Ok(params)
@@ -105,7 +106,7 @@ impl Plugin for RequestId {
             "nanoid" => {
                 let size = self.size;
                 nanoid!(size)
-            }
+            },
             _ => Uuid::now_v7().to_string(),
         };
         ctx.request_id = Some(id.clone());
@@ -161,7 +162,10 @@ size = 10
             )
             .unwrap(),
         );
-        assert_eq!("Plugin request_id invalid, message: Request id should be executed at request or proxy upstream step", result.err().unwrap().to_string());
+        assert_eq!(
+            "Plugin request_id invalid, message: Request id should be executed at request or proxy upstream step",
+            result.err().unwrap().to_string()
+        );
     }
 
     #[tokio::test]
@@ -180,7 +184,8 @@ size = 10
         assert_eq!("request", id.step().to_string());
 
         let headers = ["X-Request-Id: 123"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
@@ -194,7 +199,8 @@ size = 10
         assert_eq!("123", state.request_id.unwrap_or_default());
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();

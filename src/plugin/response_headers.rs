@@ -58,10 +58,11 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
         }
         let mut remove_headers = vec![];
         for item in get_str_slice_conf(value, "remove_headers").iter() {
-            let item = HeaderName::from_str(item).map_err(|e| Error::Invalid {
-                category: PluginCategory::ResponseHeaders.to_string(),
-                message: e.to_string(),
-            })?;
+            let item =
+                HeaderName::from_str(item).map_err(|e| Error::Invalid {
+                    category: PluginCategory::ResponseHeaders.to_string(),
+                    message: e.to_string(),
+                })?;
             remove_headers.push(item);
         }
         let params = Self {
@@ -194,7 +195,10 @@ remove_headers = [
             )
             .unwrap(),
         );
-        assert_eq!("Plugin response_headers invalid, message: Response headers plugin should be executed at response step", result.err().unwrap().to_string());
+        assert_eq!(
+            "Plugin response_headers invalid, message: Response headers plugin should be executed at response step",
+            result.err().unwrap().to_string()
+        );
     }
 
     #[tokio::test]
@@ -223,12 +227,14 @@ remove_headers = [
         assert_eq!("response", response_headers.step().to_string());
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let mut upstream_response = ResponseHeader::build_no_case(200, None).unwrap();
+        let mut upstream_response =
+            ResponseHeader::build_no_case(200, None).unwrap();
 
         upstream_response
             .append_header("Content-Type", "application/json")

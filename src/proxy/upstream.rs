@@ -163,37 +163,37 @@ impl TryFrom<&str> for HealthCheckConf {
                     if let Ok(d) = parse_duration(value.as_ref()) {
                         connection_timeout = d;
                     }
-                }
+                },
                 "read_timeout" => {
                     if let Ok(d) = parse_duration(value.as_ref()) {
                         read_timeout = d;
                     }
-                }
+                },
                 "check_frequency" => {
                     if let Ok(d) = parse_duration(value.as_ref()) {
                         check_frequency = d;
                     }
-                }
+                },
                 "success" => {
                     if let Ok(v) = value.parse::<usize>() {
                         consecutive_success = v;
                     }
-                }
+                },
                 "failure" => {
                     if let Ok(v) = value.parse::<usize>() {
                         consecutive_failure = v;
                     }
-                }
+                },
                 "reuse" => {
                     reuse_connection = true;
-                }
+                },
                 _ => {
                     if value.is_empty() {
                         query_list.push(key.to_string());
                     } else {
                         query_list.push(format!("{key}={value}"));
                     }
-                }
+                },
             };
         }
         let host = if let Some(host) = value.host() {
@@ -219,7 +219,10 @@ impl TryFrom<&str> for HealthCheckConf {
     }
 }
 
-fn update_peer_options(conf: &HealthCheckConf, opt: PeerOptions) -> PeerOptions {
+fn update_peer_options(
+    conf: &HealthCheckConf,
+    opt: PeerOptions,
+) -> PeerOptions {
     let mut options = opt;
     let timeout = Some(conf.connection_timeout);
     options.connection_timeout = timeout;
@@ -232,7 +235,8 @@ fn update_peer_options(conf: &HealthCheckConf, opt: PeerOptions) -> PeerOptions 
 
 fn new_tcp_health_check(conf: &HealthCheckConf) -> TcpHealthCheck {
     let mut check = TcpHealthCheck::default();
-    check.peer_template.options = update_peer_options(conf, check.peer_template.options.clone());
+    check.peer_template.options =
+        update_peer_options(conf, check.peer_template.options.clone());
     check.consecutive_success = conf.consecutive_success;
     check.consecutive_failure = conf.consecutive_failure;
 
@@ -241,7 +245,8 @@ fn new_tcp_health_check(conf: &HealthCheckConf) -> TcpHealthCheck {
 
 fn new_http_health_check(conf: &HealthCheckConf) -> HttpHealthCheck {
     let mut check = HttpHealthCheck::new(&conf.host, conf.schema == "https");
-    check.peer_template.options = update_peer_options(conf, check.peer_template.options.clone());
+    check.peer_template.options =
+        update_peer_options(conf, check.peer_template.options.clone());
 
     check.consecutive_success = conf.consecutive_success;
     check.consecutive_failure = conf.consecutive_failure;
@@ -257,7 +262,7 @@ fn new_http_health_check(conf: &HealthCheckConf) -> HttpHealthCheck {
                 );
             }
             check.req = req;
-        }
+        },
         Err(e) => error!(error = e.to_string(), "http health check fail"),
     }
 
@@ -269,32 +274,40 @@ fn new_health_check(
     health_check: &str,
 ) -> Result<(Box<dyn HealthCheck + Send + Sync + 'static>, Duration)> {
     let mut health_check_frequency = Duration::from_secs(10);
-    let hc: Box<dyn HealthCheck + Send + Sync + 'static> = if health_check.is_empty() {
-        let mut check = TcpHealthCheck::new();
-        check.peer_template.options.connection_timeout = Some(Duration::from_secs(3));
-        info!(
-            name,
-            options = format!("{:?}", check.peer_template.options),
-            "new health check"
-        );
-        check
-    } else {
-        let health_check_conf: HealthCheckConf = health_check.try_into()?;
-        health_check_frequency = health_check_conf.check_frequency;
-        info!(
-            name,
-            health_check_conf = format!("{health_check_conf:?}"),
-            "new http health check"
-        );
-        match health_check_conf.schema.as_str() {
-            "http" | "https" => Box::new(new_http_health_check(&health_check_conf)),
-            _ => Box::new(new_tcp_health_check(&health_check_conf)),
-        }
-    };
+    let hc: Box<dyn HealthCheck + Send + Sync + 'static> =
+        if health_check.is_empty() {
+            let mut check = TcpHealthCheck::new();
+            check.peer_template.options.connection_timeout =
+                Some(Duration::from_secs(3));
+            info!(
+                name,
+                options = format!("{:?}", check.peer_template.options),
+                "new health check"
+            );
+            check
+        } else {
+            let health_check_conf: HealthCheckConf = health_check.try_into()?;
+            health_check_frequency = health_check_conf.check_frequency;
+            info!(
+                name,
+                health_check_conf = format!("{health_check_conf:?}"),
+                "new http health check"
+            );
+            match health_check_conf.schema.as_str() {
+                "http" | "https" => {
+                    Box::new(new_http_health_check(&health_check_conf))
+                },
+                _ => Box::new(new_tcp_health_check(&health_check_conf)),
+            }
+        };
     Ok((hc, health_check_frequency))
 }
 
-fn new_backends(addrs: &[String], tls: bool, ipv4_only: bool) -> Result<Backends> {
+fn new_backends(
+    addrs: &[String],
+    tls: bool,
+    ipv4_only: bool,
+) -> Result<Backends> {
     let mut upstreams = BTreeSet::new();
     let mut backends = vec![];
     for addr in addrs.iter() {
@@ -329,7 +342,12 @@ fn new_backends(addrs: &[String], tls: bool, ipv4_only: bool) -> Result<Backends
     Ok(backends)
 }
 
-fn get_hash_value(hash: &str, hash_key: &str, session: &Session, ctx: &State) -> String {
+fn get_hash_value(
+    hash: &str,
+    hash_key: &str,
+    session: &Session,
+    ctx: &State,
+) -> String {
     match hash {
         "url" => session.req_header().uri.to_string(),
         "ip" => {
@@ -338,14 +356,14 @@ fn get_hash_value(hash: &str, hash_key: &str, session: &Session, ctx: &State) ->
             } else {
                 util::get_client_ip(session)
             }
-        }
+        },
         "header" => {
             if let Some(value) = session.get_header(hash_key) {
                 value.to_str().unwrap_or_default().to_string()
             } else {
                 "".to_string()
             }
-        }
+        },
         "cookie" => util::get_cookie_value(session.req_header(), hash_key)
             .unwrap_or_default()
             .to_string(),
@@ -368,16 +386,20 @@ impl Upstream {
         let mut hash = "".to_string();
         let sni = conf.sni.clone().unwrap_or_default();
         let tls = !sni.is_empty();
-        let backends = new_backends(&conf.addrs, tls, conf.ipv4_only.unwrap_or_default())?;
+        let backends =
+            new_backends(&conf.addrs, tls, conf.ipv4_only.unwrap_or_default())?;
 
-        let (hc, health_check_frequency) =
-            new_health_check(name, &conf.health_check.clone().unwrap_or_default())?;
+        let (hc, health_check_frequency) = new_health_check(
+            name,
+            &conf.health_check.clone().unwrap_or_default(),
+        )?;
         let algo_method = conf.algo.clone().unwrap_or_default();
         let algo_params: Vec<&str> = algo_method.split(':').collect();
         let mut hash_key = "".to_string();
         let lb = match algo_params[0] {
             "hash" => {
-                let mut lb = LoadBalancer::<Consistent>::from_backends(backends);
+                let mut lb =
+                    LoadBalancer::<Consistent>::from_backends(backends);
                 if algo_params.len() > 1 {
                     hash = algo_params[1].to_string();
                     if algo_params.len() > 2 {
@@ -392,9 +414,10 @@ impl Upstream {
                 lb.set_health_check(hc);
                 lb.health_check_frequency = Some(health_check_frequency);
                 SelectionLb::Consistent(Arc::new(lb))
-            }
+            },
             _ => {
-                let mut lb = LoadBalancer::<RoundRobin>::from_backends(backends);
+                let mut lb =
+                    LoadBalancer::<RoundRobin>::from_backends(backends);
                 lb.update()
                     .now_or_never()
                     .expect("static should not block")
@@ -402,7 +425,7 @@ impl Upstream {
                 lb.set_health_check(hc);
                 lb.health_check_frequency = Some(health_check_frequency);
                 SelectionLb::RoundRobin(Arc::new(lb))
-            }
+            },
         };
 
         let alpn = if let Some(alpn) = &conf.alpn {
@@ -462,13 +485,18 @@ impl Upstream {
 
     /// Returns a new http peer, if there is no healthy backend, it will return `None`.
     #[inline]
-    pub fn new_http_peer(&self, session: &Session, ctx: &State) -> Option<HttpPeer> {
+    pub fn new_http_peer(
+        &self,
+        session: &Session,
+        ctx: &State,
+    ) -> Option<HttpPeer> {
         let upstream = match &self.lb {
             SelectionLb::RoundRobin(lb) => lb.select(b"", 256),
             SelectionLb::Consistent(lb) => {
-                let value = get_hash_value(&self.hash, &self.hash_key, session, ctx);
+                let value =
+                    get_hash_value(&self.hash, &self.hash_key, session, ctx);
                 lb.select(value.as_bytes(), 256)
-            }
+            },
         };
         upstream.map(|upstream| {
             let mut p = HttpPeer::new(upstream, self.tls, self.sni.clone());
@@ -516,7 +544,8 @@ impl Upstream {
 }
 
 type Upstreams = HashMap<String, Arc<Upstream>>;
-static UPSTREAM_MAP: Lazy<ArcSwap<Upstreams>> = Lazy::new(|| ArcSwap::from_pointee(HashMap::new()));
+static UPSTREAM_MAP: Lazy<ArcSwap<Upstreams>> =
+    Lazy::new(|| ArcSwap::from_pointee(HashMap::new()));
 
 pub fn get_upstream(name: &str) -> Option<Arc<Upstream>> {
     UPSTREAM_MAP.load().get(name).cloned()
@@ -549,15 +578,16 @@ impl ServiceTask for HealthCheckTask {
         let jobs = upstreams.into_iter().map(|(name, up)| {
             let runtime = pingora_runtime::current_handle();
             runtime.spawn(async move {
-                let health_check_frequency = if let Some(lb) = up.as_round_robind() {
-                    lb.health_check_frequency
-                } else if let Some(lb) = up.as_consistent() {
-                    lb.health_check_frequency
-                } else {
-                    None
-                }
-                .unwrap_or_default()
-                .as_secs();
+                let health_check_frequency =
+                    if let Some(lb) = up.as_round_robind() {
+                        lb.health_check_frequency
+                    } else if let Some(lb) = up.as_consistent() {
+                        lb.health_check_frequency
+                    } else {
+                        None
+                    }
+                    .unwrap_or_default()
+                    .as_secs();
                 let mut count = (health_check_frequency / interval) as u32;
                 if health_check_frequency % interval != 0 {
                     count += 1;
@@ -684,7 +714,10 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!("Upstream addrs is empty", result.err().unwrap().to_string());
+        assert_eq!(
+            "Upstream addrs is empty",
+            result.err().unwrap().to_string()
+        );
 
         let up = Upstream::new(
             "charts",
@@ -732,7 +765,9 @@ mod tests {
             "X-Forwarded-For: 1.1.1.1",
         ]
         .join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?id=1234 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header = format!(
+            "GET /vicanso/pingap?id=1234 HTTP/1.1\r\n{headers}\r\n\r\n"
+        );
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
 
         let mut session = Session::new_h1(Box::new(mock_io));
@@ -773,7 +808,8 @@ mod tests {
             "Accept: application/json",
         ]
         .join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
 
         let mut session = Session::new_h1(Box::new(mock_io));

@@ -83,8 +83,7 @@ impl TryFrom<&PluginConf> for Csrf {
         if ![PluginStep::Request].contains(&params.plugin_step) {
             return Err(Error::Invalid {
                 category: PluginCategory::Csrf.to_string(),
-                message: "Csrf plugin should be executed at request or proxy upstream step"
-                    .to_string(),
+                message: "Csrf plugin should be executed at request or proxy upstream step".to_string(),
             });
         }
 
@@ -156,13 +155,15 @@ impl Plugin for Csrf {
             let token = generate_token(&self.key);
             let mut builder = Cookie::build((&self.name, &token)).path("/");
             if self.ttl > 0 {
-                builder = builder.max_age(cookie::time::Duration::seconds(self.ttl as i64));
+                builder = builder
+                    .max_age(cookie::time::Duration::seconds(self.ttl as i64));
             };
 
             let set_cookie = (
                 header::SET_COOKIE,
-                HeaderValue::from_str(&builder.build().to_string())
-                    .map_err(|e| util::new_internal_error(400, e.to_string()))?,
+                HeaderValue::from_str(&builder.build().to_string()).map_err(
+                    |e| util::new_internal_error(400, e.to_string()),
+                )?,
             );
 
             let resp = HttpResponse {
@@ -174,7 +175,9 @@ impl Plugin for Csrf {
             return Ok(Some(resp));
         }
 
-        if [Method::GET, Method::HEAD, Method::OPTIONS].contains(&session.req_header().method) {
+        if [Method::GET, Method::HEAD, Method::OPTIONS]
+            .contains(&session.req_header().method)
+        {
             return Ok(None);
         }
 
@@ -185,7 +188,9 @@ impl Plugin for Csrf {
 
         let value = std::string::String::from_utf8_lossy(value);
 
-        if value != util::get_cookie_value(session.req_header(), &self.name).unwrap_or_default()
+        if value
+            != util::get_cookie_value(session.req_header(), &self.name)
+                .unwrap_or_default()
             || !validate_token(&self.key, self.ttl, &value)
         {
             return Ok(Some(self.unauthorized_resp.clone()));
@@ -276,7 +281,10 @@ ttl = "1h"
             )
             .unwrap(),
         );
-        assert_eq!("Plugin csrf invalid, message: Csrf plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
+        assert_eq!(
+            "Plugin csrf invalid, message: Csrf plugin should be executed at request or proxy upstream step",
+            result.err().unwrap().to_string()
+        );
     }
 
     #[test]
@@ -305,13 +313,18 @@ ttl = "1h"
         assert_eq!("csrf", csrf.category().to_string());
 
         let headers = [""].join("\r\n");
-        let input_header = format!("GET /csrf-token HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /csrf-token HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
         let resp = csrf
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap()
             .unwrap();
@@ -328,7 +341,11 @@ ttl = "1h"
         session.read_request().await.unwrap();
 
         let resp = csrf
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap()
             .unwrap();
@@ -345,7 +362,11 @@ ttl = "1h"
         session.read_request().await.unwrap();
 
         let result = csrf
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
 

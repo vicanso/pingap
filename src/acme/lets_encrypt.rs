@@ -22,7 +22,8 @@ use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use http::StatusCode;
 use instant_acme::{
-    Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder, OrderStatus,
+    Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
+    OrderStatus,
 };
 use once_cell::sync::OnceCell;
 use pingora::proxy::Session;
@@ -71,11 +72,12 @@ pub fn new_lets_encrypt_service(
 impl ServiceTask for LetsEncryptService {
     async fn run(&self) -> Option<bool> {
         let domains = &self.domains;
-        let should_renew_now = if let Ok(cert) = get_lets_encrypt_cert(&self.certificate_file) {
-            !cert.valid() || domains.join(",") != cert.domains.join(",")
-        } else {
-            true
-        };
+        let should_renew_now =
+            if let Ok(cert) = get_lets_encrypt_cert(&self.certificate_file) {
+                !cert.valid() || domains.join(",") != cert.domains.join(",")
+            } else {
+                true
+            };
         if should_renew_now {
             info!(domains = domains.join(","), "renew cert from let's encrypt");
             match new_lets_encrypt(&self.certificate_file, domains).await {
@@ -88,7 +90,7 @@ impl ServiceTask for LetsEncryptService {
                             "restart fail"
                         );
                     }
-                }
+                },
                 Err(e) => error!(
                     error = e.to_string(),
                     domains = domains.join(","),
@@ -111,20 +113,23 @@ pub fn get_lets_encrypt_cert(path: &PathBuf) -> Result<Certificate> {
         });
     }
     let buf = std::fs::read(path).map_err(|e| Error::Io { source: e })?;
-    let cert: Certificate =
-        serde_json::from_slice(&buf).map_err(|e| Error::SerdeJson { source: e })?;
+    let cert: Certificate = serde_json::from_slice(&buf)
+        .map_err(|e| Error::SerdeJson { source: e })?;
     Ok(cert)
 }
 
 /// The proxy plugin for lets encrypt http-01.
-pub async fn handle_lets_encrypt(session: &mut Session, ctx: &mut State) -> pingora::Result<bool> {
+pub async fn handle_lets_encrypt(
+    session: &mut Session,
+    ctx: &mut State,
+) -> pingora::Result<bool> {
     let path = session.req_header().uri.path();
     if path.starts_with("/.well-known/acme-challenge/") {
         let value = {
             let data = get_lets_encrypt().lock().await;
-            let v = data
-                .get(path)
-                .ok_or_else(|| util::new_internal_error(400, "token not found".to_string()))?;
+            let v = data.get(path).ok_or_else(|| {
+                util::new_internal_error(400, "token not found".to_string())
+            })?;
             v.clone()
         };
         ctx.response_body_size = HttpResponse {
@@ -141,7 +146,10 @@ pub async fn handle_lets_encrypt(session: &mut Session, ctx: &mut State) -> ping
 
 /// Get the new cert from lets encrypt for all domains.
 /// The cert will be saved if success.
-async fn new_lets_encrypt(certificate_file: &PathBuf, domains: &[String]) -> Result<()> {
+async fn new_lets_encrypt(
+    certificate_file: &PathBuf,
+    domains: &[String],
+) -> Result<()> {
     let mut domains: Vec<String> = domains.to_vec();
     domains.sort();
     info!(domains = domains.join(","), "acme form let's encrypt");
@@ -187,7 +195,7 @@ async fn new_lets_encrypt(certificate_file: &PathBuf, domains: &[String]) -> Res
             "acme from let's encrypt"
         );
         match authz.status {
-            instant_acme::AuthorizationStatus::Pending => {}
+            instant_acme::AuthorizationStatus::Pending => {},
             instant_acme::AuthorizationStatus::Valid => continue,
             _ => todo!(),
         }
@@ -205,7 +213,8 @@ async fn new_lets_encrypt(certificate_file: &PathBuf, domains: &[String]) -> Res
         let key_auth = order.key_authorization(challenge);
 
         // http://<你的域名>/.well-known/acme-challenge/<TOKEN>
-        let well_known_path = format!("/.well-known/acme-challenge/{}", challenge.token);
+        let well_known_path =
+            format!("/.well-known/acme-challenge/{}", challenge.token);
         info!(well_known_path, "let's encrypt well known path",);
 
         let mut map = get_lets_encrypt().lock().await;
@@ -228,7 +237,9 @@ async fn new_lets_encrypt(certificate_file: &PathBuf, domains: &[String]) -> Res
     let state = loop {
         let state = order.state();
         info!(status = format!("{:?}", state.status), "get order status");
-        if let OrderStatus::Ready | OrderStatus::Invalid | OrderStatus::Valid = state.status {
+        if let OrderStatus::Ready | OrderStatus::Invalid | OrderStatus::Valid =
+            state.status
+        {
             break state;
         }
         order
@@ -239,14 +250,15 @@ async fn new_lets_encrypt(certificate_file: &PathBuf, domains: &[String]) -> Res
         delay *= 2;
         tries += 1;
         match tries < 10 {
-            true => info!(delay = format!("{delay:?}"), "Order is not ready, waiting"),
+            true => info!(
+                delay = format!("{delay:?}"),
+                "Order is not ready, waiting"
+            ),
             false => {
                 return Err(Error::Fail {
-                    message: format!(
-                        "Giving up: order is not ready. For details, see the url: {detail_url:?}"
-                    ),
+                    message: format!("Giving up: order is not ready. For details, see the url: {detail_url:?}"),
                 });
-            }
+            },
         }
         tokio::time::sleep(delay).await;
     };
@@ -262,7 +274,8 @@ async fn new_lets_encrypt(certificate_file: &PathBuf, domains: &[String]) -> Res
 
     let mut params = CertificateParams::new(names.clone());
     params.distinguished_name = DistinguishedName::new();
-    let cert = rcgen::Certificate::from_params(params).map_err(|e| Error::Rcgen { source: e })?;
+    let cert = rcgen::Certificate::from_params(params)
+        .map_err(|e| Error::Rcgen { source: e })?;
     let csr = cert
         .serialize_request_der()
         .map_err(|e| Error::Rcgen { source: e })?;
@@ -304,7 +317,8 @@ async fn new_lets_encrypt(certificate_file: &PathBuf, domains: &[String]) -> Res
         pem: STANDARD.encode(cert_chain_pem.as_bytes()),
         key: STANDARD.encode(cert.serialize_private_key_pem().as_bytes()),
     };
-    let buf = serde_json::to_vec(&info).map_err(|e| Error::SerdeJson { source: e })?;
+    let buf = serde_json::to_vec(&info)
+        .map_err(|e| Error::SerdeJson { source: e })?;
     f.write(&buf).await.map_err(|e| Error::Io { source: e })?;
     info!(
         certificate_file = format!("{certificate_file:?}"),

@@ -46,7 +46,8 @@ impl EtcdStorage {
             }
         }
 
-        let addrs: Vec<String> = hosts.split(',').map(|item| item.to_string()).collect();
+        let addrs: Vec<String> =
+            hosts.split(',').map(|item| item.to_string()).collect();
         let mut user = "".to_string();
         let mut password = "".to_string();
         let mut options = ConnectOptions::default();
@@ -59,13 +60,13 @@ impl EtcdStorage {
                         if let Ok(d) = parse_duration(value) {
                             options = options.with_timeout(d);
                         }
-                    }
+                    },
                     "connect_timeout" => {
                         if let Ok(d) = parse_duration(value) {
                             options = options.with_connect_timeout(d);
                         }
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
             }
         }
@@ -106,7 +107,11 @@ impl ConfigStorage for EtcdStorage {
         PingapConf::try_from(buffer.as_slice())
     }
     /// Save config to etcd by category.
-    async fn save_config(&self, conf: &PingapConf, category: &str) -> Result<()> {
+    async fn save_config(
+        &self,
+        conf: &PingapConf,
+        category: &str,
+    ) -> Result<()> {
         let filepath = self.path.clone();
         conf.validate()?;
         let (path, toml_value) = conf.get_toml(category)?;
@@ -123,8 +128,8 @@ impl ConfigStorage for EtcdStorage {
 mod tests {
     use super::EtcdStorage;
     use crate::config::{
-        ConfigStorage, PingapConf, CATEGORY_BASIC, CATEGORY_LOCATION, CATEGORY_PLUGIN,
-        CATEGORY_SERVER, CATEGORY_UPSTREAM,
+        ConfigStorage, PingapConf, CATEGORY_BASIC, CATEGORY_LOCATION,
+        CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
     };
     use nanoid::nanoid;
     use pretty_assertions::assert_eq;

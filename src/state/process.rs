@@ -65,7 +65,8 @@ pub fn set_restart_process_command(data: RestartProcessCommand) {
 }
 
 static PROCESS_RESTAR_COUNT: Lazy<AtomicU8> = Lazy::new(|| AtomicU8::new(0));
-static PROCESS_RESTARTING: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
+static PROCESS_RESTARTING: Lazy<AtomicBool> =
+    Lazy::new(|| AtomicBool::new(false));
 
 pub fn restart_now() -> io::Result<process::Output> {
     let restarting = PROCESS_RESTARTING.swap(true, Ordering::Relaxed);
@@ -109,10 +110,10 @@ pub fn restart() {
                         category: webhook::NotificationCategory::RestartFail,
                         msg: e.to_string(),
                     });
-                }
+                },
                 Ok(output) => {
                     info!("{output:?}");
-                }
+                },
             }
         }
     });

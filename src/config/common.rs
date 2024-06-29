@@ -80,13 +80,16 @@ impl<'de> Deserialize<'de> for PluginCategory {
         D: serde::Deserializer<'de>,
     {
         let value: String = serde::Deserialize::deserialize(deserializer)?;
-        let category = PluginCategory::from_str(&value).unwrap_or(PluginCategory::default());
+        let category = PluginCategory::from_str(&value)
+            .unwrap_or(PluginCategory::default());
 
         Ok(category)
     }
 }
 
-#[derive(PartialEq, Debug, Default, Clone, Copy, EnumString, strum::Display)]
+#[derive(
+    PartialEq, Debug, Default, Clone, Copy, EnumString, strum::Display,
+)]
 #[strum(serialize_all = "snake_case")]
 pub enum PluginStep {
     EarlyRequest,
@@ -111,7 +114,8 @@ impl<'de> Deserialize<'de> for PluginStep {
         D: serde::Deserializer<'de>,
     {
         let value: String = serde::Deserialize::deserialize(deserializer)?;
-        let category = PluginStep::from_str(&value).unwrap_or(PluginStep::default());
+        let category =
+            PluginStep::from_str(&value).unwrap_or(PluginStep::default());
 
         Ok(category)
     }
@@ -140,8 +144,10 @@ impl CertificateConf {
                 value.as_bytes().to_vec()
             };
 
-            let _ = PKey::private_key_from_pem(&buf).map_err(|e| Error::Invalid {
-                message: e.to_string(),
+            let _ = PKey::private_key_from_pem(&buf).map_err(|e| {
+                Error::Invalid {
+                    message: e.to_string(),
+                }
             })?;
         }
         if let Some(value) = &self.tls_cert {
@@ -266,24 +272,22 @@ impl LocationConf {
         let validate = |headers: &Option<Vec<String>>| -> Result<()> {
             if let Some(headers) = headers {
                 for header in headers.iter() {
-                    let arr = header.split_once(':').map(|(k, v)| (k.trim(), v.trim()));
+                    let arr = header
+                        .split_once(':')
+                        .map(|(k, v)| (k.trim(), v.trim()));
                     if arr.is_none() {
                         return Err(Error::Invalid {
-                            message: format!("header {header} is invalid(location:{name})"),
+                            message: format!(
+                                "header {header} is invalid(location:{name})"
+                            ),
                         });
                     }
                     let (header_name, header_value) = arr.unwrap();
-                    HeaderName::from_bytes(header_name.as_bytes()).map_err(|err| {
-                        Error::Invalid {
-                            message: format!(
-                                "header name({header_name}) is invalid, error: {err}(location:{name})"
-                            ),
-                        }
+                    HeaderName::from_bytes(header_name.as_bytes()).map_err(|err| Error::Invalid {
+                        message: format!("header name({header_name}) is invalid, error: {err}(location:{name})"),
                     })?;
                     HeaderValue::from_str(header_value).map_err(|err| Error::Invalid {
-                        message: format!(
-                            "header value({header_value}) is invalid, error: {err}(location:{name})"
-                        ),
+                        message: format!("header value({header_value}) is invalid, error: {err}(location:{name})"),
                     })?;
                 }
             }
@@ -293,7 +297,9 @@ impl LocationConf {
         let upstream = self.upstream.clone().unwrap_or_default();
         if !upstream.is_empty() && !upstream_names.contains(&upstream) {
             return Err(Error::Invalid {
-                message: format!("upstream({upstream}) is not found(location:{name})"),
+                message: format!(
+                    "upstream({upstream}) is not found(location:{name})"
+                ),
             });
         }
         validate(&self.proxy_add_headers)?;
@@ -301,7 +307,8 @@ impl LocationConf {
 
         if let Some(value) = &self.rewrite {
             let arr: Vec<&str> = value.split(' ').collect();
-            let _ = Regex::new(arr[0]).map_err(|e| Error::Regex { source: e })?;
+            let _ =
+                Regex::new(arr[0]).map_err(|e| Error::Regex { source: e })?;
         }
 
         Ok(())
@@ -379,7 +386,9 @@ impl ServerConf {
             for item in locations {
                 if !location_names.contains(item) {
                     return Err(Error::Invalid {
-                        message: format!("location({item}) is not found(server:{name})"),
+                        message: format!(
+                            "location({item}) is not found(server:{name})"
+                        ),
                     });
                 }
             }
@@ -393,8 +402,10 @@ impl ServerConf {
                 value.as_bytes().to_vec()
             };
 
-            let _ = PKey::private_key_from_pem(&buf).map_err(|e| Error::Invalid {
-                message: e.to_string(),
+            let _ = PKey::private_key_from_pem(&buf).map_err(|e| {
+                Error::Invalid {
+                    message: e.to_string(),
+                }
             })?;
         }
         if let Some(value) = &self.tls_cert {
@@ -484,7 +495,8 @@ pub struct PingapConf {
 
 impl PingapConf {
     pub fn get_toml(&self, category: &str) -> Result<(String, String)> {
-        let ping_conf = toml::to_string_pretty(self).map_err(|e| Error::Ser { source: e })?;
+        let ping_conf = toml::to_string_pretty(self)
+            .map_err(|e| Error::Ser { source: e })?;
         let mut data: TomlConfig =
             toml::from_str(&ping_conf).map_err(|e| Error::De { source: e })?;
         let result = match category {
@@ -494,54 +506,60 @@ impl PingapConf {
                     "servers".to_string(),
                     toml::Value::Table(data.servers.unwrap_or_default()),
                 );
-                let value = toml::to_string_pretty(&m).map_err(|e| Error::Ser { source: e })?;
+                let value = toml::to_string_pretty(&m)
+                    .map_err(|e| Error::Ser { source: e })?;
                 ("/servers.toml".to_string(), value)
-            }
+            },
             CATEGORY_LOCATION => {
                 let mut m = Map::new();
                 let _ = m.insert(
                     "locations".to_string(),
                     toml::Value::Table(data.locations.unwrap_or_default()),
                 );
-                let value = toml::to_string_pretty(&m).map_err(|e| Error::Ser { source: e })?;
+                let value = toml::to_string_pretty(&m)
+                    .map_err(|e| Error::Ser { source: e })?;
                 ("/locations.toml".to_string(), value)
-            }
+            },
             CATEGORY_UPSTREAM => {
                 let mut m = Map::new();
                 let _ = m.insert(
                     "upstreams".to_string(),
                     toml::Value::Table(data.upstreams.unwrap_or_default()),
                 );
-                let value = toml::to_string_pretty(&m).map_err(|e| Error::Ser { source: e })?;
+                let value = toml::to_string_pretty(&m)
+                    .map_err(|e| Error::Ser { source: e })?;
                 ("/upstreams.toml".to_string(), value)
-            }
+            },
             CATEGORY_PLUGIN => {
                 let mut m = Map::new();
                 let _ = m.insert(
                     "plugins".to_string(),
                     toml::Value::Table(data.plugins.unwrap_or_default()),
                 );
-                let value = toml::to_string_pretty(&m).map_err(|e| Error::Ser { source: e })?;
+                let value = toml::to_string_pretty(&m)
+                    .map_err(|e| Error::Ser { source: e })?;
                 ("/plugins.toml".to_string(), value)
-            }
+            },
             CATEGORY_CERTIFICATE => {
                 let mut m = Map::new();
                 let _ = m.insert(
                     "certificates".to_string(),
                     toml::Value::Table(data.certificates.unwrap_or_default()),
                 );
-                let value = toml::to_string_pretty(&m).map_err(|e| Error::Ser { source: e })?;
+                let value = toml::to_string_pretty(&m)
+                    .map_err(|e| Error::Ser { source: e })?;
                 ("/certificates.toml".to_string(), value)
-            }
+            },
             _ => {
                 data.servers = None;
                 data.locations = None;
                 data.upstreams = None;
                 data.plugins = None;
                 data.certificates = None;
-                let value = toml::to_string_pretty(&data).map_err(|e| Error::Ser { source: e })?;
+                let value = toml::to_string_pretty(&data)
+                    .map_err(|e| Error::Ser { source: e })?;
                 ("/basic.toml".to_string(), value)
-            }
+            },
         };
         Ok(result)
     }
@@ -562,29 +580,34 @@ impl TryFrom<&[u8]> for PingapConf {
             ..Default::default()
         };
         for (name, value) in data.upstreams.unwrap_or_default() {
-            let upstream: UpstreamConf = toml::from_str(format_toml(&value).as_str())
-                .map_err(|e| Error::De { source: e })?;
+            let upstream: UpstreamConf =
+                toml::from_str(format_toml(&value).as_str())
+                    .map_err(|e| Error::De { source: e })?;
             conf.upstreams.insert(name, upstream);
         }
         for (name, value) in data.locations.unwrap_or_default() {
-            let location: LocationConf = toml::from_str(format_toml(&value).as_str())
-                .map_err(|e| Error::De { source: e })?;
+            let location: LocationConf =
+                toml::from_str(format_toml(&value).as_str())
+                    .map_err(|e| Error::De { source: e })?;
             conf.locations.insert(name, location);
         }
         for (name, value) in data.servers.unwrap_or_default() {
-            let server: ServerConf = toml::from_str(format_toml(&value).as_str())
-                .map_err(|e| Error::De { source: e })?;
+            let server: ServerConf =
+                toml::from_str(format_toml(&value).as_str())
+                    .map_err(|e| Error::De { source: e })?;
             conf.servers.insert(name, server);
         }
         for (name, value) in data.plugins.unwrap_or_default() {
-            let plugin: PluginConf = toml::from_str(format_toml(&value).as_str())
-                .map_err(|e| Error::De { source: e })?;
+            let plugin: PluginConf =
+                toml::from_str(format_toml(&value).as_str())
+                    .map_err(|e| Error::De { source: e })?;
             conf.plugins.insert(name, plugin);
         }
 
         for (name, value) in data.certificates.unwrap_or_default() {
-            let certificate: CertificateConf = toml::from_str(format_toml(&value).as_str())
-                .map_err(|e| Error::De { source: e })?;
+            let certificate: CertificateConf =
+                toml::from_str(format_toml(&value).as_str())
+                    .map_err(|e| Error::De { source: e })?;
             conf.certificates.insert(name, certificate);
         }
 
@@ -625,11 +648,11 @@ impl PingapConf {
             server.validate(name, &location_names)?;
         }
         for (name, plugin) in self.plugins.iter() {
-            parse_plugins(vec![(name.to_string(), plugin.clone())]).map_err(|e| {
-                Error::Invalid {
+            parse_plugins(vec![(name.to_string(), plugin.clone())]).map_err(
+                |e| Error::Invalid {
                     message: e.to_string(),
-                }
-            })?;
+                },
+            )?;
         }
         for (_, certificate) in self.certificates.iter() {
             certificate.validate()?;
@@ -663,7 +686,7 @@ impl PingapConf {
                 }
 
                 self.upstreams.remove(name);
-            }
+            },
             CATEGORY_LOCATION => {
                 for server in self.servers.values() {
                     if server
@@ -678,10 +701,10 @@ impl PingapConf {
                     }
                 }
                 self.locations.remove(name);
-            }
+            },
             CATEGORY_SERVER => {
                 self.servers.remove(name);
-            }
+            },
             CATEGORY_PLUGIN => {
                 let mut all_plugins = vec![];
                 for lo in self.locations.values() {
@@ -695,11 +718,11 @@ impl PingapConf {
                     });
                 }
                 self.plugins.remove(name);
-            }
+            },
             CATEGORY_CERTIFICATE => {
                 self.certificates.remove(name);
-            }
-            _ => {}
+            },
+            _ => {},
         };
         Ok(())
     }
@@ -808,9 +831,13 @@ impl PingapConf {
                 let mut item_diff_result = vec![];
                 for diff in diff::lines(&item.data, &new_item.data) {
                     match diff {
-                        diff::Result::Left(l) => item_diff_result.push(format!("-{}", l)),
-                        diff::Result::Right(r) => item_diff_result.push(format!("+{}", r)),
-                        _ => {}
+                        diff::Result::Left(l) => {
+                            item_diff_result.push(format!("-{}", l))
+                        },
+                        diff::Result::Right(r) => {
+                            item_diff_result.push(format!("+{}", r))
+                        },
+                        _ => {},
                     };
                 }
                 if !item_diff_result.is_empty() {
@@ -880,10 +907,13 @@ pub fn get_config_hash() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_app_name, get_config_hash, set_app_name, set_current_config, BasicConf};
     use super::{
-        LocationConf, PingapConf, PluginCategory, ServerConf, UpstreamConf, CATEGORY_LOCATION,
-        CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
+        get_app_name, get_config_hash, set_app_name, set_current_config,
+        BasicConf,
+    };
+    use super::{
+        LocationConf, PingapConf, PluginCategory, ServerConf, UpstreamConf,
+        CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
     };
     use pretty_assertions::assert_eq;
     use serde::{Deserialize, Serialize};
@@ -1189,7 +1219,8 @@ basic
     #[test]
     fn test_config_remove() {
         let toml_data = include_bytes!("../../conf/pingap.toml");
-        let mut conf = PingapConf::try_from(toml_data.to_vec().as_slice()).unwrap();
+        let mut conf =
+            PingapConf::try_from(toml_data.to_vec().as_slice()).unwrap();
 
         let result = conf.remove("plugin", "stats");
         assert_eq!(

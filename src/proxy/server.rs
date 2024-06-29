@@ -37,7 +37,9 @@ use pingora::cache::cache_control::CacheControl;
 use pingora::cache::cache_control::DirectiveValue;
 use pingora::cache::cache_control::InterpretCacheControl;
 use pingora::cache::filters::resp_cacheable;
-use pingora::cache::{CacheKey, CacheMetaDefaults, NoCacheReason, RespCacheable};
+use pingora::cache::{
+    CacheKey, CacheMetaDefaults, NoCacheReason, RespCacheable,
+};
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::listeners::{TcpSocketOptions, TlsSettings};
 use pingora::modules::http::compression::ResponseCompression;
@@ -80,11 +82,12 @@ pub fn try_init_server_locations(
         if let Some(items) = &server.locations {
             let mut items = items.clone();
             items.sort_by_key(|item| {
-                let weight = if let Some(weight) = location_weights.get(item.as_str()) {
-                    weight.to_owned()
-                } else {
-                    0
-                };
+                let weight =
+                    if let Some(weight) = location_weights.get(item.as_str()) {
+                        weight.to_owned()
+                    } else {
+                        0
+                    };
                 std::cmp::Reverse(weight)
             });
             server_locations.insert(name.to_string(), Arc::new(items));
@@ -127,7 +130,8 @@ pub struct ServerServices {
     pub lb: Service<HttpProxy<Server>>,
 }
 
-const META_DEFAULTS: CacheMetaDefaults = CacheMetaDefaults::new(|_| Some(1), 1, 1);
+const META_DEFAULTS: CacheMetaDefaults =
+    CacheMetaDefaults::new(|_| Some(1), 1, 1);
 
 impl Server {
     /// Create a new server for http proxy.
@@ -137,14 +141,15 @@ impl Server {
         if let Some(access_log) = &conf.access_log {
             p = Some(Parser::from(access_log.as_str()));
         }
-        let tcp_socket_options = if conf.tcp_fastopen.is_some() || conf.tcp_keepalive.is_some() {
-            let mut opts = TcpSocketOptions::default();
-            opts.tcp_fastopen = conf.tcp_fastopen;
-            opts.tcp_keepalive.clone_from(&conf.tcp_keepalive);
-            Some(opts)
-        } else {
-            None
-        };
+        let tcp_socket_options =
+            if conf.tcp_fastopen.is_some() || conf.tcp_keepalive.is_some() {
+                let mut opts = TcpSocketOptions::default();
+                opts.tcp_fastopen = conf.tcp_fastopen;
+                opts.tcp_keepalive.clone_from(&conf.tcp_keepalive);
+                Some(opts)
+            } else {
+                None
+            };
         let s = Server {
             name: conf.name.clone(),
             admin: conf.admin,
@@ -175,7 +180,10 @@ impl Server {
     }
 
     /// Add TCP/TLS listening endpoint.
-    pub fn run(self, conf: &Arc<configuration::ServerConf>) -> Result<ServerServices> {
+    pub fn run(
+        self,
+        conf: &Arc<configuration::ServerConf>,
+    ) -> Result<ServerServices> {
         let tls_from_lets_encrypt = self.tls_from_lets_encrypt;
         let addr = self.addr.clone();
         let tcp_socket_options = self.tcp_socket_options.clone();
@@ -195,8 +203,11 @@ impl Server {
                     Ok(cert_info) => {
                         tls_cert = Some(cert_info.get_cert());
                         tls_key = Some(cert_info.get_key());
-                    }
-                    Err(e) => error!(error = e.to_string(), name, "get lets encrypt cert fail"),
+                    },
+                    Err(e) => error!(
+                        error = e.to_string(),
+                        name, "get lets encrypt cert fail"
+                    ),
                 };
             }
             if tls_cert.is_some() {
@@ -205,13 +216,14 @@ impl Server {
                     tls_cert_info = Some(info)
                 }
 
-                let d =
-                    DynamicCertificate::new(&cert, &tls_key.unwrap_or_default()).map_err(|e| {
-                        Error::Common {
-                            category: "tls".to_string(),
-                            message: e.to_string(),
-                        }
-                    })?;
+                let d = DynamicCertificate::new(
+                    &cert,
+                    &tls_key.unwrap_or_default(),
+                )
+                .map_err(|e| Error::Common {
+                    category: "tls".to_string(),
+                    message: e.to_string(),
+                })?;
                 dynamic_cert = Some(d);
             };
         }
@@ -249,11 +261,12 @@ impl Server {
         for addr in addr.split(',') {
             // tls
             if let Some(dynamic_cert) = &dynamic_cert {
-                let mut tls_settings = TlsSettings::with_callbacks(Box::new(dynamic_cert.clone()))
-                    .map_err(|e| Error::Common {
-                        category: "tls".to_string(),
-                        message: e.to_string(),
-                    })?;
+                let mut tls_settings =
+                    TlsSettings::with_callbacks(Box::new(dynamic_cert.clone()))
+                        .map_err(|e| Error::Common {
+                            category: "tls".to_string(),
+                            message: e.to_string(),
+                        })?;
 
                 if enbaled_h2 {
                     tls_settings.enable_h2();
@@ -261,17 +274,28 @@ impl Server {
 
                 if let Some(cipher_list) = &cipher_list {
                     if let Err(e) = tls_settings.set_cipher_list(cipher_list) {
-                        error!(error = e.to_string(), name, "set cipher list fail");
+                        error!(
+                            error = e.to_string(),
+                            name, "set cipher list fail"
+                        );
                     }
                 }
                 if let Some(ciphersuites) = &ciphersuites {
-                    if let Err(e) = tls_settings.set_ciphersuites(ciphersuites) {
-                        error!(error = e.to_string(), name, "set ciphersuites fail");
+                    if let Err(e) = tls_settings.set_ciphersuites(ciphersuites)
+                    {
+                        error!(
+                            error = e.to_string(),
+                            name, "set ciphersuites fail"
+                        );
                     }
                 }
 
-                if let Some(version) = util::convert_tls_version(&tls_min_version) {
-                    if let Err(e) = tls_settings.set_min_proto_version(Some(version)) {
+                if let Some(version) =
+                    util::convert_tls_version(&tls_min_version)
+                {
+                    if let Err(e) =
+                        tls_settings.set_min_proto_version(Some(version))
+                    {
                         error!(
                             error = e.to_string(),
                             name, "set tls min proto version fail"
@@ -279,11 +303,17 @@ impl Server {
                     }
                     if version == pingora::tls::ssl::SslVersion::TLS1_1 {
                         tls_settings.set_security_level(0);
-                        tls_settings.clear_options(pingora::tls::ssl::SslOptions::NO_TLSV1_1);
+                        tls_settings.clear_options(
+                            pingora::tls::ssl::SslOptions::NO_TLSV1_1,
+                        );
                     }
                 }
-                if let Some(version) = util::convert_tls_version(&tls_max_version) {
-                    if let Err(e) = tls_settings.set_max_proto_version(Some(version)) {
+                if let Some(version) =
+                    util::convert_tls_version(&tls_max_version)
+                {
+                    if let Err(e) =
+                        tls_settings.set_max_proto_version(Some(version))
+                    {
                         error!(
                             error = e.to_string(),
                             name, "set tls max proto version fail"
@@ -293,12 +323,24 @@ impl Server {
 
                 // tls_settings.set_min_proto_version(version)
                 if let Some(min_version) = tls_settings.min_proto_version() {
-                    info!(name, min_version = format!("{min_version:?}"), "tls proto");
+                    info!(
+                        name,
+                        min_version = format!("{min_version:?}"),
+                        "tls proto"
+                    );
                 }
                 if let Some(max_version) = tls_settings.max_proto_version() {
-                    info!(name, max_version = format!("{max_version:?}"), "tls proto");
+                    info!(
+                        name,
+                        max_version = format!("{max_version:?}"),
+                        "tls proto"
+                    );
                 }
-                lb.add_tls_with_settings(addr, tcp_socket_options.clone(), tls_settings);
+                lb.add_tls_with_settings(
+                    addr,
+                    tcp_socket_options.clone(),
+                    tls_settings,
+                );
             } else if let Some(opt) = &tcp_socket_options {
                 lb.add_tcp_with_settings(addr, opt.clone());
             } else {
@@ -307,9 +349,15 @@ impl Server {
         }
         Ok(ServerServices { tls_cert_info, lb })
     }
-    async fn serve_admin(&self, session: &mut Session, ctx: &mut State) -> pingora::Result<()> {
+    async fn serve_admin(
+        &self,
+        session: &mut Session,
+        ctx: &mut State,
+    ) -> pingora::Result<()> {
         if let Some(plugins) = get_plugins() {
-            if let Some(plugin) = plugins.get(util::ADMIN_SERVER_PLUGIN.as_str()) {
+            if let Some(plugin) =
+                plugins.get(util::ADMIN_SERVER_PLUGIN.as_str())
+            {
                 let result = plugin
                     .handle_request(PluginStep::Request, session, ctx)
                     .await?;
@@ -390,8 +438,10 @@ impl ProxyHttp for Server {
             }
         }
         if let Some(lo) = location {
-            ctx.location_accepted = lo.accepted.fetch_add(1, Ordering::Relaxed) + 1;
-            ctx.location_processing = lo.processing.fetch_add(1, Ordering::Relaxed) + 1;
+            ctx.location_accepted =
+                lo.accepted.fetch_add(1, Ordering::Relaxed) + 1;
+            ctx.location_processing =
+                lo.processing.fetch_add(1, Ordering::Relaxed) + 1;
             let _ = lo
                 .handle_request_plugin(PluginStep::EarlyRequest, session, ctx)
                 .await?;
@@ -421,12 +471,13 @@ impl ProxyHttp for Server {
         let header = session.req_header_mut();
         let Some(location) = get_location(&ctx.location) else {
             let host = util::get_host(header).unwrap_or_default();
-            ctx.response_body_size = HttpResponse::unknown_error(Bytes::from(format!(
-                "Location not found, host:{host} path:{}",
-                header.uri.path(),
-            )))
-            .send(session)
-            .await?;
+            ctx.response_body_size =
+                HttpResponse::unknown_error(Bytes::from(format!(
+                    "Location not found, host:{host} path:{}",
+                    header.uri.path(),
+                )))
+                .send(session)
+                .await?;
             return Ok(true);
         };
 
@@ -488,7 +539,8 @@ impl ProxyHttp for Server {
             )
         })?;
 
-        ctx.upstream_connect_time = util::get_latency(&ctx.upstream_connect_time);
+        ctx.upstream_connect_time =
+            util::get_latency(&ctx.upstream_connect_time);
 
         Ok(Box::new(peer))
     }
@@ -506,8 +558,10 @@ impl ProxyHttp for Server {
     {
         ctx.reused = reused;
         ctx.upstream_address = peer.address().to_string();
-        ctx.upstream_connect_time = util::get_latency(&ctx.upstream_connect_time);
-        ctx.upstream_processing_time = util::get_latency(&ctx.upstream_processing_time);
+        ctx.upstream_connect_time =
+            util::get_latency(&ctx.upstream_connect_time);
+        ctx.upstream_processing_time =
+            util::get_latency(&ctx.upstream_processing_time);
         Ok(())
     }
     async fn upstream_request_filter(
@@ -563,7 +617,9 @@ impl ProxyHttp for Server {
         let mut cc = CacheControl::from_resp_headers(resp);
         if let Some(ref mut c) = &mut cc {
             if c.no_cache() || c.no_store() || c.private() {
-                return Ok(RespCacheable::Uncacheable(NoCacheReason::OriginNotCache));
+                return Ok(RespCacheable::Uncacheable(
+                    NoCacheReason::OriginNotCache,
+                ));
             }
             // adjust cache ttl
             if let Some(d) = ctx.cache_max_ttl {
@@ -571,7 +627,10 @@ impl ProxyHttp for Server {
                     c.directives.insert(
                         "s-maxage".to_string(),
                         Some(DirectiveValue(
-                            itoa::Buffer::new().format(d.as_secs()).as_bytes().to_vec(),
+                            itoa::Buffer::new()
+                                .format(d.as_secs())
+                                .as_bytes()
+                                .to_vec(),
                         )),
                     );
                 }
@@ -592,23 +651,32 @@ impl ProxyHttp for Server {
     {
         if session.cache.enabled() {
             // ignore insert header error
-            let _ =
-                upstream_response.insert_header("X-Cache-Status", session.cache.phase().as_str());
+            let _ = upstream_response.insert_header(
+                "X-Cache-Status",
+                session.cache.phase().as_str(),
+            );
             if let Some(d) = session.cache.lookup_duration() {
                 let ms = d.as_millis() as u64;
-                let _ = upstream_response.insert_header("X-Cache-Lookup", format!("{ms}ms"));
+                let _ = upstream_response
+                    .insert_header("X-Cache-Lookup", format!("{ms}ms"));
                 ctx.cache_lookup_time = Some(ms);
             }
             if let Some(d) = session.cache.lock_duration() {
                 let ms = d.as_millis() as u64;
-                let _ = upstream_response.insert_header("X-Cache-Lock", format!("{ms}ms"));
+                let _ = upstream_response
+                    .insert_header("X-Cache-Lock", format!("{ms}ms"));
                 ctx.cache_lock_time = Some(ms);
             }
         }
 
         if let Some(location) = get_location(&ctx.location) {
             let _ = location
-                .handle_response_plugin(PluginStep::Response, session, ctx, upstream_response)
+                .handle_response_plugin(
+                    PluginStep::Response,
+                    session,
+                    ctx,
+                    upstream_response,
+                )
                 .await?;
         }
 
@@ -623,12 +691,15 @@ impl ProxyHttp for Server {
     ) {
         if ctx.status.is_none() {
             ctx.status = Some(upstream_response.status);
-            ctx.upstream_response_time = util::get_latency(&ctx.upstream_response_time);
+            ctx.upstream_response_time =
+                util::get_latency(&ctx.upstream_response_time);
         }
         if let Some(id) = &ctx.request_id {
-            let _ = upstream_response.insert_header(HTTP_HEADER_NAME_X_REQUEST_ID.clone(), id);
+            let _ = upstream_response
+                .insert_header(HTTP_HEADER_NAME_X_REQUEST_ID.clone(), id);
         }
-        ctx.upstream_processing_time = util::get_latency(&ctx.upstream_processing_time);
+        ctx.upstream_processing_time =
+            util::get_latency(&ctx.upstream_processing_time);
     }
 
     fn upstream_response_body_filter(
@@ -642,7 +713,8 @@ impl ProxyHttp for Server {
             ctx.response_body_size += body.len();
         }
         if end_of_stream {
-            ctx.upstream_response_time = util::get_latency(&ctx.upstream_response_time);
+            ctx.upstream_response_time =
+                util::get_latency(&ctx.upstream_response_time);
         }
     }
 
@@ -698,12 +770,14 @@ impl ProxyHttp for Server {
             _ => match e.esource() {
                 pingora::ErrorSource::Upstream => 502,
                 pingora::ErrorSource::Downstream => match e.etype() {
-                    pingora::ErrorType::WriteError | pingora::ErrorType::ReadError => 500,
+                    pingora::ErrorType::WriteError
+                    | pingora::ErrorType::ReadError => 500,
                     // client close the connection
                     pingora::ErrorType::ConnectionClosed => 499,
                     _ => 400,
                 },
-                pingora::ErrorSource::Internal | pingora::ErrorSource::Unset => 500,
+                pingora::ErrorSource::Internal
+                | pingora::ErrorSource::Unset => 500,
             },
         };
         let mut resp = match code {
@@ -717,7 +791,10 @@ impl ProxyHttp for Server {
             .replace("{{version}}", util::get_pkg_version())
             .replace("{{content}}", &e.to_string());
         let buf = Bytes::from(content);
-        ctx.status = Some(StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR));
+        ctx.status = Some(
+            StatusCode::from_u16(code)
+                .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        );
         ctx.response_body_size = buf.len();
         let content_type = if buf.starts_with(b"{") {
             "application/json; charset=utf-8"
@@ -725,7 +802,8 @@ impl ProxyHttp for Server {
             "text/html; charset=utf-8"
         };
         let _ = resp.insert_header(http::header::CONTENT_TYPE, content_type);
-        let _ = resp.insert_header(http::header::CONTENT_LENGTH, buf.len().to_string());
+        let _ = resp
+            .insert_header(http::header::CONTENT_LENGTH, buf.len().to_string());
 
         // TODO: we shouldn't be closing downstream connections on internally generated errors
         // and possibly other upstream connect() errors (connection refused, timeout, etc)
@@ -748,8 +826,12 @@ impl ProxyHttp for Server {
         let _ = server_session.write_response_body(buf, true).await;
         code
     }
-    async fn logging(&self, session: &mut Session, _e: Option<&pingora::Error>, ctx: &mut Self::CTX)
-    where
+    async fn logging(
+        &self,
+        session: &mut Session,
+        _e: Option<&pingora::Error>,
+        ctx: &mut Self::CTX,
+    ) where
         Self::CTX: Send + Sync,
     {
         self.processing.fetch_sub(1, Ordering::Relaxed);
@@ -761,7 +843,9 @@ impl ProxyHttp for Server {
                 ctx.status = Some(header.status);
             }
         }
-        if let Some(c) = session.downstream_modules_ctx.get::<ResponseCompression>() {
+        if let Some(c) =
+            session.downstream_modules_ctx.get::<ResponseCompression>()
+        {
             if c.is_enabled() {
                 if let Some((_, in_bytes, out_bytes, took)) = c.get_info() {
                     ctx.compression_stat = Some(CompressionStat {
@@ -785,7 +869,8 @@ mod tests {
     use crate::config::PingapConf;
     use crate::proxy::server::get_digest_detail;
     use crate::proxy::{
-        try_init_locations, try_init_server_locations, try_init_upstreams, ServerConf,
+        try_init_locations, try_init_server_locations, try_init_upstreams,
+        ServerConf,
     };
     use crate::state::State;
     use pingora::http::ResponseHeader;
@@ -825,7 +910,8 @@ mod tests {
         let pingap_conf = PingapConf::try_from(toml_data.as_ref()).unwrap();
         try_init_upstreams(&pingap_conf.upstreams).unwrap();
         try_init_locations(&pingap_conf.locations).unwrap();
-        try_init_server_locations(&pingap_conf.servers, &pingap_conf.locations).unwrap();
+        try_init_server_locations(&pingap_conf.servers, &pingap_conf.locations)
+            .unwrap();
         let confs: Vec<ServerConf> = pingap_conf.into();
         Server::new(&confs[0]).unwrap()
     }
@@ -845,7 +931,8 @@ mod tests {
         let server = new_server();
 
         let headers = [""].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
@@ -863,7 +950,8 @@ mod tests {
         let server = new_server();
 
         let headers = [""].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
@@ -881,7 +969,8 @@ mod tests {
         let server = new_server();
 
         let headers = [""].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
@@ -904,12 +993,14 @@ mod tests {
         let server = new_server();
 
         let headers = [""].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let mut upstream_response = ResponseHeader::build_no_case(200, None).unwrap();
+        let mut upstream_response =
+            ResponseHeader::build_no_case(200, None).unwrap();
         upstream_response
             .append_header("Content-Type", "application/json")
             .unwrap();
@@ -925,7 +1016,8 @@ mod tests {
             .unwrap();
         assert_eq!(true, result.is_cacheable());
 
-        let mut upstream_response = ResponseHeader::build_no_case(200, None).unwrap();
+        let mut upstream_response =
+            ResponseHeader::build_no_case(200, None).unwrap();
         upstream_response
             .append_header("Cache-Control", "no-cache")
             .unwrap();
@@ -941,7 +1033,8 @@ mod tests {
             .unwrap();
         assert_eq!(false, result.is_cacheable());
 
-        let mut upstream_response = ResponseHeader::build_no_case(200, None).unwrap();
+        let mut upstream_response =
+            ResponseHeader::build_no_case(200, None).unwrap();
         upstream_response
             .append_header("Cache-Control", "no-store")
             .unwrap();
@@ -957,7 +1050,8 @@ mod tests {
             .unwrap();
         assert_eq!(false, result.is_cacheable());
 
-        let mut upstream_response = ResponseHeader::build_no_case(200, None).unwrap();
+        let mut upstream_response =
+            ResponseHeader::build_no_case(200, None).unwrap();
         upstream_response
             .append_header("Cache-Control", "private, max-age=100")
             .unwrap();

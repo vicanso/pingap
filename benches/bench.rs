@@ -161,7 +161,8 @@ fn bench_location_rewrite_path(c: &mut Criterion) {
 
     c.bench_function("rewrite path", |b| {
         b.iter(|| {
-            let mut req_header = RequestHeader::build("GET", b"/users/v1/me", None).unwrap();
+            let mut req_header =
+                RequestHeader::build("GET", b"/users/v1/me", None).unwrap();
             let _ = lo.rewrite(&mut req_header);
         })
     });
@@ -189,19 +190,19 @@ fn get_logger_session(s: crossbeam_channel::Sender<Option<Session>>) {
                         "X-Forwarded-For: 1.1.1.1, 2.2.2.2",
                     ]
                     .join("\r\n");
-                    let input_header =
-                        format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-                    let mock_io = Builder::new().read(input_header.as_bytes()).build();
+                    let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+                    let mock_io =
+                        Builder::new().read(input_header.as_bytes()).build();
 
                     let mut session = Session::new_h1(Box::new(mock_io));
                     session.read_request().await.unwrap();
                     let _ = s.send(Some(session));
                 };
                 rt.block_on(send);
-            }
+            },
             Err(_e) => {
                 let _ = s.send(None);
-            }
+            },
         };
     });
 }
@@ -211,7 +212,8 @@ fn bench_logger_format(c: &mut Criterion) {
     get_logger_session(s);
     let session = r.recv().unwrap().unwrap();
     c.bench_function("logger format", |b| {
-        let p: Parser = "{host} {method} {path} {proto} {query} {remote} {client_ip} \
+        let p: Parser =
+            "{host} {method} {path} {proto} {query} {remote} {client_ip} \
 {scheme} {uri} {referer} {user_agent} {when} {when_utc_iso} \
 {when_unix} {size} {size_human} {status} {latency} \
 {payload_size} {latency_human} {payload_size} \
@@ -221,7 +223,7 @@ fn bench_logger_format(c: &mut Criterion) {
 {:location} {:established} {:tls_version} {:compression_time} \
 {:compression_ratio} {:cache_lookup_time} {:cache_lock_time} \
 {~deviceId} {>accept} {:reused}"
-            .into();
+                .into();
         let ctx = State {
             response_body_size: 1024,
             payload_size: 512,

@@ -83,11 +83,12 @@ impl TryFrom<&PluginConf> for JwtAuth {
             });
         }
 
-        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
+        if ![PluginStep::Request, PluginStep::ProxyUpstream]
+            .contains(&params.plugin_step)
+        {
             return Err(Error::Invalid {
                 category: PluginCategory::IpRestriction.to_string(),
-                message: "Jwt auth plugin should be executed at request or proxy upstream step"
-                    .to_string(),
+                message: "Jwt auth plugin should be executed at request or proxy upstream step".to_string(),
             });
         }
 
@@ -133,7 +134,8 @@ impl Plugin for JwtAuth {
             return Ok(None);
         }
         let value = if let Some(key) = &self.header {
-            let value = util::get_req_header_value(req_header, key).unwrap_or_default();
+            let value =
+                util::get_req_header_value(req_header, key).unwrap_or_default();
             let bearer = "Bearer ";
             if value.starts_with(bearer) {
                 value.substring(bearer.len(), value.len())
@@ -155,7 +157,8 @@ impl Plugin for JwtAuth {
         let arr: Vec<&str> = value.split('.').collect();
         if arr.len() != 3 {
             let mut resp = self.unauthorized_resp.clone();
-            resp.body = Bytes::from_static(b"Jwt authorization format is invalid");
+            resp.body =
+                Bytes::from_static(b"Jwt authorization format is invalid");
             return Ok(Some(resp));
         }
         let jwt_header = serde_json::from_slice::<JwtHeader>(
@@ -168,20 +171,21 @@ impl Plugin for JwtAuth {
             "HS512" => {
                 let hash = hmac_sha512::HMAC::mac(content.as_bytes(), secret);
                 URL_SAFE_NO_PAD.encode(hash) == arr[2]
-            }
+            },
             _ => {
                 let hash = hmac_sha256::HMAC::mac(content.as_bytes(), secret);
                 URL_SAFE_NO_PAD.encode(hash) == arr[2]
-            }
+            },
         };
         if !valid {
             let mut resp = self.unauthorized_resp.clone();
             resp.body = Bytes::from_static(b"Jwt authorization is invalid");
             return Ok(Some(resp));
         }
-        let value: serde_json::Value =
-            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(arr[1]).unwrap_or_default())
-                .unwrap_or_default();
+        let value: serde_json::Value = serde_json::from_slice(
+            &URL_SAFE_NO_PAD.decode(arr[1]).unwrap_or_default(),
+        )
+        .unwrap_or_default();
         if let Some(exp) = value.get("exp") {
             if exp.as_u64().unwrap_or_default() < util::now().as_secs() {
                 let mut resp = self.unauthorized_resp.clone();
@@ -210,7 +214,8 @@ impl Plugin for JwtAuth {
         let json = HTTP_HEADER_CONTENT_JSON.clone();
         let _ = upstream_response.insert_header(json.0, json.1);
         // no error
-        let _ = upstream_response.insert_header(http::header::TRANSFER_ENCODING, "Chunked");
+        let _ = upstream_response
+            .insert_header(http::header::TRANSFER_ENCODING, "Chunked");
         ctx.modify_response_body = Some(Box::new(Sign {
             algorithm: self.algorithm.clone(),
             secret: self.secret.clone(),
@@ -229,7 +234,8 @@ impl ModifyResponseBody for Sign {
     fn handle(&self, data: Bytes) -> Bytes {
         let is_hs512 = self.algorithm == "HS512";
         let alg = if is_hs512 { "HS512" } else { "HS256" };
-        let header = URL_SAFE_NO_PAD.encode(r#"{"alg": ""#.to_owned() + alg + r#"","typ": "JWT"}"#);
+        let header = URL_SAFE_NO_PAD
+            .encode(r#"{"alg": ""#.to_owned() + alg + r#"","typ": "JWT"}"#);
         let payload = URL_SAFE_NO_PAD.encode(data);
         let content = format!("{header}.{payload}");
         let secret = self.secret.as_bytes();
@@ -354,7 +360,11 @@ header = "Authorization"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = auth
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
 
@@ -367,7 +377,11 @@ header = "Authorization"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = auth
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
 
@@ -380,7 +394,11 @@ header = "Authorization"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let resp = auth
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap()
             .unwrap();
@@ -397,7 +415,11 @@ header = "Authorization"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let resp = auth
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap()
             .unwrap();
@@ -413,7 +435,11 @@ header = "Authorization"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let resp = auth
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap()
             .unwrap();
@@ -430,7 +456,11 @@ header = "Authorization"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let resp = auth
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap()
             .unwrap();
@@ -463,7 +493,8 @@ auth_path = "/login"
         session.read_request().await.unwrap();
 
         let mut ctx = State::default();
-        let mut upstream_response = ResponseHeader::build_no_case(200, None).unwrap();
+        let mut upstream_response =
+            ResponseHeader::build_no_case(200, None).unwrap();
         auth.handle_response(
             PluginStep::Response,
             &mut session,

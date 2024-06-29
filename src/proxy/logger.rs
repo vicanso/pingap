@@ -100,14 +100,14 @@ fn format_extra_tag(key: &str) -> Option<Tag> {
                     data: Some(std::env::var(value).unwrap_or_default()),
                 })
             }
-        }
+        },
         _ => None,
     }
 }
 
-static COMBINED: &str =
-    r###"{remote} "{method} {uri} {proto}" {status} {size_human} "{referer}" "{user_agent}""###;
-static COMMON: &str = r###"{remote} "{method} {uri} {proto}" {status} {size_human}""###;
+static COMBINED: &str = r###"{remote} "{method} {uri} {proto}" {status} {size_human} "{referer}" "{user_agent}""###;
+static COMMON: &str =
+    r###"{remote} "{method} {uri} {proto}" {status} {size_human}""###;
 static SHORT: &str = r###"{remote} {method} {uri} {proto} {status} {size_human} - {latency}ms"###;
 static TINY: &str = r###"{method} {uri} {status} {size_human} - {latency}ms"###;
 
@@ -129,7 +129,9 @@ impl From<&str> for Parser {
             if end < result.start() {
                 tags.push(Tag {
                     category: TagCategory::Fill,
-                    data: Some(value.substring(end, result.start()).to_string()),
+                    data: Some(
+                        value.substring(end, result.start()).to_string(),
+                    ),
                 });
             }
             let key = result.as_str();
@@ -227,7 +229,7 @@ impl From<&str> for Parser {
                     if let Some(tag) = format_extra_tag(key) {
                         tags.push(tag);
                     }
-                }
+                },
             }
 
             end = result.end();
@@ -243,7 +245,10 @@ impl From<&str> for Parser {
     }
 }
 
-fn get_resp_header_value<'a>(resp_header: &'a ResponseHeader, key: &str) -> Option<&'a [u8]> {
+fn get_resp_header_value<'a>(
+    resp_header: &'a ResponseHeader,
+    key: &str,
+) -> Option<&'a [u8]> {
     if let Some(value) = resp_header.headers.get(key) {
         return Some(value.as_bytes());
     }
@@ -260,138 +265,144 @@ impl Parser {
                     if let Some(data) = &tag.data {
                         buf.extend(data.as_bytes());
                     }
-                }
+                },
                 TagCategory::Host => {
                     if let Some(host) = util::get_host(req_header) {
                         buf.extend(host.as_bytes());
                     }
-                }
+                },
                 TagCategory::Method => {
                     buf.extend(req_header.method.as_str().as_bytes());
-                }
+                },
                 TagCategory::Path => {
                     buf.extend(req_header.uri.path().as_bytes());
-                }
+                },
                 TagCategory::Proto => {
                     if session.is_http2() {
                         buf.extend(b"HTTP/2.0");
                     } else {
                         buf.extend(b"HTTP/1.1");
                     }
-                }
+                },
                 TagCategory::Query => {
                     if let Some(query) = req_header.uri.query() {
                         buf.extend(query.as_bytes());
                     }
-                }
+                },
                 TagCategory::Remote => {
                     if let Some(addr) = &ctx.remote_addr {
                         buf.extend(addr.as_bytes());
                     }
-                }
+                },
                 TagCategory::ClientIp => {
                     if let Some(client_ip) = &ctx.client_ip {
                         buf.extend(client_ip.as_bytes());
                     } else {
                         buf.extend(util::get_client_ip(session).as_bytes());
                     }
-                }
+                },
                 TagCategory::Scheme => {
                     if ctx.tls_version.is_some() {
                         buf.extend(b"https");
                     } else {
                         buf.extend(b"http");
                     }
-                }
+                },
                 TagCategory::Uri => {
                     if let Some(value) = req_header.uri.path_and_query() {
                         buf.extend(value.as_str().as_bytes());
                     }
-                }
+                },
                 TagCategory::Referer => {
                     let value = session.get_header_bytes("Referer");
                     buf.extend(value);
-                }
+                },
                 TagCategory::UserAgent => {
                     let value = session.get_header_bytes("User-Agent");
                     buf.extend(value);
-                }
+                },
                 TagCategory::When => {
                     buf.extend(chrono::Local::now().to_rfc3339().as_bytes());
-                }
+                },
                 TagCategory::WhenUtcIso => {
                     buf.extend(chrono::Utc::now().to_rfc3339().as_bytes());
-                }
+                },
                 TagCategory::WhenUnix => {
                     buf.extend(
                         itoa::Buffer::new()
                             .format(chrono::Utc::now().timestamp_millis())
                             .as_bytes(),
                     );
-                }
+                },
                 TagCategory::Size => {
                     buf.extend(
                         itoa::Buffer::new()
                             .format(ctx.response_body_size)
                             .as_bytes(),
                     );
-                }
+                },
                 TagCategory::SizeHuman => {
                     buf = format_byte_size(buf, ctx.response_body_size);
-                }
+                },
                 TagCategory::Status => {
                     if let Some(status) = ctx.status {
                         buf.extend(status.as_str().as_bytes());
                     } else {
                         buf.extend(b"0");
                     }
-                }
+                },
                 TagCategory::Latency => {
                     let ms = (util::now().as_millis() as u64) - ctx.created_at;
                     buf.extend(itoa::Buffer::new().format(ms).as_bytes())
-                }
+                },
                 TagCategory::LatencyHuman => {
                     let ms = (util::now().as_millis() as u64) - ctx.created_at;
                     buf = format_duration(buf, ms);
-                }
+                },
                 TagCategory::Cookie => {
                     if let Some(cookie) = &tag.data {
-                        if let Some(value) = util::get_cookie_value(req_header, cookie) {
+                        if let Some(value) =
+                            util::get_cookie_value(req_header, cookie)
+                        {
                             buf.extend(value.as_bytes());
                         }
                     }
-                }
+                },
                 TagCategory::RequestHeader => {
                     if let Some(key) = &tag.data {
                         let value = session.get_header_bytes(key);
                         buf.extend(value);
                     }
-                }
+                },
                 TagCategory::ResponseHeader => {
                     if let Some(resp_header) = session.response_written() {
                         if let Some(key) = &tag.data {
-                            if let Some(value) = get_resp_header_value(resp_header, key) {
+                            if let Some(value) =
+                                get_resp_header_value(resp_header, key)
+                            {
                                 buf.extend(value);
                             }
                         }
                     }
-                }
+                },
                 TagCategory::PayloadSize => {
-                    buf.extend(itoa::Buffer::new().format(ctx.payload_size).as_bytes());
-                }
+                    buf.extend(
+                        itoa::Buffer::new().format(ctx.payload_size).as_bytes(),
+                    );
+                },
                 TagCategory::PayloadSizeHuman => {
                     buf = format_byte_size(buf, ctx.payload_size);
-                }
+                },
                 TagCategory::RequestId => {
                     if let Some(key) = &ctx.request_id {
                         buf.extend(key.as_bytes());
                     }
-                }
+                },
                 TagCategory::Context => {
                     if let Some(key) = &tag.data {
                         buf = ctx.append_value(buf, key.as_str());
                     }
-                }
+                },
             };
         }
 
@@ -599,13 +610,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_logger() {
-        let p: Parser = "{host} {method} {path} {proto} {query} {remote} {client_ip} \
+        let p: Parser =
+            "{host} {method} {path} {proto} {query} {remote} {client_ip} \
 {scheme} {uri} {referer} {user_agent} {size} \
 {size_human} {status} {payload_size} {payload_size_human} \
 {~deviceId} {>accept} {:reused} {:upstream_addr} \
 {:processing} {:upstream_connect_time} {:location} \
 {:connection_time} {:tls_version} {request_id}"
-            .into();
+                .into();
         let headers = [
             "Host: github.com",
             "Referer: https://github.com/",
@@ -614,7 +626,8 @@ mod tests {
             "Accept: application/json",
         ]
         .join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
 
         let mut session = Session::new_h1(Box::new(mock_io));

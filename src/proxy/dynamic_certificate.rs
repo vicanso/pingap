@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::acme::{get_certificate_info, get_lets_encrypt_cert, CertificateInfo};
+use crate::acme::{
+    get_certificate_info, get_lets_encrypt_cert, CertificateInfo,
+};
 use crate::config::CertificateConf;
 use crate::{util, webhook};
 use async_trait::async_trait;
@@ -42,41 +44,49 @@ const R10: &[u8] = include_bytes!("../assets/r10.pem");
 const R11: &[u8] = include_bytes!("../assets/r11.pem");
 
 // TODO not after validate
-static E5_CERTIFICATE: Lazy<Option<X509>> = Lazy::new(|| X509::from_pem(E5).ok());
-static E6_CERTIFICATE: Lazy<Option<X509>> = Lazy::new(|| X509::from_pem(E6).ok());
-static R10_CERTIFICATE: Lazy<Option<X509>> = Lazy::new(|| X509::from_pem(R10).ok());
-static R11_CERTIFICATE: Lazy<Option<X509>> = Lazy::new(|| X509::from_pem(R11).ok());
+static E5_CERTIFICATE: Lazy<Option<X509>> =
+    Lazy::new(|| X509::from_pem(E5).ok());
+static E6_CERTIFICATE: Lazy<Option<X509>> =
+    Lazy::new(|| X509::from_pem(E6).ok());
+static R10_CERTIFICATE: Lazy<Option<X509>> =
+    Lazy::new(|| X509::from_pem(R10).ok());
+static R11_CERTIFICATE: Lazy<Option<X509>> =
+    Lazy::new(|| X509::from_pem(R11).ok());
 
 static LETS_ENCRYPT: &str = "lets_encrypt";
 
 fn parse_certificate(
     certificate_config: &CertificateConf,
 ) -> Result<(Vec<String>, DynamicCertificate, CertificateInfo)> {
-    let (cert, key, category) = if let Some(file) = &certificate_config.certificate_file {
-        let cert = get_lets_encrypt_cert(&Path::new(&util::resolve_path(file)).to_path_buf())
+    let (cert, key, category) =
+        if let Some(file) = &certificate_config.certificate_file {
+            let cert = get_lets_encrypt_cert(
+                &Path::new(&util::resolve_path(file)).to_path_buf(),
+            )
             .map_err(|e| Error::Invalid {
                 message: e.to_string(),
             })?;
-        (cert.get_cert(), cert.get_key(), LETS_ENCRYPT)
-    } else {
-        (
-            util::convert_certificate_bytes(&certificate_config.tls_cert).ok_or(
-                Error::Invalid {
+            (cert.get_cert(), cert.get_key(), LETS_ENCRYPT)
+        } else {
+            (
+                util::convert_certificate_bytes(&certificate_config.tls_cert)
+                    .ok_or(Error::Invalid {
                     message: "Convert certificate fail".to_string(),
-                },
-            )?,
-            util::convert_certificate_bytes(&certificate_config.tls_key).ok_or(Error::Invalid {
-                message: "Convert certificate key fail".to_string(),
-            })?,
-            "",
-        )
-    };
+                })?,
+                util::convert_certificate_bytes(&certificate_config.tls_key)
+                    .ok_or(Error::Invalid {
+                        message: "Convert certificate key fail".to_string(),
+                    })?,
+                "",
+            )
+        };
     let info = get_certificate_info(&cert).map_err(|e| Error::Invalid {
         message: e.to_string(),
     })?;
 
     let mut chain_certificate = None;
-    let tls_chain = util::convert_certificate_bytes(&certificate_config.tls_chain);
+    let tls_chain =
+        util::convert_certificate_bytes(&certificate_config.tls_chain);
     if let Some(value) = &tls_chain {
         chain_certificate = X509::from_pem(value).ok();
     } else if category == LETS_ENCRYPT {
@@ -120,26 +130,35 @@ pub fn try_init_certificates(
                 Ok((domains, dynamic_cert, certificate_info)) => {
                     let mut names = domains;
                     if let Some(value) = &certificate.domains {
-                        names = value.split(',').map(|item| item.to_string()).collect();
+                        names = value
+                            .split(',')
+                            .map(|item| item.to_string())
+                            .collect();
                     }
                     for name in names.iter() {
-                        dynamic_certs.insert(name.to_string(), dynamic_cert.clone());
+                        dynamic_certs
+                            .insert(name.to_string(), dynamic_cert.clone());
                     }
                     info!(
                         name,
                         subject_alt_names = names.join(","),
                         "init certificates success"
                     );
-                    certificate_info_list.push((name.to_string(), certificate_info));
-                }
+                    certificate_info_list
+                        .push((name.to_string(), certificate_info));
+                },
                 Err(e) => {
-                    error!(error = e.to_string(), name, "parse certificate fail");
+                    error!(
+                        error = e.to_string(),
+                        name, "parse certificate fail"
+                    );
                     webhook::send(webhook::SendNotificationParams {
-                        category: webhook::NotificationCategory::ParseCertificateFail,
+                        category:
+                            webhook::NotificationCategory::ParseCertificateFail,
                         level: webhook::NotificationLevel::Error,
                         msg: e.to_string(),
                     });
-                }
+                },
             };
         }
         Ok(dynamic_certs)
@@ -173,9 +192,10 @@ impl DynamicCertificate {
             subject_alt_names = names.join(","),
             "get subject alt name from cert"
         );
-        let key = PKey::private_key_from_pem(key).map_err(|e| Error::Invalid {
-            message: e.to_string(),
-        })?;
+        let key =
+            PKey::private_key_from_pem(key).map_err(|e| Error::Invalid {
+                message: e.to_string(),
+            })?;
         Ok(DynamicCertificate {
             chain_certificate: None,
             certificate: Some((cert, key)),

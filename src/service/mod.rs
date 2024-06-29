@@ -33,7 +33,11 @@ pub struct CommonServiceTask {
 }
 
 impl CommonServiceTask {
-    pub fn new(name: &str, interval: Duration, task: impl ServiceTask + 'static) -> Self {
+    pub fn new(
+        name: &str,
+        interval: Duration,
+        task: impl ServiceTask + 'static,
+    ) -> Self {
         Self {
             task: Box::new(task),
             interval,

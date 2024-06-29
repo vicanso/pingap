@@ -62,7 +62,11 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 #[async_trait]
 pub trait ConfigStorage {
     async fn load_config(&self, admin: bool) -> Result<PingapConf>;
-    async fn save_config(&self, conf: &PingapConf, category: &str) -> Result<()>;
+    async fn save_config(
+        &self,
+        conf: &PingapConf,
+        category: &str,
+    ) -> Result<()>;
 }
 
 pub use common::*;

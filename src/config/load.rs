@@ -12,12 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{ConfigStorage, EtcdStorage, FileStorage, PingapConf, Result, ETCD_PROTOCOL};
+use super::{
+    ConfigStorage, EtcdStorage, FileStorage, PingapConf, Result, ETCD_PROTOCOL,
+};
 
 /// Save the confog to path.
 ///
 /// Validate the config before save.
-pub async fn save_config(path: &str, conf: &PingapConf, category: &str) -> Result<()> {
+pub async fn save_config(
+    path: &str,
+    conf: &PingapConf,
+    category: &str,
+) -> Result<()> {
     if path.starts_with(ETCD_PROTOCOL) {
         EtcdStorage::new(path)?.save_config(conf, category).await
     } else {

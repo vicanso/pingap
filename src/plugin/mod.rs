@@ -149,81 +149,83 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
                 message: "Category can not be empty".to_string(),
             });
         }
-        let category = PluginCategory::from_str(category.unwrap().as_str().unwrap_or_default())
-            .unwrap_or_default();
+        let category = PluginCategory::from_str(
+            category.unwrap().as_str().unwrap_or_default(),
+        )
+        .unwrap_or_default();
         match category {
             PluginCategory::Limit => {
                 let l = limit::Limiter::new(conf)?;
                 plguins.insert(name, Box::new(l));
-            }
+            },
             PluginCategory::Compression => {
                 let c = compression::Compression::new(conf)?;
                 plguins.insert(name, Box::new(c));
-            }
+            },
             PluginCategory::Stats => {
                 let s = stats::Stats::new(conf)?;
                 plguins.insert(name, Box::new(s));
-            }
+            },
             PluginCategory::Admin => {
                 let a = admin::AdminServe::new(conf)?;
                 plguins.insert(name, Box::new(a));
-            }
+            },
             PluginCategory::Directory => {
                 let d = directory::Directory::new(conf)?;
                 plguins.insert(name, Box::new(d));
-            }
+            },
             PluginCategory::Mock => {
                 let m = mock::MockResponse::new(conf)?;
                 plguins.insert(name, Box::new(m));
-            }
+            },
             PluginCategory::RequestId => {
                 let r = request_id::RequestId::new(conf)?;
                 plguins.insert(name, Box::new(r));
-            }
+            },
             PluginCategory::IpRestriction => {
                 let l = ip_restriction::IpRestriction::new(conf)?;
                 plguins.insert(name, Box::new(l));
-            }
+            },
             PluginCategory::KeyAuth => {
                 let k = key_auth::KeyAuth::new(conf)?;
                 plguins.insert(name, Box::new(k));
-            }
+            },
             PluginCategory::BasicAuth => {
                 let b = basic_auth::BasicAuth::new(conf)?;
                 plguins.insert(name, Box::new(b));
-            }
+            },
             PluginCategory::Cache => {
                 let c = cache::Cache::new(conf)?;
                 plguins.insert(name, Box::new(c));
-            }
+            },
             PluginCategory::Redirect => {
                 let r = redirect::Redirect::new(conf)?;
                 plguins.insert(name, Box::new(r));
-            }
+            },
             PluginCategory::Ping => {
                 let p = ping::Ping::new(conf)?;
                 plguins.insert(name, Box::new(p));
-            }
+            },
             PluginCategory::ResponseHeaders => {
                 let r = response_headers::ResponseHeaders::new(conf)?;
                 plguins.insert(name, Box::new(r));
-            }
+            },
             PluginCategory::RefererRestriction => {
                 let r = referer_restriction::RefererRestriction::new(conf)?;
                 plguins.insert(name, Box::new(r));
-            }
+            },
             PluginCategory::Csrf => {
                 let c = csrf::Csrf::new(conf)?;
                 plguins.insert(name, Box::new(c));
-            }
+            },
             PluginCategory::Jwt => {
                 let auth = jwt::JwtAuth::new(conf)?;
                 plguins.insert(name.clone(), Box::new(auth));
-            }
+            },
             PluginCategory::Cors => {
                 let cors = cors::Cors::new(conf)?;
                 plguins.insert(name.clone(), Box::new(cors));
-            }
+            },
         };
     }
 
@@ -282,7 +284,8 @@ pub(crate) fn get_str_slice_conf(value: &PluginConf, key: &str) -> Vec<String> {
 }
 
 pub(crate) fn get_step_conf(value: &PluginConf) -> PluginStep {
-    PluginStep::from_str(get_str_conf(value, "step").as_str()).unwrap_or_default()
+    PluginStep::from_str(get_str_conf(value, "step").as_str())
+        .unwrap_or_default()
 }
 
 #[test]

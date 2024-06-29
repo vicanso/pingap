@@ -28,9 +28,11 @@ const ZSTD: &str = "zstd";
 const BR: &str = "br";
 const GZIP: &str = "gzip";
 
-static ZSTD_ENCODING: Lazy<HeaderValue> = Lazy::new(|| ZSTD.try_into().unwrap());
+static ZSTD_ENCODING: Lazy<HeaderValue> =
+    Lazy::new(|| ZSTD.try_into().unwrap());
 static BR_ENCODING: Lazy<HeaderValue> = Lazy::new(|| BR.try_into().unwrap());
-static GZIP_ENCODING: Lazy<HeaderValue> = Lazy::new(|| GZIP.try_into().unwrap());
+static GZIP_ENCODING: Lazy<HeaderValue> =
+    Lazy::new(|| GZIP.try_into().unwrap());
 
 pub struct Compression {
     gzip_level: u32,
@@ -97,21 +99,33 @@ impl Plugin for Compression {
             return Ok(None);
         }
         let header = session.req_header_mut();
-        if let Some(accept_encoding) = header.headers.get(http::header::ACCEPT_ENCODING) {
+        if let Some(accept_encoding) =
+            header.headers.get(http::header::ACCEPT_ENCODING)
+        {
             let accept_encoding = accept_encoding.to_str().unwrap_or_default();
             if accept_encoding.is_empty() {
                 return Ok(None);
             }
             // compression order, zstd > br > gzip
             // Wait for pingora support to specify the order
-            let level = if self.zstd_level > 0 && accept_encoding.contains(ZSTD) {
-                let _ = header.insert_header(http::header::ACCEPT_ENCODING, ZSTD_ENCODING.clone());
+            let level = if self.zstd_level > 0 && accept_encoding.contains(ZSTD)
+            {
+                let _ = header.insert_header(
+                    http::header::ACCEPT_ENCODING,
+                    ZSTD_ENCODING.clone(),
+                );
                 self.zstd_level
             } else if self.br_level > 0 && accept_encoding.contains(BR) {
-                let _ = header.insert_header(http::header::ACCEPT_ENCODING, BR_ENCODING.clone());
+                let _ = header.insert_header(
+                    http::header::ACCEPT_ENCODING,
+                    BR_ENCODING.clone(),
+                );
                 self.br_level
             } else if self.gzip_level > 0 && accept_encoding.contains(GZIP) {
-                let _ = header.insert_header(http::header::ACCEPT_ENCODING, GZIP_ENCODING.clone());
+                let _ = header.insert_header(
+                    http::header::ACCEPT_ENCODING,
+                    GZIP_ENCODING.clone(),
+                );
                 self.gzip_level
             } else {
                 0
@@ -126,13 +140,22 @@ impl Plugin for Compression {
                         c.adjust_decompression(decompression);
                     }
                     if self.zstd_level > 0 {
-                        c.adjust_algorithm_level(Algorithm::Zstd, self.zstd_level);
+                        c.adjust_algorithm_level(
+                            Algorithm::Zstd,
+                            self.zstd_level,
+                        );
                     }
                     if self.br_level > 0 {
-                        c.adjust_algorithm_level(Algorithm::Brotli, self.br_level);
+                        c.adjust_algorithm_level(
+                            Algorithm::Brotli,
+                            self.br_level,
+                        );
                     }
                     if self.gzip_level > 0 {
-                        c.adjust_algorithm_level(Algorithm::Gzip, self.gzip_level);
+                        c.adjust_algorithm_level(
+                            Algorithm::Gzip,
+                            self.gzip_level,
+                        );
                     }
                 }
             }
@@ -146,7 +169,9 @@ mod tests {
     use super::Compression;
     use crate::state::State;
     use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
-    use pingora::modules::http::compression::{ResponseCompression, ResponseCompressionBuilder};
+    use pingora::modules::http::compression::{
+        ResponseCompression, ResponseCompressionBuilder,
+    };
     use pingora::modules::http::HttpModules;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -192,11 +217,13 @@ zstd_level = 7
 
         // gzip
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut modules = HttpModules::new();
         modules.add_module(ResponseCompressionBuilder::enable(0));
-        let mut session = Session::new_h1_with_modules(Box::new(mock_io), &modules);
+        let mut session =
+            Session::new_h1_with_modules(Box::new(mock_io), &modules);
         session.read_request().await.unwrap();
         let result = compression
             .handle_request(
@@ -218,11 +245,13 @@ zstd_level = 7
 
         // brotli
         let headers = ["Accept-Encoding: br"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut modules = HttpModules::new();
         modules.add_module(ResponseCompressionBuilder::enable(0));
-        let mut session = Session::new_h1_with_modules(Box::new(mock_io), &modules);
+        let mut session =
+            Session::new_h1_with_modules(Box::new(mock_io), &modules);
         session.read_request().await.unwrap();
         let result = compression
             .handle_request(
@@ -244,11 +273,13 @@ zstd_level = 7
 
         // zstd
         let headers = ["Accept-Encoding: zstd"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut modules = HttpModules::new();
         modules.add_module(ResponseCompressionBuilder::enable(0));
-        let mut session = Session::new_h1_with_modules(Box::new(mock_io), &modules);
+        let mut session =
+            Session::new_h1_with_modules(Box::new(mock_io), &modules);
         session.read_request().await.unwrap();
         let result = compression
             .handle_request(
@@ -270,11 +301,13 @@ zstd_level = 7
 
         // not support compression
         let headers = ["Accept-Encoding: none"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut modules = HttpModules::new();
         modules.add_module(ResponseCompressionBuilder::enable(0));
-        let mut session = Session::new_h1_with_modules(Box::new(mock_io), &modules);
+        let mut session =
+            Session::new_h1_with_modules(Box::new(mock_io), &modules);
         session.read_request().await.unwrap();
         let result = compression
             .handle_request(

@@ -15,7 +15,9 @@
 use async_trait::async_trait;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
-use pyroscope::{pyroscope::PyroscopeAgentRunning, PyroscopeAgent, PyroscopeError};
+use pyroscope::{
+    pyroscope::PyroscopeAgentRunning, PyroscopeAgent, PyroscopeError,
+};
 use pyroscope_pprofrs::{pprof_backend, PprofConfig};
 use snafu::{ResultExt, Snafu};
 use tracing::info;
@@ -53,7 +55,9 @@ impl BackgroundService for AgentService {
     }
 }
 
-fn start_pyroscope(value: &str) -> Result<PyroscopeAgent<PyroscopeAgentRunning>> {
+fn start_pyroscope(
+    value: &str,
+) -> Result<PyroscopeAgent<PyroscopeAgentRunning>> {
     let mut connect_url = value.to_string();
     let url_info = Url::parse(value).context(UrlParseSnafu {
         url: value.to_string(),
@@ -71,8 +75,8 @@ fn start_pyroscope(value: &str) -> Result<PyroscopeAgent<PyroscopeAgentRunning>>
                 if let Ok(v) = value.parse::<u32>() {
                     samplerate = v;
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         };
     }
     if let Some(query) = url_info.query() {

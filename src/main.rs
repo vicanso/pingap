@@ -88,7 +88,10 @@ struct Args {
     autoreload: bool,
 }
 
-fn new_server_conf(args: &Args, conf: &PingapConf) -> server::configuration::ServerConf {
+fn new_server_conf(
+    args: &Args,
+    conf: &PingapConf,
+) -> server::configuration::ServerConf {
     let basic_conf = &conf.basic;
     let mut server_conf = server::configuration::ServerConf {
         pid_file: format!("/tmp/{}.pid", util::get_pkg_name()),
@@ -104,7 +107,9 @@ fn new_server_conf(args: &Args, conf: &PingapConf) -> server::configuration::Ser
     if let Some(value) = basic_conf.graceful_shutdown_timeout {
         server_conf.graceful_shutdown_timeout_seconds = Some(value.as_secs());
     }
-    if let Some(upstream_keepalive_pool_size) = basic_conf.upstream_keepalive_pool_size {
+    if let Some(upstream_keepalive_pool_size) =
+        basic_conf.upstream_keepalive_pool_size
+    {
         server_conf.upstream_keepalive_pool_size = upstream_keepalive_pool_size;
     }
     if let Some(pid_file) = &basic_conf.pid_file {
@@ -123,7 +128,11 @@ fn new_server_conf(args: &Args, conf: &PingapConf) -> server::configuration::Ser
     server_conf
 }
 
-fn get_config(conf: String, admin: bool, s: Sender<Result<PingapConf, config::Error>>) {
+fn get_config(
+    conf: String,
+    admin: bool,
+    s: Sender<Result<PingapConf, config::Error>>,
+) {
     std::thread::spawn(move || {
         match tokio::runtime::Runtime::new() {
             Ok(rt) => {
@@ -135,7 +144,7 @@ fn get_config(conf: String, admin: bool, s: Sender<Result<PingapConf, config::Er
                     }
                 };
                 rt.block_on(send);
-            }
+            },
             Err(e) => {
                 if let Err(e) = s.send(Err(config::Error::Invalid {
                     message: e.to_string(),
@@ -143,7 +152,7 @@ fn get_config(conf: String, admin: bool, s: Sender<Result<PingapConf, config::Er
                     // use pringln because log is not init
                     println!("sender fail, {e}");
                 }
-            }
+            },
         };
     });
 }
@@ -330,21 +339,28 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         if let Some(value) = &serve_conf.lets_encrypt {
             enabled_lets_encrypt = true;
-            let domains: Vec<String> = value.split(',').map(|item| item.to_string()).collect();
+            let domains: Vec<String> =
+                value.split(',').map(|item| item.to_string()).collect();
             my_server.add_service(background_service(
                 &format!("LetsEncrypt: {}", serve_conf.name),
-                new_lets_encrypt_service(serve_conf.get_certificate_file(), domains),
+                new_lets_encrypt_service(
+                    serve_conf.get_certificate_file(),
+                    domains,
+                ),
             ));
         }
     }
     for (name, certificate) in certificates.iter() {
         let acme = certificate.acme.clone().unwrap_or_default();
         let domains = certificate.domains.clone().unwrap_or_default();
-        let certificate_file = certificate.certificate_file.clone().unwrap_or_default();
-        if acme.is_empty() || domains.is_empty() || certificate_file.is_empty() {
+        let certificate_file =
+            certificate.certificate_file.clone().unwrap_or_default();
+        if acme.is_empty() || domains.is_empty() || certificate_file.is_empty()
+        {
             continue;
         }
-        let file = Path::new(&util::resolve_path(&certificate_file)).to_path_buf();
+        let file =
+            Path::new(&util::resolve_path(&certificate_file)).to_path_buf();
         // now supports lets encrypt only
         enabled_lets_encrypt = true;
         my_server.add_service(background_service(
@@ -355,7 +371,8 @@ fn run() -> Result<(), Box<dyn Error>> {
             ),
         ));
     }
-    let mut certificate_info_list = proxy::try_init_certificates(&certificates)?;
+    let mut certificate_info_list =
+        proxy::try_init_certificates(&certificates)?;
 
     // no server listen 80 and lets encrypt domains is not empty
     if !exits_80_server && enabled_lets_encrypt {
@@ -383,7 +400,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     if args.autorestart || args.autoreload {
         my_server.add_service(background_service(
             "AutoRestart",
-            new_auto_restart_service(auto_restart_check_interval, args.autoreload),
+            new_auto_restart_service(
+                auto_restart_check_interval,
+                args.autoreload,
+            ),
         ));
     }
 
@@ -409,7 +429,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
     #[cfg(feature = "perf")]
     {
-        my_server.add_service(background_service("DhatHeap", perf::DhatHeapService {}));
+        my_server.add_service(background_service(
+            "DhatHeap",
+            perf::DhatHeapService {},
+        ));
     }
 
     info!("Server is running");

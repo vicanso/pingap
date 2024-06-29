@@ -27,7 +27,10 @@ struct ValidityChecker {
 
 // Verify the validity period of tls certificate,
 // include not after and not before.
-fn validity_check(validity_list: &[(String, CertificateInfo)], time_offset: i64) -> Option<String> {
+fn validity_check(
+    validity_list: &[(String, CertificateInfo)],
+    time_offset: i64,
+) -> Option<String> {
     let now = util::now().as_secs() as i64;
     for (name, cert) in validity_list.iter() {
         // will expire check
@@ -53,7 +56,9 @@ fn validity_check(validity_list: &[(String, CertificateInfo)], time_offset: i64)
 #[async_trait]
 impl ServiceTask for ValidityChecker {
     async fn run(&self) -> Option<bool> {
-        if let Some(message) = validity_check(&self.tls_cert_info_list, self.time_offset) {
+        if let Some(message) =
+            validity_check(&self.tls_cert_info_list, self.time_offset)
+        {
             warn!(message);
             webhook::send(webhook::SendNotificationParams {
                 level: webhook::NotificationLevel::Warn,
@@ -64,7 +69,8 @@ impl ServiceTask for ValidityChecker {
         None
     }
     fn description(&self) -> String {
-        let offset_human: humantime::Duration = Duration::from_secs(self.time_offset as u64).into();
+        let offset_human: humantime::Duration =
+            Duration::from_secs(self.time_offset as u64).into();
         format!(
             "offset: {offset_human}, tls_cert_info_list: {:?}",
             self.tls_cert_info_list
@@ -104,8 +110,12 @@ mod tests {
             &[(
                 "Pingap".to_string(),
                 CertificateInfo {
-                    not_after: ASN1Time::from_timestamp(2651852800).unwrap().timestamp(),
-                    not_before: ASN1Time::from_timestamp(2651852800).unwrap().timestamp(),
+                    not_after: ASN1Time::from_timestamp(2651852800)
+                        .unwrap()
+                        .timestamp(),
+                    not_before: ASN1Time::from_timestamp(2651852800)
+                        .unwrap()
+                        .timestamp(),
                     issuer: "pingap".to_string(),
                 },
             )],
@@ -120,8 +130,12 @@ mod tests {
             &[(
                 "Pingap".to_string(),
                 CertificateInfo {
-                    not_after: ASN1Time::from_timestamp(2651852800).unwrap().timestamp(),
-                    not_before: ASN1Time::from_timestamp(2651852800).unwrap().timestamp(),
+                    not_after: ASN1Time::from_timestamp(2651852800)
+                        .unwrap()
+                        .timestamp(),
+                    not_before: ASN1Time::from_timestamp(2651852800)
+                        .unwrap()
+                        .timestamp(),
                     issuer: "pingap".to_string(),
                 },
             )],
@@ -137,8 +151,12 @@ mod tests {
         let _ = new_tls_validity_service(vec![(
             "Pingap".to_string(),
             CertificateInfo {
-                not_after: ASN1Time::from_timestamp(2651852800).unwrap().timestamp(),
-                not_before: ASN1Time::from_timestamp(2651852800).unwrap().timestamp(),
+                not_after: ASN1Time::from_timestamp(2651852800)
+                    .unwrap()
+                    .timestamp(),
+                not_before: ASN1Time::from_timestamp(2651852800)
+                    .unwrap()
+                    .timestamp(),
                 issuer: "".to_string(),
             },
         )]);
@@ -146,8 +164,12 @@ mod tests {
             tls_cert_info_list: vec![(
                 "Pingap".to_string(),
                 CertificateInfo {
-                    not_after: ASN1Time::from_timestamp(2651852800).unwrap().timestamp(),
-                    not_before: ASN1Time::from_timestamp(2651852800).unwrap().timestamp(),
+                    not_after: ASN1Time::from_timestamp(2651852800)
+                        .unwrap()
+                        .timestamp(),
+                    not_before: ASN1Time::from_timestamp(2651852800)
+                        .unwrap()
+                        .timestamp(),
                     issuer: "".to_string(),
                 },
             )],

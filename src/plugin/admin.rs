@@ -12,13 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_int_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error, Plugin, Result};
-use crate::config::{
-    self, save_config, BasicConf, CertificateConf, LocationConf, PluginCategory, PluginConf,
-    PluginStep, ServerConf, UpstreamConf, CATEGORY_CERTIFICATE,
+use super::{
+    get_int_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error,
+    Plugin, Result,
 };
 use crate::config::{
-    PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
+    self, save_config, BasicConf, CertificateConf, LocationConf,
+    PluginCategory, PluginConf, PluginStep, ServerConf, UpstreamConf,
+    CATEGORY_CERTIFICATE,
+};
+use crate::config::{
+    PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
+    CATEGORY_UPSTREAM,
 };
 use crate::http_extra::{HttpResponse, HTTP_HEADER_WWW_AUTHENTICATE};
 use crate::limit::TtlLruLimit;
@@ -139,11 +144,12 @@ impl TryFrom<&PluginConf> for AdminServeParams {
             ip_fail_limit,
             authorizations,
         };
-        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.step) {
+        if ![PluginStep::Request, PluginStep::ProxyUpstream]
+            .contains(&params.step)
+        {
             return Err(Error::Invalid {
                 category: PluginCategory::Admin.to_string(),
-                message: "Admin serve plugin should be executed at request or proxy upstream step"
-                    .to_string(),
+                message: "Admin serve plugin should be executed at request or proxy upstream step".to_string(),
             });
         }
 
@@ -171,7 +177,8 @@ impl AdminServe {
         if self.authorizations.is_empty() {
             return true;
         }
-        let value = util::get_req_header_value(req_header, "Authorization").unwrap_or_default();
+        let value = util::get_req_header_value(req_header, "Authorization")
+            .unwrap_or_default();
         if value.is_empty() {
             return false;
         }
@@ -190,7 +197,10 @@ impl AdminServe {
         })?;
         Ok(conf)
     }
-    async fn get_config(&self, category: &str) -> pingora::Result<HttpResponse> {
+    async fn get_config(
+        &self,
+        category: &str,
+    ) -> pingora::Result<HttpResponse> {
         let conf = self.load_config().await?;
         if category == "toml" {
             let data = toml::to_string_pretty(&conf)
@@ -206,13 +216,19 @@ impl AdminServe {
             CATEGORY_LOCATION => HttpResponse::try_from_json(&conf.locations)?,
             CATEGORY_SERVER => HttpResponse::try_from_json(&conf.servers)?,
             CATEGORY_PLUGIN => HttpResponse::try_from_json(&conf.plugins)?,
-            CATEGORY_CERTIFICATE => HttpResponse::try_from_json(&conf.certificates)?,
+            CATEGORY_CERTIFICATE => {
+                HttpResponse::try_from_json(&conf.certificates)?
+            },
             _ => HttpResponse::try_from_json(&conf)?,
         };
         Ok(resp)
     }
 
-    async fn remove_config(&self, category: &str, name: &str) -> pingora::Result<HttpResponse> {
+    async fn remove_config(
+        &self,
+        category: &str,
+        name: &str,
+    ) -> pingora::Result<HttpResponse> {
         let mut conf = self.load_config().await?;
         conf.remove(category, name).map_err(|e| {
             error!(error = e.to_string(), "validate config fail");
@@ -240,47 +256,68 @@ impl AdminServe {
         let mut conf = self.load_config().await?;
         match category {
             CATEGORY_UPSTREAM => {
-                let upstream: UpstreamConf = serde_json::from_slice(&buf).map_err(|e| {
-                    error!(error = e.to_string(), "descrialize upstream fail");
-                    util::new_internal_error(400, e.to_string())
-                })?;
+                let upstream: UpstreamConf = serde_json::from_slice(&buf)
+                    .map_err(|e| {
+                        error!(
+                            error = e.to_string(),
+                            "descrialize upstream fail"
+                        );
+                        util::new_internal_error(400, e.to_string())
+                    })?;
                 conf.upstreams.insert(key, upstream);
-            }
+            },
             CATEGORY_LOCATION => {
-                let location: LocationConf = serde_json::from_slice(&buf).map_err(|e| {
-                    error!(error = e.to_string(), "descrialize location fail");
-                    util::new_internal_error(400, e.to_string())
-                })?;
+                let location: LocationConf = serde_json::from_slice(&buf)
+                    .map_err(|e| {
+                        error!(
+                            error = e.to_string(),
+                            "descrialize location fail"
+                        );
+                        util::new_internal_error(400, e.to_string())
+                    })?;
                 conf.locations.insert(key, location);
-            }
+            },
             CATEGORY_SERVER => {
-                let server: ServerConf = serde_json::from_slice(&buf).map_err(|e| {
-                    error!(error = e.to_string(), "descrialize server fail");
-                    util::new_internal_error(400, e.to_string())
-                })?;
+                let server: ServerConf =
+                    serde_json::from_slice(&buf).map_err(|e| {
+                        error!(
+                            error = e.to_string(),
+                            "descrialize server fail"
+                        );
+                        util::new_internal_error(400, e.to_string())
+                    })?;
                 conf.servers.insert(key, server);
-            }
+            },
             CATEGORY_PLUGIN => {
-                let plugin: PluginConf = serde_json::from_slice(&buf).map_err(|e| {
-                    error!(error = e.to_string(), "descrialize plugin fail");
-                    util::new_internal_error(400, e.to_string())
-                })?;
+                let plugin: PluginConf =
+                    serde_json::from_slice(&buf).map_err(|e| {
+                        error!(
+                            error = e.to_string(),
+                            "descrialize plugin fail"
+                        );
+                        util::new_internal_error(400, e.to_string())
+                    })?;
                 conf.plugins.insert(key, plugin);
-            }
+            },
             CATEGORY_CERTIFICATE => {
-                let certificate: CertificateConf = serde_json::from_slice(&buf).map_err(|e| {
-                    error!(error = e.to_string(), "descrialize certificate fail");
-                    util::new_internal_error(400, e.to_string())
-                })?;
+                let certificate: CertificateConf = serde_json::from_slice(&buf)
+                    .map_err(|e| {
+                        error!(
+                            error = e.to_string(),
+                            "descrialize certificate fail"
+                        );
+                        util::new_internal_error(400, e.to_string())
+                    })?;
                 conf.certificates.insert(key, certificate);
-            }
+            },
             _ => {
-                let basic_conf: BasicConf = serde_json::from_slice(&buf).map_err(|e| {
-                    error!(error = e.to_string(), "descrialize basic fail");
-                    util::new_internal_error(400, e.to_string())
-                })?;
+                let basic_conf: BasicConf = serde_json::from_slice(&buf)
+                    .map_err(|e| {
+                        error!(error = e.to_string(), "descrialize basic fail");
+                        util::new_internal_error(400, e.to_string())
+                    })?;
                 conf.basic = basic_conf;
-            }
+            },
         };
         save_config(&config::get_config_path(), &conf, category)
             .await
@@ -339,7 +376,8 @@ impl Plugin for AdminServe {
             }));
         }
         let path = header.uri.path();
-        let mut new_path = path.substring(self.path.len(), path.len()).to_string();
+        let mut new_path =
+            path.substring(self.path.len(), path.len()).to_string();
         if let Some(query) = header.uri.query() {
             new_path = format!("{new_path}?{query}");
         }
@@ -366,14 +404,14 @@ impl Plugin for AdminServe {
                     } else {
                         self.update_config(session, category, params[3]).await
                     }
-                }
+                },
                 Method::DELETE => {
                     if params.len() < 4 {
                         Err(pingora::Error::new_str("Url is invalid(no name)"))
                     } else {
                         self.remove_config(category, params[3]).await
                     }
-                }
+                },
                 _ => self.get_config(category).await,
             }
             .unwrap_or_else(|err| {
@@ -383,18 +421,21 @@ impl Plugin for AdminServe {
                     },
                     StatusCode::INTERNAL_SERVER_ERROR,
                 )
-                .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
+                .unwrap_or(HttpResponse::unknown_error(
+                    "Json serde fail".into(),
+                ))
             })
         } else if path == "/basic" {
             let mut memory = "".to_string();
             if let Some(value) = memory_stats() {
                 memory = ByteSize(value.physical_mem as u64).to_string_as(true);
             }
-            let arch = if cfg!(any(target_arch = "arm", target_arch = "aarch64")) {
-                "arm64"
-            } else {
-                "x86"
-            };
+            let arch =
+                if cfg!(any(target_arch = "arm", target_arch = "aarch64")) {
+                    "arm64"
+                } else {
+                    "x86"
+                };
 
             HttpResponse::try_from_json(&BasicInfo {
                 start_time: get_start_time(),
@@ -416,7 +457,11 @@ impl Plugin for AdminServe {
             if file.is_empty() {
                 file = "index.html";
             }
-            EmbeddedStaticFile(AdminAsset::get(file), Duration::from_secs(365 * 24 * 3600)).into()
+            EmbeddedStaticFile(
+                AdminAsset::get(file),
+                Duration::from_secs(365 * 24 * 3600),
+            )
+            .into()
         };
         Ok(Some(resp))
     }
@@ -424,9 +469,14 @@ impl Plugin for AdminServe {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_method_path, AdminAsset, AdminServe, AdminServeParams, EmbeddedStaticFile};
+    use super::{
+        get_method_path, AdminAsset, AdminServe, AdminServeParams,
+        EmbeddedStaticFile,
+    };
     use crate::plugin::Plugin;
-    use crate::{config::set_config_path, config::PluginConf, http_extra::HttpResponse};
+    use crate::{
+        config::set_config_path, config::PluginConf, http_extra::HttpResponse,
+    };
     use http::Method;
     use pingora::http::RequestHeader;
     use pingora::proxy::Session;
@@ -503,7 +553,8 @@ mod tests {
     #[test]
     fn test_embeded_static_file() {
         let file = AdminAsset::get("index.html").unwrap();
-        let resp: HttpResponse = EmbeddedStaticFile(Some(file), Duration::from_secs(60)).into();
+        let resp: HttpResponse =
+            EmbeddedStaticFile(Some(file), Duration::from_secs(60)).into();
         assert_eq!(true, !resp.body.is_empty());
         assert_eq!(200, resp.status.as_u16());
         assert_eq!(0, resp.max_age.unwrap_or_default());
@@ -512,7 +563,8 @@ mod tests {
             format!("{:?}", resp.headers.unwrap_or_default()[0])
         );
 
-        let resp: HttpResponse = EmbeddedStaticFile(None, Duration::from_secs(60)).into();
+        let resp: HttpResponse =
+            EmbeddedStaticFile(None, Duration::from_secs(60)).into();
         assert_eq!(404, resp.status.as_u16())
     }
 

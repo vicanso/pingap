@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_bool_conf, get_step_conf, get_str_slice_conf, Error, Plugin, Result};
+use super::{
+    get_bool_conf, get_step_conf, get_str_slice_conf, Error, Plugin, Result,
+};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -53,8 +55,10 @@ impl TryFrom<&PluginConf> for BasicAuth {
                 status: StatusCode::UNAUTHORIZED,
                 headers: Some(vec![(
                     http::header::WWW_AUTHENTICATE,
-                    HeaderValue::from_str(r###"Basic realm="Access to the staging site""###)
-                        .unwrap(),
+                    HeaderValue::from_str(
+                        r###"Basic realm="Access to the staging site""###,
+                    )
+                    .unwrap(),
                 )]),
                 body: Bytes::from_static(b"Authorization is missing"),
                 ..Default::default()
@@ -63,8 +67,10 @@ impl TryFrom<&PluginConf> for BasicAuth {
                 status: StatusCode::UNAUTHORIZED,
                 headers: Some(vec![(
                     http::header::WWW_AUTHENTICATE,
-                    HeaderValue::from_str(r###"Basic realm="Access to the staging site""###)
-                        .unwrap(),
+                    HeaderValue::from_str(
+                        r###"Basic realm="Access to the staging site""###,
+                    )
+                    .unwrap(),
                 )]),
                 body: Bytes::from_static(b"Invalid user or password"),
                 ..Default::default()
@@ -73,7 +79,8 @@ impl TryFrom<&PluginConf> for BasicAuth {
         if ![PluginStep::Request].contains(&params.plugin_step) {
             return Err(Error::Invalid {
                 category: PluginCategory::BasicAuth.to_string(),
-                message: "Basic auth plugin should be executed at request step".to_string(),
+                message: "Basic auth plugin should be executed at request step"
+                    .to_string(),
             });
         }
         Ok(params)
@@ -209,24 +216,34 @@ authorizations = [
 
         // auth success
         let headers = ["Authorization: Basic YWRtaW46MTIzMTIz"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = auth
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
 
         // auth fail
         let headers = ["Authorization: Basic YWRtaW46MTIzMTIa"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = auth
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         assert_eq!(true, result.is_some());

@@ -40,7 +40,8 @@ impl Ping {
         if step != PluginStep::Request {
             return Err(Error::Invalid {
                 category: PluginCategory::Ping.to_string(),
-                message: "Ping plugin should be executed at request step".to_string(),
+                message: "Ping plugin should be executed at request step"
+                    .to_string(),
             });
         }
         Ok(Self {
@@ -108,7 +109,11 @@ path = "/ping"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = ping
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
 

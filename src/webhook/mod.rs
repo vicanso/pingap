@@ -116,26 +116,56 @@ pub fn send(params: SendNotificationParams) {
                 match webhook_type.to_lowercase().as_str() {
                     "wecom" => {
                         let mut markdown_data = Map::new();
-                        markdown_data.insert("content".to_string(), Value::String(content));
-                        data.insert("msgtype".to_string(), Value::String("markdown".to_string()));
-                        data.insert("markdown".to_string(), Value::Object(markdown_data));
-                    }
+                        markdown_data.insert(
+                            "content".to_string(),
+                            Value::String(content),
+                        );
+                        data.insert(
+                            "msgtype".to_string(),
+                            Value::String("markdown".to_string()),
+                        );
+                        data.insert(
+                            "markdown".to_string(),
+                            Value::Object(markdown_data),
+                        );
+                    },
                     "dingtalk" => {
                         let mut markdown_data = serde_json::Map::new();
+                        markdown_data.insert(
+                            "title".to_string(),
+                            Value::String(category.to_string()),
+                        );
                         markdown_data
-                            .insert("title".to_string(), Value::String(category.to_string()));
-                        markdown_data.insert("text".to_string(), Value::String(content));
-                        data.insert("msgtype".to_string(), Value::String("markdown".to_string()));
-                        data.insert("markdown".to_string(), Value::Object(markdown_data));
-                    }
+                            .insert("text".to_string(), Value::String(content));
+                        data.insert(
+                            "msgtype".to_string(),
+                            Value::String("markdown".to_string()),
+                        );
+                        data.insert(
+                            "markdown".to_string(),
+                            Value::Object(markdown_data),
+                        );
+                    },
                     _ => {
                         data.insert("name".to_string(), Value::String(name));
-                        data.insert("level".to_string(), Value::String(level.to_string()));
-                        data.insert("hostname".to_string(), Value::String(hostname));
+                        data.insert(
+                            "level".to_string(),
+                            Value::String(level.to_string()),
+                        );
+                        data.insert(
+                            "hostname".to_string(),
+                            Value::String(hostname),
+                        );
                         data.insert("ip".to_string(), Value::String(ip));
-                        data.insert("category".to_string(), Value::String(category));
-                        data.insert("message".to_string(), Value::String(params.msg));
-                    }
+                        data.insert(
+                            "category".to_string(),
+                            Value::String(category),
+                        );
+                        data.insert(
+                            "message".to_string(),
+                            Value::String(params.msg),
+                        );
+                    },
                 }
 
                 match client
@@ -149,12 +179,15 @@ pub fn send(params: SendNotificationParams) {
                         if res.status().as_u16() < 400 {
                             info!("send webhook success");
                         } else {
-                            error!(status = res.status().to_string(), "send webhook fail");
+                            error!(
+                                status = res.status().to_string(),
+                                "send webhook fail"
+                            );
                         }
-                    }
+                    },
                     Err(e) => {
                         error!(error = e.to_string(), "send webhook fail");
-                    }
+                    },
                 };
             };
             rt.block_on(send);

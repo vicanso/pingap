@@ -12,8 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_conf, get_str_slice_conf, Error, Plugin, Result};
-use crate::config::{get_current_config, PluginCategory, PluginConf, PluginStep};
+use super::{
+    get_step_conf, get_str_conf, get_str_slice_conf, Error, Plugin, Result,
+};
+use crate::config::{
+    get_current_config, PluginCategory, PluginConf, PluginStep,
+};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
@@ -38,7 +42,9 @@ static PREDICTOR: Lazy<Predictor<32>> = Lazy::new(|| Predictor::new(128, None));
 // meomory limit size
 const MAX_MEMORY_SIZE: usize = 100 * 1024 * 1024;
 static EVICTION_MANAGER: Lazy<Manager> = Lazy::new(|| {
-    let size = if let Some(cache_max_size) = get_current_config().basic.cache_max_size {
+    let size = if let Some(cache_max_size) =
+        get_current_config().basic.cache_max_size
+    {
         cache_max_size.as_u64() as usize
     } else {
         MAX_MEMORY_SIZE
@@ -124,7 +130,8 @@ impl TryFrom<&PluginConf> for Cache {
         if params.plugin_step != PluginStep::Request {
             return Err(Error::Invalid {
                 category: PluginCategory::Cache.to_string(),
-                message: "Cache plugin should be executed at request step".to_string(),
+                message: "Cache plugin should be executed at request step"
+                    .to_string(),
             });
         }
         Ok(params)
@@ -174,11 +181,12 @@ impl Plugin for Cache {
             3 => Some(&*CACHE_LOCK_THREE_SECONDS),
             _ => None,
         };
-        let predictor: Option<&'static (dyn CacheablePredictor + Sync)> = if self.predictor {
-            Some(&*PREDICTOR)
-        } else {
-            None
-        };
+        let predictor: Option<&'static (dyn CacheablePredictor + Sync)> =
+            if self.predictor {
+                Some(&*PREDICTOR)
+            } else {
+                None
+            };
         session
             .cache
             .enable(self.storage, eviction, predictor, lock);
@@ -200,7 +208,8 @@ impl Plugin for Cache {
             }
         }
         if !keys.is_empty() {
-            let prefix = std::string::String::from_utf8_lossy(&keys).to_string();
+            let prefix =
+                std::string::String::from_utf8_lossy(&keys).to_string();
             debug!("Cache prefix: {prefix}");
             ctx.cache_prefix = Some(prefix);
         }

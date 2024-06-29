@@ -26,7 +26,8 @@ use substring::Substring;
 const NAME: &str = env!("CARGO_PKG_NAME");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-pub static ADMIN_SERVER_PLUGIN: Lazy<String> = Lazy::new(|| uuid::Uuid::new_v4().to_string());
+pub static ADMIN_SERVER_PLUGIN: Lazy<String> =
+    Lazy::new(|| uuid::Uuid::new_v4().to_string());
 
 /// Gets the package name.
 pub fn get_pkg_name() -> &'static str {
@@ -75,8 +76,10 @@ pub fn get_remote_addr(session: &Session) -> Option<String> {
 /// If none, get from X-Real-Ip,
 /// If none, get remote addr.
 pub fn get_client_ip(session: &Session) -> String {
-    if let Some(value) = session.get_header(HTTP_HEADER_X_FORWARDED_FOR.clone()) {
-        let arr: Vec<&str> = value.to_str().unwrap_or_default().split(',').collect();
+    if let Some(value) = session.get_header(HTTP_HEADER_X_FORWARDED_FOR.clone())
+    {
+        let arr: Vec<&str> =
+            value.to_str().unwrap_or_default().split(',').collect();
         if !arr.is_empty() {
             return arr[0].trim().to_string();
         }
@@ -91,7 +94,10 @@ pub fn get_client_ip(session: &Session) -> String {
 }
 
 /// Gets string value from req header.
-pub fn get_req_header_value<'a>(req_header: &'a RequestHeader, key: &str) -> Option<&'a str> {
+pub fn get_req_header_value<'a>(
+    req_header: &'a RequestHeader,
+    key: &str,
+) -> Option<&'a str> {
     if let Some(value) = req_header.headers.get(key) {
         if let Ok(value) = value.to_str() {
             return Some(value);
@@ -101,7 +107,10 @@ pub fn get_req_header_value<'a>(req_header: &'a RequestHeader, key: &str) -> Opt
 }
 
 /// Gets cookie value from req header.
-pub fn get_cookie_value<'a>(req_header: &'a RequestHeader, cookie_name: &str) -> Option<&'a str> {
+pub fn get_cookie_value<'a>(
+    req_header: &'a RequestHeader,
+    cookie_name: &str,
+) -> Option<&'a str> {
     if let Some(cookie_value) = get_req_header_value(req_header, "Cookie") {
         for item in cookie_value.split(';') {
             if let Some((k, v)) = item.split_once('=') {
@@ -115,7 +124,10 @@ pub fn get_cookie_value<'a>(req_header: &'a RequestHeader, cookie_name: &str) ->
 }
 
 /// Gets query value from req header.
-pub fn get_query_value<'a>(req_header: &'a RequestHeader, name: &str) -> Option<&'a str> {
+pub fn get_query_value<'a>(
+    req_header: &'a RequestHeader,
+    name: &str,
+) -> Option<&'a str> {
     if let Some(query) = req_header.uri.query() {
         for item in query.split('&') {
             if let Some((k, v)) = item.split_once('=') {
@@ -223,8 +235,12 @@ pub fn get_host(header: &RequestHeader) -> Option<&str> {
 
 /// Get the content length from http request header.
 pub fn get_content_length(header: &RequestHeader) -> Option<usize> {
-    if let Some(content_length) = header.headers.get(http::header::CONTENT_LENGTH) {
-        if let Ok(size) = content_length.to_str().unwrap_or_default().parse::<usize>() {
+    if let Some(content_length) =
+        header.headers.get(http::header::CONTENT_LENGTH)
+    {
+        if let Ok(size) =
+            content_length.to_str().unwrap_or_default().parse::<usize>()
+        {
             return Some(size);
         }
     }
@@ -327,19 +343,23 @@ pub fn format_duration(mut buf: BytesMut, ms: u64) -> BytesMut {
 #[cfg(test)]
 mod tests {
     use super::{
-        convert_tls_version, format_byte_size, format_duration, get_latency, get_pkg_name,
-        get_pkg_version, local_ip_list, remove_query_from_header, resolve_path,
+        convert_tls_version, format_byte_size, format_duration, get_latency,
+        get_pkg_name, get_pkg_version, local_ip_list, remove_query_from_header,
+        resolve_path,
     };
     use bytes::BytesMut;
     use pingora::{http::RequestHeader, tls::ssl::SslVersion};
     use pretty_assertions::assert_eq;
     #[test]
     fn test_remove_query_from_header() {
-        let mut req = RequestHeader::build("GET", b"/?apikey=123", None).unwrap();
+        let mut req =
+            RequestHeader::build("GET", b"/?apikey=123", None).unwrap();
         remove_query_from_header(&mut req, "apikey").unwrap();
         assert_eq!("/", req.uri.to_string());
 
-        let mut req = RequestHeader::build("GET", b"/?apikey=123&name=pingap", None).unwrap();
+        let mut req =
+            RequestHeader::build("GET", b"/?apikey=123&name=pingap", None)
+                .unwrap();
         remove_query_from_header(&mut req, "apikey").unwrap();
         assert_eq!("/?name=pingap", req.uri.to_string());
     }

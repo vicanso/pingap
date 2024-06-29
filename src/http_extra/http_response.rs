@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    HttpHeader, HTTP_HEADER_CONTENT_HTML, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_NO_CACHE,
-    HTTP_HEADER_NO_STORE, HTTP_HEADER_TRANSFER_CHUNKED,
+    HttpHeader, HTTP_HEADER_CONTENT_HTML, HTTP_HEADER_CONTENT_JSON,
+    HTTP_HEADER_NO_CACHE, HTTP_HEADER_NO_STORE, HTTP_HEADER_TRANSFER_CHUNKED,
 };
 use crate::util;
 use bytes::Bytes;
@@ -27,15 +27,19 @@ use std::pin::Pin;
 use tokio::io::AsyncReadExt;
 use tracing::error;
 
-fn get_cache_control(max_age: Option<u32>, cache_private: Option<bool>) -> HttpHeader {
+fn get_cache_control(
+    max_age: Option<u32>,
+    cache_private: Option<bool>,
+) -> HttpHeader {
     if let Some(max_age) = max_age {
         let category = if cache_private.unwrap_or_default() {
             "private"
         } else {
             "public"
         };
-        if let Ok(value) = header::HeaderValue::from_str(&format!("{category}, max-age={max_age}"))
-        {
+        if let Ok(value) = header::HeaderValue::from_str(&format!(
+            "{category}, max-age={max_age}"
+        )) {
             return (header::CACHE_CONTROL, value);
         }
     }
@@ -107,7 +111,10 @@ impl HttpResponse {
         }
     }
     /// Create a response from serde json, and set the status of response.
-    pub fn try_from_json_status<T>(value: &T, status: StatusCode) -> pingora::Result<Self>
+    pub fn try_from_json_status<T>(
+        value: &T,
+        status: StatusCode,
+    ) -> pingora::Result<Self>
     where
         T: ?Sized + Serialize,
     {
@@ -140,7 +147,10 @@ impl HttpResponse {
             .as_ref()
             .map_or_else(|| fix_size, |headers| headers.len() + fix_size);
         let mut resp = ResponseHeader::build(self.status, Some(size))?;
-        resp.insert_header(header::CONTENT_LENGTH, self.body.len().to_string())?;
+        resp.insert_header(
+            header::CONTENT_LENGTH,
+            self.body.len().to_string(),
+        )?;
 
         // set cache control
         let cache_control = get_cache_control(self.max_age, self.cache_private);
@@ -148,7 +158,8 @@ impl HttpResponse {
 
         if let Some(created_at) = self.created_at {
             let secs = util::get_super_ts() - created_at;
-            if let Ok(value) = header::HeaderValue::from_str(&secs.to_string()) {
+            if let Ok(value) = header::HeaderValue::from_str(&secs.to_string())
+            {
                 resp.insert_header(header::AGE, value)?;
             }
         }
@@ -218,7 +229,10 @@ where
         Ok(resp)
     }
     /// Send the chunk data to client until the end of reader, return how many bytes were sent.
-    pub async fn send(&mut self, session: &mut Session) -> pingora::Result<usize> {
+    pub async fn send(
+        &mut self,
+        session: &mut Session,
+    ) -> pingora::Result<usize> {
         let header = self.get_response_header()?;
         session
             .write_response_header(Box::new(header), false)
@@ -234,7 +248,10 @@ where
             })?;
             let end = size < chunk_size;
             session
-                .write_response_body(Some(Bytes::copy_from_slice(&buffer[..size])), end)
+                .write_response_body(
+                    Some(Bytes::copy_from_slice(&buffer[..size])),
+                    end,
+                )
                 .await?;
             sent += size;
             if end {
@@ -286,7 +303,10 @@ mod tests {
         );
         assert_eq!(
             r###"HttpResponse { status: 500, body: b"Unknown Error", max_age: None, created_at: None, cache_private: None, headers: Some([("cache-control", "private, no-store")]) }"###,
-            format!("{:?}", HttpResponse::unknown_error("Unknown Error".into()))
+            format!(
+                "{:?}",
+                HttpResponse::unknown_error("Unknown Error".into())
+            )
         );
 
         assert_eq!(
@@ -354,7 +374,9 @@ mod tests {
         let mut resp = HttpChunkResponse::new(&mut f);
         resp.max_age = Some(3600);
         resp.cache_private = Some(false);
-        resp.headers = Some(convert_headers(&["Contont-Type: text/html".to_string()]).unwrap());
+        resp.headers = Some(
+            convert_headers(&["Contont-Type: text/html".to_string()]).unwrap(),
+        );
         let header = resp.get_response_header().unwrap();
         assert_eq!(
             r###"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"contont-type": "text/html", "transfer-encoding": "chunked", "cache-control": "public, max-age=3600"} }, header_name_map: Some({"contont-type": CaseHeaderName(b"contont-type"), "transfer-encoding": CaseHeaderName(b"Transfer-Encoding"), "cache-control": CaseHeaderName(b"Cache-Control")}), reason_phrase: None }"###,

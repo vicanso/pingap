@@ -69,7 +69,7 @@ fn new_path_selector(path: &str) -> Result<PathSelector> {
                 value: last.to_string(),
             })?;
             PathSelector::RegexPath(RegexPath { value: re })
-        }
+        },
         '=' => PathSelector::EqualPath(EqualPath {
             value: last.to_string(),
         }),
@@ -78,7 +78,7 @@ fn new_path_selector(path: &str) -> Result<PathSelector> {
             PathSelector::PrefixPath(PrefixPath {
                 value: path.trim().to_string(),
             })
-        }
+        },
     };
 
     Ok(se)
@@ -112,11 +112,14 @@ impl fmt::Display for Location {
     }
 }
 
-fn format_headers(values: &Option<Vec<String>>) -> Result<Option<Vec<HttpHeader>>> {
+fn format_headers(
+    values: &Option<Vec<String>>,
+) -> Result<Option<Vec<HttpHeader>>> {
     if let Some(header_values) = values {
-        let arr = convert_headers(header_values).map_err(|err| Error::Invalid {
-            message: err.to_string(),
-        })?;
+        let arr =
+            convert_headers(header_values).map_err(|err| Error::Invalid {
+                message: err.to_string(),
+            })?;
         Ok(Some(arr))
     } else {
         Ok(None)
@@ -162,7 +165,10 @@ impl Location {
             processing: AtomicI32::new(0),
             proxy_add_headers: format_headers(&conf.proxy_add_headers)?,
             proxy_set_headers: format_headers(&conf.proxy_set_headers)?,
-            client_max_body_size: conf.client_max_body_size.unwrap_or_default().as_u64() as usize,
+            client_max_body_size: conf
+                .client_max_body_size
+                .unwrap_or_default()
+                .as_u64() as usize,
         };
         debug!(location = location.to_string(), "create a new location");
 
@@ -174,8 +180,12 @@ impl Location {
         if !self.path.is_empty() {
             let matched = match &self.path_selector {
                 PathSelector::EqualPath(EqualPath { value }) => value == path,
-                PathSelector::RegexPath(RegexPath { value }) => value.is_match(path),
-                PathSelector::PrefixPath(PrefixPath { value }) => path.starts_with(value),
+                PathSelector::RegexPath(RegexPath { value }) => {
+                    value.is_match(path)
+                },
+                PathSelector::PrefixPath(PrefixPath { value }) => {
+                    path.starts_with(value)
+                },
                 PathSelector::Empty => true,
             };
             if !matched {
@@ -202,7 +212,9 @@ impl Location {
             return Ok(());
         }
         if let Some(header) = header {
-            if util::get_content_length(header).unwrap_or_default() > self.client_max_body_size {
+            if util::get_content_length(header).unwrap_or_default()
+                > self.client_max_body_size
+            {
                 return Err(util::new_internal_error(
                     413,
                     "Request Entity Too Large".to_string(),
@@ -231,7 +243,9 @@ impl Location {
                 new_path = format!("{new_path}?{query}");
             }
             debug!(new_path, "rewrite path");
-            if let Err(e) = new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri)) {
+            if let Err(e) =
+                new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri))
+            {
                 error!(
                     error = e.to_string(),
                     location = self.name,
@@ -333,7 +347,8 @@ impl Location {
 }
 
 type Locations = HashMap<String, Arc<Location>>;
-static LOCATION_MAP: Lazy<ArcSwap<Locations>> = Lazy::new(|| ArcSwap::from_pointee(HashMap::new()));
+static LOCATION_MAP: Lazy<ArcSwap<Locations>> =
+    Lazy::new(|| ArcSwap::from_pointee(HashMap::new()));
 
 pub fn get_location(name: &str) -> Option<Arc<Location>> {
     if name.is_empty() {
@@ -367,8 +382,10 @@ mod tests {
 
     #[test]
     fn test_format_headers() {
-        let headers =
-            format_headers(&Some(vec!["Content-Type: application/json".to_string()])).unwrap();
+        let headers = format_headers(&Some(vec![
+            "Content-Type: application/json".to_string(),
+        ]))
+        .unwrap();
         assert_eq!(
             r###"Some([("content-type", "application/json")])"###,
             format!("{headers:?}")
@@ -490,11 +507,13 @@ mod tests {
             },
         )
         .unwrap();
-        let mut req_header = RequestHeader::build("GET", b"/users/me?abc=1", None).unwrap();
+        let mut req_header =
+            RequestHeader::build("GET", b"/users/me?abc=1", None).unwrap();
         assert_eq!(true, lo.rewrite(&mut req_header));
         assert_eq!("/me?abc=1", req_header.uri.to_string());
 
-        let mut req_header = RequestHeader::build("GET", b"/api/me?abc=1", None).unwrap();
+        let mut req_header =
+            RequestHeader::build("GET", b"/api/me?abc=1", None).unwrap();
         assert_eq!(false, lo.rewrite(&mut req_header));
         assert_eq!("/api/me?abc=1", req_header.uri.to_string());
     }
@@ -508,7 +527,9 @@ mod tests {
             &LocationConf {
                 upstream: Some(upstream_name.to_string()),
                 rewrite: Some("^/users/(.*)$ /$1".to_string()),
-                proxy_set_headers: Some(vec!["Cache-Control: no-store".to_string()]),
+                proxy_set_headers: Some(vec![
+                    "Cache-Control: no-store".to_string()
+                ]),
                 proxy_add_headers: Some(vec!["X-User: pingap".to_string()]),
                 ..Default::default()
             },
@@ -516,13 +537,19 @@ mod tests {
         .unwrap();
 
         let headers = [""].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let mut req_header = RequestHeader::build_no_case(Method::GET, b"", None).unwrap();
-        lo.set_append_proxy_headers(&session, &State::default(), &mut req_header);
+        let mut req_header =
+            RequestHeader::build_no_case(Method::GET, b"", None).unwrap();
+        lo.set_append_proxy_headers(
+            &session,
+            &State::default(),
+            &mut req_header,
+        );
         assert_eq!(
             r###"RequestHeader { base: Parts { method: GET, uri: , version: HTTP/1.1, headers: {"cache-control": "no-store", "x-user": "pingap"} }, header_name_map: None, raw_path_fallback: [] }"###,
             format!("{req_header:?}")
@@ -545,17 +572,20 @@ mod tests {
         )
         .unwrap();
 
-        let mut req_header = RequestHeader::build("GET", b"/users/v1/me", None).unwrap();
+        let mut req_header =
+            RequestHeader::build("GET", b"/users/v1/me", None).unwrap();
         req_header
             .insert_header(http::header::CONTENT_LENGTH, "1")
             .unwrap();
-        let result = lo.client_body_size_limit(Some(&req_header), &State::default());
+        let result =
+            lo.client_body_size_limit(Some(&req_header), &State::default());
         assert_eq!(true, result.is_ok());
 
         req_header
             .insert_header(http::header::CONTENT_LENGTH, "1024")
             .unwrap();
-        let result = lo.client_body_size_limit(Some(&req_header), &State::default());
+        let result =
+            lo.client_body_size_limit(Some(&req_header), &State::default());
         assert_eq!(
             " HTTPStatus context: Request Entity Too Large cause:  InternalError",
             result.err().unwrap().to_string()
@@ -624,7 +654,11 @@ mod tests {
         session.read_request().await.unwrap();
 
         let result = lo
-            .handle_request_plugin(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request_plugin(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         assert_eq!(false, result);
@@ -652,7 +686,8 @@ mod tests {
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let mut upstream_response = ResponseHeader::build(200, Some(4)).unwrap();
+        let mut upstream_response =
+            ResponseHeader::build(200, Some(4)).unwrap();
         upstream_response
             .append_header("Content-Type", "application/json")
             .unwrap();

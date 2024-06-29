@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use crate::config::{
-    get_config_path, get_current_config, load_config, set_current_config, PingapConf,
-    CATEGORY_LOCATION, CATEGORY_UPSTREAM,
+    get_config_path, get_current_config, load_config, set_current_config,
+    PingapConf, CATEGORY_LOCATION, CATEGORY_UPSTREAM,
 };
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::restart;
@@ -59,30 +59,30 @@ async fn hot_reload(
         match proxy::try_init_upstreams(&conf.upstreams) {
             Err(e) => {
                 error!(error = e.to_string(), "reload upstream fail");
-            }
+            },
             Ok(()) => {
                 info!("reload upstream success");
-            }
+            },
         };
     }
     if should_reload_location {
         match proxy::try_init_locations(&conf.locations) {
             Err(e) => {
                 error!(error = e.to_string(), "reload location fail");
-            }
+            },
             Ok(()) => {
                 info!("reload location success");
-            }
+            },
         };
     }
     if should_reload_server_location {
         match proxy::try_init_server_locations(&conf.servers, &conf.locations) {
             Err(e) => {
                 error!(error = e.to_string(), "reload server fail");
-            }
+            },
             Ok(()) => {
                 info!("reload server location success");
-            }
+            },
         };
     }
 
@@ -109,7 +109,10 @@ struct AutoRestart {
     count: AtomicU32,
 }
 
-pub fn new_auto_restart_service(interval: Duration, only_hot_reload: bool) -> CommonServiceTask {
+pub fn new_auto_restart_service(
+    interval: Duration,
+    only_hot_reload: bool,
+) -> CommonServiceTask {
     let mut restart_unit = 1_u32;
     let unit = Duration::from_secs(30);
     if interval > unit {
@@ -148,10 +151,10 @@ impl ServiceTask for AutoRestart {
                     });
                     restart();
                 }
-            }
+            },
             Err(e) => {
                 error!(error = e.to_string(), "auto restart validate fail");
-            }
+            },
         }
         None
     }

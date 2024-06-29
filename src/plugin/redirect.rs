@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_bool_conf, get_step_conf, get_str_conf, Error, Plugin, Result};
+use super::{
+    get_bool_conf, get_step_conf, get_str_conf, Error, Plugin, Result,
+};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::convert_headers;
 use crate::http_extra::HttpResponse;
@@ -36,7 +38,9 @@ impl Redirect {
         if step != PluginStep::Request {
             return Err(Error::Invalid {
                 category: PluginCategory::Redirect.to_string(),
-                message: "Redirect https plugin should be executed at request step".to_string(),
+                message:
+                    "Redirect https plugin should be executed at request step"
+                        .to_string(),
             });
         }
         Ok(Self {
@@ -68,7 +72,9 @@ impl Plugin for Redirect {
             return Ok(None);
         }
         let schema_match = ctx.tls_version.is_some() == self.http_to_https;
-        if schema_match && session.req_header().uri.path().starts_with(&self.prefix) {
+        if schema_match
+            && session.req_header().uri.path().starts_with(&self.prefix)
+        {
             return Ok(None);
         }
         let host = util::get_host(session.req_header()).unwrap_or_default();
@@ -113,12 +119,17 @@ prefix = "/api"
         assert_eq!("request", redirect.step().to_string());
 
         let headers = ["Host: github.com"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = redirect
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         assert_eq!(true, result.is_some());
@@ -139,6 +150,9 @@ prefix = "/api"
             )
             .unwrap(),
         );
-        assert_eq!("Plugin redirect invalid, message: Redirect https plugin should be executed at request step", params.err().unwrap().to_string());
+        assert_eq!(
+            "Plugin redirect invalid, message: Redirect https plugin should be executed at request step",
+            params.err().unwrap().to_string()
+        );
     }
 }

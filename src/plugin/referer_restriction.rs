@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_conf, get_str_slice_conf, Error, Plugin, Result};
+use super::{
+    get_step_conf, get_str_conf, get_str_slice_conf, Error, Plugin, Result,
+};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -39,7 +41,8 @@ impl TryFrom<&PluginConf> for RefererRestriction {
         let mut prefix_referer_list = vec![];
         for item in get_str_slice_conf(value, "referer_list").iter() {
             if item.starts_with('*') {
-                prefix_referer_list.push(item.substring(1, item.len()).to_string());
+                prefix_referer_list
+                    .push(item.substring(1, item.len()).to_string());
             } else {
                 referer_list.push(item.to_string());
             }
@@ -60,12 +63,12 @@ impl TryFrom<&PluginConf> for RefererRestriction {
                 ..Default::default()
             },
         };
-        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
+        if ![PluginStep::Request, PluginStep::ProxyUpstream]
+            .contains(&params.plugin_step)
+        {
             return Err(Error::Invalid {
                 category: PluginCategory::RefererRestriction.to_string(),
-                message:
-                    "Referer restriction plugin should be executed at request or proxy upstream step"
-                        .to_string(),
+                message: "Referer restriction plugin should be executed at request or proxy upstream step".to_string(),
             });
         }
 
@@ -195,32 +198,43 @@ type = "deny"
         assert_eq!("request", deny.step().to_string());
 
         let headers = ["Referer: https://google.com/"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
         let result = deny
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
 
         let headers = ["Referer: https://github.com/"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
         let result = deny
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         assert_eq!(true, result.is_some());
         assert_eq!(StatusCode::FORBIDDEN, result.unwrap().status);
 
         let headers = ["Referer: https://test.bing.cn/"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();

@@ -79,11 +79,12 @@ impl TryFrom<&PluginConf> for Limiter {
             rate,
             plugin_step: step,
         };
-        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&params.plugin_step) {
+        if ![PluginStep::Request, PluginStep::ProxyUpstream]
+            .contains(&params.plugin_step)
+        {
             return Err(Error::Invalid {
                 category: PluginCategory::Limit.to_string(),
-                message: "Limit plugin should be executed at request or proxy upstream step"
-                    .to_string(),
+                message: "Limit plugin should be executed at request or proxy upstream step".to_string(),
             });
         }
         Ok(params)
@@ -99,20 +100,26 @@ impl Limiter {
     /// Otherwise returns a Guard. It may set the client ip to context.
     pub fn incr(&self, session: &Session, ctx: &mut State) -> Result<()> {
         let key = match self.tag {
-            LimitTag::Query => util::get_query_value(session.req_header(), &self.key)
-                .unwrap_or_default()
-                .to_string(),
-            LimitTag::RequestHeader => util::get_req_header_value(session.req_header(), &self.key)
-                .unwrap_or_default()
-                .to_string(),
-            LimitTag::Cookie => util::get_cookie_value(session.req_header(), &self.key)
-                .unwrap_or_default()
-                .to_string(),
+            LimitTag::Query => {
+                util::get_query_value(session.req_header(), &self.key)
+                    .unwrap_or_default()
+                    .to_string()
+            },
+            LimitTag::RequestHeader => {
+                util::get_req_header_value(session.req_header(), &self.key)
+                    .unwrap_or_default()
+                    .to_string()
+            },
+            LimitTag::Cookie => {
+                util::get_cookie_value(session.req_header(), &self.key)
+                    .unwrap_or_default()
+                    .to_string()
+            },
             _ => {
                 let client_ip = util::get_client_ip(session);
                 ctx.client_ip = Some(client_ip.clone());
                 client_ip
-            }
+            },
         };
         if key.is_empty() {
             return Ok(());
@@ -172,7 +179,9 @@ impl Plugin for Limiter {
 #[cfg(test)]
 mod tests {
     use super::{LimitTag, Limiter};
-    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin, state::State};
+    use crate::{
+        config::PluginConf, config::PluginStep, plugin::Plugin, state::State,
+    };
     use http::StatusCode;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -190,7 +199,8 @@ mod tests {
             "X-Forwarded-For: 1.1.1.1, 192.168.1.2",
         ]
         .join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?key=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?key=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
@@ -228,7 +238,10 @@ max = 10
             )
             .unwrap(),
         );
-        assert_eq!("Plugin limit invalid, message: Limit plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
+        assert_eq!(
+            "Plugin limit invalid, message: Limit plugin should be executed at request or proxy upstream step",
+            result.err().unwrap().to_string()
+        );
     }
 
     #[tokio::test]
@@ -338,12 +351,17 @@ max = 0
         .unwrap();
 
         let headers = ["X-Forwarded-For: 1.1.1.1"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = limiter
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
 
@@ -361,7 +379,11 @@ max = 1
         )
         .unwrap();
         let result = limiter
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
 
@@ -383,26 +405,39 @@ interval = "1s"
         .unwrap();
 
         let headers = ["X-Forwarded-For: 1.1.1.1"].join("\r\n");
-        let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let result = limiter
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
 
         assert_eq!(true, result.is_none());
 
         let _ = limiter
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
 
         tokio::time::sleep(Duration::from_secs(1)).await;
 
         let result = limiter
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         assert_eq!(true, result.is_some());
@@ -411,7 +446,11 @@ interval = "1s"
         tokio::time::sleep(Duration::from_secs(1)).await;
 
         let result = limiter
-            .handle_request(PluginStep::Request, &mut session, &mut State::default())
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut State::default(),
+            )
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
