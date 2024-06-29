@@ -261,8 +261,8 @@ dependencies = [
  "bytes",
  "futures-util",
  "http 0.2.12",
- "http-body",
- "hyper",
+ "http-body 0.4.6",
+ "hyper 0.14.29",
  "itoa",
  "matchit",
  "memchr",
@@ -271,7 +271,7 @@ dependencies = [
  "pin-project-lite",
  "rustversion",
  "serde",
- "sync_wrapper",
+ "sync_wrapper 0.1.2",
  "tower",
  "tower-layer",
  "tower-service",
@@ -287,7 +287,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "http 0.2.12",
- "http-body",
+ "http-body 0.4.6",
  "mime",
  "rustversion",
  "tower-layer",
@@ -424,9 +424,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "cfg_aliases"
-version = "0.1.1"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
+checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chrono"
@@ -486,19 +486,19 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.7"
+version = "4.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5db83dced34638ad474f39f250d7fea9598bdd239eaced1bdf45d597da0f433f"
+checksum = "84b3edb18336f4df585bc9aa31dd99c036dfa5dc5e9a2939a722a188f3a8970d"
 dependencies = [
  "clap_builder",
- "clap_derive 4.5.5",
+ "clap_derive 4.5.8",
 ]
 
 [[package]]
 name = "clap_builder"
-version = "4.5.7"
+version = "4.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f7e204572485eb3fbf28f871612191521df159bc3e15a9f5064c66dba3a8c05f"
+checksum = "c1c09dd5ada6c6c78075d6fd0da3f90d8080651e2d6cc8eb2f1aaa4034ced708"
 dependencies = [
  "anstream",
  "anstyle",
@@ -521,9 +521,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.5.5"
+version = "4.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c780290ccf4fb26629baa7a1081e68ced113f1d3ec302fa5948f1c381ebf06c6"
+checksum = "2bac35c6dafb060fd4d275d9a4ffae97917c13a6327903a8be2153cd964f7085"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -623,7 +623,7 @@ dependencies = [
  "anes",
  "cast",
  "ciborium",
- "clap 4.5.7",
+ "clap 4.5.8",
  "criterion-plot",
  "is-terminal",
  "itertools 0.10.5",
@@ -838,29 +838,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "env_filter"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a009aa4810eb158359dda09d0c87378e4bbb89b5a801f016885a4707ba24f7ea"
-dependencies = [
- "log",
- "regex",
-]
-
-[[package]]
-name = "env_logger"
-version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38b35839ba51819680ba087cd351788c9a3c476841207e0b8cee0b04722343b9"
-dependencies = [
- "anstream",
- "anstyle",
- "env_filter",
- "humantime",
- "log",
-]
-
-[[package]]
 name = "equivalent"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -878,9 +855,9 @@ dependencies = [
 
 [[package]]
 name = "etcd-client"
-version = "0.12.4"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ae697f3928e8c89ae6f4dcf788059f49fd01a76dc53e63628f5a33881f5715e"
+checksum = "5b915bb9b1e143ab7062e0067ed663e3dfeffc69ce0ceb9e93b35fecfc158d28"
 dependencies = [
  "http 0.2.12",
  "prost 0.12.6",
@@ -1244,6 +1221,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-body"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1cac85db508abc24a2e48553ba12a996e87244a0395ce011e62b37158745d643"
+dependencies = [
+ "bytes",
+ "http 1.1.0",
+]
+
+[[package]]
+name = "http-body-util"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "793429d76616a256bcb62c2a2ec2bed781c8307e797e2598c50010f2bee2544f"
+dependencies = [
+ "bytes",
+ "futures-util",
+ "http 1.1.0",
+ "http-body 1.0.0",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "httparse"
 version = "1.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1283,7 +1283,7 @@ dependencies = [
  "futures-util",
  "h2 0.3.26",
  "http 0.2.12",
- "http-body",
+ "http-body 0.4.6",
  "httparse",
  "httpdate",
  "itoa",
@@ -1296,6 +1296,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper"
+version = "1.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe575dd17d0862a9a33781c8c4696a55c320909004a67a00fb286ba8b1bc496d"
+dependencies = [
+ "bytes",
+ "futures-channel",
+ "futures-util",
+ "h2 0.4.5",
+ "http 1.1.0",
+ "http-body 1.0.0",
+ "httparse",
+ "itoa",
+ "pin-project-lite",
+ "smallvec",
+ "tokio",
+ "want",
+]
+
+[[package]]
 name = "hyper-rustls"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1303,11 +1323,28 @@ checksum = "ec3efd23720e2049821a693cbc7e65ea87c72f1c58ff2f9522ff332b1491e590"
 dependencies = [
  "futures-util",
  "http 0.2.12",
- "hyper",
- "rustls",
+ "hyper 0.14.29",
+ "rustls 0.21.12",
  "rustls-native-certs",
  "tokio",
- "tokio-rustls",
+ "tokio-rustls 0.24.1",
+]
+
+[[package]]
+name = "hyper-rustls"
+version = "0.27.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ee4be2c948921a1a5320b629c4193916ed787a7f7f293fd3f7f5a6c9de74155"
+dependencies = [
+ "futures-util",
+ "http 1.1.0",
+ "hyper 1.3.1",
+ "hyper-util",
+ "rustls 0.23.10",
+ "rustls-pki-types",
+ "tokio",
+ "tokio-rustls 0.26.0",
+ "tower-service",
 ]
 
 [[package]]
@@ -1316,7 +1353,7 @@ version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbb958482e8c7be4bc3cf272a766a2b0bf1a6755e7a6ae777f017a31d11b13b1"
 dependencies = [
- "hyper",
+ "hyper 0.14.29",
  "pin-project-lite",
  "tokio",
  "tokio-io-timeout",
@@ -1324,15 +1361,38 @@ dependencies = [
 
 [[package]]
 name = "hyper-tls"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6183ddfa99b85da61a140bea0efc93fdf56ceaa041b37d553518030827f9905"
+checksum = "70206fc6890eaca9fde8a0bf71caa2ddfc9fe045ac9e5c70df101a7dbde866e0"
 dependencies = [
  "bytes",
- "hyper",
+ "http-body-util",
+ "hyper 1.3.1",
+ "hyper-util",
  "native-tls",
  "tokio",
  "tokio-native-tls",
+ "tower-service",
+]
+
+[[package]]
+name = "hyper-util"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b875924a60b96e5d7b9ae7b066540b1dd1cbd90d1828f54c92e02a283351c56"
+dependencies = [
+ "bytes",
+ "futures-channel",
+ "futures-util",
+ "http 1.1.0",
+ "http-body 1.0.0",
+ "hyper 1.3.1",
+ "pin-project-lite",
+ "socket2",
+ "tokio",
+ "tower",
+ "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -1429,8 +1489,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51e78737dbac1bae14cb5556c9cd7c604886095c59cdb5af71f12a4c59be2b05"
 dependencies = [
  "base64 0.21.7",
- "hyper",
- "hyper-rustls",
+ "hyper 0.14.29",
+ "hyper-rustls 0.24.2",
  "ring",
  "rustls-pki-types",
  "serde",
@@ -1597,9 +1657,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.21"
+version = "0.4.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90ed8c1e510134f979dbc4f070f87d4313098b704861a105fe34231c70a3901c"
+checksum = "a7a70ba024b9dc04c27ea2f0c0548feb474ec5c54bba33a7f72f873a39d07b24"
 
 [[package]]
 name = "lru"
@@ -1648,12 +1708,12 @@ dependencies = [
 
 [[package]]
 name = "memory-stats"
-version = "1.1.0"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34f79cf9964c5c9545493acda1263f1912f8d2c56c8a2ffee2606cb960acaacc"
+checksum = "c73f5c649995a115e1a0220b35e4df0a1294500477f97a91d0660fb5abeb574a"
 dependencies = [
  "libc",
- "winapi",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1796,9 +1856,9 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.28.0"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4"
+checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
 dependencies = [
  "bitflags 2.6.0",
  "cfg-if",
@@ -1828,9 +1888,9 @@ dependencies = [
 
 [[package]]
 name = "num-bigint"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c165a9ab64cf766f73521c0dd2cfdff64f488b8f0b3e621face3462d3db536d7"
+checksum = "a5e44f723f1133c9deac646763579fdb3ac745e418f2a7af9cd0c431da1f20b9"
 dependencies = [
  "num-integer",
  "num-traits",
@@ -2096,7 +2156,7 @@ dependencies = [
  "bytes",
  "bytesize",
  "chrono",
- "clap 4.5.7",
+ "clap 4.5.8",
  "cookie",
  "crc32fast",
  "criterion",
@@ -2104,7 +2164,6 @@ dependencies = [
  "dhat",
  "diff",
  "dirs",
- "env_logger",
  "etcd-client",
  "futures",
  "futures-util",
@@ -2125,7 +2184,7 @@ dependencies = [
  "memory-stats",
  "mime_guess",
  "nanoid",
- "nix 0.28.0",
+ "nix 0.29.0",
  "num_cpus",
  "once_cell",
  "path-absolutize",
@@ -2137,7 +2196,7 @@ dependencies = [
  "pyroscope_pprofrs",
  "rcgen",
  "regex",
- "reqwest",
+ "reqwest 0.12.5",
  "rust-embed",
  "serde",
  "serde_json",
@@ -2161,7 +2220,7 @@ dependencies = [
 [[package]]
 name = "pingora"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=648a6ad0554442be5f9c8d396a66843552156d1f#648a6ad0554442be5f9c8d396a66843552156d1f"
+source = "git+https://github.com/cloudflare/pingora?rev=38a9d556b557a10f7815f50fca6a49de146ab5be#38a9d556b557a10f7815f50fca6a49de146ab5be"
 dependencies = [
  "pingora-cache",
  "pingora-core",
@@ -2174,7 +2233,7 @@ dependencies = [
 [[package]]
 name = "pingora-cache"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=648a6ad0554442be5f9c8d396a66843552156d1f#648a6ad0554442be5f9c8d396a66843552156d1f"
+source = "git+https://github.com/cloudflare/pingora?rev=38a9d556b557a10f7815f50fca6a49de146ab5be#38a9d556b557a10f7815f50fca6a49de146ab5be"
 dependencies = [
  "ahash",
  "async-trait",
@@ -2207,7 +2266,7 @@ dependencies = [
 [[package]]
 name = "pingora-core"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=648a6ad0554442be5f9c8d396a66843552156d1f#648a6ad0554442be5f9c8d396a66843552156d1f"
+source = "git+https://github.com/cloudflare/pingora?rev=38a9d556b557a10f7815f50fca6a49de146ab5be#38a9d556b557a10f7815f50fca6a49de146ab5be"
 dependencies = [
  "ahash",
  "async-trait",
@@ -2234,7 +2293,7 @@ dependencies = [
  "pingora-http",
  "pingora-openssl",
  "pingora-pool",
- "pingora-runtime 0.2.0 (git+https://github.com/cloudflare/pingora?rev=648a6ad0554442be5f9c8d396a66843552156d1f)",
+ "pingora-runtime 0.2.0 (git+https://github.com/cloudflare/pingora?rev=38a9d556b557a10f7815f50fca6a49de146ab5be)",
  "pingora-timeout",
  "prometheus",
  "rand",
@@ -2256,12 +2315,12 @@ dependencies = [
 [[package]]
 name = "pingora-error"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=648a6ad0554442be5f9c8d396a66843552156d1f#648a6ad0554442be5f9c8d396a66843552156d1f"
+source = "git+https://github.com/cloudflare/pingora?rev=38a9d556b557a10f7815f50fca6a49de146ab5be#38a9d556b557a10f7815f50fca6a49de146ab5be"
 
 [[package]]
 name = "pingora-header-serde"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=648a6ad0554442be5f9c8d396a66843552156d1f#648a6ad0554442be5f9c8d396a66843552156d1f"
+source = "git+https://github.com/cloudflare/pingora?rev=38a9d556b557a10f7815f50fca6a49de146ab5be#38a9d556b557a10f7815f50fca6a49de146ab5be"
 dependencies = [
  "bytes",
  "http 1.1.0",
@@ -2276,7 +2335,7 @@ dependencies = [
 [[package]]
 name = "pingora-http"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=648a6ad0554442be5f9c8d396a66843552156d1f#648a6ad0554442be5f9c8d396a66843552156d1f"
+source = "git+https://github.com/cloudflare/pingora?rev=38a9d556b557a10f7815f50fca6a49de146ab5be#38a9d556b557a10f7815f50fca6a49de146ab5be"
 dependencies = [
  "bytes",
  "http 1.1.0",
@@ -2286,7 +2345,7 @@ dependencies = [
 [[package]]
 name = "pingora-ketama"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=648a6ad0554442be5f9c8d396a66843552156d1f#648a6ad0554442be5f9c8d396a66843552156d1f"
+source = "git+https://github.com/cloudflare/pingora?rev=38a9d556b557a10f7815f50fca6a49de146ab5be#38a9d556b557a10f7815f50fca6a49de146ab5be"
 dependencies = [
  "crc32fast",
 ]
@@ -2303,7 +2362,7 @@ dependencies = [
 [[package]]
 name = "pingora-load-balancing"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=648a6ad0554442be5f9c8d396a66843552156d1f#648a6ad0554442be5f9c8d396a66843552156d1f"
+source = "git+https://github.com/cloudflare/pingora?rev=38a9d556b557a10f7815f50fca6a49de146ab5be#38a9d556b557a10f7815f50fca6a49de146ab5be"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -2314,7 +2373,7 @@ dependencies = [
  "pingora-error",
  "pingora-http",
  "pingora-ketama",
- "pingora-runtime 0.2.0 (git+https://github.com/cloudflare/pingora?rev=648a6ad0554442be5f9c8d396a66843552156d1f)",
+ "pingora-runtime 0.2.0 (git+https://github.com/cloudflare/pingora?rev=38a9d556b557a10f7815f50fca6a49de146ab5be)",
  "rand",
  "tokio",
 ]
@@ -2322,7 +2381,7 @@ dependencies = [
 [[package]]
 name = "pingora-lru"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=648a6ad0554442be5f9c8d396a66843552156d1f#648a6ad0554442be5f9c8d396a66843552156d1f"
+source = "git+https://github.com/cloudflare/pingora?rev=38a9d556b557a10f7815f50fca6a49de146ab5be#38a9d556b557a10f7815f50fca6a49de146ab5be"
 dependencies = [
  "arrayvec",
  "hashbrown 0.14.5",
@@ -2333,7 +2392,7 @@ dependencies = [
 [[package]]
 name = "pingora-openssl"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=648a6ad0554442be5f9c8d396a66843552156d1f#648a6ad0554442be5f9c8d396a66843552156d1f"
+source = "git+https://github.com/cloudflare/pingora?rev=38a9d556b557a10f7815f50fca6a49de146ab5be#38a9d556b557a10f7815f50fca6a49de146ab5be"
 dependencies = [
  "foreign-types",
  "libc",
@@ -2346,7 +2405,7 @@ dependencies = [
 [[package]]
 name = "pingora-pool"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=648a6ad0554442be5f9c8d396a66843552156d1f#648a6ad0554442be5f9c8d396a66843552156d1f"
+source = "git+https://github.com/cloudflare/pingora?rev=38a9d556b557a10f7815f50fca6a49de146ab5be#38a9d556b557a10f7815f50fca6a49de146ab5be"
 dependencies = [
  "crossbeam-queue",
  "log",
@@ -2360,7 +2419,7 @@ dependencies = [
 [[package]]
 name = "pingora-proxy"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=648a6ad0554442be5f9c8d396a66843552156d1f#648a6ad0554442be5f9c8d396a66843552156d1f"
+source = "git+https://github.com/cloudflare/pingora?rev=38a9d556b557a10f7815f50fca6a49de146ab5be#38a9d556b557a10f7815f50fca6a49de146ab5be"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2394,7 +2453,7 @@ dependencies = [
 [[package]]
 name = "pingora-runtime"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=648a6ad0554442be5f9c8d396a66843552156d1f#648a6ad0554442be5f9c8d396a66843552156d1f"
+source = "git+https://github.com/cloudflare/pingora?rev=38a9d556b557a10f7815f50fca6a49de146ab5be#38a9d556b557a10f7815f50fca6a49de146ab5be"
 dependencies = [
  "once_cell",
  "rand",
@@ -2405,7 +2464,7 @@ dependencies = [
 [[package]]
 name = "pingora-timeout"
 version = "0.2.0"
-source = "git+https://github.com/cloudflare/pingora?rev=648a6ad0554442be5f9c8d396a66843552156d1f#648a6ad0554442be5f9c8d396a66843552156d1f"
+source = "git+https://github.com/cloudflare/pingora?rev=38a9d556b557a10f7815f50fca6a49de146ab5be#38a9d556b557a10f7815f50fca6a49de146ab5be"
 dependencies = [
  "futures",
  "once_cell",
@@ -2649,7 +2708,7 @@ dependencies = [
  "log",
  "names",
  "prost 0.11.9",
- "reqwest",
+ "reqwest 0.11.27",
  "thiserror",
  "url",
  "winapi",
@@ -2800,10 +2859,53 @@ dependencies = [
  "futures-util",
  "h2 0.3.26",
  "http 0.2.12",
- "http-body",
- "hyper",
- "hyper-rustls",
+ "http-body 0.4.6",
+ "hyper 0.14.29",
+ "hyper-rustls 0.24.2",
+ "ipnet",
+ "js-sys",
+ "log",
+ "mime",
+ "once_cell",
+ "percent-encoding",
+ "pin-project-lite",
+ "rustls 0.21.12",
+ "rustls-pemfile 1.0.4",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "sync_wrapper 0.1.2",
+ "system-configuration",
+ "tokio",
+ "tokio-rustls 0.24.1",
+ "tower-service",
+ "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "webpki-roots",
+ "winreg 0.50.0",
+]
+
+[[package]]
+name = "reqwest"
+version = "0.12.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7d6d2a27d57148378eb5e111173f4276ad26340ecc5c49a4a2152167a2d6a37"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "encoding_rs",
+ "futures-core",
+ "futures-util",
+ "h2 0.4.5",
+ "http 1.1.0",
+ "http-body 1.0.0",
+ "http-body-util",
+ "hyper 1.3.1",
+ "hyper-rustls 0.27.2",
  "hyper-tls",
+ "hyper-util",
  "ipnet",
  "js-sys",
  "log",
@@ -2812,23 +2914,20 @@ dependencies = [
  "once_cell",
  "percent-encoding",
  "pin-project-lite",
- "rustls",
- "rustls-pemfile",
+ "rustls-pemfile 2.1.2",
  "serde",
  "serde_json",
  "serde_urlencoded",
- "sync_wrapper",
+ "sync_wrapper 1.0.1",
  "system-configuration",
  "tokio",
  "tokio-native-tls",
- "tokio-rustls",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "webpki-roots",
- "winreg",
+ "winreg 0.52.0",
 ]
 
 [[package]]
@@ -2971,8 +3070,21 @@ checksum = "3f56a14d1f48b391359b22f731fd4bd7e43c97f3c50eee276f3aa09c94784d3e"
 dependencies = [
  "log",
  "ring",
- "rustls-webpki",
+ "rustls-webpki 0.101.7",
  "sct",
+]
+
+[[package]]
+name = "rustls"
+version = "0.23.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05cff451f60db80f490f3c182b77c35260baace73209e9cdbbe526bfe3a4d402"
+dependencies = [
+ "once_cell",
+ "rustls-pki-types",
+ "rustls-webpki 0.102.4",
+ "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -2982,7 +3094,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a9aace74cb666635c918e9c12bc0d348266037aa8eb599b5cba565709a8dff00"
 dependencies = [
  "openssl-probe",
- "rustls-pemfile",
+ "rustls-pemfile 1.0.4",
  "schannel",
  "security-framework",
 ]
@@ -2994,6 +3106,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c74cae0a4cf6ccbbf5f359f08efdf8ee7e1dc532573bf0db71968cb56b1448c"
 dependencies = [
  "base64 0.21.7",
+]
+
+[[package]]
+name = "rustls-pemfile"
+version = "2.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29993a25686778eb88d4189742cd713c9bce943bc54251a33509dc63cbacf73d"
+dependencies = [
+ "base64 0.22.1",
+ "rustls-pki-types",
 ]
 
 [[package]]
@@ -3009,6 +3131,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b6275d1ee7a1cd780b64aca7726599a1dbc893b1e64144529e55c3c2f745765"
 dependencies = [
  "ring",
+ "untrusted",
+]
+
+[[package]]
+name = "rustls-webpki"
+version = "0.102.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff448f7e92e913c4b7d4c6d8e4540a1724b319b4152b8aef6d4cf8339712b33e"
+dependencies = [
+ "ring",
+ "rustls-pki-types",
  "untrusted",
 ]
 
@@ -3121,7 +3254,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "904eca4fb30c6112a1dae60c0a9e29cfb42f42129da4260f1ee20e94151b62e3"
 dependencies = [
  "httpdate",
- "reqwest",
+ "reqwest 0.11.27",
  "sentry-backtrace",
  "sentry-contexts",
  "sentry-core",
@@ -3457,6 +3590,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2047c6ded9c721764247e62cd3b03c09ffc529b2ba5b10ec482ae507a4a70160"
 
 [[package]]
+name = "sync_wrapper"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7065abeca94b6a8a577f9bd45aa0867a2238b74e8eb67cf10d492bc39351394"
+
+[[package]]
 name = "synstructure"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3686,7 +3825,18 @@ version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c28327cf380ac148141087fbfb9de9d7bd4e84ab5d2c28fbc911d753de8a7081"
 dependencies = [
- "rustls",
+ "rustls 0.21.12",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-rustls"
+version = "0.26.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c7bc40d0e5a97695bb96e27995cd3a08538541b0a846f65bba7a359f36700d4"
+dependencies = [
+ "rustls 0.23.10",
+ "rustls-pki-types",
  "tokio",
 ]
 
@@ -3763,9 +3913,9 @@ dependencies = [
 
 [[package]]
 name = "tonic"
-version = "0.10.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d560933a0de61cf715926b9cac824d4c883c2c43142f787595e48280c40a1d0e"
+checksum = "76c4eb7a4e9ef9d4763600161f12f5070b92a578e1b634db88a6887844c91a13"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -3774,8 +3924,8 @@ dependencies = [
  "bytes",
  "h2 0.3.26",
  "http 0.2.12",
- "http-body",
- "hyper",
+ "http-body 0.4.6",
+ "hyper 0.14.29",
  "hyper-timeout",
  "percent-encoding",
  "pin-project",
@@ -3790,9 +3940,9 @@ dependencies = [
 
 [[package]]
 name = "tonic-build"
-version = "0.10.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d021fc044c18582b9a2408cd0dd05b1596e3ecdb5c4df822bb0183545683889"
+checksum = "be4ef6dd70a610078cb4e338a0f79d06bc759ff1b22d2120c2ff02ae264ba9c2"
 dependencies = [
  "prettyplease",
  "proc-macro2",
@@ -4359,6 +4509,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "winreg"
+version = "0.52.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a277a57398d4bfa075df44f501a17cfdf8542d224f0d36095a2adc7aee4ef0a5"
+dependencies = [
+ "cfg-if",
+ "windows-sys 0.48.0",
+]
+
+[[package]]
 name = "x509-parser"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4418,6 +4578,12 @@ dependencies = [
  "quote",
  "syn 2.0.68",
 ]
+
+[[package]]
+name = "zeroize"
+version = "1.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ced3678a2879b30306d323f4542626697a464a97c0a07c9aebf7ebca65cd4dde"
 
 [[package]]
 name = "zstd"
