@@ -4,7 +4,7 @@ description: Pingap 配置说明
 
 Pingap使用toml来配置相关参数，具体参数说明如下：
 
-## 基本配置
+## 基础配置
 
 - `name`: 实例名称，默认为`Pingap`
 - `error_template`: 参数可选，异常出错时的html模板，可自定义出错的html模板，在出错时会替换模板中的`{{version}}`为pingap的版本号，`{{content}}`为出错的具体信息
@@ -26,7 +26,6 @@ Pingap使用toml来配置相关参数，具体参数说明如下：
 - `pyroscope`: Pyroscope连接地址，需要注意默认版本并未编译支持pyroscpe，需要使用perf的版本
 - `auto_restart_check_interval`: 检测配置更新的间隔，默认为每90秒检测一次，若配置为小于1秒的值，则不检测
 - `cache_max_size`: 缓存空间的最大限制，缓存是程序中所有服务共用
-- `certificate_file`: https证书文件保存，对于使用`let's encrypt`自动生成证书时建议配置
 
 ## upstreams
 
@@ -41,10 +40,14 @@ Location的相关配置说明可查看[Location的详细说明](./location_zh.md
 - `server.x`: server的配置，其中`x`为server的名称，需要注意名称不要相同，相同名称的配置会被覆盖。
 - `addr`: 监控的端口地址，地址格式为`ip:port`的形式，若需要监听多地址则以`,`分隔
 - `access_log`: 可选，默认为不输出访问日志。请求日志格式化，指定输出访问日志的形式。提供了以下几种常用的日志输出格式`combined`, `common`, `short`, `tiny`
-- `locations`: location的列表，指定该server使用的所有location
+- `locations`: location的列表，指定该server使用的location
 - `threads`: 设置服务默认的线程数，设置为0则等于cpu核数，默认为1
 - `tls_cert`: tls证书的cert，pem格式，如果是https的形式才需要添加
 - `tls_key`: tls证书的key，pem格式，如果是https的形式才需要添加
+- `tls_cipher_list`: 指定tls1.3之前版本使用的加密套件
+- `tls_ciphersuites`: 指定tls1.3版本使用的加密套件
+- `tls_min_version`: 指定tls的最低版本，默认为1.2
+- `tls_max_version`: 指定tls的最低版本，默认为1.3
 - `lets_encrypt`: 指定通过let's encrypt生成https证书的域名地址列表，多个域名用`,`分隔
 - `enabled_h2`: 是否启用http2，默认为不启用，需要注意只有https下才有效
 - `tcp_idle`: tcp连接keepalive空闲回收时长

@@ -132,6 +132,7 @@ export default {
   "form.removeDescript":
     "Please confirm whether you want to delete the configuration, and it can not be restored after delete it.",
   "form.confirm": "Confirm",
+  "form.cancel": "Cancel",
   "form.nameRequired": "Name is required",
   "form.nameExists": "Name is exitst",
   "form.sortPlugin": "Sort plugins",

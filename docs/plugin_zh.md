@@ -12,30 +12,38 @@ Pingap中通过Locaton添加各种插件支持更多的应用场景，如鉴权�
 - `ProxyUpstream`: 请求转发至上流节点之前，因为此流程是在读取缓存之后，因此若不希望针对缓存前限制，但转发至上游前限制的可配置为此阶段。如限制IP访问频繁，但允许高并发读取缓存数据。
 - `Response`: 上游数据响应之后，用于针对上游响应数据做调整时使用。
 
-# 转发插件
-
-转发插件是在请求转发至upstream之前执行，支持在`request_filter`与`proxy_upstream_filter`阶段执行，均为转发到上游节点前的处理。下面介绍一下`proxy plugin`的具体逻辑，trait如下：
-
 ```rust
 #[async_trait]
-pub trait ProxyPlugin: Sync + Send {
+pub trait Plugin: Sync + Send {
     fn category(&self) -> PluginCategory;
-    fn step(&self) -> PluginStep;
-    async fn handle(
+    fn step(&self) -> String;
+    async fn handle_request(
         &self,
+        _step: PluginStep,
         _session: &mut Session,
         _ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
         Ok(None)
     }
+    async fn handle_response(
+        &self,
+        _step: PluginStep,
+        _session: &mut Session,
+        _ctx: &mut State,
+        _upstream_response: &mut ResponseHeader,
+    ) -> pingora::Result<Option<Bytes>> {
+        Ok(None)
+    }
 }
+
 ```
 
 主要分三个实现：
 
 - `category`: 插件类型，用于区分该插件是哪类形式的插件
 - `step`: 插件的执行阶段，现只支持在`request_filter`与`proxy_upstream_filter`阶段执行
-- `handle`: 插件的执行逻辑，若返回的是`Ok(Some(HttpResponse))`，则表示请求已处理完成，不再转发到上游节点，并将该响应传输至请求端
+- `handle_request`: 插件的转发前执行逻辑，若返回的是`Ok(Some(HttpResponse))`，则表示请求已处理完成，不再转发到上游节点，并将该响应传输至请求端
+- `handle_response`: 插件的响应前执逻辑，若返回的是Ok(Some(Bytes))`，则表示要重写响应数据
 
 ## Stats
 
@@ -100,7 +108,7 @@ remark = "管理后台"
 category = "directory"
 charset = "utf-8"
 chunk_size = 4096
-index = "/index.html"
+index = "index.html"
 max_age = "1h"
 path = "~/Downloads"
 ```
@@ -120,7 +128,7 @@ path = "~/Downloads"
 category = "mock"
 data = "{\"message\": \"error message\"}"
 headers = [
-    "X-Error:custom error",
+    "X-Error:CustomRrror",
     "Content-Type:application/json",
 ]
 path = "/"
@@ -196,6 +204,7 @@ KeyAuth用于提供简单的认证方式，支持配置从query或header中获�
 ```toml
 [plugins.appAuth]
 category = "key_auth"
+hide_credentials = true
 keys = [
     "KOXQaw",
     "GKvXY2",
@@ -208,6 +217,7 @@ query = "app"
 ```toml
 [plugins.appAuth]
 category = "key_auth"
+hide_credentials = true
 header = "X-App"
 keys = [
     "KOXQaw",
@@ -232,6 +242,7 @@ authorizations = [
     "YWRtaW46MTIzMTIz",
 ]
 category = "basic_auth"
+hide_credentials = true
 ```
 
 界面配置如图所示，配置basic auth的值，需要注意配置已做base64处理后的值即可：
@@ -340,23 +351,6 @@ type = "allow"
 
 Http缓存，仅支持内存式缓存，暂不建议使用。
 
-# 响应插件
-
-响应插件是在获取到响应数据，在数据发送给客户端之前的处理。下面介绍一下`response plugin`的具体逻辑，trait如下：
-
-```rust
-pub trait ResponsePlugin: Sync + Send {
-    fn category(&self) -> PluginCategory;
-    fn step(&self) -> PluginStep;
-    fn handle(
-        &self,
-        _session: &mut Session,
-        _ctx: &mut State,
-        _upstream_response: &mut ResponseHeader,
-    ) {
-    }
-}
-```
 
 ## ResponseHeaders
 

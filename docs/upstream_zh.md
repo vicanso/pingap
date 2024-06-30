@@ -52,4 +52,4 @@ Upstream配置为节点地址列表，配置为域名则会根据解析后的IP�
 - `hash:header:X-User`: 根据请求头获取`X-User`的值转发
 - `hash:cookie:uid`: 根据Cookie的`uid`值转发
 - `hash:query:appKey`: 根据Query的`appkey`值转发
-- `hash:path`: 根据path转发，其它的默认值
+- `hash:path`: 根据path转发，hash方式的默认值

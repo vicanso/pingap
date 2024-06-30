@@ -692,7 +692,7 @@ export default function FormEditor({
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button onClick={handleCloseRemoveDialog}>Cancel</Button>
+          <Button onClick={handleCloseRemoveDialog}>{t("form.cancel")}</Button>
           <Button
             onClick={() => {
               doRemove();

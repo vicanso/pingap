@@ -131,6 +131,7 @@ export default {
   "form.confirmRemove": "确认要删除该配置吗？",
   "form.removeDescript": "请确认是否要删除该配置，该配置删除后无法恢复！",
   "form.confirm": "确认",
+  "form.cancel": "取消",
   "form.nameRequired": "名称不允许为空",
   "form.nameExists": "该名称已存在",
   "form.sortPlugin": "排序插件",
