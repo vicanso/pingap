@@ -158,6 +158,11 @@ prefix = "/api"
     <img src="../asset/plugin-redirect-https.jpg" alt="plugin-redirect-https">
 </p>
 
+## Cache
+
+Http缓存，仅支持内存式缓存，暂不建议使用。
+
+
 ## RequestId
 
 用于在请求头中添加`X-Request-Id`(也可指定对应的请求头），若已有则忽略，可指定使用`uuid`或`nanoid`两种形式，`nanoid`可以指定长度。
@@ -250,6 +255,25 @@ hide_credentials = true
 <p align="center">
     <img src="../asset/plugin-basic-auth.jpg" alt="plugin-basic-auth">
 </p>
+
+## Jwt
+
+用于生成jwt认证信息以及针对相关请求判断jwt相关信息是否符合。需要注意请求路径的响应数据会使用jwt的形式重新签名生成对应的token返回，其它路径则校验其token是否符合。
+
+```toml
+[plugins.jwtAuth]
+algorithm = "HS256"
+auth_path = "/jwt-sign"
+category = "jwt"
+cookie = ""
+header = "X-Jwt"
+secret = "123123"
+```
+
+<p align="center">
+    <img src="../asset/plugin-jwt.jpg" alt="plugin-jwt">
+</p>
+
 
 ## Limit
 
@@ -347,10 +371,41 @@ type = "allow"
 </p>
 
 
-## Cache
+## Csrf
 
-Http缓存，仅支持内存式缓存，暂不建议使用。
+Csrf校验，校验请求时的cookie与请求头的是否一致，若不一致则返回出错。获取令牌的路径则会生成对应的cookie，并设置为非http的模式允许浏览器获取。
 
+```toml
+[plugins.csrf]
+category = "csrf"
+key = "WjrXUG47wu"
+name = "x-csrf-toekn"
+token_path = "/csrf-token"
+ttl = "1h"
+```
+
+<p align="center">
+    <img src="../asset/plugin-csrf.jpg" alt="plugin-csrf">
+</p>
+
+## Cors
+
+Cors插件，用于设置跨域请求相关配置。
+
+```toml
+[plugins.cors]
+allow_credentials = true
+allow_headers = 'Content-Type, X-User-Id"'
+allow_methods = "GET, POST"
+allow_origin = "$http_origin"
+category = "cors"
+max_age = "1h"
+path = "^/api"
+```
+
+<p align="center">
+    <img src="../asset/plugin-cors.jpg" alt="plugin-cors">
+</p>
 
 ## ResponseHeaders
 
