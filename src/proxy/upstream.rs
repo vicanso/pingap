@@ -639,11 +639,13 @@ mod tests {
     use super::{
         get_hash_value, new_backends, new_health_check, new_http_health_check,
         new_tcp_health_check, HealthCheckConf, State, Upstream, UpstreamConf,
+        UpstreamPeerTracer,
     };
     use pingora::protocols::ALPN;
     use pingora::proxy::Session;
-    use pingora::upstreams::peer::Peer;
+    use pingora::upstreams::peer::{Peer, Tracing};
     use pretty_assertions::assert_eq;
+    use std::sync::atomic::Ordering;
     use std::time::Duration;
     use tokio_test::io::Builder;
     #[test]
@@ -827,5 +829,13 @@ mod tests {
             up.new_http_peer(&session, &State::default(),).is_some()
         );
         assert_eq!(true, up.as_round_robind().is_some());
+    }
+    #[test]
+    fn test_upstream_peer_tracer() {
+        let tracer = UpstreamPeerTracer::new();
+        tracer.on_connected();
+        assert_eq!(1, tracer.connected.load(Ordering::Relaxed));
+        tracer.on_disconnected();
+        assert_eq!(0, tracer.connected.load(Ordering::Relaxed));
     }
 }
