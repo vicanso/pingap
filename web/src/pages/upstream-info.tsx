@@ -280,6 +280,7 @@ export default function UpstreamInfo() {
       onRemove={onRemove}
       created={created}
       currentNames={currentNames}
+      hiddenIndex={2}
     />
   );
 }

@@ -83,34 +83,6 @@ export default function ServerInfo() {
       category: FormItemCategory.NUMBER,
     },
     {
-      id: "tcp_fastopen",
-      label: t("server.tcpFastOpen"),
-      defaultValue: server.tcp_fastopen,
-      span: 6,
-      category: FormItemCategory.NUMBER,
-    },
-    {
-      id: "tcp_idle",
-      label: t("server.tcpIdle"),
-      defaultValue: server.tcp_idle,
-      span: 4,
-      category: FormItemCategory.TEXT,
-    },
-    {
-      id: "tcp_interval",
-      label: t("server.tcpInterval"),
-      defaultValue: server.tcp_interval,
-      span: 4,
-      category: FormItemCategory.TEXT,
-    },
-    {
-      id: "tcp_probe_count",
-      label: t("server.tcpProbeCount"),
-      defaultValue: server.tcp_probe_count,
-      span: 4,
-      category: FormItemCategory.NUMBER,
-    },
-    {
       id: "access_log",
       label: t("server.accessLog"),
       defaultValue: server.access_log,
@@ -224,6 +196,34 @@ export default function ServerInfo() {
       options: tlsVersions,
     },
     {
+      id: "tcp_fastopen",
+      label: t("server.tcpFastOpen"),
+      defaultValue: server.tcp_fastopen,
+      span: 6,
+      category: FormItemCategory.NUMBER,
+    },
+    {
+      id: "tcp_idle",
+      label: t("server.tcpIdle"),
+      defaultValue: server.tcp_idle,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
+      id: "tcp_interval",
+      label: t("server.tcpInterval"),
+      defaultValue: server.tcp_interval,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
+      id: "tcp_probe_count",
+      label: t("server.tcpProbeCount"),
+      defaultValue: server.tcp_probe_count,
+      span: 6,
+      category: FormItemCategory.NUMBER,
+    },
+    {
       id: "remark",
       label: t("server.remark"),
       defaultValue: server.remark,
@@ -258,6 +258,7 @@ export default function ServerInfo() {
       onRemove={onRemove}
       created={created}
       currentNames={currentNames}
+      hiddenIndex={5}
     />
   );
 }

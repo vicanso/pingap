@@ -132,6 +132,7 @@ export default function ProxyPluginInfo() {
       onRemove={onRemove}
       created={created}
       currentNames={currentNames}
+      hiddenIndex={0}
     />
   );
 }

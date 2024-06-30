@@ -25,20 +25,6 @@ export default function BasicInfo() {
       category: FormItemCategory.TEXT,
     },
     {
-      id: "pid_file",
-      label: t("basic.pidFile"),
-      defaultValue: basic.pid_file,
-      span: 6,
-      category: FormItemCategory.TEXT,
-    },
-    {
-      id: "upgrade_sock",
-      label: t("basic.upgradeSock"),
-      defaultValue: basic.upgrade_sock,
-      span: 6,
-      category: FormItemCategory.TEXT,
-    },
-    {
       id: "threads",
       label: t("basic.threads"),
       defaultValue: basic.threads,
@@ -68,34 +54,6 @@ export default function BasicInfo() {
           value: null,
         },
       ],
-    },
-    {
-      id: "user",
-      label: t("basic.user"),
-      defaultValue: basic.user,
-      span: 6,
-      category: FormItemCategory.TEXT,
-    },
-    {
-      id: "group",
-      label: t("basic.group"),
-      defaultValue: basic.group,
-      span: 6,
-      category: FormItemCategory.TEXT,
-    },
-    {
-      id: "grace_period",
-      label: t("basic.gracePeriod"),
-      defaultValue: basic.grace_period,
-      span: 6,
-      category: FormItemCategory.TEXT,
-    },
-    {
-      id: "graceful_shutdown_timeout",
-      label: t("basic.gracefulShutdownTimeout"),
-      defaultValue: basic.graceful_shutdown_timeout,
-      span: 6,
-      category: FormItemCategory.TEXT,
     },
     {
       id: "log_level",
@@ -143,6 +101,20 @@ export default function BasicInfo() {
       category: FormItemCategory.NUMBER,
     },
     {
+      id: "grace_period",
+      label: t("basic.gracePeriod"),
+      defaultValue: basic.grace_period,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
+      id: "graceful_shutdown_timeout",
+      label: t("basic.gracefulShutdownTimeout"),
+      defaultValue: basic.graceful_shutdown_timeout,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
       id: "auto_restart_check_interval",
       label: t("basic.autoRestartCheckInterval"),
       defaultValue: basic.auto_restart_check_interval,
@@ -153,6 +125,34 @@ export default function BasicInfo() {
       id: "cache_max_size",
       label: t("basic.cacheMaxSize"),
       defaultValue: basic.cache_max_size,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
+      id: "pid_file",
+      label: t("basic.pidFile"),
+      defaultValue: basic.pid_file,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
+      id: "upgrade_sock",
+      label: t("basic.upgradeSock"),
+      defaultValue: basic.upgrade_sock,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
+      id: "user",
+      label: t("basic.user"),
+      defaultValue: basic.user,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
+      id: "group",
+      label: t("basic.group"),
+      defaultValue: basic.group,
       span: 6,
       category: FormItemCategory.TEXT,
     },
@@ -218,6 +218,7 @@ export default function BasicInfo() {
       description={t("basic.description")}
       items={arr}
       onUpsert={onUpsert}
+      hiddenIndex={11}
     />
   );
 }

@@ -125,6 +125,8 @@ export default {
   "form.remove": "Remove",
   "form.submitting": "Submitting",
   "form.submit": "Submit",
+  "form.showMore": "Show More Options",
+  "form.hideMore": "Hide More Options",
   "form.success": "Update success!",
   "form.confirmRemove": "Remove config?",
   "form.removeDescript":

@@ -126,6 +126,7 @@ export default function CertificateInfo() {
       onRemove={onRemove}
       created={created}
       currentNames={currentNames}
+      hiddenIndex={1}
     />
   );
 }

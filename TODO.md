@@ -7,8 +7,8 @@
 - [ ] support validate config for plugin
 - [ ] secret storage
 - [ ] support include comnand for configuraion
-- [ ] admin web expand common configuration items by default
 - [ ] support tracing-appender
+- [x] admin web expand common configuration items by default
 - [x] different servers avoid listening to the same address
 - [x] support different sni on the same listen address
 - [x] build gnu and musl versions

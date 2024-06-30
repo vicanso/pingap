@@ -91,11 +91,11 @@ export default function LocationInfo() {
       options: upstreams,
     },
     {
-      id: "weight",
-      label: t("location.weight"),
-      defaultValue: location.weight,
+      id: "rewrite",
+      label: t("location.rewrite"),
+      defaultValue: location.rewrite,
       span: 6,
-      category: FormItemCategory.NUMBER,
+      category: FormItemCategory.TEXT,
     },
     {
       id: "proxy_set_headers",
@@ -112,11 +112,11 @@ export default function LocationInfo() {
       category: FormItemCategory.PROXY_ADD_HEADERS,
     },
     {
-      id: "rewrite",
-      label: t("location.rewrite"),
-      defaultValue: location.rewrite,
+      id: "weight",
+      label: t("location.weight"),
+      defaultValue: location.weight,
       span: 6,
-      category: FormItemCategory.TEXT,
+      category: FormItemCategory.NUMBER,
     },
     {
       id: "client_max_body_size",
@@ -168,6 +168,7 @@ export default function LocationInfo() {
       onUpsert={onUpsert}
       created={created}
       currentNames={currentNames}
+      hiddenIndex={5}
     />
   );
 }

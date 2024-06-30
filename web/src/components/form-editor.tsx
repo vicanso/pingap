@@ -30,6 +30,7 @@ import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogContentText from "@mui/material/DialogContentText";
 import DialogTitle from "@mui/material/DialogTitle";
+import Divider from "@mui/material/Divider";
 import { useTranslation } from "react-i18next";
 import SubtitlesIcon from "@mui/icons-material/Subtitles";
 import { useParams } from "react-router-dom";
@@ -56,6 +57,7 @@ export default function FormEditor({
   onRemove,
   created,
   currentNames,
+  hiddenIndex,
 }: {
   title: string;
   description: string;
@@ -64,11 +66,13 @@ export default function FormEditor({
   onRemove?: () => Promise<void>;
   created?: boolean;
   currentNames?: string[];
+  hiddenIndex: number;
 }) {
   const { name } = useParams();
   const { t } = useTranslation();
   const theme = useTheme();
   const [data, setData] = React.useState(getDefaultValues(items));
+  const [showMore, setShowMore] = React.useState(false);
   const [openRemoveDialog, setOpenRemoveDialog] = React.useState(false);
   const [pluginCategory, setPluginCategory] = React.useState(
     (data["category"] as string) || "",
@@ -121,7 +125,10 @@ export default function FormEditor({
     message: "",
   });
 
-  const list = items.map((item) => {
+  const showList: JSX.Element[] = [];
+  const hideList: JSX.Element[] = [];
+
+  items.map((item, index) => {
     let formItem: JSX.Element = <></>;
     switch (item.category) {
       case FormItemCategory.PLUGIN_STEP:
@@ -454,11 +461,16 @@ export default function FormEditor({
         break;
       }
     }
-    return (
+    const grid = (
       <Grid item xs={12} sm={12} md={item.span} key={item.id}>
         <FormControl fullWidth={true}>{formItem}</FormControl>
       </Grid>
     );
+    if (hiddenIndex != 0 && index > hiddenIndex) {
+      hideList.push(grid);
+    } else {
+      showList.push(grid);
+    }
   });
   const updateValue = (key: string, value: unknown) => {
     setShowSuccess(false);
@@ -607,7 +619,23 @@ export default function FormEditor({
         <form noValidate autoComplete="off">
           <Grid container spacing={2}>
             {createNewItem}
-            {list}
+            {showList}
+            {hideList.length != 0 && (
+              <Grid item xs={12}>
+                <Divider>
+                  <Button
+                    variant="text"
+                    onClick={() => {
+                      setShowMore(!showMore);
+                    }}
+                  >
+                    {!showMore && t("form.showMore")}
+                    {showMore && t("form.hideMore")}
+                  </Button>
+                </Divider>
+              </Grid>
+            )}
+            {showMore && hideList}
             <Grid item xs={submitSpan}>
               <Button
                 disabled={!updated}

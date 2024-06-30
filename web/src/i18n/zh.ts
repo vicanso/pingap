@@ -125,6 +125,8 @@ export default {
   "form.remove": "删除",
   "form.submitting": "提交中",
   "form.submit": "提交",
+  "form.showMore": "更多配置",
+  "form.hideMore": "隐藏更多配置",
   "form.success": "成功更新！",
   "form.confirmRemove": "确认要删除该配置吗？",
   "form.removeDescript": "请确认是否要删除该配置，该配置删除后无法恢复！",
