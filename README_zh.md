@@ -2,18 +2,28 @@
 
 Pingap是类似于nginx的反向代理，基于[pingora](https://github.com/cloudflare/pingora)构建，简单而高效。
 
+```mermaid
+flowchart LR
+  internet("互联网") -- 客户端请求 --> pingap["Pingap"]
+  pingap -- 转发:pingap.io/api/* --> apiUpstream["10.1.1.1,10.1.1.2"]
+  pingap -- 转发:cdn.pingap.io --> cdnUpstream["10.1.2.1,10.1.2.2"]
+  pingap -- 转发:pingap.io --> upstream["10.1.3.1,10.1.3.2"]
+```
+
 ## 特性
 
-- 支持通过host与path筛选对应的location
+- 服务支持配置多个Location，通过host与path筛选对应的location
 - 正则形式重写Path
-- HTTP 1/2的全链路支持
+- HTTP 1/2 的全链路支持，包括h2c
 - 基于TOML格式的配置，可保存至文件或etcd
-- 应用配置更新后，无中断式的优雅更新程序
-- 访问日志的模板化配置
-- WEB形式的管理后台界面
-- 可通过`let's encrypt`生成tls相关证书，简单易用
+- Upstream与Location的相关配置调整实时生效，其它应用配置更新后，无中断式的优雅更新程序
+- 访问日志的模板化配置，已支30多个相关属性的配置
+- WEB形式的管理后台界面，简单易用
+- 可通过`let's encrypt`生成tls相关证书
+- 支持同一服务端口监听，使用不同域名的tls证书
 - 支持各种事件的推送：`lets_encrypt`, `backend_status`, `diff_config`, `restart`等等
 - 丰富的http转发插件：`compression`, `static serve`, `limit`, `stats`, `mock`, 等等
+- 提供了不同阶段的统计数据，如`upstream_connect_time`, `upstream_processing_time`, `compression_time`, `cache_lookup_time` 与 `cache_lock_time`等
 
 ## 使用手册
 
@@ -21,10 +31,10 @@ Pingap是类似于nginx的反向代理，基于[pingora](https://github.com/clou
 
 ## 启用程序
 
-从 `/opt/proxy`目录中加载所有配置，并以后台程序的形式运行，日志写入至`/opt/proxy/pingap.log`。
+从 `/opt/pingap/conf`目录中加载所有配置，并以后台程序的形式运行，日志写入至`/opt/propingapxy/pingap.log`。
 
 ```bash
-RUST_LOG=INFO pingap -c=/opt/proxy -d --log=/opt/proxy/pingap.log
+RUST_LOG=INFO pingap -c=/opt/pingap/conf -d --log=/opt/pingap/pingap.log
 ```
 
 ## 优雅重启
@@ -32,9 +42,18 @@ RUST_LOG=INFO pingap -c=/opt/proxy -d --log=/opt/proxy/pingap.log
 校验配置是否正确后，发送信号给pingap并启动新的程序接收原有的请求。
 
 ```bash
-RUST_LOG=INFO pingap -c=/opt/proxy -t \
+RUST_LOG=INFO pingap -c=/opt/pingap/conf -t \
   && pkill -SIGQUIT pingap \
-  && RUST_LOG=INFO pingap -c=/opt/proxy -d -u --log=/opt/proxy/pingap.log
+  && RUST_LOG=INFO pingap -c=/opt/pingap/conf -d -u --log=/opt/pingap/pingap.log
+```
+
+## 自动重启
+
+应用启动后，监听相关配置变化，若有变化则无中断式重启程序加载配置。`autoreload`参数表示如果只是upstream与location的配置变化，则变更实时生效，无需重启。
+
+```bash
+RUST_LOG=INFO pingap -c=/opt/pingap/conf \
+  && -a -d --autoreload --log=/opt/pingap/pingap.log
 ```
 
 ## 应用配置

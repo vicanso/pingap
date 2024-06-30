@@ -11,25 +11,25 @@ A reverse proxy like nginx, built on [pingora](https://github.com/cloudflare/pin
 ```mermaid
 flowchart LR
   internet("Internet") -- request --> pingap["Pingap"]
-  pingap -- proxy(pingap.io/api/*) --> server2["10.1.1.2"]
-  pingap -- proxy(cdn.pingap.io) --> server1["10.1.1.1"]
-  pingap -- proxy(pingap.io) --> server3["10.1.1.3"]
+  pingap -- proxy:pingap.io/api/* --> apiUpstream["10.1.1.1,10.1.1.2"]
+  pingap -- proxy:cdn.pingap.io --> cdnUpstream["10.1.2.1,10.1.2.2"]
+  pingap -- proxy:pingap.io --> upstream["10.1.3.1,10.1.3.2"]
 ```
 
 ## Feature
 
-- Filter location by host and path
-- Path rewrite with regexp
-- HTTP 1/2 end to end proxy
+- Server supports multiple locations, select the location by host and path
+- Using regular expression rewriting path
+- HTTP 1/2 end to end proxy, including h2c
 - TOML base configuration, file or etcd storage
-- Hot realod or Graceful restart after the configuration is changed
-- Template for http access log
-- Admin Web UI configuration
+- Uptream and location changes are effective immediately, and other configurations are effective after graceful restart
+- Template for http access log, supports more than 30 attributes
+- Admin Web UI configuration which is easy to use
 - Genrate TLS certificates from let's encrypt
-- Support multiple domains with different certificates
+- Server supports multiple tls certificates for different domains
 - Notification events: `lets_encrypt`, `backend_status`, `diff_config`, `restart`, etc.
 - Http proxy plugins: `compression`, `static serve`, `limit`, `stats`, `mock`, etc.
-- Statistics at different stages: `upstream_connect_time`, `upstream_processing_time`, `compression_time`, `cache_lookup_time` and `cache_lock_time`.
+- Statistics at different stages: `upstream_connect_time`, `upstream_processing_time`, `compression_time`, `cache_lookup_time` and `cache_lock_time`
 
 ## Start
 
@@ -51,11 +51,11 @@ RUST_LOG=INFO pingap -c=/opt/pingap/conf -t \
 
 ## Auto restart
 
-Watch the configurations, if one of them changes, graceful restart pingap.
+Watch the configurations, if one of them changes, graceful restart pingap. `autoreload` means if only the upstream and location configurations are updated, they will take effect immediately without restarting.
 
 ```bash
 RUST_LOG=INFO pingap -c=/opt/pingap/conf \
-  && -a -d --log=/opt/pingap/pingap.log
+  && -a -d --autoreload --log=/opt/pingap/pingap.log
 ```
 
 ## Docker
@@ -66,7 +66,9 @@ RUST_LOG=INFO pingap -c=/opt/pingap/conf \
 docker run -it -d --restart=always \
   -v $PWD/pingap:/opt/pingap \
   -p 3018:3018 \
-  vicanso/pingap -c /opt/pingap/conf --admin=cGluZ2FwOjEyMzEyMw==@0.0.0.0:3018
+  vicanso/pingap -c /opt/pingap/conf \
+  --autoreload \
+  --admin=cGluZ2FwOjEyMzEyMw==@0.0.0.0:3018
 ```
 
 ## Dev
