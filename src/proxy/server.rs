@@ -421,7 +421,7 @@ impl ProxyHttp for Server {
         ctx.remote_addr = util::get_remote_addr(session);
 
         let mut location = None;
-        // location not found
+        // locations not found
         let Some(locations) = get_server_locations(&self.name) else {
             return Ok(());
         };
