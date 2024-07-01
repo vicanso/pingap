@@ -8,6 +8,7 @@
 - [ ] secret storage
 - [ ] support include comnand for configuraion
 - [ ] support tracing-appender
+- [ ] support dns service discovery
 - [x] admin web expand common configuration items by default
 - [x] different servers avoid listening to the same address
 - [x] support different sni on the same listen address

@@ -30,15 +30,17 @@ pub struct LoggerParams {
 }
 
 pub fn logger_try_init(params: LoggerParams) -> Result<(), Box<dyn Error>> {
-    let level = if !params.level.is_empty() {
-        match params.level.to_lowercase().as_str() {
-            "error" => Level::ERROR,
-            "warn" => Level::WARN,
-            "debug" => Level::DEBUG,
-            _ => Level::INFO,
-        }
+    let level = if params.level.is_empty() {
+        std::env::var("RUST_LOG").unwrap_or("INFO".to_string())
     } else {
-        Level::INFO
+        params.level.clone()
+    };
+
+    let level = match level.to_lowercase().as_str() {
+        "error" => Level::ERROR,
+        "warn" => Level::WARN,
+        "debug" => Level::DEBUG,
+        _ => Level::INFO,
     };
 
     let seconds = chrono::Local::now().offset().local_minus_utc();

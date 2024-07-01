@@ -37,6 +37,37 @@ export default function UpstreamInfo() {
       category: FormItemCategory.ADDRS,
     },
     {
+      id: "discovery",
+      label: t("upstream.discovery"),
+      defaultValue: upstream.discovery,
+      span: 6,
+      category: FormItemCategory.CHECKBOX,
+      options: [
+        {
+          label: "common",
+          option: 1,
+          value: "common",
+        },
+        {
+          label: "dns",
+          option: 2,
+          value: "dns",
+        },
+        {
+          label: "None",
+          option: -1,
+          value: null,
+        },
+      ],
+    },
+    {
+      id: "update_frequency",
+      label: t("upstream.updateFrequency"),
+      defaultValue: upstream.update_frequency,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
       id: "algo",
       label: t("upstream.algo"),
       defaultValue: upstream.algo,

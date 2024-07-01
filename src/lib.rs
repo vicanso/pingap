@@ -14,6 +14,7 @@
 
 pub mod acme;
 pub mod config;
+pub mod discovery;
 pub mod http_extra;
 pub mod limit;
 pub mod logger;

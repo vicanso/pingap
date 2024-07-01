@@ -181,6 +181,10 @@ impl CertificateConf {
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
 pub struct UpstreamConf {
     pub addrs: Vec<String>,
+    pub discovery: Option<String>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub update_frequency: Option<Duration>,
     pub algo: Option<String>,
     pub sni: Option<String>,
     pub verify_cert: Option<bool>,

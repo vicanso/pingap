@@ -3,6 +3,8 @@ import { create } from "zustand";
 
 interface Upstream {
   addrs: string[];
+  discovery?: string;
+  update_frequency?: string;
   algo?: string;
   sni?: string;
   alpn?: string;

@@ -13,6 +13,9 @@
 // limitations under the License.
 
 use crate::config::UpstreamConf;
+use crate::discovery::{
+    new_common_discover_backends, new_dns_discover_backends,
+};
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::State;
 use crate::util;
@@ -24,17 +27,14 @@ use once_cell::sync::Lazy;
 use pingora::http::RequestHeader;
 use pingora::lb::health_check::{HealthCheck, HttpHealthCheck, TcpHealthCheck};
 use pingora::lb::selection::{Consistent, RoundRobin};
-use pingora::lb::{discovery, Backend, Backends, LoadBalancer};
+use pingora::lb::{Backends, LoadBalancer};
 use pingora::protocols::l4::ext::TcpKeepalive;
-use pingora::protocols::l4::socket::SocketAddr;
 use pingora::protocols::ALPN;
 use pingora::proxy::Session;
 use pingora::upstreams::peer::{HttpPeer, PeerOptions, Tracer, Tracing};
 use snafu::{ResultExt, Snafu};
-use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::fmt;
-use std::net::ToSocketAddrs;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -49,11 +49,6 @@ pub enum Error {
     UrlParse {
         source: url::ParseError,
         url: String,
-    },
-    #[snafu(display("Io error {source}, {content}"))]
-    Io {
-        source: std::io::Error,
-        content: String,
     },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -307,39 +302,21 @@ fn new_backends(
     addrs: &[String],
     tls: bool,
     ipv4_only: bool,
+    discovery: String,
 ) -> Result<Backends> {
-    let mut upstreams = BTreeSet::new();
-    let mut backends = vec![];
-    for addr in addrs.iter() {
-        let arr: Vec<_> = addr.split(' ').collect();
-        let weight = if arr.len() == 2 {
-            arr[1].parse::<usize>().unwrap_or(1)
-        } else {
-            1
-        };
-        let mut addr = arr[0].to_string();
-        if !addr.contains(':') {
-            if tls {
-                addr = format!("{addr}:443");
-            } else {
-                addr = format!("{addr}:80");
+    if discovery == "dns" {
+        new_dns_discover_backends(addrs, tls, ipv4_only).map_err(|e| {
+            Error::Invalid {
+                message: e.to_string(),
             }
-        }
-        for item in addr.to_socket_addrs().context(IoSnafu { content: addr })? {
-            if ipv4_only && item.is_ipv6() {
-                continue;
+        })
+    } else {
+        new_common_discover_backends(addrs, tls, ipv4_only).map_err(|e| {
+            Error::Invalid {
+                message: e.to_string(),
             }
-            let backend = Backend {
-                addr: SocketAddr::Inet(item),
-                weight,
-            };
-            backends.push(backend)
-        }
+        })
     }
-    upstreams.extend(backends);
-    let discovery = discovery::Static::new(upstreams);
-    let backends = Backends::new(discovery);
-    Ok(backends)
 }
 
 fn get_hash_value(
@@ -386,8 +363,12 @@ impl Upstream {
         let mut hash = "".to_string();
         let sni = conf.sni.clone().unwrap_or_default();
         let tls = !sni.is_empty();
-        let backends =
-            new_backends(&conf.addrs, tls, conf.ipv4_only.unwrap_or_default())?;
+        let backends = new_backends(
+            &conf.addrs,
+            tls,
+            conf.ipv4_only.unwrap_or_default(),
+            conf.discovery.clone().unwrap_or_default(),
+        )?;
 
         let (hc, health_check_frequency) = new_health_check(
             name,
@@ -412,6 +393,7 @@ impl Upstream {
                     .expect("static should not block")
                     .expect("static should not error");
                 lb.set_health_check(hc);
+                lb.update_frequency = conf.update_frequency;
                 lb.health_check_frequency = Some(health_check_frequency);
                 SelectionLb::Consistent(Arc::new(lb))
             },
@@ -423,6 +405,7 @@ impl Upstream {
                     .expect("static should not block")
                     .expect("static should not error");
                 lb.set_health_check(hc);
+                lb.update_frequency = conf.update_frequency;
                 lb.health_check_frequency = Some(health_check_frequency);
                 SelectionLb::RoundRobin(Arc::new(lb))
             },
@@ -574,10 +557,57 @@ impl ServiceTask for HealthCheckTask {
             upstreams
         };
         let interval = self.interval.as_secs();
-
         let jobs = upstreams.into_iter().map(|(name, up)| {
             let runtime = pingora_runtime::current_handle();
             runtime.spawn(async move {
+                let check_frequency_matched = |frequency: u64| -> bool {
+                    let mut count = (frequency / interval) as u32;
+                    if frequency % interval != 0 {
+                        count += 1;
+                    }
+                    check_count % count == 0
+                };
+
+                let update_frequency = if let Some(lb) = up.as_round_robind() {
+                    lb.update_frequency
+                } else if let Some(lb) = up.as_consistent() {
+                    lb.update_frequency
+                } else {
+                    None
+                }
+                .unwrap_or_default()
+                .as_secs();
+
+                if update_frequency > 0
+                    && check_frequency_matched(update_frequency)
+                {
+                    debug!(name, "update backends is running",);
+                    let result = if let Some(lb) = up.as_round_robind() {
+                        lb.backends().update().await
+                    } else if let Some(lb) = up.as_consistent() {
+                        lb.backends().update().await
+                    } else {
+                        Ok(false)
+                    };
+                    match result {
+                        Ok(different) => {
+                            if different {
+                                info!(
+                                    name,
+                                    "update backends with different value"
+                                )
+                            }
+                        },
+                        Err(e) => {
+                            error!(
+                                error = e.to_string(),
+                                name, "update backends fail"
+                            )
+                        },
+                    };
+                    debug!(name, "update backend is done",);
+                }
+
                 let health_check_frequency =
                     if let Some(lb) = up.as_round_robind() {
                         lb.health_check_frequency
@@ -588,11 +618,8 @@ impl ServiceTask for HealthCheckTask {
                     }
                     .unwrap_or_default()
                     .as_secs();
-                let mut count = (health_check_frequency / interval) as u32;
-                if health_check_frequency % interval != 0 {
-                    count += 1;
-                }
-                if check_count % count != 0 {
+
+                if !check_frequency_matched(health_check_frequency) {
                     return;
                 }
 
@@ -698,6 +725,7 @@ mod tests {
             ],
             false,
             true,
+            "".to_string(),
         )
         .unwrap();
 
@@ -705,6 +733,7 @@ mod tests {
             &["192.168.1.1".to_string(), "192.168.1.2:8001".to_string()],
             true,
             true,
+            "".to_string(),
         )
         .unwrap();
     }

@@ -83,6 +83,8 @@ export default {
   "upstream.title": "上游服务的相关配置",
   "upstream.description": "修改上游服务的相关配置，如地址列表、各超时设置等",
   "upstream.addrs": "节点地址列表，格式为ip:port的形式",
+  "upstream.discovery": "上流节点发现方式",
+  "upstream.updateFrequency": "发现服务更新间隔",
   "upstream.algo": "节点选择算法",
   "upstream.healthCheck": "健康检查配置",
   "upstream.connectionTimeout": "连接超时",

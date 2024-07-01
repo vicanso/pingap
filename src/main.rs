@@ -31,6 +31,7 @@ use tracing::{error, info};
 
 mod acme;
 mod config;
+mod discovery;
 mod http_extra;
 mod limit;
 mod logger;
@@ -189,9 +190,7 @@ remark = "Admin serve"
 }
 
 fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
-    let level = std::env::var("RUST_LOG").unwrap_or("INFO".to_string());
     logger::logger_try_init(logger::LoggerParams {
-        level,
         ..Default::default()
     })?;
     let (server_conf, name, proxy_plugin_info) =

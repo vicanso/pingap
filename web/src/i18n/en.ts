@@ -84,6 +84,8 @@ export default {
   "upstream.description":
     "Upstream configuration including address list, timeouts and tcp options",
   "upstream.addrs": "Upstream Addrs(ip:port)",
+  "upstream.discovery": "Upstream Node Discover Type",
+  "upstream.updateFrequency": "Discovery Update Frequency",
   "upstream.algo": "Load Balancer Algorithm",
   "upstream.healthCheck": "Health Check",
   "upstream.connectionTimeout": "Connection Timeout",
