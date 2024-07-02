@@ -2,13 +2,13 @@
 description: Pingap 简述
 ---
 
-Pingap是基于[pingora](https://github.com/cloudflare/pingora)开发的，pingora提供了各类模块便于rust开发者使用，但并不方便非rust开发者使用，因此pingap提供了以toml的形式配置简单易用的反向代理，单服务支持多location转发，通过插件的形式支持更多的需求场景。特性如下：
+Pingap是基于[pingora](https://github.com/cloudflare/pingora)开发的，pingora提供了各类模块便于rust开发者使用，但并不方便非rust开发者，因此pingap提供了以toml的形式配置简单易用的反向代理，单服务支持多location转发，通过插件的形式支持更多的需求场景。特性如下：
 
 - 服务支持配置多个Location，通过host与path筛选对应的location
 - 正则形式重写Path
 - HTTP 1/2 的全链路支持，包括h2c
 - 基于TOML格式的配置，可保存至文件或etcd
-- Upstream与Location的相关配置调整实时生效，其它应用配置更新后，无中断式的优雅更新程序
+- Upstream与Location的相关配置调整准实时生效，其它应用配置更新后，无中断式的优雅更新程序
 - 访问日志的模板化配置，已支30多个相关属性的配置
 - WEB形式的管理后台界面，简单易用
 - 可通过`let's encrypt`生成tls相关证书

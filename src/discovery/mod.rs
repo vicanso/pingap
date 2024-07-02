@@ -24,7 +24,15 @@ pub enum Error {
     },
     #[snafu(display("Resolve error {source}"))]
     Resolve { source: ResolveError },
+    #[snafu(display("{message}"))]
+    Invalid { message: String },
 }
+impl From<Error> for pingora::BError {
+    fn from(value: Error) -> Self {
+        util::new_internal_error(500, value.to_string())
+    }
+}
+
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub(crate) type Addr = (String, String, usize);
@@ -56,3 +64,5 @@ mod common;
 mod dns;
 pub use common::new_common_discover_backends;
 pub use dns::new_dns_discover_backends;
+
+use crate::util;

@@ -177,6 +177,7 @@ export default function BasicInfo() {
         "restart",
         "restart_fail",
         "tls_validity",
+        "service_discover_fail",
       ],
     },
     {

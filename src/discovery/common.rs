@@ -31,7 +31,7 @@ pub fn new_common_discover_backends(
         let addr = format!("{ip}:{port}");
         for item in addr.to_socket_addrs().map_err(|e| Error::Io {
             source: e,
-            content: "new common discovery fail".to_string(),
+            content: format!("{addr} to socket addr fail"),
         })? {
             if ipv4_only && item.is_ipv6() {
                 continue;

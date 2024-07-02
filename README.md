@@ -22,7 +22,7 @@ flowchart LR
 - Using regular expression rewriting path
 - HTTP 1/2 end to end proxy, including h2c
 - TOML base configuration, file or etcd storage
-- Uptream and location changes are effective immediately, and other configurations are effective after graceful restart
+- Uptream and location changes are effective about 10s, and other configurations are effective after graceful restart
 - Template for http access log, supports more than 30 attributes
 - Admin Web UI configuration which is easy to use
 - Genrate TLS certificates from let's encrypt
@@ -33,7 +33,7 @@ flowchart LR
 
 ## Start
 
-Loads all configurations from `/opt/pingap/conf` and run in the background. Log appends to `/opt/pingap/pingap.log`.
+Loads all configurations from `/opt/pingap/conf` or file `/opt/pingap/pingap.toml` and run in the background. Log appends to `/opt/pingap/pingap.log`.
 
 ```bash
 RUST_LOG=INFO pingap -c=/opt/pingap/conf -d --log=/opt/pingap/pingap.log
@@ -51,7 +51,7 @@ RUST_LOG=INFO pingap -c=/opt/pingap/conf -t \
 
 ## Auto restart
 
-Watch the configurations, if one of them changes, graceful restart pingap. `autoreload` means if only the upstream and location configurations are updated, they will take effect immediately without restarting.
+Watch the configurations, if one of them changes, graceful restart pingap. `autoreload` means if only the upstream and location configurations are updated, they will take effect about 10s without restarting.
 
 ```bash
 RUST_LOG=INFO pingap -c=/opt/pingap/conf \

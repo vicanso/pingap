@@ -12,19 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::webhook;
+
 use super::{format_addrs, Addr, Error, Result};
-use crate::util;
 use async_trait::async_trait;
-use hickory_resolver::name_server::{GenericConnector, TokioRuntimeProvider};
-use hickory_resolver::AsyncResolver;
+use hickory_resolver::lookup_ip::LookupIp;
+use hickory_resolver::{AsyncResolver, Resolver};
 use pingora::lb::discovery::ServiceDiscovery;
 use pingora::lb::{Backend, Backends};
 use pingora::protocols::l4::socket::SocketAddr;
 use std::collections::{BTreeSet, HashMap};
 use std::net::ToSocketAddrs;
+use tokio::runtime::Handle;
+use tracing::{debug, error};
 
 struct Dns {
-    resolver: AsyncResolver<GenericConnector<TokioRuntimeProvider>>,
     ipv4_only: bool,
     hosts: Vec<Addr>,
 }
@@ -32,28 +34,54 @@ struct Dns {
 impl Dns {
     fn new(addrs: &[String], tls: bool, ipv4_only: bool) -> Result<Self> {
         let hosts = format_addrs(addrs, tls);
+        Ok(Self { hosts, ipv4_only })
+    }
+    fn lookup_ip(&self) -> Result<Vec<LookupIp>> {
+        let mut ip_list = vec![];
+        let resolver = Resolver::from_system_conf().map_err(|e| Error::Io {
+            source: e,
+            content: "new resolover fail".to_string(),
+        })?;
+        for (host, _, _) in self.hosts.iter() {
+            let ip = resolver
+                .lookup_ip(host)
+                .map_err(|e| Error::Resolve { source: e })?;
+            ip_list.push(ip);
+        }
+        Ok(ip_list)
+    }
+    async fn tokio_lookup_ip(&self) -> Result<Vec<LookupIp>> {
+        let mut ip_list = vec![];
         let resolver = AsyncResolver::tokio_from_system_conf()
             .map_err(|e| Error::Resolve { source: e })?;
-        Ok(Self {
-            resolver,
-            hosts,
-            ipv4_only,
-        })
+        for (host, _, _) in self.hosts.iter() {
+            let ip = resolver
+                .lookup_ip(host)
+                .await
+                .map_err(|e| Error::Resolve { source: e })?;
+            ip_list.push(ip);
+        }
+        Ok(ip_list)
     }
-}
-
-#[async_trait]
-impl ServiceDiscovery for Dns {
-    async fn discover(
+    async fn run_discover(
         &self,
-    ) -> pingora::Result<(BTreeSet<Backend>, HashMap<u64, bool>)> {
+    ) -> Result<(BTreeSet<Backend>, HashMap<u64, bool>)> {
+        let tokio_runtime = Handle::try_current().is_ok();
         let mut upstreams = BTreeSet::new();
         let mut backends = vec![];
-        for (host, port, weight) in self.hosts.iter() {
-            let ip =
-                self.resolver.lookup_ip(host).await.map_err(|e| {
-                    util::new_internal_error(500, e.to_string())
-                })?;
+        debug!(
+            hosts = format!("{:?}", self.hosts),
+            "dns discover is running"
+        );
+        let ip_list = if tokio_runtime {
+            self.tokio_lookup_ip().await?
+        } else {
+            self.lookup_ip()?
+        };
+        for (index, (_, port, weight)) in self.hosts.iter().enumerate() {
+            let ip = ip_list.get(index).ok_or(Error::Invalid {
+                message: "lookup ip fail".to_string(),
+            })?;
             for item in ip.iter() {
                 if self.ipv4_only && item.is_ipv6() {
                     continue;
@@ -62,9 +90,11 @@ impl ServiceDiscovery for Dns {
                 if !port.is_empty() {
                     addr += &format!(":{port}");
                 }
-                for socket_addr in addr
-                    .to_socket_addrs()
-                    .map_err(|e| util::new_internal_error(500, e.to_string()))?
+                for socket_addr in
+                    addr.to_socket_addrs().map_err(|e| Error::Io {
+                        source: e,
+                        content: format!("{addr} to socket addr fail"),
+                    })?
                 {
                     backends.push(Backend {
                         addr: SocketAddr::Inet(socket_addr),
@@ -77,6 +107,31 @@ impl ServiceDiscovery for Dns {
         // no readiness
         let health = HashMap::new();
         Ok((upstreams, health))
+    }
+}
+
+#[async_trait]
+impl ServiceDiscovery for Dns {
+    async fn discover(
+        &self,
+    ) -> pingora::Result<(BTreeSet<Backend>, HashMap<u64, bool>)> {
+        match self.run_discover().await {
+            Ok(data) => return Ok(data),
+            Err(e) => {
+                error!(
+                    error = e.to_string(),
+                    hosts = format!("{:?}", self.hosts),
+                    "dns discover fail"
+                );
+                webhook::send(webhook::SendNotificationParams {
+                    category:
+                        webhook::NotificationCategory::ServiceDiscoverFail,
+                    level: webhook::NotificationLevel::Warn,
+                    msg: e.to_string(),
+                });
+                return Err(e.into());
+            },
+        }
     }
 }
 

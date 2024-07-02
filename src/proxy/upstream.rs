@@ -298,13 +298,15 @@ fn new_health_check(
     Ok((hc, health_check_frequency))
 }
 
+const DNS_DISCOVERY: &str = "dns";
+
 fn new_backends(
     addrs: &[String],
     tls: bool,
     ipv4_only: bool,
-    discovery: String,
+    discovery: &str,
 ) -> Result<Backends> {
-    if discovery == "dns" {
+    if discovery == DNS_DISCOVERY {
         new_dns_discover_backends(addrs, tls, ipv4_only).map_err(|e| {
             Error::Invalid {
                 message: e.to_string(),
@@ -360,6 +362,7 @@ impl Upstream {
                 message: "Upstream addrs is empty".to_string(),
             });
         }
+        let discovery = conf.discovery.clone().unwrap_or_default();
         let mut hash = "".to_string();
         let sni = conf.sni.clone().unwrap_or_default();
         let tls = !sni.is_empty();
@@ -367,7 +370,7 @@ impl Upstream {
             &conf.addrs,
             tls,
             conf.ipv4_only.unwrap_or_default(),
-            conf.discovery.clone().unwrap_or_default(),
+            discovery.as_str(),
         )?;
 
         let (hc, health_check_frequency) = new_health_check(
@@ -387,7 +390,6 @@ impl Upstream {
                         hash_key = algo_params[2].to_string();
                     }
                 }
-
                 lb.update()
                     .now_or_never()
                     .expect("static should not block")
@@ -578,8 +580,10 @@ impl ServiceTask for HealthCheckTask {
                 .unwrap_or_default()
                 .as_secs();
 
-                if update_frequency > 0
-                    && check_frequency_matched(update_frequency)
+                // the firt time should match
+                if check_count == 0
+                    || (update_frequency > 0
+                        && check_frequency_matched(update_frequency))
                 {
                     debug!(name, "update backends is running",);
                     let result = if let Some(lb) = up.as_round_robind() {
@@ -725,7 +729,7 @@ mod tests {
             ],
             false,
             true,
-            "".to_string(),
+            "",
         )
         .unwrap();
 
@@ -733,7 +737,7 @@ mod tests {
             &["192.168.1.1".to_string(), "192.168.1.2:8001".to_string()],
             true,
             true,
-            "".to_string(),
+            "",
         )
         .unwrap();
     }
