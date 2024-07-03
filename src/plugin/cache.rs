@@ -15,6 +15,7 @@
 use super::{
     get_step_conf, get_str_conf, get_str_slice_conf, Error, Plugin, Result,
 };
+use crate::cache::{new_file_cache, new_tiny_ufo_cache, HttpCache};
 use crate::config::{
     get_current_config, PluginCategory, PluginConf, PluginStep,
 };
@@ -30,14 +31,25 @@ use pingora::cache::eviction::simple_lru::Manager;
 use pingora::cache::eviction::EvictionManager;
 use pingora::cache::lock::CacheLock;
 use pingora::cache::predictor::{CacheablePredictor, Predictor};
-use pingora::cache::{MemCache, Storage};
+use pingora::cache::Storage;
 use pingora::proxy::Session;
 use std::str::FromStr;
 use std::time::Duration;
 use tracing::debug;
 
-// TODO mem cache is for test
-static MEM_BACKEND: Lazy<MemCache> = Lazy::new(MemCache::new);
+static CACHE_BACKEND: Lazy<HttpCache> = Lazy::new(|| {
+    let basic_conf = &get_current_config().basic;
+    let size = if let Some(cache_max_size) = basic_conf.cache_max_size {
+        cache_max_size.as_u64() as usize
+    } else {
+        MAX_MEMORY_SIZE
+    };
+    if let Some(dir) = &basic_conf.cache_directory {
+        new_file_cache(dir.as_str())
+    } else {
+        new_tiny_ufo_cache(size)
+    }
+});
 static PREDICTOR: Lazy<Predictor<32>> = Lazy::new(|| Predictor::new(128, None));
 // meomory limit size
 const MAX_MEMORY_SIZE: usize = 100 * 1024 * 1024;
@@ -117,7 +129,7 @@ impl TryFrom<&PluginConf> for Cache {
             Some(headers)
         };
         let params = Self {
-            storage: &*MEM_BACKEND,
+            storage: &*CACHE_BACKEND,
             plugin_step: step,
             eviction: value.contains_key("eviction"),
             predictor: value.contains_key("predictor"),

@@ -30,6 +30,7 @@ use std::time::Duration;
 use tracing::{error, info};
 
 mod acme;
+mod cache;
 mod config;
 mod discovery;
 mod http_extra;

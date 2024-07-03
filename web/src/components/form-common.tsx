@@ -10,6 +10,7 @@ import PlaylistRemoveIcon from "@mui/icons-material/PlaylistRemove";
 import IconButton from "@mui/material/IconButton";
 import AddRoadIcon from "@mui/icons-material/AddRoad";
 import Paper from "@mui/material/Paper";
+import { v4 } from "uuid";
 
 export enum FormItemCategory {
   TEXT = "text",
@@ -138,7 +139,14 @@ export function FormTwoInputFields({
     arr.push("");
   }
   const isSingleMode = divide == "";
-  const [newValues, setNewValues] = React.useState(arr);
+  const [newValues, setNewValues] = React.useState(
+    arr.map((item) => {
+      return {
+        value: item,
+        id: v4(),
+      };
+    }),
+  );
   const divideToTwoValues = (value: string) => {
     if (isSingleMode) {
       return [value];
@@ -158,21 +166,21 @@ export function FormTwoInputFields({
     value: string | undefined,
   ) => {
     const cloneValues = newValues.slice(0);
-    const arr = divideToTwoValues(cloneValues[index]);
+    const arr = divideToTwoValues(cloneValues[index].value);
     if (isSingleMode) {
-      cloneValues[index] = name || "";
+      cloneValues[index].value = name || "";
     } else {
       if (name === undefined) {
         arr[1] = value || "";
       } else {
         arr[0] = name;
       }
-      cloneValues[index] = arr.join(divide).trim();
+      cloneValues[index].value = arr.join(divide).trim();
     }
     setNewValues(cloneValues);
     const updateValues: string[] = [];
     cloneValues.forEach((item) => {
-      const v = item.trim();
+      const v = item.value.trim();
       if (v) {
         updateValues.push(v);
       }
@@ -181,7 +189,7 @@ export function FormTwoInputFields({
   };
 
   const list = newValues.map((item, index) => {
-    const arr = divideToTwoValues(item);
+    const arr = divideToTwoValues(item.value);
     const name = arr[0];
     let value = "";
     if (arr.length === 2) {
@@ -213,7 +221,7 @@ export function FormTwoInputFields({
     }
     return (
       <Paper
-        key={`{id}-${index}`}
+        key={`{id}-${item.id}`}
         sx={{
           display: "flex",
           marginBottom: "15px",
@@ -244,7 +252,7 @@ export function FormTwoInputFields({
             const values = newValues.slice(0);
             values.splice(index, 1);
             setNewValues(values);
-            onUpdate(values);
+            onUpdate(values.map((item) => item.value));
           }}
         >
           <PlaylistRemoveIcon />
@@ -260,7 +268,10 @@ export function FormTwoInputFields({
       endIcon={<AddRoadIcon />}
       onClick={() => {
         const values = newValues.slice(0);
-        values.push("");
+        values.push({
+          value: "",
+          id: v4(),
+        });
         setNewValues(values);
       }}
     >

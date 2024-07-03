@@ -35,6 +35,7 @@ export default {
   "basic.logFormatJson": "Log Format Json",
   "basic.autoRestartCheckInterval": "Auto Restart Check Interval",
   "basic.upstreamKeepalivePoolSize": "Upstream Keepalive Pool Size",
+  "basic.cacheDirectory": "Program Cache Directory",
   "basic.cacheMaxSize": "Program Sharing Cache Max Size",
   "basic.webhookType": "Webhook Type",
   "basic.webhookNotifications": "Webhook Notifications",

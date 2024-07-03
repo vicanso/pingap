@@ -122,16 +122,23 @@ export default function BasicInfo() {
       category: FormItemCategory.TEXT,
     },
     {
-      id: "cache_max_size",
-      label: t("basic.cacheMaxSize"),
-      defaultValue: basic.cache_max_size,
+      id: "pid_file",
+      label: t("basic.pidFile"),
+      defaultValue: basic.pid_file,
       span: 6,
       category: FormItemCategory.TEXT,
     },
     {
-      id: "pid_file",
-      label: t("basic.pidFile"),
-      defaultValue: basic.pid_file,
+      id: "cache_directory",
+      label: t("basic.cacheDirectory"),
+      defaultValue: basic.cache_directory,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
+      id: "cache_max_size",
+      label: t("basic.cacheMaxSize"),
+      defaultValue: basic.cache_max_size,
       span: 6,
       category: FormItemCategory.TEXT,
     },
@@ -219,7 +226,7 @@ export default function BasicInfo() {
       description={t("basic.description")}
       items={arr}
       onUpsert={onUpsert}
-      hiddenIndex={11}
+      hiddenIndex={12}
     />
   );
 }

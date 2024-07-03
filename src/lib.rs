@@ -13,6 +13,7 @@
 // limitations under the License.
 
 pub mod acme;
+pub mod cache;
 pub mod config;
 pub mod discovery;
 pub mod http_extra;

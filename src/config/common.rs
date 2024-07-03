@@ -464,6 +464,7 @@ pub struct BasicConf {
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub auto_restart_check_interval: Option<Duration>,
+    pub cache_directory: Option<String>,
     pub cache_max_size: Option<ByteSize>,
 }
 

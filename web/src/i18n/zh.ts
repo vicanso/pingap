@@ -35,6 +35,7 @@ export default {
   "basic.logFormatJson": "日志以json格式化",
   "basic.autoRestartCheckInterval": "自动重启检测间隔",
   "basic.upstreamKeepalivePoolSize": "上游节点连接池大小",
+  "basic.cacheDirectory": "应用的缓存目录",
   "basic.cacheMaxSize": "应用共享的缓存空间大小限制",
   "basic.webhookType": "Webhook类型",
   "basic.webhookNotifications": "Webhook通知类型",

@@ -3,12 +3,12 @@
 - [ ] better error handler
 - [ ] log rotate
 - [ ] support validate config before save(web)
-- [ ] http response cache(storage: tinyufo, file)
 - [ ] support validate config for plugin
 - [ ] secret storage
 - [ ] support include comnand for configuraion
 - [ ] support tracing-appender
-- [ ] support dns service discovery
+- [ ] http response cache(storage: tinyufo, file)
+- [x] support dns service discovery
 - [x] admin web expand common configuration items by default
 - [x] different servers avoid listening to the same address
 - [x] support different sni on the same listen address
