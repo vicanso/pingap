@@ -224,9 +224,18 @@ fn run() -> Result<(), Box<dyn Error>> {
     let (s, r) = crossbeam_channel::bounded(0);
     get_config(args.conf.clone(), args.admin.is_some(), s);
     let conf = r.recv()??;
+    logger::logger_try_init(logger::LoggerParams {
+        capacity: conf.basic.log_buffered_lines.unwrap_or_default(),
+        file: args.log.clone().unwrap_or_default(),
+        level: conf.basic.log_level.clone().unwrap_or_default(),
+        json: conf.basic.log_format_json.unwrap_or_default(),
+    })?;
+    // TODO a better way
+    // since the cache will be initialized in validate function
+    // so set the current conf first
+    config::set_current_config(&conf);
     conf.validate()?;
     let basic_conf = &conf.basic;
-    config::set_current_config(&conf);
     config::set_app_name(&basic_conf.name.clone().unwrap_or_default());
 
     let webhook_url = basic_conf.webhook.clone().unwrap_or_default();
@@ -235,13 +244,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         &conf.basic.webhook_type.clone().unwrap_or_default(),
         &conf.basic.webhook_notifications.clone().unwrap_or_default(),
     );
-
-    logger::logger_try_init(logger::LoggerParams {
-        capacity: basic_conf.log_buffered_lines.unwrap_or_default(),
-        file: args.log.clone().unwrap_or_default(),
-        level: basic_conf.log_level.clone().unwrap_or_default(),
-        json: basic_conf.log_format_json.unwrap_or_default(),
-    })?;
 
     // return if test mode
     if args.test {

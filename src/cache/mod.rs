@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use crate::util;
-use dashmap::DashMap;
 use snafu::Snafu;
 use std::sync::Arc;
 
@@ -39,15 +38,12 @@ impl From<Error> for pingora::BError {
 pub fn new_tiny_ufo_cache(size: usize) -> HttpCache {
     HttpCache {
         cached: Arc::new(tiny::new_tiny_ufo_cache(size / 1024, size / 1024)),
-        temp: Arc::new(DashMap::new()),
     }
 }
-pub fn new_file_cache(dir: &str) -> HttpCache {
-    // TODO error
-    HttpCache {
-        cached: Arc::new(file::new_file_cache(dir).unwrap()),
-        temp: Arc::new(DashMap::new()),
-    }
+pub fn new_file_cache(dir: &str) -> Result<HttpCache> {
+    Ok(HttpCache {
+        cached: Arc::new(file::new_file_cache(dir)?),
+    })
 }
 
 pub use http_cache::HttpCache;

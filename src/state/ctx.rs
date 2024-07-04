@@ -194,6 +194,12 @@ impl State {
                     buf = format_duration(buf, ms);
                 }
             },
+            "service_time" => {
+                buf = format_duration(
+                    buf,
+                    util::now().as_millis() as u64 - self.created_at,
+                )
+            },
             _ => {},
         }
         buf

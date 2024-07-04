@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util;
-
 use super::http_cache::{CacheObject, HttpCacheStorage};
 use super::{Error, Result};
+use crate::util;
 use async_trait::async_trait;
 use std::path::Path;
 use tokio::fs;
+use tracing::info;
 
 pub struct FileCache {
     directory: String,
@@ -30,6 +30,7 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
     if !path.exists() {
         std::fs::create_dir_all(path).map_err(|e| Error::Io { source: e })?;
     }
+    info!(dir, "new file cache");
 
     Ok(FileCache { directory: dir })
 }

@@ -26,7 +26,7 @@ use bytes::{BufMut, BytesMut};
 use bytesize::ByteSize;
 use http::Method;
 use humantime::parse_duration;
-use once_cell::sync::Lazy;
+use once_cell::sync::{Lazy, OnceCell};
 use pingora::cache::eviction::simple_lru::Manager;
 use pingora::cache::eviction::EvictionManager;
 use pingora::cache::lock::CacheLock;
@@ -37,19 +37,7 @@ use std::str::FromStr;
 use std::time::Duration;
 use tracing::debug;
 
-static CACHE_BACKEND: Lazy<HttpCache> = Lazy::new(|| {
-    let basic_conf = &get_current_config().basic;
-    let size = if let Some(cache_max_size) = basic_conf.cache_max_size {
-        cache_max_size.as_u64() as usize
-    } else {
-        MAX_MEMORY_SIZE
-    };
-    if let Some(dir) = &basic_conf.cache_directory {
-        new_file_cache(dir.as_str())
-    } else {
-        new_tiny_ufo_cache(size)
-    }
-});
+static CACHE_BACKEND: OnceCell<HttpCache> = OnceCell::new();
 static PREDICTOR: Lazy<Predictor<32>> = Lazy::new(|| Predictor::new(128, None));
 // meomory limit size
 const MAX_MEMORY_SIZE: usize = 100 * 1024 * 1024;
@@ -85,6 +73,23 @@ pub struct Cache {
 impl TryFrom<&PluginConf> for Cache {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
+        let cache = CACHE_BACKEND.get_or_try_init(|| {
+            let basic_conf = &get_current_config().basic;
+            let size = if let Some(cache_max_size) = basic_conf.cache_max_size {
+                cache_max_size.as_u64() as usize
+            } else {
+                MAX_MEMORY_SIZE
+            };
+            let cache = if let Some(dir) = &basic_conf.cache_directory {
+                new_file_cache(dir.as_str()).map_err(|e| Error::Invalid {
+                    category: "cache_backend".to_string(),
+                    message: e.to_string(),
+                })?
+            } else {
+                new_tiny_ufo_cache(size)
+            };
+            Ok(cache)
+        })?;
         let step = get_step_conf(value);
 
         let lock = get_str_conf(value, "lock");
@@ -114,7 +119,7 @@ impl TryFrom<&PluginConf> for Cache {
                 message: e.to_string(),
             })?
         } else {
-            ByteSize::mb(50)
+            ByteSize::mb(5)
         };
         let namespace = get_str_conf(value, "namespace");
         let namespace = if namespace.is_empty() {
@@ -129,7 +134,7 @@ impl TryFrom<&PluginConf> for Cache {
             Some(headers)
         };
         let params = Self {
-            storage: &*CACHE_BACKEND,
+            storage: cache,
             plugin_step: step,
             eviction: value.contains_key("eviction"),
             predictor: value.contains_key("predictor"),
