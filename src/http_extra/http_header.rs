@@ -101,8 +101,7 @@ pub fn convert_header_value(
         _ => {
             if buf.starts_with(b"$") {
                 if let Ok(value) = std::env::var(
-                    std::string::String::from_utf8_lossy(&buf[1..buf.len()])
-                        .to_string(),
+                    std::str::from_utf8(&buf[1..buf.len()]).unwrap_or_default(),
                 ) {
                     return HeaderValue::from_str(&value).ok();
                 }
@@ -110,9 +109,7 @@ pub fn convert_header_value(
                 let mut value = BytesMut::with_capacity(20);
                 value = ctx.append_value(
                     value,
-                    std::string::String::from_utf8_lossy(&buf[1..buf.len()])
-                        .to_string()
-                        .as_str(),
+                    std::str::from_utf8(&buf[1..buf.len()]).unwrap_or_default(),
                 );
                 if !value.is_empty() {
                     return HeaderValue::from_bytes(&value).ok();

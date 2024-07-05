@@ -601,11 +601,13 @@ impl ProxyHttp for Server {
         session: &Session,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<CacheKey> {
-        Ok(CacheKey::new(
+        let key = CacheKey::new(
             ctx.cache_prefix.clone().unwrap_or_default(),
             format!("{}", session.req_header().uri),
             "".to_string(),
-        ))
+        );
+        debug!(key = format!("{key:?}"), "cache key callback");
+        Ok(key)
     }
 
     fn response_cache_filter(

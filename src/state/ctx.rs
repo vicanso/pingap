@@ -205,3 +205,126 @@ impl State {
         buf
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::State;
+    use crate::state::CompressionStat;
+    use crate::util;
+    use bytes::BytesMut;
+    use pretty_assertions::assert_eq;
+    use std::time::Duration;
+
+    #[test]
+    fn test_state() {
+        let mut ctx = State {
+            ..Default::default()
+        };
+
+        assert_eq!(
+            b"false",
+            ctx.append_value(BytesMut::new(), "reused").as_ref()
+        );
+
+        ctx.reused = true;
+        assert_eq!(
+            b"true",
+            ctx.append_value(BytesMut::new(), "reused").as_ref()
+        );
+
+        ctx.upstream_address = "192.168.1.1:80".to_string();
+        assert_eq!(
+            b"192.168.1.1:80",
+            ctx.append_value(BytesMut::new(), "upstream_addr").as_ref()
+        );
+
+        ctx.processing = 10;
+        assert_eq!(
+            b"10",
+            ctx.append_value(BytesMut::new(), "processing").as_ref()
+        );
+
+        ctx.upstream_connect_time = Some(1);
+        assert_eq!(
+            b"1ms",
+            ctx.append_value(BytesMut::new(), "upstream_connect_time")
+                .as_ref()
+        );
+
+        ctx.upstream_connected = Some(30);
+        assert_eq!(
+            b"30",
+            ctx.append_value(BytesMut::new(), "upstream_connected")
+                .as_ref()
+        );
+
+        ctx.upstream_processing_time = Some(2);
+        assert_eq!(
+            b"2ms",
+            ctx.append_value(BytesMut::new(), "upstream_processing_time")
+                .as_ref()
+        );
+
+        ctx.upstream_response_time = Some(3);
+        assert_eq!(
+            b"3ms",
+            ctx.append_value(BytesMut::new(), "upstream_response_time")
+                .as_ref()
+        );
+
+        ctx.location = "pingap".to_string();
+        assert_eq!(
+            b"pingap",
+            ctx.append_value(BytesMut::new(), "location").as_ref()
+        );
+
+        ctx.connection_time = 4;
+        assert_eq!(
+            b"4ms",
+            ctx.append_value(BytesMut::new(), "connection_time")
+                .as_ref()
+        );
+
+        ctx.tls_version = Some("tls1.3".to_string());
+        assert_eq!(
+            b"tls1.3",
+            ctx.append_value(BytesMut::new(), "tls_version").as_ref()
+        );
+
+        ctx.compression_stat = Some(CompressionStat {
+            in_bytes: 1024,
+            out_bytes: 500,
+            duration: Duration::from_millis(5),
+        });
+        assert_eq!(
+            b"5ms",
+            ctx.append_value(BytesMut::new(), "compression_time")
+                .as_ref()
+        );
+        assert_eq!(
+            b"2.0",
+            ctx.append_value(BytesMut::new(), "compression_ratio")
+                .as_ref()
+        );
+
+        ctx.cache_lookup_time = Some(6);
+        assert_eq!(
+            b"6ms",
+            ctx.append_value(BytesMut::new(), "cache_lookup_time")
+                .as_ref()
+        );
+
+        ctx.cache_lock_time = Some(7);
+        assert_eq!(
+            b"7ms",
+            ctx.append_value(BytesMut::new(), "cache_lock_time")
+                .as_ref()
+        );
+
+        ctx.created_at = util::now().as_millis() as u64 - 1;
+        assert_eq!(
+            b"1ms",
+            ctx.append_value(BytesMut::new(), "service_time").as_ref()
+        );
+    }
+}

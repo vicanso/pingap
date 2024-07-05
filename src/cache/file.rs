@@ -17,11 +17,13 @@ use super::{Error, Result};
 use crate::util;
 use async_trait::async_trait;
 use std::path::Path;
+use tinyufo::TinyUfo;
 use tokio::fs;
 use tracing::info;
 
 pub struct FileCache {
     directory: String,
+    cache: TinyUfo<String, CacheObject>,
 }
 
 pub fn new_file_cache(dir: &str) -> Result<FileCache> {
@@ -32,12 +34,18 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
     }
     info!(dir, "new file cache");
 
-    Ok(FileCache { directory: dir })
+    Ok(FileCache {
+        directory: dir,
+        cache: TinyUfo::new(100, 100),
+    })
 }
 
 #[async_trait]
 impl HttpCacheStorage for FileCache {
     async fn get(&self, key: &str) -> Option<CacheObject> {
+        if let Some(obj) = self.cache.get(&key.to_string()) {
+            return Some(obj);
+        }
         let file = Path::new(&self.directory).join(key);
         let Ok(buf) = fs::read(file).await else {
             return None;
@@ -52,8 +60,9 @@ impl HttpCacheStorage for FileCache {
         &self,
         key: String,
         data: CacheObject,
-        _weight: u16,
+        weight: u16,
     ) -> Result<()> {
+        self.cache.put(key.clone(), data.clone(), weight);
         let buf: Vec<u8> = data.into();
         let file = Path::new(&self.directory).join(key);
         fs::write(file, buf)
@@ -62,10 +71,46 @@ impl HttpCacheStorage for FileCache {
         Ok(())
     }
     async fn remove(&self, key: &str) -> Result<Option<CacheObject>> {
+        // TODO remove from tinyufo
         let file = Path::new(&self.directory).join(key);
         fs::remove_file(file)
             .await
             .map_err(|e| Error::Io { source: e })?;
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::new_file_cache;
+    use crate::cache::http_cache::{CacheObject, HttpCacheStorage};
+    use pretty_assertions::assert_eq;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_file_cache() {
+        let dir = TempDir::new().unwrap();
+        let dir = dir.into_path().to_string_lossy().to_string();
+        let cache = new_file_cache(&dir).unwrap();
+        let key = "key".to_string();
+        let obj = CacheObject {
+            meta: (b"Hello".to_vec(), b"World".to_vec()),
+            body: Arc::new(b"Hello World!".to_vec()),
+        };
+        let result = cache.get(&key).await;
+        assert_eq!(true, result.is_none());
+        cache.put(key.clone(), obj.clone(), 1).await.unwrap();
+        let result = cache.get(&key).await.unwrap();
+        assert_eq!(obj, result);
+
+        // empty tinyufo, get from file
+        let cache = new_file_cache(&dir).unwrap();
+        let result = cache.get(&key).await.unwrap();
+        assert_eq!(obj, result);
+
+        cache.remove(&key).await.unwrap();
+        let result = cache.get(&key).await;
+        assert_eq!(true, result.is_none());
     }
 }

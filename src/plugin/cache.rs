@@ -140,7 +140,7 @@ impl TryFrom<&PluginConf> for Cache {
             predictor: value.contains_key("predictor"),
             lock: lock.as_secs().max(1) as u8,
             max_ttl,
-            max_file_size: max_file_size.as_u64().max(5 * 1024 * 1024) as usize,
+            max_file_size: max_file_size.as_u64().max(20 * 1024) as usize,
             namespace,
             headers,
         };
@@ -226,11 +226,85 @@ impl Plugin for Cache {
         }
         if !keys.is_empty() {
             let prefix =
-                std::string::String::from_utf8_lossy(&keys).to_string();
+                std::str::from_utf8(&keys).unwrap_or_default().to_string();
             debug!("Cache prefix: {prefix}");
             ctx.cache_prefix = Some(prefix);
         }
 
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Cache;
+    use crate::config::{PluginConf, PluginStep};
+    use crate::plugin::Plugin;
+    use crate::state::State;
+    use pingora::proxy::Session;
+    use pretty_assertions::assert_eq;
+    use tokio_test::io::Builder;
+
+    #[test]
+    fn test_cache_params() {
+        let params = Cache::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+eviction = true
+headers = ["Accept-Encoding"]
+lock = "2s"
+max_file_size = "100kb"
+predictor = true
+max_ttl = "1m"
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(true, params.eviction);
+        assert_eq!(
+            r#"Some(["Accept-Encoding"])"#,
+            format!("{:?}", params.headers)
+        );
+        assert_eq!(2, params.lock);
+        assert_eq!(100 * 1000, params.max_file_size);
+        assert_eq!(60, params.max_ttl.unwrap().as_secs());
+        assert_eq!(true, params.predictor);
+    }
+    #[tokio::test]
+    async fn test_cache() {
+        let cache = Cache::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+namespace = "pingap"
+eviction = true
+headers = ["Accept-Encoding"]
+lock = "2s"
+max_file_size = "100kb"
+predictor = true
+max_ttl = "1m"
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!("request", cache.step().to_string());
+        assert_eq!("cache", cache.category().to_string());
+
+        let headers = ["Accept-Encoding: gzip"].join("\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = State::default();
+        cache
+            .handle_request(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!("pingap:gzip:", ctx.cache_prefix.unwrap());
+        assert_eq!(true, session.cache.enabled());
+        assert_eq!(100 * 1000, cache.max_file_size);
     }
 }

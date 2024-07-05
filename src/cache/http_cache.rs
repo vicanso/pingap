@@ -29,7 +29,7 @@ use std::sync::Arc;
 
 type BinaryMeta = (Vec<u8>, Vec<u8>);
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct CacheObject {
     pub meta: BinaryMeta,
     pub body: Arc<Vec<u8>>,
@@ -198,6 +198,7 @@ impl HandleMiss for ObjectMissHandler {
                 1,
             )
             .await?;
+
         Ok(size)
     }
 }
@@ -297,5 +298,59 @@ impl Storage for HttpCache {
 
     fn as_any(&self) -> &(dyn Any + Send + Sync) {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CompleteHit, HttpCacheStorage, ObjectMissHandler};
+    use crate::cache::tiny::new_tiny_ufo_cache;
+    use bytes::{Bytes, BytesMut};
+    use pingora::cache::storage::{HitHandler, MissHandler};
+    use pretty_assertions::assert_eq;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn test_complete_hit() {
+        let body = Arc::new(b"Hello World!".to_vec());
+        let size = body.len();
+        let hit = CompleteHit {
+            body,
+            done: false,
+            range_start: 0,
+            range_end: size,
+        };
+        let mut handle: HitHandler = Box::new(hit);
+        let body = handle.read_body().await.unwrap();
+        assert_eq!(true, body.is_some());
+        assert_eq!(b"Hello World!", body.unwrap().as_ref());
+
+        handle.seek(1, Some(size - 1)).unwrap();
+        let body = handle.read_body().await.unwrap();
+        assert_eq!(true, body.is_some());
+        assert_eq!(b"ello World", body.unwrap().as_ref());
+    }
+
+    #[tokio::test]
+    async fn test_object_miss_handler() {
+        let key = "key";
+
+        let cache = Arc::new(new_tiny_ufo_cache(10, 10));
+        let obj = ObjectMissHandler {
+            meta: (b"Hello".to_vec(), b"World".to_vec()),
+            body: BytesMut::new(),
+            key: key.to_string(),
+            cache: cache.clone(),
+        };
+        let mut handle: MissHandler = Box::new(obj);
+
+        handle
+            .write_body(Bytes::from_static(b"Hello World!"), true)
+            .await
+            .unwrap();
+        handle.finish().await.unwrap();
+
+        let data = cache.get(key).await.unwrap();
+        assert_eq!("Hello World!", std::str::from_utf8(&data.body).unwrap());
     }
 }

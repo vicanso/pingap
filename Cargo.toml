@@ -101,6 +101,7 @@ perf = ["pyro", "dhat"]
 criterion = { version = "0.5.1", features = ["html_reports"] }
 pretty_assertions = "1.4.0"
 tokio-test = "0.4.4"
+tempfile = "3.10.1"
 
 [profile.release]
 codegen-units = 1
