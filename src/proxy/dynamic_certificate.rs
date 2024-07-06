@@ -153,6 +153,8 @@ pub fn try_init_certificates(
                         error = e.to_string(),
                         name, "parse certificate fail"
                     );
+                    // not return error
+                    // so send a webhook notification
                     webhook::send(webhook::SendNotificationParams {
                         category:
                             webhook::NotificationCategory::ParseCertificateFail,

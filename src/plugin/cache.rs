@@ -92,7 +92,7 @@ impl TryFrom<&PluginConf> for Cache {
                         message: "memory size should less than 1GB".to_string(),
                     });
                 }
-                new_tiny_ufo_cache(size)
+                new_tiny_ufo_cache(size.min(ByteSize::gb(1).as_u64() as usize))
             };
             Ok(cache)
         })?;

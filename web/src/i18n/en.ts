@@ -24,7 +24,7 @@ export default {
   "basic.name": "Name",
   "basic.pidFile": "Pid File",
   "basic.upgradeSock": "Upgrade Sock For Daemon",
-  "basic.threads": "Default Threads Of Each Server",
+  "basic.threads": "Each Server Default Threads",
   "basic.workStealing": "Work Stealing",
   "basic.user": "User For Daemon",
   "basic.group": "Group For Daemon",
@@ -227,8 +227,7 @@ export default {
   "form.cacheMaxFileSize":
     "The Max File Size To Cache(Bigger will be not cached)",
   "form.cacheNamespace": "The Name Space Of Cache",
-  "form.cacheHeaders":
-    "The Headers Value Add To Cache Key,Multiple Values Are Separated By Comma",
+  "form.cacheHeaders": "The Headers Value Add To Cache Key",
   "form.cacheHeadersAdd": "Add More Header For Cache key",
   "form.cacheEviction": "Enable Evicted From Storage",
   "form.cachePredictor": "Enable Predictor",
