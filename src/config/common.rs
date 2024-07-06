@@ -14,7 +14,7 @@
 
 use super::{Error, Result};
 use crate::plugin::parse_plugins;
-use crate::proxy::Parser;
+use crate::proxy::{is_dns_discovery, Parser};
 use crate::util;
 use arc_swap::ArcSwap;
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -229,16 +229,18 @@ impl UpstreamConf {
             });
         }
         // validate upstream addr
-        for addr in self.addrs.iter() {
-            let arr: Vec<_> = addr.split(' ').collect();
-            let mut addr = arr[0].to_string();
-            if !addr.contains(':') {
-                addr = format!("{addr}:80");
+        if !is_dns_discovery(&self.discovery.clone().unwrap_or_default()) {
+            for addr in self.addrs.iter() {
+                let arr: Vec<_> = addr.split(' ').collect();
+                let mut addr = arr[0].to_string();
+                if !addr.contains(':') {
+                    addr = format!("{addr}:80");
+                }
+                let _ = addr.to_socket_addrs().map_err(|e| Error::Io {
+                    source: e,
+                    file: format!("{}(upstream:{name})", arr[0]),
+                })?;
             }
-            let _ = addr.to_socket_addrs().map_err(|e| Error::Io {
-                source: e,
-                file: format!("{}(upstream:{name})", arr[0]),
-            })?;
         }
         // validate health check
         let health_check = self.health_check.clone().unwrap_or_default();

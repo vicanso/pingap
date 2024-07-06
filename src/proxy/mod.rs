@@ -28,4 +28,6 @@ pub use location::try_init_locations;
 pub use logger::Parser;
 pub use server::*;
 pub use server_conf::ServerConf;
-pub use upstream::{new_upstream_health_check_task, try_init_upstreams};
+pub use upstream::{
+    is_dns_discovery, new_upstream_health_check_task, try_init_upstreams,
+};

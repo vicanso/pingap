@@ -300,6 +300,10 @@ fn new_health_check(
 
 const DNS_DISCOVERY: &str = "dns";
 
+pub fn is_dns_discovery(value: &str) -> bool {
+    value == DNS_DISCOVERY
+}
+
 fn new_backends(
     addrs: &[String],
     tls: bool,
@@ -380,6 +384,20 @@ impl Upstream {
         let algo_method = conf.algo.clone().unwrap_or_default();
         let algo_params: Vec<&str> = algo_method.split(':').collect();
         let mut hash_key = "".to_string();
+        let check_result = |result: Option<Result<(), Box<pingora::Error>>>| {
+            let Some(result) = result else {
+                return;
+            };
+            let Err(err) = result else {
+                return;
+            };
+
+            if discovery == DNS_DISCOVERY {
+                error!(error = err.to_string(), "dns discovery fail");
+                return;
+            }
+            panic!("{err:?}");
+        };
         let lb = match algo_params[0] {
             "hash" => {
                 let mut lb =
@@ -390,10 +408,8 @@ impl Upstream {
                         hash_key = algo_params[2].to_string();
                     }
                 }
-                lb.update()
-                    .now_or_never()
-                    .expect("static should not block")
-                    .expect("static should not error");
+                let result = lb.update().now_or_never();
+                check_result(result);
                 lb.set_health_check(hc);
                 lb.update_frequency = conf.update_frequency;
                 lb.health_check_frequency = Some(health_check_frequency);
@@ -402,10 +418,8 @@ impl Upstream {
             _ => {
                 let mut lb =
                     LoadBalancer::<RoundRobin>::from_backends(backends);
-                lb.update()
-                    .now_or_never()
-                    .expect("static should not block")
-                    .expect("static should not error");
+                let result = lb.update().now_or_never();
+                check_result(result);
                 lb.set_health_check(hc);
                 lb.update_frequency = conf.update_frequency;
                 lb.health_check_frequency = Some(health_check_frequency);
