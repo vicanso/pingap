@@ -23,6 +23,7 @@ use crate::config;
 use crate::config::PluginStep;
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use crate::plugin::get_plugins;
+use crate::proxy::dynamic_certificate::TlsSettingParams;
 use crate::proxy::location::get_location;
 use crate::state::CompressionStat;
 use crate::state::State;
@@ -41,7 +42,7 @@ use pingora::cache::{
     CacheKey, CacheMetaDefaults, NoCacheReason, RespCacheable,
 };
 use pingora::http::{RequestHeader, ResponseHeader};
-use pingora::listeners::{TcpSocketOptions, TlsSettings};
+use pingora::listeners::TcpSocketOptions;
 use pingora::modules::http::compression::ResponseCompression;
 use pingora::protocols::http::error_resp;
 use pingora::protocols::Digest;
@@ -261,81 +262,19 @@ impl Server {
         for addr in addr.split(',') {
             // tls
             if let Some(dynamic_cert) = &dynamic_cert {
-                let mut tls_settings =
-                    TlsSettings::with_callbacks(Box::new(dynamic_cert.clone()))
-                        .map_err(|e| Error::Common {
-                            category: "tls".to_string(),
-                            message: e.to_string(),
-                        })?;
-
-                if enbaled_h2 {
-                    tls_settings.enable_h2();
-                }
-
-                if let Some(cipher_list) = &cipher_list {
-                    if let Err(e) = tls_settings.set_cipher_list(cipher_list) {
-                        error!(
-                            error = e.to_string(),
-                            name, "set cipher list fail"
-                        );
-                    }
-                }
-                if let Some(ciphersuites) = &ciphersuites {
-                    if let Err(e) = tls_settings.set_ciphersuites(ciphersuites)
-                    {
-                        error!(
-                            error = e.to_string(),
-                            name, "set ciphersuites fail"
-                        );
-                    }
-                }
-
-                if let Some(version) =
-                    util::convert_tls_version(&tls_min_version)
-                {
-                    if let Err(e) =
-                        tls_settings.set_min_proto_version(Some(version))
-                    {
-                        error!(
-                            error = e.to_string(),
-                            name, "set tls min proto version fail"
-                        );
-                    }
-                    if version == pingora::tls::ssl::SslVersion::TLS1_1 {
-                        tls_settings.set_security_level(0);
-                        tls_settings.clear_options(
-                            pingora::tls::ssl::SslOptions::NO_TLSV1_1,
-                        );
-                    }
-                }
-                if let Some(version) =
-                    util::convert_tls_version(&tls_max_version)
-                {
-                    if let Err(e) =
-                        tls_settings.set_max_proto_version(Some(version))
-                    {
-                        error!(
-                            error = e.to_string(),
-                            name, "set tls max proto version fail"
-                        );
-                    }
-                }
-
-                // tls_settings.set_min_proto_version(version)
-                if let Some(min_version) = tls_settings.min_proto_version() {
-                    info!(
-                        name,
-                        min_version = format!("{min_version:?}"),
-                        "tls proto"
-                    );
-                }
-                if let Some(max_version) = tls_settings.max_proto_version() {
-                    info!(
-                        name,
-                        max_version = format!("{max_version:?}"),
-                        "tls proto"
-                    );
-                }
+                let tls_settings = dynamic_cert
+                    .new_tls_settings(&TlsSettingParams {
+                        server_name: name.clone(),
+                        enbaled_h2,
+                        cipher_list: cipher_list.clone(),
+                        ciphersuites: ciphersuites.clone(),
+                        tls_min_version: tls_min_version.clone(),
+                        tls_max_version: tls_max_version.clone(),
+                    })
+                    .map_err(|e| Error::Common {
+                        category: "tls".to_string(),
+                        message: e.to_string(),
+                    })?;
                 lb.add_tls_with_settings(
                     addr,
                     tcp_socket_options.clone(),

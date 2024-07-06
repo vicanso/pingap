@@ -19,6 +19,7 @@ use crate::config::CertificateConf;
 use crate::{util, webhook};
 use async_trait::async_trait;
 use once_cell::sync::{Lazy, OnceCell};
+use pingora::listeners::TlsSettings;
 use pingora::tls::ext;
 use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::ssl::{NameType, SslRef};
@@ -172,12 +173,81 @@ pub struct DynamicCertificate {
     certificate: Option<(X509, PKey<Private>)>,
 }
 
+pub struct TlsSettingParams {
+    pub server_name: String,
+    pub enbaled_h2: bool,
+    pub cipher_list: Option<String>,
+    pub ciphersuites: Option<String>,
+    pub tls_min_version: Option<String>,
+    pub tls_max_version: Option<String>,
+}
+
 impl DynamicCertificate {
     pub fn new_global() -> Self {
         Self {
             chain_certificate: None,
             certificate: None,
         }
+    }
+    pub fn new_tls_settings(
+        &self,
+        params: &TlsSettingParams,
+    ) -> Result<TlsSettings> {
+        let name = params.server_name.clone();
+        let mut tls_settings = TlsSettings::with_callbacks(Box::new(
+            self.clone(),
+        ))
+        .map_err(|e| Error::Invalid {
+            message: e.to_string(),
+        })?;
+        if params.enbaled_h2 {
+            tls_settings.enable_h2();
+        }
+        if let Some(cipher_list) = &params.cipher_list {
+            if let Err(e) = tls_settings.set_cipher_list(cipher_list) {
+                error!(error = e.to_string(), name, "set cipher list fail");
+            }
+        }
+        if let Some(ciphersuites) = &params.ciphersuites {
+            if let Err(e) = tls_settings.set_ciphersuites(ciphersuites) {
+                error!(error = e.to_string(), name, "set ciphersuites fail");
+            }
+        }
+        if let Some(version) =
+            util::convert_tls_version(&params.tls_min_version)
+        {
+            if let Err(e) = tls_settings.set_min_proto_version(Some(version)) {
+                error!(
+                    error = e.to_string(),
+                    name, "set tls min proto version fail"
+                );
+            }
+            if version == pingora::tls::ssl::SslVersion::TLS1_1 {
+                tls_settings.set_security_level(0);
+                tls_settings
+                    .clear_options(pingora::tls::ssl::SslOptions::NO_TLSV1_1);
+            }
+        }
+        if let Some(version) =
+            util::convert_tls_version(&params.tls_max_version)
+        {
+            if let Err(e) = tls_settings.set_max_proto_version(Some(version)) {
+                error!(
+                    error = e.to_string(),
+                    name, "set tls max proto version fail"
+                );
+            }
+        }
+
+        // tls_settings.set_min_proto_version(version)
+        if let Some(min_version) = tls_settings.min_proto_version() {
+            info!(name, min_version = format!("{min_version:?}"), "tls proto");
+        }
+        if let Some(max_version) = tls_settings.max_proto_version() {
+            info!(name, max_version = format!("{max_version:?}"), "tls proto");
+        }
+
+        Ok(tls_settings)
     }
 
     pub fn new(cert: &[u8], key: &[u8]) -> Result<Self> {
@@ -263,5 +333,32 @@ impl pingora::listeners::TlsAccept for DynamicCertificate {
         if let Some((cert, key)) = &d.certificate {
             ssl_certificate(ssl, cert, key, &d.chain_certificate);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DynamicCertificate, TlsSettingParams};
+
+    #[test]
+    fn test_new_tls_settings() {
+        let dynamic = DynamicCertificate::new_global();
+        let mut tls_setings = dynamic
+            .new_tls_settings(&TlsSettingParams {
+                server_name: "pingap".to_string(),
+                enbaled_h2: true,
+                cipher_list: Some(
+                    "ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES128-SHA".to_string(),
+                ),
+                ciphersuites: Some(
+                    "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256"
+                        .to_string(),
+                ),
+                tls_min_version: Some("tlsv1.1".to_string()),
+                tls_max_version: Some("tlsv1.3".to_string()),
+            })
+            .unwrap();
+        assert_eq!(true, tls_setings.min_proto_version().is_some());
+        assert_eq!(true, tls_setings.max_proto_version().is_some());
     }
 }

@@ -125,7 +125,7 @@ impl TryFrom<&PluginConf> for Cache {
                 message: e.to_string(),
             })?
         } else {
-            ByteSize::mb(5)
+            ByteSize::mb(1)
         };
         let namespace = get_str_conf(value, "namespace");
         let namespace = if namespace.is_empty() {
@@ -146,7 +146,7 @@ impl TryFrom<&PluginConf> for Cache {
             predictor: value.contains_key("predictor"),
             lock: lock.as_secs().max(1) as u8,
             max_ttl,
-            max_file_size: max_file_size.as_u64().max(20 * 1024) as usize,
+            max_file_size: max_file_size.as_u64() as usize,
             namespace,
             headers,
         };
