@@ -338,7 +338,75 @@ impl pingora::listeners::TlsAccept for DynamicCertificate {
 
 #[cfg(test)]
 mod tests {
-    use super::{DynamicCertificate, TlsSettingParams};
+    use std::collections::HashMap;
+
+    use super::{parse_certificate, DynamicCertificate, TlsSettingParams};
+    use crate::{
+        config::CertificateConf,
+        proxy::{
+            dynamic_certificate::{DYNAMIC_CERT_MAP, E5},
+            try_init_certificates,
+        },
+    };
+
+    fn get_tls_pem() -> (String, String) {
+        (
+            r###"-----BEGIN CERTIFICATE-----
+MIID/TCCAmWgAwIBAgIQJUGCkB1VAYha6fGExkx0KTANBgkqhkiG9w0BAQsFADBV
+MR4wHAYDVQQKExVta2NlcnQgZGV2ZWxvcG1lbnQgQ0ExFTATBgNVBAsMDHZpY2Fu
+c29AdHJlZTEcMBoGA1UEAwwTbWtjZXJ0IHZpY2Fuc29AdHJlZTAeFw0yNDA3MDYw
+MjIzMzZaFw0yNjEwMDYwMjIzMzZaMEAxJzAlBgNVBAoTHm1rY2VydCBkZXZlbG9w
+bWVudCBjZXJ0aWZpY2F0ZTEVMBMGA1UECwwMdmljYW5zb0B0cmVlMIIBIjANBgkq
+hkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAv5dbylSPQNARrpT/Rn7qZf6JmH3cueMp
+YdOpctuPYeefT0Jdgp67bg17fU5pfyR2BWYdwyvHCNmKqLdYPx/J69hwTiVFMOcw
+lVQJjbzSy8r5r2cSBMMsRaAZopRDnPy7Ls7Ji+AIT4vshUgL55eR7ACuIJpdtUYm
+TzMx9PTA0BUDkit6z7bTMaEbjDmciIBDfepV4goHmvyBJoYMIjnAwnTFRGRs/QJN
+d2ikFq999fRINzTDbRDP1K0Kk6+zYoFAiCMs9lEDymu3RmiWXBXpINR/Sv8CXtz2
+9RTVwTkjyiMOPY99qBfaZTiy+VCjcwTGKPyus1axRMff4xjgOBewOwIDAQABo14w
+XDAOBgNVHQ8BAf8EBAMCBaAwEwYDVR0lBAwwCgYIKwYBBQUHAwEwHwYDVR0jBBgw
+FoAUhU5Igu3uLUabIqUhUpVXjk1JVtkwFAYDVR0RBA0wC4IJcGluZ2FwLmlvMA0G
+CSqGSIb3DQEBCwUAA4IBgQDBimRKrqnEG65imKriM2QRCEfdB6F/eP9HYvPswuAP
+tvQ6m19/74qbtkd6vjnf6RhMbj9XbCcAJIhRdnXmS0vsBrLDsm2q98zpg6D04F2E
+L++xTiKU6F5KtejXcTHHe23ZpmD2XilwcVDeGFu5BEiFoRH9dmqefGZn3NIwnIeD
+Yi31/cL7BoBjdWku5Qm2nCSWqy12ywbZtQCbgbzb8Me5XZajeGWKb8r6D0Nb+9I9
+OG7dha1L3kxerI5VzVKSiAdGU0C+WcuxfsKAP8ajb1TLOlBaVyilfqmiF457yo/2
+PmTYzMc80+cQWf7loJPskyWvQyfmAnSUX0DI56avXH8LlQ57QebllOtKgMiCo7cr
+CCB2C+8hgRNG9ZmW1KU8rxkzoddHmSB8d6+vFqOajxGdyOV+aX00k3w6FgtHOoKD
+Ztdj1N0eTfn02pibVcXXfwESPUzcjERaMAGg1hoH1F4Gxg0mqmbySAuVRqNLnXp5
+CRVQZGgOQL6WDg3tUUDXYOs=
+-----END CERTIFICATE-----"###
+                .to_string(),
+            r###"-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC/l1vKVI9A0BGu
+lP9Gfupl/omYfdy54ylh06ly249h559PQl2CnrtuDXt9Tml/JHYFZh3DK8cI2Yqo
+t1g/H8nr2HBOJUUw5zCVVAmNvNLLyvmvZxIEwyxFoBmilEOc/LsuzsmL4AhPi+yF
+SAvnl5HsAK4gml21RiZPMzH09MDQFQOSK3rPttMxoRuMOZyIgEN96lXiCgea/IEm
+hgwiOcDCdMVEZGz9Ak13aKQWr3319Eg3NMNtEM/UrQqTr7NigUCIIyz2UQPKa7dG
+aJZcFekg1H9K/wJe3Pb1FNXBOSPKIw49j32oF9plOLL5UKNzBMYo/K6zVrFEx9/j
+GOA4F7A7AgMBAAECggEAWNDkx2XtxsDuAX2m3VpGdSPLS3rFURMCgwwpGEq6LEvA
+qXB9gujswHbVkWBBPaR8ZcJR98EaknquccoUyaaF56Q9Y6yZZ7M07XS4vREUs06T
+8wEX9Ec6BcjTOW/77BGpAGjyO7qOf7nA2oRsqF62Ua57CjglSryLU9nKxeCUZaEa
+HWbpn/AVieddIBdCSK1ANFgXb1ySA3Rh2IaMggql1n2+gk2s4qyAScarNSz0PDps
+v65iK1ZAABmQEItsklBE8XddIK0BE5ciaLShK+BLX/bnPjCle2QGdDOtbNKfn3Ab
+8gMmY9q4/isO0i8njeNWtgrmOKpL8ETxbzCDGwqdEQKBgQDxe3nuxeDJSXUaj4Vl
+LMJ+jln8AZTEegt5T0lm3kke4vJTyQAjwCtWrxB8xario5uWwf0Np/NvLvqJI7e4
++KIJF/5Vy15QngUHJ0c5D8Fm0DufWI9btuZDG3EYeqs4NRbc1Vu+QBziwZXvemkU
+2hHwnVYn3lc2WKgiEXcLf2SAQwKBgQDLHAkc9JzWOnj6YIb/WWLGQxu7kVW6T3Fr
+f+c4IZN9IhbjxrRilMG0Z/kQDX8dD2b3suOD+QjBZ1rJR34xDVGPPhbHx+3j+2rK
+piUZLPAqk+vODHlx9ST9V7RklZnsitQpxZLI5OhylIKXkTk6I92jDUJNRF9ooeoV
+zi2FHQasqQKBgFJg0g7PeEiSg51k+peyNkNgInhivbJtA/8FOkAaco1T1GEav65y
+fxZaMGCwOgSI1aoPUVlYQyZZu2QPSDyUrQo3Ii94ahtMXOC82IIxysNdJAnO91DN
+Sy33bZRxPHm3Oq5pJpv3WSNN8O06MCDJ57bSpbKCGfRTOEAu/xJwCgPrAoGBALtv
+GN3WwvFTrpboA0yb8XIjNfGHMkSn0XQx6W+8VH5SuirjEU40FvnkRUzSF676qrwF
+Ir6ET9cjCP3ccxDTSKPW2XDuCJOuTaPLZUrxVIUGUsKocl5+qu78Q+XaxNwsVZRi
+1o176SLr+APlKZmExaEVuEzTvvQxD3Ol/A3udl1ZAoGBAKztzGZc2YG5nw62kJ8J
+1XBrQG1rWuAMgrVbo/aDnPs04E31tPEOrZ2m7pKr/uGmf74OQeQrUaQ0+A5YZxrD
+vmkKQHwfyX6cFGxuXwyCZa7q1E83qFNLPSZ0ZF8DHiJqeunLchxYm4uA4Y8BO1jK
+aqcrKJfS+xaKWxXPiNlpBMG5
+-----END PRIVATE KEY-----"###
+                .to_string(),
+        )
+    }
 
     #[test]
     fn test_new_tls_settings() {
@@ -360,5 +428,52 @@ mod tests {
             .unwrap();
         assert_eq!(true, tls_setings.min_proto_version().is_some());
         assert_eq!(true, tls_setings.max_proto_version().is_some());
+    }
+
+    #[test]
+    fn test_parse_certificate() {
+        let (tls_cert, tls_key) = get_tls_pem();
+        let cert_info = CertificateConf {
+            tls_cert: Some(tls_cert),
+            tls_key: Some(tls_key),
+            tls_chain: Some(std::str::from_utf8(E5).unwrap().to_string()),
+            ..Default::default()
+        };
+        let (domains, dynamic_certificate, info) =
+            parse_certificate(&cert_info).unwrap();
+
+        assert_eq!("pingap.io", domains.join(","));
+        assert_eq!(
+            "O=mkcert development CA, OU=vicanso@tree, CN=mkcert vicanso@tree",
+            info.issuer
+        );
+        assert_eq!(1720232616, info.not_before);
+        assert_eq!(1791253416, info.not_after);
+        assert_eq!(true, dynamic_certificate.certificate.is_some());
+        assert_eq!(true, dynamic_certificate.chain_certificate.is_some());
+
+        let mut map = HashMap::new();
+        map.insert("pingap".to_string(), cert_info);
+        let result = try_init_certificates(&map).unwrap();
+        assert_eq!(1, result.len());
+        assert_eq!("pingap".to_string(), result[0].0);
+        assert_eq!(
+            "O=mkcert development CA, OU=vicanso@tree, CN=mkcert vicanso@tree"
+                .to_string(),
+            result[0].1.issuer
+        );
+        let cert = DYNAMIC_CERT_MAP.get().unwrap().get("pingap.io").unwrap();
+        assert_eq!(true, cert.certificate.is_some());
+    }
+
+    #[test]
+    fn test_dynamic_certificate() {
+        let (tls_cert, tls_key) = get_tls_pem();
+        let dynamic_certificate =
+            DynamicCertificate::new(tls_cert.as_bytes(), tls_key.as_bytes())
+                .unwrap();
+
+        assert_eq!(true, dynamic_certificate.certificate.is_some());
+        assert_eq!(true, dynamic_certificate.chain_certificate.is_none());
     }
 }
