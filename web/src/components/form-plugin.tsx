@@ -110,6 +110,7 @@ export function FormPluginField({
     id: string;
     span: number;
     options?: string[] | CheckBoxItem[];
+    required?: boolean;
   }[] = [];
 
   const boolOptions = [
@@ -215,6 +216,7 @@ export function FormPluginField({
           label: t("form.adminPath"),
           id: "admin-path",
           span: 6,
+          required: true,
         },
         {
           category: "number",
@@ -242,6 +244,7 @@ export function FormPluginField({
           label: t("form.dirPath"),
           id: "dir-path",
           span: 6,
+          required: true,
         },
         {
           category: "text",
@@ -444,6 +447,7 @@ export function FormPluginField({
           id: "key-auth-values",
           addLabel: t("form.keyAuthAdd"),
           span: 12,
+          required: true,
         },
       );
       break;
@@ -457,6 +461,7 @@ export function FormPluginField({
           id: "key-auth-values",
           addLabel: t("form.keyAuthAdd"),
           span: 12,
+          required: true,
         },
         {
           category: "checkbox",
@@ -524,6 +529,7 @@ export function FormPluginField({
           label: t("form.jwtAuthSecret"),
           id: "jwt-auth-secret",
           span: 12,
+          required: true,
         },
       );
       break;
@@ -555,6 +561,7 @@ export function FormPluginField({
         label: t("form.pingPath"),
         id: "ping-path",
         span: 12,
+        required: true,
       });
       break;
     }
@@ -602,6 +609,7 @@ export function FormPluginField({
           label: t("form.csrfTokenPath"),
           id: "csrf-token-path",
           span: 6,
+          required: true,
         },
         {
           category: "text",
@@ -616,6 +624,7 @@ export function FormPluginField({
           label: t("form.csrfKey"),
           id: "csrf-key",
           span: 6,
+          required: true,
         },
         {
           category: "text",
@@ -780,6 +789,7 @@ export function FormPluginField({
         label: t("form.statsPath"),
         id: "stats-path",
         span: 12,
+        required: true,
       });
       break;
     }
@@ -880,12 +890,16 @@ export function FormPluginField({
         break;
       }
       case "textlist": {
+        let label = field.label;
+        if (field.required) {
+          label += "*";
+        }
         dom = (
           <FormTwoInputFields
             id={field.id}
             divide={field.divide || ""}
             values={(data[field.key] as string[]) || []}
-            label={field.label}
+            label={label}
             valueLabel={field.valueLabel || ""}
             valueWidth={field.valueWidth || ""}
             addButtonFullWidth={true}
@@ -911,6 +925,7 @@ export function FormPluginField({
             style={{
               marginLeft: 0,
             }}
+            required={field.required || false}
             defaultValue={(data[field.key] as string) || ""}
             sx={{ ml: 1, flex: 1 }}
             onChange={(e) => {

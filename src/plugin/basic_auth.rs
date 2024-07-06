@@ -47,6 +47,12 @@ impl TryFrom<&PluginConf> for BasicAuth {
             })?;
             authorizations.push(format!("Basic {item}").as_bytes().to_vec());
         }
+        if authorizations.is_empty() {
+            return Err(Error::Invalid {
+                category: PluginCategory::BasicAuth.to_string(),
+                message: "basic authorizations can't be empty".to_string(),
+            });
+        }
         let params = Self {
             plugin_step: step,
             hide_credentials: get_bool_conf(value, "hide_credentials"),

@@ -39,6 +39,7 @@ export interface CheckBoxItem {
 export interface FormItem {
   id: string;
   label: string;
+  required?: boolean;
   defaultValue: unknown;
   span: number;
   category: FormItemCategory;

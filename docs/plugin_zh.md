@@ -56,6 +56,8 @@ path = "/stats"
 remark = "用于获取性能指标"
 ```
 
+- `path`: 响应性能指标的路径
+
 界面配置如图所示，主要是配置其对应的请求路径即可：
 
 <p align="center">
@@ -72,6 +74,8 @@ category = "ping"
 path = "/ping"
 ```
 
+- `path`: 响应pong的路径
+
 ## Admin
 
 管理后台配置，可在现在的现有的location中添加支持管理后台服务，`YWRtaW46MTIzMTIz`为`base64(admin:123123)`，将该配置关联至对应location后，即可使用该location的/pingap/访问管理后台，账号为`admin`，密码为`123123`
@@ -85,6 +89,10 @@ path = "/pingap"
 remark = "管理后台"
 ```
 
+- `authorizations`: Basic认证的密钥列表
+- `ip_fail_limit`: 认证失败时的IP限制次数
+- `path`: 管理后台的路径
+
 <p align="center">
     <img src="../asset/plugin-admin.jpg" alt="plugin-admin">
 </p>
@@ -92,16 +100,6 @@ remark = "管理后台"
 ## Directory
 
 静态文件目录服务，为指定目录提供静态文件服务，说明如下：
-
-- `path`: 静态文件目录路径
-- `chunk_size`: Http chunk的大小，默认为`8192`
-- `max_age`: 设置http响应的的缓存时间，默认无。此值对于`text/html`无效，html均设置为不可缓存。如设置为`1h`表示缓存有效期1小时
-- `private`: 缓存是否设置为`private`，默认为`public1
-- `index`: 设置默认的index文件，默认为`index.html`
-- `charset`: 指定charset类型，默认无
-- `autoindex`: 是否允许目录以浏览形式展示
-- `download`: 是否支持下载，指定该参数后响应时会设置响应头`Content-Disposition`
-- `headers`:  需要添加的http响应头列表
 
 ```toml
 [plugins.downloadsServe]
@@ -112,6 +110,17 @@ index = "index.html"
 max_age = "1h"
 path = "~/Downloads"
 ```
+
+- `path`: 静态文件目录路径
+- `chunk_size`: Http chunk的大小，默认为`8192`
+- `max_age`: 设置http响应的的缓存时间，默认无。此值对于`text/html`无效，html均设置为不可缓存。如设置为`1h`表示缓存有效期1小时
+- `private`: 缓存是否设置为`private`，默认为`public`
+- `index`: 设置默认的index文件，默认为`index.html`
+- `charset`: 指定charset类型，默认无
+- `autoindex`: 是否允许目录以浏览形式展示，需要注意若指定了目录允许浏览，则`index`参数无效
+- `download`: 是否支持下载，指定该参数后响应时会设置响应头`Content-Disposition`
+- `headers`: 需要添加的http响应头列表
+
 
 界面配置如图所示，配置对应的静态文件目录，并按需要添加对应的query参数即可：
 
@@ -135,6 +144,11 @@ path = "/"
 status = 500
 ```
 
+- `data`: Mock的响应数据
+- `headers`: Mock的响应头
+- `path`: Mock请求的路径，如果不配置则匹配所有
+- `status`: Mock响应的状态码
+
 界面配置如图所示，配置对应响应数据既可，需要注意如果指定响应类型，如json等：
 
 <p align="center">
@@ -152,6 +166,10 @@ http_to_https = true
 prefix = "/api"
 ```
 
+- `http_to_https`: 是否从http重定向至https
+- `prefix`: 重定向时添加的前缀
+
+
 界面配置如图所示，若需要重定向时添加前缀，可配置对应的前缀，若无需要调整则不配置值即可：
 
 <p align="center">
@@ -160,7 +178,32 @@ prefix = "/api"
 
 ## Cache
 
-Http缓存，仅支持内存式缓存，暂不建议使用。
+缓存中间件，用于缓存http请求，由于缓存模块是全局使用，因此如果不同的Location均使用缓存，则需要设置不同的namespace。
+
+```toml
+[plugins.chartsCache]
+category = "cache"
+eviction = true
+headers = ["Accept-Encoding"]
+lock = "3s"
+max_file_size = "100kb"
+max_ttl = "1h"
+namespace = "charts"
+predictor = true
+```
+
+- `lock`: 缓存不存在时，相同请求的等待时长
+- `max_file_size`: 单个缓存文件的最大长度，建议设置合理的值，避免过大的响应缓存在内存中导致内存占用过高
+- `namespace`: 由于缓存是应用共享，而缓存的key是基于path+querystring，因此如果是多域名共享时，不同的域名使用不同的缓存中间件，并设置对应的namespace
+- `max_ttl`: 设置缓存的最长有效期，一般建议由upstream服务响应时，若`Cache-Control`的`max-age`较长，则设置较短的`s-maxage`，若`upstream`未设置`s-maxage`，可通过此配置限制缓存的最大有效期
+- `eviction`: 当缓存超限时，触发缓存清除，需要注意，如tinyufo暂时不支持主动清除
+- `predictor`: 是否记录无法缓存的请求，可避免后续重复的等待确认请求是否可缓存
+
+
+<p align="center">
+    <img src="../asset/plugin-cache.jpg" alt="plugin-redirect-https">
+</p>
+
 
 
 ## RequestId
@@ -174,7 +217,10 @@ category = "request_id"
 size = 8
 ```
 
-界面配置如图所示，算法类型若不是`nanoid`，其它的值均表示`uuid`。长度也只针对`nanoid`生效：
+- `algorithm`: 生成请求id的算法
+- `size`: 请求id的长度，只对于`nanoid`有效。
+
+界面配置如图所示：
 
 <p align="center">
     <img src="../asset/plugin-request-id.jpg" alt="plugin-request-id">
@@ -191,6 +237,10 @@ category = "compression"
 gzip_level = 6
 zstd_level = 5
 ```
+
+- `br_level`: brotli压缩算法的压缩级别
+- `gzip_level`: gzip压缩算法的压缩级别
+- `zstd_level`: zstd压缩算法的压缩级别
 
 需要注意三种压缩算法的压缩级别不一样，按需选择即可，也可使用自带的`pingap:compression`，它的压缩级别配置为`gzip_level = 6`, `br_level = 6`, `zstd_level = 3`。
 
@@ -230,6 +280,11 @@ keys = [
 ]
 ```
 
+- `hide_credentials`: 转发至upstream时是否删除认证信息
+- `query`: 从query中获取认证信息
+- `header`: 从请求头中获取认证信息（与query二选一,，使用使用query)
+- `keys`: 认证的key列表
+
 界面配置如图所示，配置key的名称，再配置符合的值即可：
 
 <p align="center">
@@ -250,6 +305,9 @@ category = "basic_auth"
 hide_credentials = true
 ```
 
+- `authorizations`: Basic认证的信息，它使用的是base64(user:password)后的数据，可以配置多个
+- `hide_credentials`: 转发至upstream时是否删除认证信息
+
 界面配置如图所示，配置basic auth的值，需要注意配置已做base64处理后的值即可：
 
 <p align="center">
@@ -269,6 +327,13 @@ cookie = ""
 header = "X-Jwt"
 secret = "123123"
 ```
+
+- `header`: jwt认证时从header中获取的请求头名（与cookie，query三选一，优先级为header > cookie -> query)
+- `cookie`: jwt认证时从cookie中获取的cookie名
+- `query`: jwt认证时从query中获取的字段
+- `auth_path`: 生成jwt认证信息的路径
+- `algorithm`: 认证使用的算法
+- `secret`: 认证使用的密钥
 
 <p align="center">
     <img src="../asset/plugin-jwt.jpg" alt="plugin-jwt">
@@ -324,6 +389,12 @@ tag = "ip"
 type = "rate"
 ```
 
+- `type`: 限制的类型，有`inflight`并发限制与`rate`速率限制
+- `tag`: 限流的key的获取类型，有`cookie`, `header`，`query`与`ip`
+- `key`: 限制使用的key，对于`ip`类型无需指定
+- `max`: 限流最大值
+- `interval`: 限流间隔，用于`rate`类型
+
 界面配置如图所示，主要是配置限制条件以及对应的最大并发访问量：
 
 <p align="center">
@@ -345,6 +416,10 @@ message = "禁止该IP访问"
 type = "deny"
 ```
 
+- `type`: 类型，是允许还是禁止
+- `ip_list`: IP或IP网段列表
+- `message`: 拦截时的出错信息
+
 界面配置如图所示，配置IP列表后，填写是允许还是禁止即可：
 
 <p align="center">
@@ -362,6 +437,10 @@ message = ""
 referer_list = ["*.github.com"]
 type = "allow"
 ```
+
+- `type`: 类型，是允许还是禁止
+- `referer_list`: referer列表
+- `message`: 拦截时的出错信息
 
 界面配置如图所示，配置Referer列表后，填写是允许还是禁止即可：
 
@@ -384,6 +463,11 @@ token_path = "/csrf-token"
 ttl = "1h"
 ```
 
+- `key`: 生成csrf信息时使用的key
+- `name`: csrf的名称
+- `token_path`: 生成token的目录
+- `ttl`: 有效期
+
 <p align="center">
     <img src="../asset/plugin-csrf.jpg" alt="plugin-csrf">
 </p>
@@ -401,7 +485,16 @@ allow_origin = "$http_origin"
 category = "cors"
 max_age = "1h"
 path = "^/api"
+expose_headers = "Content-Type, X-Device"
 ```
+
+- `allow_credentials`: 是否允许携带认证信息
+- `allow_headers`: 允许的请求头
+- `allow_methods`: 允许的http方法
+- `allow_origin`: 允许的origin，若设置为`$http_origin`则表示按来源设置允许，不建议使用此形式，建议按需设置
+- `max_age`: 设置有效期
+- `path`: 设置允许cors的路径，可为正则表达式
+- `expose_headers`: 暴露给浏览器访问的响应头
 
 <p align="center">
     <img src="../asset/plugin-cors.jpg" alt="plugin-cors">
@@ -420,7 +513,11 @@ set_headers = ["X-Response-Id:123"]
 step = "response"
 ```
 
-界面配置如图所示，按需要配置要设置、添加或删除的响应头，若不需要则不设置即可：
+- `add_headers`: 需要添加的响应头
+- `set_headers`: 需要设置的响应头，会覆盖原有值
+- `remove_headers`: 需要删除的响应头
+
+执行顺序为`add_headers --> remove_headers --> set_headers`。界面配置如图所示，按需要配置要设置、添加或删除的响应头，若不需要则不设置即可：
 
 <p align="center">
     <img src="../asset/plugin-response-headers.jpg" alt="plugin-response-headers">

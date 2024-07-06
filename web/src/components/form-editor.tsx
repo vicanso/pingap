@@ -177,9 +177,13 @@ export default function FormEditor({
       }
       case FormItemCategory.LOCATION: {
         const options = (item.options as string[]) || [];
+        let label = item.label;
+        if (item.required) {
+          label += "*";
+        }
         formItem = (
           <React.Fragment>
-            <InputLabel id={`{item.id}-label`}>{item.label}</InputLabel>
+            <InputLabel id={`{item.id}-label`}>{label}</InputLabel>
             <Select
               labelId={`{item.id}-label`}
               id={item.label}
@@ -437,6 +441,7 @@ export default function FormEditor({
           <TextField
             id={item.id}
             label={item.label}
+            required={item.required || false}
             variant="outlined"
             defaultValue={defaultValue}
             onChange={(e) => {

@@ -66,6 +66,7 @@ export default function ServerInfo() {
       defaultValue: server.addr,
       span: 6,
       category: FormItemCategory.TEXT,
+      required: true,
     },
     {
       id: "locations",
@@ -74,6 +75,7 @@ export default function ServerInfo() {
       span: 6,
       category: FormItemCategory.LOCATION,
       options: locations,
+      required: true,
     },
     {
       id: "threads",

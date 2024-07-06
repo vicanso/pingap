@@ -134,7 +134,7 @@ export default function UpstreamInfo() {
           value: "H2",
         },
         {
-          label: "http2http2",
+          label: "http2http1",
           option: 3,
           value: "H2H1",
         },

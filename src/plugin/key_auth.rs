@@ -62,11 +62,18 @@ impl TryFrom<&PluginConf> for KeyAuth {
                 }
             })?);
         }
+        let keys: Vec<Vec<u8>> = get_str_slice_conf(value, "keys")
+            .iter()
+            .map(|item| item.as_bytes().to_vec())
+            .collect();
+        if keys.is_empty() {
+            return Err(Error::Invalid {
+                category: PluginCategory::KeyAuth.to_string(),
+                message: "auth keys can't be empty".to_string(),
+            });
+        }
         let params = Self {
-            keys: get_str_slice_conf(value, "keys")
-                .iter()
-                .map(|item| item.as_bytes().to_vec())
-                .collect(),
+            keys,
             hide_credentials: get_bool_conf(value, "hide_credentials"),
             plugin_step: step,
             query,
