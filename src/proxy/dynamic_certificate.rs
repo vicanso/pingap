@@ -338,8 +338,6 @@ impl pingora::listeners::TlsAccept for DynamicCertificate {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::{parse_certificate, DynamicCertificate, TlsSettingParams};
     use crate::{
         config::CertificateConf,
@@ -348,6 +346,8 @@ mod tests {
             try_init_certificates,
         },
     };
+    use pretty_assertions::assert_eq;
+    use std::collections::HashMap;
 
     fn get_tls_pem() -> (String, String) {
         (
