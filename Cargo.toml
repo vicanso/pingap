@@ -72,8 +72,11 @@ pingora-runtime = "0.2.0"
 pyroscope = { version = "0.5.7", optional = true }
 pyroscope_pprofrs = { version = "0.2.7", optional = true }
 rcgen = "0.12.1"
-regex = "1.10.5"
-reqwest = { version = "0.12.5", features = ["json"] }
+regex = { version = "1.10.5", default-features = false }
+reqwest = { version = "0.12.5", default-features = false, features = [
+    "json",
+    "default-tls",
+] }
 rust-embed = { version = "8.4.0", features = ["mime-guess", "compression"] }
 serde = "1.0.203"
 serde_json = "1.0.118"
