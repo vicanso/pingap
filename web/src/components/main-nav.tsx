@@ -131,14 +131,11 @@ export default function MainNav({
   }, [configVersion]);
 
   const toggleCollapse = (index: number) => {
-    const values = opens.slice(0);
-    const value = values.indexOf(index);
-    if (value >= 0) {
-      values.splice(value, 1);
+    if (opens.indexOf(index) !== -1) {
+      setOpens([]);
     } else {
-      values.push(index);
+      setOpens([index]);
     }
-    setOpens(values);
   };
 
   const list: JSX.Element[] = [];
