@@ -158,7 +158,6 @@ export default function MainNav({
           setSubSelectedIndex(-1);
           if (item.category == NavCategory.BasicInfo) {
             goToBasicInfo();
-            return;
           }
           toggleCollapse(index);
         }}
