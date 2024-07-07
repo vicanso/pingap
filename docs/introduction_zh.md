@@ -2,19 +2,19 @@
 description: Pingap 简述
 ---
 
-Pingap是基于[pingora](https://github.com/cloudflare/pingora)开发的，pingora提供了各类模块便于rust开发者使用，但并不方便非rust开发者，因此pingap提供了以toml的形式配置简单易用的反向代理，单服务支持多location转发，通过插件的形式支持更多的需求场景。特性如下：
+Pingap是基于[pingora](https://github.com/cloudflare/pingora)开发的，pingora提供了各类模块便于rust开发者使用，但并不方便非rust开发者，因此pingap提供了以toml的形式配置简单易用的反向代理，单服务支持多location转发，通过插件的形式支持更多的需求场景。已预编译好各架构上使用的可执行文件，在[releases](https://github.com/vicanso/pingap/releases)下载即可。特性如下：
 
-- 服务支持配置多个Location，通过host与path筛选对应的location
-- 正则形式重写Path
+- 服务支持配置多个Location，通过host与path筛选对应的location，按权重逐一匹配选择
+- 支持正则形式配置重写Path，方便应用按前缀区分转发
 - HTTP 1/2 的全链路支持，包括h2c
-- 基于TOML格式的配置，可保存至文件或etcd
-- Upstream与Location的相关配置调整准实时生效，其它应用配置更新后，无中断式的优雅重启程序
-- 访问日志的模板化配置，已支30多个相关属性的配置
-- WEB形式的管理后台界面，简单易用
-- 可通过`let's encrypt`生成tls相关证书
-- 支持同一服务端口监听，使用不同域名的tls证书
+- 基于TOML格式的配置，配置方式非常简洁，可保存至文件或etcd
+- 频繁更新的Upstream与Location相关配置调整准实时生效(30秒)，其它应用配置更新后，无中断式的优雅重启程序
+- 访问日志的模板化配置，已支30多个相关属性的配置，可按需指定输出各种参数与指标
+- WEB形式的管理后台界面，无需学习，简单易用
+- 开箱即用的`let's encrypt`tls证书，仅需配置对应域名即可
+- 不同域名的tls证书可使用在同一服务端口中，按servername自动选择匹配证书
 - 支持各种事件的推送：`lets_encrypt`, `backend_status`, `diff_config`, `restart`等等
-- 丰富的http转发插件：`compression`, `static serve`, `limit`, `stats`, `mock`, 等等
+- 丰富的http插件：`compression`, `static serve`, `limit`, `stats`, `mock`, 等等
 - 提供了不同阶段的统计数据，如`upstream_connect_time`, `upstream_processing_time`, `compression_time`, `cache_lookup_time` 与 `cache_lock_time`等
 
 [Pingap处理流程](./phase_chart_zh.md)

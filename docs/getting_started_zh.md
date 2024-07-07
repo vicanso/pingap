@@ -18,7 +18,7 @@ RUST_LOG=INFO pingap -c /opt/pingap/conf
 
 ## 启用WEB管理后台配置
 
-toml的相关配置可以查阅[应用配置详细说明](./config_zh.md)，建议可以使用WEB管理后台的方式来匹配。WEB管理后台支持basic auth的方式鉴权（可选），下面通过127.0.0.1:3018端口提供管理后台服务，账号为：pingap，密码为：123123，`cGluZ2FwOjEyMzEyMw==`为base64("pingap:123123")。
+toml的相关配置可以查阅[应用配置详细说明](./config_zh.md)，建议可以使用WEB管理后台的方式配置。WEB管理后台支持basic auth的方式鉴权（可选），下面通过127.0.0.1:3018端口提供管理后台服务，账号为：pingap，密码为：123123，`cGluZ2FwOjEyMzEyMw==`为base64("pingap:123123")。
 
 ```bash
 RUST_LOG=INFO pingap -c /opt/pingap/conf --admin=cGluZ2FwOjEyMzEyMw==@127.0.0.1:3018
@@ -48,7 +48,7 @@ RUST_LOG=INFO pingap -c /opt/pingap/conf --admin=cGluZ2FwOjEyMzEyMw==@127.0.0.1:
 
 地址配置的是`ip:端口`的形式，无需指定协议，默认为http，若有配置`sni`则认为是以https的形式访问上游节点。
 
-虽然大部署的配置均可不配置，建议展开更多配置，按需设置各超时的值，默认值无超时不建议使用。`sni`与`是否校验证书`用于该upstream的节点使用https时设置，若非https忽略即可。健康检查的`http://charts/ping`其中charts为指定请求时的Host，真正检测时会连接配置upstream地址连接。
+大部分的配置均可不配置，建议展开更多配置，按需设置各超时的值，默认值无超时不建议使用。`sni`与`是否校验证书`用于该upstream的节点使用https时设置，若非https忽略即可。健康检查的`http://charts/ping`其中charts为指定请求时的Host，真正检测时会连接配置upstream地址连接。
 
 <p align="center">
     <img src="../asset/upstream-detail-zh.jpg" alt="upstream detail">
@@ -85,7 +85,7 @@ host根据提供服务的域名设置，如果多个域名则使用`,`分隔，�
 ```bash
 RUST_LOG=INFO pingap -c /opt/pingap/conf \
   -d --log=/opt/pingap/pingap.log \
-  --autorestart --autoreload \
+  --autorestart \
   --admin=cGluZ2FwOjEyMzEyMw==@127.0.0.1:3018
 ```
 
@@ -101,4 +101,4 @@ RUST_LOG=INFO pingap -c /opt/pingap/conf \
 2024-06-30T13:04:28.524079+08:00  INFO reload location success
 ```
 
-需要注意，因为避免频繁更新配置时导致重复的重启，配置检测只会定时检测(现默认为90秒，reload则为30秒检测一次)，而程序重启也避免过于频繁，因此需要配置更新后，大概需要等待2分钟才会真正触发upgrade操作。部分配置，如`upstream`与`location`等已实现热更新，程序无需重启即可实现配置更新。完成后打`http://127.0.0.1:6188/charts/`，需要注意在linux才可正常的触发upgrade的更新切换。
+需要注意，因为避免频繁更新配置时导致重复的重启，配置检测只会定时检测(现默认为90秒，reload则为30秒检测一次)，程序重启也避免过于频繁，因此需要配置更新后，大概需要等待2分钟才会真正触发upgrade操作。部分配置，如`upstream`与`location`等已实现热更新，程序无需重启即可实现配置更新。完成后打`http://127.0.0.1:6188/charts/`，需要注意在linux才可正常的触发upgrade的更新切换。
