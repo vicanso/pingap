@@ -8,7 +8,7 @@ Pingap是基于[pingora](https://github.com/cloudflare/pingora)开发的，pingo
 - 正则形式重写Path
 - HTTP 1/2 的全链路支持，包括h2c
 - 基于TOML格式的配置，可保存至文件或etcd
-- Upstream与Location的相关配置调整准实时生效，其它应用配置更新后，无中断式的优雅更新程序
+- Upstream与Location的相关配置调整准实时生效，其它应用配置更新后，无中断式的优雅重启程序
 - 访问日志的模板化配置，已支30多个相关属性的配置
 - WEB形式的管理后台界面，简单易用
 - 可通过`let's encrypt`生成tls相关证书

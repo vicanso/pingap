@@ -400,11 +400,12 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     if args.autorestart || args.autoreload {
+        let only_hot_reload = !args.autorestart;
         my_server.add_service(background_service(
             "AutoRestart",
             new_auto_restart_service(
                 auto_restart_check_interval,
-                args.autoreload,
+                only_hot_reload,
             ),
         ));
     }
