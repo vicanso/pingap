@@ -13,13 +13,11 @@
 // limitations under the License.
 
 use crate::util;
-use lru::LruCache;
-use std::num::NonZeroUsize;
 use std::time::Duration;
-use tokio::sync::RwLock;
+use tinyufo::TinyUfo;
 use tracing::debug;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct TtlLimit {
     count: usize,
     created_at: Duration,
@@ -27,27 +25,26 @@ struct TtlLimit {
 
 pub struct TtlLruLimit {
     ttl: Duration,
-    lru: RwLock<LruCache<String, TtlLimit>>,
+    ufo: TinyUfo<String, TtlLimit>,
     max: usize,
 }
 
 impl TtlLruLimit {
     /// Create a ttl lru limit.
     pub fn new(size: usize, ttl: Duration, max: usize) -> Self {
-        let capacity = NonZeroUsize::new(size.max(1)).unwrap();
         Self {
             ttl,
             max,
-            lru: RwLock::new(LruCache::new(capacity)),
+            ufo: TinyUfo::new(size, size),
         }
     }
     /// Validate the value of key, return true if valid.
     pub async fn validate(&self, key: &str) -> bool {
-        let mut g = self.lru.write().await;
         let mut should_reset = false;
         let mut valid = false;
+        let key = key.to_string();
 
-        if let Some(value) = g.peek(key) {
+        if let Some(value) = self.ufo.get(&key) {
             debug!(key, value = format!("{value:?}"), "ttl lru limit");
             // validate expired first
             if util::now() - value.created_at > self.ttl {
@@ -60,25 +57,35 @@ impl TtlLruLimit {
             valid = true
         }
         if should_reset {
-            g.pop(key);
+            self.ufo.put(
+                key,
+                TtlLimit {
+                    count: 0,
+                    created_at: Duration::from_secs(0),
+                },
+                1,
+            );
         }
 
         valid
     }
     /// Increase the value of key.
     pub async fn inc(&self, key: &str) {
-        let mut g = self.lru.write().await;
-        if let Some(value) = g.get_mut(key) {
+        let key = key.to_string();
+        let data = if let Some(mut value) = self.ufo.get(&key) {
+            // the reset value
+            if value.created_at.as_secs() == 0 {
+                value.created_at = util::now();
+            }
             value.count += 1;
+            value
         } else {
-            g.put(
-                key.to_string(),
-                TtlLimit {
-                    count: 1,
-                    created_at: util::now(),
-                },
-            );
-        }
+            TtlLimit {
+                count: 1,
+                created_at: util::now(),
+            }
+        };
+        self.ufo.put(key, data, 1);
     }
 }
 

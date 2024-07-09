@@ -50,6 +50,7 @@ impl HttpCacheStorage for TinyUfoCache {
         self.cache.put(key, data, weight);
         Ok(())
     }
+    // TODO remove
 }
 
 #[cfg(test)]

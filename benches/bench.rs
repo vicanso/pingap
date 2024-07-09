@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion};
 use http::{HeaderName, HeaderValue, StatusCode};
+use nanoid::nanoid;
 use pingap::config::LocationConf;
 use pingap::http_extra::{convert_headers, HttpResponse};
 use pingap::proxy::{Location, Parser};
@@ -8,6 +9,7 @@ use pingap::state::{CompressionStat, State};
 use pingap::util::{self, get_super_ts};
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio_test::io::Builder;
 
@@ -207,6 +209,31 @@ fn get_logger_session(s: crossbeam_channel::Sender<Option<Session>>) {
     });
 }
 
+fn bench_map(c: &mut Criterion) {
+    let mut map = HashMap::new();
+    let mut amap = ahash::AHashMap::new();
+    for i in 0..10 {
+        let id = nanoid!(6);
+        map.insert(id.clone(), i);
+        amap.insert(id, i);
+    }
+    let id = nanoid!(6);
+    map.insert(id.clone(), 100);
+    amap.insert(id.clone(), 100);
+    c.bench_function("normal hash map", |b| {
+        let new_id = id.clone();
+        b.iter(|| {
+            map.get(&new_id);
+        });
+    });
+    c.bench_function("ahash map", |b| {
+        let new_id = id.clone();
+        b.iter(|| {
+            amap.get(&new_id);
+        });
+    });
+}
+
 fn bench_logger_format(c: &mut Criterion) {
     let (s, r) = crossbeam_channel::bounded(0);
     get_logger_session(s);
@@ -236,7 +263,7 @@ fn bench_logger_format(c: &mut Criterion) {
             upstream_connected: Some(10),
             upstream_processing_time: Some(50),
             upstream_response_time: Some(5),
-            location: "lo".to_string(),
+            location: None,
             connection_time: 300,
             tls_version: Some("tls1.2".to_string()),
             processing: 10,
@@ -264,5 +291,6 @@ criterion_group!(
     bench_location_rewrite_path,
     bench_get_super_ts,
     bench_logger_format,
+    bench_map,
 );
 criterion_main!(benches);

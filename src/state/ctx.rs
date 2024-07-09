@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util;
 use crate::util::format_duration;
+use crate::{proxy::Location, util};
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
 use pingora_limits::inflight::Guard;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 pub trait ModifyResponseBody: Sync + Send {
     fn handle(&self, data: Bytes) -> Bytes;
@@ -44,9 +44,10 @@ pub struct State {
     pub tls_version: Option<String>,
     pub status: Option<StatusCode>,
     pub connection_time: u64,
+    pub connection_reused: bool,
     pub response_body_size: usize,
     pub reused: bool,
-    pub location: String,
+    pub location: Option<Arc<Location>>,
     pub upstream_address: String,
     pub client_ip: Option<String>,
     pub remote_addr: Option<String>,
@@ -76,10 +77,11 @@ impl Default for State {
             tls_version: None,
             status: None,
             connection_time: 0,
+            connection_reused: false,
             created_at: util::now().as_millis() as u64,
             response_body_size: 0,
             reused: false,
-            location: "".to_string(),
+            location: None,
             upstream_address: "".to_string(),
             client_ip: None,
             remote_addr: None,
@@ -164,9 +166,20 @@ impl State {
                     buf = format_duration(buf, ms);
                 }
             },
-            "location" => buf.extend(self.location.as_bytes()),
+            "location" => {
+                if let Some(location) = &self.location {
+                    buf.extend(location.name.as_bytes())
+                }
+            },
             "connection_time" => {
                 buf = format_duration(buf, self.connection_time)
+            },
+            "connection_reused" => {
+                if self.connection_reused {
+                    buf.extend(b"true");
+                } else {
+                    buf.extend(b"false");
+                }
             },
             "tls_version" => {
                 if let Some(value) = &self.tls_version {
@@ -209,10 +222,13 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::State;
+    use crate::config::LocationConf;
+    use crate::proxy::Location;
     use crate::state::CompressionStat;
     use crate::util;
     use bytes::BytesMut;
     use pretty_assertions::assert_eq;
+    use std::sync::Arc;
     use std::time::Duration;
 
     #[test]
@@ -272,7 +288,15 @@ mod tests {
                 .as_ref()
         );
 
-        ctx.location = "pingap".to_string();
+        ctx.location = Some(Arc::new(
+            Location::new(
+                "pingap",
+                &LocationConf {
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        ));
         assert_eq!(
             b"pingap",
             ctx.append_value(BytesMut::new(), "location").as_ref()

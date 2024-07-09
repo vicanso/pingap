@@ -17,6 +17,7 @@ use crate::http_extra::{convert_header_value, convert_headers, HttpHeader};
 use crate::plugin::get_plugins;
 use crate::state::State;
 use crate::util;
+use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use bytes::Bytes;
 use once_cell::sync::Lazy;
@@ -346,9 +347,9 @@ impl Location {
     }
 }
 
-type Locations = HashMap<String, Arc<Location>>;
+type Locations = AHashMap<String, Arc<Location>>;
 static LOCATION_MAP: Lazy<ArcSwap<Locations>> =
-    Lazy::new(|| ArcSwap::from_pointee(HashMap::new()));
+    Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
 
 pub fn get_location(name: &str) -> Option<Arc<Location>> {
     if name.is_empty() {
@@ -358,7 +359,7 @@ pub fn get_location(name: &str) -> Option<Arc<Location>> {
 }
 
 pub fn try_init_locations(confs: &HashMap<String, LocationConf>) -> Result<()> {
-    let mut locations = HashMap::new();
+    let mut locations = AHashMap::new();
     for (name, conf) in confs.iter() {
         let lo = Location::new(name, conf)?;
         locations.insert(name.to_string(), Arc::new(lo));
@@ -639,7 +640,6 @@ mod tests {
                 PluginStep::Request,
                 &mut session,
                 &mut State {
-                    location: "lo".to_string(),
                     ..Default::default()
                 },
             )

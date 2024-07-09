@@ -2267,6 +2267,7 @@ name = "pingap"
 version = "0.5.25"
 dependencies = [
  "TinyUFO",
+ "ahash 0.8.11",
  "arc-swap",
  "async-trait",
  "base64 0.22.1",
@@ -2298,7 +2299,6 @@ dependencies = [
  "itoa",
  "libc",
  "local-ip-address",
- "lru",
  "memory-stats",
  "mime_guess",
  "nanoid",

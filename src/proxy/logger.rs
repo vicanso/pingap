@@ -412,8 +412,10 @@ impl Parser {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::{format_extra_tag, Parser, Tag, TagCategory};
-    use crate::state::State;
+    use crate::{config::LocationConf, proxy::Location, state::State};
     use http::Method;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -640,7 +642,15 @@ mod tests {
             upstream_address: "192.186.1.1:6188".to_string(),
             processing: 1,
             upstream_connect_time: Some(100),
-            location: "test".to_string(),
+            location: Some(Arc::new(
+                Location::new(
+                    "test",
+                    &LocationConf {
+                        ..Default::default()
+                    },
+                )
+                .unwrap(),
+            )),
             connection_time: 300,
             tls_version: Some("1.2".to_string()),
             request_id: Some("nanoid".to_string()),

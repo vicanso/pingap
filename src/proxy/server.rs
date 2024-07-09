@@ -28,6 +28,7 @@ use crate::proxy::location::get_location;
 use crate::state::CompressionStat;
 use crate::state::State;
 use crate::util;
+use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
@@ -66,9 +67,9 @@ pub enum Error {
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-type ServerLocations = HashMap<String, Arc<Vec<String>>>;
+type ServerLocations = AHashMap<String, Arc<Vec<String>>>;
 static LOCATION_MAP: Lazy<ArcSwap<ServerLocations>> =
-    Lazy::new(|| ArcSwap::from_pointee(HashMap::new()));
+    Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
 
 pub fn try_init_server_locations(
     servers: &HashMap<String, config::ServerConf>,
@@ -78,7 +79,7 @@ pub fn try_init_server_locations(
     for (name, item) in locations.iter() {
         location_weights.insert(name.to_string(), item.get_weight());
     }
-    let mut server_locations = HashMap::new();
+    let mut server_locations = AHashMap::new();
     for (name, server) in servers.iter() {
         if let Some(items) = &server.locations {
             let mut items = items.clone();
@@ -353,13 +354,15 @@ impl ProxyHttp for Server {
         if let Some(digest) = session.digest() {
             let (established, tls_version) = get_digest_detail(digest);
             ctx.connection_time = util::now().as_millis() as u64 - established;
+            if ctx.connection_time > 5 {
+                ctx.connection_reused = true;
+            }
             ctx.tls_version = tls_version;
         };
         ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
         ctx.accepted = self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
         ctx.remote_addr = util::get_remote_addr(session);
 
-        let mut location = None;
         // locations not found
         let Some(locations) = get_server_locations(&self.name) else {
             return Ok(());
@@ -368,20 +371,21 @@ impl ProxyHttp for Server {
         let host = util::get_host(header).unwrap_or_default();
         let path = header.uri.path();
         for name in locations.iter() {
-            if let Some(lo) = get_location(name) {
-                if lo.matched(host, path) {
-                    ctx.location = name.to_string();
-                    location = Some(lo);
-                    break;
-                }
+            let Some(lo) = get_location(name) else {
+                continue;
+            };
+            if lo.matched(host, path) {
+                ctx.location = Some(lo);
+                break;
             }
         }
-        if let Some(lo) = location {
+        if let Some(lo) = &ctx.location {
             ctx.location_accepted =
                 lo.accepted.fetch_add(1, Ordering::Relaxed) + 1;
             ctx.location_processing =
                 lo.processing.fetch_add(1, Ordering::Relaxed) + 1;
             let _ = lo
+                .clone()
                 .handle_request_plugin(PluginStep::EarlyRequest, session, ctx)
                 .await?;
         }
@@ -408,7 +412,7 @@ impl ProxyHttp for Server {
         }
 
         let header = session.req_header_mut();
-        let Some(location) = get_location(&ctx.location) else {
+        let Some(location) = &ctx.location else {
             let host = util::get_host(header).unwrap_or_default();
             ctx.response_body_size =
                 HttpResponse::unknown_error(Bytes::from(format!(
@@ -427,6 +431,7 @@ impl ProxyHttp for Server {
         location.client_body_size_limit(Some(header), ctx)?;
 
         let done = location
+            .clone()
             .handle_request_plugin(PluginStep::Request, session, ctx)
             .await?;
 
@@ -445,8 +450,9 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        if let Some(location) = get_location(&ctx.location) {
+        if let Some(location) = &ctx.location {
             let done = location
+                .clone()
                 .handle_request_plugin(PluginStep::ProxyUpstream, session, ctx)
                 .await?;
             if done {
@@ -461,7 +467,9 @@ impl ProxyHttp for Server {
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Box<HttpPeer>> {
-        let peer = if let Some(location) = get_location(&ctx.location) {
+        let mut location_name = "unknown".to_string();
+        let peer = if let Some(location) = &ctx.location {
+            location_name = location.name.clone();
             if let Some(up) = get_upstream(&location.upstream) {
                 ctx.upstream_connected = up.connected();
                 up.new_http_peer(session, ctx)
@@ -474,7 +482,7 @@ impl ProxyHttp for Server {
         .ok_or_else(|| {
             util::new_internal_error(
                 503,
-                format!("No available upstream, location:{}", ctx.location),
+                format!("No available upstream for {location_name}"),
             )
         })?;
 
@@ -512,7 +520,7 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        if let Some(location) = get_location(&ctx.location) {
+        if let Some(location) = &ctx.location {
             location.set_append_proxy_headers(session, ctx, upstream_response);
         }
         Ok(())
@@ -529,7 +537,7 @@ impl ProxyHttp for Server {
     {
         if let Some(buf) = body {
             ctx.payload_size += buf.len();
-            if let Some(lo) = get_location(&ctx.location) {
+            if let Some(lo) = &ctx.location {
                 lo.client_body_size_limit(None, ctx)?;
             }
         }
@@ -610,8 +618,9 @@ impl ProxyHttp for Server {
             }
         }
 
-        if let Some(location) = get_location(&ctx.location) {
+        if let Some(location) = &ctx.location {
             let _ = location
+                .clone()
                 .handle_response_plugin(
                     PluginStep::Response,
                     session,
@@ -776,7 +785,7 @@ impl ProxyHttp for Server {
         Self::CTX: Send + Sync,
     {
         self.processing.fetch_sub(1, Ordering::Relaxed);
-        if let Some(location) = get_location(&ctx.location) {
+        if let Some(location) = &ctx.location {
             location.processing.fetch_sub(1, Ordering::Relaxed);
         }
         if ctx.status.is_none() {
@@ -807,11 +816,11 @@ impl ProxyHttp for Server {
 #[cfg(test)]
 mod tests {
     use super::Server;
-    use crate::config::PingapConf;
+    use crate::config::{LocationConf, PingapConf};
     use crate::proxy::server::get_digest_detail;
     use crate::proxy::{
         try_init_locations, try_init_server_locations, try_init_upstreams,
-        ServerConf,
+        Location, ServerConf,
     };
     use crate::state::State;
     use pingora::http::ResponseHeader;
@@ -883,7 +892,7 @@ mod tests {
             .early_request_filter(&mut session, &mut ctx)
             .await
             .unwrap();
-        assert_eq!("lo", ctx.location);
+        assert_eq!("lo", ctx.location.unwrap().name);
     }
 
     #[tokio::test]
@@ -898,7 +907,9 @@ mod tests {
         session.read_request().await.unwrap();
 
         let mut ctx = State {
-            location: "lo".to_string(),
+            location: Some(Arc::new(
+                Location::new("lo", &LocationConf::default()).unwrap(),
+            )),
             ..Default::default()
         };
         let done = server.request_filter(&mut session, &mut ctx).await.unwrap();

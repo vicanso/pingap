@@ -16,6 +16,7 @@ rust-version = "1.74"
 
 [dependencies]
 TinyUFO = "0.2.0"
+ahash = "0.8.11"
 arc-swap = "1.7.1"
 async-trait = "0.1.80"
 base64 = "0.22.1"
@@ -49,7 +50,6 @@ ipnet = "2.9.0"
 itoa = "1.0.11"
 libc = "0.2.155"
 local-ip-address = "0.6.1"
-lru = "0.12.3"
 memory-stats = { version = "1.2.0", features = ["always_use_statm"] }
 mime_guess = "2.0.4"
 nanoid = "0.4.0"

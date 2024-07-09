@@ -19,6 +19,7 @@ use crate::discovery::{
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::State;
 use crate::util;
+use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use futures_util::FutureExt;
@@ -396,6 +397,7 @@ impl Upstream {
                 error!(error = err.to_string(), "dns discovery fail");
                 return;
             }
+            // not dns discovery should panic
             panic!("{err:?}");
         };
         let lb = match algo_params[0] {
@@ -542,16 +544,16 @@ impl Upstream {
     }
 }
 
-type Upstreams = HashMap<String, Arc<Upstream>>;
+type Upstreams = AHashMap<String, Arc<Upstream>>;
 static UPSTREAM_MAP: Lazy<ArcSwap<Upstreams>> =
-    Lazy::new(|| ArcSwap::from_pointee(HashMap::new()));
+    Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
 
 pub fn get_upstream(name: &str) -> Option<Arc<Upstream>> {
     UPSTREAM_MAP.load().get(name).cloned()
 }
 
 pub fn try_init_upstreams(confs: &HashMap<String, UpstreamConf>) -> Result<()> {
-    let mut upstreams = HashMap::new();
+    let mut upstreams = AHashMap::new();
     for (name, conf) in confs.iter() {
         let up = Arc::new(Upstream::new(name, conf)?);
         upstreams.insert(name.to_string(), up);
