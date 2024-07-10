@@ -74,6 +74,7 @@ impl ServiceTask for LetsEncryptService {
         let domains = &self.domains;
         let should_renew_now =
             if let Ok(cert) = get_lets_encrypt_cert(&self.certificate_file) {
+                // invalid or different domains
                 !cert.valid() || domains.join(",") != cert.domains.join(",")
             } else {
                 true
@@ -121,7 +122,7 @@ pub fn get_lets_encrypt_cert(path: &PathBuf) -> Result<Certificate> {
 /// The proxy plugin for lets encrypt http-01.
 pub async fn handle_lets_encrypt(
     session: &mut Session,
-    ctx: &mut State,
+    _ctx: &mut State,
 ) -> pingora::Result<bool> {
     let path = session.req_header().uri.path();
     if path.starts_with("/.well-known/acme-challenge/") {
@@ -132,7 +133,7 @@ pub async fn handle_lets_encrypt(
             })?;
             v.clone()
         };
-        ctx.response_body_size = HttpResponse {
+        HttpResponse {
             status: StatusCode::OK,
             body: value.into(),
             ..Default::default()

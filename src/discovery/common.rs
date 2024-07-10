@@ -19,6 +19,8 @@ use pingora::protocols::l4::socket::SocketAddr;
 use std::collections::BTreeSet;
 use std::net::ToSocketAddrs;
 
+/// Create a static discovery, execute it only once.
+/// it will resolve the domain to socket address at the beginning stage.
 pub fn new_common_discover_backends(
     addrs: &[String],
     tls: bool,
@@ -33,7 +35,7 @@ pub fn new_common_discover_backends(
             source: e,
             content: format!("{addr} to socket addr fail"),
         })? {
-            if ipv4_only && item.is_ipv6() {
+            if ipv4_only && !item.is_ipv4() {
                 continue;
             }
             let backend = Backend {

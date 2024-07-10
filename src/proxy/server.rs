@@ -47,6 +47,7 @@ use pingora::listeners::TcpSocketOptions;
 use pingora::modules::http::compression::ResponseCompression;
 use pingora::protocols::http::error_resp;
 use pingora::protocols::Digest;
+use pingora::protocols::TimingDigest;
 use pingora::proxy::{http_proxy_service, HttpProxy};
 use pingora::proxy::{ProxyHttp, Session};
 use pingora::server::configuration;
@@ -84,12 +85,10 @@ pub fn try_init_server_locations(
         if let Some(items) = &server.locations {
             let mut items = items.clone();
             items.sort_by_key(|item| {
-                let weight =
-                    if let Some(weight) = location_weights.get(item.as_str()) {
-                        weight.to_owned()
-                    } else {
-                        0
-                    };
+                let weight = location_weights
+                    .get(item.as_str())
+                    .map(|value| value.to_owned())
+                    .unwrap_or_default();
                 std::cmp::Reverse(weight)
             });
             server_locations.insert(name.to_string(), Arc::new(items));
@@ -303,7 +302,7 @@ impl Server {
                     .await?;
                 if let Some(resp) = result {
                     ctx.status = Some(resp.status);
-                    ctx.response_body_size = resp.send(session).await?;
+                    resp.send(session).await?;
                 } else {
                     return Err(util::new_internal_error(
                         500,
@@ -316,23 +315,45 @@ impl Server {
     }
 }
 
+#[derive(Debug, Default)]
+struct DigestDeailt {
+    tcp_established: u64,
+    tls_established: u64,
+    tls_version: Option<String>,
+    tls_cipher: Option<String>,
+}
+
 #[inline]
-fn get_digest_detail(digest: &Digest) -> (u64, Option<String>) {
-    let mut established = 0;
-    let mut tls_version = None;
-    if let Some(item) = digest.timing_digest.first() {
-        if let Some(item) = item.as_ref() {
-            established = item
-                .established_ts
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64;
-        }
+fn get_digest_detail(digest: &Digest) -> DigestDeailt {
+    let get_established = |value: Option<&Option<TimingDigest>>| -> u64 {
+        value
+            .map(|item| {
+                if let Some(item) = item {
+                    item.established_ts
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64
+                } else {
+                    0
+                }
+            })
+            .unwrap_or_default()
+    };
+
+    let tcp_established = get_established(digest.timing_digest.first());
+    let Some(ssl_digest) = &digest.ssl_digest else {
+        return DigestDeailt {
+            tcp_established,
+            ..Default::default()
+        };
+    };
+
+    DigestDeailt {
+        tcp_established,
+        tls_established: get_established(digest.timing_digest.get(1)),
+        tls_version: Some(ssl_digest.version.to_string()),
+        tls_cipher: Some(ssl_digest.cipher.to_string()),
     }
-    if let Some(item) = &digest.ssl_digest {
-        tls_version = Some(item.version.to_string());
-    }
-    (established, tls_version)
 }
 
 #[async_trait]
@@ -352,12 +373,24 @@ impl ProxyHttp for Server {
         Self::CTX: Send + Sync,
     {
         if let Some(digest) = session.digest() {
-            let (established, tls_version) = get_digest_detail(digest);
-            ctx.connection_time = util::now().as_millis() as u64 - established;
-            if ctx.connection_time > 5 {
+            let digest_detail = get_digest_detail(digest);
+            ctx.connection_time = util::now().as_millis() as u64
+                - digest_detail
+                    .tcp_established
+                    .max(digest_detail.tls_established);
+
+            if ctx.connection_time > 10 {
                 ctx.connection_reused = true;
             }
-            ctx.tls_version = tls_version;
+            if !ctx.connection_reused
+                && digest_detail.tls_established
+                    >= digest_detail.tcp_established
+            {
+                ctx.tls_handshake_time = digest_detail.tls_established
+                    - digest_detail.tcp_established;
+            }
+            ctx.tls_cipher = digest_detail.tls_cipher;
+            ctx.tls_version = digest_detail.tls_version;
         };
         ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
         ctx.accepted = self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
@@ -371,20 +404,20 @@ impl ProxyHttp for Server {
         let host = util::get_host(header).unwrap_or_default();
         let path = header.uri.path();
         for name in locations.iter() {
-            let Some(lo) = get_location(name) else {
+            let Some(location) = get_location(name) else {
                 continue;
             };
-            if lo.matched(host, path) {
-                ctx.location = Some(lo);
+            if location.matched(host, path) {
+                ctx.location = Some(location);
                 break;
             }
         }
-        if let Some(lo) = &ctx.location {
+        if let Some(location) = &ctx.location {
             ctx.location_accepted =
-                lo.accepted.fetch_add(1, Ordering::Relaxed) + 1;
+                location.accepted.fetch_add(1, Ordering::Relaxed) + 1;
             ctx.location_processing =
-                lo.processing.fetch_add(1, Ordering::Relaxed) + 1;
-            let _ = lo
+                location.processing.fetch_add(1, Ordering::Relaxed) + 1;
+            let _ = location
                 .clone()
                 .handle_request_plugin(PluginStep::EarlyRequest, session, ctx)
                 .await?;
@@ -414,13 +447,12 @@ impl ProxyHttp for Server {
         let header = session.req_header_mut();
         let Some(location) = &ctx.location else {
             let host = util::get_host(header).unwrap_or_default();
-            ctx.response_body_size =
-                HttpResponse::unknown_error(Bytes::from(format!(
-                    "Location not found, host:{host} path:{}",
-                    header.uri.path(),
-                )))
-                .send(session)
-                .await?;
+            HttpResponse::unknown_error(Bytes::from(format!(
+                "Location not found, host:{host} path:{}",
+                header.uri.path(),
+            )))
+            .send(session)
+            .await?;
             return Ok(true);
         };
 
@@ -469,7 +501,7 @@ impl ProxyHttp for Server {
     ) -> pingora::Result<Box<HttpPeer>> {
         let mut location_name = "unknown".to_string();
         let peer = if let Some(location) = &ctx.location {
-            location_name = location.name.clone();
+            location_name.clone_from(&location.name);
             if let Some(up) = get_upstream(&location.upstream) {
                 ctx.upstream_connected = up.connected();
                 up.new_http_peer(session, ctx)
@@ -537,8 +569,8 @@ impl ProxyHttp for Server {
     {
         if let Some(buf) = body {
             ctx.payload_size += buf.len();
-            if let Some(lo) = &ctx.location {
-                lo.client_body_size_limit(None, ctx)?;
+            if let Some(location) = &ctx.location {
+                location.client_body_size_limit(None, ctx)?;
             }
         }
         Ok(())
@@ -569,6 +601,14 @@ impl ProxyHttp for Server {
                 return Ok(RespCacheable::Uncacheable(
                     NoCacheReason::OriginNotCache,
                 ));
+            }
+            //  max-age=0
+            if let Ok(max_age) = c.max_age() {
+                if max_age.unwrap_or_default() == 0 {
+                    return Ok(RespCacheable::Uncacheable(
+                        NoCacheReason::OriginNotCache,
+                    ));
+                }
             }
             // adjust cache ttl
             if let Some(d) = ctx.cache_max_ttl {
@@ -655,13 +695,10 @@ impl ProxyHttp for Server {
     fn upstream_response_body_filter(
         &self,
         _session: &mut Session,
-        body: &mut Option<bytes::Bytes>,
+        _body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
         ctx: &mut Self::CTX,
     ) {
-        if let Some(body) = body {
-            ctx.response_body_size += body.len();
-        }
         if end_of_stream {
             ctx.upstream_response_time =
                 util::get_latency(&ctx.upstream_response_time);
@@ -745,7 +782,6 @@ impl ProxyHttp for Server {
             StatusCode::from_u16(code)
                 .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
         );
-        ctx.response_body_size = buf.len();
         let content_type = if buf.starts_with(b"{") {
             "application/json; charset=utf-8"
         } else {
@@ -843,7 +879,7 @@ mod tests {
             })],
             ssl_digest: Some(Arc::new(SslDigest {
                 version: "1.3",
-                cipher: "",
+                cipher: "ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
                 organization: None,
                 serial_number: None,
                 cert_digest: vec![],
@@ -851,8 +887,12 @@ mod tests {
             ..Default::default()
         };
         let result = get_digest_detail(&digest);
-        assert_eq!(10000, result.0);
-        assert_eq!("1.3", result.1.unwrap_or_default());
+        assert_eq!(10000, result.tcp_established);
+        assert_eq!("1.3", result.tls_version.unwrap_or_default());
+        assert_eq!(
+            "ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+            result.tls_cipher.unwrap_or_default()
+        );
     }
 
     fn new_server() -> Server {

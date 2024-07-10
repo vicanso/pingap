@@ -310,7 +310,7 @@ impl Location {
                     // ingore http response status >= 900
                     if resp.status.as_u16() < 900 {
                         ctx.status = Some(resp.status);
-                        ctx.response_body_size = resp.send(session).await?;
+                        resp.send(session).await?;
                     }
                     return Ok(true);
                 }

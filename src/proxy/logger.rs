@@ -337,12 +337,12 @@ impl Parser {
                 TagCategory::Size => {
                     buf.extend(
                         itoa::Buffer::new()
-                            .format(ctx.response_body_size)
+                            .format(session.body_bytes_sent())
                             .as_bytes(),
                     );
                 },
                 TagCategory::SizeHuman => {
-                    buf = format_byte_size(buf, ctx.response_body_size);
+                    buf = format_byte_size(buf, session.body_bytes_sent());
                 },
                 TagCategory::Status => {
                     if let Some(status) = ctx.status {
@@ -637,7 +637,6 @@ mod tests {
         assert_eq!(Method::GET, session.req_header().method);
 
         let ctx = State {
-            response_body_size: 1100,
             reused: true,
             upstream_address: "192.186.1.1:6188".to_string(),
             processing: 1,
@@ -658,7 +657,7 @@ mod tests {
         };
         let log = p.format(&session, &ctx);
         assert_eq!(
-            "github.com GET /vicanso/pingap HTTP/1.1 size=1   https /vicanso/pingap?size=1 https://github.com/ pingap/0.1.1 1100 1.1KB 0 0 0B abc application/json true 192.186.1.1:6188 1 100ms test 300ms 1.2 nanoid",
+            "github.com GET /vicanso/pingap HTTP/1.1 size=1   https /vicanso/pingap?size=1 https://github.com/ pingap/0.1.1 0 0B 0 0 0B abc application/json true 192.186.1.1:6188 1 100ms test 300ms 1.2 nanoid",
             log
         );
     }

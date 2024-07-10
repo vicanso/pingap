@@ -252,7 +252,6 @@ fn bench_logger_format(c: &mut Criterion) {
 {~deviceId} {>accept} {:reused}"
                 .into();
         let ctx = State {
-            response_body_size: 1024,
             payload_size: 512,
             reused: true,
             status: Some(StatusCode::OK),

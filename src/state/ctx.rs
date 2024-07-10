@@ -42,10 +42,12 @@ pub struct State {
     pub location_accepted: u64,
     pub created_at: u64,
     pub tls_version: Option<String>,
+    pub tls_cipher: Option<String>,
+    pub tls_handshake_time: u64,
     pub status: Option<StatusCode>,
     pub connection_time: u64,
     pub connection_reused: bool,
-    pub response_body_size: usize,
+    // pub response_body_size: usize,
     pub reused: bool,
     pub location: Option<Arc<Location>>,
     pub upstream_address: String,
@@ -75,11 +77,12 @@ impl Default for State {
             location_processing: 0,
             location_accepted: 0,
             tls_version: None,
+            tls_cipher: None,
+            tls_handshake_time: 0,
             status: None,
             connection_time: 0,
             connection_reused: false,
             created_at: util::now().as_millis() as u64,
-            response_body_size: 0,
             reused: false,
             location: None,
             upstream_address: "".to_string(),
@@ -184,6 +187,16 @@ impl State {
             "tls_version" => {
                 if let Some(value) = &self.tls_version {
                     buf.extend(value.as_bytes());
+                }
+            },
+            "tls_cipher" => {
+                if let Some(value) = &self.tls_cipher {
+                    buf.extend(value.as_bytes());
+                }
+            },
+            "tls_handshake_time" => {
+                if self.tls_version.is_some() {
+                    buf = format_duration(buf, self.tls_handshake_time);
                 }
             },
             "compression_time" => {
@@ -313,6 +326,13 @@ mod tests {
         assert_eq!(
             b"tls1.3",
             ctx.append_value(BytesMut::new(), "tls_version").as_ref()
+        );
+
+        ctx.tls_cipher =
+            Some("ECDHE_ECDSA_WITH_AES_128_GCM_SHA256".to_string());
+        assert_eq!(
+            b"ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+            ctx.append_value(BytesMut::new(), "tls_cipher").as_ref()
         );
 
         ctx.compression_stat = Some(CompressionStat {

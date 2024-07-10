@@ -83,7 +83,7 @@ impl Dns {
                 message: "lookup ip fail".to_string(),
             })?;
             for item in ip.iter() {
-                if self.ipv4_only && item.is_ipv6() {
+                if self.ipv4_only && !item.is_ipv4() {
                     continue;
                 }
                 let mut addr = item.to_string();
@@ -135,6 +135,8 @@ impl ServiceDiscovery for Dns {
     }
 }
 
+/// Create a dns discovery, scheduled execution execute DNS resolve,
+/// and update the latest IP address list.
 pub fn new_dns_discover_backends(
     addrs: &[String],
     tls: bool,

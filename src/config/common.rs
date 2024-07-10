@@ -136,12 +136,12 @@ impl CertificateConf {
     /// Validate the options of certificate config.
     pub fn validate(&self) -> Result<()> {
         if let Some(value) = &self.tls_key {
-            let buf = if !util::is_pem(value) {
+            let buf = if util::is_pem(value) {
+                value.as_bytes().to_vec()
+            } else {
                 STANDARD
                     .decode(value)
                     .map_err(|e| Error::Base64Decode { source: e })?
-            } else {
-                value.as_bytes().to_vec()
             };
 
             let _ = PKey::private_key_from_pem(&buf).map_err(|e| {
@@ -151,24 +151,24 @@ impl CertificateConf {
             })?;
         }
         if let Some(value) = &self.tls_cert {
-            let buf = if !util::is_pem(value) {
+            let buf = if util::is_pem(value) {
+                value.as_bytes().to_vec()
+            } else {
                 STANDARD
                     .decode(value)
                     .map_err(|e| Error::Base64Decode { source: e })?
-            } else {
-                value.as_bytes().to_vec()
             };
             let _ = X509::from_pem(&buf).map_err(|e| Error::Invalid {
                 message: e.to_string(),
             })?;
         }
         if let Some(value) = &self.tls_chain {
-            let buf = if !util::is_pem(value) {
+            let buf = if util::is_pem(value) {
+                value.as_bytes().to_vec()
+            } else {
                 STANDARD
                     .decode(value)
                     .map_err(|e| Error::Base64Decode { source: e })?
-            } else {
-                value.as_bytes().to_vec()
             };
             let _ = X509::from_pem(&buf).map_err(|e| Error::Invalid {
                 message: e.to_string(),
@@ -400,12 +400,12 @@ impl ServerConf {
             }
         }
         if let Some(value) = &self.tls_key {
-            let buf = if !util::is_pem(value) {
+            let buf = if util::is_pem(value) {
+                value.as_bytes().to_vec()
+            } else {
                 STANDARD
                     .decode(value)
                     .map_err(|e| Error::Base64Decode { source: e })?
-            } else {
-                value.as_bytes().to_vec()
             };
 
             let _ = PKey::private_key_from_pem(&buf).map_err(|e| {
@@ -415,12 +415,12 @@ impl ServerConf {
             })?;
         }
         if let Some(value) = &self.tls_cert {
-            let buf = if !util::is_pem(value) {
+            let buf = if util::is_pem(value) {
+                value.as_bytes().to_vec()
+            } else {
                 STANDARD
                     .decode(value)
                     .map_err(|e| Error::Base64Decode { source: e })?
-            } else {
-                value.as_bytes().to_vec()
             };
             let _ = X509::from_pem(&buf).map_err(|e| Error::Invalid {
                 message: e.to_string(),

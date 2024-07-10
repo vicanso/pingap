@@ -35,6 +35,7 @@ pub struct CacheObject {
     pub body: Arc<Vec<u8>>,
 }
 
+/// Create a cache object from bytes.
 impl From<Vec<u8>> for CacheObject {
     fn from(value: Vec<u8>) -> Self {
         let size_byte = 8;
@@ -62,6 +63,7 @@ impl From<Vec<u8>> for CacheObject {
         }
     }
 }
+/// Convert cache object to bytes.
 impl From<CacheObject> for Vec<u8> {
     fn from(value: CacheObject) -> Self {
         let mut buf = BytesMut::with_capacity(value.body.len() + 1024);

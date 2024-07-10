@@ -46,6 +46,8 @@ Pingap格式化可以使用以下几种默认形式`combined`，`common`，`shor
 - `location`: 对应的location
 - `established`: 客户端的连接时间
 - `tls_version`: tls的版本(http连接则为空)
+- `tls_cipher`: tls的加解密算法(http连接则为空)
+- `tls_handshake_time`: tls握手耗时
 - `compression_time`: 数据压缩的耗时
 - `compression_ratio`: 数据压缩比
 - `cache_lookup_time`: 缓存的查询耗时

@@ -26,6 +26,7 @@ pub struct FileCache {
     cache: TinyUfo<String, CacheObject>,
 }
 
+/// Create a file cache and use tinyufo for hotspot data caching
 pub fn new_file_cache(dir: &str) -> Result<FileCache> {
     let dir = util::resolve_path(dir);
     let path = Path::new(&dir);
@@ -42,6 +43,8 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
 
 #[async_trait]
 impl HttpCacheStorage for FileCache {
+    /// Get cache object from tinyufo,
+    /// if not exists, then get from the file.
     async fn get(&self, key: &str) -> Option<CacheObject> {
         if let Some(obj) = self.cache.get(&key.to_string()) {
             return Some(obj);
@@ -56,6 +59,7 @@ impl HttpCacheStorage for FileCache {
             Some(CacheObject::from(buf))
         }
     }
+    /// Put cache object to tinyufo and file.
     async fn put(
         &self,
         key: String,
@@ -70,6 +74,7 @@ impl HttpCacheStorage for FileCache {
             .map_err(|e| Error::Io { source: e })?;
         Ok(())
     }
+    /// Remove cache object from file, tinyufo doesn't support remove now.
     async fn remove(&self, key: &str) -> Result<Option<CacheObject>> {
         // TODO remove from tinyufo
         let file = Path::new(&self.directory).join(key);
