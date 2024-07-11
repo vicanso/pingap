@@ -305,7 +305,9 @@ impl pingora::listeners::TlsAccept for DynamicCertificate {
             ssl_certificate(ssl, cert, key, &self.chain_certificate);
             return;
         }
-        let Some(sni) = ssl.servername(NameType::HOST_NAME) else {
+        let server_name = ssl.servername(NameType::HOST_NAME);
+        debug!(server_name = format!("{server_name:?}"));
+        let Some(sni) = server_name else {
             error!(ssl = format!("{ssl:?}"), "get server name fail");
             return;
         };

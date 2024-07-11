@@ -32,6 +32,9 @@ fn get_cache_control(
     cache_private: Option<bool>,
 ) -> HttpHeader {
     if let Some(max_age) = max_age {
+        if max_age == 0 {
+            return HTTP_HEADER_NO_CACHE.clone();
+        }
         let category = if cache_private.unwrap_or_default() {
             "private"
         } else {

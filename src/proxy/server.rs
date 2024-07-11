@@ -386,8 +386,10 @@ impl ProxyHttp for Server {
                 && digest_detail.tls_established
                     >= digest_detail.tcp_established
             {
-                ctx.tls_handshake_time = digest_detail.tls_established
-                    - digest_detail.tcp_established;
+                ctx.tls_handshake_time = Some(
+                    digest_detail.tls_established
+                        - digest_detail.tcp_established,
+                );
             }
             ctx.tls_cipher = digest_detail.tls_cipher;
             ctx.tls_version = digest_detail.tls_version;
@@ -529,13 +531,30 @@ impl ProxyHttp for Server {
         reused: bool,
         peer: &HttpPeer,
         _fd: std::os::unix::io::RawFd,
-        _digest: Option<&Digest>,
+        digest: Option<&Digest>,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<()>
     where
         Self::CTX: Send + Sync,
     {
-        ctx.reused = reused;
+        if !reused {
+            if let Some(digest) = digest {
+                let detail = get_digest_detail(digest);
+                let upstream_connect_time =
+                    ctx.upstream_connect_time.unwrap_or_default();
+                if upstream_connect_time > 0
+                    && detail.tcp_established > upstream_connect_time
+                {
+                    ctx.upstream_tcp_connect_time =
+                        Some(detail.tcp_established - upstream_connect_time);
+                }
+                if detail.tls_established > detail.tcp_established {
+                    ctx.upstream_tls_handshake_time =
+                        Some(detail.tls_established - detail.tcp_established);
+                }
+            }
+        }
+        ctx.upstream_reused = reused;
         ctx.upstream_address = peer.address().to_string();
         ctx.upstream_connect_time =
             util::get_latency(&ctx.upstream_connect_time);

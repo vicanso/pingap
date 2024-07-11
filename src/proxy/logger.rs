@@ -616,7 +616,7 @@ mod tests {
             "{host} {method} {path} {proto} {query} {remote} {client_ip} \
 {scheme} {uri} {referer} {user_agent} {size} \
 {size_human} {status} {payload_size} {payload_size_human} \
-{~deviceId} {>accept} {:reused} {:upstream_addr} \
+{~deviceId} {>accept} {:upstream_reused} {:upstream_addr} \
 {:processing} {:upstream_connect_time} {:location} \
 {:connection_time} {:tls_version} {request_id}"
                 .into();
@@ -637,7 +637,7 @@ mod tests {
         assert_eq!(Method::GET, session.req_header().method);
 
         let ctx = State {
-            reused: true,
+            upstream_reused: true,
             upstream_address: "192.186.1.1:6188".to_string(),
             processing: 1,
             upstream_connect_time: Some(100),

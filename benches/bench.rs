@@ -245,7 +245,7 @@ fn bench_logger_format(c: &mut Criterion) {
 {when_unix} {size} {size_human} {status} {latency} \
 {payload_size} {latency_human} {payload_size} \
 {payload_size_human} {request_id} \
-{:reused} {:upstream_addr} {:processing} {:upstream_connect_time} \
+{:upstream_reused} {:upstream_addr} {:processing} {:upstream_connect_time} \
 {:upstream_connected} {:upstream_processing_time} {:upstream_response_time} \
 {:location} {:established} {:tls_version} {:compression_time} \
 {:compression_ratio} {:cache_lookup_time} {:cache_lock_time} \
@@ -253,7 +253,7 @@ fn bench_logger_format(c: &mut Criterion) {
                 .into();
         let ctx = State {
             payload_size: 512,
-            reused: true,
+            upstream_reused: true,
             status: Some(StatusCode::OK),
             created_at: util::now().as_millis() as u64,
             request_id: Some("AMwBhEil".to_string()),
