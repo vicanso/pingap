@@ -30,6 +30,8 @@ async fn hot_reload(
     let conf = load_config(&get_config_path(), false).await?;
     conf.validate()?;
     let mut current_conf: PingapConf = get_current_config().as_ref().clone();
+    let (_, original_diff_result) = current_conf.diff(&conf);
+
     let mut should_reload_server_location = false;
     for (name, server) in conf.servers.iter() {
         if let Some(old) = current_conf.servers.get_mut(name) {
@@ -39,9 +41,9 @@ async fn hot_reload(
             }
         }
     }
-    let (updated_category_list, diff_result) = current_conf.diff(&conf);
+    let (updated_category_list, _) = current_conf.diff(&conf);
     if !should_reload_server_location && updated_category_list.is_empty() {
-        return Ok((false, vec![]));
+        return Ok((false, original_diff_result));
     }
 
     let mut should_reload_upstream = false;
@@ -92,12 +94,12 @@ async fn hot_reload(
         if !should_restart {
             set_current_config(&conf);
         }
-        return Ok((false, vec![]));
+        return Ok((false, original_diff_result));
     }
 
     set_current_config(&conf);
     if should_restart {
-        return Ok((true, diff_result));
+        return Ok((true, original_diff_result));
     }
 
     Ok((false, vec![]))
