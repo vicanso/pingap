@@ -30,6 +30,7 @@ const UPSTREAM_ADDR_TAG: &[u8] = b"$upstream_addr";
 
 #[derive(Debug, Snafu)]
 pub enum Error {
+    #[snafu(display("Invalid header value {source}, {value}"))]
     InvalidHeaderValue {
         value: String,
         source: header::InvalidHeaderValue,

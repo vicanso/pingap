@@ -73,16 +73,17 @@ impl Dns {
             hosts = format!("{:?}", self.hosts),
             "dns discover is running"
         );
-        let ip_list = if tokio_runtime {
+        let lookup_ip_list = if tokio_runtime {
             self.tokio_lookup_ip().await?
         } else {
             self.lookup_ip()?
         };
         for (index, (_, port, weight)) in self.hosts.iter().enumerate() {
-            let ip = ip_list.get(index).ok_or(Error::Invalid {
-                message: "lookup ip fail".to_string(),
-            })?;
-            for item in ip.iter() {
+            let lookup_ip =
+                lookup_ip_list.get(index).ok_or(Error::Invalid {
+                    message: "lookup ip fail".to_string(),
+                })?;
+            for item in lookup_ip.iter() {
                 if self.ipv4_only && !item.is_ipv4() {
                     continue;
                 }
@@ -127,7 +128,7 @@ impl ServiceDiscovery for Dns {
                     category:
                         webhook::NotificationCategory::ServiceDiscoverFail,
                     level: webhook::NotificationLevel::Warn,
-                    msg: e.to_string(),
+                    msg: format!("{:?}, error: {e}", self.hosts),
                 });
                 return Err(e.into());
             },

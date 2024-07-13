@@ -58,14 +58,13 @@ mod tests {
     use super::new_tiny_ufo_cache;
     use crate::cache::http_cache::{CacheObject, HttpCacheStorage};
     use pretty_assertions::assert_eq;
-    use std::sync::Arc;
     #[tokio::test]
     async fn test_tiny_ufo_cache() {
         let cache = new_tiny_ufo_cache(10, 10);
         let key = "key".to_string();
         let obj = CacheObject {
             meta: (b"Hello".to_vec(), b"World".to_vec()),
-            body: Arc::new(b"Hello World!".to_vec()),
+            body: b"Hello World!".to_vec(),
         };
         let result = cache.get(&key).await;
         assert_eq!(true, result.is_none());

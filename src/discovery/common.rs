@@ -31,6 +31,7 @@ pub fn new_common_discover_backends(
     let addrs = format_addrs(addrs, tls);
     for (ip, port, weight) in addrs.iter() {
         let addr = format!("{ip}:{port}");
+        // resolve to socket addr
         for item in addr.to_socket_addrs().map_err(|e| Error::Io {
             source: e,
             content: format!("{addr} to socket addr fail"),

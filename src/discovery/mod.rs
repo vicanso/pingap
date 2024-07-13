@@ -40,12 +40,15 @@ pub(crate) type Addr = (String, String, usize);
 pub(crate) fn format_addrs(addrs: &[String], tls: bool) -> Vec<Addr> {
     let mut new_addrs = vec![];
     for addr in addrs.iter() {
+        // get the weight of address
         let arr: Vec<_> = addr.split(' ').collect();
         let weight = if arr.len() == 2 {
             arr[1].parse::<usize>().unwrap_or(1)
         } else {
             1
         };
+        // split ip and port
+        // the port will use default value if none
         if let Some((host, port)) = arr[0].split_once(':') {
             new_addrs.push((host.to_string(), port.to_string(), weight));
         } else {

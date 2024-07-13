@@ -30,7 +30,7 @@ struct ValidityChecker {
 fn validity_check(
     validity_list: &[(String, CertificateInfo)],
     time_offset: i64,
-) -> Option<String> {
+) -> Result<(), String> {
     let now = util::now().as_secs() as i64;
     for (name, cert) in validity_list.iter() {
         // will expire check
@@ -39,7 +39,7 @@ fn validity_check(
                 "{name} cert will be expired, issuer: {}, expired date: {:?}",
                 cert.issuer, cert.not_after
             );
-            return Some(message);
+            return Err(message);
         }
         // not valid check
         if now < cert.not_before {
@@ -47,18 +47,19 @@ fn validity_check(
                 "{name} cert is not valid, issuer: {}, valid date: {:?}",
                 cert.issuer, cert.not_before
             );
-            return Some(message);
+            return Err(message);
         }
     }
-    None
+    Ok(())
 }
 
 #[async_trait]
 impl ServiceTask for ValidityChecker {
     async fn run(&self) -> Option<bool> {
-        if let Some(message) =
+        if let Err(message) =
             validity_check(&self.tls_cert_info_list, self.time_offset)
         {
+            // certificate will be expired
             warn!(message);
             webhook::send(webhook::SendNotificationParams {
                 level: webhook::NotificationLevel::Warn,
@@ -121,9 +122,10 @@ mod tests {
             )],
             7 * 24 * 3600,
         );
+
         assert_eq!(
             "Pingap cert is not valid, issuer: pingap, valid date: 2651852800",
-            result.unwrap_or_default().to_string()
+            result.unwrap_err()
         );
 
         let result = validity_check(
@@ -143,7 +145,7 @@ mod tests {
         );
         assert_eq!(
             "Pingap cert is not valid, issuer: pingap, valid date: 2651852800",
-            result.unwrap_or_default().to_string()
+            result.unwrap_err()
         );
     }
     #[tokio::test]

@@ -125,8 +125,10 @@ pub async fn handle_lets_encrypt(
     _ctx: &mut State,
 ) -> pingora::Result<bool> {
     let path = session.req_header().uri.path();
+    // lets encrypt acme challenge path
     if path.starts_with("/.well-known/acme-challenge/") {
         let value = {
+            // token auth
             let data = get_lets_encrypt().lock().await;
             let v = data.get(path).ok_or_else(|| {
                 util::new_internal_error(400, "token not found".to_string())

@@ -143,12 +143,14 @@ impl ServiceTask for AutoRestart {
         };
         match hot_reload(hot_reload_only).await {
             Ok((should_restart, diff_result)) => {
-                if should_restart {
+                if !diff_result.is_empty() {
                     webhook::send(webhook::SendNotificationParams {
                         level: webhook::NotificationLevel::Info,
                         category: webhook::NotificationCategory::DiffConfig,
                         msg: diff_result.join("\n"),
                     });
+                }
+                if should_restart {
                     restart();
                 }
             },
