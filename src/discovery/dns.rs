@@ -12,9 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::webhook;
-
 use super::{format_addrs, Addr, Error, Result};
+use crate::webhook;
 use async_trait::async_trait;
 use hickory_resolver::lookup_ip::LookupIp;
 use hickory_resolver::{AsyncResolver, Resolver};
@@ -23,8 +22,9 @@ use pingora::lb::{Backend, Backends};
 use pingora::protocols::l4::socket::SocketAddr;
 use std::collections::{BTreeSet, HashMap};
 use std::net::ToSocketAddrs;
+use std::time::SystemTime;
 use tokio::runtime::Handle;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 struct Dns {
     ipv4_only: bool,
@@ -116,12 +116,33 @@ impl ServiceDiscovery for Dns {
     async fn discover(
         &self,
     ) -> pingora::Result<(BTreeSet<Backend>, HashMap<u64, bool>)> {
+        let now = SystemTime::now();
+        let hosts: Vec<String> =
+            self.hosts.iter().map(|item| item.0.clone()).collect();
         match self.run_discover().await {
-            Ok(data) => return Ok(data),
+            Ok(data) => {
+                let addrs: Vec<String> =
+                    data.0.iter().map(|item| item.addr.to_string()).collect();
+
+                info!(
+                    hosts = hosts.join(","),
+                    addrs = addrs.join(","),
+                    elapsed = format!(
+                        "{}ms",
+                        now.elapsed().unwrap_or_default().as_millis()
+                    ),
+                    "dns discover success"
+                );
+                return Ok(data);
+            },
             Err(e) => {
                 error!(
                     error = e.to_string(),
-                    hosts = format!("{:?}", self.hosts),
+                    hosts = hosts.join(","),
+                    elapsed = format!(
+                        "{}ms",
+                        now.elapsed().unwrap_or_default().as_millis()
+                    ),
                     "dns discover fail"
                 );
                 webhook::send(webhook::SendNotificationParams {

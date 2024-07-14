@@ -14,7 +14,7 @@
 use async_trait::async_trait;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tokio::time::interval;
 use tracing::info;
 
@@ -65,10 +65,21 @@ impl BackgroundService for CommonServiceTask {
                     break;
                 }
                 _ = period.tick() => {
-                   let done = self.task.run().await.unwrap_or_default();
-                   if done {
-                       break;
-                   }
+                    let now = SystemTime::now();
+
+                    let done = self.task.run().await.unwrap_or_default();
+                    info!(
+                        name = self.name,
+                        done,
+                        elapsed = format!(
+                            "{}ms",
+                            now.elapsed().unwrap_or_default().as_millis()
+                        ),
+                        "background service run success"
+                    );
+                    if done {
+                        break;
+                    }
                 }
             }
         }
