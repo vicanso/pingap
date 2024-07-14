@@ -59,3 +59,6 @@ publish:
 
 hooks:
 	cp hooks/* .git/hooks/
+
+version:
+	git cliff --unreleased --tag 0.6.0 --prepend CHANGELOG.md

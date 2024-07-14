@@ -14,6 +14,7 @@
 
 use super::{Error, Result};
 use async_trait::async_trait;
+use bytes::Buf;
 use bytes::BufMut;
 use bytes::Bytes;
 use bytes::BytesMut;
@@ -32,39 +33,33 @@ type BinaryMeta = (Vec<u8>, Vec<u8>);
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CacheObject {
     pub meta: BinaryMeta,
-    pub body: Vec<u8>,
+    pub body: Bytes,
 }
 
 /// Create a cache object from bytes.
-impl From<Vec<u8>> for CacheObject {
-    fn from(value: Vec<u8>) -> Self {
+impl From<Bytes> for CacheObject {
+    fn from(value: Bytes) -> Self {
         let size_byte = 8;
         // 8 bytes
         if value.len() < size_byte {
             return Self::default();
         }
-        let meta0_size =
-            u32::from_be_bytes(value[0..4].try_into().unwrap()) as usize;
-        let meta1_size =
-            u32::from_be_bytes(value[4..8].try_into().unwrap()) as usize;
-        let mut start = size_byte;
-        let mut end = start + meta0_size;
-        let meta0 = value[start..end].to_vec();
+        let mut data = value;
 
-        start = end;
-        end += meta1_size;
-        let meta1 = value[start..end].to_vec();
+        let meta0_size = data.get_u32() as usize;
+        let meta1_size = data.get_u32() as usize;
 
-        start = end;
-        let body = value[start..value.len()].to_vec();
+        let meta0 = data.split_to(meta0_size).to_vec();
+        let meta1 = data.split_to(meta1_size).to_vec();
+
         Self {
             meta: (meta0, meta1),
-            body,
+            body: data,
         }
     }
 }
 /// Convert cache object to bytes.
-impl From<CacheObject> for Vec<u8> {
+impl From<CacheObject> for Bytes {
     fn from(value: CacheObject) -> Self {
         let mut buf = BytesMut::with_capacity(value.body.len() + 1024);
         let meta0_size = value.meta.0.len() as u32;
@@ -75,7 +70,7 @@ impl From<CacheObject> for Vec<u8> {
         buf.extend(value.meta.1);
         buf.extend(value.body.iter());
 
-        buf.to_vec()
+        buf.into()
     }
 }
 
@@ -98,7 +93,7 @@ pub struct HttpCache {
 }
 
 pub struct CompleteHit {
-    body: Vec<u8>,
+    body: Bytes,
     done: bool,
     range_start: usize,
     range_end: usize,
@@ -110,9 +105,7 @@ impl CompleteHit {
             None
         } else {
             self.done = true;
-            Some(Bytes::copy_from_slice(
-                &self.body.as_slice()[self.range_start..self.range_end],
-            ))
+            Some(self.body.slice(self.range_start..self.range_end))
         }
     }
 
@@ -195,7 +188,7 @@ impl HandleMiss for ObjectMissHandler {
                 self.key.clone(),
                 CacheObject {
                     meta: self.meta,
-                    body: self.body.to_vec(),
+                    body: self.body.into(),
                 },
                 get_wegith(size),
             )
@@ -326,7 +319,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_complete_hit() {
-        let body = b"Hello World!".to_vec();
+        let body = Bytes::from_static(b"Hello World!");
         let size = body.len();
         let hit = CompleteHit {
             body,

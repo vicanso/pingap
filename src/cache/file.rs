@@ -16,6 +16,7 @@ use super::http_cache::{CacheObject, HttpCacheStorage};
 use super::{Error, Result};
 use crate::util;
 use async_trait::async_trait;
+use bytes::Bytes;
 use std::path::Path;
 use tinyufo::TinyUfo;
 use tokio::fs;
@@ -56,7 +57,7 @@ impl HttpCacheStorage for FileCache {
         if buf.len() < 8 {
             None
         } else {
-            Some(CacheObject::from(buf))
+            Some(CacheObject::from(Bytes::from(buf)))
         }
     }
     /// Put cache object to tinyufo and file.
@@ -67,7 +68,7 @@ impl HttpCacheStorage for FileCache {
         weight: u16,
     ) -> Result<()> {
         self.cache.put(key.clone(), data.clone(), weight);
-        let buf: Vec<u8> = data.into();
+        let buf: Bytes = data.into();
         let file = Path::new(&self.directory).join(key);
         fs::write(file, buf)
             .await
@@ -89,6 +90,7 @@ impl HttpCacheStorage for FileCache {
 mod tests {
     use super::new_file_cache;
     use crate::cache::http_cache::{CacheObject, HttpCacheStorage};
+    use bytes::Bytes;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
@@ -100,7 +102,7 @@ mod tests {
         let key = "key".to_string();
         let obj = CacheObject {
             meta: (b"Hello".to_vec(), b"World".to_vec()),
-            body: b"Hello World!".to_vec(),
+            body: Bytes::from_static(b"Hello World!"),
         };
         let result = cache.get(&key).await;
         assert_eq!(true, result.is_none());
