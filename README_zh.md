@@ -25,10 +25,6 @@ flowchart LR
 - 丰富的http转发插件：`compression`, `static serve`, `limit`, `stats`, `mock`, 等等
 - 提供了不同阶段的统计数据，如`upstream_connect_time`, `upstream_processing_time`, `compression_time`, `cache_lookup_time` 与 `cache_lock_time`等
 
-## 使用手册
-
-[使用手册](./SUMMARY.md)
-
 ## 启用程序
 
 从 `/opt/pingap/conf`目录中加载所有配置，并以后台程序的形式运行，日志写入至`/opt/propingapxy/pingap.log`。

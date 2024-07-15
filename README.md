@@ -166,8 +166,6 @@ Requests/sec: 148928.76
 Transfer/sec:     19.46MB
 ```
 
-[More Performance](./docs/performance.md)
-
 ## Rust version
 
 Our current MSRV is 1.74
