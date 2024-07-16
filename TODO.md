@@ -7,6 +7,7 @@
 - [ ] secret storage
 - [ ] support include comnand for configuraion
 - [ ] support tracing-appender
+- [ ] support prometheus plugin
 - [x] http response cache(storage: tinyufo, file)
 - [x] support dns service discovery
 - [x] admin web expand common configuration items by default

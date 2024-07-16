@@ -36,10 +36,12 @@ pub struct CacheObject {
     pub body: Bytes,
 }
 
+const META_SIZE_LENGTH: usize = 8;
+
 /// Create a cache object from bytes.
 impl From<Bytes> for CacheObject {
     fn from(value: Bytes) -> Self {
-        let size_byte = 8;
+        let size_byte = META_SIZE_LENGTH;
         // 8 bytes
         if value.len() < size_byte {
             return Self::default();
@@ -61,7 +63,9 @@ impl From<Bytes> for CacheObject {
 /// Convert cache object to bytes.
 impl From<CacheObject> for Bytes {
     fn from(value: CacheObject) -> Self {
-        let mut buf = BytesMut::with_capacity(value.body.len() + 1024);
+        let meta_size =
+            value.meta.0.len() + value.meta.1.len() + META_SIZE_LENGTH;
+        let mut buf = BytesMut::with_capacity(value.body.len() + meta_size);
         let meta0_size = value.meta.0.len() as u32;
         let meta1_size = value.meta.1.len() as u32;
         buf.put_u32(meta0_size);
@@ -185,7 +189,7 @@ impl HandleMiss for ObjectMissHandler {
         let _ = self
             .cache
             .put(
-                self.key.clone(),
+                self.key,
                 CacheObject {
                     meta: self.meta,
                     body: self.body.into(),
@@ -254,7 +258,7 @@ impl Storage for HttpCache {
         let meta = meta.serialize()?;
         let miss_handler = ObjectMissHandler {
             meta,
-            key: hash.clone(),
+            key: hash,
             cache: self.cached.clone(),
             body: BytesMut::with_capacity(size),
         };

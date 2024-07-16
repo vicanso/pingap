@@ -90,6 +90,19 @@ make build-web
 
 ## Config
 
+```toml
+[upstreams.charts]
+addrs = ["127.0.0.1:5000"]
+
+[locations.lo]
+upstream = "charts"
+path = "/"
+
+[servers.test]
+addr = "0.0.0.0:6188"
+locations = ["lo"]
+```
+
 All toml configurations are as follows [pingap.toml](./conf/pingap.toml).
 
 ## Proxy step

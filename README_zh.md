@@ -54,6 +54,19 @@ RUST_LOG=INFO pingap -c=/opt/pingap/conf \
 
 ## 应用配置
 
+```toml
+[upstreams.charts]
+addrs = ["127.0.0.1:5000"]
+
+[locations.lo]
+upstream = "charts"
+path = "/"
+
+[servers.test]
+addr = "0.0.0.0:6188"
+locations = ["lo"]
+```
+
 所有的应用配置可查阅说明： [pingap.toml](./conf/pingap.toml)。
 
 ## 请求处理流程
