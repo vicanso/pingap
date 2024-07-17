@@ -64,7 +64,7 @@ export default {
   "server.tcpIdle": "Tcp保持连接的空闲时长",
   "server.tcpInterval": "Tcp保持连接探针的发送间隔",
   "server.tcpProbeCount": "Tcp保持连接探针发送的最大次数",
-
+  "server.prometheusMetrics": "Prometheus的量度指标数据请求路径",
   "server.remark": "备注",
   // location info
   "location.title": "Location的相关配置",

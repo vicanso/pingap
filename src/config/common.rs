@@ -371,6 +371,7 @@ pub struct ServerConf {
     pub tcp_interval: Option<Duration>,
     pub tcp_probe_count: Option<usize>,
     pub tcp_fastopen: Option<usize>,
+    pub prometheus_metrics: Option<String>,
     pub remark: Option<String>,
 }
 

@@ -72,7 +72,8 @@ pub struct State {
     pub cache_lock_time: Option<u64>,
     pub cache_max_ttl: Option<Duration>,
     pub upstream_reused: bool,
-    // upstream connect time
+    // upstream connect time,
+    // get reused connection from pool or connect to upstream,
     // it may be a small value if it is a reused connection
     pub upstream_connect_time: Option<u64>,
     // current upstream connected connection count

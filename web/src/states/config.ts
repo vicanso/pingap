@@ -77,6 +77,7 @@ interface Server {
   tcp_interval?: string;
   tcp_probe_count?: number;
   tcp_fastopen?: number;
+  prometheus_metrics?: string;
   remark?: string;
 }
 

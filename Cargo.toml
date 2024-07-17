@@ -65,6 +65,7 @@ pingora = { version = "0.3.0", default-features = false, features = [
 ] }
 pingora-limits = "0.3.0"
 pingora-runtime = "0.3.0"
+prometheus = { version = "0.13.4", default-features = false }
 pyroscope = { version = "0.5.7", optional = true }
 pyroscope_pprofrs = { version = "0.2.7", optional = true }
 rcgen = "0.12.1"

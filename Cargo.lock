@@ -2338,6 +2338,7 @@ dependencies = [
  "pingora-limits",
  "pingora-runtime",
  "pretty_assertions",
+ "prometheus",
  "pyroscope",
  "pyroscope_pprofrs",
  "rcgen",

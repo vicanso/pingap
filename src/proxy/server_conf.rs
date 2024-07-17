@@ -40,6 +40,7 @@ pub struct ServerConf {
     pub tcp_fastopen: Option<usize>,
     pub global_certificates: bool,
     pub enbaled_h2: bool,
+    pub prometheus_metrics: Option<String>,
 }
 
 impl ServerConf {
@@ -145,6 +146,7 @@ impl From<PingapConf> for Vec<ServerConf> {
                 enbaled_h2: item.enabled_h2.unwrap_or_default(),
                 tcp_keepalive,
                 tcp_fastopen: item.tcp_fastopen,
+                prometheus_metrics: item.prometheus_metrics,
                 error_template,
             });
         }

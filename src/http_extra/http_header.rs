@@ -168,6 +168,13 @@ pub static HTTP_HEADER_CONTENT_HTML: Lazy<HttpHeader> = Lazy::new(|| {
     )
 });
 
+pub static HTTP_HEADER_CONTENT_TEXT: Lazy<HttpHeader> = Lazy::new(|| {
+    (
+        header::CONTENT_TYPE,
+        HeaderValue::from_str("text/plain; charset=utf-8").unwrap(),
+    )
+});
+
 pub static HTTP_HEADER_TRANSFER_CHUNKED: Lazy<HttpHeader> = Lazy::new(|| {
     (
         header::TRANSFER_ENCODING,

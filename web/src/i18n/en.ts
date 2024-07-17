@@ -65,6 +65,7 @@ export default {
   "server.tcpIdle": "Tcp Keepalive Idle Duration",
   "server.tcpInterval": "Tcp Keepalive Interval Duration",
   "server.tcpProbeCount": "Tcp Keepalive Probe Max Number",
+  "server.prometheusMetrics": "The Metrics Path Of Prometheus",
   "server.remark": "Remark",
   // location info
   "location.title": "Modify location configuration",

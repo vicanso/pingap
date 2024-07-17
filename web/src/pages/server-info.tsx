@@ -226,6 +226,13 @@ export default function ServerInfo() {
       category: FormItemCategory.NUMBER,
     },
     {
+      id: "prometheus_metrics",
+      label: t("server.prometheusMetrics"),
+      defaultValue: server.prometheus_metrics,
+      span: 6,
+      category: FormItemCategory.TEXT,
+    },
+    {
       id: "remark",
       label: t("server.remark"),
       defaultValue: server.remark,

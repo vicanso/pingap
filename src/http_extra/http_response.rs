@@ -14,7 +14,8 @@
 
 use super::{
     HttpHeader, HTTP_HEADER_CONTENT_HTML, HTTP_HEADER_CONTENT_JSON,
-    HTTP_HEADER_NO_CACHE, HTTP_HEADER_NO_STORE, HTTP_HEADER_TRANSFER_CHUNKED,
+    HTTP_HEADER_CONTENT_TEXT, HTTP_HEADER_NO_CACHE, HTTP_HEADER_NO_STORE,
+    HTTP_HEADER_TRANSFER_CHUNKED,
 };
 use crate::util;
 use bytes::Bytes;
@@ -107,6 +108,18 @@ impl HttpResponse {
             status: StatusCode::OK,
             headers: Some(vec![
                 HTTP_HEADER_CONTENT_HTML.clone(),
+                HTTP_HEADER_NO_CACHE.clone(),
+            ]),
+            body,
+            ..Default::default()
+        }
+    }
+    /// Create a text response with `no-cache` cache-control.
+    pub fn text(body: Bytes) -> Self {
+        HttpResponse {
+            status: StatusCode::OK,
+            headers: Some(vec![
+                HTTP_HEADER_CONTENT_TEXT.clone(),
                 HTTP_HEADER_NO_CACHE.clone(),
             ]),
             body,

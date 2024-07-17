@@ -25,7 +25,9 @@ use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use crate::plugin::get_plugins;
 use crate::proxy::dynamic_certificate::TlsSettingParams;
 use crate::proxy::location::get_location;
+use crate::state::new_prometheus;
 use crate::state::CompressionStat;
+use crate::state::Prometheus;
 use crate::state::State;
 use crate::util;
 use ahash::AHashMap;
@@ -124,6 +126,8 @@ pub struct Server {
     certificate_file: PathBuf,
     tls_from_lets_encrypt: bool,
     tcp_socket_options: Option<TcpSocketOptions>,
+    prometheus: Option<Prometheus>,
+    prometheus_metrics: String,
 }
 
 pub struct ServerServices {
@@ -151,6 +155,16 @@ impl Server {
             } else {
                 None
             };
+        let prometheus_metrics =
+            conf.prometheus_metrics.clone().unwrap_or_default();
+        let prometheus = if prometheus_metrics.is_empty() {
+            None
+        } else {
+            Some(new_prometheus(&conf.name).map_err(|e| Error::Common {
+                category: "prometheus".to_string(),
+                message: e.to_string(),
+            })?)
+        };
         let s = Server {
             name: conf.name.clone(),
             admin: conf.admin,
@@ -172,6 +186,8 @@ impl Server {
             enbaled_h2: conf.enbaled_h2,
             tcp_socket_options,
             tls_from_lets_encrypt: conf.lets_encrypt.is_some(),
+            prometheus_metrics,
+            prometheus,
         };
         Ok(s)
     }
@@ -397,6 +413,9 @@ impl ProxyHttp for Server {
         ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
         ctx.accepted = self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
         ctx.remote_addr = util::get_remote_addr(session);
+        if let Some(prom) = &self.prometheus {
+            prom.before();
+        }
 
         // locations not found
         let Some(locations) = get_server_locations(&self.name) else {
@@ -447,6 +466,19 @@ impl ProxyHttp for Server {
         }
 
         let header = session.req_header_mut();
+
+        // prometheus metric
+        if self.prometheus.is_some()
+            && header.uri.path() == self.prometheus_metrics
+        {
+            let body =
+                self.prometheus.as_ref().unwrap().metrics().map_err(|e| {
+                    util::new_internal_error(500, e.to_string())
+                })?;
+            HttpResponse::text(body.into()).send(session).await?;
+            return Ok(true);
+        }
+
         let Some(location) = &ctx.location else {
             let host = util::get_host(header).unwrap_or_default();
             HttpResponse::unknown_error(Bytes::from(format!(
@@ -860,6 +892,9 @@ impl ProxyHttp for Server {
                     });
                 }
             }
+        }
+        if let Some(prom) = &self.prometheus {
+            prom.after(session, ctx);
         }
 
         if let Some(p) = &self.log_parser {

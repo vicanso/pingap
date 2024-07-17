@@ -12,7 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use snafu::Snafu;
+
 mod ctx;
 mod process;
+mod prom;
 pub use ctx::*;
 pub use process::*;
+pub use prom::{new_prometheus, Prometheus};
+
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("{source}"))]
+    Prometheus { source: prometheus::Error },
+}
+pub type Result<T, E = Error> = std::result::Result<T, E>;
