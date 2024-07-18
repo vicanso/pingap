@@ -1,26 +1,81 @@
 [basic]
+# application name (default pingap)
+name = "pingap"
+# the error response's template (default <html>...</html>)
 error_template = ""
+# process id file (default /tmp/pingap.pid)
 pid_file = "/tmp/pingap.pid"
+# upgrade sock (default /tmp/pingap_upgrade.sock)
 upgrade_sock = "/tmp/pingap_upgrade.sock"
+# daemon user (default none)
+# user = ""
+# daemon group (default none)
+# group = ""
+# thread count of server (default 1)
 threads = 1
+# enable work stealing runtime (default true)
 work_stealing = true
+# grace period before starting the final step of the graceful shutdown
+# after signaling shutdown (default 5m)
 grace_period = "3m"
+# timeout  of the final step for the graceful shutdown (default 5s)
 graceful_shutdown_timeout = "10s"
+# log level for application (default none)
 log_level = "info"
+# log format as json (default false)
+log_format_json = false
+# sentry connection uri (default none)
+sentry = ""
+# auto check configuration interval, process will be restartd if changed (default 90s)
+auto_restart_check_interval = 1m
+# the file cache directory, cache will use memory if cache directory none (default none)
+cache_directory = ""
+# the max cache size (default 100mb)
+cache_max_size = "100mb"
 
 [upstreams.charts]
+# upstream address list
 addrs = ["127.0.0.1:5000"]
+# service discovery (default none)
+discovery = ""
+# service discover update frequency (default none)
+update_frequency = "1m"
+# loadbalancer selection algorithm
 algo = "hash:cookie"
+# sni for https upstream (default none)
+sni = ""
+# hether to check if upstream' server cert is valid and validated (default true)
+verify_cert = true
+# upstream http health check
 health_check = "http://charts/ping?connection_timeout=3s&pingap"
+# upstream address ipv4 only (default false)
+ipv4_only = false
+# enable tracer for upsteam (default false)
+enable_tracer = false
+# set alpn form upstream (default h1)
+alpn = "h1"
+# connection tiemout (default none)
 connection_timeout = "10s"
+# total connection timeout, include tls handshake (default none)
 total_connection_timeout = "30s"
+# read timeout (default none)
 read_timeout = "10s"
+# idle timeout (default none)
 idle_timeout = "2m"
+# write timeout (default none)
 write_timeout = "10s"
+# the time a connection needs to be idle before TCP
+# begins sending out keep-alive probes (default none)
 tcp_idle = "2m"
+# duration between TCP keep-alive probes (default none)
 tcp_interval = "1m"
+# the maximum number of TCP keep-alive probes to send
+# before giving up and killing the connection
 tcp_probe_count = 100
+# tcp receive buffer size (default none)
 tcp_recv_buf = "4kb"
+# tcp fast open (default none)
+tcp_fast_open = true
 
 
 [upstreams.diving]
@@ -28,22 +83,66 @@ addrs = ["127.0.0.1:5001"]
 
 
 [locations.lo]
+# upstream of location (default none)
 upstream = "charts"
+# location match path (default none)
 path = "/"
+# location match host, multiple domain names are separated by commas (default none)
 host = ""
+# set headers to request (default none)
 proxy_set_headers = ["name:value"]
+# add headers to request (default none)
 proxy_add_headers = ["name:value"]
+# rewrite the request path, e.g. `^/api/ /` replace prefix /api/ to / (default none)
 rewrite = ""
+# the weigh of location (default none)
+weight = 1024
+# client max body size limit (default none)
+client_max_body_size = "1mb"
+# plugin list for location
 plugins = ["pingap:requestId", "stats"]
 
 [servers.test]
+# server linsten address, multiple addresses are separated by commas (default none)
 addr = "0.0.0.0:6188"
+# access log format (default none)
 access_log = "tiny"
+# the locations for server
 locations = ["lo"]
+# the threads count for server (default 1)
+threads = 1
+# tls certificate(pem) (default none)
+tls_cert = ""
+# tle private key(pem) (default none)
+tls_key = ""
+# the list of supported ciphers for protocols before TLSv1.3 (default none)
+tls_cipher_list = ""
+# the list of supported ciphers for protocols TLSv1.3 (default none)
+tls_ciphersuites = ""
+# tls min version (default none)
+tls_min_version = ""
+# tls max version (default none)
+tls_max_version = ""
+# get domain certificates from let's encrypt (default none)
+lets_encrypt = ""
+# the file for save certificate (default none)
+certificate_file = ""
+# using global certificates (default false)
+global_certificates = false
+# enable http2 (default false)
+enabled_h2 = false
+# the time a connection needs to be idle before TCP
+# begins sending out keep-alive probes (default none)
 tcp_idle = "2m"
+# duration between TCP keep-alive probes (default none)
 tcp_interval = "1m"
+# the maximum number of TCP keep-alive probes to send
+# before giving up and killing the connection
 tcp_probe_count = 100
-# tcp_fast_open = 10
+# enable TCP fast open and set the backlog size of it (defualt none)
+tcp_fast_open = 10
+# enable prometheus metrics path (default none)
+prometheus_metrics = ""
 
 [plugins.stats]
 value = "/stats"

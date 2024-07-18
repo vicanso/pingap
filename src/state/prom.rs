@@ -31,6 +31,7 @@ pub struct Prometheus {
     connection_reused: IntCounter,
     tls_handshake_time: Histogram,
     upstream_tcp_connect_time: Histogram,
+    upstream_tls_handshake_time: Histogram,
     upstream_reused: IntCounter,
     upstream_processing_time: Histogram,
     upstream_response_time: Histogram,
@@ -38,6 +39,8 @@ pub struct Prometheus {
     cache_lock_time: Histogram,
     compression_ratio: Histogram,
 }
+
+const SECOND: f64 = 1000.0;
 
 impl Prometheus {
     pub fn before(&self) {
@@ -64,12 +67,13 @@ impl Prometheus {
                 .with_label_values(label_values)
                 .inc();
         }
-        self.http_response_time.observe(ms as f64);
+        self.http_response_time.observe(ms as f64 / SECOND);
         if ctx.connection_reused {
             self.connection_reused.inc();
         }
         if let Some(tls_handshake_time) = ctx.tls_handshake_time {
-            self.tls_handshake_time.observe(tls_handshake_time as f64);
+            self.tls_handshake_time
+                .observe(tls_handshake_time as f64 / SECOND);
         }
         self.http_response_body_sent
             .observe(session.body_bytes_sent() as f64 / 1024.0);
@@ -79,24 +83,32 @@ impl Prometheus {
         }
         if let Some(upstream_tcp_connect_time) = ctx.upstream_tcp_connect_time {
             self.upstream_tcp_connect_time
-                .observe(upstream_tcp_connect_time as f64);
+                .observe(upstream_tcp_connect_time as f64 / SECOND);
+        }
+        if let Some(upstream_tls_handshake_time) =
+            ctx.upstream_tls_handshake_time
+        {
+            self.upstream_tls_handshake_time
+                .observe(upstream_tls_handshake_time as f64 / SECOND);
         }
         if ctx.upstream_reused {
             self.upstream_reused.inc();
         }
         if let Some(upstream_processing_time) = ctx.upstream_processing_time {
             self.upstream_processing_time
-                .observe(upstream_processing_time as f64);
+                .observe(upstream_processing_time as f64 / SECOND);
         }
         if let Some(upstream_response_time) = ctx.upstream_response_time {
             self.upstream_response_time
-                .observe(upstream_response_time as f64);
+                .observe(upstream_response_time as f64 / SECOND);
         }
         if let Some(cache_lookup_time) = ctx.cache_lookup_time {
-            self.cache_lookup_time.observe(cache_lookup_time as f64);
+            self.cache_lookup_time
+                .observe(cache_lookup_time as f64 / SECOND);
         }
         if let Some(cache_lock_time) = ctx.cache_lock_time {
-            self.cache_lock_time.observe(cache_lock_time as f64);
+            self.cache_lock_time
+                .observe(cache_lock_time as f64 / SECOND);
         }
         if let Some(compression_stat) = &ctx.compression_stat {
             self.compression_ratio.observe(compression_stat.ratio());
@@ -128,6 +140,7 @@ fn new_int_gauge(server: &str, name: &str, help: &str) -> Result<IntGauge> {
         .map_err(|e| Error::Prometheus { source: e })?;
     Ok(guage)
 }
+
 fn new_int_counter_vec(
     server: &str,
     name: &str,
@@ -140,6 +153,7 @@ fn new_int_counter_vec(
         .map_err(|e| Error::Prometheus { source: e })?;
     Ok(guage)
 }
+
 fn new_histogram(
     server: &str,
     name: &str,
@@ -156,6 +170,7 @@ fn new_histogram(
     Ok(histogram)
 }
 
+/// Create a prometheus metrics for server
 pub fn new_prometheus(server: &str) -> Result<Prometheus> {
     let r = Registry::new();
     let http_request_accepted = new_int_counter(
@@ -183,10 +198,9 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
     let http_response_time = new_histogram(
         server,
         "pingap_http_response_time",
-        "pingap http response time(milliseconds)",
+        "pingap http response time(second)",
         &[
-            5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0,
-            10000.0,
+            0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
         ],
     )?;
     let http_response_body_sent = new_histogram(
@@ -203,15 +217,21 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
     let tls_handshake_time = new_histogram(
         server,
         "pingap_tls_handshake_time",
-        "pingap tls handshake time(milliseconds)",
-        &[10.0, 50.0, 100.0, 500.0, 1000.0],
+        "pingap tls handshake time(second)",
+        &[0.01, 0.05, 0.1, 0.5, 1.0],
     )?;
 
     let upstream_tcp_connect_time = new_histogram(
         server,
         "pingap_upstream_tcp_connect_time",
-        "pingap upstream tcp connect time(milliseconds)",
-        &[5.0, 10.0, 50.0, 100.0, 500.0, 1000.0],
+        "pingap upstream tcp connect time(second)",
+        &[0.005, 0.01, 0.05, 0.1, 0.5, 1.0],
+    )?;
+    let upstream_tls_handshake_time = new_histogram(
+        server,
+        "pingap_upstream_tls_handshake_time",
+        "pingap upstream tsl handshake time(second)",
+        &[0.01, 0.05, 0.1, 0.5, 1.0],
     )?;
     let upstream_reused = new_int_counter(
         server,
@@ -221,26 +241,26 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
     let upstream_processing_time = new_histogram(
         server,
         "pingap_upstream_processing_time",
-        "pingap upstream processing time(milliseconds)",
-        &[20.0, 100.0, 500.0, 1000.0, 5000.0, 10000.0],
+        "pingap upstream processing time(second)",
+        &[0.02, 0.1, 0.5, 1.0, 5.0, 10.0],
     )?;
     let upstream_response_time = new_histogram(
         server,
         "pingap_upstream_response_time",
-        "pingap upstream response time(milliseconds)",
-        &[5.0, 10.0, 50.0, 100.0, 500.0, 1000.0],
+        "pingap upstream response time(second)",
+        &[0.005, 0.01, 0.05, 0.1, 0.5, 1.0],
     )?;
     let cache_lookup_time = new_histogram(
         server,
         "pingap_cache_lookup_time",
-        "pingap cache lookup time(milliseconds)",
-        &[1.0, 5.0, 10.0, 50.0, 100.0, 1000.0],
+        "pingap cache lookup time(second)",
+        &[0.001, 0.005, 0.01, 0.05, 0.1, 1.0],
     )?;
     let cache_lock_time = new_histogram(
         server,
         "pingap_cache_lock_time",
-        "pingap cache lock time(milliseconds)",
-        &[10.0, 50.0, 100.0, 1000.0, 3000.0],
+        "pingap cache lock time(second)",
+        &[0.01, 0.05, 0.1, 1.0, 3.0],
     )?;
 
     let compression_ratio = new_histogram(
@@ -260,6 +280,7 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         Box::new(connection_reused.clone()),
         Box::new(tls_handshake_time.clone()),
         Box::new(upstream_tcp_connect_time.clone()),
+        Box::new(upstream_tls_handshake_time.clone()),
         Box::new(upstream_reused.clone()),
         Box::new(upstream_processing_time.clone()),
         Box::new(upstream_response_time.clone()),
@@ -282,6 +303,7 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         connection_reused,
         tls_handshake_time,
         upstream_tcp_connect_time,
+        upstream_tls_handshake_time,
         upstream_reused,
         upstream_processing_time,
         upstream_response_time,
