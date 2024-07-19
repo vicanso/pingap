@@ -460,7 +460,7 @@ pub struct BasicConf {
     pub webhook_type: Option<String>,
     pub webhook_notifications: Option<Vec<String>>,
     pub log_level: Option<String>,
-    pub log_buffered_lines: Option<usize>,
+    pub log_buffered_size: Option<ByteSize>,
     pub log_format_json: Option<bool>,
     pub sentry: Option<String>,
     pub pyroscope: Option<String>,

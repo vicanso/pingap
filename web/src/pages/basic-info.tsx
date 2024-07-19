@@ -63,11 +63,11 @@ export default function BasicInfo() {
       category: FormItemCategory.TEXT,
     },
     {
-      id: "log_buffered_lines",
-      label: t("basic.logBufferedLines"),
-      defaultValue: basic.log_buffered_lines,
+      id: "log_buffered_size",
+      label: t("basic.logBufferedSize"),
+      defaultValue: basic.log_buffered_size,
       span: 6,
-      category: FormItemCategory.NUMBER,
+      category: FormItemCategory.TEXT,
     },
     {
       id: "log_format_json",

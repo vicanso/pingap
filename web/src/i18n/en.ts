@@ -31,7 +31,7 @@ export default {
   "basic.gracePeriod": "Grace Period For Exit",
   "basic.gracefulShutdownTimeout": "Graceful Shutdown Timeout",
   "basic.logLevel": "Log Level",
-  "basic.logBufferedLines": "Log Buffered Lines",
+  "basic.logBufferedSize": "Log Buffered Size",
   "basic.logFormatJson": "Log Format Json",
   "basic.autoRestartCheckInterval": "Auto Restart Check Interval",
   "basic.upstreamKeepalivePoolSize": "Upstream Keepalive Pool Size",

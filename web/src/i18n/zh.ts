@@ -31,7 +31,7 @@ export default {
   "basic.gracePeriod": "重启等待周期",
   "basic.gracefulShutdownTimeout": "等待关闭时长",
   "basic.logLevel": "日志级别",
-  "basic.logBufferedLines": "日志缓冲区行数量",
+  "basic.logBufferedSize": "日志缓冲区大小",
   "basic.logFormatJson": "日志以json格式化",
   "basic.autoRestartCheckInterval": "自动重启检测间隔",
   "basic.upstreamKeepalivePoolSize": "上游节点连接池大小",

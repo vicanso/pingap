@@ -14,8 +14,10 @@
 
 use std::error::Error;
 use std::fs;
+use std::io;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
+use std::sync::Mutex;
 use tracing::{info, Level};
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 
@@ -25,7 +27,7 @@ use crate::util;
 pub struct LoggerParams {
     pub file: String,
     pub level: String,
-    pub capacity: usize,
+    pub capacity: u64,
     pub json: bool,
 }
 
@@ -72,7 +74,13 @@ pub fn logger_try_init(params: LoggerParams) -> Result<(), Box<dyn Error>> {
             .read(true)
             .custom_flags(libc::O_NONBLOCK)
             .open(filepath)?;
-        BoxMakeWriter::new(file)
+        if params.capacity < 4096 {
+            BoxMakeWriter::new(file)
+        } else {
+            let w =
+                io::BufWriter::with_capacity(params.capacity as usize, file);
+            BoxMakeWriter::new(Mutex::new(w))
+        }
     };
     // better performance for logger
     if params.json {

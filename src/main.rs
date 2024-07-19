@@ -225,7 +225,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     get_config(args.conf.clone(), args.admin.is_some(), s);
     let conf = r.recv()??;
     logger::logger_try_init(logger::LoggerParams {
-        capacity: conf.basic.log_buffered_lines.unwrap_or_default(),
+        capacity: conf.basic.log_buffered_size.unwrap_or_default().as_u64(),
         file: args.log.clone().unwrap_or_default(),
         level: conf.basic.log_level.clone().unwrap_or_default(),
         json: conf.basic.log_format_json.unwrap_or_default(),
