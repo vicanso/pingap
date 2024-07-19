@@ -19,10 +19,12 @@ mod process;
 mod prom;
 pub use ctx::*;
 pub use process::*;
-pub use prom::{new_prometheus, Prometheus};
+pub use prom::{new_prometheus, new_prometheus_push_service, Prometheus};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
+    #[snafu(display("{source}"))]
+    Url { source: url::ParseError },
     #[snafu(display("{source}"))]
     Prometheus { source: prometheus::Error },
 }

@@ -25,10 +25,9 @@ use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use crate::plugin::get_plugins;
 use crate::proxy::dynamic_certificate::TlsSettingParams;
 use crate::proxy::location::get_location;
-use crate::state::new_prometheus;
-use crate::state::CompressionStat;
-use crate::state::Prometheus;
-use crate::state::State;
+use crate::service::CommonServiceTask;
+use crate::state::{new_prometheus, new_prometheus_push_service};
+use crate::state::{CompressionStat, Prometheus, State};
 use crate::util;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
@@ -126,7 +125,8 @@ pub struct Server {
     certificate_file: PathBuf,
     tls_from_lets_encrypt: bool,
     tcp_socket_options: Option<TcpSocketOptions>,
-    prometheus: Option<Prometheus>,
+    prometheus: Option<Arc<Prometheus>>,
+    prometheus_push_mode: bool,
     prometheus_metrics: String,
 }
 
@@ -160,10 +160,11 @@ impl Server {
         let prometheus = if prometheus_metrics.is_empty() {
             None
         } else {
-            Some(new_prometheus(&conf.name).map_err(|e| Error::Common {
+            let p = new_prometheus(&conf.name).map_err(|e| Error::Common {
                 category: "prometheus".to_string(),
                 message: e.to_string(),
-            })?)
+            })?;
+            Some(Arc::new(p))
         };
         let s = Server {
             name: conf.name.clone(),
@@ -186,6 +187,7 @@ impl Server {
             enbaled_h2: conf.enbaled_h2,
             tcp_socket_options,
             tls_from_lets_encrypt: conf.lets_encrypt.is_some(),
+            prometheus_push_mode: prometheus_metrics.contains("://"),
             prometheus_metrics,
             prometheus,
         };
@@ -194,6 +196,28 @@ impl Server {
     /// Enable lets encrypt proxy plugin for `/.well-known/acme-challenge` handle.
     pub fn enable_lets_encrypt(&mut self) {
         self.lets_encrypt_enabled = true;
+    }
+    /// Get the prometheus push service
+    pub fn get_prometheus_push_service(&self) -> Option<CommonServiceTask> {
+        if self.prometheus_push_mode {
+            if let Some(prometheus) = &self.prometheus {
+                return match new_prometheus_push_service(
+                    &self.name,
+                    &self.prometheus_metrics,
+                    prometheus.clone(),
+                ) {
+                    Ok(serivce) => Some(serivce),
+                    Err(e) => {
+                        error!(
+                            error = e.to_string(),
+                            "new prometheus push service fail"
+                        );
+                        None
+                    },
+                };
+            }
+        }
+        None
     }
 
     /// Add TCP/TLS listening endpoint.
@@ -468,7 +492,8 @@ impl ProxyHttp for Server {
         let header = session.req_header_mut();
 
         // prometheus metric
-        if self.prometheus.is_some()
+        if !self.prometheus_push_mode
+            && self.prometheus.is_some()
             && header.uri.path() == self.prometheus_metrics
         {
             let body =

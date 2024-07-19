@@ -40,7 +40,8 @@ impl CommonServiceTask {
     ) -> Self {
         Self {
             task: Box::new(task),
-            interval,
+            // interval should gt 1s
+            interval: interval.max(Duration::from_secs(1)),
             name: name.to_string(),
         }
     }

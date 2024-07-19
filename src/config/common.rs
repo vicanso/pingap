@@ -1115,10 +1115,20 @@ mod tests {
             r###"[servers.test]
 access_log = "tiny"
 addr = "0.0.0.0:6188"
+certificate_file = ""
+enabled_h2 = false
+global_certificates = false
+lets_encrypt = ""
 locations = ["lo"]
+prometheus_metrics = ""
 tcp_idle = "2m"
 tcp_interval = "1m"
 tcp_probe_count = 100
+threads = 1
+tls_cipher_list = ""
+tls_ciphersuites = ""
+tls_max_version = ""
+tls_min_version = ""
 "###,
             data
         );
@@ -1127,6 +1137,7 @@ tcp_probe_count = 100
         assert_eq!("/locations.toml", key);
         assert_eq!(
             r###"[locations.lo]
+client_max_body_size = "1000.0 KB"
 host = ""
 path = "/"
 plugins = [
@@ -1137,6 +1148,7 @@ proxy_add_headers = ["name:value"]
 proxy_set_headers = ["name:value"]
 rewrite = ""
 upstream = "charts"
+weight = 1024
 "###,
             data
         );
@@ -1147,15 +1159,23 @@ upstream = "charts"
             r###"[upstreams.charts]
 addrs = ["127.0.0.1:5000"]
 algo = "hash:cookie"
+alpn = "h1"
 connection_timeout = "10s"
+discovery = ""
+enable_tracer = false
 health_check = "http://charts/ping?connection_timeout=3s&pingap"
 idle_timeout = "2m"
+ipv4_only = false
 read_timeout = "10s"
+sni = ""
+tcp_fast_open = true
 tcp_idle = "2m"
 tcp_interval = "1m"
 tcp_probe_count = 100
 tcp_recv_buf = "4.0 KB"
 total_connection_timeout = "30s"
+update_frequency = "1m"
+verify_cert = true
 write_timeout = "10s"
 
 [upstreams.diving]
@@ -1178,6 +1198,7 @@ value = "/stats"
         assert_eq!("/basic.toml", key);
         assert_eq!(
             r###"[basic]
+name = "pingap"
 error_template = ""
 pid_file = "/tmp/pingap.pid"
 upgrade_sock = "/tmp/pingap_upgrade.sock"
@@ -1186,6 +1207,11 @@ work_stealing = true
 grace_period = "3m"
 graceful_shutdown_timeout = "10s"
 log_level = "info"
+log_format_json = false
+sentry = ""
+auto_restart_check_interval = "1m"
+cache_directory = ""
+cache_max_size = "100.0 MB"
 "###,
             data
         );

@@ -13,12 +13,20 @@
 // limitations under the License.
 
 use super::{Error, Result, State};
+use crate::service::{CommonServiceTask, ServiceTask};
 use crate::util;
+use async_trait::async_trait;
+use humantime::parse_duration;
 use pingora::proxy::Session;
+use prometheus::ProtobufEncoder;
 use prometheus::{
     core::Collector, Encoder, Histogram, HistogramOpts, IntCounter,
     IntCounterVec, IntGauge, Opts, Registry, TextEncoder,
 };
+use std::sync::Arc;
+use std::time::Duration;
+use tracing::{error, info};
+use url::Url;
 
 pub struct Prometheus {
     r: Registry,
@@ -114,6 +122,9 @@ impl Prometheus {
             self.compression_ratio.observe(compression_stat.ratio());
         }
     }
+    fn gather(&self) -> Vec<prometheus::proto::MetricFamily> {
+        self.r.gather()
+    }
     pub fn metrics(&self) -> Result<Vec<u8>> {
         let mut buffer = vec![];
         let encoder = TextEncoder::new();
@@ -122,6 +133,92 @@ impl Prometheus {
             .encode(&metrics, &mut buffer)
             .map_err(|e| Error::Prometheus { source: e })?;
         Ok(buffer)
+    }
+}
+
+pub fn new_prometheus_push_service(
+    name: &str,
+    url: &str,
+    p: Arc<Prometheus>,
+) -> Result<CommonServiceTask> {
+    let mut info = Url::parse(url).map_err(|e| Error::Url { source: e })?;
+
+    let username = info.username().to_string();
+    let password = info.password().map(|value| value.to_string());
+    let _ = info.set_username("");
+    let _ = info.set_password(None);
+    let mut interval = Duration::from_secs(60);
+    for (key, value) in info.query_pairs().into_iter() {
+        if key == "interval" {
+            if let Ok(v) = parse_duration(&value) {
+                interval = v;
+            }
+        }
+    }
+
+    let push = PrometheusPush {
+        name: name.to_string(),
+        url: info.to_string(),
+        username,
+        password,
+        p,
+    };
+    Ok(CommonServiceTask::new(
+        &format!("Prometheus push service, server:{name}"),
+        interval,
+        push,
+    ))
+}
+
+struct PrometheusPush {
+    name: String,
+    url: String,
+    p: Arc<Prometheus>,
+    username: String,
+    password: Option<String>,
+}
+
+#[async_trait]
+impl ServiceTask for PrometheusPush {
+    async fn run(&self) -> Option<bool> {
+        let encoder = ProtobufEncoder::new();
+        let mut buf = Vec::new();
+
+        for mf in self.p.gather() {
+            let _ = encoder.encode(&[mf], &mut buf);
+        }
+        let client = reqwest::Client::new();
+        let mut builder = client
+            .post(&self.url)
+            .header(http::header::CONTENT_TYPE, encoder.format_type())
+            .body(buf);
+
+        if !self.username.is_empty() {
+            builder = builder.basic_auth(&self.username, self.password.clone());
+        }
+
+        match builder.timeout(Duration::from_secs(60)).send().await {
+            Ok(res) => {
+                if res.status().as_u16() >= 400 {
+                    error!(
+                        name = self.name,
+                        status = res.status().to_string(),
+                        "push prometheus fail"
+                    );
+                } else {
+                    info!(name = self.name, "push prometheus success");
+                }
+            },
+            Err(e) => {
+                error!(
+                    name = self.name,
+                    error = e.to_string(),
+                    "push prometheus fail"
+                );
+            },
+        }
+
+        None
     }
 }
 
@@ -262,7 +359,6 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         "pingap cache lock time(second)",
         &[0.01, 0.05, 0.1, 1.0, 3.0],
     )?;
-
     let compression_ratio = new_histogram(
         server,
         "pingap_compression_ratio",
