@@ -408,3 +408,208 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         compression_ratio,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::new_prometheus;
+    use crate::{
+        state::{CompressionStat, State},
+        util,
+    };
+    use http::StatusCode;
+    use pingora::proxy::Session;
+    use pretty_assertions::assert_eq;
+    use tokio_test::io::Builder;
+
+    #[tokio::test]
+    async fn test_new_prometheus() {
+        let headers = [
+            "Host: github.com",
+            "Referer: https://github.com/",
+            "user-agent: pingap/0.1.1",
+            "Cookie: deviceId=abc",
+            "Accept: application/json",
+            "X-Forwarded-For: 1.1.1.1, 2.2.2.2",
+        ]
+        .join("\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let p = new_prometheus("pingap").unwrap();
+        p.before();
+
+        p.after(
+            &session,
+            &State {
+                created_at: util::now().as_millis() as u64 - 10,
+                status: Some(StatusCode::from_u16(200).unwrap()),
+                connection_reused: true,
+                tls_handshake_time: Some(1),
+                payload_size: 1024,
+                upstream_tcp_connect_time: Some(2),
+                upstream_tls_handshake_time: Some(3),
+                upstream_reused: true,
+                upstream_processing_time: Some(10),
+                upstream_response_time: Some(5),
+                cache_lookup_time: Some(11),
+                cache_lock_time: Some(12),
+                compression_stat: Some(CompressionStat {
+                    in_bytes: 1024,
+                    out_bytes: 512,
+                    duration: Duration::from_millis(20),
+                }),
+                ..Default::default()
+            },
+        );
+        let buf = p.metrics().unwrap();
+        assert_eq!(
+            r#"# HELP pingap_cache_lock_time pingap cache lock time(second)
+# TYPE pingap_cache_lock_time histogram
+pingap_cache_lock_time_bucket{server="pingap",le="0.01"} 0
+pingap_cache_lock_time_bucket{server="pingap",le="0.05"} 1
+pingap_cache_lock_time_bucket{server="pingap",le="0.1"} 1
+pingap_cache_lock_time_bucket{server="pingap",le="1"} 1
+pingap_cache_lock_time_bucket{server="pingap",le="3"} 1
+pingap_cache_lock_time_bucket{server="pingap",le="+Inf"} 1
+pingap_cache_lock_time_sum{server="pingap"} 0.012
+pingap_cache_lock_time_count{server="pingap"} 1
+# HELP pingap_cache_lookup_time pingap cache lookup time(second)
+# TYPE pingap_cache_lookup_time histogram
+pingap_cache_lookup_time_bucket{server="pingap",le="0.001"} 0
+pingap_cache_lookup_time_bucket{server="pingap",le="0.005"} 0
+pingap_cache_lookup_time_bucket{server="pingap",le="0.01"} 0
+pingap_cache_lookup_time_bucket{server="pingap",le="0.05"} 1
+pingap_cache_lookup_time_bucket{server="pingap",le="0.1"} 1
+pingap_cache_lookup_time_bucket{server="pingap",le="1"} 1
+pingap_cache_lookup_time_bucket{server="pingap",le="+Inf"} 1
+pingap_cache_lookup_time_sum{server="pingap"} 0.011
+pingap_cache_lookup_time_count{server="pingap"} 1
+# HELP pingap_compression_ratio pingap response compression ratio
+# TYPE pingap_compression_ratio histogram
+pingap_compression_ratio_bucket{server="pingap",le="1"} 0
+pingap_compression_ratio_bucket{server="pingap",le="2"} 1
+pingap_compression_ratio_bucket{server="pingap",le="3"} 1
+pingap_compression_ratio_bucket{server="pingap",le="5"} 1
+pingap_compression_ratio_bucket{server="pingap",le="10"} 1
+pingap_compression_ratio_bucket{server="pingap",le="+Inf"} 1
+pingap_compression_ratio_sum{server="pingap"} 2
+pingap_compression_ratio_count{server="pingap"} 1
+# HELP pingap_connection_reused pingap connection reused count
+# TYPE pingap_connection_reused counter
+pingap_connection_reused{server="pingap"} 1
+# HELP pingap_http_reqesut_body_received pingap http request body received(KB)
+# TYPE pingap_http_reqesut_body_received histogram
+pingap_http_reqesut_body_received_bucket{server="pingap",le="1"} 1
+pingap_http_reqesut_body_received_bucket{server="pingap",le="5"} 1
+pingap_http_reqesut_body_received_bucket{server="pingap",le="10"} 1
+pingap_http_reqesut_body_received_bucket{server="pingap",le="50"} 1
+pingap_http_reqesut_body_received_bucket{server="pingap",le="100"} 1
+pingap_http_reqesut_body_received_bucket{server="pingap",le="1000"} 1
+pingap_http_reqesut_body_received_bucket{server="pingap",le="+Inf"} 1
+pingap_http_reqesut_body_received_sum{server="pingap"} 1
+pingap_http_reqesut_body_received_count{server="pingap"} 1
+# HELP pingap_http_request_accepted pingap http request accepted count
+# TYPE pingap_http_request_accepted counter
+pingap_http_request_accepted{server="pingap"} 1
+# HELP pingap_http_request_processing pingap http request processing count
+# TYPE pingap_http_request_processing gauge
+pingap_http_request_processing{server="pingap"} 0
+# HELP pingap_http_response_body_sent pingap http resonse body send(KB)
+# TYPE pingap_http_response_body_sent histogram
+pingap_http_response_body_sent_bucket{server="pingap",le="1"} 1
+pingap_http_response_body_sent_bucket{server="pingap",le="5"} 1
+pingap_http_response_body_sent_bucket{server="pingap",le="10"} 1
+pingap_http_response_body_sent_bucket{server="pingap",le="50"} 1
+pingap_http_response_body_sent_bucket{server="pingap",le="100"} 1
+pingap_http_response_body_sent_bucket{server="pingap",le="1000"} 1
+pingap_http_response_body_sent_bucket{server="pingap",le="10000"} 1
+pingap_http_response_body_sent_bucket{server="pingap",le="+Inf"} 1
+pingap_http_response_body_sent_sum{server="pingap"} 0
+pingap_http_response_body_sent_count{server="pingap"} 1
+# HELP pingap_http_response_codes pingap http response codes
+# TYPE pingap_http_response_codes counter
+pingap_http_response_codes{server="pingap",status_code="2xx"} 1
+# HELP pingap_http_response_time pingap http response time(second)
+# TYPE pingap_http_response_time histogram
+pingap_http_response_time_bucket{server="pingap",le="0.005"} 0
+pingap_http_response_time_bucket{server="pingap",le="0.01"} 1
+pingap_http_response_time_bucket{server="pingap",le="0.025"} 1
+pingap_http_response_time_bucket{server="pingap",le="0.05"} 1
+pingap_http_response_time_bucket{server="pingap",le="0.1"} 1
+pingap_http_response_time_bucket{server="pingap",le="0.25"} 1
+pingap_http_response_time_bucket{server="pingap",le="0.5"} 1
+pingap_http_response_time_bucket{server="pingap",le="1"} 1
+pingap_http_response_time_bucket{server="pingap",le="2.5"} 1
+pingap_http_response_time_bucket{server="pingap",le="5"} 1
+pingap_http_response_time_bucket{server="pingap",le="10"} 1
+pingap_http_response_time_bucket{server="pingap",le="+Inf"} 1
+pingap_http_response_time_sum{server="pingap"} 0.01
+pingap_http_response_time_count{server="pingap"} 1
+# HELP pingap_tls_handshake_time pingap tls handshake time(second)
+# TYPE pingap_tls_handshake_time histogram
+pingap_tls_handshake_time_bucket{server="pingap",le="0.01"} 1
+pingap_tls_handshake_time_bucket{server="pingap",le="0.05"} 1
+pingap_tls_handshake_time_bucket{server="pingap",le="0.1"} 1
+pingap_tls_handshake_time_bucket{server="pingap",le="0.5"} 1
+pingap_tls_handshake_time_bucket{server="pingap",le="1"} 1
+pingap_tls_handshake_time_bucket{server="pingap",le="+Inf"} 1
+pingap_tls_handshake_time_sum{server="pingap"} 0.001
+pingap_tls_handshake_time_count{server="pingap"} 1
+# HELP pingap_upstream_processing_time pingap upstream processing time(second)
+# TYPE pingap_upstream_processing_time histogram
+pingap_upstream_processing_time_bucket{server="pingap",le="0.01"} 1
+pingap_upstream_processing_time_bucket{server="pingap",le="0.02"} 1
+pingap_upstream_processing_time_bucket{server="pingap",le="0.1"} 1
+pingap_upstream_processing_time_bucket{server="pingap",le="0.5"} 1
+pingap_upstream_processing_time_bucket{server="pingap",le="1"} 1
+pingap_upstream_processing_time_bucket{server="pingap",le="5"} 1
+pingap_upstream_processing_time_bucket{server="pingap",le="10"} 1
+pingap_upstream_processing_time_bucket{server="pingap",le="+Inf"} 1
+pingap_upstream_processing_time_sum{server="pingap"} 0.01
+pingap_upstream_processing_time_count{server="pingap"} 1
+# HELP pingap_upstream_response_time pingap upstream response time(second)
+# TYPE pingap_upstream_response_time histogram
+pingap_upstream_response_time_bucket{server="pingap",le="0.005"} 1
+pingap_upstream_response_time_bucket{server="pingap",le="0.01"} 1
+pingap_upstream_response_time_bucket{server="pingap",le="0.05"} 1
+pingap_upstream_response_time_bucket{server="pingap",le="0.1"} 1
+pingap_upstream_response_time_bucket{server="pingap",le="0.5"} 1
+pingap_upstream_response_time_bucket{server="pingap",le="1"} 1
+pingap_upstream_response_time_bucket{server="pingap",le="+Inf"} 1
+pingap_upstream_response_time_sum{server="pingap"} 0.005
+pingap_upstream_response_time_count{server="pingap"} 1
+# HELP pingap_upstream_reused pingap upstream reused count
+# TYPE pingap_upstream_reused counter
+pingap_upstream_reused{server="pingap"} 1
+# HELP pingap_upstream_tcp_connect_time pingap upstream tcp connect time(second)
+# TYPE pingap_upstream_tcp_connect_time histogram
+pingap_upstream_tcp_connect_time_bucket{server="pingap",le="0.005"} 1
+pingap_upstream_tcp_connect_time_bucket{server="pingap",le="0.01"} 1
+pingap_upstream_tcp_connect_time_bucket{server="pingap",le="0.05"} 1
+pingap_upstream_tcp_connect_time_bucket{server="pingap",le="0.1"} 1
+pingap_upstream_tcp_connect_time_bucket{server="pingap",le="0.5"} 1
+pingap_upstream_tcp_connect_time_bucket{server="pingap",le="1"} 1
+pingap_upstream_tcp_connect_time_bucket{server="pingap",le="+Inf"} 1
+pingap_upstream_tcp_connect_time_sum{server="pingap"} 0.002
+pingap_upstream_tcp_connect_time_count{server="pingap"} 1
+# HELP pingap_upstream_tls_handshake_time pingap upstream tsl handshake time(second)
+# TYPE pingap_upstream_tls_handshake_time histogram
+pingap_upstream_tls_handshake_time_bucket{server="pingap",le="0.01"} 1
+pingap_upstream_tls_handshake_time_bucket{server="pingap",le="0.05"} 1
+pingap_upstream_tls_handshake_time_bucket{server="pingap",le="0.1"} 1
+pingap_upstream_tls_handshake_time_bucket{server="pingap",le="0.5"} 1
+pingap_upstream_tls_handshake_time_bucket{server="pingap",le="1"} 1
+pingap_upstream_tls_handshake_time_bucket{server="pingap",le="+Inf"} 1
+pingap_upstream_tls_handshake_time_sum{server="pingap"} 0.003
+pingap_upstream_tls_handshake_time_count{server="pingap"} 1
+"#,
+            std::str::from_utf8(&buf).unwrap()
+        );
+    }
+}
