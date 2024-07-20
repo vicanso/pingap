@@ -374,6 +374,13 @@ mod tests {
                 .as_ref()
         );
 
+        ctx.connection_reused = true;
+        assert_eq!(
+            b"true",
+            ctx.append_value(BytesMut::new(), "connection_reused")
+                .as_ref()
+        );
+
         ctx.tls_version = Some("tls1.3".to_string());
         assert_eq!(
             b"tls1.3",
@@ -385,6 +392,12 @@ mod tests {
         assert_eq!(
             b"ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
             ctx.append_value(BytesMut::new(), "tls_cipher").as_ref()
+        );
+        ctx.tls_handshake_time = Some(101);
+        assert_eq!(
+            b"101ms",
+            ctx.append_value(BytesMut::new(), "tls_handshake_time")
+                .as_ref()
         );
 
         ctx.compression_stat = Some(CompressionStat {

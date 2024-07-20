@@ -146,10 +146,17 @@ impl ServiceTask for AutoRestart {
         match hot_reload(hot_reload_only).await {
             Ok((should_restart, diff_result)) => {
                 if !diff_result.is_empty() {
+                    let mut arr = diff_result.clone();
+                    // add more message for auto reload
+                    if !should_restart {
+                        arr.push(
+                            "configuration has been hot reloaded".to_string(),
+                        );
+                    }
                     webhook::send(webhook::SendNotificationParams {
                         level: webhook::NotificationLevel::Info,
                         category: webhook::NotificationCategory::DiffConfig,
-                        msg: diff_result.join("\n"),
+                        msg: arr.join("\n"),
                     });
                 }
                 if should_restart {

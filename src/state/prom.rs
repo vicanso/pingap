@@ -339,7 +339,7 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         server,
         "pingap_upstream_processing_time",
         "pingap upstream processing time(second)",
-        &[0.02, 0.1, 0.5, 1.0, 5.0, 10.0],
+        &[0.01, 0.02, 0.1, 0.5, 1.0, 5.0, 10.0],
     )?;
     let upstream_response_time = new_histogram(
         server,
