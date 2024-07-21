@@ -18,10 +18,10 @@ use crate::util;
 use async_trait::async_trait;
 use humantime::parse_duration;
 use pingora::proxy::Session;
-use prometheus::ProtobufEncoder;
+use prometheus::core::Collector;
+use prometheus::{Encoder, Opts, ProtobufEncoder, Registry, TextEncoder};
 use prometheus::{
-    core::Collector, Encoder, Histogram, HistogramOpts, IntCounter,
-    IntCounterVec, IntGauge, Opts, Registry, TextEncoder,
+    Histogram, HistogramOpts, IntCounter, IntCounterVec, IntGauge, IntGaugeVec,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -38,6 +38,7 @@ pub struct Prometheus {
     http_response_body_sent: Histogram,
     connection_reused: IntCounter,
     tls_handshake_time: Histogram,
+    upstream_connected: IntGaugeVec,
     upstream_tcp_connect_time: Histogram,
     upstream_tls_handshake_time: Histogram,
     upstream_reused: IntCounter,
@@ -88,6 +89,13 @@ impl Prometheus {
         if ctx.payload_size != 0 {
             self.http_reqesut_body_received
                 .observe(ctx.payload_size as f64 / 1024.0);
+        }
+        if let Some(lo) = &ctx.location {
+            if let Some(count) = ctx.upstream_connected {
+                self.upstream_connected
+                    .with_label_values(&[&lo.upstream])
+                    .set(count as i64);
+            }
         }
         if let Some(upstream_tcp_connect_time) = ctx.upstream_tcp_connect_time {
             self.upstream_tcp_connect_time
@@ -246,7 +254,20 @@ fn new_int_counter_vec(
 ) -> Result<IntCounterVec> {
     let mut opts = Opts::new(name, help);
     opts = opts.const_label("server", server);
-    let guage = IntCounterVec::new(opts, label_names)
+    let counter = IntCounterVec::new(opts, label_names)
+        .map_err(|e| Error::Prometheus { source: e })?;
+    Ok(counter)
+}
+
+fn new_intgauge_vec(
+    server: &str,
+    name: &str,
+    help: &str,
+    label_names: &[&str],
+) -> Result<IntGaugeVec> {
+    let mut opts = Opts::new(name, help);
+    opts = opts.const_label("server", server);
+    let guage = IntGaugeVec::new(opts, label_names)
         .map_err(|e| Error::Prometheus { source: e })?;
     Ok(guage)
 }
@@ -318,6 +339,12 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         &[0.01, 0.05, 0.1, 0.5, 1.0],
     )?;
 
+    let upstream_connected = new_intgauge_vec(
+        server,
+        "pingap_upstream_connected",
+        "pingap upstream connnected count",
+        &["upstream"],
+    )?;
     let upstream_tcp_connect_time = new_histogram(
         server,
         "pingap_upstream_tcp_connect_time",
@@ -375,6 +402,7 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         Box::new(http_response_body_sent.clone()),
         Box::new(connection_reused.clone()),
         Box::new(tls_handshake_time.clone()),
+        Box::new(upstream_connected.clone()),
         Box::new(upstream_tcp_connect_time.clone()),
         Box::new(upstream_tls_handshake_time.clone()),
         Box::new(upstream_reused.clone()),
@@ -398,6 +426,7 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         http_response_body_sent,
         connection_reused,
         tls_handshake_time,
+        upstream_connected,
         upstream_tcp_connect_time,
         upstream_tls_handshake_time,
         upstream_reused,

@@ -199,7 +199,7 @@ tcp_probe_count = 100
 # enable TCP fast open and set the backlog size of it (defualt none)
 tcp_fast_open = 10
 
-# enable prometheus metrics path (default none)
+# enable prometheus metrics, it can be a push gateway url or pull metrics path (default none)
 prometheus_metrics = ""
 
 [plugins.stats]
