@@ -36,7 +36,7 @@ use pingora::upstreams::peer::{HttpPeer, PeerOptions, Tracer, Tracing};
 use snafu::{ResultExt, Snafu};
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info};
@@ -103,6 +103,7 @@ pub struct Upstream {
     tcp_fast_open: Option<bool>,
     peer_tracer: Option<UpstreamPeerTracer>,
     tracer: Option<Tracer>,
+    processing: AtomicI32,
 }
 
 impl fmt::Display for Upstream {
@@ -479,6 +480,7 @@ impl Upstream {
             tcp_fast_open: conf.tcp_fast_open,
             peer_tracer,
             tracer,
+            processing: AtomicI32::new(0),
         };
         debug!(upstream = up.to_string(), "new upstream");
         Ok(up)
@@ -499,6 +501,7 @@ impl Upstream {
                 lb.select(value.as_bytes(), 256)
             },
         };
+        self.processing.fetch_add(1, Ordering::Relaxed);
         upstream.map(|upstream| {
             let mut p = HttpPeer::new(upstream, self.tls, self.sni.clone());
             p.options.connection_timeout = self.connection_timeout;
@@ -541,6 +544,10 @@ impl Upstream {
             SelectionLb::Consistent(lb) => Some(lb.clone()),
             _ => None,
         }
+    }
+    #[inline]
+    pub fn completed(&self) -> i32 {
+        self.processing.fetch_add(-1, Ordering::Relaxed)
     }
 }
 

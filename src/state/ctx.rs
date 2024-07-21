@@ -72,6 +72,7 @@ pub struct State {
     pub cache_lock_time: Option<u64>,
     pub cache_max_ttl: Option<Duration>,
     pub upstream_reused: bool,
+    pub upstream_processing: Option<i32>,
     // upstream connect time,
     // get reused connection from pool or connect to upstream,
     // it may be a small value if it is a reused connection
@@ -119,6 +120,7 @@ impl Default for State {
             cache_lookup_time: None,
             cache_lock_time: None,
             cache_max_ttl: None,
+            upstream_processing: None,
             upstream_connect_time: None,
             upstream_connected: None,
             upstream_tcp_connect_time: None,

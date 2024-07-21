@@ -899,12 +899,16 @@ impl ProxyHttp for Server {
         self.processing.fetch_sub(1, Ordering::Relaxed);
         if let Some(location) = &ctx.location {
             location.processing.fetch_sub(1, Ordering::Relaxed);
+            if let Some(up) = get_upstream(&location.upstream) {
+                ctx.upstream_processing = Some(up.completed());
+            }
         }
         if ctx.status.is_none() {
             if let Some(header) = session.response_written() {
                 ctx.status = Some(header.status);
             }
         }
+
         if let Some(c) =
             session.downstream_modules_ctx.get::<ResponseCompression>()
         {

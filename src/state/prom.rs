@@ -39,6 +39,7 @@ pub struct Prometheus {
     connection_reused: IntCounter,
     tls_handshake_time: Histogram,
     upstream_connected: IntGaugeVec,
+    upstream_processing: IntGaugeVec,
     upstream_tcp_connect_time: Histogram,
     upstream_tls_handshake_time: Histogram,
     upstream_reused: IntCounter,
@@ -93,6 +94,11 @@ impl Prometheus {
         if let Some(lo) = &ctx.location {
             if let Some(count) = ctx.upstream_connected {
                 self.upstream_connected
+                    .with_label_values(&[&lo.upstream])
+                    .set(count as i64);
+            }
+            if let Some(count) = ctx.upstream_processing {
+                self.upstream_processing
                     .with_label_values(&[&lo.upstream])
                     .set(count as i64);
             }
@@ -345,6 +351,12 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         "pingap upstream connnected count",
         &["upstream"],
     )?;
+    let upstream_processing = new_intgauge_vec(
+        server,
+        "pingap_upstream_processing",
+        "pingap upstream processing count",
+        &["upstream"],
+    )?;
     let upstream_tcp_connect_time = new_histogram(
         server,
         "pingap_upstream_tcp_connect_time",
@@ -403,6 +415,7 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         Box::new(connection_reused.clone()),
         Box::new(tls_handshake_time.clone()),
         Box::new(upstream_connected.clone()),
+        Box::new(upstream_processing.clone()),
         Box::new(upstream_tcp_connect_time.clone()),
         Box::new(upstream_tls_handshake_time.clone()),
         Box::new(upstream_reused.clone()),
@@ -427,6 +440,7 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         connection_reused,
         tls_handshake_time,
         upstream_connected,
+        upstream_processing,
         upstream_tcp_connect_time,
         upstream_tls_handshake_time,
         upstream_reused,
