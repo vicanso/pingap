@@ -100,7 +100,13 @@ export function FormPluginField({
   const [data, setData] = React.useState(value);
 
   const fields: {
-    category: "text" | "number" | "select" | "checkbox" | "textlist";
+    category:
+      | "text"
+      | "number"
+      | "select"
+      | "checkbox"
+      | "textlist"
+      | "textarea";
     key: string;
     label: string;
     valueLabel?: string;
@@ -592,7 +598,7 @@ export function FormPluginField({
           addLabel: t("form.mockHeader"),
         },
         {
-          category: "text",
+          category: "textarea",
           key: "data",
           label: t("form.mockData"),
           id: "mock-data",
@@ -925,6 +931,8 @@ export function FormPluginField({
             style={{
               marginLeft: 0,
             }}
+            multiline={field.category != "text"}
+            minRows={4}
             required={field.required || false}
             defaultValue={(data[field.key] as string) || ""}
             sx={{ ml: 1, flex: 1 }}

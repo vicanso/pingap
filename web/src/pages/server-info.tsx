@@ -229,7 +229,7 @@ export default function ServerInfo() {
       id: "prometheus_metrics",
       label: t("server.prometheusMetrics"),
       defaultValue: server.prometheus_metrics,
-      span: 6,
+      span: 12,
       category: FormItemCategory.TEXT,
     },
     {

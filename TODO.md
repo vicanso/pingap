@@ -6,6 +6,7 @@
 - [ ] support validate config for plugin
 - [ ] secret storage
 - [ ] support include comnand for configuraion
+- [ ] support OpenTelemetry
 - [x] support buffer file logger
 - [x] support prometheus plugin
 - [x] http response cache(storage: tinyufo, file)

@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_int_conf, get_step_conf, get_str_conf,
-    get_str_slice_conf, Error, Plugin, Result,
+    get_bool_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error,
+    Plugin, Result,
 };
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{
@@ -32,6 +32,7 @@ use pingora::proxy::Session;
 use std::fs::Metadata;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::UNIX_EPOCH;
 use substring::Substring;
 use tokio::fs;
@@ -169,7 +170,13 @@ impl TryFrom<&PluginConf> for Directory {
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
 
-        let chunk_size = get_int_conf(value, "chunk_size");
+        let chunk_size = if let Ok(chunk_size) =
+            ByteSize::from_str(&get_str_conf(value, "chunk_size"))
+        {
+            chunk_size.0
+        } else {
+            4096
+        };
         let chunk_size = if chunk_size > 0 {
             Some(chunk_size as usize)
         } else {
