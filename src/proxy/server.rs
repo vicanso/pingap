@@ -852,7 +852,8 @@ impl ProxyHttp for Server {
         let content = self
             .error_template
             .replace("{{version}}", util::get_pkg_version())
-            .replace("{{content}}", &e.to_string());
+            .replace("{{content}}", &e.to_string())
+            .replace("{{errorType}}", e.etype().as_str());
         let buf = Bytes::from(content);
         ctx.status = Some(
             StatusCode::from_u16(code)
