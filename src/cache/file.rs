@@ -12,18 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::http_cache::{CacheObject, HttpCacheStorage};
+use super::http_cache::{CacheObject, HttpCacheStats, HttpCacheStorage};
 use super::{Error, Result};
 use crate::util;
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::path::Path;
+use std::sync::atomic::{AtomicU32, Ordering};
 use tinyufo::TinyUfo;
 use tokio::fs;
 use tracing::info;
 
 pub struct FileCache {
     directory: String,
+    reading: AtomicU32,
+    writing: AtomicU32,
     cache: TinyUfo<String, CacheObject>,
 }
 
@@ -38,6 +41,8 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
 
     Ok(FileCache {
         directory: dir,
+        reading: AtomicU32::new(0),
+        writing: AtomicU32::new(0),
         cache: TinyUfo::new(100, 100),
     })
 }
@@ -51,9 +56,12 @@ impl HttpCacheStorage for FileCache {
             return Some(obj);
         }
         let file = Path::new(&self.directory).join(key);
+        self.reading.fetch_add(1, Ordering::Relaxed);
         let Ok(buf) = fs::read(file).await else {
+            self.reading.fetch_sub(1, Ordering::Relaxed);
             return None;
         };
+        self.reading.fetch_sub(1, Ordering::Relaxed);
         if buf.len() < 8 {
             None
         } else {
@@ -70,10 +78,17 @@ impl HttpCacheStorage for FileCache {
         self.cache.put(key.clone(), data.clone(), weight);
         let buf: Bytes = data.into();
         let file = Path::new(&self.directory).join(key);
-        fs::write(file, buf)
-            .await
-            .map_err(|e| Error::Io { source: e })?;
-        Ok(())
+        self.writing.fetch_add(1, Ordering::Relaxed);
+        match fs::write(file, buf).await {
+            Err(e) => {
+                self.writing.fetch_sub(1, Ordering::Relaxed);
+                Err(Error::Io { source: e })
+            },
+            Ok(()) => {
+                self.writing.fetch_sub(1, Ordering::Relaxed);
+                Ok(())
+            },
+        }
     }
     /// Remove cache object from file, tinyufo doesn't support remove now.
     async fn remove(&self, key: &str) -> Result<Option<CacheObject>> {
@@ -83,6 +98,13 @@ impl HttpCacheStorage for FileCache {
             .await
             .map_err(|e| Error::Io { source: e })?;
         Ok(None)
+    }
+    /// Get the stats of file cache
+    fn stats(&self) -> Option<HttpCacheStats> {
+        Some(HttpCacheStats {
+            reading: self.reading.load(Ordering::Relaxed),
+            writing: self.writing.load(Ordering::Relaxed),
+        })
     }
 }
 

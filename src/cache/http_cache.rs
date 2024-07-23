@@ -78,6 +78,11 @@ impl From<CacheObject> for Bytes {
     }
 }
 
+pub struct HttpCacheStats {
+    pub reading: u32,
+    pub writing: u32,
+}
+
 #[async_trait]
 pub trait HttpCacheStorage: Sync + Send {
     async fn get(&self, key: &str) -> Option<CacheObject>;
@@ -89,6 +94,9 @@ pub trait HttpCacheStorage: Sync + Send {
     ) -> Result<()>;
     async fn remove(&self, _key: &str) -> Result<Option<CacheObject>> {
         Ok(None)
+    }
+    fn stats(&self) -> Option<HttpCacheStats> {
+        None
     }
 }
 
