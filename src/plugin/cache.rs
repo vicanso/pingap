@@ -31,7 +31,6 @@ use pingora::cache::eviction::simple_lru::Manager;
 use pingora::cache::eviction::EvictionManager;
 use pingora::cache::lock::CacheLock;
 use pingora::cache::predictor::{CacheablePredictor, Predictor};
-use pingora::cache::Storage;
 use pingora::proxy::Session;
 use std::str::FromStr;
 use std::time::Duration;
@@ -63,7 +62,7 @@ pub struct Cache {
     eviction: bool,
     predictor: bool,
     lock: u8,
-    storage: &'static (dyn Storage + Sync),
+    http_cache: &'static HttpCache,
     max_file_size: usize,
     max_ttl: Option<Duration>,
     namespace: Option<String>,
@@ -134,7 +133,7 @@ impl TryFrom<&PluginConf> for Cache {
             Some(headers)
         };
         let params = Self {
-            storage: cache,
+            http_cache: cache,
             plugin_step: step,
             eviction: value.contains_key("eviction"),
             predictor: value.contains_key("predictor"),
@@ -206,9 +205,13 @@ impl Plugin for Cache {
             };
         session
             .cache
-            .enable(self.storage, eviction, predictor, lock);
+            .enable(self.http_cache, eviction, predictor, lock);
         if self.max_file_size > 0 {
             session.cache.set_max_file_size_bytes(self.max_file_size);
+        }
+        if let Some(stats) = self.http_cache.stats() {
+            ctx.cache_reading = Some(stats.reading);
+            ctx.cache_writing = Some(stats.writing);
         }
         let mut keys = BytesMut::with_capacity(64);
         if let Some(namespace) = &self.namespace {

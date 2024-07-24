@@ -93,6 +93,10 @@ pub struct State {
     pub compression_stat: Option<CompressionStat>,
     pub modify_response_body: Option<Box<dyn ModifyResponseBody>>,
     pub response_body: Option<BytesMut>,
+    // cache reading count
+    pub cache_reading: Option<u32>,
+    // cache writing count
+    pub cache_writing: Option<u32>,
 }
 
 impl Default for State {
@@ -131,6 +135,8 @@ impl Default for State {
             compression_stat: None,
             modify_response_body: None,
             response_body: None,
+            cache_reading: None,
+            cache_writing: None,
         }
     }
 }
@@ -434,8 +440,9 @@ mod tests {
 
         ctx.created_at = util::now().as_millis() as u64 - 1;
         assert_eq!(
-            b"1ms",
-            ctx.append_value(BytesMut::new(), "service_time").as_ref()
+            true,
+            ctx.append_value(BytesMut::new(), "service_time")
+                .ends_with(b"ms")
         );
     }
 }

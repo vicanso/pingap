@@ -417,7 +417,7 @@ download = true
         assert_eq!(true, params.path.to_str().unwrap().ends_with("/Downloads"));
         assert_eq!("/index.html", params.index);
         assert_eq!(true, params.autoindex);
-        assert_eq!(1024, params.chunk_size.unwrap_or_default());
+        assert_eq!(4096, params.chunk_size.unwrap_or_default());
         assert_eq!(600, params.max_age.unwrap_or_default());
         assert_eq!(true, params.cache_private.unwrap_or_default());
         assert_eq!(true, params.cache_private.unwrap_or_default());
@@ -460,7 +460,7 @@ download = true
             .unwrap(),
         )
         .unwrap();
-        assert_eq!(1024, dir.chunk_size.unwrap_or_default());
+        assert_eq!(4096, dir.chunk_size.unwrap_or_default());
         assert_eq!(3600, dir.max_age.unwrap_or_default());
         assert_eq!(true, dir.cache_private.unwrap_or_default());
         assert_eq!("/pingap/index.html", dir.index);

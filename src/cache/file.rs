@@ -14,11 +14,14 @@
 
 use super::http_cache::{CacheObject, HttpCacheStats, HttpCacheStorage};
 use super::{Error, Result};
+use crate::state::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use crate::util;
 use async_trait::async_trait;
 use bytes::Bytes;
+use prometheus::Histogram;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::SystemTime;
 use tinyufo::TinyUfo;
 use tokio::fs;
 use tracing::info;
@@ -26,7 +29,9 @@ use tracing::info;
 pub struct FileCache {
     directory: String,
     reading: AtomicU32,
+    read_time: Histogram,
     writing: AtomicU32,
+    write_time: Histogram,
     cache: TinyUfo<String, CacheObject>,
 }
 
@@ -42,9 +47,17 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
     Ok(FileCache {
         directory: dir,
         reading: AtomicU32::new(0),
+        read_time: CACHE_READING_TIME.clone(),
         writing: AtomicU32::new(0),
+        write_time: CACHE_WRITING_TIME.clone(),
         cache: TinyUfo::new(100, 100),
     })
+}
+
+#[inline]
+fn elapsed(time: SystemTime) -> f64 {
+    let ms = time.elapsed().unwrap_or_default().as_millis();
+    ms as f64 / 1000.0
 }
 
 #[async_trait]
@@ -56,12 +69,15 @@ impl HttpCacheStorage for FileCache {
             return Some(obj);
         }
         let file = Path::new(&self.directory).join(key);
+        let start = SystemTime::now();
         self.reading.fetch_add(1, Ordering::Relaxed);
         let Ok(buf) = fs::read(file).await else {
             self.reading.fetch_sub(1, Ordering::Relaxed);
+            self.read_time.observe(elapsed(start));
             return None;
         };
         self.reading.fetch_sub(1, Ordering::Relaxed);
+        self.read_time.observe(elapsed(start));
         if buf.len() < 8 {
             None
         } else {
@@ -78,14 +94,17 @@ impl HttpCacheStorage for FileCache {
         self.cache.put(key.clone(), data.clone(), weight);
         let buf: Bytes = data.into();
         let file = Path::new(&self.directory).join(key);
+        let start = SystemTime::now();
         self.writing.fetch_add(1, Ordering::Relaxed);
         match fs::write(file, buf).await {
             Err(e) => {
                 self.writing.fetch_sub(1, Ordering::Relaxed);
+                self.write_time.observe(elapsed(start));
                 Err(Error::Io { source: e })
             },
             Ok(()) => {
                 self.writing.fetch_sub(1, Ordering::Relaxed);
+                self.write_time.observe(elapsed(start));
                 Ok(())
             },
         }
@@ -100,6 +119,7 @@ impl HttpCacheStorage for FileCache {
         Ok(None)
     }
     /// Get the stats of file cache
+    #[inline]
     fn stats(&self) -> Option<HttpCacheStats> {
         Some(HttpCacheStats {
             reading: self.reading.load(Ordering::Relaxed),

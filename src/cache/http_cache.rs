@@ -104,6 +104,13 @@ pub struct HttpCache {
     pub(crate) cached: Arc<dyn HttpCacheStorage>,
 }
 
+impl HttpCache {
+    #[inline]
+    pub fn stats(&self) -> Option<HttpCacheStats> {
+        self.cached.stats()
+    }
+}
+
 pub struct CompleteHit {
     body: Bytes,
     done: bool,

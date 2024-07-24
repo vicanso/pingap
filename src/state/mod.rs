@@ -19,7 +19,10 @@ mod process;
 mod prom;
 pub use ctx::*;
 pub use process::*;
-pub use prom::{new_prometheus, new_prometheus_push_service, Prometheus};
+pub use prom::{
+    new_prometheus, new_prometheus_push_service, Prometheus,
+    CACHE_READING_TIME, CACHE_WRITING_TIME,
+};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
