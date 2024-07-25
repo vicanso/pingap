@@ -357,6 +357,8 @@ impl Server {
 
 #[derive(Debug, Default)]
 struct DigestDeailt {
+    connection_reused: bool,
+    connection_time: u64,
     tcp_established: u64,
     tls_established: u64,
     tls_version: Option<String>,
@@ -381,15 +383,25 @@ fn get_digest_detail(digest: &Digest) -> DigestDeailt {
     };
 
     let tcp_established = get_established(digest.timing_digest.first());
+    let mut connection_time = 0;
+    if tcp_established > 0 {
+        connection_time = util::now().as_millis() as u64 - tcp_established;
+    }
+    let connection_reused = connection_time > 10;
+
     let Some(ssl_digest) = &digest.ssl_digest else {
         return DigestDeailt {
+            connection_reused,
             tcp_established,
+            connection_time,
             ..Default::default()
         };
     };
 
     DigestDeailt {
+        connection_reused,
         tcp_established,
+        connection_time,
         tls_established: get_established(digest.timing_digest.get(1)),
         tls_version: Some(ssl_digest.version.to_string()),
         tls_cipher: Some(ssl_digest.cipher.to_string()),
@@ -414,14 +426,9 @@ impl ProxyHttp for Server {
     {
         if let Some(digest) = session.digest() {
             let digest_detail = get_digest_detail(digest);
-            ctx.connection_time = util::now().as_millis() as u64
-                - digest_detail
-                    .tcp_established
-                    .max(digest_detail.tls_established);
+            ctx.connection_time = digest_detail.connection_time;
+            ctx.connection_reused = digest_detail.connection_reused;
 
-            if ctx.connection_time > 10 {
-                ctx.connection_reused = true;
-            }
             if !ctx.connection_reused
                 && digest_detail.tls_established
                     >= digest_detail.tcp_established

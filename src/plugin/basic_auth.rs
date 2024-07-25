@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_step_conf, get_str_slice_conf, Error, Plugin, Result,
+    get_bool_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error,
+    Plugin, Result,
 };
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
@@ -23,7 +24,10 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::Bytes;
 use http::HeaderValue;
 use http::StatusCode;
+use humantime::parse_duration;
 use pingora::proxy::Session;
+use std::time::Duration;
+use tokio::time::sleep;
 use tracing::debug;
 
 pub struct BasicAuth {
@@ -32,6 +36,7 @@ pub struct BasicAuth {
     hide_credentials: bool,
     miss_authorization_resp: HttpResponse,
     unauthorized_resp: HttpResponse,
+    delay: Option<Duration>,
 }
 
 impl TryFrom<&PluginConf> for BasicAuth {
@@ -39,6 +44,16 @@ impl TryFrom<&PluginConf> for BasicAuth {
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
 
+        let delay = get_str_conf(value, "delay");
+        let delay = if !delay.is_empty() {
+            let d = parse_duration(&delay).map_err(|e| Error::Invalid {
+                category: PluginCategory::KeyAuth.to_string(),
+                message: e.to_string(),
+            })?;
+            Some(d)
+        } else {
+            None
+        };
         let mut authorizations = vec![];
         for item in get_str_slice_conf(value, "authorizations").iter() {
             let _ = STANDARD.decode(item).map_err(|e| Error::Base64Decode {
@@ -55,6 +70,7 @@ impl TryFrom<&PluginConf> for BasicAuth {
         }
         let params = Self {
             plugin_step: step,
+            delay,
             hide_credentials: get_bool_conf(value, "hide_credentials"),
             authorizations,
             miss_authorization_resp: HttpResponse {
@@ -125,6 +141,9 @@ impl Plugin for BasicAuth {
             return Ok(Some(self.miss_authorization_resp.clone()));
         }
         if !self.authorizations.contains(&value.to_vec()) {
+            if let Some(d) = self.delay {
+                sleep(d).await;
+            }
             return Ok(Some(self.unauthorized_resp.clone()));
         }
         if self.hide_credentials {

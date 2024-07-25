@@ -7,6 +7,7 @@
 - [ ] secret storage
 - [ ] support include comnand for configuraion
 - [ ] support OpenTelemetry
+- [x] auth delay
 - [x] support get processing count of file cache
 - [x] support buffer file logger
 - [x] support prometheus plugin

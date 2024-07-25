@@ -23,8 +23,11 @@ use crate::util;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::{HeaderName, StatusCode};
+use humantime::parse_duration;
 use pingora::proxy::Session;
 use std::str::FromStr;
+use std::time::Duration;
+use tokio::time::sleep;
 use tracing::{debug, error};
 
 pub struct KeyAuth {
@@ -32,6 +35,7 @@ pub struct KeyAuth {
     header: Option<HeaderName>,
     query: Option<String>,
     keys: Vec<Vec<u8>>,
+    delay: Option<Duration>,
     miss_authorization_resp: HttpResponse,
     unauthorized_resp: HttpResponse,
     hide_credentials: bool,
@@ -41,6 +45,17 @@ impl TryFrom<&PluginConf> for KeyAuth {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let step = get_step_conf(value);
+
+        let delay = get_str_conf(value, "delay");
+        let delay = if !delay.is_empty() {
+            let d = parse_duration(&delay).map_err(|e| Error::Invalid {
+                category: PluginCategory::KeyAuth.to_string(),
+                message: e.to_string(),
+            })?;
+            Some(d)
+        } else {
+            None
+        };
 
         let query_name = get_str_conf(value, "query");
         let header_name = get_str_conf(value, "header");
@@ -78,6 +93,7 @@ impl TryFrom<&PluginConf> for KeyAuth {
             plugin_step: step,
             query,
             header,
+            delay,
             miss_authorization_resp: HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
                 body: Bytes::from_static(b"Key missing"),
@@ -142,6 +158,9 @@ impl Plugin for KeyAuth {
             return Ok(Some(self.miss_authorization_resp.clone()));
         }
         if !self.keys.contains(&value.to_vec()) {
+            if let Some(d) = self.delay {
+                sleep(d).await;
+            }
             return Ok(Some(self.unauthorized_resp.clone()));
         }
         if self.hide_credentials {

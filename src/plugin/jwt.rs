@@ -21,10 +21,13 @@ use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
 use http::StatusCode;
+use humantime::parse_duration;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use substring::Substring;
+use tokio::time::sleep;
 use tracing::debug;
 
 pub struct JwtAuth {
@@ -35,6 +38,7 @@ pub struct JwtAuth {
     query: Option<String>,
     cookie: Option<String>,
     algorithm: String,
+    delay: Option<Duration>,
     unauthorized_resp: HttpResponse,
 }
 
@@ -61,11 +65,22 @@ impl TryFrom<&PluginConf> for JwtAuth {
         } else {
             Some(cookie)
         };
+        let delay = get_str_conf(value, "delay");
+        let delay = if !delay.is_empty() {
+            let d = parse_duration(&delay).map_err(|e| Error::Invalid {
+                category: PluginCategory::KeyAuth.to_string(),
+                message: e.to_string(),
+            })?;
+            Some(d)
+        } else {
+            None
+        };
         let params = Self {
             plugin_step: get_step_conf(value),
             secret: get_str_conf(value, "secret"),
             auth_path: get_str_conf(value, "auth_path"),
             algorithm: get_str_conf(value, "algorithm"),
+            delay,
             header,
             query,
             cookie,
@@ -178,6 +193,9 @@ impl Plugin for JwtAuth {
             },
         };
         if !valid {
+            if let Some(d) = self.delay {
+                sleep(d).await;
+            }
             let mut resp = self.unauthorized_resp.clone();
             resp.body = Bytes::from_static(b"Jwt authorization is invalid");
             return Ok(Some(resp));
