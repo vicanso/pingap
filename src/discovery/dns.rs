@@ -15,14 +15,17 @@
 use super::{format_addrs, Addr, Error, Result};
 use crate::webhook;
 use async_trait::async_trait;
+use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use hickory_resolver::lookup_ip::LookupIp;
+use hickory_resolver::name_server::TokioConnectionProvider;
+use hickory_resolver::system_conf::read_system_conf;
 use hickory_resolver::{AsyncResolver, Resolver};
 use pingora::lb::discovery::ServiceDiscovery;
 use pingora::lb::{Backend, Backends};
 use pingora::protocols::l4::socket::SocketAddr;
 use std::collections::{BTreeSet, HashMap};
 use std::net::ToSocketAddrs;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use tokio::runtime::Handle;
 use tracing::{debug, error, info};
 
@@ -36,12 +39,22 @@ impl Dns {
         let hosts = format_addrs(addrs, tls);
         Ok(Self { hosts, ipv4_only })
     }
+    fn read_system_conf(&self) -> Result<(ResolverConfig, ResolverOpts)> {
+        let (config, mut options) =
+            read_system_conf().map_err(|e| Error::Resolve { source: e })?;
+        options.timeout = Duration::from_secs(30);
+
+        Ok((config, options))
+    }
     fn lookup_ip(&self) -> Result<Vec<LookupIp>> {
         let mut ip_list = vec![];
-        let resolver = Resolver::from_system_conf().map_err(|e| Error::Io {
-            source: e,
-            content: "new resolover fail".to_string(),
-        })?;
+        let (config, options) = self.read_system_conf()?;
+
+        let resolver =
+            Resolver::new(config, options).map_err(|e| Error::Io {
+                source: e,
+                content: "new resolover fail".to_string(),
+            })?;
         for (host, _, _) in self.hosts.iter() {
             let ip = resolver
                 .lookup_ip(host)
@@ -52,8 +65,10 @@ impl Dns {
     }
     async fn tokio_lookup_ip(&self) -> Result<Vec<LookupIp>> {
         let mut ip_list = vec![];
-        let resolver = AsyncResolver::tokio_from_system_conf()
-            .map_err(|e| Error::Resolve { source: e })?;
+        let provider = TokioConnectionProvider::default();
+        let (config, options) = self.read_system_conf()?;
+        let resolver = AsyncResolver::new(config, options, provider);
+
         for (host, _, _) in self.hosts.iter() {
             let ip = resolver
                 .lookup_ip(host)

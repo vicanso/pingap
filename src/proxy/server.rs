@@ -387,7 +387,7 @@ fn get_digest_detail(digest: &Digest) -> DigestDeailt {
     if tcp_established > 0 {
         connection_time = util::now().as_millis() as u64 - tcp_established;
     }
-    let connection_reused = connection_time > 10;
+    let connection_reused = connection_time > 100;
 
     let Some(ssl_digest) = &digest.ssl_digest else {
         return DigestDeailt {
