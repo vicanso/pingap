@@ -63,6 +63,7 @@ pub struct SendNotificationParams {
     pub category: NotificationCategory,
     pub level: NotificationLevel,
     pub msg: String,
+    pub remark: Option<String>,
 }
 
 pub fn send(params: SendNotificationParams) {
@@ -95,6 +96,7 @@ pub fn send(params: SendNotificationParams) {
             let category = params.category.to_string();
             let level = params.level;
             let ip = util::local_ip_list().join(";");
+            let remark = params.remark.unwrap_or_default();
 
             let send = async move {
                 let client = reqwest::Client::new();
@@ -111,7 +113,8 @@ pub fn send(params: SendNotificationParams) {
                     >hostname: {hostname}
                     >ip: {ip}
                     >category: {category}
-                    >message: {}"###,
+                    >message: {}
+                    >remark: {remark}"###,
                     params.msg
                 );
                 match webhook_type.to_lowercase().as_str() {

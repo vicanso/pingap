@@ -167,6 +167,7 @@ pub fn try_init_certificates(
                             webhook::NotificationCategory::ParseCertificateFail,
                         level: webhook::NotificationLevel::Error,
                         msg: e.to_string(),
+                        remark: None,
                     });
                 },
             };

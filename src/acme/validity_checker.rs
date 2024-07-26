@@ -65,6 +65,7 @@ impl ServiceTask for ValidityChecker {
                 level: webhook::NotificationLevel::Warn,
                 category: webhook::NotificationCategory::TlsValidity,
                 msg: message,
+                remark: None,
             });
         }
         None

@@ -331,6 +331,7 @@ async fn new_lets_encrypt(
         level: webhook::NotificationLevel::Info,
         category: webhook::NotificationCategory::LetsEncrypt,
         msg: "Generate new cert from lets encrypt".to_string(),
+        remark: None,
     });
 
     Ok(())

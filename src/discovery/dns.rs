@@ -150,6 +150,7 @@ impl ServiceDiscovery for Dns {
                         webhook::NotificationCategory::ServiceDiscoverFail,
                     level: webhook::NotificationLevel::Warn,
                     msg: format!("{:?}, error: {e}", self.hosts),
+                    remark: None,
                 });
                 return Err(e.into());
             },

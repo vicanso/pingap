@@ -27,12 +27,13 @@ use tracing::{error, info};
 async fn hot_reload(
     hot_reload_only: bool,
 ) -> Result<(bool, Vec<String>), Box<dyn std::error::Error>> {
-    let conf = load_config(&get_config_path(), false).await?;
+    let mut conf = load_config(&get_config_path(), false).await?;
     conf.validate()?;
     let mut current_conf: PingapConf = get_current_config().as_ref().clone();
     let (_, original_diff_result) = current_conf.diff(&conf);
 
     let mut should_reload_server_location = false;
+    // set the locations as the old config
     for (name, server) in conf.servers.iter() {
         if let Some(old) = current_conf.servers.get_mut(name) {
             if server.locations != old.locations {
@@ -41,7 +42,17 @@ async fn hot_reload(
             }
         }
     }
+
+    // if hot reload only, just only check upstreams and locations
+    if hot_reload_only {
+        let mut clone_conf = current_conf.clone();
+        clone_conf.upstreams = conf.upstreams;
+        clone_conf.locations = conf.locations;
+        conf = clone_conf;
+    }
+
     let (updated_category_list, _) = current_conf.diff(&conf);
+    // no update date
     if !should_reload_server_location && updated_category_list.is_empty() {
         return Ok((false, original_diff_result));
     }
@@ -146,10 +157,11 @@ impl ServiceTask for AutoRestart {
         match hot_reload(hot_reload_only).await {
             Ok((should_restart, diff_result)) => {
                 if !diff_result.is_empty() {
-                    let mut arr = diff_result.clone();
+                    let arr = diff_result.clone();
+                    let mut remark = None;
                     // add more message for auto reload
                     if !should_restart {
-                        arr.push(
+                        remark = Some(
                             "configuration has been hot reloaded".to_string(),
                         );
                     }
@@ -157,6 +169,7 @@ impl ServiceTask for AutoRestart {
                         level: webhook::NotificationLevel::Info,
                         category: webhook::NotificationCategory::DiffConfig,
                         msg: arr.join("\n"),
+                        remark,
                     });
                 }
                 if should_restart {

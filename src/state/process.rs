@@ -82,6 +82,7 @@ pub fn restart_now() -> io::Result<process::Output> {
         level: webhook::NotificationLevel::Info,
         category: webhook::NotificationCategory::Restart,
         msg: format!("Restart now, pid:{}", std::process::id()),
+        remark: None,
     });
     if let Some(cmd) = CMD.get() {
         nix::sys::signal::kill(
@@ -109,6 +110,7 @@ pub fn restart() {
                         level: webhook::NotificationLevel::Error,
                         category: webhook::NotificationCategory::RestartFail,
                         msg: e.to_string(),
+                        remark: None,
                     });
                 },
                 Ok(output) => {
