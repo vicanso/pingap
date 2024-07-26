@@ -47,7 +47,7 @@ const R11: &[u8] = include_bytes!("../assets/r11.pem");
 fn parse_chain_certificate(data: &[u8]) -> Option<X509> {
     if let Ok(info) = get_certificate_info(data) {
         if info.not_after > util::now().as_secs() as i64 {
-            return X509::from_pem(E5).ok();
+            return X509::from_pem(data).ok();
         }
     }
     None
