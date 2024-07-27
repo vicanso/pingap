@@ -34,7 +34,7 @@ pub static CACHE_READING_TIME: Lazy<Histogram> = Lazy::new(|| {
         "",
         "pingap_cache_storage_read_time",
         "pingap cache storage read time(second)",
-        &[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5],
+        &[0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0],
     )
     .unwrap()
 });
@@ -43,7 +43,7 @@ pub static CACHE_WRITING_TIME: Lazy<Histogram> = Lazy::new(|| {
         "",
         "pingap_cache_storage_write_time",
         "pingap cache storage write time(second)",
-        &[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5],
+        &[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0],
     )
     .unwrap()
 });
@@ -421,7 +421,7 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         server,
         "pingap_cache_lookup_time",
         "pingap cache lookup time(second)",
-        &[0.001, 0.005, 0.01, 0.05, 0.1, 1.0],
+        &[0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0],
     )?;
     let cache_lock_time = new_histogram(
         server,
@@ -558,6 +558,6 @@ mod tests {
             },
         );
         let buf = p.metrics().unwrap();
-        assert_eq!(170, std::str::from_utf8(&buf).unwrap().split('\n').count());
+        assert_eq!(174, std::str::from_utf8(&buf).unwrap().split('\n').count());
     }
 }
