@@ -174,7 +174,7 @@ tls_min_version = ""
 tls_max_version = ""
 
 # get domain certificates from let's encrypt (default none)
-lets_encrypt = ""
+# lets_encrypt = ""
 
 # the file for save certificate (default none)
 certificate_file = ""

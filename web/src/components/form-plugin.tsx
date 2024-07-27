@@ -599,14 +599,21 @@ export function FormPluginField({
           key: "path",
           label: t("form.mockPath"),
           id: "mock-path",
-          span: 6,
+          span: 4,
         },
         {
           category: "number",
           key: "status",
           label: t("form.mockStats"),
           id: "mock-status",
-          span: 6,
+          span: 4,
+        },
+        {
+          category: "text",
+          key: "delay",
+          label: t("form.mockResponseDelay"),
+          id: "mock-response-delay",
+          span: 4,
         },
         {
           category: "textlist",

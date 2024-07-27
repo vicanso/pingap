@@ -19,13 +19,17 @@ use crate::plugin::{get_int_conf, get_str_slice_conf};
 use crate::state::State;
 use async_trait::async_trait;
 use http::StatusCode;
+use humantime::parse_duration;
 use pingora::proxy::Session;
+use std::time::Duration;
 use tracing::debug;
+use tokio::time::sleep;
 
 pub struct MockResponse {
     pub path: String,
     pub plugin_step: PluginStep,
     pub resp: HttpResponse,
+    pub delay: Option<Duration>,
 }
 
 impl MockResponse {
@@ -44,6 +48,16 @@ impl MockResponse {
         let status = get_int_conf(params, "status") as u16;
         let headers = get_str_slice_conf(params, "headers");
         let data = get_str_conf(params, "data");
+        let delay = get_str_conf(params, "delay");
+        let delay = if !delay.is_empty() {
+            let d = parse_duration(&delay).map_err(|e| Error::Invalid {
+                category: PluginCategory::Mock.to_string(),
+                message: e.to_string(),
+            })?;
+            Some(d)
+        } else {
+            None
+        };
 
         let mut resp = HttpResponse {
             status: StatusCode::OK,
@@ -64,6 +78,7 @@ impl MockResponse {
             resp,
             plugin_step: step,
             path,
+            delay,
         })
     }
 }
@@ -92,6 +107,9 @@ impl Plugin for MockResponse {
         if !self.path.is_empty() && session.req_header().uri.path() != self.path
         {
             return Ok(None);
+        }
+        if let Some(d) = self.delay {
+            sleep(d).await;
         }
         Ok(Some(self.resp.clone()))
     }

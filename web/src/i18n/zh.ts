@@ -225,6 +225,7 @@ export default {
   "form.responseHeadersRemove": "删除更多的响应头",
   "form.mockPath": "Mock响应的匹配路径(为空则匹配所有路径)",
   "form.mockStats": "Mock响应的状态码(为空则表示200)",
+  "form.mockResponseDelay": "Mock延时响应(如1s)",
   "form.mockHeader": "Mock响应的响应头",
   "form.mockHeaderName": "Mock响应头名称",
   "form.mockHeaderValue": "Mock响应头值",

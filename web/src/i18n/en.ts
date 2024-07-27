@@ -227,6 +227,7 @@ export default {
   "form.responseHeadersRemove": "Remove More Header",
   "form.mockPath": "Response Match Path",
   "form.mockStats": "Response Status(default:200)",
+  "form.mockResponseDelay": "Mock Response Delay Processing(e.g. 1s)",
   "form.mockHeader": "Add Response Header",
   "form.mockHeaderName": "Mock Header Name Of Response",
   "form.mockHeaderValue": "Mock Header Value Of Response",

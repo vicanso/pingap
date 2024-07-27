@@ -1118,7 +1118,6 @@ addr = "0.0.0.0:6188"
 certificate_file = ""
 enabled_h2 = false
 global_certificates = false
-lets_encrypt = ""
 locations = ["lo"]
 prometheus_metrics = ""
 tcp_idle = "2m"
