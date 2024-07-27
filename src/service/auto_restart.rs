@@ -157,19 +157,18 @@ impl ServiceTask for AutoRestart {
         match hot_reload(hot_reload_only).await {
             Ok((should_restart, diff_result)) => {
                 if !diff_result.is_empty() {
-                    let arr = diff_result.clone();
-                    let mut remark = None;
                     // add more message for auto reload
-                    if !should_restart {
-                        remark = Some(
-                            "configuration has been hot reloaded".to_string(),
-                        );
-                    }
+                    let remark = if !should_restart {
+                        "Configuration has been hot reloaded".to_string()
+                    } else {
+                        "Pingap will restart due to configuration updates"
+                            .to_string()
+                    };
                     webhook::send(webhook::SendNotificationParams {
-                        level: webhook::NotificationLevel::Info,
                         category: webhook::NotificationCategory::DiffConfig,
-                        msg: arr.join("\n"),
-                        remark,
+                        msg: diff_result.join("; "),
+                        remark: Some(remark),
+                        ..Default::default()
                     });
                 }
                 if should_restart {

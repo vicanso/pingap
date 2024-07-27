@@ -79,10 +79,9 @@ pub fn restart_now() -> io::Result<process::Output> {
     }
     info!("pingap will restart");
     webhook::send(webhook::SendNotificationParams {
-        level: webhook::NotificationLevel::Info,
         category: webhook::NotificationCategory::Restart,
         msg: format!("Restart now, pid:{}", std::process::id()),
-        remark: None,
+        ..Default::default()
     });
     if let Some(cmd) = CMD.get() {
         nix::sys::signal::kill(

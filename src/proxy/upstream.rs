@@ -621,9 +621,8 @@ impl ServiceTask for HealthCheckTask {
                         );
                         webhook::send(webhook::SendNotificationParams{
                             category: webhook::NotificationCategory::DifferentBackends,
-                            level: webhook::NotificationLevel::Info,
                             msg: format!("upstream: {name}, addrs: {addrs:?}"),
-                            remark: None,
+                            ..Default::default()
                         });
                     };
                     let result = if let Some(lb) = up.as_round_robind() {

@@ -66,6 +66,16 @@ pub struct SendNotificationParams {
     pub msg: String,
     pub remark: Option<String>,
 }
+impl Default for SendNotificationParams {
+    fn default() -> Self {
+        Self {
+            category: NotificationCategory::BackendStatus,
+            level: NotificationLevel::Info,
+            msg: "".to_string(),
+            remark: None,
+        }
+    }
+}
 
 pub fn send(params: SendNotificationParams) {
     info!(

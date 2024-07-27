@@ -328,10 +328,10 @@ async fn new_lets_encrypt(
         "write certificate success"
     );
     webhook::send(webhook::SendNotificationParams {
-        level: webhook::NotificationLevel::Info,
         category: webhook::NotificationCategory::LetsEncrypt,
         msg: "Generate new cert from lets encrypt".to_string(),
-        remark: None,
+        remark: Some(format!("Domains: {domains:?}")),
+        ..Default::default()
     });
 
     Ok(())
