@@ -154,6 +154,10 @@ export default function MainHeader() {
                 {basicInfo.arch}
               </Typography>
               <Typography gutterBottom variant="body2">
+                {"Rust: "}
+                {basicInfo.rustc_version}
+              </Typography>
+              <Typography gutterBottom variant="body2">
                 {t("header.configHash")}
                 {basicInfo.config_hash}
               </Typography>

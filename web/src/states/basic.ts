@@ -4,6 +4,7 @@ import { create } from "zustand";
 interface Basic {
   start_time: number;
   version: string;
+  rustc_version: string;
   memory: string;
   arch: string;
   config_hash: string;
@@ -19,6 +20,7 @@ const useBasicStore = create<ConfigState>()((set, get) => ({
   data: {
     start_time: 0,
     version: "",
+    rustc_version: "",
     memory: "",
     arch: "",
     config_hash: "",

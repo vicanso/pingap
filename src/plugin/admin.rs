@@ -29,7 +29,7 @@ use crate::http_extra::{HttpResponse, HTTP_HEADER_WWW_AUTHENTICATE};
 use crate::limit::TtlLruLimit;
 use crate::state::get_start_time;
 use crate::state::{restart_now, State};
-use crate::util::{self, get_pkg_version};
+use crate::util;
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::Bytes;
@@ -107,6 +107,7 @@ struct ErrorResponse {
 struct BasicInfo {
     start_time: u64,
     version: String,
+    rustc_version: String,
     memory: String,
     arch: String,
     config_hash: String,
@@ -439,7 +440,8 @@ impl Plugin for AdminServe {
 
             HttpResponse::try_from_json(&BasicInfo {
                 start_time: get_start_time(),
-                version: get_pkg_version().to_string(),
+                version: util::get_pkg_version().to_string(),
+                rustc_version: util::get_rustc_version(),
                 arch: arch.to_string(),
                 config_hash: config::get_config_hash(),
                 memory,

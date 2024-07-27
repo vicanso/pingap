@@ -2345,6 +2345,7 @@ dependencies = [
  "regex",
  "reqwest 0.12.5",
  "rust-embed",
+ "rustc_version",
  "serde",
  "serde_json",
  "sha2",

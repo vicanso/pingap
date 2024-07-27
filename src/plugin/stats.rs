@@ -25,8 +25,6 @@ use serde::Serialize;
 use std::time::Duration;
 use tracing::debug;
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-
 #[derive(Serialize)]
 struct ServerStats {
     processing: i32,
@@ -37,6 +35,7 @@ struct ServerStats {
     physical_mem_mb: usize,
     physical_mem: String,
     version: String,
+    rustc_version: String,
     start_time: u64,
     uptime: String,
 }
@@ -109,7 +108,8 @@ impl Plugin for Stats {
                 hostname: get_hostname(),
                 physical_mem: ByteSize(physical_mem as u64).to_string_as(true),
                 physical_mem_mb: physical_mem / (1024 * 1024),
-                version: VERSION.to_string(),
+                version: util::get_pkg_version().to_string(),
+                rustc_version: util::get_rustc_version(),
                 start_time: get_start_time(),
                 uptime: uptime.to_string(),
             })
