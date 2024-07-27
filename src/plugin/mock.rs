@@ -22,8 +22,8 @@ use http::StatusCode;
 use humantime::parse_duration;
 use pingora::proxy::Session;
 use std::time::Duration;
-use tracing::debug;
 use tokio::time::sleep;
+use tracing::debug;
 
 pub struct MockResponse {
     pub path: String,

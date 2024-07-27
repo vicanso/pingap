@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::{format_addrs, Error, Result};
+use http::Extensions;
 use pingora::lb::discovery;
 use pingora::lb::{Backend, Backends};
 use pingora::protocols::l4::socket::SocketAddr;
@@ -42,6 +43,7 @@ pub fn new_common_discover_backends(
             let backend = Backend {
                 addr: SocketAddr::Inet(item),
                 weight: weight.to_owned(),
+                ext: Extensions::new(),
             };
             backends.push(backend)
         }

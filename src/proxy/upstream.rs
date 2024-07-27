@@ -18,7 +18,7 @@ use crate::discovery::{
 };
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::State;
-use crate::util;
+use crate::{util, webhook};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -28,13 +28,13 @@ use once_cell::sync::Lazy;
 use pingora::http::RequestHeader;
 use pingora::lb::health_check::{HealthCheck, HttpHealthCheck, TcpHealthCheck};
 use pingora::lb::selection::{Consistent, RoundRobin};
-use pingora::lb::{Backends, LoadBalancer};
+use pingora::lb::{Backend, Backends, LoadBalancer};
 use pingora::protocols::l4::ext::TcpKeepalive;
 use pingora::protocols::ALPN;
 use pingora::proxy::Session;
 use pingora::upstreams::peer::{HttpPeer, PeerOptions, Tracer, Tracing};
 use snafu::{ResultExt, Snafu};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -609,29 +609,36 @@ impl ServiceTask for HealthCheckTask {
                         && check_frequency_matched(update_frequency))
                 {
                     debug!(name, "update backends is running",);
+                    let different = |backends: Arc<BTreeSet<Backend>>| {
+                        let mut addrs = vec![];
+                        for item in backends.iter() {
+                            addrs.push(item.addr.to_string());
+                        }
+                        info!(
+                            name,
+                            addrs = addrs.join(","),
+                            "update backends with different value",
+                        );
+                        webhook::send(webhook::SendNotificationParams{
+                            category: webhook::NotificationCategory::DifferentBackends,
+                            level: webhook::NotificationLevel::Info,
+                            msg: format!("upstream: {name}, addrs: {addrs:?}"),
+                            remark: None,
+                        });
+                    };
                     let result = if let Some(lb) = up.as_round_robind() {
-                        lb.backends().update().await
+                        lb.backends().update(different).await
                     } else if let Some(lb) = up.as_consistent() {
-                        lb.backends().update().await
+                        lb.backends().update(different).await
                     } else {
-                        Ok(false)
+                        Ok(())
                     };
-                    match result {
-                        Ok(different) => {
-                            if different {
-                                info!(
-                                    name,
-                                    "update backends with different value"
-                                )
-                            }
-                        },
-                        Err(e) => {
-                            error!(
-                                error = e.to_string(),
-                                name, "update backends fail"
-                            )
-                        },
-                    };
+                    if let Err(e) = result {
+                        error!(
+                            error = e.to_string(),
+                            name, "update backends fail"
+                        )
+                    }
                     debug!(name, "update backend is done",);
                 }
 

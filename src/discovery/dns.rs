@@ -20,6 +20,7 @@ use hickory_resolver::lookup_ip::LookupIp;
 use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_resolver::system_conf::read_system_conf;
 use hickory_resolver::{AsyncResolver, Resolver};
+use http::Extensions;
 use pingora::lb::discovery::ServiceDiscovery;
 use pingora::lb::{Backend, Backends};
 use pingora::protocols::l4::socket::SocketAddr;
@@ -115,6 +116,7 @@ impl Dns {
                     backends.push(Backend {
                         addr: SocketAddr::Inet(socket_addr),
                         weight: weight.to_owned(),
+                        ext: Extensions::new(),
                     });
                 }
             }
