@@ -166,7 +166,7 @@ impl ServiceTask for AutoRestart {
                     };
                     webhook::send(webhook::SendNotificationParams {
                         category: webhook::NotificationCategory::DiffConfig,
-                        msg: diff_result.join("; "),
+                        msg: diff_result.join("\n").trim().to_string(),
                         remark: Some(remark),
                         ..Default::default()
                     });

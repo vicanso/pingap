@@ -85,7 +85,7 @@ pub struct HttpCacheStats {
 
 #[async_trait]
 pub trait HttpCacheStorage: Sync + Send {
-    async fn get(&self, key: &str) -> Option<CacheObject>;
+    async fn get(&self, key: &str) -> Result<Option<CacheObject>>;
     async fn put(
         &self,
         key: String,
@@ -235,7 +235,7 @@ impl Storage for HttpCache {
         _trace: &SpanHandle,
     ) -> pingora::Result<Option<(CacheMeta, HitHandler)>> {
         let hash = key.combined();
-        if let Some(obj) = self.cached.get(&hash).await {
+        if let Some(obj) = self.cached.get(&hash).await? {
             let meta = CacheMeta::deserialize(&obj.meta.0, &obj.meta.1)?;
             let size = obj.body.len();
             let hit_handler = CompleteHit {
@@ -305,7 +305,7 @@ impl Storage for HttpCache {
         _trace: &SpanHandle,
     ) -> pingora::Result<bool> {
         let hash = key.combined();
-        if let Some(mut obj) = self.cached.get(&hash).await {
+        if let Some(mut obj) = self.cached.get(&hash).await? {
             obj.meta = meta.serialize()?;
             let size = obj.body.len();
             let _ = self.cached.put(hash, obj, get_wegith(size)).await?;
@@ -376,7 +376,7 @@ mod tests {
             .unwrap();
         handle.finish().await.unwrap();
 
-        let data = cache.get(key).await.unwrap();
+        let data = cache.get(key).await.unwrap().unwrap();
         assert_eq!("Hello World!", std::str::from_utf8(&data.body).unwrap());
     }
 }

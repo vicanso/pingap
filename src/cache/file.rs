@@ -64,24 +64,31 @@ fn elapsed(time: SystemTime) -> f64 {
 impl HttpCacheStorage for FileCache {
     /// Get cache object from tinyufo,
     /// if not exists, then get from the file.
-    async fn get(&self, key: &str) -> Option<CacheObject> {
+    async fn get(&self, key: &str) -> Result<Option<CacheObject>> {
         if let Some(obj) = self.cache.get(&key.to_string()) {
-            return Some(obj);
+            return Ok(Some(obj));
         }
         let file = Path::new(&self.directory).join(key);
         let start = SystemTime::now();
         self.reading.fetch_add(1, Ordering::Relaxed);
-        let Ok(buf) = fs::read(file).await else {
-            self.reading.fetch_sub(1, Ordering::Relaxed);
-            self.read_time.observe(elapsed(start));
-            return None;
-        };
+        let buf = match fs::read(file).await {
+            Ok(buf) => Ok(buf),
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    Ok(vec![])
+                } else {
+                    self.reading.fetch_sub(1, Ordering::Relaxed);
+                    self.read_time.observe(elapsed(start));
+                    Err(Error::Io { source: e })
+                }
+            },
+        }?;
         self.reading.fetch_sub(1, Ordering::Relaxed);
         self.read_time.observe(elapsed(start));
         if buf.len() < 8 {
-            None
+            Ok(None)
         } else {
-            Some(CacheObject::from(Bytes::from(buf)))
+            Ok(Some(CacheObject::from(Bytes::from(buf))))
         }
     }
     /// Put cache object to tinyufo and file.
@@ -146,19 +153,19 @@ mod tests {
             meta: (b"Hello".to_vec(), b"World".to_vec()),
             body: Bytes::from_static(b"Hello World!"),
         };
-        let result = cache.get(&key).await;
+        let result = cache.get(&key).await.unwrap();
         assert_eq!(true, result.is_none());
         cache.put(key.clone(), obj.clone(), 1).await.unwrap();
-        let result = cache.get(&key).await.unwrap();
+        let result = cache.get(&key).await.unwrap().unwrap();
         assert_eq!(obj, result);
 
         // empty tinyufo, get from file
         let cache = new_file_cache(&dir).unwrap();
-        let result = cache.get(&key).await.unwrap();
+        let result = cache.get(&key).await.unwrap().unwrap();
         assert_eq!(obj, result);
 
         cache.remove(&key).await.unwrap();
-        let result = cache.get(&key).await;
+        let result = cache.get(&key).await.unwrap();
         assert_eq!(true, result.is_none());
     }
 }

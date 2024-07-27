@@ -38,8 +38,8 @@ pub fn new_tiny_ufo_cache(
 
 #[async_trait]
 impl HttpCacheStorage for TinyUfoCache {
-    async fn get(&self, key: &str) -> Option<CacheObject> {
-        self.cache.get(&key.to_string())
+    async fn get(&self, key: &str) -> Result<Option<CacheObject>> {
+        Ok(self.cache.get(&key.to_string()))
     }
     async fn put(
         &self,
@@ -67,10 +67,10 @@ mod tests {
             meta: (b"Hello".to_vec(), b"World".to_vec()),
             body: Bytes::from_static(b"Hello World!"),
         };
-        let result = cache.get(&key).await;
+        let result = cache.get(&key).await.unwrap();
         assert_eq!(true, result.is_none());
         cache.put(key.clone(), obj.clone(), 1).await.unwrap();
-        let result = cache.get(&key).await.unwrap();
+        let result = cache.get(&key).await.unwrap().unwrap();
         assert_eq!(obj, result);
     }
 }
