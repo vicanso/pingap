@@ -166,7 +166,7 @@ impl ServiceDiscovery for Dns {
                     category:
                         webhook::NotificationCategory::ServiceDiscoverFail,
                     level: webhook::NotificationLevel::Warn,
-                    msg: format!("{:?}, error: {e}", self.hosts),
+                    msg: format!("dns discovery {:?}, error: {e}", self.hosts),
                     remark: None,
                 });
                 return Err(e.into());

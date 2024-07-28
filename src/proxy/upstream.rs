@@ -593,17 +593,24 @@ impl ServiceTask for HealthCheckTask {
                     check_count % count == 0
                 };
 
-                let update_frequency = if let Some(lb) = up.as_round_robind() {
-                    lb.update_frequency
+                let (update_frequency, health_check_frequency) = if let Some(lb) = up.as_round_robind() {
+                    let update_frequency = lb.update_frequency.unwrap_or_default()
+                    .as_secs();
+                    let health_check_frequency = lb.health_check_frequency.unwrap_or_default()
+                    .as_secs();
+                    (update_frequency, health_check_frequency)
                 } else if let Some(lb) = up.as_consistent() {
-                    lb.update_frequency
+                    let update_frequency = lb.update_frequency.unwrap_or_default()
+                    .as_secs();
+                    let health_check_frequency = lb.health_check_frequency.unwrap_or_default()
+                    .as_secs();
+                    (update_frequency, health_check_frequency)
                 } else {
-                    None
-                }
-                .unwrap_or_default()
-                .as_secs();
+                    (0, 0)
+                };
 
                 // the firt time should match
+                // update check
                 if check_count == 0
                     || (update_frequency > 0
                         && check_frequency_matched(update_frequency))
@@ -641,17 +648,7 @@ impl ServiceTask for HealthCheckTask {
                     debug!(name, "update backend is done",);
                 }
 
-                let health_check_frequency =
-                    if let Some(lb) = up.as_round_robind() {
-                        lb.health_check_frequency
-                    } else if let Some(lb) = up.as_consistent() {
-                        lb.health_check_frequency
-                    } else {
-                        None
-                    }
-                    .unwrap_or_default()
-                    .as_secs();
-
+                // health check
                 if !check_frequency_matched(health_check_frequency) {
                     return;
                 }
