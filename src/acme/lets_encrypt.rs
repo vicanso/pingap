@@ -27,7 +27,6 @@ use instant_acme::{
 };
 use once_cell::sync::OnceCell;
 use pingora::proxy::Session;
-use rcgen::{CertificateParams, DistinguishedName};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -72,18 +71,26 @@ pub fn new_lets_encrypt_service(
 impl ServiceTask for LetsEncryptService {
     async fn run(&self) -> Option<bool> {
         let domains = &self.domains;
-        let should_renew_now =
-            if let Ok(cert) = get_lets_encrypt_cert(&self.certificate_file) {
-                // invalid or different domains
-                !cert.valid() || domains.join(",") != cert.domains.join(",")
-            } else {
-                true
-            };
+        let should_renew_now = if let Ok(certificate) =
+            get_lets_encrypt_cert(&self.certificate_file)
+        {
+            // invalid or different domains
+            !certificate.valid()
+                || domains.join(",") != certificate.domains.join(",")
+        } else {
+            true
+        };
         if should_renew_now {
-            info!(domains = domains.join(","), "renew cert from let's encrypt");
+            info!(
+                domains = domains.join(","),
+                "renew certificate from let's encrypt"
+            );
             match new_lets_encrypt(&self.certificate_file, domains).await {
                 Ok(()) => {
-                    info!(domains = domains.join(","), "renew cert success");
+                    info!(
+                        domains = domains.join(","),
+                        "renew certificate success"
+                    );
                     if let Err(e) = restart_now() {
                         error!(
                             error = e.to_string(),
@@ -95,7 +102,7 @@ impl ServiceTask for LetsEncryptService {
                 Err(e) => error!(
                     error = e.to_string(),
                     domains = domains.join(","),
-                    "renew cert fail"
+                    "renew certificate fail"
                 ),
             };
         }
@@ -113,9 +120,15 @@ pub fn get_lets_encrypt_cert(path: &PathBuf) -> Result<Certificate> {
             message: "cert file not found".to_string(),
         });
     }
-    let buf = std::fs::read(path).map_err(|e| Error::Io { source: e })?;
-    let cert: Certificate = serde_json::from_slice(&buf)
-        .map_err(|e| Error::SerdeJson { source: e })?;
+    let buf = std::fs::read(path).map_err(|e| Error::Io {
+        category: "read_cert".to_string(),
+        source: e,
+    })?;
+    let cert: Certificate =
+        serde_json::from_slice(&buf).map_err(|e| Error::SerdeJson {
+            category: "serde_cert_from_bytes".to_string(),
+            source: e,
+        })?;
     Ok(cert)
 }
 
@@ -155,7 +168,7 @@ async fn new_lets_encrypt(
 ) -> Result<()> {
     let mut domains: Vec<String> = domains.to_vec();
     domains.sort();
-    info!(domains = domains.join(","), "acme form let's encrypt");
+    info!(domains = domains.join(","), "acme from let's encrypt");
     let (account, _) = Account::create(
         &NewAccount {
             contact: &[],
@@ -166,7 +179,10 @@ async fn new_lets_encrypt(
         None,
     )
     .await
-    .map_err(|e| Error::Instant { source: e })?;
+    .map_err(|e| Error::Instant {
+        category: "create_account".to_string(),
+        source: e,
+    })?;
 
     // let identifier = Identifier::Dns(opts.name);
     let mut order = account
@@ -177,19 +193,24 @@ async fn new_lets_encrypt(
                 .collect::<Vec<Identifier>>(),
         })
         .await
-        .map_err(|e| Error::Instant { source: e })?;
+        .map_err(|e| Error::Instant {
+            category: "new_order".to_string(),
+            source: e,
+        })?;
 
     let state = order.state();
     if !matches!(state.status, OrderStatus::Pending) {
         return Err(Error::Fail {
             message: format!("order is not pending, staus: {:?}", state.status),
+            category: "order_status".to_string(),
         });
     }
 
-    let authorizations = order
-        .authorizations()
-        .await
-        .map_err(|e| Error::Instant { source: e })?;
+    let authorizations =
+        order.authorizations().await.map_err(|e| Error::Instant {
+            category: "authorizations".to_string(),
+            source: e,
+        })?;
     let mut challenges = Vec::with_capacity(authorizations.len());
 
     for authz in &authorizations {
@@ -229,7 +250,10 @@ async fn new_lets_encrypt(
         order
             .set_challenge_ready(url)
             .await
-            .map_err(|e| Error::Instant { source: e })?;
+            .map_err(|e| Error::Instant {
+                category: "set_challenge_ready".to_string(),
+                source: e,
+            })?;
     }
 
     let mut tries = 1u8;
@@ -245,10 +269,10 @@ async fn new_lets_encrypt(
         {
             break state;
         }
-        order
-            .refresh()
-            .await
-            .map_err(|e| Error::Instant { source: e })?;
+        order.refresh().await.map_err(|e| Error::Instant {
+            category: "refresh_order".to_string(),
+            source: e,
+        })?;
 
         delay *= 2;
         tries += 1;
@@ -259,6 +283,7 @@ async fn new_lets_encrypt(
             ),
             false => {
                 return Err(Error::Fail {
+                    category: "retry_too_many".to_string(),
                     message: format!("Giving up: order is not ready. For details, see the url: {detail_url:?}"),
                 });
             },
@@ -267,6 +292,7 @@ async fn new_lets_encrypt(
     };
     if state.status == OrderStatus::Invalid {
         return Err(Error::Fail {
+            category: "order_invalid".to_string(),
             message: format!("order is invalid, check {detail_url:?}"),
         });
     }
@@ -275,29 +301,42 @@ async fn new_lets_encrypt(
         names.push(identifier.to_owned());
     }
 
-    let mut params = CertificateParams::new(names.clone());
-    params.distinguished_name = DistinguishedName::new();
-    let cert = rcgen::Certificate::from_params(params)
-        .map_err(|e| Error::Rcgen { source: e })?;
-    let csr = cert
-        .serialize_request_der()
-        .map_err(|e| Error::Rcgen { source: e })?;
-
+    let mut params =
+        rcgen::CertificateParams::new(names.clone()).map_err(|e| {
+            Error::Rcgen {
+                category: "new_params".to_string(),
+                source: e,
+            }
+        })?;
+    params.distinguished_name = rcgen::DistinguishedName::new();
+    let private_key = rcgen::KeyPair::generate().map_err(|e| Error::Rcgen {
+        category: "generate_key_pair".to_string(),
+        source: e,
+    })?;
+    let csr =
+        params
+            .serialize_request(&private_key)
+            .map_err(|e| Error::Rcgen {
+                category: "serialize_request".to_string(),
+                source: e,
+            })?;
     order
-        .finalize(&csr)
+        .finalize(csr.der())
         .await
-        .map_err(|e| Error::Instant { source: e })?;
+        .map_err(|e| Error::Instant {
+            category: "order_finalize".to_string(),
+            source: e,
+        })?;
     let cert_chain_pem = loop {
-        match order
-            .certificate()
-            .await
-            .map_err(|e| Error::Instant { source: e })?
-        {
+        match order.certificate().await.map_err(|e| Error::Instant {
+            category: "order_certificate".to_string(),
+            source: e,
+        })? {
             Some(cert_chain_pem) => break cert_chain_pem,
             None => tokio::time::sleep(Duration::from_secs(1)).await,
         }
     };
-    let mut not_before = cert.get_params().not_before.unix_timestamp();
+    let mut not_before = params.not_before.unix_timestamp();
     let now = util::now().as_secs() as i64;
     // default expired time set 90 days
     let mut not_after = now + 90 * 24 * 3600;
@@ -312,17 +351,25 @@ async fn new_lets_encrypt(
         .truncate(true)
         .open(certificate_file)
         .await
-        .map_err(|e| Error::Io { source: e })?;
+        .map_err(|e| Error::Io {
+            category: "open_file".to_string(),
+            source: e,
+        })?;
     let info = Certificate {
         domains: domains.to_vec(),
         not_after,
         not_before,
         pem: STANDARD.encode(cert_chain_pem.as_bytes()),
-        key: STANDARD.encode(cert.serialize_private_key_pem().as_bytes()),
+        key: STANDARD.encode(private_key.serialize_pem().as_bytes()),
     };
-    let buf = serde_json::to_vec(&info)
-        .map_err(|e| Error::SerdeJson { source: e })?;
-    f.write(&buf).await.map_err(|e| Error::Io { source: e })?;
+    let buf = serde_json::to_vec(&info).map_err(|e| Error::SerdeJson {
+        category: "serde_certificate".to_string(),
+        source: e,
+    })?;
+    f.write(&buf).await.map_err(|e| Error::Io {
+        category: "save_certificate".to_string(),
+        source: e,
+    })?;
     info!(
         certificate_file = format!("{certificate_file:?}"),
         "write certificate success"

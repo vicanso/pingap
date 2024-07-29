@@ -19,20 +19,32 @@ use snafu::Snafu;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Instant error, {source}"))]
-    Instant { source: instant_acme::Error },
-    #[snafu(display("Rcgen error, {source}"))]
-    Rcgen { source: rcgen::Error },
+    #[snafu(display("Instant error, category: {category}, {source}"))]
+    Instant {
+        category: String,
+        source: instant_acme::Error,
+    },
+    #[snafu(display("Rcgen error, category: {category}, {source}"))]
+    Rcgen {
+        category: String,
+        source: rcgen::Error,
+    },
     #[snafu(display("Challenge not found error, {message}"))]
     NotFound { message: String },
-    #[snafu(display("Lets encrypt fail, {message}"))]
-    Fail { message: String },
-    #[snafu(display("Io error, {source}"))]
-    Io { source: std::io::Error },
-    #[snafu(display("Serde json error, {source}"))]
-    SerdeJson { source: serde_json::Error },
-    #[snafu(display("X509 error, {message}"))]
-    X509 { message: String },
+    #[snafu(display("Lets encrypt fail, category: {category}, {message}"))]
+    Fail { category: String, message: String },
+    #[snafu(display("Io error, category: {category}, {source}"))]
+    Io {
+        category: String,
+        source: std::io::Error,
+    },
+    #[snafu(display("Serde json error, category: {category}, {source}"))]
+    SerdeJson {
+        category: String,
+        source: serde_json::Error,
+    },
+    #[snafu(display("X509 error, category: {category}, {message}"))]
+    X509 { category: String, message: String },
 }
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -59,9 +71,11 @@ impl CertificateInfo {
 pub fn get_certificate_info(data: &[u8]) -> Result<CertificateInfo> {
     let (_, pem) =
         x509_parser::pem::parse_x509_pem(data).map_err(|e| Error::X509 {
+            category: "parse_x509_pem".to_string(),
             message: e.to_string(),
         })?;
     let x509 = pem.parse_x509().map_err(|e| Error::X509 {
+        category: "parse_x509".to_string(),
         message: e.to_string(),
     })?;
 
