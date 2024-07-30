@@ -86,7 +86,7 @@ impl Tracing for UpstreamPeerTracer {
 
 pub struct Upstream {
     pub name: String,
-    pub addrs: Vec<String>,
+    pub key: String,
     hash: String,
     hash_key: String,
     tls: bool,
@@ -369,14 +369,13 @@ impl Upstream {
                 message: "Upstream addrs is empty".to_string(),
             });
         }
-        let mut addrs = conf.addrs.clone();
-        addrs.sort();
+        let key = conf.hash_key();
         let discovery = conf.discovery.clone().unwrap_or_default();
         let mut hash = "".to_string();
         let sni = conf.sni.clone().unwrap_or_default();
         let tls = !sni.is_empty();
         let backends = new_backends(
-            &addrs,
+            &conf.addrs,
             tls,
             conf.ipv4_only.unwrap_or_default(),
             discovery.as_str(),
@@ -466,7 +465,7 @@ impl Upstream {
             .map(|peer_tracer| Tracer(Box::new(peer_tracer.to_owned())));
         let up = Self {
             name: name.to_string(),
-            addrs,
+            key,
             tls,
             sni: sni.clone(),
             hash,
@@ -569,11 +568,10 @@ fn new_ahash_upstreams(
     let mut upstreams = AHashMap::new();
     let mut new_upstreams = vec![];
     for (name, conf) in confs.iter() {
-        let mut addrs = conf.addrs.clone();
-        addrs.sort();
+        let key = conf.hash_key();
         if let Some(found) = get_upstream(name) {
             // not modified
-            if found.addrs == addrs {
+            if found.key == key {
                 upstreams.insert(name.to_string(), found);
                 continue;
             }

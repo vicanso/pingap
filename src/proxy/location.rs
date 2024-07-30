@@ -87,6 +87,7 @@ fn new_path_selector(path: &str) -> Result<PathSelector> {
 
 pub struct Location {
     pub name: String,
+    pub key: String,
     path: String,
     path_selector: PathSelector,
     hosts: Vec<String>,
@@ -135,6 +136,7 @@ impl Location {
                 message: "Name is required".to_string(),
             });
         }
+        let key = conf.hash_key();
         let upstream = conf.upstream.clone().unwrap_or_default();
         let mut reg_rewrite = None;
         if let Some(value) = &conf.rewrite {
@@ -156,6 +158,7 @@ impl Location {
 
         let location = Location {
             name: name.to_string(),
+            key,
             path_selector: new_path_selector(&path)?,
             path,
             hosts,
@@ -361,6 +364,12 @@ pub fn get_location(name: &str) -> Option<Arc<Location>> {
 pub fn try_init_locations(confs: &HashMap<String, LocationConf>) -> Result<()> {
     let mut locations = AHashMap::new();
     for (name, conf) in confs.iter() {
+        if let Some(found) = get_location(name) {
+            if found.key == conf.hash_key() {
+                locations.insert(name.to_string(), found);
+                continue;
+            }
+        }
         let lo = Location::new(name, conf)?;
         locations.insert(name.to_string(), Arc::new(lo));
     }

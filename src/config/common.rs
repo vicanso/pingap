@@ -26,6 +26,7 @@ use pingora::tls::pkey::PKey;
 use pingora::tls::x509::X509;
 use regex::Regex;
 use serde::{Deserialize, Serialize, Serializer};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::Duration;
@@ -178,7 +179,7 @@ impl CertificateConf {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Clone, Serialize)]
+#[derive(Debug, Default, Deserialize, Clone, Serialize, Hash)]
 pub struct UpstreamConf {
     pub addrs: Vec<String>,
     pub discovery: Option<String>,
@@ -219,6 +220,11 @@ pub struct UpstreamConf {
     pub remark: Option<String>,
 }
 impl UpstreamConf {
+    pub fn hash_key(&self) -> String {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        format!("{:x}", hasher.finish())
+    }
     /// Validate the options of upstream config.
     /// 1. The address list can't be empty, and can be converted to socket addr.
     /// 2. The health check url can be parsed to Url if it exists.
@@ -255,7 +261,7 @@ impl UpstreamConf {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Clone, Serialize)]
+#[derive(Debug, Default, Deserialize, Clone, Serialize, Hash)]
 pub struct LocationConf {
     pub upstream: Option<String>,
     pub path: Option<String>,
@@ -270,6 +276,11 @@ pub struct LocationConf {
 }
 
 impl LocationConf {
+    pub fn hash_key(&self) -> String {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        format!("{:x}", hasher.finish())
+    }
     /// Validate the options of location config.
     /// 1. Convert add and set headers to (HeaderName, HeaderValue).
     /// 2. Parse rewrite path to regexp if it exists.
