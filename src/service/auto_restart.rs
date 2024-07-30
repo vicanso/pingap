@@ -69,7 +69,7 @@ async fn hot_reload(
     }
 
     if should_reload_upstream {
-        match proxy::try_init_upstreams(&conf.upstreams) {
+        match proxy::try_update_upstreams(&conf.upstreams).await {
             Err(e) => {
                 error!(error = e.to_string(), "reload upstream fail");
             },

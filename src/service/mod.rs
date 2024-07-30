@@ -14,6 +14,7 @@
 use async_trait::async_trait;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 use tokio::time::interval;
 use tracing::info;
@@ -30,6 +31,7 @@ pub struct CommonServiceTask {
     task: Box<dyn ServiceTask>,
     interval: Duration,
     name: String,
+    running: AtomicBool,
 }
 
 impl CommonServiceTask {
@@ -43,6 +45,7 @@ impl CommonServiceTask {
             // interval should gt 1s
             interval: interval.max(Duration::from_secs(1)),
             name: name.to_string(),
+            running: AtomicBool::new(false),
         }
     }
 }
@@ -66,9 +69,13 @@ impl BackgroundService for CommonServiceTask {
                     break;
                 }
                 _ = period.tick() => {
+                    if self.running.load(Ordering::Relaxed) {
+                        continue;
+                    }
+                    self.running.store(true, Ordering::Relaxed);
                     let now = SystemTime::now();
-
                     let done = self.task.run().await.unwrap_or_default();
+                    self.running.store(false, Ordering::Relaxed);
                     info!(
                         name = self.name,
                         done,

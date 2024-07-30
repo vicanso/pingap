@@ -18,7 +18,7 @@ use crate::discovery::{
 };
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::State;
-use crate::{util, webhook};
+use crate::util;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -28,13 +28,13 @@ use once_cell::sync::Lazy;
 use pingora::http::RequestHeader;
 use pingora::lb::health_check::{HealthCheck, HttpHealthCheck, TcpHealthCheck};
 use pingora::lb::selection::{Consistent, RoundRobin};
-use pingora::lb::{Backend, Backends, LoadBalancer};
+use pingora::lb::{Backends, LoadBalancer};
 use pingora::protocols::l4::ext::TcpKeepalive;
 use pingora::protocols::ALPN;
 use pingora::proxy::Session;
 use pingora::upstreams::peer::{HttpPeer, PeerOptions, Tracer, Tracing};
 use snafu::{ResultExt, Snafu};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::Arc;
@@ -86,6 +86,7 @@ impl Tracing for UpstreamPeerTracer {
 
 pub struct Upstream {
     pub name: String,
+    pub addrs: Vec<String>,
     hash: String,
     hash_key: String,
     tls: bool,
@@ -368,12 +369,14 @@ impl Upstream {
                 message: "Upstream addrs is empty".to_string(),
             });
         }
+        let mut addrs = conf.addrs.clone();
+        addrs.sort();
         let discovery = conf.discovery.clone().unwrap_or_default();
         let mut hash = "".to_string();
         let sni = conf.sni.clone().unwrap_or_default();
         let tls = !sni.is_empty();
         let backends = new_backends(
-            &conf.addrs,
+            &addrs,
             tls,
             conf.ipv4_only.unwrap_or_default(),
             discovery.as_str(),
@@ -463,6 +466,7 @@ impl Upstream {
             .map(|peer_tracer| Tracer(Box::new(peer_tracer.to_owned())));
         let up = Self {
             name: name.to_string(),
+            addrs,
             tls,
             sni: sni.clone(),
             hash,
@@ -559,14 +563,71 @@ pub fn get_upstream(name: &str) -> Option<Arc<Upstream>> {
     UPSTREAM_MAP.load().get(name).cloned()
 }
 
-pub fn try_init_upstreams(confs: &HashMap<String, UpstreamConf>) -> Result<()> {
+fn new_ahash_upstreams(
+    confs: &HashMap<String, UpstreamConf>,
+) -> Result<(Upstreams, Vec<String>)> {
     let mut upstreams = AHashMap::new();
+    let mut new_upstreams = vec![];
     for (name, conf) in confs.iter() {
+        let mut addrs = conf.addrs.clone();
+        addrs.sort();
+        if let Some(found) = get_upstream(name) {
+            // not modified
+            if found.addrs == addrs {
+                upstreams.insert(name.to_string(), found);
+                continue;
+            }
+        }
         let up = Arc::new(Upstream::new(name, conf)?);
         upstreams.insert(name.to_string(), up);
+        new_upstreams.push(name.to_string());
+    }
+    Ok((upstreams, new_upstreams))
+}
+
+pub fn try_init_upstreams(confs: &HashMap<String, UpstreamConf>) -> Result<()> {
+    let (upstreams, _) = new_ahash_upstreams(confs)?;
+    UPSTREAM_MAP.store(Arc::new(upstreams));
+    Ok(())
+}
+
+async fn run_health_check(up: &Arc<Upstream>) -> Result<()> {
+    if let Some(lb) = up.as_round_robind() {
+        lb.update().await.map_err(|e| Error::Invalid {
+            message: e.to_string(),
+        })?;
+        lb.backends()
+            .run_health_check(lb.parallel_health_check)
+            .await;
+    } else if let Some(lb) = up.as_consistent() {
+        lb.update().await.map_err(|e| Error::Invalid {
+            message: e.to_string(),
+        })?;
+        lb.backends()
+            .run_health_check(lb.parallel_health_check)
+            .await;
+    }
+    Ok(())
+}
+
+pub async fn try_update_upstreams(
+    confs: &HashMap<String, UpstreamConf>,
+) -> Result<()> {
+    let (upstreams, new_upstreams) = new_ahash_upstreams(confs)?;
+    for (name, up) in upstreams.iter() {
+        // no need to run health check if not new upstream
+        if !new_upstreams.contains(name) {
+            continue;
+        }
+        if let Err(e) = run_health_check(up).await {
+            error!(
+                error = e.to_string(),
+                upstream = name,
+                "update upstream health check fail"
+            );
+        }
     }
     UPSTREAM_MAP.store(Arc::new(upstreams));
-
     Ok(())
 }
 
@@ -593,49 +654,38 @@ impl ServiceTask for HealthCheckTask {
                     check_count % count == 0
                 };
 
-                let (update_frequency, health_check_frequency) = if let Some(lb) = up.as_round_robind() {
-                    let update_frequency = lb.update_frequency.unwrap_or_default()
-                    .as_secs();
-                    let health_check_frequency = lb.health_check_frequency.unwrap_or_default()
-                    .as_secs();
-                    (update_frequency, health_check_frequency)
-                } else if let Some(lb) = up.as_consistent() {
-                    let update_frequency = lb.update_frequency.unwrap_or_default()
-                    .as_secs();
-                    let health_check_frequency = lb.health_check_frequency.unwrap_or_default()
-                    .as_secs();
-                    (update_frequency, health_check_frequency)
-                } else {
-                    (0, 0)
-                };
+                let (update_frequency, health_check_frequency) =
+                    if let Some(lb) = up.as_round_robind() {
+                        let update_frequency =
+                            lb.update_frequency.unwrap_or_default().as_secs();
+                        let health_check_frequency = lb
+                            .health_check_frequency
+                            .unwrap_or_default()
+                            .as_secs();
+                        (update_frequency, health_check_frequency)
+                    } else if let Some(lb) = up.as_consistent() {
+                        let update_frequency =
+                            lb.update_frequency.unwrap_or_default().as_secs();
+                        let health_check_frequency = lb
+                            .health_check_frequency
+                            .unwrap_or_default()
+                            .as_secs();
+                        (update_frequency, health_check_frequency)
+                    } else {
+                        (0, 0)
+                    };
 
-                // the firt time should match
+                // the first time should match
                 // update check
                 if check_count == 0
                     || (update_frequency > 0
                         && check_frequency_matched(update_frequency))
                 {
-                    debug!(name, "update backends is running",);
-                    let different = |backends: Arc<BTreeSet<Backend>>| {
-                        let mut addrs = vec![];
-                        for item in backends.iter() {
-                            addrs.push(item.addr.to_string());
-                        }
-                        info!(
-                            name,
-                            addrs = addrs.join(","),
-                            "update backends with different value",
-                        );
-                        webhook::send(webhook::SendNotificationParams{
-                            category: webhook::NotificationCategory::DifferentBackends,
-                            msg: format!("upstream: {name}, addrs: {addrs:?}"),
-                            ..Default::default()
-                        });
-                    };
+                    info!(name, "update backends is running",);
                     let result = if let Some(lb) = up.as_round_robind() {
-                        lb.backends().update(different).await
+                        lb.update().await
                     } else if let Some(lb) = up.as_consistent() {
-                        lb.backends().update(different).await
+                        lb.update().await
                     } else {
                         Ok(())
                     };
@@ -644,8 +694,9 @@ impl ServiceTask for HealthCheckTask {
                             error = e.to_string(),
                             name, "update backends fail"
                         )
+                    } else {
+                        info!(name, "update backend is done",);
                     }
-                    debug!(name, "update backend is done",);
                 }
 
                 // health check
@@ -653,7 +704,7 @@ impl ServiceTask for HealthCheckTask {
                     return;
                 }
 
-                debug!(name, "health check is running",);
+                info!(name, "health check is running",);
                 if let Some(lb) = up.as_round_robind() {
                     lb.backends()
                         .run_health_check(lb.parallel_health_check)
@@ -663,7 +714,7 @@ impl ServiceTask for HealthCheckTask {
                         .run_health_check(lb.parallel_health_check)
                         .await;
                 }
-                debug!(name, "health check is done",);
+                info!(name, "health check is done",);
             })
         });
         futures::future::join_all(jobs).await;

@@ -43,7 +43,7 @@ impl Dns {
     fn read_system_conf(&self) -> Result<(ResolverConfig, ResolverOpts)> {
         let (config, mut options) =
             read_system_conf().map_err(|e| Error::Resolve { source: e })?;
-        options.timeout = Duration::from_secs(30);
+        options.timeout = Duration::from_secs(5);
 
         Ok((config, options))
     }
@@ -54,7 +54,7 @@ impl Dns {
         let resolver =
             Resolver::new(config, options).map_err(|e| Error::Io {
                 source: e,
-                content: "new resolover fail".to_string(),
+                content: "new resolver fail".to_string(),
             })?;
         for (host, _, _) in self.hosts.iter() {
             let ip = resolver
