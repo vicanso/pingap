@@ -64,7 +64,7 @@ use tracing::{debug, error, info};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Error {category} {message}"))]
+    #[snafu(display("Common error, category: {category}, {message}"))]
     Common { category: String, message: String },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;

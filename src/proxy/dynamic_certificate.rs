@@ -17,6 +17,7 @@ use crate::acme::{
 };
 use crate::config::CertificateConf;
 use crate::{util, webhook};
+use ahash::AHashMap;
 use async_trait::async_trait;
 use once_cell::sync::{Lazy, OnceCell};
 use pingora::listeners::TlsSettings;
@@ -32,12 +33,12 @@ use tracing::{debug, error, info};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Invalid {message}"))]
-    Invalid { message: String },
+    #[snafu(display("Invalid error, category: {category}, {message}"))]
+    Invalid { message: String, category: String },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-type DynamicCertificates = HashMap<String, DynamicCertificate>;
+type DynamicCertificates = AHashMap<String, DynamicCertificate>;
 static DYNAMIC_CERT_MAP: OnceCell<DynamicCertificates> = OnceCell::new();
 const E6: &[u8] = include_bytes!("../assets/e6.pem");
 const E5: &[u8] = include_bytes!("../assets/e5.pem");
@@ -72,6 +73,7 @@ fn parse_certificate(
                 &Path::new(&util::resolve_path(file)).to_path_buf(),
             )
             .map_err(|e| Error::Invalid {
+                category: "get_lets_encrypt_cert".to_string(),
                 message: e.to_string(),
             })?;
             (cert.get_cert(), cert.get_key(), LETS_ENCRYPT)
@@ -79,37 +81,43 @@ fn parse_certificate(
             (
                 util::convert_certificate_bytes(&certificate_config.tls_cert)
                     .ok_or(Error::Invalid {
+                    category: "convert_certificate_bytes".to_string(),
                     message: "Convert certificate fail".to_string(),
                 })?,
                 util::convert_certificate_bytes(&certificate_config.tls_key)
                     .ok_or(Error::Invalid {
+                        category: "convert_certificate_bytes".to_string(),
                         message: "Convert certificate key fail".to_string(),
                     })?,
                 "",
             )
         };
     let info = get_certificate_info(&cert).map_err(|e| Error::Invalid {
+        category: "get_certificate_info".to_string(),
         message: e.to_string(),
     })?;
 
-    let mut chain_certificate = None;
     let tls_chain =
         util::convert_certificate_bytes(&certificate_config.tls_chain);
-    if let Some(value) = &tls_chain {
-        chain_certificate = X509::from_pem(value).ok();
+    let chain_certificate = if let Some(value) = &tls_chain {
+        X509::from_pem(value).ok()
     } else if category == LETS_ENCRYPT {
-        chain_certificate = match info.get_issuer_common_name().as_str() {
+        match info.get_issuer_common_name().as_str() {
             "E5" => E5_CERTIFICATE.clone(),
             "E6" => E6_CERTIFICATE.clone(),
             "R10" => R10_CERTIFICATE.clone(),
             "R11" => R11_CERTIFICATE.clone(),
             _ => None,
-        };
-    }
+        }
+    } else {
+        None
+    };
     let cert = X509::from_pem(&cert).map_err(|e| Error::Invalid {
+        category: "x509_from_pem".to_string(),
         message: e.to_string(),
     })?;
     let names = cert.subject_alt_names().ok_or(Error::Invalid {
+        category: "subject alt names".to_string(),
         message: "get subject alt names fail".to_string(),
     })?;
     let mut domains = vec![];
@@ -118,6 +126,7 @@ fn parse_certificate(
     }
 
     let key = PKey::private_key_from_pem(&key).map_err(|e| Error::Invalid {
+        category: "private_key_from_pem".to_string(),
         message: e.to_string(),
     })?;
     let d = DynamicCertificate {
@@ -132,7 +141,7 @@ pub fn try_init_certificates(
 ) -> Result<Vec<(String, CertificateInfo)>> {
     let mut certificate_info_list = vec![];
     DYNAMIC_CERT_MAP.get_or_try_init(|| {
-        let mut dynamic_certs = HashMap::new();
+        let mut dynamic_certs = AHashMap::new();
         for (name, certificate) in certificate_configs.iter() {
             match parse_certificate(certificate) {
                 Ok((domains, dynamic_cert, certificate_info)) => {
@@ -208,6 +217,7 @@ impl DynamicCertificate {
             self.clone(),
         ))
         .map_err(|e| Error::Invalid {
+            category: "new_tls_settings".to_string(),
             message: e.to_string(),
         })?;
         if params.enbaled_h2 {
@@ -262,6 +272,7 @@ impl DynamicCertificate {
 
     pub fn new(cert: &[u8], key: &[u8]) -> Result<Self> {
         let cert = X509::from_pem(cert).map_err(|e| Error::Invalid {
+            category: "x509_from_pem".to_string(),
             message: e.to_string(),
         })?;
         let names: Vec<String> = cert
@@ -275,6 +286,7 @@ impl DynamicCertificate {
         );
         let key =
             PKey::private_key_from_pem(key).map_err(|e| Error::Invalid {
+                category: "private_key_from_pem".to_string(),
                 message: e.to_string(),
             })?;
         Ok(Self {

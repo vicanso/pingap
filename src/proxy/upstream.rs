@@ -44,8 +44,8 @@ use url::Url;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("{message}"))]
-    Invalid { message: String },
+    #[snafu(display("Common error, category: {category}, {message}"))]
+    Common { message: String, category: String },
     #[snafu(display("Url parse error {source}, {url}"))]
     UrlParse {
         source: url::ParseError,
@@ -315,13 +315,15 @@ fn new_backends(
 ) -> Result<Backends> {
     if discovery == DNS_DISCOVERY {
         new_dns_discover_backends(addrs, tls, ipv4_only).map_err(|e| {
-            Error::Invalid {
+            Error::Common {
+                category: "dns_discovery".to_string(),
                 message: e.to_string(),
             }
         })
     } else {
         new_common_discover_backends(addrs, tls, ipv4_only).map_err(|e| {
-            Error::Invalid {
+            Error::Common {
+                category: "static_discovery".to_string(),
                 message: e.to_string(),
             }
         })
@@ -365,7 +367,8 @@ impl Upstream {
     /// Creates a new upstream from config.
     pub fn new(name: &str, conf: &UpstreamConf) -> Result<Self> {
         if conf.addrs.is_empty() {
-            return Err(Error::Invalid {
+            return Err(Error::Common {
+                category: "new_upstream".to_string(),
                 message: "Upstream addrs is empty".to_string(),
             });
         }
@@ -591,14 +594,16 @@ pub fn try_init_upstreams(confs: &HashMap<String, UpstreamConf>) -> Result<()> {
 
 async fn run_health_check(up: &Arc<Upstream>) -> Result<()> {
     if let Some(lb) = up.as_round_robind() {
-        lb.update().await.map_err(|e| Error::Invalid {
+        lb.update().await.map_err(|e| Error::Common {
+            category: "run_health_check".to_string(),
             message: e.to_string(),
         })?;
         lb.backends()
             .run_health_check(lb.parallel_health_check)
             .await;
     } else if let Some(lb) = up.as_consistent() {
-        lb.update().await.map_err(|e| Error::Invalid {
+        lb.update().await.map_err(|e| Error::Common {
+            category: "run_health_check".to_string(),
             message: e.to_string(),
         })?;
         lb.backends()
@@ -679,7 +684,6 @@ impl ServiceTask for HealthCheckTask {
                     || (update_frequency > 0
                         && check_frequency_matched(update_frequency))
                 {
-                    info!(name, "update backends is running",);
                     let result = if let Some(lb) = up.as_round_robind() {
                         lb.update().await
                     } else if let Some(lb) = up.as_consistent() {
@@ -693,7 +697,7 @@ impl ServiceTask for HealthCheckTask {
                             name, "update backends fail"
                         )
                     } else {
-                        info!(name, "update backend is done",);
+                        info!(name, "update backend success",);
                     }
                 }
 
@@ -702,7 +706,6 @@ impl ServiceTask for HealthCheckTask {
                     return;
                 }
 
-                info!(name, "health check is running",);
                 if let Some(lb) = up.as_round_robind() {
                     lb.backends()
                         .run_health_check(lb.parallel_health_check)

@@ -81,10 +81,6 @@ impl ServiceTask for LetsEncryptService {
             true
         };
         if should_renew_now {
-            info!(
-                domains = domains.join(","),
-                "renew certificate from let's encrypt"
-            );
             match new_lets_encrypt(&self.certificate_file, domains).await {
                 Ok(()) => {
                     info!(
