@@ -18,7 +18,7 @@ use crate::discovery::{
 };
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::State;
-use crate::util;
+use crate::{util, webhook};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -237,6 +237,8 @@ fn new_tcp_health_check(conf: &HealthCheckConf) -> TcpHealthCheck {
         update_peer_options(conf, check.peer_template.options.clone());
     check.consecutive_success = conf.consecutive_success;
     check.consecutive_failure = conf.consecutive_failure;
+    check.health_changed_callback =
+        Some(webhook::new_backend_observe_notification());
 
     check
 }
@@ -249,6 +251,8 @@ fn new_http_health_check(conf: &HealthCheckConf) -> HttpHealthCheck {
     check.consecutive_success = conf.consecutive_success;
     check.consecutive_failure = conf.consecutive_failure;
     check.reuse_connection = conf.reuse_connection;
+    check.health_changed_callback =
+        Some(webhook::new_backend_observe_notification());
     match RequestHeader::build("GET", conf.path.as_bytes(), None) {
         Ok(mut req) => {
             // 忽略append header fail
@@ -275,6 +279,8 @@ fn new_health_check(
     let hc: Box<dyn HealthCheck + Send + Sync + 'static> =
         if health_check.is_empty() {
             let mut check = TcpHealthCheck::new();
+            check.health_changed_callback =
+                Some(webhook::new_backend_observe_notification());
             check.peer_template.options.connection_timeout =
                 Some(Duration::from_secs(3));
             info!(
@@ -697,7 +703,7 @@ impl ServiceTask for HealthCheckTask {
                             name, "update backends fail"
                         )
                     } else {
-                        info!(name, "update backend success",);
+                        debug!(name, "update backend success",);
                     }
                 }
 
@@ -715,7 +721,7 @@ impl ServiceTask for HealthCheckTask {
                         .run_health_check(lb.parallel_health_check)
                         .await;
                 }
-                info!(name, "health check is done",);
+                debug!(name, "health check is done",);
             })
         });
         futures::future::join_all(jobs).await;
@@ -828,7 +834,7 @@ mod tests {
             },
         );
         assert_eq!(
-            "Upstream addrs is empty",
+            "Common error, category: new_upstream, Upstream addrs is empty",
             result.err().unwrap().to_string()
         );
 

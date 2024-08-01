@@ -57,8 +57,8 @@ nix = { version = "0.29.0", features = ["signal"] }
 num_cpus = "1.16.0"
 once_cell = "1.19.0"
 path-absolutize = "3.1.1"
-pingora = { git = "https://github.com/cloudflare/pingora", rev = "8af7348958f243d098e4407f36302a3548ef0471", default-features = false, features = [
-# pingora = { version = "0.3.0", default-features = false, features = [
+pingora = { git = "https://github.com/vicanso/pingora", rev = "72d6ee09ae7488a372180cbf2b57f19d76eb8697", default-features = false, features = [
+    # pingora = { version = "0.3.0", default-features = false, features = [
     "lb",
     "openssl",
     "cache",

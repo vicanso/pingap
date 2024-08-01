@@ -14,7 +14,7 @@
 
 use crate::config::{
     get_config_path, get_current_config, load_config, set_current_config,
-    PingapConf, CATEGORY_LOCATION, CATEGORY_UPSTREAM,
+    PingapConf, CATEGORY_LOCATION, CATEGORY_SERVER, CATEGORY_UPSTREAM,
 };
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::restart;
@@ -22,48 +22,50 @@ use crate::{proxy, webhook};
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 async fn hot_reload(
     hot_reload_only: bool,
 ) -> Result<(bool, Vec<String>), Box<dyn std::error::Error>> {
     let mut conf = load_config(&get_config_path(), false).await?;
     conf.validate()?;
-    let mut current_conf: PingapConf = get_current_config().as_ref().clone();
-    let (_, original_diff_result) = current_conf.diff(&conf);
+    let current_conf: PingapConf = get_current_config().as_ref().clone();
 
-    let mut should_reload_server_location = false;
-    // set the locations as the old config
-    for (name, server) in conf.servers.iter() {
-        if let Some(old) = current_conf.servers.get_mut(name) {
-            if server.locations != old.locations {
-                should_reload_server_location = true;
-                old.locations.clone_from(&server.locations);
-            }
-        }
-    }
-
-    // if hot reload only, just only check upstreams and locations
     if hot_reload_only {
         let mut clone_conf = current_conf.clone();
+        // set server locations
+        for (name, server) in conf.servers.iter() {
+            if let Some(clone_server_conf) = clone_conf.servers.get_mut(name) {
+                if server.locations != clone_server_conf.locations {
+                    clone_server_conf.locations.clone_from(&server.locations);
+                }
+            }
+        }
+
+        // set upstream and location value
         clone_conf.upstreams = conf.upstreams;
         clone_conf.locations = conf.locations;
         conf = clone_conf;
     }
 
-    let (updated_category_list, _) = current_conf.diff(&conf);
+    let (updated_category_list, original_diff_result) =
+        current_conf.diff(&conf);
+
     // no update date
-    if !should_reload_server_location && updated_category_list.is_empty() {
-        return Ok((false, original_diff_result));
+    if original_diff_result.is_empty() {
+        return Ok((false, vec![]));
     }
 
+    let mut should_reload_server_location = false;
     let mut should_reload_upstream = false;
     let mut should_reload_location = false;
     let mut should_restart = false;
+
     for category in updated_category_list {
         match category.as_str() {
             CATEGORY_LOCATION => should_reload_location = true,
             CATEGORY_UPSTREAM => should_reload_upstream = true,
+            CATEGORY_SERVER => should_reload_server_location = true,
             _ => should_restart = true,
         };
     }
@@ -99,16 +101,12 @@ async fn hot_reload(
         };
     }
 
+    debug!(config = format!("{conf:?}"), "set new current config");
+    set_current_config(&conf);
     if hot_reload_only {
-        // update current config only hot reload config updated
-        // the next check will not trigger hot reload
-        if !should_restart {
-            set_current_config(&conf);
-        }
         return Ok((false, original_diff_result));
     }
 
-    set_current_config(&conf);
     if should_restart {
         return Ok((true, original_diff_result));
     }
@@ -156,6 +154,11 @@ impl ServiceTask for AutoRestart {
         };
         match hot_reload(hot_reload_only).await {
             Ok((should_restart, diff_result)) => {
+                let diff_result: Vec<_> = diff_result
+                    .iter()
+                    .filter(|item| !item.trim().is_empty())
+                    .map(|item| item.to_string())
+                    .collect();
                 if !diff_result.is_empty() {
                     // add more message for auto reload
                     let remark = if !should_restart {

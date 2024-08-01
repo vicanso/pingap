@@ -14,7 +14,10 @@
 
 use crate::util;
 use crate::{config::get_app_name, state};
+use async_trait::async_trait;
 use once_cell::sync::OnceCell;
+use pingora::lb::health_check::HealthObserve;
+use pingora::lb::Backend;
 use serde_json::{Map, Value};
 use std::{fmt::Display, time::Duration};
 use strum::EnumString;
@@ -58,6 +61,33 @@ impl Display for NotificationLevel {
         };
         write!(f, "{msg}")
     }
+}
+
+pub struct BackendObserveNotification {}
+
+#[async_trait]
+impl HealthObserve for BackendObserveNotification {
+    async fn observe(&self, backend: &Backend, healthy: bool) {
+        let addr = backend.addr.to_string();
+        let info = if healthy {
+            (NotificationLevel::Info, format!("{addr} becomes healthy"))
+        } else {
+            (
+                NotificationLevel::Error,
+                format!("{addr} becomes unhealthy"),
+            )
+        };
+        send(SendNotificationParams {
+            category: NotificationCategory::BackendStatus,
+            level: info.0,
+            msg: info.1,
+            ..Default::default()
+        });
+    }
+}
+
+pub fn new_backend_observe_notification() -> Box<BackendObserveNotification> {
+    Box::new(BackendObserveNotification {})
 }
 
 pub struct SendNotificationParams {
