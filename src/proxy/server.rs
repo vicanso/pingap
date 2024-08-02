@@ -872,6 +872,7 @@ impl ProxyHttp for Server {
             "text/html; charset=utf-8"
         };
         let _ = resp.insert_header(http::header::CONTENT_TYPE, content_type);
+        let _ = resp.insert_header("X-Pingap-EType", e.etype().as_str());
         let _ = resp
             .insert_header(http::header::CONTENT_LENGTH, buf.len().to_string());
 

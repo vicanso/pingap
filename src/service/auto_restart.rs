@@ -24,17 +24,17 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tracing::{debug, error, info};
 
-async fn hot_reload(
+async fn diff_config(
     hot_reload_only: bool,
-) -> Result<(bool, Vec<String>), Box<dyn std::error::Error>> {
-    let mut conf = load_config(&get_config_path(), false).await?;
-    conf.validate()?;
-    let current_conf: PingapConf = get_current_config().as_ref().clone();
-
+    current_config: PingapConf,
+    new_config: PingapConf,
+) -> Result<(bool, Vec<String>, Option<PingapConf>), Box<dyn std::error::Error>>
+{
+    let mut new_config = new_config;
     if hot_reload_only {
-        let mut clone_conf = current_conf.clone();
+        let mut clone_conf = current_config.clone();
         // set server locations
-        for (name, server) in conf.servers.iter() {
+        for (name, server) in new_config.servers.iter() {
             if let Some(clone_server_conf) = clone_conf.servers.get_mut(name) {
                 if server.locations != clone_server_conf.locations {
                     clone_server_conf.locations.clone_from(&server.locations);
@@ -43,17 +43,18 @@ async fn hot_reload(
         }
 
         // set upstream and location value
-        clone_conf.upstreams = conf.upstreams;
-        clone_conf.locations = conf.locations;
-        conf = clone_conf;
+        clone_conf.upstreams = new_config.upstreams;
+        clone_conf.locations = new_config.locations;
+        new_config = clone_conf;
     }
 
     let (updated_category_list, original_diff_result) =
-        current_conf.diff(&conf);
+        current_config.diff(&new_config);
+    debug!("updated_category_list: {updated_category_list:?}, original_diff_result: {original_diff_result:?}");
 
     // no update date
     if original_diff_result.is_empty() {
-        return Ok((false, vec![]));
+        return Ok((false, vec![], None));
     }
 
     let mut should_reload_server_location = false;
@@ -71,7 +72,7 @@ async fn hot_reload(
     }
 
     if should_reload_upstream {
-        match proxy::try_update_upstreams(&conf.upstreams).await {
+        match proxy::try_update_upstreams(&new_config.upstreams).await {
             Err(e) => {
                 error!(error = e.to_string(), "reload upstream fail");
             },
@@ -81,7 +82,7 @@ async fn hot_reload(
         };
     }
     if should_reload_location {
-        match proxy::try_init_locations(&conf.locations) {
+        match proxy::try_init_locations(&new_config.locations) {
             Err(e) => {
                 error!(error = e.to_string(), "reload location fail");
             },
@@ -91,7 +92,10 @@ async fn hot_reload(
         };
     }
     if should_reload_server_location {
-        match proxy::try_init_server_locations(&conf.servers, &conf.locations) {
+        match proxy::try_init_server_locations(
+            &new_config.servers,
+            &new_config.locations,
+        ) {
             Err(e) => {
                 error!(error = e.to_string(), "reload server fail");
             },
@@ -101,17 +105,30 @@ async fn hot_reload(
         };
     }
 
-    debug!(config = format!("{conf:?}"), "set new current config");
-    set_current_config(&conf);
     if hot_reload_only {
-        return Ok((false, original_diff_result));
+        return Ok((false, original_diff_result, Some(new_config)));
     }
 
     if should_restart {
-        return Ok((true, original_diff_result));
+        return Ok((true, original_diff_result, Some(new_config)));
     }
 
-    Ok((false, vec![]))
+    Ok((false, vec![], Some(new_config)))
+}
+
+async fn hot_reload(
+    hot_reload_only: bool,
+) -> Result<(bool, Vec<String>), Box<dyn std::error::Error>> {
+    let new_config = load_config(&get_config_path(), false).await?;
+    new_config.validate()?;
+    let current_config: PingapConf = get_current_config().as_ref().clone();
+    let (should_restart, diff_result, result) =
+        diff_config(hot_reload_only, current_config, new_config).await?;
+    if let Some(config) = result {
+        debug!(config = format!("{config:?}"), "set new current config");
+        set_current_config(&config);
+    }
+    Ok((should_restart, diff_result))
 }
 
 struct AutoRestart {
