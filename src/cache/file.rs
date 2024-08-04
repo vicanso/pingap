@@ -29,8 +29,10 @@ use tracing::info;
 pub struct FileCache {
     directory: String,
     reading: AtomicU32,
+    reading_max: u32,
     read_time: Histogram,
     writing: AtomicU32,
+    writing_max: u32,
     write_time: Histogram,
     cache: TinyUfo<String, CacheObject>,
 }
@@ -47,8 +49,10 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
     Ok(FileCache {
         directory: dir,
         reading: AtomicU32::new(0),
+        reading_max: 0,
         read_time: CACHE_READING_TIME.clone(),
         writing: AtomicU32::new(0),
+        writing_max: 0,
         write_time: CACHE_WRITING_TIME.clone(),
         cache: TinyUfo::new(100, 100),
     })
@@ -68,23 +72,31 @@ impl HttpCacheStorage for FileCache {
         if let Some(obj) = self.cache.get(&key.to_string()) {
             return Ok(Some(obj));
         }
-        let file = Path::new(&self.directory).join(key);
         let start = SystemTime::now();
-        self.reading.fetch_add(1, Ordering::Relaxed);
-        let buf = match fs::read(file).await {
+        let file = Path::new(&self.directory).join(key);
+        // add reading count
+        let count = self.reading.fetch_add(1, Ordering::Relaxed);
+        if self.reading_max > 0 && count >= self.reading_max {
+            self.reading.fetch_sub(1, Ordering::Relaxed);
+            return Err(Error::OverQuota {
+                max: self.reading_max,
+                message: "Too many reading".to_string(),
+            });
+        }
+        let result = fs::read(file).await;
+        // sub reading count
+        self.reading.fetch_sub(1, Ordering::Relaxed);
+        self.read_time.observe(elapsed(start));
+        let buf = match result {
             Ok(buf) => Ok(buf),
             Err(e) => {
                 if e.kind() == std::io::ErrorKind::NotFound {
                     Ok(vec![])
                 } else {
-                    self.reading.fetch_sub(1, Ordering::Relaxed);
-                    self.read_time.observe(elapsed(start));
                     Err(Error::Io { source: e })
                 }
             },
         }?;
-        self.reading.fetch_sub(1, Ordering::Relaxed);
-        self.read_time.observe(elapsed(start));
         if buf.len() < 8 {
             Ok(None)
         } else {
@@ -99,22 +111,23 @@ impl HttpCacheStorage for FileCache {
         weight: u16,
     ) -> Result<()> {
         self.cache.put(key.clone(), data.clone(), weight);
+        let start = SystemTime::now();
         let buf: Bytes = data.into();
         let file = Path::new(&self.directory).join(key);
-        let start = SystemTime::now();
-        self.writing.fetch_add(1, Ordering::Relaxed);
-        match fs::write(file, buf).await {
-            Err(e) => {
-                self.writing.fetch_sub(1, Ordering::Relaxed);
-                self.write_time.observe(elapsed(start));
-                Err(Error::Io { source: e })
-            },
-            Ok(()) => {
-                self.writing.fetch_sub(1, Ordering::Relaxed);
-                self.write_time.observe(elapsed(start));
-                Ok(())
-            },
+        // add writing count
+        let count = self.writing.fetch_add(1, Ordering::Relaxed);
+        if self.writing_max > 0 && count >= self.writing_max {
+            self.writing.fetch_sub(1, Ordering::Relaxed);
+            return Err(Error::OverQuota {
+                max: self.writing_max,
+                message: "Too many writing".to_string(),
+            });
         }
+        let result = fs::write(file, buf).await;
+        // sub writing count
+        self.writing.fetch_sub(1, Ordering::Relaxed);
+        self.write_time.observe(elapsed(start));
+        result.map_err(|e| Error::Io { source: e })
     }
     /// Remove cache object from file, tinyufo doesn't support remove now.
     async fn remove(&self, key: &str) -> Result<Option<CacheObject>> {

@@ -26,6 +26,8 @@ pub enum Error {
     Io { source: std::io::Error },
     #[snafu(display("{message}"))]
     Invalid { message: String },
+    #[snafu(display("Over quota error, max: {max}, {message}"))]
+    OverQuota { max: u32, message: String },
 }
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
