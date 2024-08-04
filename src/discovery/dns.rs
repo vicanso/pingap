@@ -15,7 +15,9 @@
 use super::{format_addrs, Addr, Error, Result};
 use crate::webhook;
 use async_trait::async_trait;
-use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+use hickory_resolver::config::{
+    LookupIpStrategy, ResolverConfig, ResolverOpts,
+};
 use hickory_resolver::lookup_ip::LookupIp;
 use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_resolver::system_conf::read_system_conf;
@@ -41,8 +43,12 @@ impl Dns {
         Ok(Self { hosts, ipv4_only })
     }
     fn read_system_conf(&self) -> Result<(ResolverConfig, ResolverOpts)> {
-        let (config, options) =
+        let (config, mut options) =
             read_system_conf().map_err(|e| Error::Resolve { source: e })?;
+
+        if self.ipv4_only {
+            options.ip_strategy = LookupIpStrategy::Ipv4Only;
+        }
 
         Ok((config, options))
     }
