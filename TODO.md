@@ -7,6 +7,7 @@
 - [ ] secret storage
 - [ ] support include comnand for configuraion
 - [ ] support OpenTelemetry
+- [ ] add docker run illustrate
 - [x] auth delay
 - [x] support get processing count of file cache
 - [x] support buffer file logger

@@ -41,15 +41,16 @@ impl Dns {
         Ok(Self { hosts, ipv4_only })
     }
     fn read_system_conf(&self) -> Result<(ResolverConfig, ResolverOpts)> {
-        let (config, mut options) =
+        let (config, options) =
             read_system_conf().map_err(|e| Error::Resolve { source: e })?;
-        options.timeout = Duration::from_secs(5);
 
         Ok((config, options))
     }
     fn lookup_ip(&self) -> Result<Vec<LookupIp>> {
         let mut ip_list = vec![];
-        let (config, options) = self.read_system_conf()?;
+        let (config, mut options) = self.read_system_conf()?;
+        options.attempts = 1;
+        options.timeout = Duration::from_secs(3);
 
         let resolver =
             Resolver::new(config, options).map_err(|e| Error::Io {
