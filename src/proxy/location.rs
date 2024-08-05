@@ -36,7 +36,7 @@ use tracing::{debug, error};
 pub enum Error {
     #[snafu(display("Invalid error {message}"))]
     Invalid { message: String },
-    #[snafu(display("Regex {source}, {value}"))]
+    #[snafu(display("Regex value: {value}, {source}"))]
     Regex { value: String, source: regex::Error },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;

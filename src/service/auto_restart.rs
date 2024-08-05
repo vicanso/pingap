@@ -14,7 +14,7 @@
 
 use crate::config::{
     get_config_path, get_current_config, load_config, set_current_config,
-    PingapConf, CATEGORY_LOCATION, CATEGORY_SERVER, CATEGORY_UPSTREAM,
+    PingapConf, CATEGORY_LOCATION, CATEGORY_UPSTREAM,
 };
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::restart;
@@ -31,6 +31,8 @@ async fn diff_config(
 ) -> Result<(bool, Vec<String>, Option<PingapConf>), Box<dyn std::error::Error>>
 {
     let mut new_config = new_config;
+    let mut should_reload_server_location = false;
+    // update the values which can be hot reload
     if hot_reload_only {
         let mut clone_conf = current_config.clone();
         // set server locations
@@ -38,6 +40,7 @@ async fn diff_config(
             if let Some(clone_server_conf) = clone_conf.servers.get_mut(name) {
                 if server.locations != clone_server_conf.locations {
                     clone_server_conf.locations.clone_from(&server.locations);
+                    should_reload_server_location = true;
                 }
             }
         }
@@ -57,7 +60,6 @@ async fn diff_config(
         return Ok((false, vec![], None));
     }
 
-    let mut should_reload_server_location = false;
     let mut should_reload_upstream = false;
     let mut should_reload_location = false;
     let mut should_restart = false;
@@ -66,7 +68,7 @@ async fn diff_config(
         match category.as_str() {
             CATEGORY_LOCATION => should_reload_location = true,
             CATEGORY_UPSTREAM => should_reload_upstream = true,
-            CATEGORY_SERVER => should_reload_server_location = true,
+            // other value is updated (not locations)
             _ => should_restart = true,
         };
     }
@@ -105,15 +107,7 @@ async fn diff_config(
         };
     }
 
-    if hot_reload_only {
-        return Ok((false, original_diff_result, Some(new_config)));
-    }
-
-    if should_restart {
-        return Ok((true, original_diff_result, Some(new_config)));
-    }
-
-    Ok((false, vec![], Some(new_config)))
+    Ok((should_restart, original_diff_result, Some(new_config)))
 }
 
 async fn hot_reload(

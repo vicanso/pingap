@@ -27,6 +27,7 @@ flowchart LR
 - Admin Web UI configuration which is easy to use
 - Genrate TLS certificates from let's encrypt
 - Server supports multiple tls certificates for different domains
+- Support static and dns discovery
 - Notification events: `lets_encrypt`, `backend_status`, `diff_config`, `restart`, etc.
 - Http proxy plugins: `compression`, `static serve`, `limit`, `stats`, `mock`, etc.
 - Statistics at different stages: `upstream_connect_time`, `upstream_processing_time`, `compression_time`, `cache_lookup_time` and `cache_lock_time`

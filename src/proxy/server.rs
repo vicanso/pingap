@@ -840,11 +840,10 @@ impl ProxyHttp for Server {
             _ => match e.esource() {
                 pingora::ErrorSource::Upstream => 502,
                 pingora::ErrorSource::Downstream => match e.etype() {
-                    pingora::ErrorType::WriteError
-                    | pingora::ErrorType::ReadError => 500,
+                    pingora::ErrorType::ConnectTimedout => 408,
                     // client close the connection
                     pingora::ErrorType::ConnectionClosed => 499,
-                    _ => 400,
+                    _ => 500,
                 },
                 pingora::ErrorSource::Internal
                 | pingora::ErrorSource::Unset => 500,

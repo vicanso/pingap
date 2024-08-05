@@ -49,10 +49,10 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
     Ok(FileCache {
         directory: dir,
         reading: AtomicU32::new(0),
-        reading_max: 0,
+        reading_max: 10 * 1000,
         read_time: CACHE_READING_TIME.clone(),
         writing: AtomicU32::new(0),
-        writing_max: 0,
+        writing_max: 1000,
         write_time: CACHE_WRITING_TIME.clone(),
         cache: TinyUfo::new(100, 100),
     })
@@ -80,7 +80,7 @@ impl HttpCacheStorage for FileCache {
             self.reading.fetch_sub(1, Ordering::Relaxed);
             return Err(Error::OverQuota {
                 max: self.reading_max,
-                message: "Too many reading".to_string(),
+                message: "too many reading".to_string(),
             });
         }
         let result = fs::read(file).await;
@@ -120,7 +120,7 @@ impl HttpCacheStorage for FileCache {
             self.writing.fetch_sub(1, Ordering::Relaxed);
             return Err(Error::OverQuota {
                 max: self.writing_max,
-                message: "Too many writing".to_string(),
+                message: "too many writing".to_string(),
             });
         }
         let result = fs::write(file, buf).await;

@@ -21,6 +21,7 @@ flowchart LR
 - WEB形式的管理后台界面，简单易用
 - 可通过`let's encrypt`生成tls相关证书
 - 支持同一服务端口监听，使用不同域名的tls证书
+- 支持静态服务与dns服务发现模式
 - 支持各种事件的推送：`lets_encrypt`, `backend_status`, `diff_config`, `restart`等等
 - 丰富的http转发插件：`compression`, `static serve`, `limit`, `stats`, `mock`, 等等
 - 提供了不同阶段的统计数据，如`upstream_connect_time`, `upstream_processing_time`, `compression_time`, `cache_lookup_time` 与 `cache_lock_time`等

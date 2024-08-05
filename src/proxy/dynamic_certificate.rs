@@ -40,8 +40,8 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 type DynamicCertificates = AHashMap<String, DynamicCertificate>;
 static DYNAMIC_CERT_MAP: OnceCell<DynamicCertificates> = OnceCell::new();
-const E6: &[u8] = include_bytes!("../assets/e6.pem");
 const E5: &[u8] = include_bytes!("../assets/e5.pem");
+const E6: &[u8] = include_bytes!("../assets/e6.pem");
 const R10: &[u8] = include_bytes!("../assets/r10.pem");
 const R11: &[u8] = include_bytes!("../assets/r11.pem");
 
@@ -117,7 +117,7 @@ fn parse_certificate(
         message: e.to_string(),
     })?;
     let names = cert.subject_alt_names().ok_or(Error::Invalid {
-        category: "subject alt names".to_string(),
+        category: "subject_alt_names".to_string(),
         message: "get subject alt names fail".to_string(),
     })?;
     let mut domains = vec![];

@@ -42,7 +42,6 @@ pub enum NotificationLevel {
 #[strum(serialize_all = "snake_case")]
 pub enum NotificationCategory {
     BackendStatus,
-    DifferentBackends,
     LetsEncrypt,
     DiffConfig,
     Restart,

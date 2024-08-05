@@ -179,7 +179,6 @@ export default function BasicInfo() {
       category: FormItemCategory.WEBHOOK_NOTIFICATIONS,
       options: [
         "backend_status",
-        "different_backends",
         "lets_encrypt",
         "diff_config",
         "restart",
