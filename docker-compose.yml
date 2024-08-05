@@ -1,0 +1,15 @@
+services:
+  pingap:
+    image: vicanso/pingap
+    restart: always
+    ports:
+      - 80:80
+      - 443:443
+      - 3018:3018
+    volumes:
+      - ./conf:/opt/pingap/conf
+    command:
+      - /bin/bash
+      - -c
+      - |
+        pingap -c /opt/pingap/conf --autoreload --admin=cGluZ2FwOjEyMzEyMw==@0.0.0.0:3018
