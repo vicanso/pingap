@@ -16,6 +16,7 @@ use crate::util::format_duration;
 use crate::{proxy::Location, util};
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
+use opentelemetry::global::BoxedSpan;
 use pingora_limits::inflight::Guard;
 use std::{sync::Arc, time::Duration};
 
@@ -97,6 +98,7 @@ pub struct State {
     pub cache_reading: Option<u32>,
     // cache writing count
     pub cache_writing: Option<u32>,
+    pub http_request_span: Option<BoxedSpan>,
 }
 
 impl Default for State {
@@ -137,6 +139,7 @@ impl Default for State {
             response_body: None,
             cache_reading: None,
             cache_writing: None,
+            http_request_span: None,
         }
     }
 }

@@ -35,6 +35,14 @@ use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
 use once_cell::sync::Lazy;
+use opentelemetry::global::BoxedTracer;
+use opentelemetry::{
+    global,
+    trace::{Span, SpanKind, Tracer},
+    KeyValue,
+};
+use opentelemetry_http::HeaderExtractor;
+
 use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::CacheControl;
 use pingora::cache::cache_control::DirectiveValue;
@@ -408,6 +416,10 @@ fn get_digest_detail(digest: &Digest) -> DigestDeailt {
     }
 }
 
+fn new_global_tracer() -> BoxedTracer {
+    global::tracer("pingap")
+}
+
 #[async_trait]
 impl ProxyHttp for Server {
     type CTX = State;
@@ -444,6 +456,30 @@ impl ProxyHttp for Server {
         ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
         ctx.accepted = self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
         ctx.remote_addr = util::get_remote_addr(session);
+        let header = session.req_header_mut();
+        let host = util::get_host(header).unwrap_or_default();
+        let path = header.uri.path();
+
+        // TODO get enable flat
+        {
+            let cx = global::get_text_map_propagator(|propagator| {
+                propagator.extract(&HeaderExtractor(&header.headers))
+            });
+            let tracer = new_global_tracer();
+            let mut span_names = vec![header.method.to_string()];
+            if !host.is_empty() {
+                span_names.push(host.to_string());
+            }
+            span_names.push(path.to_string());
+            let span = tracer
+                .span_builder(span_names.join(" "))
+                .with_kind(SpanKind::Server)
+                .start_with_context(&tracer, &cx);
+
+            ctx.http_request_span = Some(span);
+        }
+        // tracer.
+
         if let Some(prom) = &self.prometheus {
             prom.before();
         }
@@ -452,9 +488,7 @@ impl ProxyHttp for Server {
         let Some(locations) = get_server_locations(&self.name) else {
             return Ok(());
         };
-        let header = session.req_header_mut();
-        let host = util::get_host(header).unwrap_or_default();
-        let path = header.uri.path();
+
         for name in locations.iter() {
             let Some(location) = get_location(name) else {
                 continue;
@@ -932,6 +966,25 @@ impl ProxyHttp for Server {
         }
         if let Some(prom) = &self.prometheus {
             prom.after(session, ctx);
+        }
+
+        // open telemetry
+        {
+            if let Some(ref mut span) = ctx.http_request_span.as_mut() {
+                let ip = if let Some(ip) = &ctx.client_ip {
+                    ip.to_string()
+                } else {
+                    util::get_client_ip(session)
+                };
+                span.set_attribute(KeyValue::new("http.client_ip", ip));
+                if let Some(remote_addr) = &ctx.remote_addr {
+                    span.set_attribute(KeyValue::new(
+                        "http.remote_addr",
+                        remote_addr.to_string(),
+                    ));
+                }
+                span.end()
+            }
         }
 
         if let Some(p) = &self.log_parser {

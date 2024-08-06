@@ -42,6 +42,7 @@ export default {
   "basic.webhook": "Webhook的请求地址",
   "basic.sentry": "Sentry地址",
   "basic.pyroscope": "Pyroscope地址(需启用pyro后编译)",
+  "basic.otlpExporter": "Open Telemetry 输出连接地址",
   "basic.errorTemplate": "错误模板(默认为html模板，可配置为json)",
   // server info
   "server.title": "监听服务的相关配置",

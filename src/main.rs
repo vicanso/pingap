@@ -18,6 +18,7 @@ use crate::service::new_auto_restart_service;
 use clap::Parser;
 use config::{PingapConf, PluginConf};
 use crossbeam_channel::Sender;
+use otlp::TracerService;
 use pingora::server;
 use pingora::server::configuration::Opt;
 use pingora::services::background::background_service;
@@ -36,6 +37,7 @@ mod discovery;
 mod http_extra;
 mod limit;
 mod logger;
+mod otlp;
 mod plugin;
 mod proxy;
 #[cfg(feature = "pyro")]
@@ -235,6 +237,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     // so set the current conf first
     config::set_current_config(&conf);
     conf.validate()?;
+
     let basic_conf = &conf.basic;
     config::set_app_name(&basic_conf.name.clone().unwrap_or_default());
 
@@ -309,6 +312,13 @@ fn run() -> Result<(), Box<dyn Error>> {
     my_server.sentry.clone_from(&basic_conf.sentry);
     my_server.bootstrap();
 
+    // add otlp service
+    if let Some(otlp_exporter) = &conf.basic.otlp_exporter {
+        my_server.add_service(background_service(
+            "Otlp",
+            TracerService::new(otlp_exporter),
+        ));
+    }
     #[cfg(feature = "pyro")]
     if let Some(url) = &conf.basic.pyroscope {
         my_server.add_service(background_service(
