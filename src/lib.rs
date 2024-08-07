@@ -19,6 +19,7 @@ pub mod discovery;
 pub mod http_extra;
 pub mod limit;
 pub mod logger;
+pub mod otel;
 pub mod plugin;
 pub mod proxy;
 pub mod service;

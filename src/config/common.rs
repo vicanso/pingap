@@ -480,6 +480,7 @@ pub struct BasicConf {
     pub auto_restart_check_interval: Option<Duration>,
     pub cache_directory: Option<String>,
     pub cache_max_size: Option<ByteSize>,
+    pub otlp_exporter: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Serialize)]

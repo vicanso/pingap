@@ -44,6 +44,7 @@ export default {
   "basic.webhook": "Webhook Http Url",
   "basic.sentry": "Sentry Connect Url",
   "basic.pyroscope": "Pyroscope Connect Url(should rebuild with pyro feature)",
+  "basic.otlpExporter": "Open Telemetry Exporter Url",
   "basic.errorTemplate": "Error Template(default is html, it can be json too)",
   // server info
   "server.title": "Modify server configuration",
@@ -70,6 +71,7 @@ export default {
   "server.tcpProbeCount": "Tcp Keepalive Probe Max Number(e.g. 1000)",
   "server.prometheusMetrics":
     "The Metrics Path Of Prometheus(it can be push gateway uri or path for pull mode)",
+
   "server.remark": "Remark",
   // location info
   "location.title": "Modify location configuration",

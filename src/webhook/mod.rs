@@ -144,7 +144,7 @@ pub fn send(params: SendNotificationParams) {
                 let hostname = state::get_hostname().clone();
                 let name = get_app_name();
                 let color_type = match level {
-                    NotificationLevel::Error => "error",
+                    NotificationLevel::Error => "warning",
                     NotificationLevel::Warn => "warning",
                     _ => "comment",
                 };

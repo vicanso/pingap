@@ -218,13 +218,17 @@ pub fn local_ip_list() -> Vec<String> {
     let mut ip_list = vec![];
 
     if let Ok(value) = local_ip_address::local_ip() {
-        ip_list.push(value.to_string());
+        ip_list.push(value);
     }
     if let Ok(value) = local_ip_address::local_ipv6() {
-        ip_list.push(value.to_string());
+        ip_list.push(value);
     }
 
     ip_list
+        .iter()
+        .filter(|item| !item.is_loopback())
+        .map(|item| item.to_string())
+        .collect()
 }
 
 /// Get request host in this order of precedence:
