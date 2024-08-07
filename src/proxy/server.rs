@@ -26,6 +26,7 @@ use crate::plugin::get_plugins;
 use crate::proxy::dynamic_certificate::TlsSettingParams;
 use crate::proxy::location::get_location;
 use crate::service::CommonServiceTask;
+use crate::state::OtelTracer;
 use crate::state::{new_prometheus, new_prometheus_push_service};
 use crate::state::{CompressionStat, Prometheus, State};
 use crate::util;
@@ -42,7 +43,6 @@ use opentelemetry::{
     KeyValue,
 };
 use opentelemetry_http::HeaderExtractor;
-
 use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::CacheControl;
 use pingora::cache::cache_control::DirectiveValue;
@@ -136,6 +136,7 @@ pub struct Server {
     prometheus: Option<Arc<Prometheus>>,
     prometheus_push_mode: bool,
     prometheus_metrics: String,
+    enabled_otel: bool,
 }
 
 pub struct ServerServices {
@@ -196,6 +197,7 @@ impl Server {
             tcp_socket_options,
             tls_from_lets_encrypt: conf.lets_encrypt.is_some(),
             prometheus_push_mode: prometheus_metrics.contains("://"),
+            enabled_otel: conf.enabled_otel,
             prometheus_metrics,
             prometheus,
         };
@@ -460,25 +462,21 @@ impl ProxyHttp for Server {
         let host = util::get_host(header).unwrap_or_default();
         let path = header.uri.path();
 
-        // TODO get enable flat
-        {
+        if self.enabled_otel {
             let cx = global::get_text_map_propagator(|propagator| {
                 propagator.extract(&HeaderExtractor(&header.headers))
             });
             let tracer = new_global_tracer();
-            let mut span_names = vec![header.method.to_string()];
-            if !host.is_empty() {
-                span_names.push(host.to_string());
-            }
-            span_names.push(path.to_string());
+            let span_names = [header.method.to_string(), path.to_string()];
             let span = tracer
                 .span_builder(span_names.join(" "))
                 .with_kind(SpanKind::Server)
                 .start_with_context(&tracer, &cx);
-
-            ctx.http_request_span = Some(span);
+            ctx.otel_tracer = Some(OtelTracer {
+                tracer,
+                http_request_span: span,
+            });
         }
-        // tracer.
 
         if let Some(prom) = &self.prometheus {
             prom.before();
@@ -604,6 +602,15 @@ impl ProxyHttp for Server {
             location_name.clone_from(&location.name);
             if let Some(up) = get_upstream(&location.upstream) {
                 ctx.upstream_connected = up.connected();
+                if let Some(tracer) = &ctx.otel_tracer {
+                    let name = format!("upstream.{}", &location.upstream);
+                    let mut span = tracer.new_upstream_span(&name);
+                    span.set_attribute(KeyValue::new(
+                        "upstream.connected",
+                        ctx.upstream_connected.unwrap_or_default().to_string(),
+                    ));
+                    ctx.upstream_span = Some(span);
+                }
                 up.new_http_peer(session, ctx)
             } else {
                 None
@@ -652,12 +659,23 @@ impl ProxyHttp for Server {
                 }
             }
         }
+
         ctx.upstream_reused = reused;
         ctx.upstream_address = peer.address().to_string();
         ctx.upstream_connect_time =
             util::get_latency(&ctx.upstream_connect_time);
         ctx.upstream_processing_time =
             util::get_latency(&ctx.upstream_processing_time);
+        if let Some(ref mut span) = ctx.upstream_span.as_mut() {
+            span.set_attributes([
+                KeyValue::new("upstream.ip", peer.address().to_string()),
+                KeyValue::new("upstream.reused", reused.to_string()),
+                KeyValue::new(
+                    "upstream.connect_time",
+                    ctx.upstream_connect_time.unwrap_or_default().to_string(),
+                ),
+            ]);
+        }
         Ok(())
     }
     async fn upstream_request_filter(
@@ -804,6 +822,9 @@ impl ProxyHttp for Server {
         if let Some(id) = &ctx.request_id {
             let _ = upstream_response
                 .insert_header(HTTP_HEADER_NAME_X_REQUEST_ID.clone(), id);
+        }
+        if let Some(ref mut span) = ctx.upstream_span.as_mut() {
+            span.end();
         }
         ctx.upstream_processing_time =
             util::get_latency(&ctx.upstream_processing_time);
@@ -970,20 +991,24 @@ impl ProxyHttp for Server {
 
         // open telemetry
         {
-            if let Some(ref mut span) = ctx.http_request_span.as_mut() {
+            if let Some(ref mut tracer) = ctx.otel_tracer.as_mut() {
                 let ip = if let Some(ip) = &ctx.client_ip {
                     ip.to_string()
                 } else {
                     util::get_client_ip(session)
                 };
-                span.set_attribute(KeyValue::new("http.client_ip", ip));
-                if let Some(remote_addr) = &ctx.remote_addr {
-                    span.set_attribute(KeyValue::new(
-                        "http.remote_addr",
-                        remote_addr.to_string(),
-                    ));
+                let mut attrs = vec![
+                    KeyValue::new("http.client_ip", ip),
+                    KeyValue::new(
+                        "http.status",
+                        ctx.status.unwrap_or_default().to_string(),
+                    ),
+                ];
+                if let Some(lo) = &ctx.location {
+                    attrs.push(KeyValue::new("location", lo.name.clone()));
                 }
-                span.end()
+                tracer.http_request_span.set_attributes(attrs);
+                tracer.http_request_span.end()
             }
         }
 

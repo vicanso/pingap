@@ -2230,7 +2230,6 @@ dependencies = [
  "bytes",
  "http 1.1.0",
  "opentelemetry",
- "reqwest 0.12.5",
 ]
 
 [[package]]
@@ -2243,12 +2242,9 @@ dependencies = [
  "futures-core",
  "http 1.1.0",
  "opentelemetry",
- "opentelemetry-http",
  "opentelemetry-proto",
  "opentelemetry_sdk",
  "prost 0.13.1",
- "reqwest 0.12.5",
- "serde_json",
  "thiserror",
  "tokio",
  "tonic",
@@ -2260,11 +2256,9 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30ee9f20bff9c984511a02f082dc8ede839e4a9bf15cc2487c8d6fea5ad850d9"
 dependencies = [
- "hex",
  "opentelemetry",
  "opentelemetry_sdk",
  "prost 0.13.1",
- "serde",
  "tonic",
 ]
 
@@ -3171,7 +3165,6 @@ checksum = "c7d6d2a27d57148378eb5e111173f4276ad26340ecc5c49a4a2152167a2d6a37"
 dependencies = [
  "base64 0.22.1",
  "bytes",
- "futures-channel",
  "futures-core",
  "futures-util",
  "http 1.1.0",

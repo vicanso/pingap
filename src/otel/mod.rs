@@ -12,9 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use async_trait::async_trait;
-use opentelemetry::{global, KeyValue};
+use opentelemetry::{
+    global, propagation::TextMapCompositePropagator, KeyValue,
+};
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
+    propagation::{BaggagePropagator, TraceContextPropagator},
     trace::{self, BatchConfig, RandomIdGenerator, Sampler},
     Resource,
 };
@@ -49,9 +52,8 @@ impl BackgroundService for TracerService {
             .with_trace_config(
                 trace::Config::default()
                     // TODO smapler config
-                    .with_sampler(Sampler::AlwaysOff)
+                    .with_sampler(Sampler::AlwaysOn)
                     .with_id_generator(RandomIdGenerator::default())
-                    .with_max_events_per_span(64)
                     .with_max_attributes_per_span(16)
                     .with_max_events_per_span(16)
                     .with_resource(Resource::new(vec![KeyValue::new(
@@ -64,8 +66,19 @@ impl BackgroundService for TracerService {
 
         match result {
             Ok(tracer_provider) => {
-                info!("opentelemetry init success");
+                info!(endpoint = self.endpoint, "opentelemetry init success");
+                let baggage_propagator = BaggagePropagator::new();
+                let trace_context_propagator = TraceContextPropagator::new();
+                global::set_text_map_propagator(
+                    TextMapCompositePropagator::new(vec![
+                        Box::new(baggage_propagator),
+                        Box::new(trace_context_propagator),
+                    ]),
+                );
+
+                // set tracer provider
                 global::set_tracer_provider(tracer_provider.clone());
+
                 let _ = shutdown.changed().await;
                 if let Err(e) = tracer_provider.shutdown() {
                     error!(

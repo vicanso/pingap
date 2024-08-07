@@ -18,7 +18,7 @@ use crate::service::new_auto_restart_service;
 use clap::Parser;
 use config::{PingapConf, PluginConf};
 use crossbeam_channel::Sender;
-use otlp::TracerService;
+use otel::TracerService;
 use pingora::server;
 use pingora::server::configuration::Opt;
 use pingora::services::background::background_service;
@@ -37,7 +37,7 @@ mod discovery;
 mod http_extra;
 mod limit;
 mod logger;
-mod otlp;
+mod otel;
 mod plugin;
 mod proxy;
 #[cfg(feature = "pyro")]

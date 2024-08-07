@@ -16,7 +16,9 @@ use crate::util::format_duration;
 use crate::{proxy::Location, util};
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
-use opentelemetry::global::BoxedSpan;
+use opentelemetry::global::{BoxedSpan, BoxedTracer, ObjectSafeSpan};
+use opentelemetry::trace::{SpanKind, TraceContextExt, Tracer};
+use opentelemetry::Context;
 use pingora_limits::inflight::Guard;
 use std::{sync::Arc, time::Duration};
 
@@ -33,6 +35,26 @@ pub struct CompressionStat {
 impl CompressionStat {
     pub fn ratio(&self) -> f64 {
         (self.in_bytes as f64) / (self.out_bytes as f64)
+    }
+}
+
+pub struct OtelTracer {
+    pub tracer: BoxedTracer,
+    pub http_request_span: BoxedSpan,
+}
+
+impl OtelTracer {
+    #[inline]
+    pub fn new_upstream_span(&self, name: &str) -> BoxedSpan {
+        self.tracer
+            .span_builder(name.to_string())
+            .with_kind(SpanKind::Client)
+            .start_with_context(
+                &self.tracer,
+                &Context::current().with_remote_span_context(
+                    self.http_request_span.span_context().clone(),
+                ),
+            )
     }
 }
 
@@ -98,7 +120,8 @@ pub struct State {
     pub cache_reading: Option<u32>,
     // cache writing count
     pub cache_writing: Option<u32>,
-    pub http_request_span: Option<BoxedSpan>,
+    pub otel_tracer: Option<OtelTracer>,
+    pub upstream_span: Option<BoxedSpan>,
 }
 
 impl Default for State {
@@ -139,7 +162,8 @@ impl Default for State {
             response_body: None,
             cache_reading: None,
             cache_writing: None,
-            http_request_span: None,
+            otel_tracer: None,
+            upstream_span: None,
         }
     }
 }
