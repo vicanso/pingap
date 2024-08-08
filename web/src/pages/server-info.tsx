@@ -233,6 +233,13 @@ export default function ServerInfo() {
       category: FormItemCategory.TEXT,
     },
     {
+      id: "otlp_exporter",
+      label: t("server.otlpExporter"),
+      defaultValue: server.otlp_exporter,
+      span: 12,
+      category: FormItemCategory.TEXT,
+    },
+    {
       id: "remark",
       label: t("server.remark"),
       defaultValue: server.remark,

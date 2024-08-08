@@ -383,6 +383,7 @@ pub struct ServerConf {
     pub tcp_probe_count: Option<usize>,
     pub tcp_fastopen: Option<usize>,
     pub prometheus_metrics: Option<String>,
+    pub otlp_exporter: Option<String>,
     pub remark: Option<String>,
 }
 
@@ -480,7 +481,6 @@ pub struct BasicConf {
     pub auto_restart_check_interval: Option<Duration>,
     pub cache_directory: Option<String>,
     pub cache_max_size: Option<ByteSize>,
-    pub otlp_exporter: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Serialize)]

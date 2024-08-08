@@ -2233,6 +2233,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "opentelemetry-jaeger-propagator"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc0a68a13b92fc708d875ad659b08b35d08b8ef2403e01944b39ca21e5b08b17"
+dependencies = [
+ "opentelemetry",
+]
+
+[[package]]
 name = "opentelemetry-otlp"
 version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2451,6 +2460,7 @@ dependencies = [
  "once_cell",
  "opentelemetry",
  "opentelemetry-http",
+ "opentelemetry-jaeger-propagator",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "path-absolutize",

@@ -312,13 +312,6 @@ fn run() -> Result<(), Box<dyn Error>> {
     my_server.sentry.clone_from(&basic_conf.sentry);
     my_server.bootstrap();
 
-    // add otlp service
-    if let Some(otlp_exporter) = &conf.basic.otlp_exporter {
-        my_server.add_service(background_service(
-            "Otlp",
-            TracerService::new(otlp_exporter),
-        ));
-    }
     #[cfg(feature = "pyro")]
     if let Some(url) = &conf.basic.pyroscope {
         my_server.add_service(background_service(
@@ -349,6 +342,14 @@ fn run() -> Result<(), Box<dyn Error>> {
         if serve_conf.addr.ends_with(":80") {
             exits_80_server = true;
         }
+        // add otlp service
+        if let Some(otlp_exporter) = &serve_conf.otlp_exporter {
+            my_server.add_service(background_service(
+                &format!("Otlp:{}", serve_conf.name),
+                TracerService::new(&serve_conf.name, otlp_exporter),
+            ));
+        }
+
         if let Some(value) = &serve_conf.lets_encrypt {
             enabled_lets_encrypt = true;
             let domains: Vec<String> =

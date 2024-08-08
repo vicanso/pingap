@@ -11,9 +11,13 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 use async_trait::async_trait;
 use opentelemetry::{
-    global, propagation::TextMapCompositePropagator, KeyValue,
+    global::{self, BoxedTracer},
+    propagation::TextMapCompositePropagator,
+    trace::TracerProvider,
+    KeyValue,
 };
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
@@ -26,15 +30,30 @@ use std::time::Duration;
 use tracing::{error, info};
 
 pub struct TracerService {
+    name: String,
     endpoint: String,
 }
 
 impl TracerService {
-    pub fn new(endpoint: &str) -> TracerService {
+    pub fn new(name: &str, endpoint: &str) -> TracerService {
         Self {
+            name: name.to_string(),
             endpoint: endpoint.to_string(),
         }
     }
+}
+
+#[inline]
+fn get_service_name(name: &str) -> String {
+    format!("pingap-{name}")
+}
+
+#[inline]
+pub fn new_tracer(name: &str) -> Option<BoxedTracer> {
+    if let Some(provider) = provider::get_provider(name) {
+        return Some(provider.tracer(get_service_name(name)));
+    }
+    None
 }
 
 #[async_trait]
@@ -58,7 +77,7 @@ impl BackgroundService for TracerService {
                     .with_max_events_per_span(16)
                     .with_resource(Resource::new(vec![KeyValue::new(
                         "service.name",
-                        "pingap",
+                        get_service_name(&self.name),
                     )])),
             )
             .with_batch_config(BatchConfig::default())
@@ -69,15 +88,18 @@ impl BackgroundService for TracerService {
                 info!(endpoint = self.endpoint, "opentelemetry init success");
                 let baggage_propagator = BaggagePropagator::new();
                 let trace_context_propagator = TraceContextPropagator::new();
+                let jaeger_propagator =
+                    opentelemetry_jaeger_propagator::Propagator::new();
                 global::set_text_map_propagator(
                     TextMapCompositePropagator::new(vec![
-                        Box::new(baggage_propagator),
                         Box::new(trace_context_propagator),
+                        Box::new(baggage_propagator),
+                        Box::new(jaeger_propagator),
                     ]),
                 );
 
                 // set tracer provider
-                global::set_tracer_provider(tracer_provider.clone());
+                provider::add_provider(&self.name, tracer_provider.clone());
 
                 let _ = shutdown.changed().await;
                 if let Err(e) = tracer_provider.shutdown() {
@@ -95,3 +117,5 @@ impl BackgroundService for TracerService {
         }
     }
 }
+
+mod provider;

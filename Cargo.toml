@@ -60,6 +60,7 @@ opentelemetry = { version = "0.24.0", default-features = false, features = [
     "trace",
 ] }
 opentelemetry-http = { version = "0.13.0", default-features = false }
+opentelemetry-jaeger-propagator = "0.3.0"
 opentelemetry-otlp = { version = "0.17.0", default-features = false, features = [
     "grpc-tonic",
     "trace",

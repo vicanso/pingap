@@ -78,6 +78,7 @@ interface Server {
   tcp_probe_count?: number;
   tcp_fastopen?: number;
   prometheus_metrics?: string;
+  otlp_exporter?: string;
   remark?: string;
 }
 
@@ -109,7 +110,6 @@ interface Basic {
   auto_restart_check_interval?: string;
   cache_max_size?: number;
   cache_directory?: string;
-  otlp_exporter?: string;
   sentry?: string;
   pyroscope?: string;
   webhook?: string;

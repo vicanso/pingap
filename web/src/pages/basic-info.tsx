@@ -195,13 +195,6 @@ export default function BasicInfo() {
       category: FormItemCategory.TEXT,
     },
     {
-      id: "otlp_exporter",
-      label: t("basic.otlpExporter"),
-      defaultValue: basic.otlp_exporter,
-      span: 12,
-      category: FormItemCategory.TEXT,
-    },
-    {
       id: "sentry",
       label: t("basic.sentry"),
       defaultValue: basic.sentry,

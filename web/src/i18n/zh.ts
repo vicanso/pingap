@@ -42,7 +42,6 @@ export default {
   "basic.webhook": "Webhook的请求地址",
   "basic.sentry": "Sentry地址",
   "basic.pyroscope": "Pyroscope地址(需启用pyro后编译)",
-  "basic.otlpExporter": "Open Telemetry 输出连接地址",
   "basic.errorTemplate": "错误模板(默认为html模板，可配置为json)",
   // server info
   "server.title": "监听服务的相关配置",
@@ -70,6 +69,7 @@ export default {
   "server.tcpProbeCount": "Tcp保持连接探针发送的最大次数(如1000)",
   "server.prometheusMetrics":
     "Prometheus的量度指标数据请求路径(若为完整的http链接由使用push方式，若为路径则pull)",
+  "server.otlpExporter": "Open Telemetry 输出连接地址",
   "server.remark": "备注",
   // location info
   "location.title": "Location的相关配置",

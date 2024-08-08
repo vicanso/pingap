@@ -41,7 +41,7 @@ pub struct ServerConf {
     pub global_certificates: bool,
     pub enbaled_h2: bool,
     pub prometheus_metrics: Option<String>,
-    pub enabled_otel: bool,
+    pub otlp_exporter: Option<String>,
 }
 
 impl ServerConf {
@@ -86,7 +86,6 @@ impl From<PingapConf> for Vec<ServerConf> {
         // sort location by weight
         locations.sort_by_key(|b| std::cmp::Reverse(b.1.get_weight()));
         let mut servers = vec![];
-        let enabled_otel = conf.basic.otlp_exporter.is_some();
         for (name, item) in conf.servers {
             // load config validate base64
             // so ignore error
@@ -149,7 +148,7 @@ impl From<PingapConf> for Vec<ServerConf> {
                 tcp_keepalive,
                 tcp_fastopen: item.tcp_fastopen,
                 prometheus_metrics: item.prometheus_metrics,
-                enabled_otel,
+                otlp_exporter: item.otlp_exporter.clone(),
                 error_template,
             });
         }
