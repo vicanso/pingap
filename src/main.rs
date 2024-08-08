@@ -59,7 +59,7 @@ mod perf;
 struct Args {
     /// The config file or directory
     #[arg(short, long)]
-    conf: String,
+    conf: Option<String>,
     /// Whether should run this server in the background
     #[arg(short, long)]
     daemon: bool,
@@ -202,7 +202,7 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     if let Err(e) = plugin::init_plugins(vec![(name, proxy_plugin_info)]) {
         error!(error = e.to_string(), "init plugins fail",);
     }
-    config::set_config_path(&args.conf);
+    config::set_config_path(&args.conf.clone().unwrap_or_default());
     let mut my_server = server::Server::new(None)?;
     let ps = Server::new(&server_conf)?;
     let services = ps.run(&my_server.configuration)?;
@@ -227,6 +227,13 @@ fn parse_arguments() -> Args {
             "".to_string()
         }
     };
+
+    if args.conf.is_none() {
+        let conf = get_from_env("conf");
+        if conf.is_empty() {
+            args.conf = Some(conf);
+        }
+    }
 
     if !args.daemon && !get_from_env("daemon").is_empty() {
         args.daemon = true;
@@ -260,6 +267,9 @@ fn parse_arguments() -> Args {
     if !args.autoreload && !get_from_env("autoreload").is_empty() {
         args.autoreload = true;
     }
+    if args.conf.clone().unwrap_or_default().is_empty() {
+        panic!("--conf is required argument");
+    }
 
     args
 }
@@ -271,7 +281,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     let (s, r) = crossbeam_channel::bounded(0);
-    get_config(args.conf.clone(), args.admin.is_some(), s);
+    let conf_path = args.conf.clone().unwrap_or_default();
+    get_config(conf_path.clone(), args.admin.is_some(), s);
     let conf = r.recv()??;
     logger::logger_try_init(logger::LoggerParams {
         capacity: conf.basic.log_buffered_size.unwrap_or_default().as_u64(),
@@ -308,7 +319,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "perf")]
     info!("Enable feature perf");
 
-    config::set_config_path(&args.conf);
+    config::set_config_path(&conf_path);
 
     if let Ok(exec_path) = std::env::current_exe() {
         let mut cmd = state::RestartProcessCommand {
@@ -318,10 +329,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         if let Ok(env) = std::env::var("RUST_LOG") {
             cmd.log_level = env;
         }
-        let conf_path = if args.conf.starts_with(ETCD_PROTOCOL) {
-            args.conf.clone()
+        let conf_path = if conf_path.starts_with(ETCD_PROTOCOL) {
+            conf_path.clone()
         } else {
-            util::resolve_path(&args.conf)
+            util::resolve_path(&conf_path)
         };
 
         let mut new_args = vec![
