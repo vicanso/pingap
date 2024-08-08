@@ -6,8 +6,8 @@
 - [ ] support validate config for plugin
 - [ ] secret storage
 - [ ] support include comnand for configuraion
-- [ ] get arguments from env
 - [ ] support more params for open telemetry
+- [x] get arguments from env
 - [x] support OpenTelemetry
 - [x] add docker run illustrate
 - [x] auth delay

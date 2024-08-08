@@ -294,6 +294,10 @@ pub fn convert_certificate_bytes(value: &Option<String>) -> Option<Vec<u8>> {
     None
 }
 
+pub fn base64_encode(data: &str) -> String {
+    STANDARD.encode(data.as_bytes())
+}
+
 const B_100: usize = 100;
 const KB: usize = 1_000;
 const KB_100: usize = 100 * KB;

@@ -216,9 +216,56 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     my_server.run_forever();
 }
 
-fn run() -> Result<(), Box<dyn Error>> {
-    let args = Args::parse();
+fn parse_arguments() -> Args {
+    let mut args = Args::parse();
 
+    let get_from_env = |key: &str| -> String {
+        let k = format!("PINGAP_{key}").to_uppercase();
+        if let Ok(value) = std::env::var(k) {
+            value
+        } else {
+            "".to_string()
+        }
+    };
+
+    if !args.daemon && !get_from_env("daemon").is_empty() {
+        args.daemon = true;
+    }
+    if !args.upgrade && !get_from_env("upgrade").is_empty() {
+        args.upgrade = true;
+    }
+    if args.log.is_none() {
+        let log = get_from_env("log");
+        if !log.is_empty() {
+            args.log = Some(log);
+        }
+    }
+    let mut addr = get_from_env("admin_addr");
+    if args.admin.is_none() && !addr.is_empty() {
+        let user = get_from_env("admin_user");
+        let password = get_from_env("admin_password");
+        if !user.is_empty() && !password.is_empty() {
+            let data = format!("{user}:{password}");
+            addr = format!("{}@{addr}", util::base64_encode(&data));
+        }
+        args.admin = Some(addr)
+    }
+    if !args.cp && !get_from_env("cp").is_empty() {
+        args.cp = true;
+    }
+
+    if !args.autorestart && !get_from_env("autorestart").is_empty() {
+        args.autorestart = true;
+    }
+    if !args.autoreload && !get_from_env("autoreload").is_empty() {
+        args.autoreload = true;
+    }
+
+    args
+}
+
+fn run() -> Result<(), Box<dyn Error>> {
+    let args = parse_arguments();
     if args.cp && args.admin.is_some() {
         return run_admin_node(args);
     }
