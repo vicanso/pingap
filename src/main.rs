@@ -217,8 +217,6 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
 }
 
 fn parse_arguments() -> Args {
-    let mut args = Args::parse();
-
     let get_from_env = |key: &str| -> String {
         let k = format!("PINGAP_{key}").to_uppercase();
         if let Ok(value) = std::env::var(k) {
@@ -227,6 +225,26 @@ fn parse_arguments() -> Args {
             "".to_string()
         }
     };
+    let mut arr = vec![];
+    let mut exist_config_argument = false;
+    for arg in std::env::args_os() {
+        for item in ["-c", "--conf"] {
+            if arg == item
+                || arg.to_string_lossy().starts_with(&format!("{item}="))
+            {
+                exist_config_argument = true;
+            }
+        }
+        arr.push(arg);
+    }
+    if !exist_config_argument {
+        let conf = get_from_env("conf");
+        if !conf.is_empty() {
+            arr.push(format!("-c={conf}").into());
+        }
+    }
+
+    let mut args = Args::parse_from(arr);
 
     if !args.daemon && !get_from_env("daemon").is_empty() {
         args.daemon = true;

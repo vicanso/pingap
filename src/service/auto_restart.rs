@@ -24,20 +24,34 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use tracing::{debug, error, info};
 
-async fn diff_config(
+async fn diff_and_update_config(
     hot_reload_only: bool,
     current_config: PingapConf,
     new_config: PingapConf,
-) -> Result<(bool, Vec<String>, Option<PingapConf>), Box<dyn std::error::Error>>
-{
-    let mut new_config = new_config;
-    let mut should_reload_server_location = false;
-    // update the values which can be hot reload
-    if hot_reload_only {
-        let mut clone_conf = current_config.clone();
+) -> Result<(bool, Vec<String>), Box<dyn std::error::Error>> {
+    let (updated_category_list, original_diff_result) =
+        current_config.diff(&new_config);
+    debug!(
+        updated_category_list = updated_category_list.join(","),
+        original_diff_result = original_diff_result.join("\n"),
+        "current config diff from new config"
+    );
+    // no update date
+    if original_diff_result.is_empty() {
+        return Ok((false, vec![]));
+    }
+
+    let mut hot_realod_config = current_config.clone();
+    {
+        // hot reload first,
+        // only validate server.locations, locations, and upstreams
+        let mut should_reload_server_location = false;
+        // update the values which can be hot reload
         // set server locations
         for (name, server) in new_config.servers.iter() {
-            if let Some(clone_server_conf) = clone_conf.servers.get_mut(name) {
+            if let Some(clone_server_conf) =
+                hot_realod_config.servers.get_mut(name)
+            {
                 if server.locations != clone_server_conf.locations {
                     clone_server_conf.locations.clone_from(&server.locations);
                     should_reload_server_location = true;
@@ -46,68 +60,87 @@ async fn diff_config(
         }
 
         // set upstream and location value
-        clone_conf.upstreams = new_config.upstreams;
-        clone_conf.locations = new_config.locations;
-        new_config = clone_conf;
+        hot_realod_config.upstreams = new_config.upstreams.clone();
+        hot_realod_config.locations = new_config.locations.clone();
+        let mut should_reload_upstream = false;
+        let mut should_reload_location = false;
+
+        for category in updated_category_list {
+            match category.as_str() {
+                CATEGORY_LOCATION => should_reload_location = true,
+                CATEGORY_UPSTREAM => should_reload_upstream = true,
+                _ => {},
+            };
+        }
+        if should_reload_upstream {
+            match proxy::try_update_upstreams(&new_config.upstreams).await {
+                Err(e) => {
+                    error!(error = e.to_string(), "reload upstream fail");
+                },
+                Ok(()) => {
+                    info!("reload upstream success");
+                },
+            };
+        }
+        if should_reload_location {
+            match proxy::try_init_locations(&new_config.locations) {
+                Err(e) => {
+                    error!(error = e.to_string(), "reload location fail");
+                },
+                Ok(()) => {
+                    info!("reload location success");
+                },
+            };
+        }
+        if should_reload_server_location {
+            match proxy::try_init_server_locations(
+                &new_config.servers,
+                &new_config.locations,
+            ) {
+                Err(e) => {
+                    error!(error = e.to_string(), "reload server fail");
+                },
+                Ok(()) => {
+                    info!("reload server location success");
+                },
+            };
+        }
     }
 
-    let (updated_category_list, original_diff_result) =
-        current_config.diff(&new_config);
-    debug!("updated_category_list: {updated_category_list:?}, original_diff_result: {original_diff_result:?}");
+    if hot_reload_only {
+        let (updated_category_list, original_diff_result) =
+            current_config.diff(&hot_realod_config);
+        debug!(
+            updated_category_list = updated_category_list.join(","),
+            original_diff_result = original_diff_result.join("\n"),
+            "current config diff from hot realod config"
+        );
+        // no update date
+        if original_diff_result.is_empty() {
+            return Ok((false, vec![]));
+        }
+        // update current config to be hot reload config
+        set_current_config(&hot_realod_config);
+        return Ok((false, original_diff_result));
+    }
+    // restart mode
+    // update current config to be hot reload config
+    set_current_config(&hot_realod_config);
 
-    // no update date
-    if original_diff_result.is_empty() {
-        return Ok((false, vec![], None));
+    // diff hot reload config and new config
+    let (_, new_config_result) = hot_realod_config.diff(&new_config);
+    debug!(
+        new_config_result = new_config_result.join("\n"),
+        "hot reload config diff from new config"
+    );
+
+    let mut should_restart = true;
+    // no update other config update except hot reload config
+    if new_config_result.is_empty() {
+        should_restart = false;
     }
 
-    let mut should_reload_upstream = false;
-    let mut should_reload_location = false;
-    let mut should_restart = false;
-
-    for category in updated_category_list {
-        match category.as_str() {
-            CATEGORY_LOCATION => should_reload_location = true,
-            CATEGORY_UPSTREAM => should_reload_upstream = true,
-            // other value is updated (not locations)
-            _ => should_restart = true,
-        };
-    }
-
-    if should_reload_upstream {
-        match proxy::try_update_upstreams(&new_config.upstreams).await {
-            Err(e) => {
-                error!(error = e.to_string(), "reload upstream fail");
-            },
-            Ok(()) => {
-                info!("reload upstream success");
-            },
-        };
-    }
-    if should_reload_location {
-        match proxy::try_init_locations(&new_config.locations) {
-            Err(e) => {
-                error!(error = e.to_string(), "reload location fail");
-            },
-            Ok(()) => {
-                info!("reload location success");
-            },
-        };
-    }
-    if should_reload_server_location {
-        match proxy::try_init_server_locations(
-            &new_config.servers,
-            &new_config.locations,
-        ) {
-            Err(e) => {
-                error!(error = e.to_string(), "reload server fail");
-            },
-            Ok(()) => {
-                info!("reload server location success");
-            },
-        };
-    }
-
-    Ok((should_restart, original_diff_result, Some(new_config)))
+    Ok((should_restart, original_diff_result))
 }
 
 async fn hot_reload(
@@ -116,12 +149,9 @@ async fn hot_reload(
     let new_config = load_config(&get_config_path(), false).await?;
     new_config.validate()?;
     let current_config: PingapConf = get_current_config().as_ref().clone();
-    let (should_restart, diff_result, result) =
-        diff_config(hot_reload_only, current_config, new_config).await?;
-    if let Some(config) = result {
-        debug!(config = format!("{config:?}"), "set new current config");
-        set_current_config(&config);
-    }
+    let (should_restart, diff_result) =
+        diff_and_update_config(hot_reload_only, current_config, new_config)
+            .await?;
     Ok((should_restart, diff_result))
 }
 
