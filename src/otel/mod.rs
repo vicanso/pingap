@@ -13,9 +13,10 @@
 // limitations under the License.
 
 use async_trait::async_trait;
+use humantime::parse_duration;
 use opentelemetry::{
     global::{self, BoxedTracer},
-    propagation::TextMapCompositePropagator,
+    propagation::{TextMapCompositePropagator, TextMapPropagator},
     trace::TracerProvider,
     KeyValue,
 };
@@ -28,17 +29,62 @@ use opentelemetry_sdk::{
 use pingora::{server::ShutdownWatch, services::background::BackgroundService};
 use std::time::Duration;
 use tracing::{error, info};
+use url::Url;
 
 pub struct TracerService {
     name: String,
     endpoint: String,
+    timeout: Duration,
+    max_attributes: u32,
+    max_events: u32,
+    support_jaeger_propagator: bool,
+    support_baggage_propagator: bool,
 }
 
 impl TracerService {
     pub fn new(name: &str, endpoint: &str) -> TracerService {
+        let mut timeout = Duration::from_secs(3);
+        let mut max_attributes = 16;
+        let mut max_events = 16;
+        let mut support_jaeger_propagator = false;
+        let mut support_baggage_propagator = false;
+        if let Ok(info) = Url::parse(endpoint) {
+            for (key, value) in info.query_pairs().into_iter() {
+                match key.to_string().as_str() {
+                    "timeout" => {
+                        if let Ok(v) = parse_duration(&value) {
+                            timeout = v;
+                        }
+                    },
+                    "max_attributes" => {
+                        if let Ok(v) = value.parse::<u32>() {
+                            max_attributes = v;
+                        }
+                    },
+                    "max_events" => {
+                        if let Ok(v) = value.parse::<u32>() {
+                            max_events = v;
+                        }
+                    },
+                    "jaeger" => {
+                        support_jaeger_propagator = true;
+                    },
+                    "baggage" => {
+                        support_baggage_propagator = true;
+                    },
+                    _ => {},
+                }
+            }
+        }
+
         Self {
             name: name.to_string(),
             endpoint: endpoint.to_string(),
+            timeout,
+            max_events,
+            max_attributes,
+            support_jaeger_propagator,
+            support_baggage_propagator,
         }
     }
 }
@@ -66,15 +112,15 @@ impl BackgroundService for TracerService {
                 opentelemetry_otlp::new_exporter()
                     .tonic()
                     .with_endpoint(&self.endpoint)
-                    .with_timeout(Duration::from_secs(3)),
+                    .with_timeout(self.timeout),
             )
             .with_trace_config(
                 trace::Config::default()
                     // TODO smapler config
                     .with_sampler(Sampler::AlwaysOn)
                     .with_id_generator(RandomIdGenerator::default())
-                    .with_max_attributes_per_span(16)
-                    .with_max_events_per_span(16)
+                    .with_max_attributes_per_span(self.max_attributes)
+                    .with_max_events_per_span(self.max_events)
                     .with_resource(Resource::new(vec![KeyValue::new(
                         "service.name",
                         get_service_name(&self.name),
@@ -86,16 +132,19 @@ impl BackgroundService for TracerService {
         match result {
             Ok(tracer_provider) => {
                 info!(endpoint = self.endpoint, "opentelemetry init success");
-                let baggage_propagator = BaggagePropagator::new();
-                let trace_context_propagator = TraceContextPropagator::new();
-                let jaeger_propagator =
-                    opentelemetry_jaeger_propagator::Propagator::new();
+                let mut propagators: Vec<
+                    Box<dyn TextMapPropagator + Send + Sync>,
+                > = vec![Box::new(TraceContextPropagator::new())];
+                if self.support_jaeger_propagator {
+                    propagators.push(Box::new(
+                        opentelemetry_jaeger_propagator::Propagator::new(),
+                    ));
+                }
+                if self.support_baggage_propagator {
+                    propagators.push(Box::new(BaggagePropagator::new()));
+                }
                 global::set_text_map_propagator(
-                    TextMapCompositePropagator::new(vec![
-                        Box::new(trace_context_propagator),
-                        Box::new(baggage_propagator),
-                        Box::new(jaeger_propagator),
-                    ]),
+                    TextMapCompositePropagator::new(propagators),
                 );
 
                 // set tracer provider
