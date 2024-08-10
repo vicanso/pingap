@@ -8,10 +8,11 @@ services:
       - 3018:3018
     volumes:
       - ./conf:/opt/pingap/conf
-      # admin user: pingap
-      # admin password: 135790
+    environment:
+      PINGAP_CONF: /opt/pingap/conf
+      PINGAP_ADMIN_ADDR: 0.0.0.0:3018
+      PINGAP_ADMIN_USER: pingap
+      PINGAP_ADMIN_PASSWORD: 135790
+      PINGAP_AUTORELOAD: true
     entrypoint: |
       pingap
-      -c /opt/pingap/conf
-      --admin=cGluZ2FwOjEzNTc5MA==@0.0.0.0:3018
-      --autoreload

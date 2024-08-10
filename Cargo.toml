@@ -26,7 +26,7 @@ chrono = { version = "0.4.38", default-features = false, features = [
     "std",
     "clock",
 ] }
-clap = { version = "4.5.14", features = ["derive"] }
+clap = { version = "4.5.15", features = ["derive"] }
 cookie = "0.18.1"
 crc32fast = "1.4.2"
 crossbeam-channel = "0.5.13"
@@ -67,7 +67,7 @@ opentelemetry-otlp = { version = "0.17.0", default-features = false, features = 
 ] }
 opentelemetry_sdk = { version = "0.24.1", features = ["rt-tokio"] }
 path-absolutize = "3.1.1"
-pingora = { git = "https://github.com/vicanso/pingora", rev = "72d6ee09ae7488a372180cbf2b57f19d76eb8697", default-features = false, features = [
+pingora = { git = "https://github.com/cloudflare/pingora", rev = "50c3687e837e1380e7806900849c1df2f491e715", default-features = false, features = [
     # pingora = { version = "0.3.0", default-features = false, features = [
     "lb",
     "openssl",
