@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.7.0](https://github.com/vicanso/pingap/compare/v0.6.2..0.7.0) - 2024-08-10
+
+### ⛰️  Features
+
+- Support get arguments from env - ([33ed2a8](https://github.com/vicanso/pingap/commit/33ed2a88091d4ac3e0ae3faa1d443e9c3c992b58))
+- Support opentelemetry ([#20](https://github.com/orhun/git-cliff/issues/20)) - ([d50596c](https://github.com/vicanso/pingap/commit/d50596c5882ad91744dd19eba69232fc142bb438))
+- Add docker-compose template config, #19 - ([534c0b5](https://github.com/vicanso/pingap/commit/534c0b53b93e81eaa8aaeff471b633113076df9c))
+- Support backend health observe handler - ([5f5892b](https://github.com/vicanso/pingap/commit/5f5892baa862bb02476f9f8d302372ec885871e0))
+- Support different backends webhook event - ([bccc695](https://github.com/vicanso/pingap/commit/bccc6958232b7d211a0d17c3aeb7e035622c3bf4))
+- Add rustc version to basic info - ([ad21162](https://github.com/vicanso/pingap/commit/ad21162b3825b1ba298bd4cba8aff68e4634ece3))
+- Support delay for mock response plugin - ([1f368c3](https://github.com/vicanso/pingap/commit/1f368c3f3f63595013a8bbd3b0451136c5ad2e50))
+
+### 🐛 Bug Fixes
+
+- Fixed dns discovery not update backend health status - ([f6f8b0a](https://github.com/vicanso/pingap/commit/f6f8b0a998ae99e4fedbfd2a665fe0951ee8bf0c))
+
+### 🚜 Refactor
+
+- Update pingora version - ([aa8c96e](https://github.com/vicanso/pingap/commit/aa8c96e322be3f782f556bf300a82ad9e4a0bec7))
+- Support more params for opentelemetry - ([66694b0](https://github.com/vicanso/pingap/commit/66694b01374d19b1428bf0d34aa29dce574b769c))
+- Adjust auto reload and restart handler - ([b8f8799](https://github.com/vicanso/pingap/commit/b8f87997d96fc0ad4f6a70709e4e054d59302832))
+- Adjust conf parameter get from env - ([778d944](https://github.com/vicanso/pingap/commit/778d94487ee939a3a5d66b50e659f3f8ec9989b9))
+- Adjust open telemetry for each server service, not global - ([e022cf3](https://github.com/vicanso/pingap/commit/e022cf3c07791d453e3b6fc3882a7545e54b9d30))
+- Adjust http status code of error - ([db351fb](https://github.com/vicanso/pingap/commit/db351fb6dfe334f8bbeff2beebe640de854a6e90))
+- Adjust file cache stats - ([462f46f](https://github.com/vicanso/pingap/commit/462f46f99b880556c67e15df6a7cacb727f520de))
+- Set ip strategy for better performance - ([1e701c2](https://github.com/vicanso/pingap/commit/1e701c2cc00fba07090da36db03c88e9c5386324))
+- Adjust dns timeout for lookup ip - ([9b9a6b8](https://github.com/vicanso/pingap/commit/9b9a6b883c765dc978938e1e4df76ca1ad825f2c))
+- Adjust configuration diff handler - ([3f283f4](https://github.com/vicanso/pingap/commit/3f283f430dfeae7b9d6d3b44b6a09f70ae7b3285))
+- Adjust error message - ([d7a2d3c](https://github.com/vicanso/pingap/commit/d7a2d3cba0f530a3550bef994f40d3c409b927dd))
+- Adjust upstream and location update handler - ([1ea5e92](https://github.com/vicanso/pingap/commit/1ea5e92e8755ae5a433f22a80da0c411f1e6a4d2))
+- Adjust acme and rcgen - ([8a8b12d](https://github.com/vicanso/pingap/commit/8a8b12da9390ea2e5eefb63ef4f5116cd6090924))
+- Adjust update and health check frequency - ([25dbc7b](https://github.com/vicanso/pingap/commit/25dbc7bb98732ee0143f968cda6ac4f42d28a211))
+- Adjust http cache storage trait - ([aafde95](https://github.com/vicanso/pingap/commit/aafde955b39f20dbef099fd93f374ee810b7afd0))
+- Adjust webhook notification - ([8ec4fcc](https://github.com/vicanso/pingap/commit/8ec4fccbf34b4cba874b99f5a0e07d8f421ab17a))
+- Adjust prometheus timing - ([de46260](https://github.com/vicanso/pingap/commit/de46260e1cadfd714005e2e6b8f55228af1133f0))
+
 ## [0.6.2](https://github.com/vicanso/pingap/compare/v0.6.1..0.6.2) - 2024-07-26
 
 ### ⛰️  Features
