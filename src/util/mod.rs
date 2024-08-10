@@ -41,11 +41,7 @@ pub fn get_pkg_version() -> &'static str {
 
 /// Get the rustc version.
 pub fn get_rustc_version() -> String {
-    if let Ok(version) = rustc_version::version() {
-        version.to_string()
-    } else {
-        "--".to_string()
-    }
+    rustc_version_runtime::version().to_string()
 }
 
 /// Resolves the path as absolute.
