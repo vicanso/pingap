@@ -18,19 +18,20 @@ flowchart LR
 
 ## Feature
 
-- Server supports multiple locations, select the location by host and path
-- Using regular expression rewriting path
-- HTTP 1/2 end to end proxy, including h2c
-- TOML base configuration, file or etcd storage
-- Uptream and location changes are effective about 10s, and other configurations are effective after graceful restart
-- Template for http access log, supports more than 30 attributes
-- Admin Web UI configuration which is easy to use
-- Genrate TLS certificates from let's encrypt
-- Server supports multiple tls certificates for different domains
-- Support static and dns discovery
-- Notification events: `lets_encrypt`, `backend_status`, `diff_config`, `restart`, etc.
-- Http proxy plugins: `compression`, `static serve`, `limit`, `stats`, `mock`, etc.
-- Statistics at different stages: `upstream_connect_time`, `upstream_processing_time`, `compression_time`, `cache_lookup_time` and `cache_lock_time`
+- The service supports configuring multiple Locations, filtering locations by host and path, and matching and selecting them one by one according to the weight
+- Supports regular form configuration to rewrite Path
+- Support HTTP 1/2, including h2c
+- Configuration based on TOML format, the configuration method is very simple, and can be saved to files or etcd
+- Supports more than 10 Prometheus indicators, pull and push mode
+- Opentelemetry supports w3c context trace and jaeger trace
+- Frequently updated Upstream and Location related configuration adjustments take effect in 30 seconds, and after other application configurations are updated, the program is restarted gracefully without interruption
+- Templated configuration of access logs, which supports more than 30 related attribute configurations, and various parameters and indicators can be specified as needed
+- Web UI for config, simple and easy to use
+- Support let's encrypt, just set the domain of http server
+- TLS certificates of different domain names can be served in the same service port, and the matching certificate is automatically selected according to servername
+- Supports push of various events: lets_encrypt, backend_status, diff_config, restart, etc.
+- Many http plugins, such as cache service components, compression components with multiple compression algorithms, authentication components, limiting components, etc.
+- Provides statistical data at different stages, such as upstream_connect_time, upstream_processing_time, compression_time, cache_lookup_time and cache_lock_time, etc.
 
 ## Start
 
