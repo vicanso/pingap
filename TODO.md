@@ -1,11 +1,11 @@
 # TODO
 
-- [ ] better error handler
 - [ ] log rotate
 - [ ] support validate config before save(web)
 - [ ] support validate config for plugin
 - [ ] secret storage
 - [ ] support include comnand for configuraion
+- [x] better error handler
 - [x] support more params for open telemetry
 - [x] get arguments from env
 - [x] support OpenTelemetry

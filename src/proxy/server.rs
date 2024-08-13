@@ -147,6 +147,9 @@ pub struct ServerServices {
 const META_DEFAULTS: CacheMetaDefaults =
     CacheMetaDefaults::new(|_| Some(1), 1, 1);
 
+static HTTP_500_RESPONSE: Lazy<ResponseHeader> =
+    Lazy::new(|| error_resp::gen_error_response(500));
+
 impl Server {
     /// Create a new server for http proxy.
     pub fn new(conf: &ServerConf) -> Result<Self> {
@@ -925,14 +928,16 @@ impl ProxyHttp for Server {
         let mut resp = match code {
             502 => error_resp::HTTP_502_RESPONSE.clone(),
             400 => error_resp::HTTP_400_RESPONSE.clone(),
+            500 => HTTP_500_RESPONSE.clone(),
             _ => error_resp::gen_error_response(code),
         };
 
+        let error_type = e.etype().as_str();
         let content = self
             .error_template
             .replace("{{version}}", util::get_pkg_version())
             .replace("{{content}}", &e.to_string())
-            .replace("{{errorType}}", e.etype().as_str());
+            .replace("{{error_ype}}", error_type);
         let buf = Bytes::from(content);
         ctx.status = Some(
             StatusCode::from_u16(code)
@@ -944,9 +949,16 @@ impl ProxyHttp for Server {
             "text/html; charset=utf-8"
         };
         let _ = resp.insert_header(http::header::CONTENT_TYPE, content_type);
-        let _ = resp.insert_header("X-Pingap-EType", e.etype().as_str());
+        let _ = resp.insert_header("X-Pingap-EType", error_type);
         let _ = resp
             .insert_header(http::header::CONTENT_LENGTH, buf.len().to_string());
+
+        error!(
+            error = e.to_string(),
+            error_type,
+            path = server_session.req_header().uri.path(),
+            "fail to proxy"
+        );
 
         // TODO: we shouldn't be closing downstream connections on internally generated errors
         // and possibly other upstream connect() errors (connection refused, timeout, etc)
@@ -1016,7 +1028,9 @@ impl ProxyHttp for Server {
             let ip = if let Some(ip) = &ctx.client_ip {
                 ip.to_string()
             } else {
-                util::get_client_ip(session)
+                let ip = util::get_client_ip(session);
+                ctx.client_ip = Some(ip.clone());
+                ip
             };
             let mut attrs = vec![
                 KeyValue::new("http.client_ip", ip),
