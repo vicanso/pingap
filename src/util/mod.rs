@@ -283,15 +283,21 @@ pub fn convert_certificate_bytes(value: &Option<String>) -> Option<Vec<u8>> {
         if is_pem(value) {
             return Some(value.as_bytes().to_vec());
         } else {
-            let buf = STANDARD.decode(value).unwrap_or_default();
+            let buf = base64_decode(value).unwrap_or_default();
             return Some(buf);
         }
     }
     None
 }
 
-pub fn base64_encode(data: &str) -> String {
-    STANDARD.encode(data.as_bytes())
+pub fn base64_encode<T: AsRef<[u8]>>(data: T) -> String {
+    STANDARD.encode(data)
+}
+
+pub fn base64_decode<T: AsRef<[u8]>>(
+    data: T,
+) -> Result<Vec<u8>, base64::DecodeError> {
+    STANDARD.decode(data)
 }
 
 const B_100: usize = 100;

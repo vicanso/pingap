@@ -199,8 +199,15 @@ mod tests {
     use super::Dns;
     use pretty_assertions::assert_eq;
 
+    #[test]
+    fn test_dns_discover() {
+        let dns = Dns::new(&["github.com".to_string()], true, true).unwrap();
+        let ip_list = dns.lookup_ip().unwrap();
+        assert_eq!(true, !ip_list.is_empty());
+    }
+
     #[tokio::test]
-    async fn test_dns_discover() {
+    async fn test_async_dns_discover() {
         let dns = Dns::new(&["github.com".to_string()], true, true).unwrap();
         let ip_list = dns.tokio_lookup_ip().await.unwrap();
         assert_eq!(true, !ip_list.is_empty());

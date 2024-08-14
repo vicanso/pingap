@@ -754,7 +754,7 @@ mod tests {
     use super::{
         get_hash_value, new_backends, new_health_check, new_http_health_check,
         new_tcp_health_check, HealthCheckConf, State, Upstream, UpstreamConf,
-        UpstreamPeerTracer,
+        UpstreamPeerTracer, DNS_DISCOVERY,
     };
     use pingora::protocols::ALPN;
     use pingora::proxy::Session;
@@ -822,6 +822,14 @@ mod tests {
             true,
             true,
             "",
+        )
+        .unwrap();
+
+        let _ = new_backends(
+            &["github.com".to_string()],
+            true,
+            false,
+            DNS_DISCOVERY,
         )
         .unwrap();
     }

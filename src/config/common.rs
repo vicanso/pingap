@@ -15,9 +15,8 @@
 use super::{Error, Result};
 use crate::plugin::parse_plugins;
 use crate::proxy::{is_dns_discovery, Parser};
-use crate::util;
+use crate::util::{self, base64_decode};
 use arc_swap::ArcSwap;
-use base64::{engine::general_purpose::STANDARD, Engine};
 use bytesize::ByteSize;
 use http::{HeaderName, HeaderValue};
 use once_cell::sync::Lazy;
@@ -140,8 +139,7 @@ impl CertificateConf {
             let buf = if util::is_pem(value) {
                 value.as_bytes().to_vec()
             } else {
-                STANDARD
-                    .decode(value)
+                base64_decode(value)
                     .map_err(|e| Error::Base64Decode { source: e })?
             };
 
@@ -155,8 +153,7 @@ impl CertificateConf {
             let buf = if util::is_pem(value) {
                 value.as_bytes().to_vec()
             } else {
-                STANDARD
-                    .decode(value)
+                base64_decode(value)
                     .map_err(|e| Error::Base64Decode { source: e })?
             };
             let _ = X509::from_pem(&buf).map_err(|e| Error::Invalid {
@@ -167,8 +164,7 @@ impl CertificateConf {
             let buf = if util::is_pem(value) {
                 value.as_bytes().to_vec()
             } else {
-                STANDARD
-                    .decode(value)
+                base64_decode(value)
                     .map_err(|e| Error::Base64Decode { source: e })?
             };
             let _ = X509::from_pem(&buf).map_err(|e| Error::Invalid {
@@ -416,8 +412,7 @@ impl ServerConf {
             let buf = if util::is_pem(value) {
                 value.as_bytes().to_vec()
             } else {
-                STANDARD
-                    .decode(value)
+                base64_decode(value)
                     .map_err(|e| Error::Base64Decode { source: e })?
             };
 
@@ -431,8 +426,7 @@ impl ServerConf {
             let buf = if util::is_pem(value) {
                 value.as_bytes().to_vec()
             } else {
-                STANDARD
-                    .decode(value)
+                base64_decode(value)
                     .map_err(|e| Error::Base64Decode { source: e })?
             };
             let _ = X509::from_pem(&buf).map_err(|e| Error::Invalid {

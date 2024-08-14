@@ -29,9 +29,8 @@ use crate::http_extra::{HttpResponse, HTTP_HEADER_WWW_AUTHENTICATE};
 use crate::limit::TtlLruLimit;
 use crate::state::get_start_time;
 use crate::state::{restart_now, State};
-use crate::util;
+use crate::util::{self, base64_decode};
 use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::Bytes;
 use bytes::{BufMut, BytesMut};
 use bytesize::ByteSize;
@@ -129,7 +128,7 @@ impl TryFrom<&PluginConf> for AdminServeParams {
             if item.is_empty() {
                 continue;
             }
-            let _ = STANDARD.decode(item).map_err(|e| Error::Base64Decode {
+            let _ = base64_decode(item).map_err(|e| Error::Base64Decode {
                 category: PluginCategory::BasicAuth.to_string(),
                 source: e,
             })?;

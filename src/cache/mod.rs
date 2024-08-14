@@ -49,3 +49,33 @@ pub fn new_file_cache(dir: &str) -> Result<HttpCache> {
 }
 
 pub use http_cache::HttpCache;
+
+#[cfg(test)]
+mod tests {
+    use super::{new_file_cache, new_tiny_ufo_cache, Error};
+    use pretty_assertions::assert_eq;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_convert_error() {
+        let err = Error::Invalid {
+            message: "invalid error".to_string(),
+        };
+
+        let b_error: pingora::BError = err.into();
+
+        assert_eq!(
+            " HTTPStatus context: invalid error cause:  InternalError",
+            b_error.to_string()
+        );
+    }
+
+    #[test]
+    fn test_cache() {
+        let _ = new_tiny_ufo_cache(1024);
+
+        let dir = TempDir::new().unwrap();
+        let result = new_file_cache(&dir.into_path().to_string_lossy());
+        assert_eq!(true, result.is_ok());
+    }
+}

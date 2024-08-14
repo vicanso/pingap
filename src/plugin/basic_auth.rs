@@ -19,8 +19,8 @@ use super::{
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
+use crate::util::base64_decode;
 use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::Bytes;
 use http::HeaderValue;
 use http::StatusCode;
@@ -56,7 +56,7 @@ impl TryFrom<&PluginConf> for BasicAuth {
         };
         let mut authorizations = vec![];
         for item in get_str_slice_conf(value, "authorizations").iter() {
-            let _ = STANDARD.decode(item).map_err(|e| Error::Base64Decode {
+            let _ = base64_decode(item).map_err(|e| Error::Base64Decode {
                 category: PluginCategory::BasicAuth.to_string(),
                 source: e,
             })?;

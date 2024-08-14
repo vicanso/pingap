@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util;
-use base64::{engine::general_purpose::STANDARD, Engine};
+use crate::util::{self, base64_decode};
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
 
@@ -107,11 +106,11 @@ impl Certificate {
     }
     /// Get the cert pem data.
     pub fn get_cert(&self) -> Vec<u8> {
-        STANDARD.decode(&self.pem).unwrap_or_default()
+        base64_decode(&self.pem).unwrap_or_default()
     }
     /// Get the cert key data.
     pub fn get_key(&self) -> Vec<u8> {
-        STANDARD.decode(&self.key).unwrap_or_default()
+        base64_decode(&self.key).unwrap_or_default()
     }
 }
 

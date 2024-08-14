@@ -16,10 +16,9 @@ use super::{get_certificate_info, Certificate, Error, Result};
 use crate::http_extra::HttpResponse;
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::{restart_now, State};
-use crate::util;
+use crate::util::{self, base64_encode};
 use crate::webhook;
 use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD, Engine};
 use http::StatusCode;
 use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
@@ -355,8 +354,8 @@ async fn new_lets_encrypt(
         domains: domains.to_vec(),
         not_after,
         not_before,
-        pem: STANDARD.encode(cert_chain_pem.as_bytes()),
-        key: STANDARD.encode(private_key.serialize_pem().as_bytes()),
+        pem: base64_encode(&cert_chain_pem),
+        key: base64_encode(private_key.serialize_pem()),
     };
     let buf = serde_json::to_vec(&info).map_err(|e| Error::SerdeJson {
         category: "serde_certificate".to_string(),

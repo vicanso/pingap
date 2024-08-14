@@ -78,6 +78,7 @@ impl From<CacheObject> for Bytes {
     }
 }
 
+#[derive(Debug)]
 pub struct HttpCacheStats {
     pub reading: u32,
     pub writing: u32,

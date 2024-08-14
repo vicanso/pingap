@@ -16,9 +16,8 @@ use super::{get_step_conf, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NO_STORE};
 use crate::state::State;
-use crate::util;
+use crate::util::{self, base64_encode};
 use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::Bytes;
 use cookie::Cookie;
 use http::{header, HeaderValue, Method, StatusCode};
@@ -105,7 +104,7 @@ fn generate_token(key: &str) -> String {
     hasher.update(prefix.as_bytes());
     hasher.update(key.as_bytes());
     let hash256 = hasher.finalize();
-    format!("{prefix}.{}", STANDARD.encode(hash256))
+    format!("{prefix}.{}", base64_encode(hash256))
 }
 
 fn validate_token(key: &str, ttl: u64, value: &str) -> bool {
@@ -125,7 +124,7 @@ fn validate_token(key: &str, ttl: u64, value: &str) -> bool {
     hasher.update(format!("{}.{}", arr[0], arr[1]).as_bytes());
     hasher.update(key.as_bytes());
     let hash256 = hasher.finalize();
-    if arr[2] != STANDARD.encode(hash256) {
+    if arr[2] != base64_encode(hash256) {
         return false;
     }
     true
