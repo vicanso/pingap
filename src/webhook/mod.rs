@@ -62,19 +62,19 @@ impl Display for NotificationLevel {
     }
 }
 
-pub struct BackendObserveNotification {}
+pub struct BackendObserveNotification {
+    name: String,
+}
 
 #[async_trait]
 impl HealthObserve for BackendObserveNotification {
     async fn observe(&self, backend: &Backend, healthy: bool) {
         let addr = backend.addr.to_string();
+        let template = format!("upstream {}({addr}) becomes ", self.name);
         let info = if healthy {
-            (NotificationLevel::Info, format!("{addr} becomes healthy"))
+            (NotificationLevel::Info, template + "healthy")
         } else {
-            (
-                NotificationLevel::Error,
-                format!("{addr} becomes unhealthy"),
-            )
+            (NotificationLevel::Error, template + "unhealthy")
         };
         send(SendNotificationParams {
             category: NotificationCategory::BackendStatus,
@@ -85,8 +85,12 @@ impl HealthObserve for BackendObserveNotification {
     }
 }
 
-pub fn new_backend_observe_notification() -> Box<BackendObserveNotification> {
-    Box::new(BackendObserveNotification {})
+pub fn new_backend_observe_notification(
+    name: &str,
+) -> Box<BackendObserveNotification> {
+    Box::new(BackendObserveNotification {
+        name: name.to_string(),
+    })
 }
 
 pub struct SendNotificationParams {

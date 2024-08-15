@@ -231,19 +231,22 @@ fn update_peer_options(
     options
 }
 
-fn new_tcp_health_check(conf: &HealthCheckConf) -> TcpHealthCheck {
+fn new_tcp_health_check(name: &str, conf: &HealthCheckConf) -> TcpHealthCheck {
     let mut check = TcpHealthCheck::default();
     check.peer_template.options =
         update_peer_options(conf, check.peer_template.options.clone());
     check.consecutive_success = conf.consecutive_success;
     check.consecutive_failure = conf.consecutive_failure;
     check.health_changed_callback =
-        Some(webhook::new_backend_observe_notification());
+        Some(webhook::new_backend_observe_notification(name));
 
     check
 }
 
-fn new_http_health_check(conf: &HealthCheckConf) -> HttpHealthCheck {
+fn new_http_health_check(
+    name: &str,
+    conf: &HealthCheckConf,
+) -> HttpHealthCheck {
     let mut check = HttpHealthCheck::new(&conf.host, conf.schema == "https");
     check.peer_template.options =
         update_peer_options(conf, check.peer_template.options.clone());
@@ -252,7 +255,7 @@ fn new_http_health_check(conf: &HealthCheckConf) -> HttpHealthCheck {
     check.consecutive_failure = conf.consecutive_failure;
     check.reuse_connection = conf.reuse_connection;
     check.health_changed_callback =
-        Some(webhook::new_backend_observe_notification());
+        Some(webhook::new_backend_observe_notification(name));
     match RequestHeader::build("GET", conf.path.as_bytes(), None) {
         Ok(mut req) => {
             // 忽略append header fail
@@ -280,7 +283,7 @@ fn new_health_check(
         if health_check.is_empty() {
             let mut check = TcpHealthCheck::new();
             check.health_changed_callback =
-                Some(webhook::new_backend_observe_notification());
+                Some(webhook::new_backend_observe_notification(name));
             check.peer_template.options.connection_timeout =
                 Some(Duration::from_secs(3));
             info!(
@@ -299,9 +302,9 @@ fn new_health_check(
             );
             match health_check_conf.schema.as_str() {
                 "http" | "https" => {
-                    Box::new(new_http_health_check(&health_check_conf))
+                    Box::new(new_http_health_check(name, &health_check_conf))
                 },
-                _ => Box::new(new_tcp_health_check(&health_check_conf)),
+                _ => Box::new(new_tcp_health_check(name, &health_check_conf)),
             }
         };
     Ok((hc, health_check_frequency))
@@ -773,7 +776,7 @@ mod tests {
             r###"HealthCheckConf { schema: "tcp", host: "upstreamname", path: "", connection_timeout: 3s, read_timeout: 3s, check_frequency: 10s, reuse_connection: false, consecutive_success: 2, consecutive_failure: 1 }"###,
             format!("{tcp_check:?}")
         );
-        let tcp_check = new_tcp_health_check(&tcp_check);
+        let tcp_check = new_tcp_health_check("", &tcp_check);
         assert_eq!(1, tcp_check.consecutive_failure);
         assert_eq!(2, tcp_check.consecutive_success);
         assert_eq!(
@@ -786,7 +789,7 @@ mod tests {
             r###"HealthCheckConf { schema: "https", host: "upstreamname", path: "/ping?from=nginx", connection_timeout: 3s, read_timeout: 1s, check_frequency: 10s, reuse_connection: true, consecutive_success: 2, consecutive_failure: 1 }"###,
             format!("{http_check:?}")
         );
-        let http_check = new_http_health_check(&http_check);
+        let http_check = new_http_health_check("", &http_check);
         assert_eq!(1, http_check.consecutive_failure);
         assert_eq!(2, http_check.consecutive_success);
         assert_eq!(true, http_check.reuse_connection);
