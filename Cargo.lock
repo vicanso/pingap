@@ -2476,6 +2476,7 @@ dependencies = [
  "reqwest 0.12.5",
  "rust-embed",
  "rustc_version_runtime",
+ "scopeguard",
  "serde",
  "serde_json",
  "sha2",

@@ -19,6 +19,7 @@ use crate::util;
 use async_trait::async_trait;
 use bytes::Bytes;
 use prometheus::Histogram;
+use scopeguard::defer;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::SystemTime;
@@ -76,16 +77,14 @@ impl HttpCacheStorage for FileCache {
         let file = Path::new(&self.directory).join(key);
         // add reading count
         let count = self.reading.fetch_add(1, Ordering::Relaxed);
+        defer!(self.reading.fetch_sub(1, Ordering::Relaxed););
         if self.reading_max > 0 && count >= self.reading_max {
-            self.reading.fetch_sub(1, Ordering::Relaxed);
             return Err(Error::OverQuota {
                 max: self.reading_max,
                 message: "too many reading".to_string(),
             });
         }
         let result = fs::read(file).await;
-        // sub reading count
-        self.reading.fetch_sub(1, Ordering::Relaxed);
         self.read_time.observe(elapsed(start));
         let buf = match result {
             Ok(buf) => Ok(buf),
@@ -116,16 +115,14 @@ impl HttpCacheStorage for FileCache {
         let file = Path::new(&self.directory).join(key);
         // add writing count
         let count = self.writing.fetch_add(1, Ordering::Relaxed);
+        defer!(self.writing.fetch_sub(1, Ordering::Relaxed););
         if self.writing_max > 0 && count >= self.writing_max {
-            self.writing.fetch_sub(1, Ordering::Relaxed);
             return Err(Error::OverQuota {
                 max: self.writing_max,
                 message: "too many writing".to_string(),
             });
         }
         let result = fs::write(file, buf).await;
-        // sub writing count
-        self.writing.fetch_sub(1, Ordering::Relaxed);
         self.write_time.observe(elapsed(start));
         result.map_err(|e| Error::Io { source: e })
     }
