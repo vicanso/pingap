@@ -23,7 +23,7 @@ use crate::config;
 use crate::config::PluginStep;
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use crate::otel;
-use crate::plugin::get_plugins;
+use crate::plugin::{get_plugin, ADMIN_SERVER_PLUGIN};
 use crate::proxy::dynamic_certificate::TlsSettingParams;
 use crate::proxy::location::get_location;
 use crate::service::CommonServiceTask;
@@ -346,22 +346,18 @@ impl Server {
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<()> {
-        if let Some(plugins) = get_plugins() {
-            if let Some(plugin) =
-                plugins.get(util::ADMIN_SERVER_PLUGIN.as_str())
-            {
-                let result = plugin
-                    .handle_request(PluginStep::Request, session, ctx)
-                    .await?;
-                if let Some(resp) = result {
-                    ctx.status = Some(resp.status);
-                    resp.send(session).await?;
-                } else {
-                    return Err(util::new_internal_error(
-                        500,
-                        "Admin server is unavailable".to_string(),
-                    ));
-                }
+        if let Some(plugin) = get_plugin(ADMIN_SERVER_PLUGIN.as_str()) {
+            let result = plugin
+                .handle_request(PluginStep::Request, session, ctx)
+                .await?;
+            if let Some(resp) = result {
+                ctx.status = Some(resp.status);
+                resp.send(session).await?;
+            } else {
+                return Err(util::new_internal_error(
+                    500,
+                    "Admin server is unavailable".to_string(),
+                ));
             }
         }
         Ok(())

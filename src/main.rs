@@ -16,14 +16,15 @@ use crate::acme::{new_lets_encrypt_service, new_tls_validity_service};
 use crate::config::ETCD_PROTOCOL;
 use crate::service::new_auto_restart_service;
 use clap::Parser;
-use config::{PingapConf, PluginConf};
+use config::PingapConf;
 use crossbeam_channel::Sender;
 use otel::TracerService;
 use pingora::server;
 use pingora::server::configuration::Opt;
 use pingora::services::background::background_service;
 use proxy::{new_upstream_health_check_task, Server, ServerConf};
-use state::get_start_time;
+use state::{get_admin_addr, get_start_time, set_admin_addr};
+use std::collections::HashMap;
 use std::error::Error;
 use std::path::Path;
 use std::sync::Arc;
@@ -161,45 +162,16 @@ fn get_config(
     });
 }
 
-fn parse_admin_plugin(addr: &str) -> (ServerConf, String, PluginConf) {
-    let arr: Vec<&str> = addr.split('@').collect();
-    let mut addr = arr[0].to_string();
-    let mut authorization = "".to_string();
-    if arr.len() >= 2 {
-        authorization = arr[0].trim().to_string();
-        addr = arr[1].trim().to_string();
-    }
-    let data = format!(
-        r#"
-category = "admin"
-path = "/"
-authorizations = [
-    "{}"
-]
-remark = "Admin serve"
-"#,
-        authorization
-    );
-    (
-        ServerConf {
-            name: "pingap:admin".to_string(),
-            admin: true,
-            addr,
-            ..Default::default()
-        },
-        util::ADMIN_SERVER_PLUGIN.clone(),
-        toml::from_str::<PluginConf>(&data).unwrap(),
-    )
-}
-
 fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     logger::logger_try_init(logger::LoggerParams {
         ..Default::default()
     })?;
     let (server_conf, name, proxy_plugin_info) =
-        parse_admin_plugin(&args.admin.unwrap_or_default());
+        plugin::parse_admin_plugin(&args.admin.unwrap_or_default());
 
-    if let Err(e) = plugin::init_plugins(vec![(name, proxy_plugin_info)]) {
+    if let Err(e) =
+        plugin::try_init_plugins(&HashMap::from([(name, proxy_plugin_info)]))
+    {
         error!(error = e.to_string(), "init plugins fail",);
     }
     config::set_config_path(&args.conf);
@@ -277,6 +249,9 @@ fn parse_arguments() -> Args {
     }
     if !args.autoreload && !get_from_env("autoreload").is_empty() {
         args.autoreload = true;
+    }
+    if let Some(admin) = &args.admin {
+        set_admin_addr(admin);
     }
 
     args
@@ -385,22 +360,17 @@ fn run() -> Result<(), Box<dyn Error>> {
         ));
     }
 
-    let mut plugin_confs: Vec<(String, PluginConf)> = conf
-        .plugins
-        .iter()
-        .map(|(name, value)| (name.to_string(), value.clone()))
-        .collect();
+    if let Err(e) = plugin::try_init_plugins(&conf.plugins) {
+        error!(error = e.to_string(), "init plugins fail",);
+    }
 
     let mut server_conf_list: Vec<ServerConf> = conf.into();
-    if let Some(addr) = args.admin {
-        let (server_conf, name, proxy_plugin_info) = parse_admin_plugin(&addr);
-        plugin_confs.push((name, proxy_plugin_info));
+
+    if let Some(addr) = &get_admin_addr() {
+        let (server_conf, _, _) = plugin::parse_admin_plugin(addr);
         server_conf_list.push(server_conf);
     }
 
-    if let Err(e) = plugin::init_plugins(plugin_confs) {
-        error!(error = e.to_string(), "init plugins fail",);
-    }
     let mut enabled_lets_encrypt = false;
     let mut exits_80_server = false;
     for serve_conf in server_conf_list.iter() {
@@ -503,15 +473,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         new_upstream_health_check_task(Duration::from_secs(10)),
     ));
 
-    if let Some(plugins) = plugin::get_plugins() {
-        for (name, plugin) in plugins {
-            info!(
-                name,
-                category = plugin.category().to_string(),
-                step = plugin.step(),
-            );
-        }
-    }
+    plugin::list_plugins_summary();
+
     #[cfg(feature = "perf")]
     {
         my_server.add_service(background_service(

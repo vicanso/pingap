@@ -26,6 +26,16 @@ use tracing::{error, info};
 
 static START_TIME: Lazy<Duration> = Lazy::new(util::now);
 
+static ADMIN_ADDR: OnceCell<String> = OnceCell::new();
+
+pub fn set_admin_addr(addr: &str) {
+    ADMIN_ADDR.get_or_init(|| addr.to_string());
+}
+
+pub fn get_admin_addr() -> Option<String> {
+    ADMIN_ADDR.get().cloned()
+}
+
 static HOST_NAME: Lazy<String> = Lazy::new(|| {
     hostname::get()
         .unwrap_or_default()

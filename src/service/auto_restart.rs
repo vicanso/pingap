@@ -14,11 +14,11 @@
 
 use crate::config::{
     get_config_path, get_current_config, load_config, set_current_config,
-    PingapConf, CATEGORY_LOCATION, CATEGORY_UPSTREAM,
+    PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_UPSTREAM,
 };
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::restart;
-use crate::{proxy, webhook};
+use crate::{plugin, proxy, webhook};
 use async_trait::async_trait;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
@@ -62,13 +62,16 @@ async fn diff_and_update_config(
         // set upstream and location value
         hot_realod_config.upstreams = new_config.upstreams.clone();
         hot_realod_config.locations = new_config.locations.clone();
+        hot_realod_config.plugins = new_config.plugins.clone();
         let mut should_reload_upstream = false;
         let mut should_reload_location = false;
+        let mut should_reload_plugin = false;
 
         for category in updated_category_list {
             match category.as_str() {
                 CATEGORY_LOCATION => should_reload_location = true,
                 CATEGORY_UPSTREAM => should_reload_upstream = true,
+                CATEGORY_PLUGIN => should_reload_plugin = true,
                 _ => {},
             };
         }
@@ -89,6 +92,16 @@ async fn diff_and_update_config(
                 },
                 Ok(()) => {
                     info!("reload location success");
+                },
+            };
+        }
+        if should_reload_plugin {
+            match plugin::try_init_plugins(&new_config.plugins) {
+                Err(e) => {
+                    error!(error = e.to_string(), "reload plugin fail");
+                },
+                Ok(()) => {
+                    info!("reload plugin success");
                 },
             };
         }

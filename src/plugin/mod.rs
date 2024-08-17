@@ -14,15 +14,20 @@
 
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
-use crate::state::State;
+use crate::proxy::ServerConf;
+use crate::state::{get_admin_addr, State};
+use ahash::AHashMap;
+use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use bytes::Bytes;
-use once_cell::sync::OnceCell;
+use once_cell::sync::Lazy;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use snafu::Snafu;
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::Arc;
+use tracing::info;
 
 mod admin;
 mod basic_auth;
@@ -42,6 +47,40 @@ mod referer_restriction;
 mod request_id;
 mod response_headers;
 mod stats;
+
+pub static ADMIN_SERVER_PLUGIN: Lazy<String> =
+    Lazy::new(|| uuid::Uuid::new_v4().to_string());
+
+pub fn parse_admin_plugin(addr: &str) -> (ServerConf, String, PluginConf) {
+    let arr: Vec<&str> = addr.split('@').collect();
+    let mut addr = arr[0].to_string();
+    let mut authorization = "".to_string();
+    if arr.len() >= 2 {
+        authorization = arr[0].trim().to_string();
+        addr = arr[1].trim().to_string();
+    }
+    let data = format!(
+        r#"
+    category = "admin"
+    path = "/"
+    authorizations = [
+        "{}"
+    ]
+    remark = "Admin serve"
+    "#,
+        authorization
+    );
+    (
+        ServerConf {
+            name: "pingap:admin".to_string(),
+            admin: true,
+            addr,
+            ..Default::default()
+        },
+        ADMIN_SERVER_PLUGIN.clone(),
+        toml::from_str::<PluginConf>(&data).unwrap(),
+    )
+}
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -135,11 +174,11 @@ remark = "Generate a request id for service"
     ]
 }
 
-type Plugins = HashMap<String, Box<dyn Plugin>>;
-static PLUGINS: OnceCell<Plugins> = OnceCell::new();
-
+type Plugins = AHashMap<String, Arc<dyn Plugin>>;
+static PLUGINS: Lazy<ArcSwap<Plugins>> =
+    Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
 pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
-    let mut plguins: Plugins = HashMap::new();
+    let mut plguins: Plugins = AHashMap::new();
     for (name, conf) in confs.iter() {
         let name = name.to_string();
         let category = conf.get("category");
@@ -156,75 +195,75 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
         match category {
             PluginCategory::Limit => {
                 let l = limit::Limiter::new(conf)?;
-                plguins.insert(name, Box::new(l));
+                plguins.insert(name, Arc::new(l));
             },
             PluginCategory::Compression => {
                 let c = compression::Compression::new(conf)?;
-                plguins.insert(name, Box::new(c));
+                plguins.insert(name, Arc::new(c));
             },
             PluginCategory::Stats => {
                 let s = stats::Stats::new(conf)?;
-                plguins.insert(name, Box::new(s));
+                plguins.insert(name, Arc::new(s));
             },
             PluginCategory::Admin => {
                 let a = admin::AdminServe::new(conf)?;
-                plguins.insert(name, Box::new(a));
+                plguins.insert(name, Arc::new(a));
             },
             PluginCategory::Directory => {
                 let d = directory::Directory::new(conf)?;
-                plguins.insert(name, Box::new(d));
+                plguins.insert(name, Arc::new(d));
             },
             PluginCategory::Mock => {
                 let m = mock::MockResponse::new(conf)?;
-                plguins.insert(name, Box::new(m));
+                plguins.insert(name, Arc::new(m));
             },
             PluginCategory::RequestId => {
                 let r = request_id::RequestId::new(conf)?;
-                plguins.insert(name, Box::new(r));
+                plguins.insert(name, Arc::new(r));
             },
             PluginCategory::IpRestriction => {
                 let l = ip_restriction::IpRestriction::new(conf)?;
-                plguins.insert(name, Box::new(l));
+                plguins.insert(name, Arc::new(l));
             },
             PluginCategory::KeyAuth => {
                 let k = key_auth::KeyAuth::new(conf)?;
-                plguins.insert(name, Box::new(k));
+                plguins.insert(name, Arc::new(k));
             },
             PluginCategory::BasicAuth => {
                 let b = basic_auth::BasicAuth::new(conf)?;
-                plguins.insert(name, Box::new(b));
+                plguins.insert(name, Arc::new(b));
             },
             PluginCategory::Cache => {
                 let c = cache::Cache::new(conf)?;
-                plguins.insert(name, Box::new(c));
+                plguins.insert(name, Arc::new(c));
             },
             PluginCategory::Redirect => {
                 let r = redirect::Redirect::new(conf)?;
-                plguins.insert(name, Box::new(r));
+                plguins.insert(name, Arc::new(r));
             },
             PluginCategory::Ping => {
                 let p = ping::Ping::new(conf)?;
-                plguins.insert(name, Box::new(p));
+                plguins.insert(name, Arc::new(p));
             },
             PluginCategory::ResponseHeaders => {
                 let r = response_headers::ResponseHeaders::new(conf)?;
-                plguins.insert(name, Box::new(r));
+                plguins.insert(name, Arc::new(r));
             },
             PluginCategory::RefererRestriction => {
                 let r = referer_restriction::RefererRestriction::new(conf)?;
-                plguins.insert(name, Box::new(r));
+                plguins.insert(name, Arc::new(r));
             },
             PluginCategory::Csrf => {
                 let c = csrf::Csrf::new(conf)?;
-                plguins.insert(name, Box::new(c));
+                plguins.insert(name, Arc::new(c));
             },
             PluginCategory::Jwt => {
                 let auth = jwt::JwtAuth::new(conf)?;
-                plguins.insert(name.clone(), Box::new(auth));
+                plguins.insert(name.clone(), Arc::new(auth));
             },
             PluginCategory::Cors => {
                 let cors = cors::Cors::new(conf)?;
-                plguins.insert(name.clone(), Box::new(cors));
+                plguins.insert(name.clone(), Arc::new(cors));
             },
         };
     }
@@ -232,19 +271,37 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
     Ok(plguins)
 }
 
-pub fn init_plugins(confs: Vec<(String, PluginConf)>) -> Result<()> {
-    PLUGINS.get_or_try_init(|| {
-        let data = &mut confs.clone();
-        data.extend(get_builtin_proxy_plugins());
-        let plugins = parse_plugins(data.to_vec())?;
+pub fn try_init_plugins(plugins: &HashMap<String, PluginConf>) -> Result<()> {
+    let mut plugin_confs: Vec<(String, PluginConf)> = plugins
+        .iter()
+        .map(|(name, value)| (name.to_string(), value.clone()))
+        .collect();
 
-        Ok(plugins)
-    })?;
+    // add admin plugin
+    if let Some(addr) = &get_admin_addr() {
+        let (_, name, proxy_plugin_info) = parse_admin_plugin(addr);
+        plugin_confs.push((name, proxy_plugin_info));
+    }
+
+    plugin_confs.extend(get_builtin_proxy_plugins());
+    let plugins = parse_plugins(plugin_confs.to_vec())?;
+    PLUGINS.store(Arc::new(plugins));
+
     Ok(())
 }
 
-pub fn get_plugins() -> Option<&'static Plugins> {
-    PLUGINS.get()
+pub fn get_plugin(name: &str) -> Option<Arc<dyn Plugin>> {
+    PLUGINS.load().get(name).cloned()
+}
+
+pub fn list_plugins_summary() {
+    for (name, plugin) in PLUGINS.load().iter() {
+        info!(
+            name,
+            category = plugin.category().to_string(),
+            step = plugin.step(),
+        );
+    }
 }
 
 pub(crate) fn get_str_conf(value: &PluginConf, key: &str) -> String {
@@ -290,7 +347,7 @@ pub(crate) fn get_step_conf(value: &PluginConf) -> PluginStep {
 
 #[test]
 pub fn initialize_test_plugins() {
-    init_plugins(vec![
+    let plugins = HashMap::from([
         (
             "test:mock".to_string(),
             toml::from_str::<PluginConf>(
@@ -323,6 +380,6 @@ remove_headers = [
             )
             .unwrap(),
         ),
-    ])
-    .unwrap();
+    ]);
+    try_init_plugins(&plugins).unwrap();
 }

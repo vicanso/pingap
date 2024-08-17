@@ -112,15 +112,7 @@ struct BasicInfo {
     config_hash: String,
 }
 
-#[derive(Debug)]
-struct AdminServeParams {
-    path: String,
-    step: PluginStep,
-    authorizations: Vec<Vec<u8>>,
-    ip_fail_limit: i64,
-}
-
-impl TryFrom<&PluginConf> for AdminServeParams {
+impl TryFrom<&PluginConf> for AdminServe {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let mut authorizations = vec![];
@@ -138,14 +130,18 @@ impl TryFrom<&PluginConf> for AdminServeParams {
         if ip_fail_limit <= 0 {
             ip_fail_limit = 10;
         }
-        let params = Self {
-            step: get_step_conf(value),
+        let params = AdminServe {
+            plugin_step: get_step_conf(value),
             path: get_str_conf(value, "path"),
-            ip_fail_limit,
+            ip_fail_limit: TtlLruLimit::new(
+                512,
+                Duration::from_secs(5 * 60),
+                ip_fail_limit as usize,
+            ),
             authorizations,
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream]
-            .contains(&params.step)
+            .contains(&params.plugin_step)
         {
             return Err(Error::Invalid {
                 category: PluginCategory::Admin.to_string(),
@@ -160,18 +156,9 @@ impl TryFrom<&PluginConf> for AdminServeParams {
 impl AdminServe {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new admin server plugin");
-        let params = AdminServeParams::try_from(params)?;
+        let serve = AdminServe::try_from(params)?;
 
-        Ok(Self {
-            path: params.path,
-            plugin_step: params.step,
-            authorizations: params.authorizations,
-            ip_fail_limit: TtlLruLimit::new(
-                512,
-                Duration::from_secs(5 * 60),
-                params.ip_fail_limit as usize,
-            ),
-        })
+        Ok(serve)
     }
     fn auth_validate(&self, req_header: &RequestHeader) -> bool {
         if self.authorizations.is_empty() {
@@ -470,10 +457,7 @@ impl Plugin for AdminServe {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        get_method_path, AdminAsset, AdminServe, AdminServeParams,
-        EmbeddedStaticFile,
-    };
+    use super::{get_method_path, AdminAsset, AdminServe, EmbeddedStaticFile};
     use crate::plugin::Plugin;
     use crate::{
         config::set_config_path, config::PluginConf, http_extra::HttpResponse,
@@ -487,7 +471,7 @@ mod tests {
 
     #[test]
     fn test_admin_params() {
-        let params = AdminServeParams::try_from(
+        let params = AdminServe::try_from(
             &toml::from_str::<PluginConf>(
                 r#"
     category = "admin"
@@ -510,10 +494,10 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join(",")
         );
-        assert_eq!("request", params.step.to_string());
+        assert_eq!("request", params.plugin_step.to_string());
         assert_eq!("/", params.path);
 
-        let result = AdminServeParams::try_from(
+        let result = AdminServe::try_from(
             &toml::from_str::<PluginConf>(
                 r#"
     category = "admin"
@@ -531,7 +515,7 @@ mod tests {
             result.err().unwrap().to_string()
         );
 
-        let result = AdminServeParams::try_from(
+        let result = AdminServe::try_from(
             &toml::from_str::<PluginConf>(
                 r#"
     step = "response"

@@ -14,7 +14,7 @@
 
 use crate::config::{LocationConf, PluginStep};
 use crate::http_extra::{convert_header_value, convert_headers, HttpHeader};
-use crate::plugin::get_plugins;
+use crate::plugin::get_plugin;
 use crate::state::State;
 use crate::util;
 use ahash::AHashMap;
@@ -301,12 +301,9 @@ impl Location {
         let Some(plugins) = self.plugins.as_ref() else {
             return Ok(false);
         };
-        let Some(global_plugins) = get_plugins() else {
-            return Ok(false);
-        };
 
         for name in plugins.iter() {
-            if let Some(plugin) = global_plugins.get(name) {
+            if let Some(plugin) = get_plugin(name) {
                 debug!(name, step = step.to_string(), "handle request plugin");
                 let result = plugin.handle_request(step, session, ctx).await?;
                 if let Some(resp) = result {
@@ -332,11 +329,8 @@ impl Location {
         let Some(plugins) = self.plugins.as_ref() else {
             return Ok(None);
         };
-        let Some(global_plugins) = get_plugins() else {
-            return Ok(None);
-        };
         for name in plugins.iter() {
-            if let Some(plugin) = global_plugins.get(name) {
+            if let Some(plugin) = get_plugin(name) {
                 debug!(name, step = step.to_string(), "handle response plugin");
                 let data = plugin
                     .handle_response(step, session, ctx, upstream_response)
