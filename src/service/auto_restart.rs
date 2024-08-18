@@ -28,7 +28,7 @@ async fn diff_and_update_config(
     hot_reload_only: bool,
     current_config: PingapConf,
     new_config: PingapConf,
-) -> Result<(bool, Vec<String>), Box<dyn std::error::Error>> {
+) -> Result<(bool, Vec<String>, String), Box<dyn std::error::Error>> {
     let (updated_category_list, original_diff_result) =
         current_config.diff(&new_config);
     debug!(
@@ -38,9 +38,10 @@ async fn diff_and_update_config(
     );
     // no update date
     if original_diff_result.is_empty() {
-        return Ok((false, vec![]));
+        return Ok((false, vec![], "".to_string()));
     }
 
+    let mut reload_fail_messages = vec![];
     let mut hot_realod_config = current_config.clone();
     {
         // hot reload first,
@@ -78,7 +79,10 @@ async fn diff_and_update_config(
         if should_reload_upstream {
             match proxy::try_update_upstreams(&new_config.upstreams).await {
                 Err(e) => {
-                    error!(error = e.to_string(), "reload upstream fail");
+                    let error = e.to_string();
+                    reload_fail_messages
+                        .push(format!("upstream reload fail: {error}",));
+                    error!(error, "reload upstream fail");
                 },
                 Ok(()) => {
                     info!("reload upstream success");
@@ -88,7 +92,10 @@ async fn diff_and_update_config(
         if should_reload_location {
             match proxy::try_init_locations(&new_config.locations) {
                 Err(e) => {
-                    error!(error = e.to_string(), "reload location fail");
+                    let error = e.to_string();
+                    reload_fail_messages
+                        .push(format!("location reload fail: {error}",));
+                    error!(error, "reload location fail");
                 },
                 Ok(()) => {
                     info!("reload location success");
@@ -98,7 +105,10 @@ async fn diff_and_update_config(
         if should_reload_plugin {
             match plugin::try_init_plugins(&new_config.plugins) {
                 Err(e) => {
-                    error!(error = e.to_string(), "reload plugin fail");
+                    let error = e.to_string();
+                    reload_fail_messages
+                        .push(format!("plugin reload fail: {error}"));
+                    error!(error, "reload plugin fail");
                 },
                 Ok(()) => {
                     info!("reload plugin success");
@@ -111,7 +121,10 @@ async fn diff_and_update_config(
                 &new_config.locations,
             ) {
                 Err(e) => {
-                    error!(error = e.to_string(), "reload server fail");
+                    let error = e.to_string();
+                    reload_fail_messages
+                        .push(format!("server reload fail: {error}"));
+                    error!(error, "reload server fail");
                 },
                 Ok(()) => {
                     info!("reload server location success");
@@ -119,6 +132,8 @@ async fn diff_and_update_config(
             };
         }
     }
+
+    let reload_fail_message = reload_fail_messages.join(";");
 
     if hot_reload_only {
         let (updated_category_list, original_diff_result) =
@@ -130,11 +145,11 @@ async fn diff_and_update_config(
         );
         // no update date
         if original_diff_result.is_empty() {
-            return Ok((false, vec![]));
+            return Ok((false, vec![], reload_fail_message));
         }
         // update current config to be hot reload config
         set_current_config(&hot_realod_config);
-        return Ok((false, original_diff_result));
+        return Ok((false, original_diff_result, reload_fail_message));
     }
     // restart mode
     // update current config to be hot reload config
@@ -153,19 +168,17 @@ async fn diff_and_update_config(
         should_restart = false;
     }
 
-    Ok((should_restart, original_diff_result))
+    Ok((should_restart, original_diff_result, reload_fail_message))
 }
 
 async fn hot_reload(
     hot_reload_only: bool,
-) -> Result<(bool, Vec<String>), Box<dyn std::error::Error>> {
+) -> Result<(bool, Vec<String>, String), Box<dyn std::error::Error>> {
     let new_config = load_config(&get_config_path(), false).await?;
     new_config.validate()?;
     let current_config: PingapConf = get_current_config().as_ref().clone();
-    let (should_restart, diff_result) =
-        diff_and_update_config(hot_reload_only, current_config, new_config)
-            .await?;
-    Ok((should_restart, diff_result))
+
+    diff_and_update_config(hot_reload_only, current_config, new_config).await
 }
 
 struct AutoRestart {
@@ -207,12 +220,7 @@ impl ServiceTask for AutoRestart {
             true
         };
         match hot_reload(hot_reload_only).await {
-            Ok((should_restart, diff_result)) => {
-                let diff_result: Vec<_> = diff_result
-                    .iter()
-                    .filter(|item| !item.trim().is_empty())
-                    .map(|item| item.to_string())
-                    .collect();
+            Ok((should_restart, diff_result, reload_fail_message)) => {
                 if !diff_result.is_empty() {
                     // add more message for auto reload
                     let remark = if !should_restart {
@@ -227,7 +235,16 @@ impl ServiceTask for AutoRestart {
                         remark: Some(remark),
                         ..Default::default()
                     });
+                    if !reload_fail_message.is_empty() {
+                        webhook::send(webhook::SendNotificationParams {
+                            category: webhook::NotificationCategory::ReloadFail,
+                            msg: reload_fail_message,
+                            remark: Some("reload config fail".to_string()),
+                            ..Default::default()
+                        });
+                    }
                 }
+
                 if should_restart {
                     restart();
                 }

@@ -46,6 +46,7 @@ pub enum NotificationCategory {
     DiffConfig,
     Restart,
     RestartFail,
+    ReloadFail,
     TlsValidity,
     ParseCertificateFail,
     ServiceDiscoverFail,
