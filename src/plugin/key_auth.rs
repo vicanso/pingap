@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error,
-    Plugin, Result,
+    get_bool_conf, get_hash_key, get_step_conf, get_str_conf,
+    get_str_slice_conf, Error, Plugin, Result,
 };
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
@@ -39,11 +39,13 @@ pub struct KeyAuth {
     miss_authorization_resp: HttpResponse,
     unauthorized_resp: HttpResponse,
     hide_credentials: bool,
+    hash_value: String,
 }
 
 impl TryFrom<&PluginConf> for KeyAuth {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
+        let hash_value = get_hash_key(value);
         let step = get_step_conf(value);
 
         let delay = get_str_conf(value, "delay");
@@ -88,6 +90,7 @@ impl TryFrom<&PluginConf> for KeyAuth {
             });
         }
         let params = Self {
+            hash_value,
             keys,
             hide_credentials: get_bool_conf(value, "hide_credentials"),
             plugin_step: step,
@@ -127,12 +130,8 @@ impl KeyAuth {
 #[async_trait]
 impl Plugin for KeyAuth {
     #[inline]
-    fn step(&self) -> String {
-        self.plugin_step.to_string()
-    }
-    #[inline]
-    fn category(&self) -> PluginCategory {
-        PluginCategory::KeyAuth
+    fn hash_key(&self) -> String {
+        self.hash_value.clone()
     }
     #[inline]
     async fn handle_request(
@@ -269,9 +268,6 @@ hide_credentials = true
             .unwrap(),
         )
         .unwrap();
-
-        assert_eq!("key_auth", auth.category().to_string());
-        assert_eq!("request", auth.step().to_string());
 
         let headers = ["X-User: 123"].join("\r\n");
         let input_header =

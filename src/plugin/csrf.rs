@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_conf, Error, Plugin, Result};
+use super::{get_hash_key, get_step_conf, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NO_STORE};
 use crate::state::State;
@@ -35,14 +35,17 @@ pub struct Csrf {
     // ttl seconds
     ttl: u64,
     unauthorized_resp: HttpResponse,
+    hash_value: String,
 }
 
 impl TryFrom<&PluginConf> for Csrf {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
+        let hash_value = get_hash_key(value);
         let step = get_step_conf(value);
 
-        let mut params = Self {
+        let mut csrf = Self {
+            hash_value,
             plugin_step: step,
             name: get_str_conf(value, "name"),
             token_path: get_str_conf(value, "token_path"),
@@ -54,8 +57,8 @@ impl TryFrom<&PluginConf> for Csrf {
                 ..Default::default()
             },
         };
-        if params.name.is_empty() {
-            params.name = "x-csrf-token".to_string();
+        if csrf.name.is_empty() {
+            csrf.name = "x-csrf-token".to_string();
         }
         let ttl = get_str_conf(value, "ttl");
         if !ttl.is_empty() {
@@ -63,30 +66,30 @@ impl TryFrom<&PluginConf> for Csrf {
                 category: PluginCategory::Csrf.to_string(),
                 message: e.to_string(),
             })?;
-            params.ttl = ttl.as_secs();
+            csrf.ttl = ttl.as_secs();
         }
 
-        if params.token_path.is_empty() {
+        if csrf.token_path.is_empty() {
             return Err(Error::Invalid {
                 category: PluginCategory::Csrf.to_string(),
                 message: "Token path is not allowed empty".to_string(),
             });
         }
-        if params.key.is_empty() {
+        if csrf.key.is_empty() {
             return Err(Error::Invalid {
                 category: PluginCategory::Csrf.to_string(),
                 message: "Key is not allowed empty".to_string(),
             });
         }
 
-        if ![PluginStep::Request].contains(&params.plugin_step) {
+        if ![PluginStep::Request].contains(&csrf.plugin_step) {
             return Err(Error::Invalid {
                 category: PluginCategory::Csrf.to_string(),
                 message: "Csrf plugin should be executed at request or proxy upstream step".to_string(),
             });
         }
 
-        Ok(params)
+        Ok(csrf)
     }
 }
 
@@ -133,12 +136,8 @@ fn validate_token(key: &str, ttl: u64, value: &str) -> bool {
 #[async_trait]
 impl Plugin for Csrf {
     #[inline]
-    fn step(&self) -> String {
-        self.plugin_step.to_string()
-    }
-    #[inline]
-    fn category(&self) -> PluginCategory {
-        PluginCategory::Csrf
+    fn hash_key(&self) -> String {
+        self.hash_value.clone()
     }
     #[inline]
     async fn handle_request(
@@ -307,9 +306,6 @@ ttl = "1h"
             .unwrap(),
         )
         .unwrap();
-
-        assert_eq!("request", csrf.step().to_string());
-        assert_eq!("csrf", csrf.category().to_string());
 
         let headers = [""].join("\r\n");
         let input_header =

@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_step_conf, get_str_conf, get_str_slice_conf, Error, Plugin, Result,
+    get_hash_key, get_step_conf, get_str_conf, get_str_slice_conf, Error,
+    Plugin, Result,
 };
 use crate::cache::{new_file_cache, new_tiny_ufo_cache, HttpCache};
 use crate::config::{
@@ -67,11 +68,13 @@ pub struct Cache {
     max_ttl: Option<Duration>,
     namespace: Option<String>,
     headers: Option<Vec<String>>,
+    hash_value: String,
 }
 
 impl TryFrom<&PluginConf> for Cache {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
+        let hash_value = get_hash_key(value);
         let cache = CACHE_BACKEND.get_or_try_init(|| {
             let basic_conf = &get_current_config().basic;
             let size = if let Some(cache_max_size) = basic_conf.cache_max_size {
@@ -133,6 +136,7 @@ impl TryFrom<&PluginConf> for Cache {
             Some(headers)
         };
         let params = Self {
+            hash_value,
             http_cache: cache,
             plugin_step: step,
             eviction: value.contains_key("eviction"),
@@ -164,12 +168,8 @@ impl Cache {
 #[async_trait]
 impl Plugin for Cache {
     #[inline]
-    fn step(&self) -> String {
-        self.plugin_step.to_string()
-    }
-    #[inline]
-    fn category(&self) -> PluginCategory {
-        PluginCategory::Cache
+    fn hash_key(&self) -> String {
+        self.hash_value.clone()
     }
     #[inline]
     async fn handle_request(
@@ -291,9 +291,6 @@ max_ttl = "1m"
             .unwrap(),
         )
         .unwrap();
-
-        assert_eq!("request", cache.step().to_string());
-        assert_eq!("cache", cache.category().to_string());
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
         let input_header =

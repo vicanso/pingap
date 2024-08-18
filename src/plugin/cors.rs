@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_step_conf, get_str_conf, Error, Plugin, Result,
+    get_bool_conf, get_hash_key, get_step_conf, get_str_conf, Error, Plugin,
+    Result,
 };
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{convert_header_value, HttpHeader, HttpResponse};
@@ -34,11 +35,13 @@ pub struct Cors {
     path: Option<Regex>,
     allow_origin: HeaderValue,
     headers: Vec<HttpHeader>,
+    hash_value: String,
 }
 
 impl TryFrom<&PluginConf> for Cors {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
+        let hash_value = get_hash_key(value);
         let step = get_step_conf(value);
 
         let max_age = get_str_conf(value, "max_age");
@@ -115,13 +118,14 @@ impl TryFrom<&PluginConf> for Cors {
             ));
         }
 
-        let params = Self {
+        let cors = Self {
+            hash_value,
             plugin_step: step,
             path,
             allow_origin: format_header_value(&allow_origin)?,
             headers,
         };
-        if params.plugin_step != PluginStep::Request {
+        if cors.plugin_step != PluginStep::Request {
             return Err(Error::Invalid {
                 category: PluginCategory::Cors.to_string(),
                 message: "Cors plugin should be executed at request step"
@@ -129,7 +133,7 @@ impl TryFrom<&PluginConf> for Cors {
             });
         }
 
-        Ok(params)
+        Ok(cors)
     }
 }
 
@@ -157,12 +161,8 @@ impl Cors {
 #[async_trait]
 impl Plugin for Cors {
     #[inline]
-    fn step(&self) -> String {
-        self.plugin_step.to_string()
-    }
-    #[inline]
-    fn category(&self) -> PluginCategory {
-        PluginCategory::Cors
+    fn hash_key(&self) -> String {
+        self.hash_value.clone()
     }
     #[inline]
     async fn handle_request(
@@ -281,9 +281,6 @@ max_age = "60m"
             .unwrap(),
         )
         .unwrap();
-
-        assert_eq!("request", cors.step().to_string());
-        assert_eq!("cors", cors.category().to_string());
 
         let resp = cors
             .handle_request(

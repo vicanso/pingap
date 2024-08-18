@@ -99,10 +99,29 @@ pub enum Error {
     },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
+
+pub(crate) fn get_hash_key(conf: &PluginConf) -> String {
+    let mut keys: Vec<String> =
+        conf.keys().map(|item| item.to_string()).collect();
+    keys.sort();
+    let mut lines = vec![];
+    for key in keys {
+        let value = if let Some(value) = conf.get(&key) {
+            value.to_string()
+        } else {
+            "".to_string()
+        };
+        lines.push(format!("{key}:{value}"));
+    }
+    let hash = crc32fast::hash(lines.join("\n").as_bytes());
+    format!("{:X}", hash)
+}
+
 #[async_trait]
 pub trait Plugin: Sync + Send {
-    fn category(&self) -> PluginCategory;
-    fn step(&self) -> String;
+    fn hash_key(&self) -> String {
+        "".to_string()
+    }
     async fn handle_request(
         &self,
         _step: PluginStep,
@@ -284,7 +303,36 @@ pub fn try_init_plugins(plugins: &HashMap<String, PluginConf>) -> Result<()> {
     }
 
     plugin_confs.extend(get_builtin_proxy_plugins());
-    let plugins = parse_plugins(plugin_confs.to_vec())?;
+
+    let mut plugins = AHashMap::new();
+    let plugin_confs: Vec<(String, PluginConf)> = plugin_confs
+        .into_iter()
+        .filter(|(name, conf)| {
+            let conf_hash_key = get_hash_key(conf);
+            let mut exists = false;
+            if let Some(plugin) = get_plugin(name) {
+                exists = true;
+                // exists plugin with same config
+                if plugin.hash_key() == conf_hash_key {
+                    plugins.insert(name.to_string(), plugin);
+                    return false;
+                }
+            }
+            let step = get_step_conf(conf).to_string();
+            let category = if let Some(value) = conf.get("category") {
+                value.as_str().unwrap_or_default().to_string()
+            } else {
+                "".to_string()
+            };
+            if exists {
+                info!(name, step, category, "plugin will be reloaded");
+            } else {
+                info!(name, step, category, "plugin will be created");
+            }
+            true
+        })
+        .collect();
+    plugins.extend(parse_plugins(plugin_confs)?);
     PLUGINS.store(Arc::new(plugins));
 
     Ok(())
@@ -292,16 +340,6 @@ pub fn try_init_plugins(plugins: &HashMap<String, PluginConf>) -> Result<()> {
 
 pub fn get_plugin(name: &str) -> Option<Arc<dyn Plugin>> {
     PLUGINS.load().get(name).cloned()
-}
-
-pub fn list_plugins_summary() {
-    for (name, plugin) in PLUGINS.load().iter() {
-        info!(
-            name,
-            category = plugin.category().to_string(),
-            step = plugin.step(),
-        );
-    }
 }
 
 pub(crate) fn get_str_conf(value: &PluginConf, key: &str) -> String {

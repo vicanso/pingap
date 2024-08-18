@@ -15,7 +15,7 @@
 use super::{get_step_conf, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{convert_headers, HttpResponse};
-use crate::plugin::{get_int_conf, get_str_slice_conf};
+use crate::plugin::{get_hash_key, get_int_conf, get_str_slice_conf};
 use crate::state::State;
 use async_trait::async_trait;
 use http::StatusCode;
@@ -30,12 +30,14 @@ pub struct MockResponse {
     pub plugin_step: PluginStep,
     pub resp: HttpResponse,
     pub delay: Option<Duration>,
+    hash_value: String,
 }
 
 impl MockResponse {
     /// Creates a new mock response upstream, which will return a mock data.
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new mock plugin");
+        let hash_value = get_hash_key(params);
         let step = get_step_conf(params);
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&step) {
             return Err(Error::Invalid {
@@ -75,6 +77,7 @@ impl MockResponse {
         }
 
         Ok(MockResponse {
+            hash_value,
             resp,
             plugin_step: step,
             path,
@@ -86,12 +89,8 @@ impl MockResponse {
 #[async_trait]
 impl Plugin for MockResponse {
     #[inline]
-    fn step(&self) -> String {
-        self.plugin_step.to_string()
-    }
-    #[inline]
-    fn category(&self) -> PluginCategory {
-        PluginCategory::Mock
+    fn hash_key(&self) -> String {
+        self.hash_value.clone()
     }
     #[inline]
     /// Sends the mock data to client.
@@ -144,8 +143,6 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
         .unwrap();
 
         assert_eq!("/", params.path);
-        assert_eq!("request", params.step().to_string());
-        assert_eq!("mock", params.category().to_string());
 
         let result = MockResponse::new(
             &toml::from_str::<PluginConf>(

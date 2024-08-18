@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_conf, Error, Plugin, Result};
+use super::{get_hash_key, get_step_conf, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::{get_hostname, get_start_time, State};
@@ -42,14 +42,17 @@ struct ServerStats {
 pub struct Stats {
     path: String,
     plugin_step: PluginStep,
+    hash_value: String,
 }
 
 impl TryFrom<&PluginConf> for Stats {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
+        let hash_value = get_hash_key(value);
         let step = get_step_conf(value);
 
         let params = Self {
+            hash_value,
             plugin_step: step,
             path: get_str_conf(value, "path"),
         };
@@ -75,12 +78,8 @@ impl Stats {
 #[async_trait]
 impl Plugin for Stats {
     #[inline]
-    fn step(&self) -> String {
-        self.plugin_step.to_string()
-    }
-    #[inline]
-    fn category(&self) -> PluginCategory {
-        PluginCategory::Stats
+    fn hash_key(&self) -> String {
+        self.hash_value.clone()
     }
     #[inline]
     async fn handle_request(

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_conf, Error, Plugin, Result};
+use super::{get_hash_key, get_step_conf, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON};
 use crate::state::{ModifyResponseBody, State};
@@ -40,11 +40,13 @@ pub struct JwtAuth {
     algorithm: String,
     delay: Option<Duration>,
     unauthorized_resp: HttpResponse,
+    hash_value: String,
 }
 
 impl TryFrom<&PluginConf> for JwtAuth {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
+        let hash_value = get_hash_key(value);
         let header = get_str_conf(value, "header");
         let query = get_str_conf(value, "query");
         let cookie = get_str_conf(value, "cookie");
@@ -76,6 +78,7 @@ impl TryFrom<&PluginConf> for JwtAuth {
             None
         };
         let params = Self {
+            hash_value,
             plugin_step: get_step_conf(value),
             secret: get_str_conf(value, "secret"),
             auth_path: get_str_conf(value, "auth_path"),
@@ -127,12 +130,8 @@ struct JwtHeader {
 #[async_trait]
 impl Plugin for JwtAuth {
     #[inline]
-    fn step(&self) -> String {
-        self.plugin_step.to_string()
-    }
-    #[inline]
-    fn category(&self) -> PluginCategory {
-        PluginCategory::Jwt
+    fn hash_key(&self) -> String {
+        self.hash_value.clone()
     }
     #[inline]
     async fn handle_request(
@@ -368,9 +367,6 @@ header = "Authorization"
         )
         .unwrap();
 
-        assert_eq!("jwt", auth.category().to_string());
-        assert_eq!("request", auth.step().to_string());
-
         // auth success(hs256)
         let headers = ["Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoiSm9obiIsImFkbWluIjp0cnVlLCJleHAiOjIzNDgwNTUyNjV9.j6sYJ2dCCSxskwPmvHM7WniGCbkT30z2BrjfsuQLFJc"].join("\r\n");
         let input_header = format!("GET / HTTP/1.1\r\n{headers}\r\n\r\n");
@@ -502,7 +498,6 @@ auth_path = "/login"
             .unwrap(),
         )
         .unwrap();
-        assert_eq!("jwt", auth.category().to_string());
 
         let headers = [""].join("\r\n");
         let input_header = format!("GET /login HTTP/1.1\r\n{headers}\r\n\r\n");

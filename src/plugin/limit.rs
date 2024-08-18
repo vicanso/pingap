@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_int_conf, get_step_conf, get_str_conf, Error, Plugin, Result};
+use super::{
+    get_hash_key, get_int_conf, get_step_conf, get_str_conf, Error, Plugin,
+    Result,
+};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
@@ -41,11 +44,13 @@ pub struct Limiter {
     inflight: Option<Inflight>,
     rate: Option<Rate>,
     plugin_step: PluginStep,
+    hash_value: String,
 }
 
 impl TryFrom<&PluginConf> for Limiter {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
+        let hash_value = get_hash_key(value);
         let step = get_step_conf(value);
 
         let tag = match get_str_conf(value, "tag").as_str() {
@@ -72,6 +77,7 @@ impl TryFrom<&PluginConf> for Limiter {
         }
 
         let params = Self {
+            hash_value,
             tag,
             key: get_str_conf(value, "key"),
             max: get_int_conf(value, "max") as isize,
@@ -148,12 +154,8 @@ impl Limiter {
 #[async_trait]
 impl Plugin for Limiter {
     #[inline]
-    fn step(&self) -> String {
-        self.plugin_step.to_string()
-    }
-    #[inline]
-    fn category(&self) -> PluginCategory {
-        PluginCategory::Limit
+    fn hash_key(&self) -> String {
+        self.hash_value.clone()
     }
     #[inline]
     async fn handle_request(
@@ -258,8 +260,6 @@ max = 10
             .unwrap(),
         )
         .unwrap();
-        assert_eq!("limit", limiter.category().to_string());
-        assert_eq!("request", limiter.step().to_string());
 
         assert_eq!(LimitTag::Cookie, limiter.tag);
         let mut ctx = State {

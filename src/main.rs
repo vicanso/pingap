@@ -486,8 +486,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         new_upstream_health_check_task(Duration::from_secs(10)),
     ));
 
-    plugin::list_plugins_summary();
-
     #[cfg(feature = "perf")]
     {
         my_server.add_service(background_service(

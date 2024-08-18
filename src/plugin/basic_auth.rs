@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error,
-    Plugin, Result,
+    get_bool_conf, get_hash_key, get_step_conf, get_str_conf,
+    get_str_slice_conf, Error, Plugin, Result,
 };
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
@@ -37,11 +37,13 @@ pub struct BasicAuth {
     miss_authorization_resp: HttpResponse,
     unauthorized_resp: HttpResponse,
     delay: Option<Duration>,
+    hash_value: String,
 }
 
 impl TryFrom<&PluginConf> for BasicAuth {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
+        let hash_value = get_hash_key(value);
         let step = get_step_conf(value);
 
         let delay = get_str_conf(value, "delay");
@@ -69,6 +71,7 @@ impl TryFrom<&PluginConf> for BasicAuth {
             });
         }
         let params = Self {
+            hash_value,
             plugin_step: step,
             delay,
             hide_credentials: get_bool_conf(value, "hide_credentials"),
@@ -119,12 +122,8 @@ impl BasicAuth {
 #[async_trait]
 impl Plugin for BasicAuth {
     #[inline]
-    fn step(&self) -> String {
-        self.plugin_step.to_string()
-    }
-    #[inline]
-    fn category(&self) -> PluginCategory {
-        PluginCategory::BasicAuth
+    fn hash_key(&self) -> String {
+        self.hash_value.clone()
     }
     #[inline]
     async fn handle_request(
@@ -235,9 +234,6 @@ authorizations = [
             .unwrap(),
         )
         .unwrap();
-
-        assert_eq!("basic_auth", auth.category().to_string());
-        assert_eq!("request", auth.step().to_string());
 
         // auth success
         let headers = ["Authorization: Basic YWRtaW46MTIzMTIz"].join("\r\n");

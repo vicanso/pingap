@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_int_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error,
-    Plugin, Result,
+    get_hash_key, get_int_conf, get_step_conf, get_str_conf,
+    get_str_slice_conf, Error, Plugin, Result,
 };
 use crate::config::{
     self, save_config, BasicConf, CertificateConf, LocationConf,
@@ -94,6 +94,7 @@ pub struct AdminServe {
     pub path: String,
     pub authorizations: Vec<Vec<u8>>,
     pub plugin_step: PluginStep,
+    hash_value: String,
     ip_fail_limit: TtlLruLimit,
 }
 
@@ -115,6 +116,7 @@ struct BasicInfo {
 impl TryFrom<&PluginConf> for AdminServe {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
+        let hash_value = get_hash_key(value);
         let mut authorizations = vec![];
         for item in get_str_slice_conf(value, "authorizations").iter() {
             if item.is_empty() {
@@ -131,6 +133,7 @@ impl TryFrom<&PluginConf> for AdminServe {
             ip_fail_limit = 10;
         }
         let params = AdminServe {
+            hash_value,
             plugin_step: get_step_conf(value),
             path: get_str_conf(value, "path"),
             ip_fail_limit: TtlLruLimit::new(
@@ -326,12 +329,8 @@ fn get_method_path(session: &Session) -> (Method, String) {
 #[async_trait]
 impl Plugin for AdminServe {
     #[inline]
-    fn step(&self) -> String {
-        self.plugin_step.to_string()
-    }
-    #[inline]
-    fn category(&self) -> PluginCategory {
-        PluginCategory::Admin
+    fn hash_key(&self) -> String {
+        self.hash_value.clone()
     }
     async fn handle_request(
         &self,
@@ -458,7 +457,6 @@ impl Plugin for AdminServe {
 #[cfg(test)]
 mod tests {
     use super::{get_method_path, AdminAsset, AdminServe, EmbeddedStaticFile};
-    use crate::plugin::Plugin;
     use crate::{
         config::set_config_path, config::PluginConf, http_extra::HttpResponse,
     };
@@ -569,9 +567,6 @@ authorizations = [
             .unwrap(),
         )
         .unwrap();
-
-        assert_eq!("admin", serve.category().to_string());
-        assert_eq!("request", serve.step().to_string());
 
         let mut req_header = RequestHeader::build("GET", b"/", None).unwrap();
         req_header.insert_header("Authorization", "123").unwrap();

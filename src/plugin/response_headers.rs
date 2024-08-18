@@ -11,7 +11,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use super::{get_step_conf, get_str_slice_conf, Error, Plugin, Result};
+use super::{
+    get_hash_key, get_step_conf, get_str_slice_conf, Error, Plugin, Result,
+};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{convert_header, convert_header_value, HttpHeader};
 use crate::state::State;
@@ -28,11 +30,13 @@ pub struct ResponseHeaders {
     add_headers: Vec<HttpHeader>,
     remove_headers: Vec<HeaderName>,
     set_headers: Vec<HttpHeader>,
+    hash_value: String,
 }
 
 impl TryFrom<&PluginConf> for ResponseHeaders {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
+        let hash_value = get_hash_key(value);
         let step = get_step_conf(value);
 
         let mut add_headers = vec![];
@@ -66,6 +70,7 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
             remove_headers.push(item);
         }
         let params = Self {
+            hash_value,
             plugin_step: step,
             add_headers,
             set_headers,
@@ -92,12 +97,8 @@ impl ResponseHeaders {
 #[async_trait]
 impl Plugin for ResponseHeaders {
     #[inline]
-    fn step(&self) -> String {
-        self.plugin_step.to_string()
-    }
-    #[inline]
-    fn category(&self) -> PluginCategory {
-        PluginCategory::ResponseHeaders
+    fn hash_key(&self) -> String {
+        self.hash_value.clone()
     }
     #[inline]
     async fn handle_response(
@@ -222,9 +223,6 @@ remove_headers = [
             .unwrap(),
         )
         .unwrap();
-
-        assert_eq!("response_headers", response_headers.category().to_string());
-        assert_eq!("response", response_headers.step().to_string());
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
         let input_header =

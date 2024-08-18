@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_step_conf, get_str_conf, get_str_slice_conf, Error, Plugin, Result,
+    get_hash_key, get_step_conf, get_str_conf, get_str_slice_conf, Error,
+    Plugin, Result,
 };
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
@@ -31,11 +32,13 @@ pub struct RefererRestriction {
     prefix_referer_list: Vec<String>,
     restriction_category: String,
     forbidden_resp: HttpResponse,
+    hash_value: String,
 }
 
 impl TryFrom<&PluginConf> for RefererRestriction {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
+        let hash_value = get_hash_key(value);
         let step = get_step_conf(value);
         let mut referer_list = vec![];
         let mut prefix_referer_list = vec![];
@@ -53,6 +56,7 @@ impl TryFrom<&PluginConf> for RefererRestriction {
             message = "Request is forbidden".to_string();
         }
         let params = Self {
+            hash_value,
             plugin_step: step,
             prefix_referer_list,
             referer_list,
@@ -89,12 +93,8 @@ impl RefererRestriction {
 #[async_trait]
 impl Plugin for RefererRestriction {
     #[inline]
-    fn step(&self) -> String {
-        self.plugin_step.to_string()
-    }
-    #[inline]
-    fn category(&self) -> PluginCategory {
-        PluginCategory::RefererRestriction
+    fn hash_key(&self) -> String {
+        self.hash_value.clone()
     }
     #[inline]
     async fn handle_request(
@@ -194,8 +194,6 @@ type = "deny"
             .unwrap(),
         )
         .unwrap();
-        assert_eq!("referer_restriction", deny.category().to_string());
-        assert_eq!("request", deny.step().to_string());
 
         let headers = ["Referer: https://google.com/"].join("\r\n");
         let input_header =

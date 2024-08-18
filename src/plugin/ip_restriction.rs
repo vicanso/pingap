@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_step_conf, get_str_conf, get_str_slice_conf, Error, Plugin, Result,
+    get_hash_key, get_step_conf, get_str_conf, get_str_slice_conf, Error,
+    Plugin, Result,
 };
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
@@ -34,11 +35,13 @@ pub struct IpRestriction {
     ip_list: Vec<String>,
     restriction_category: String,
     forbidden_resp: HttpResponse,
+    hash_value: String,
 }
 
 impl TryFrom<&PluginConf> for IpRestriction {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
+        let hash_value = get_hash_key(value);
         let step = get_step_conf(value);
 
         let mut ip_net_list = vec![];
@@ -55,6 +58,7 @@ impl TryFrom<&PluginConf> for IpRestriction {
             message = "Request is forbidden".to_string();
         }
         let params = Self {
+            hash_value,
             plugin_step: step,
             ip_list,
             ip_net_list,
@@ -87,12 +91,8 @@ impl IpRestriction {
 #[async_trait]
 impl Plugin for IpRestriction {
     #[inline]
-    fn step(&self) -> String {
-        self.plugin_step.to_string()
-    }
-    #[inline]
-    fn category(&self) -> PluginCategory {
-        PluginCategory::IpRestriction
+    fn hash_key(&self) -> String {
+        self.hash_value.clone()
     }
     #[inline]
     async fn handle_request(
@@ -211,8 +211,6 @@ ip_list = [
             .unwrap(),
         )
         .unwrap();
-        assert_eq!("ip_restriction", deny.category().to_string());
-        assert_eq!("request", deny.step().to_string());
 
         let headers = ["X-Forwarded-For: 2.1.1.2"].join("\r\n");
         let input_header =

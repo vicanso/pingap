@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_int_conf, get_step_conf, get_str_conf, Error, Plugin, Result};
+use super::{
+    get_hash_key, get_int_conf, get_step_conf, get_str_conf, Error, Plugin,
+    Result,
+};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::http_extra::HTTP_HEADER_NAME_X_REQUEST_ID;
@@ -30,11 +33,13 @@ pub struct RequestId {
     algorithm: String,
     header_name: Option<HeaderName>,
     size: usize,
+    hash_value: String,
 }
 
 impl TryFrom<&PluginConf> for RequestId {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
+        let hash_value = get_hash_key(value);
         let step = get_step_conf(value);
         let header_name = get_str_conf(value, "header_name");
         let header_name = if header_name.is_empty() {
@@ -49,6 +54,7 @@ impl TryFrom<&PluginConf> for RequestId {
         };
 
         let params = Self {
+            hash_value,
             plugin_step: step,
             algorithm: get_str_conf(value, "algorithm"),
             size: get_int_conf(value, "size") as usize,
@@ -76,12 +82,8 @@ impl RequestId {
 #[async_trait]
 impl Plugin for RequestId {
     #[inline]
-    fn step(&self) -> String {
-        self.plugin_step.to_string()
-    }
-    #[inline]
-    fn category(&self) -> PluginCategory {
-        PluginCategory::RequestId
+    fn hash_key(&self) -> String {
+        self.hash_value.clone()
     }
     #[inline]
     async fn handle_request(
@@ -180,8 +182,6 @@ size = 10
             .unwrap(),
         )
         .unwrap();
-        assert_eq!("request_id", id.category().to_string());
-        assert_eq!("request", id.step().to_string());
 
         let headers = ["X-Request-Id: 123"].join("\r\n");
         let input_header =

@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_step_conf, get_str_conf, get_str_slice_conf, Error,
-    Plugin, Result,
+    get_bool_conf, get_hash_key, get_step_conf, get_str_conf,
+    get_str_slice_conf, Error, Plugin, Result,
 };
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{
@@ -119,6 +119,7 @@ pub struct Directory {
     headers: Option<Vec<HttpHeader>>,
     // support download
     download: bool,
+    hash_value: String,
 }
 
 async fn get_data(
@@ -168,6 +169,7 @@ fn get_cacheable_and_headers_from_meta(
 impl TryFrom<&PluginConf> for Directory {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
+        let hash_value = get_hash_key(value);
         let step = get_step_conf(value);
 
         let chunk_size = if let Ok(chunk_size) =
@@ -203,6 +205,7 @@ impl TryFrom<&PluginConf> for Directory {
         let cache_private = get_bool_conf(value, "private");
         let cache_private = if cache_private { Some(true) } else { None };
         let params = Self {
+            hash_value,
             autoindex: get_bool_conf(value, "autoindex"),
             index: get_str_conf(value, "index"),
             path: Path::new(&util::resolve_path(&get_str_conf(value, "path")))
@@ -285,12 +288,8 @@ fn get_autoindex_html(path: &Path) -> Result<String, String> {
 #[async_trait]
 impl Plugin for Directory {
     #[inline]
-    fn step(&self) -> String {
-        self.plugin_step.to_string()
-    }
-    #[inline]
-    fn category(&self) -> PluginCategory {
-        PluginCategory::Directory
+    fn hash_key(&self) -> String {
+        self.hash_value.clone()
     }
     async fn handle_request(
         &self,
@@ -464,8 +463,6 @@ download = true
         assert_eq!(3600, dir.max_age.unwrap_or_default());
         assert_eq!(true, dir.cache_private.unwrap_or_default());
         assert_eq!("/pingap/index.html", dir.index);
-        assert_eq!("directory", dir.category().to_string());
-        assert_eq!("request", dir.step().to_string());
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
         let input_header =

@@ -15,6 +15,7 @@
 use super::{get_step_conf, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
+use crate::plugin::get_hash_key;
 use crate::state::State;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -26,6 +27,7 @@ use tracing::debug;
 pub struct Ping {
     path: String,
     plugin_step: PluginStep,
+    hash_value: String,
 }
 static PONG_RESPONSE: Lazy<HttpResponse> = Lazy::new(|| HttpResponse {
     status: StatusCode::OK,
@@ -36,6 +38,7 @@ static PONG_RESPONSE: Lazy<HttpResponse> = Lazy::new(|| HttpResponse {
 impl Ping {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new ping plugin");
+        let hash_value = get_hash_key(params);
         let step = get_step_conf(params);
         if step != PluginStep::Request {
             return Err(Error::Invalid {
@@ -45,6 +48,7 @@ impl Ping {
             });
         }
         Ok(Self {
+            hash_value,
             path: get_str_conf(params, "path"),
             plugin_step: step,
         })
@@ -54,12 +58,8 @@ impl Ping {
 #[async_trait]
 impl Plugin for Ping {
     #[inline]
-    fn step(&self) -> String {
-        self.plugin_step.to_string()
-    }
-    #[inline]
-    fn category(&self) -> PluginCategory {
-        PluginCategory::Ping
+    fn hash_key(&self) -> String {
+        self.hash_value.clone()
     }
     #[inline]
     async fn handle_request(
@@ -100,8 +100,6 @@ path = "/ping"
         .unwrap();
         assert_eq!("request", ping.plugin_step.to_string());
         assert_eq!("/ping", ping.path);
-        assert_eq!("ping", ping.category().to_string());
-        assert_eq!("request", ping.step().to_string());
 
         let headers = [""].join("\r\n");
         let input_header = format!("GET /ping HTTP/1.1\r\n{headers}\r\n\r\n");

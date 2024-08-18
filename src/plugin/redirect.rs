@@ -18,6 +18,7 @@ use super::{
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::convert_headers;
 use crate::http_extra::HttpResponse;
+use crate::plugin::get_hash_key;
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
@@ -29,11 +30,13 @@ pub struct Redirect {
     prefix: String,
     http_to_https: bool,
     plugin_step: PluginStep,
+    hash_value: String,
 }
 
 impl Redirect {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new redirect plugin");
+        let hash_value = get_hash_key(params);
         let step = get_step_conf(params);
         if step != PluginStep::Request {
             return Err(Error::Invalid {
@@ -44,6 +47,7 @@ impl Redirect {
             });
         }
         Ok(Self {
+            hash_value,
             prefix: get_str_conf(params, "prefix"),
             http_to_https: get_bool_conf(params, "http_to_https"),
             plugin_step: step,
@@ -54,12 +58,8 @@ impl Redirect {
 #[async_trait]
 impl Plugin for Redirect {
     #[inline]
-    fn step(&self) -> String {
-        self.plugin_step.to_string()
-    }
-    #[inline]
-    fn category(&self) -> PluginCategory {
-        PluginCategory::Redirect
+    fn hash_key(&self) -> String {
+        self.hash_value.clone()
     }
     #[inline]
     async fn handle_request(
@@ -114,9 +114,6 @@ prefix = "/api"
             .unwrap(),
         )
         .unwrap();
-
-        assert_eq!("redirect", redirect.category().to_string());
-        assert_eq!("request", redirect.step().to_string());
 
         let headers = ["Host: github.com"].join("\r\n");
         let input_header =

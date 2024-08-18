@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_bool_conf, get_int_conf, Error, Plugin, Result};
-use crate::config::{PluginCategory, PluginConf, PluginStep};
+use super::{get_bool_conf, get_hash_key, get_int_conf, Error, Plugin, Result};
+use crate::config::{PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
@@ -41,11 +41,13 @@ pub struct Compression {
     support_compression: bool,
     decompression: Option<bool>,
     plugin_step: PluginStep,
+    hash_value: String,
 }
 
 impl TryFrom<&PluginConf> for Compression {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
+        let hash_value = get_hash_key(value);
         let mut decompression = None;
         if value.contains_key("decompression") {
             decompression = Some(get_bool_conf(value, "decompression"));
@@ -56,6 +58,7 @@ impl TryFrom<&PluginConf> for Compression {
         let support_compression = gzip_level + br_level + zstd_level > 0;
 
         let params = Self {
+            hash_value,
             gzip_level,
             br_level,
             zstd_level,
@@ -78,12 +81,8 @@ impl Compression {
 #[async_trait]
 impl Plugin for Compression {
     #[inline]
-    fn step(&self) -> String {
-        self.plugin_step.to_string()
-    }
-    #[inline]
-    fn category(&self) -> PluginCategory {
-        PluginCategory::Compression
+    fn hash_key(&self) -> String {
+        self.hash_value.clone()
     }
     #[inline]
     async fn handle_request(
@@ -211,9 +210,6 @@ zstd_level = 7
             .unwrap(),
         )
         .unwrap();
-
-        assert_eq!("compression", compression.category().to_string());
-        assert_eq!("early_request", compression.step().to_string());
 
         // gzip
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
