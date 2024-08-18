@@ -34,10 +34,11 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tracing::{error, info};
 
-static LETS_ENCRYPT: OnceCell<Mutex<HashMap<String, String>>> = OnceCell::new();
+static LETS_ENCRYPT_CHALLENGE: OnceCell<Mutex<HashMap<String, String>>> =
+    OnceCell::new();
 
-fn get_lets_encrypt() -> &'static Mutex<HashMap<String, String>> {
-    LETS_ENCRYPT.get_or_init(|| Mutex::new(HashMap::new()))
+fn get_lets_encrypt_challenge() -> &'static Mutex<HashMap<String, String>> {
+    LETS_ENCRYPT_CHALLENGE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 struct LetsEncryptService {
     // the file for saving certificate
@@ -79,28 +80,33 @@ impl ServiceTask for LetsEncryptService {
         } else {
             true
         };
-        if should_renew_now {
-            match new_lets_encrypt(&self.certificate_file, domains).await {
-                Ok(()) => {
-                    info!(
-                        domains = domains.join(","),
-                        "renew certificate success"
-                    );
-                    if let Err(e) = restart_now() {
-                        error!(
-                            error = e.to_string(),
-                            domains = domains.join(","),
-                            "restart fail"
-                        );
-                    }
-                },
-                Err(e) => error!(
-                    error = e.to_string(),
-                    domains = domains.join(","),
-                    "renew certificate fail"
-                ),
-            };
+        if !should_renew_now {
+            return None;
         }
+        match new_lets_encrypt(&self.certificate_file, domains).await {
+            Ok(()) => {
+                info!(domains = domains.join(","), "renew certificate success");
+                webhook::send(webhook::SendNotificationParams {
+                    category: webhook::NotificationCategory::LetsEncrypt,
+                    msg: "Generate new cert from lets encrypt".to_string(),
+                    remark: Some(format!("Domains: {domains:?}")),
+                    ..Default::default()
+                });
+
+                if let Err(e) = restart_now() {
+                    error!(
+                        error = e.to_string(),
+                        domains = domains.join(","),
+                        "restart fail"
+                    );
+                }
+            },
+            Err(e) => error!(
+                error = e.to_string(),
+                domains = domains.join(","),
+                "renew certificate fail"
+            ),
+        };
         None
     }
     fn description(&self) -> String {
@@ -137,7 +143,7 @@ pub async fn handle_lets_encrypt(
     if path.starts_with("/.well-known/acme-challenge/") {
         let value = {
             // token auth
-            let data = get_lets_encrypt().lock().await;
+            let data = get_lets_encrypt_challenge().lock().await;
             let v = data.get(path).ok_or_else(|| {
                 util::new_internal_error(400, "token not found".to_string())
             })?;
@@ -236,7 +242,7 @@ async fn new_lets_encrypt(
             format!("/.well-known/acme-challenge/{}", challenge.token);
         info!(well_known_path, "let's encrypt well known path",);
 
-        let mut map = get_lets_encrypt().lock().await;
+        let mut map = get_lets_encrypt_challenge().lock().await;
         map.insert(well_known_path, key_auth.as_str().to_string());
 
         challenges.push((identifier, &challenge.url));
@@ -369,12 +375,6 @@ async fn new_lets_encrypt(
         certificate_file = format!("{certificate_file:?}"),
         "write certificate success"
     );
-    webhook::send(webhook::SendNotificationParams {
-        category: webhook::NotificationCategory::LetsEncrypt,
-        msg: "Generate new cert from lets encrypt".to_string(),
-        remark: Some(format!("Domains: {domains:?}")),
-        ..Default::default()
-    });
 
     Ok(())
 }
