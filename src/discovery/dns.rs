@@ -48,6 +48,8 @@ impl Dns {
 
         if self.ipv4_only {
             options.ip_strategy = LookupIpStrategy::Ipv4Only;
+        } else {
+            options.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
         }
 
         Ok((config, options))
@@ -55,6 +57,9 @@ impl Dns {
     fn lookup_ip(&self) -> Result<Vec<LookupIp>> {
         let mut ip_list = vec![];
         let (config, mut options) = self.read_system_conf()?;
+        // lookup ip only use for init,
+        // subsequent lookup will use async
+        // so set attempts to 1 and timeout 3s
         options.attempts = 1;
         options.timeout = Duration::from_secs(3);
 

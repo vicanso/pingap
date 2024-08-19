@@ -21,7 +21,6 @@ use crate::http_extra::{convert_header_value, HttpHeader, HttpResponse};
 use crate::state::State;
 use crate::util;
 use async_trait::async_trait;
-use bytes::Bytes;
 use http::{header, HeaderValue};
 use humantime::parse_duration;
 use pingora::http::ResponseHeader;
@@ -196,18 +195,18 @@ impl Plugin for Cors {
         session: &mut Session,
         ctx: &mut State,
         upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<Option<Bytes>> {
+    ) -> pingora::Result<()> {
         if step != PluginStep::Response {
-            return Ok(None);
+            return Ok(());
         }
         if let Some(reg) = &self.path {
             // not match path
             if !reg.is_match(session.req_header().uri.path()) {
-                return Ok(None);
+                return Ok(());
             }
         }
         if session.get_header(header::ORIGIN).is_none() {
-            return Ok(None);
+            return Ok(());
         }
 
         let headers = self
@@ -216,7 +215,7 @@ impl Plugin for Cors {
         for (name, value) in &headers {
             let _ = upstream_response.insert_header(name, value);
         }
-        Ok(None)
+        Ok(())
     }
 }
 

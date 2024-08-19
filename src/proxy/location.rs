@@ -291,6 +291,7 @@ impl Location {
             }
         }
     }
+    /// Run request plugins, if return Ok(true), the request will be done.
     #[inline]
     pub async fn handle_request_plugin(
         &self,
@@ -332,12 +333,9 @@ impl Location {
         for name in plugins.iter() {
             if let Some(plugin) = get_plugin(name) {
                 debug!(name, step = step.to_string(), "handle response plugin");
-                let data = plugin
+                plugin
                     .handle_response(step, session, ctx, upstream_response)
                     .await?;
-                if data.is_some() {
-                    return Ok(data);
-                }
             }
         }
         Ok(None)

@@ -100,6 +100,7 @@ fn parse_certificate(
     let tls_chain =
         util::convert_certificate_bytes(&certificate_config.tls_chain);
     let chain_certificate = if let Some(value) = &tls_chain {
+        // ingore chain error
         X509::from_pem(value).ok()
     } else if category == LETS_ENCRYPT {
         match info.get_issuer_common_name().as_str() {
@@ -248,15 +249,13 @@ impl DynamicCertificate {
                     .clear_options(pingora::tls::ssl::SslOptions::NO_TLSV1_1);
             }
         }
-        if let Some(version) =
-            util::convert_tls_version(&params.tls_max_version)
-        {
-            if let Err(e) = tls_settings.set_max_proto_version(Some(version)) {
-                error!(
-                    error = e.to_string(),
-                    name, "set tls max proto version fail"
-                );
-            }
+        if let Err(e) = tls_settings.set_max_proto_version(
+            util::convert_tls_version(&params.tls_max_version),
+        ) {
+            error!(
+                error = e.to_string(),
+                name, "set tls max proto version fail"
+            );
         }
 
         // tls_settings.set_min_proto_version(version)

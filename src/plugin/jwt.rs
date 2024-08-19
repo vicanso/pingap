@@ -220,12 +220,12 @@ impl Plugin for JwtAuth {
         session: &mut Session,
         ctx: &mut State,
         upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<Option<Bytes>> {
+    ) -> pingora::Result<()> {
         if step != PluginStep::Response || self.auth_path.is_empty() {
-            return Ok(None);
+            return Ok(());
         }
         if session.req_header().uri.path() != self.auth_path {
-            return Ok(None);
+            return Ok(());
         }
         upstream_response.remove_header(&http::header::CONTENT_LENGTH);
         let json = HTTP_HEADER_CONTENT_JSON.clone();
@@ -238,7 +238,7 @@ impl Plugin for JwtAuth {
             secret: self.secret.clone(),
         }));
 
-        Ok(None)
+        Ok(())
     }
 }
 

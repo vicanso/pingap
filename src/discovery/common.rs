@@ -21,7 +21,7 @@ use std::collections::BTreeSet;
 use std::net::ToSocketAddrs;
 
 /// Create a static discovery, execute it only once.
-/// it will resolve the domain to socket address at the beginning stage.
+/// It will resolve the domain to socket address at the beginning stage.
 pub fn new_common_discover_backends(
     addrs: &[String],
     tls: bool,

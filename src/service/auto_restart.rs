@@ -171,7 +171,7 @@ async fn diff_and_update_config(
     Ok((should_restart, original_diff_result, reload_fail_message))
 }
 
-async fn hot_reload(
+async fn update_application_config(
     hot_reload_only: bool,
 ) -> Result<(bool, Vec<String>, String), Box<dyn std::error::Error>> {
     let new_config = load_config(&get_config_path(), false).await?;
@@ -219,7 +219,7 @@ impl ServiceTask for AutoRestart {
         } else {
             true
         };
-        match hot_reload(hot_reload_only).await {
+        match update_application_config(hot_reload_only).await {
             Ok((should_restart, diff_result, reload_fail_message)) => {
                 if !diff_result.is_empty() {
                     // add more message for auto reload

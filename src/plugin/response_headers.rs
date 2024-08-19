@@ -18,7 +18,6 @@ use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{convert_header, convert_header_value, HttpHeader};
 use crate::state::State;
 use async_trait::async_trait;
-use bytes::Bytes;
 use http::header::HeaderName;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
@@ -107,9 +106,9 @@ impl Plugin for ResponseHeaders {
         session: &mut Session,
         ctx: &mut State,
         upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<Option<Bytes>> {
+    ) -> pingora::Result<()> {
         if step != self.plugin_step {
-            return Ok(None);
+            return Ok(());
         }
         // add --> remove --> set
         // ingore error
@@ -130,7 +129,7 @@ impl Plugin for ResponseHeaders {
                 let _ = upstream_response.insert_header(name, value);
             }
         }
-        Ok(None)
+        Ok(())
     }
 }
 

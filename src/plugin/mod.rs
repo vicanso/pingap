@@ -19,7 +19,6 @@ use crate::state::{get_admin_addr, State};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use bytes::Bytes;
 use once_cell::sync::Lazy;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
@@ -136,8 +135,8 @@ pub trait Plugin: Sync + Send {
         _session: &mut Session,
         _ctx: &mut State,
         _upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<Option<Bytes>> {
-        Ok(None)
+    ) -> pingora::Result<()> {
+        Ok(())
     }
 }
 
