@@ -20,7 +20,7 @@ use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::restart;
 use crate::{plugin, proxy, webhook};
 use async_trait::async_trait;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 use tracing::{debug, error, info};
 
@@ -184,6 +184,7 @@ async fn update_application_config(
 struct AutoRestart {
     restart_unit: u32,
     only_hot_reload: bool,
+    running_hot_reload: AtomicBool,
     count: AtomicU32,
 }
 
@@ -192,15 +193,16 @@ pub fn new_auto_restart_service(
     only_hot_reload: bool,
 ) -> CommonServiceTask {
     let mut restart_unit = 1_u32;
-    let unit = Duration::from_secs(30);
+    let unit = Duration::from_secs(10);
     if interval > unit {
         restart_unit = (interval.as_secs() / unit.as_secs()) as u32;
     }
 
     CommonServiceTask::new(
-        "Auto restart checker",
+        "Auto restart detector",
         interval.min(unit),
         AutoRestart {
+            running_hot_reload: AtomicBool::new(false),
             only_hot_reload,
             restart_unit,
             count: AtomicU32::new(0),
@@ -219,6 +221,8 @@ impl ServiceTask for AutoRestart {
         } else {
             true
         };
+        self.running_hot_reload
+            .store(hot_reload_only, Ordering::Relaxed);
         match update_application_config(hot_reload_only).await {
             Ok((should_restart, diff_result, reload_fail_message)) => {
                 if !diff_result.is_empty() {
@@ -256,6 +260,10 @@ impl ServiceTask for AutoRestart {
         None
     }
     fn description(&self) -> String {
-        "pingap will be restart if config changed".to_string()
+        if self.running_hot_reload.load(Ordering::Relaxed) {
+            "configuration hot reload detect".to_string()
+        } else {
+            "configuration restart detect".to_string()
+        }
     }
 }

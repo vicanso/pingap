@@ -36,6 +36,9 @@ bloat:
 outdated:
 	cargo outdated
 
+unused-features:
+	unused-features analyze
+
 test:
 	cargo test
 
