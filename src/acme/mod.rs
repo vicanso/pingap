@@ -58,7 +58,7 @@ pub struct CertificateInfo {
 impl CertificateInfo {
     /// Get the common name of certificate issuer
     pub fn get_issuer_common_name(&self) -> String {
-        let re = regex::Regex::new(r"CN=(?P<CN>\S+)").unwrap();
+        let re = regex::Regex::new(r"CN=(?P<CN>[\S ]+)").unwrap();
         if let Some(caps) = re.captures(&self.issuer) {
             return caps["CN"].to_string();
         }
@@ -118,13 +118,13 @@ mod lets_encrypt;
 mod validity_checker;
 
 pub use lets_encrypt::{
-    get_lets_encrypt_cert, handle_lets_encrypt, new_lets_encrypt_service,
+    get_lets_encrypt_certificate, handle_lets_encrypt, new_lets_encrypt_service,
 };
 pub use validity_checker::new_tls_validity_service;
 
 #[cfg(test)]
 mod tests {
-    use super::Certificate;
+    use super::{get_certificate_info, Certificate};
     use pretty_assertions::assert_eq;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -137,11 +137,53 @@ mod tests {
         let mut cert = Certificate {
             not_before: ts - 10,
             not_after: ts + 3 * 24 * 3600,
+            pem: "cGluZ2Fw".to_string(),
+            key: "cGluZ2FwLWtleQ==".to_string(),
             ..Default::default()
         };
         assert_eq!(true, cert.valid());
 
         cert.not_after = ts;
         assert_eq!(false, cert.valid());
+
+        assert_eq!(b"pingap".to_vec(), cert.get_cert());
+        assert_eq!(b"pingap-key".to_vec(), cert.get_key());
+    }
+
+    #[test]
+    fn test_get_certificate_info() {
+        let data = r###"-----BEGIN CERTIFICATE-----
+MIID/TCCAmWgAwIBAgIQJUGCkB1VAYha6fGExkx0KTANBgkqhkiG9w0BAQsFADBV
+MR4wHAYDVQQKExVta2NlcnQgZGV2ZWxvcG1lbnQgQ0ExFTATBgNVBAsMDHZpY2Fu
+c29AdHJlZTEcMBoGA1UEAwwTbWtjZXJ0IHZpY2Fuc29AdHJlZTAeFw0yNDA3MDYw
+MjIzMzZaFw0yNjEwMDYwMjIzMzZaMEAxJzAlBgNVBAoTHm1rY2VydCBkZXZlbG9w
+bWVudCBjZXJ0aWZpY2F0ZTEVMBMGA1UECwwMdmljYW5zb0B0cmVlMIIBIjANBgkq
+hkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAv5dbylSPQNARrpT/Rn7qZf6JmH3cueMp
+YdOpctuPYeefT0Jdgp67bg17fU5pfyR2BWYdwyvHCNmKqLdYPx/J69hwTiVFMOcw
+lVQJjbzSy8r5r2cSBMMsRaAZopRDnPy7Ls7Ji+AIT4vshUgL55eR7ACuIJpdtUYm
+TzMx9PTA0BUDkit6z7bTMaEbjDmciIBDfepV4goHmvyBJoYMIjnAwnTFRGRs/QJN
+d2ikFq999fRINzTDbRDP1K0Kk6+zYoFAiCMs9lEDymu3RmiWXBXpINR/Sv8CXtz2
+9RTVwTkjyiMOPY99qBfaZTiy+VCjcwTGKPyus1axRMff4xjgOBewOwIDAQABo14w
+XDAOBgNVHQ8BAf8EBAMCBaAwEwYDVR0lBAwwCgYIKwYBBQUHAwEwHwYDVR0jBBgw
+FoAUhU5Igu3uLUabIqUhUpVXjk1JVtkwFAYDVR0RBA0wC4IJcGluZ2FwLmlvMA0G
+CSqGSIb3DQEBCwUAA4IBgQDBimRKrqnEG65imKriM2QRCEfdB6F/eP9HYvPswuAP
+tvQ6m19/74qbtkd6vjnf6RhMbj9XbCcAJIhRdnXmS0vsBrLDsm2q98zpg6D04F2E
+L++xTiKU6F5KtejXcTHHe23ZpmD2XilwcVDeGFu5BEiFoRH9dmqefGZn3NIwnIeD
+Yi31/cL7BoBjdWku5Qm2nCSWqy12ywbZtQCbgbzb8Me5XZajeGWKb8r6D0Nb+9I9
+OG7dha1L3kxerI5VzVKSiAdGU0C+WcuxfsKAP8ajb1TLOlBaVyilfqmiF457yo/2
+PmTYzMc80+cQWf7loJPskyWvQyfmAnSUX0DI56avXH8LlQ57QebllOtKgMiCo7cr
+CCB2C+8hgRNG9ZmW1KU8rxkzoddHmSB8d6+vFqOajxGdyOV+aX00k3w6FgtHOoKD
+Ztdj1N0eTfn02pibVcXXfwESPUzcjERaMAGg1hoH1F4Gxg0mqmbySAuVRqNLnXp5
+CRVQZGgOQL6WDg3tUUDXYOs=
+-----END CERTIFICATE-----"###;
+        let info = get_certificate_info(data.as_bytes()).unwrap();
+
+        assert_eq!(
+            "O=mkcert development CA, OU=vicanso@tree, CN=mkcert vicanso@tree",
+            info.issuer
+        );
+        assert_eq!(1720232616, info.not_before);
+        assert_eq!(1791253416, info.not_after);
+        assert_eq!("mkcert vicanso@tree", info.get_issuer_common_name());
     }
 }

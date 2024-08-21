@@ -8,6 +8,8 @@ import { FormItem, FormItemCategory } from "../components/form-common";
 
 export default function UpstreamInfo() {
   const { t } = useTranslation();
+  document.title = "Upstream-Pingap";
+
   const [initialized, config, update, remove] = useConfigStore((state) => [
     state.initialized,
     state.data,

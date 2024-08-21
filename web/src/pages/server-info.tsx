@@ -9,6 +9,7 @@ import { FormItem, FormItemCategory } from "../components/form-common";
 
 export default function ServerInfo() {
   const { t } = useTranslation();
+  document.title = "Server-Pingap";
 
   const [initialized, config, update, remove] = useConfigStore((state) => [
     state.initialized,

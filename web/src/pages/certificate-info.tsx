@@ -9,6 +9,7 @@ import { FormItem, FormItemCategory } from "../components/form-common";
 
 export default function CertificateInfo() {
   const { t } = useTranslation();
+  document.title = "Certificate-Pingap";
 
   const [initialized, config, update, remove] = useConfigStore((state) => [
     state.initialized,
@@ -30,19 +31,6 @@ export default function CertificateInfo() {
   const currentNames = Object.keys(certificates);
   const certificate = certificates[certificateName || ""] || {};
 
-  //  domains?: string;
-  // tls_cert?: string;
-  // tls_key?: string;
-  // certificate_file?: string;
-  // acme?: string;
-  // remark?: string;
-  // "certificate.title": "Certificate for tls",
-  // "certificate.description": "The setting of certificate",
-  // "certificate.domains": "The domain list fo certificate",
-  // "certificate.tlsCert": "Tls Cert Pem",
-  // "certificate.tlsKey": "Tls Key Pem",
-  // "certificate.certificateFile": "The Https Certificate File",
-  // "certificate.acme": "The acme for generate certificate",
   const arr: FormItem[] = [
     {
       id: "tls_cert",

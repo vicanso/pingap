@@ -18,7 +18,7 @@ use super::upstream::get_upstream;
 use super::ServerConf;
 use crate::acme::get_certificate_info;
 use crate::acme::CertificateInfo;
-use crate::acme::{get_lets_encrypt_cert, handle_lets_encrypt};
+use crate::acme::{get_lets_encrypt_certificate, handle_lets_encrypt};
 use crate::config;
 use crate::config::PluginStep;
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
@@ -253,7 +253,7 @@ impl Server {
             let mut tls_key = self.tls_key.clone();
 
             if tls_cert.is_none() && tls_from_lets_encrypt {
-                match get_lets_encrypt_cert(&self.certificate_file) {
+                match get_lets_encrypt_certificate(&self.certificate_file) {
                     Ok(cert_info) => {
                         tls_cert = Some(cert_info.get_cert());
                         tls_key = Some(cert_info.get_key());

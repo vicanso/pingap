@@ -34,6 +34,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tracing::{error, info};
 
+// let's encrypt http challenges
 static LETS_ENCRYPT_CHALLENGE: OnceCell<Mutex<HashMap<String, String>>> =
     OnceCell::new();
 
@@ -46,6 +47,8 @@ struct LetsEncryptService {
     // the domains list, they should be the same primary domain name
     domains: Vec<String>,
 }
+
+static WELL_KNOWN_PAHT_PREFIX: &str = "/.well-known/acme-challenge/";
 
 /// Create a Let's Encrypt service to generate the certificate,
 /// and regenerate if the certificate is invalid or will be expired.
@@ -72,7 +75,7 @@ impl ServiceTask for LetsEncryptService {
     async fn run(&self) -> Option<bool> {
         let domains = &self.domains;
         let should_renew_now = if let Ok(certificate) =
-            get_lets_encrypt_cert(&self.certificate_file)
+            get_lets_encrypt_certificate(&self.certificate_file)
         {
             // invalid or different domains
             !certificate.valid()
@@ -83,7 +86,7 @@ impl ServiceTask for LetsEncryptService {
         if !should_renew_now {
             return None;
         }
-        match new_lets_encrypt(&self.certificate_file, domains).await {
+        match new_lets_encrypt(&self.certificate_file, domains, true).await {
             Ok(()) => {
                 info!(domains = domains.join(","), "renew certificate success");
                 webhook::send(webhook::SendNotificationParams {
@@ -114,8 +117,8 @@ impl ServiceTask for LetsEncryptService {
     }
 }
 
-/// Get the cert from file and convert it to cert struct.
-pub fn get_lets_encrypt_cert(path: &PathBuf) -> Result<Certificate> {
+/// Get the cert from file and convert it to certificate struct.
+pub fn get_lets_encrypt_certificate(path: &PathBuf) -> Result<Certificate> {
     if !path.exists() {
         return Err(Error::NotFound {
             message: "cert file not found".to_string(),
@@ -140,7 +143,7 @@ pub async fn handle_lets_encrypt(
 ) -> pingora::Result<bool> {
     let path = session.req_header().uri.path();
     // lets encrypt acme challenge path
-    if path.starts_with("/.well-known/acme-challenge/") {
+    if path.starts_with(WELL_KNOWN_PAHT_PREFIX) {
         let value = {
             // token auth
             let data = get_lets_encrypt_challenge().lock().await;
@@ -166,17 +169,24 @@ pub async fn handle_lets_encrypt(
 async fn new_lets_encrypt(
     certificate_file: &PathBuf,
     domains: &[String],
+    production: bool,
 ) -> Result<()> {
     let mut domains: Vec<String> = domains.to_vec();
+    // sort domain for comparing later
     domains.sort();
     info!(domains = domains.join(","), "acme from let's encrypt");
+    let url = if production {
+        LetsEncrypt::Production.url()
+    } else {
+        LetsEncrypt::Staging.url()
+    };
     let (account, _) = Account::create(
         &NewAccount {
             contact: &[],
             terms_of_service_agreed: true,
             only_return_existing: false,
         },
-        LetsEncrypt::Production.url(),
+        url,
         None,
     )
     .await
@@ -185,7 +195,6 @@ async fn new_lets_encrypt(
         source: e,
     })?;
 
-    // let identifier = Identifier::Dns(opts.name);
     let mut order = account
         .new_order(&NewOrder {
             identifiers: &domains
@@ -237,16 +246,18 @@ async fn new_lets_encrypt(
 
         let key_auth = order.key_authorization(challenge);
 
-        // http://<你的域名>/.well-known/acme-challenge/<TOKEN>
+        // http://your-domain/.well-known/acme-challenge/<TOKEN>
         let well_known_path =
-            format!("/.well-known/acme-challenge/{}", challenge.token);
+            format!("{WELL_KNOWN_PAHT_PREFIX}{}", challenge.token);
         info!(well_known_path, "let's encrypt well known path",);
 
+        // save token for verification later
         let mut map = get_lets_encrypt_challenge().lock().await;
         map.insert(well_known_path, key_auth.as_str().to_string());
 
         challenges.push((identifier, &challenge.url));
     }
+    // set challenge ready for verification
     for (_, url) in &challenges {
         order
             .set_challenge_ready(url)
@@ -257,11 +268,10 @@ async fn new_lets_encrypt(
             })?;
     }
 
+    // get order state, retry later if fail
     let mut tries = 1u8;
     let mut delay = Duration::from_millis(250);
-
     let detail_url = authorizations.first();
-
     let state = loop {
         let state = order.state();
         info!(status = format!("{:?}", state.status), "get order status");
@@ -297,11 +307,12 @@ async fn new_lets_encrypt(
             message: format!("order is invalid, check {detail_url:?}"),
         });
     }
+
+    // generate certificate
     let mut names = Vec::with_capacity(challenges.len());
     for (identifier, _) in challenges {
         names.push(identifier.to_owned());
     }
-
     let mut params =
         rcgen::CertificateParams::new(names.clone()).map_err(|e| {
             Error::Rcgen {
@@ -337,6 +348,8 @@ async fn new_lets_encrypt(
             None => tokio::time::sleep(Duration::from_secs(1)).await,
         }
     };
+
+    // get certificate validity
     let mut not_before = params.not_before.unix_timestamp();
     let now = util::now().as_secs() as i64;
     // default expired time set 90 days
@@ -346,6 +359,7 @@ async fn new_lets_encrypt(
         not_after = info.not_after;
     }
 
+    // save certificate as json file
     let mut f = fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -377,4 +391,25 @@ async fn new_lets_encrypt(
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::new_lets_encrypt;
+    use pretty_assertions::assert_eq;
+    use std::path::Path;
+
+    #[tokio::test]
+    async fn test_new_lets_encrypt() {
+        let result = new_lets_encrypt(
+            &Path::new("~/pingap").to_path_buf(),
+            &["pingap.io".to_string()],
+            false,
+        )
+        .await;
+
+        assert_eq!(true, result.is_err());
+        let error = result.unwrap_err().to_string();
+        assert_eq!(true, error.contains("order_invalid"));
+    }
 }

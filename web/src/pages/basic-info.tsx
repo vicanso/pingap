@@ -6,6 +6,7 @@ import { FormItem, FormItemCategory } from "../components/form-common";
 
 export default function BasicInfo() {
   const { t } = useTranslation();
+  document.title = "Basic-Pingap";
 
   const [initialized, config, update] = useConfigStore((state) => [
     state.initialized,

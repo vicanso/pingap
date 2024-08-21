@@ -22,7 +22,7 @@ use tracing::warn;
 
 struct ValidityChecker {
     time_offset: i64,
-    tls_cert_info_list: Vec<(String, CertificateInfo)>,
+    tls_certificate_info_list: Vec<(String, CertificateInfo)>,
 }
 
 // Verify the validity period of tls certificate,
@@ -57,7 +57,7 @@ fn validity_check(
 impl ServiceTask for ValidityChecker {
     async fn run(&self) -> Option<bool> {
         if let Err(message) =
-            validity_check(&self.tls_cert_info_list, self.time_offset)
+            validity_check(&self.tls_certificate_info_list, self.time_offset)
         {
             // certificate will be expired
             warn!(message);
@@ -74,8 +74,8 @@ impl ServiceTask for ValidityChecker {
         let offset_human: humantime::Duration =
             Duration::from_secs(self.time_offset as u64).into();
         format!(
-            "offset: {offset_human}, tls_cert_info_list: {:?}",
-            self.tls_cert_info_list
+            "offset: {offset_human}, tls_certificate_info_list: {:?}",
+            self.tls_certificate_info_list
         )
     }
 }
@@ -84,10 +84,10 @@ impl ServiceTask for ValidityChecker {
 /// if the certificate will be expired or not valid,
 /// it will send webhook notificateion message.
 pub fn new_tls_validity_service(
-    tls_cert_info_list: Vec<(String, CertificateInfo)>,
+    tls_certificate_info_list: Vec<(String, CertificateInfo)>,
 ) -> CommonServiceTask {
     let checker = ValidityChecker {
-        tls_cert_info_list,
+        tls_certificate_info_list,
         // cert will be expired 7 days later
         time_offset: 7 * 24 * 3600_i64,
     };
@@ -164,7 +164,7 @@ mod tests {
             },
         )]);
         let checker = ValidityChecker {
-            tls_cert_info_list: vec![(
+            tls_certificate_info_list: vec![(
                 "Pingap".to_string(),
                 CertificateInfo {
                     not_after: ASN1Time::from_timestamp(2651852800)
@@ -179,7 +179,7 @@ mod tests {
             time_offset: 7 * 24 * 3600_i64,
         };
         assert_eq!(
-            r#"offset: 7days, tls_cert_info_list: [("Pingap", CertificateInfo { not_after: 2651852800, not_before: 2651852800, issuer: "" })]"#,
+            r#"offset: 7days, tls_certificate_info_list: [("Pingap", CertificateInfo { not_after: 2651852800, not_before: 2651852800, issuer: "" })]"#,
             checker.description()
         );
         let result = checker.run().await;

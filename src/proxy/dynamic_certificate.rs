@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::acme::{
-    get_certificate_info, get_lets_encrypt_cert, CertificateInfo,
+    get_certificate_info, get_lets_encrypt_certificate, CertificateInfo,
 };
 use crate::config::CertificateConf;
 use crate::{util, webhook};
@@ -69,11 +69,11 @@ fn parse_certificate(
 ) -> Result<(Vec<String>, DynamicCertificate, CertificateInfo)> {
     let (cert, key, category) =
         if let Some(file) = &certificate_config.certificate_file {
-            let cert = get_lets_encrypt_cert(
+            let cert = get_lets_encrypt_certificate(
                 &Path::new(&util::resolve_path(file)).to_path_buf(),
             )
             .map_err(|e| Error::Invalid {
-                category: "get_lets_encrypt_cert".to_string(),
+                category: "get_lets_encrypt_certificate".to_string(),
                 message: e.to_string(),
             })?;
             (cert.get_cert(), cert.get_key(), LETS_ENCRYPT)

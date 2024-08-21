@@ -10,6 +10,7 @@ import { PluginCategory } from "../components/form-plugin";
 
 export default function ProxyPluginInfo() {
   const { t } = useTranslation();
+  document.title = "Plugin-Pingap";
 
   const [initialized, config, update, remove] = useConfigStore((state) => [
     state.initialized,

@@ -13,6 +13,7 @@ import {
 
 export default function LocationInfo() {
   const { t } = useTranslation();
+  document.title = "Location-Pingap";
 
   const [initialized, config, update, remove] = useConfigStore((state) => [
     state.initialized,
