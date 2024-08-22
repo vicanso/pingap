@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, Result, State};
+use super::{get_hostname, Error, Result, State};
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::util;
 use async_trait::async_trait;
@@ -28,6 +28,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info};
 use url::Url;
+
+static HOST_NAME_TAG: &str = "$HOST_NAME";
 
 pub static CACHE_READING_TIME: Lazy<Histogram> = Lazy::new(|| {
     new_histogram(
@@ -198,10 +200,14 @@ pub fn new_prometheus_push_service(
             }
         }
     }
+    let mut url = info.to_string();
+    if url.contains(HOST_NAME_TAG) {
+        url = url.replace(HOST_NAME_TAG, &get_hostname());
+    }
 
     let push = PrometheusPush {
         name: name.to_string(),
-        url: info.to_string(),
+        url,
         username,
         password,
         p,

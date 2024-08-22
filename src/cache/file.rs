@@ -50,9 +50,11 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
     Ok(FileCache {
         directory: dir,
         reading: AtomicU32::new(0),
+        // TODO get max value from query string
         reading_max: 10 * 1000,
         read_time: CACHE_READING_TIME.clone(),
         writing: AtomicU32::new(0),
+        // TODO get max value from query string
         writing_max: 1000,
         write_time: CACHE_WRITING_TIME.clone(),
         cache: TinyUfo::new(100, 100),
@@ -177,5 +179,14 @@ mod tests {
         cache.remove(&key).await.unwrap();
         let result = cache.get(&key).await.unwrap();
         assert_eq!(true, result.is_none());
+    }
+
+    #[test]
+    fn test_stats() {
+        let dir = TempDir::new().unwrap();
+        let dir = dir.into_path().to_string_lossy().to_string();
+        let cache = new_file_cache(&dir).unwrap();
+        assert_eq!(0, cache.stats().unwrap().reading);
+        assert_eq!(0, cache.stats().unwrap().writing);
     }
 }

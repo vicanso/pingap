@@ -29,6 +29,7 @@ impl TinyUfoCache {
     }
 }
 
+/// Create a tiny ufo cache.
 pub fn new_tiny_ufo_cache(
     total_weight_limit: usize,
     estimated_size: usize,
@@ -38,9 +39,11 @@ pub fn new_tiny_ufo_cache(
 
 #[async_trait]
 impl HttpCacheStorage for TinyUfoCache {
+    /// Get cache object from tiny ufo storage
     async fn get(&self, key: &str) -> Result<Option<CacheObject>> {
         Ok(self.cache.get(&key.to_string()))
     }
+    /// Put an object to tiny ufo storage
     async fn put(
         &self,
         key: String,

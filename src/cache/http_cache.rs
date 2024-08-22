@@ -86,16 +86,20 @@ pub struct HttpCacheStats {
 
 #[async_trait]
 pub trait HttpCacheStorage: Sync + Send {
+    // get cache object from storage
     async fn get(&self, key: &str) -> Result<Option<CacheObject>>;
+    // put object to storage
     async fn put(
         &self,
         key: String,
         data: CacheObject,
         weight: u16,
     ) -> Result<()>;
+    // remove object from storage
     async fn remove(&self, _key: &str) -> Result<Option<CacheObject>> {
         Ok(None)
     }
+    // get reading and writing stats of storage
     fn stats(&self) -> Option<HttpCacheStats> {
         None
     }
