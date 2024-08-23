@@ -146,7 +146,7 @@ pub fn send(params: SendNotificationParams) {
             let send = async move {
                 let client = reqwest::Client::new();
                 let mut data = serde_json::Map::new();
-                let hostname = state::get_hostname().clone();
+                let hostname = state::get_hostname();
                 let name = get_app_name();
                 let color_type = match level {
                     NotificationLevel::Error => "warning",
@@ -203,7 +203,7 @@ pub fn send(params: SendNotificationParams) {
                         );
                         data.insert(
                             "hostname".to_string(),
-                            Value::String(hostname),
+                            Value::String(hostname.to_string()),
                         );
                         data.insert("ip".to_string(), Value::String(ip));
                         data.insert(

@@ -77,12 +77,12 @@ pub fn logger_try_init(params: LoggerParams) -> Result<(), Box<dyn Error>> {
         if params.capacity < 4096 {
             BoxMakeWriter::new(file)
         } else {
+            // buffer writer for better performance
             let w =
                 io::BufWriter::with_capacity(params.capacity as usize, file);
             BoxMakeWriter::new(Mutex::new(w))
         }
     };
-    // better performance for logger
     if params.json {
         builder
             .event_format(tracing_subscriber::fmt::format::json())
@@ -98,25 +98,5 @@ pub fn logger_try_init(params: LoggerParams) -> Result<(), Box<dyn Error>> {
         "init tracing subscriber success",
     );
 
-    // // TODO get the status change from event callback
-    // builder.format(move |buf, record| {
-    //     let msg = format!("{}", record.args());
-    //     if record.level() == Level::Warn && msg.contains("becomes unhealthy") {
-    //         webhook::send(webhook::SendNotificationParams {
-    //             level: webhook::NotificationLevel::Warn,
-    //             category: webhook::NotificationCategory::BackendStatus,
-    //             msg: format!("{}", record.args()),
-    //         });
-    //     }
-
-    //     writeln!(
-    //         buf,
-    //         "{} {} {msg}",
-    //         record.level(),
-    //         chrono::Local::now().to_rfc3339(),
-    //     )
-    // });
-
-    // builder.try_init()?;
     Ok(())
 }

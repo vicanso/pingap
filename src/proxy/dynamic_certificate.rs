@@ -39,7 +39,8 @@ pub enum Error {
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 type DynamicCertificates = AHashMap<String, DynamicCertificate>;
-static DYNAMIC_CERT_MAP: OnceCell<DynamicCertificates> = OnceCell::new();
+// global dynamic certificates
+static DYNAMIC_CERTIFICATE_MAP: OnceCell<DynamicCertificates> = OnceCell::new();
 const E5: &[u8] = include_bytes!("../assets/e5.pem");
 const E6: &[u8] = include_bytes!("../assets/e6.pem");
 const R10: &[u8] = include_bytes!("../assets/r10.pem");
@@ -67,6 +68,7 @@ static LETS_ENCRYPT: &str = "lets_encrypt";
 fn parse_certificate(
     certificate_config: &CertificateConf,
 ) -> Result<(Vec<String>, DynamicCertificate, CertificateInfo)> {
+    // parse certificate
     let (cert, key, category) =
         if let Some(file) = &certificate_config.certificate_file {
             let cert = get_lets_encrypt_certificate(
@@ -82,12 +84,12 @@ fn parse_certificate(
                 util::convert_certificate_bytes(&certificate_config.tls_cert)
                     .ok_or(Error::Invalid {
                     category: "convert_certificate_bytes".to_string(),
-                    message: "Convert certificate fail".to_string(),
+                    message: "convert certificate fail".to_string(),
                 })?,
                 util::convert_certificate_bytes(&certificate_config.tls_key)
                     .ok_or(Error::Invalid {
                         category: "convert_certificate_bytes".to_string(),
-                        message: "Convert certificate key fail".to_string(),
+                        message: "convert certificate key fail".to_string(),
                     })?,
                 "",
             )
@@ -103,6 +105,7 @@ fn parse_certificate(
         // ingore chain error
         X509::from_pem(value).ok()
     } else if category == LETS_ENCRYPT {
+        // get chain of let's encrypt
         match info.get_issuer_common_name().as_str() {
             "E5" => E5_CERTIFICATE.clone(),
             "E6" => E6_CERTIFICATE.clone(),
@@ -137,11 +140,12 @@ fn parse_certificate(
     Ok((domains, d, info))
 }
 
+/// Try to init certificates, which use for global tls callback
 pub fn try_init_certificates(
     certificate_configs: &HashMap<String, CertificateConf>,
 ) -> Result<Vec<(String, CertificateInfo)>> {
     let mut certificate_info_list = vec![];
-    DYNAMIC_CERT_MAP.get_or_try_init(|| {
+    DYNAMIC_CERTIFICATE_MAP.get_or_try_init(|| {
         let mut dynamic_certs = AHashMap::new();
         for (name, certificate) in certificate_configs.iter() {
             match parse_certificate(certificate) {
@@ -203,12 +207,14 @@ pub struct TlsSettingParams {
 }
 
 impl DynamicCertificate {
+    /// New a global dynamic certificate for tls callback
     pub fn new_global() -> Self {
         Self {
             chain_certificate: None,
             certificate: None,
         }
     }
+    /// New a dynamic certificate from tls setting parameters
     pub fn new_tls_settings(
         &self,
         params: &TlsSettingParams,
@@ -268,7 +274,7 @@ impl DynamicCertificate {
 
         Ok(tls_settings)
     }
-
+    /// New a dynamic certificate from pem data
     pub fn new(cert: &[u8], key: &[u8]) -> Result<Self> {
         let cert = X509::from_pem(cert).map_err(|e| Error::Invalid {
             category: "x509_from_pem".to_string(),
@@ -302,12 +308,15 @@ fn ssl_certificate(
     key: &PKey<Private>,
     chain_certificate: &Option<X509>,
 ) {
+    // set tls certificate
     if let Err(e) = ext::ssl_use_certificate(ssl, cert) {
         error!(error = e.to_string(), "ssl use certificate fail");
     }
+    // set private key
     if let Err(e) = ext::ssl_use_private_key(ssl, key) {
         error!(error = e.to_string(), "ssl use private key fail");
     }
+    // set chain certificate
     if let Some(chain) = chain_certificate {
         if let Err(e) = ext::ssl_add_chain_cert(ssl, chain) {
             error!(error = e.to_string(), "ssl add chain cert fail");
@@ -330,7 +339,7 @@ impl pingora::listeners::TlsAccept for DynamicCertificate {
             error!(ssl = format!("{ssl:?}"), "get server name fail");
             return;
         };
-        let Some(m) = DYNAMIC_CERT_MAP.get() else {
+        let Some(m) = DYNAMIC_CERTIFICATE_MAP.get() else {
             error!(ssl = format!("{ssl:?}"), "get dynamic cert map fail");
             return;
         };
@@ -365,7 +374,7 @@ mod tests {
     use crate::{
         config::CertificateConf,
         proxy::{
-            dynamic_certificate::{DYNAMIC_CERT_MAP, E5},
+            dynamic_certificate::{DYNAMIC_CERTIFICATE_MAP, E5},
             try_init_certificates,
         },
     };
@@ -485,7 +494,11 @@ aqcrKJfS+xaKWxXPiNlpBMG5
                 .to_string(),
             result[0].1.issuer
         );
-        let cert = DYNAMIC_CERT_MAP.get().unwrap().get("pingap.io").unwrap();
+        let cert = DYNAMIC_CERTIFICATE_MAP
+            .get()
+            .unwrap()
+            .get("pingap.io")
+            .unwrap();
         assert_eq!(true, cert.certificate.is_some());
     }
 

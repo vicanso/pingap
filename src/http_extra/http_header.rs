@@ -68,7 +68,7 @@ pub fn convert_header_value(
     let buf = value.as_bytes();
     match buf {
         HOST_NAME_TAG => {
-            return HeaderValue::from_str(&get_hostname()).ok();
+            return HeaderValue::from_str(get_hostname()).ok();
         },
         REMOTE_ADDR_TAG => {
             if let Some(remote_addr) = &ctx.remote_addr {
@@ -85,15 +85,15 @@ pub fn convert_header_value(
                 let value = if let Some(value) = session
                     .get_header(util::HTTP_HEADER_X_FORWARDED_FOR.clone())
                 {
-                    format!(
+                    &format!(
                         "{}, {}",
                         value.to_str().unwrap_or_default(),
                         remote_addr
                     )
                 } else {
-                    remote_addr.to_string()
+                    remote_addr
                 };
-                return HeaderValue::from_str(&value).ok();
+                return HeaderValue::from_str(value).ok();
             }
         },
         HTTP_ORIGIN_TAG => {

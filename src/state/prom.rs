@@ -29,7 +29,7 @@ use std::time::Duration;
 use tracing::{error, info};
 use url::Url;
 
-static HOST_NAME_TAG: &str = "$HOST_NAME";
+static HOST_NAME_TAG: &str = "$HOSTNAME";
 
 pub static CACHE_READING_TIME: Lazy<Histogram> = Lazy::new(|| {
     new_histogram(
@@ -202,7 +202,7 @@ pub fn new_prometheus_push_service(
     }
     let mut url = info.to_string();
     if url.contains(HOST_NAME_TAG) {
-        url = url.replace(HOST_NAME_TAG, &get_hostname());
+        url = url.replace(HOST_NAME_TAG, get_hostname());
     }
 
     let push = PrometheusPush {

@@ -48,8 +48,8 @@ pub fn get_start_time() -> u64 {
     START_TIME.as_secs()
 }
 
-pub fn get_hostname() -> String {
-    HOST_NAME.to_string()
+pub fn get_hostname() -> &'static str {
+    HOST_NAME.as_str()
 }
 
 #[derive(Debug, Default)]

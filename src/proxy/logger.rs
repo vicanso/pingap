@@ -92,7 +92,7 @@ fn format_extra_tag(key: &str) -> Option<Tag> {
             if key.as_bytes() == HOST_NAME_TAG {
                 Some(Tag {
                     category: TagCategory::Fill,
-                    data: Some(get_hostname()),
+                    data: Some(get_hostname().to_string()),
                 })
             } else {
                 Some(Tag {

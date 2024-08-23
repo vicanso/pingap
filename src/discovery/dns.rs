@@ -187,8 +187,8 @@ impl ServiceDiscovery for Dns {
     }
 }
 
-/// Create a dns discovery, scheduled execution execute DNS resolve,
-/// and update the latest IP address list.
+/// Create a dns discovery, scheduled resolve the domain name to get ip list,
+/// and update the latest ip address list.
 pub fn new_dns_discover_backends(
     addrs: &[String],
     tls: bool,

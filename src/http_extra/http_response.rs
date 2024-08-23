@@ -69,7 +69,7 @@ pub struct HttpResponse {
 impl HttpResponse {
     /// Create a no content `204` response.
     pub fn no_content() -> Self {
-        HttpResponse {
+        Self {
             status: StatusCode::NO_CONTENT,
             headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
             ..Default::default()
@@ -77,7 +77,7 @@ impl HttpResponse {
     }
     /// Create a bad request `400` response.
     pub fn bad_request(body: Bytes) -> Self {
-        HttpResponse {
+        Self {
             status: StatusCode::BAD_REQUEST,
             headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
             body,
@@ -86,7 +86,7 @@ impl HttpResponse {
     }
     /// Create a not found `404` response.
     pub fn not_found(body: Bytes) -> Self {
-        HttpResponse {
+        Self {
             status: StatusCode::NOT_FOUND,
             headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
             body,
@@ -95,7 +95,7 @@ impl HttpResponse {
     }
     /// Create an unknown error `500` response.
     pub fn unknown_error(body: Bytes) -> Self {
-        HttpResponse {
+        Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
             body,
@@ -104,7 +104,7 @@ impl HttpResponse {
     }
     /// Create a html response with `no-cache` cache-control.
     pub fn html(body: Bytes) -> Self {
-        HttpResponse {
+        Self {
             status: StatusCode::OK,
             headers: Some(vec![
                 HTTP_HEADER_CONTENT_HTML.clone(),
@@ -116,7 +116,7 @@ impl HttpResponse {
     }
     /// Create a text response with `no-cache` cache-control.
     pub fn text(body: Bytes) -> Self {
-        HttpResponse {
+        Self {
             status: StatusCode::OK,
             headers: Some(vec![
                 HTTP_HEADER_CONTENT_TEXT.clone(),
@@ -134,7 +134,7 @@ impl HttpResponse {
     where
         T: ?Sized + Serialize,
     {
-        let mut resp = HttpResponse::try_from_json(value)?;
+        let mut resp = Self::try_from_json(value)?;
         resp.status = status;
         Ok(resp)
     }
@@ -148,7 +148,7 @@ impl HttpResponse {
             error!(error = e.to_string(), "to json fail");
             util::new_internal_error(400, e.to_string())
         })?;
-        Ok(HttpResponse {
+        Ok(Self {
             status: StatusCode::OK,
             body: buf.into(),
             headers: Some(vec![HTTP_HEADER_CONTENT_JSON.clone()]),

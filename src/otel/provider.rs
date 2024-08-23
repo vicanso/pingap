@@ -19,8 +19,6 @@ use opentelemetry::global::{BoxedTracer, ObjectSafeTracerProvider};
 use opentelemetry::{trace, InstrumentationLibrary};
 use std::sync::Arc;
 
-// use opentelemetry::global::trace::ObjectSafeTracerProvider;
-
 #[derive(Clone)]
 pub struct InstanceTracerProvider {
     provider: Arc<dyn ObjectSafeTracerProvider + Send + Sync>,
@@ -57,6 +55,7 @@ type TracerProviders = AHashMap<String, InstanceTracerProvider>;
 static TRACER_PROVIDER_MAP: Lazy<ArcSwap<TracerProviders>> =
     Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
 
+/// Add a new provider for open telemetry tracer
 pub fn add_provider(
     name: &str,
     provider: opentelemetry_sdk::trace::TracerProvider,

@@ -23,7 +23,7 @@ use opentelemetry::{
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
     propagation::{BaggagePropagator, TraceContextPropagator},
-    trace::{self, BatchConfig, RandomIdGenerator, Sampler},
+    trace::{self, BatchConfigBuilder, RandomIdGenerator, Sampler},
     Resource,
 };
 use pingora::{server::ShutdownWatch, services::background::BackgroundService};
@@ -39,6 +39,10 @@ pub struct TracerService {
     max_events: u32,
     support_jaeger_propagator: bool,
     support_baggage_propagator: bool,
+    max_queue_size: usize,
+    scheduled_delay: Duration,
+    max_export_batch_size: usize,
+    max_export_timeout: Duration,
 }
 
 impl TracerService {
@@ -48,12 +52,36 @@ impl TracerService {
         let mut max_events = 16;
         let mut support_jaeger_propagator = false;
         let mut support_baggage_propagator = false;
+        let mut max_queue_size = 2048;
+        let mut scheduled_delay = Duration::from_secs(5);
+        let mut max_export_batch_size = 512;
+        let mut max_export_timeout = Duration::from_secs(30);
         if let Ok(info) = Url::parse(endpoint) {
             for (key, value) in info.query_pairs().into_iter() {
                 match key.to_string().as_str() {
                     "timeout" => {
                         if let Ok(v) = parse_duration(&value) {
                             timeout = v;
+                        }
+                    },
+                    "max_queue_size" => {
+                        if let Ok(v) = value.parse::<usize>() {
+                            max_queue_size = v;
+                        }
+                    },
+                    "scheduled_delay" => {
+                        if let Ok(v) = parse_duration(&value) {
+                            scheduled_delay = v;
+                        }
+                    },
+                    "max_export_batch_size" => {
+                        if let Ok(v) = value.parse::<usize>() {
+                            max_export_batch_size = v;
+                        }
+                    },
+                    "max_export_timeout" => {
+                        if let Ok(v) = parse_duration(&value) {
+                            max_export_timeout = v;
                         }
                     },
                     "max_attributes" => {
@@ -83,6 +111,10 @@ impl TracerService {
             timeout,
             max_events,
             max_attributes,
+            max_queue_size,
+            scheduled_delay,
+            max_export_batch_size,
+            max_export_timeout,
             support_jaeger_propagator,
             support_baggage_propagator,
         }
@@ -104,7 +136,7 @@ pub fn new_tracer(name: &str) -> Option<BoxedTracer> {
 
 #[async_trait]
 impl BackgroundService for TracerService {
-    /// The lets encrypt servier checks the cert, it will get news cert if current is invalid.
+    /// Open telemetry background service, it will schedule export data to server.
     async fn start(&self, mut shutdown: ShutdownWatch) {
         let result = opentelemetry_otlp::new_pipeline()
             .tracing()
@@ -126,7 +158,14 @@ impl BackgroundService for TracerService {
                         get_service_name(&self.name),
                     )])),
             )
-            .with_batch_config(BatchConfig::default())
+            .with_batch_config(
+                BatchConfigBuilder::default()
+                    .with_max_queue_size(self.max_queue_size)
+                    .with_scheduled_delay(self.scheduled_delay)
+                    .with_max_export_batch_size(self.max_export_batch_size)
+                    .with_max_export_timeout(self.max_export_timeout)
+                    .build(),
+            )
             .install_batch(opentelemetry_sdk::runtime::Tokio);
 
         match result {

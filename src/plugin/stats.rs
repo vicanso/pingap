@@ -104,7 +104,7 @@ impl Plugin for Stats {
                 processing: ctx.processing,
                 location_processing: ctx.location_processing,
                 location_accepted: ctx.location_accepted,
-                hostname: get_hostname(),
+                hostname: get_hostname().to_string(),
                 physical_mem: ByteSize(physical_mem as u64).to_string_as(true),
                 physical_mem_mb: physical_mem / (1024 * 1024),
                 version: util::get_pkg_version().to_string(),
