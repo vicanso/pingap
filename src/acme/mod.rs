@@ -58,7 +58,7 @@ pub struct CertificateInfo {
 impl CertificateInfo {
     /// Get the common name of certificate issuer
     pub fn get_issuer_common_name(&self) -> String {
-        let re = regex::Regex::new(r"CN=(?P<CN>[\S ]+)").unwrap();
+        let re = regex::Regex::new(r"CN=(?P<CN>[\S ]+?)($|,)").unwrap();
         if let Some(caps) = re.captures(&self.issuer) {
             return caps["CN"].to_string();
         }
