@@ -50,6 +50,8 @@ pub enum NotificationCategory {
     TlsValidity,
     ParseCertificateFail,
     ServiceDiscoverFail,
+    LocationUpdated,
+    UpstreamUpdated,
 }
 
 impl Display for NotificationLevel {

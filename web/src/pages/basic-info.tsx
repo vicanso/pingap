@@ -187,7 +187,9 @@ export default function BasicInfo() {
         "reload_fail",
         "tls_validity",
         "service_discover_fail",
-      ],
+        "location_updated",
+        "upstream_updated",
+      ].sort(),
     },
     {
       id: "webhook",

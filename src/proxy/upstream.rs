@@ -573,7 +573,7 @@ fn new_ahash_upstreams(
     confs: &HashMap<String, UpstreamConf>,
 ) -> Result<(Upstreams, Vec<String>)> {
     let mut upstreams = AHashMap::new();
-    let mut new_upstreams = vec![];
+    let mut updated_upstreams = vec![];
     for (name, conf) in confs.iter() {
         let key = conf.hash_key();
         if let Some(found) = get_upstream(name) {
@@ -585,9 +585,9 @@ fn new_ahash_upstreams(
         }
         let up = Arc::new(Upstream::new(name, conf)?);
         upstreams.insert(name.to_string(), up);
-        new_upstreams.push(name.to_string());
+        updated_upstreams.push(name.to_string());
     }
-    Ok((upstreams, new_upstreams))
+    Ok((upstreams, updated_upstreams))
 }
 
 pub fn try_init_upstreams(confs: &HashMap<String, UpstreamConf>) -> Result<()> {
@@ -619,11 +619,11 @@ async fn run_health_check(up: &Arc<Upstream>) -> Result<()> {
 
 pub async fn try_update_upstreams(
     confs: &HashMap<String, UpstreamConf>,
-) -> Result<()> {
-    let (upstreams, new_upstreams) = new_ahash_upstreams(confs)?;
+) -> Result<Vec<String>> {
+    let (upstreams, updated_upstreams) = new_ahash_upstreams(confs)?;
     for (name, up) in upstreams.iter() {
         // no need to run health check if not new upstream
-        if !new_upstreams.contains(name) {
+        if !updated_upstreams.contains(name) {
             continue;
         }
         if let Err(e) = run_health_check(up).await {
@@ -635,7 +635,7 @@ pub async fn try_update_upstreams(
         }
     }
     UPSTREAM_MAP.store(Arc::new(upstreams));
-    Ok(())
+    Ok(updated_upstreams)
 }
 
 #[async_trait]

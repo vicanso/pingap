@@ -84,8 +84,18 @@ async fn diff_and_update_config(
                         .push(format!("upstream reload fail: {error}",));
                     error!(error, "reload upstream fail");
                 },
-                Ok(()) => {
+                Ok(updated_upstreams) => {
                     info!("reload upstream success");
+                    webhook::send(webhook::SendNotificationParams {
+                        category:
+                            webhook::NotificationCategory::UpstreamUpdated,
+                        level: webhook::NotificationLevel::Info,
+                        msg: format!(
+                            "Upstreams({}) are created or updated",
+                            updated_upstreams.join(",")
+                        ),
+                        ..Default::default()
+                    });
                 },
             };
         }
@@ -97,8 +107,18 @@ async fn diff_and_update_config(
                         .push(format!("location reload fail: {error}",));
                     error!(error, "reload location fail");
                 },
-                Ok(()) => {
+                Ok(updated_locations) => {
                     info!("reload location success");
+                    webhook::send(webhook::SendNotificationParams {
+                        category:
+                            webhook::NotificationCategory::LocationUpdated,
+                        level: webhook::NotificationLevel::Info,
+                        msg: format!(
+                            "Locations({}) are created or updated",
+                            updated_locations.join(",")
+                        ),
+                        ..Default::default()
+                    });
                 },
             };
         }

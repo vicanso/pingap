@@ -354,8 +354,11 @@ pub fn get_location(name: &str) -> Option<Arc<Location>> {
     LOCATION_MAP.load().get(name).cloned()
 }
 
-pub fn try_init_locations(confs: &HashMap<String, LocationConf>) -> Result<()> {
+pub fn try_init_locations(
+    confs: &HashMap<String, LocationConf>,
+) -> Result<Vec<String>> {
     let mut locations = AHashMap::new();
+    let mut updated_locations = vec![];
     for (name, conf) in confs.iter() {
         if let Some(found) = get_location(name) {
             if found.key == conf.hash_key() {
@@ -363,11 +366,12 @@ pub fn try_init_locations(confs: &HashMap<String, LocationConf>) -> Result<()> {
                 continue;
             }
         }
+        updated_locations.push(name.clone());
         let lo = Location::new(name, conf)?;
         locations.insert(name.to_string(), Arc::new(lo));
     }
     LOCATION_MAP.store(Arc::new(locations));
-    Ok(())
+    Ok(updated_locations)
 }
 
 #[cfg(test)]
