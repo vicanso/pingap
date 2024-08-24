@@ -81,10 +81,13 @@ type ServerLocations = AHashMap<String, Arc<Vec<String>>>;
 static LOCATION_MAP: Lazy<ArcSwap<ServerLocations>> =
     Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
 
+/// Try to init the locations of server,
+/// the locations are order by weight
 pub fn try_init_server_locations(
     servers: &HashMap<String, config::ServerConf>,
     locations: &HashMap<String, config::LocationConf>,
 ) -> Result<()> {
+    // get the location weight
     let mut location_weights = HashMap::new();
     for (name, item) in locations.iter() {
         location_weights.insert(name.to_string(), item.get_weight());
@@ -93,6 +96,7 @@ pub fn try_init_server_locations(
     for (name, server) in servers.iter() {
         if let Some(items) = &server.locations {
             let mut items = items.clone();
+            // sort the location by weight
             items.sort_by_key(|item| {
                 let weight = location_weights
                     .get(item.as_str())
@@ -212,25 +216,26 @@ impl Server {
     }
     /// Get the prometheus push service
     pub fn get_prometheus_push_service(&self) -> Option<CommonServiceTask> {
-        if self.prometheus_push_mode {
-            if let Some(prometheus) = &self.prometheus {
-                return match new_prometheus_push_service(
-                    &self.name,
-                    &self.prometheus_metrics,
-                    prometheus.clone(),
-                ) {
-                    Ok(serivce) => Some(serivce),
-                    Err(e) => {
-                        error!(
-                            error = e.to_string(),
-                            "new prometheus push service fail"
-                        );
-                        None
-                    },
-                };
-            }
+        if !self.prometheus_push_mode {
+            return None;
         }
-        None
+        let Some(prometheus) = &self.prometheus else {
+            return None;
+        };
+        match new_prometheus_push_service(
+            &self.name,
+            &self.prometheus_metrics,
+            prometheus.clone(),
+        ) {
+            Ok(serivce) => Some(serivce),
+            Err(e) => {
+                error!(
+                    error = e.to_string(),
+                    "new prometheus push service fail"
+                );
+                None
+            },
+        }
     }
 
     /// Add TCP/TLS listening endpoint.
@@ -285,14 +290,21 @@ impl Server {
         let is_tls = dynamic_cert.is_some();
 
         let enbaled_h2 = self.enbaled_h2;
-        let mut threads = self.threads;
-        if threads.unwrap_or_default() == 0 {
-            threads = Some(1);
-        }
+        let threads = if let Some(threads) = self.threads {
+            // use cpus when set threads:0
+            if threads == 0 {
+                num_cpus::get()
+            } else {
+                threads
+            }
+        } else {
+            1
+        };
+
         info!(
             name,
             addr,
-            threads = format!("{threads:?}"),
+            threads,
             is_tls,
             h2 = enbaled_h2,
             "server is listening"
@@ -310,7 +322,7 @@ impl Server {
                 http_logic.server_options = Some(http_server_options);
             }
         }
-        lb.threads = threads;
+        lb.threads = Some(threads);
         // support listen multi adddress
         for addr in addr.split(',') {
             // tls
@@ -433,6 +445,7 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
+        // get digest of timing and tls
         if let Some(digest) = session.digest() {
             let digest_detail = get_digest_detail(digest);
             ctx.connection_time = digest_detail.connection_time;
@@ -450,13 +463,16 @@ impl ProxyHttp for Server {
             ctx.tls_cipher = digest_detail.tls_cipher;
             ctx.tls_version = digest_detail.tls_version;
         };
+
         ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
         ctx.accepted = self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
         ctx.remote_addr = util::get_remote_addr(session);
+
         let header = session.req_header_mut();
         let host = util::get_host(header).unwrap_or_default();
         let path = header.uri.path();
 
+        // enable open telemtery
         if self.enabled_otel {
             if let Some(tracer) = otel::new_tracer(&self.name) {
                 let cx = global::get_text_map_propagator(|propagator| {
@@ -474,6 +490,7 @@ impl ProxyHttp for Server {
             }
         }
 
+        // set perometheus stats
         if let Some(prom) = &self.prometheus {
             prom.before();
         }
@@ -526,7 +543,7 @@ impl ProxyHttp for Server {
 
         let header = session.req_header_mut();
 
-        // prometheus metric
+        // prometheus pull metric
         if !self.prometheus_push_mode
             && self.prometheus.is_some()
             && header.uri.path() == self.prometheus_metrics
@@ -735,6 +752,7 @@ impl ProxyHttp for Server {
             // adjust cache ttl
             if let Some(d) = ctx.cache_max_ttl {
                 if c.fresh_sec().unwrap_or_default() > d.as_secs() as u32 {
+                    // update cache-control s-maxage value
                     c.directives.insert(
                         "s-maxage".to_string(),
                         Some(DirectiveValue(
@@ -781,7 +799,7 @@ impl ProxyHttp for Server {
         }
 
         if let Some(location) = &ctx.location {
-            let _ = location
+            location
                 .clone()
                 .handle_response_plugin(
                     PluginStep::Response,
@@ -997,7 +1015,7 @@ impl ProxyHttp for Server {
                 ctx.status = Some(header.status);
             }
         }
-        // proxy upstream fail
+        // enable open telemetry and proxy upstream fail
         if let Some(ref mut span) = ctx.upstream_span.as_mut() {
             span.end();
         }

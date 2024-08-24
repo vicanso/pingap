@@ -37,6 +37,12 @@ struct Dns {
     hosts: Vec<Addr>,
 }
 
+const DNS_DISCOVERY: &str = "dns";
+
+pub fn is_dns_discovery(value: &str) -> bool {
+    value == DNS_DISCOVERY
+}
+
 impl Dns {
     fn new(addrs: &[String], tls: bool, ipv4_only: bool) -> Result<Self> {
         let hosts = format_addrs(addrs, tls);

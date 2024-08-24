@@ -3,6 +3,7 @@
 - [ ] log rotate
 - [ ] secret storage
 - [ ] support include comnand for configuraion
+- [ ] upstream and location update notification
 - [x] support validate config for plugin
 - [x] support validate config before save(web)
 - [x] better error handler

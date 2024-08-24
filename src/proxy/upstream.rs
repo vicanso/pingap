@@ -14,7 +14,7 @@
 
 use crate::config::UpstreamConf;
 use crate::discovery::{
-    new_common_discover_backends, new_dns_discover_backends,
+    is_dns_discovery, new_common_discover_backends, new_dns_discover_backends,
 };
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::State;
@@ -256,6 +256,7 @@ fn new_http_health_check(
     check.reuse_connection = conf.reuse_connection;
     check.health_changed_callback =
         Some(webhook::new_backend_observe_notification(name));
+    // create http get request
     match RequestHeader::build("GET", conf.path.as_bytes(), None) {
         Ok(mut req) => {
             // 忽略append header fail
@@ -310,19 +311,13 @@ fn new_health_check(
     Ok((hc, health_check_frequency))
 }
 
-const DNS_DISCOVERY: &str = "dns";
-
-pub fn is_dns_discovery(value: &str) -> bool {
-    value == DNS_DISCOVERY
-}
-
 fn new_backends(
     addrs: &[String],
     tls: bool,
     ipv4_only: bool,
     discovery: &str,
 ) -> Result<Backends> {
-    if discovery == DNS_DISCOVERY {
+    if is_dns_discovery(discovery) {
         new_dns_discover_backends(addrs, tls, ipv4_only).map_err(|e| {
             Error::Common {
                 category: "dns_discovery".to_string(),
@@ -408,7 +403,7 @@ impl Upstream {
                 return;
             };
 
-            if discovery == DNS_DISCOVERY {
+            if is_dns_discovery(&discovery) {
                 error!(error = err.to_string(), "dns discovery fail");
                 return;
             }
@@ -647,6 +642,7 @@ pub async fn try_update_upstreams(
 impl ServiceTask for HealthCheckTask {
     async fn run(&self) -> Option<bool> {
         let check_count = self.count.fetch_add(1, Ordering::Relaxed);
+        // get upstream names
         let upstreams = {
             let mut upstreams = vec![];
             for (name, up) in UPSTREAM_MAP.load().iter() {
@@ -655,6 +651,7 @@ impl ServiceTask for HealthCheckTask {
             upstreams
         };
         let interval = self.interval.as_secs();
+        // run health check for each upstream
         let jobs = upstreams.into_iter().map(|(name, up)| {
             let runtime = pingora_runtime::current_handle();
             runtime.spawn(async move {
@@ -666,6 +663,8 @@ impl ServiceTask for HealthCheckTask {
                     check_count % count == 0
                 };
 
+                // get update frequecy(update service)
+                // and health check frequency
                 let (update_frequency, health_check_frequency) =
                     if let Some(lb) = up.as_round_robind() {
                         let update_frequency =
@@ -757,7 +756,7 @@ mod tests {
     use super::{
         get_hash_value, new_backends, new_health_check, new_http_health_check,
         new_tcp_health_check, HealthCheckConf, State, Upstream, UpstreamConf,
-        UpstreamPeerTracer, DNS_DISCOVERY,
+        UpstreamPeerTracer,
     };
     use pingora::protocols::ALPN;
     use pingora::proxy::Session;
@@ -828,13 +827,8 @@ mod tests {
         )
         .unwrap();
 
-        let _ = new_backends(
-            &["github.com".to_string()],
-            true,
-            false,
-            DNS_DISCOVERY,
-        )
-        .unwrap();
+        let _ = new_backends(&["github.com".to_string()], true, false, "dns")
+            .unwrap();
     }
     #[test]
     fn test_new_upstream() {

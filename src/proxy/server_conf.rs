@@ -98,21 +98,6 @@ impl From<PingapConf> for Vec<ServerConf> {
                 error_template = ERROR_TEMPLATE.to_string();
             }
 
-            let mut threads = item.threads;
-            if threads.is_none() {
-                threads = conf.basic.threads;
-            }
-
-            let threads = if let Some(threads) = threads {
-                if threads > 0 {
-                    Some(threads)
-                } else {
-                    Some(num_cpus::get())
-                }
-            } else {
-                None
-            };
-
             let tcp_keepalive = if item.tcp_idle.is_some()
                 && item.tcp_probe_count.is_some()
                 && item.tcp_interval.is_some()
@@ -138,7 +123,7 @@ impl From<PingapConf> for Vec<ServerConf> {
                 addr: item.addr,
                 access_log: item.access_log,
                 locations: item.locations.unwrap_or_default(),
-                threads,
+                threads: item.threads,
                 lets_encrypt: item.lets_encrypt,
                 global_certificates: item
                     .global_certificates

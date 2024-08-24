@@ -66,6 +66,6 @@ pub(crate) fn format_addrs(addrs: &[String], tls: bool) -> Vec<Addr> {
 mod common;
 mod dns;
 pub use common::new_common_discover_backends;
-pub use dns::new_dns_discover_backends;
+pub use dns::{is_dns_discovery, new_dns_discover_backends};
 
 use crate::util;

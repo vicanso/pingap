@@ -13,8 +13,9 @@
 // limitations under the License.
 
 use super::{Error, Result};
+use crate::discovery::is_dns_discovery;
 use crate::plugin::parse_plugins;
-use crate::proxy::{is_dns_discovery, Parser};
+use crate::proxy::Parser;
 use crate::util::{self, base64_decode};
 use arc_swap::ArcSwap;
 use bytesize::ByteSize;

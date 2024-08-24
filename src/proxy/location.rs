@@ -19,7 +19,6 @@ use crate::state::State;
 use crate::util;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
-use bytes::Bytes;
 use once_cell::sync::Lazy;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
@@ -57,6 +56,7 @@ enum PathSelector {
     EqualPath(EqualPath),
     Empty,
 }
+/// New a path selector, regex, prefix or equal selector
 fn new_path_selector(path: &str) -> Result<PathSelector> {
     let path = path.trim();
     if path.is_empty() {
@@ -319,6 +319,7 @@ impl Location {
         }
         Ok(false)
     }
+    /// Run response plugins,
     #[inline]
     pub async fn handle_response_plugin(
         &self,
@@ -326,9 +327,9 @@ impl Location {
         session: &mut Session,
         ctx: &mut State,
         upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<Option<Bytes>> {
+    ) -> pingora::Result<()> {
         let Some(plugins) = self.plugins.as_ref() else {
-            return Ok(None);
+            return Ok(());
         };
         for name in plugins.iter() {
             if let Some(plugin) = get_plugin(name) {
@@ -338,7 +339,7 @@ impl Location {
                     .await?;
             }
         }
-        Ok(None)
+        Ok(())
     }
 }
 
