@@ -26,6 +26,8 @@ pub enum Error {
     Resolve { source: ResolveError },
     #[snafu(display("{message}"))]
     Invalid { message: String },
+    #[snafu(display("Docker error {source}"))]
+    Docker { source: bollard::errors::Error },
 }
 impl From<Error> for pingora::BError {
     fn from(value: Error) -> Self {
@@ -65,7 +67,9 @@ pub(crate) fn format_addrs(addrs: &[String], tls: bool) -> Vec<Addr> {
 
 mod common;
 mod dns;
-pub use common::new_common_discover_backends;
+mod docker;
+pub use common::{is_static_discovery, new_common_discover_backends};
 pub use dns::{is_dns_discovery, new_dns_discover_backends};
+pub use docker::{is_docker_discovery, new_docker_discover_backends};
 
 use crate::util;

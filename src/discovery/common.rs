@@ -20,6 +20,10 @@ use pingora::protocols::l4::socket::SocketAddr;
 use std::collections::BTreeSet;
 use std::net::ToSocketAddrs;
 
+pub fn is_static_discovery(value: &str) -> bool {
+    value.is_empty() || value == "static"
+}
+
 /// Create a static discovery, execute it only once.
 /// It will resolve the domain to socket address at the beginning stage.
 pub fn new_common_discover_backends(

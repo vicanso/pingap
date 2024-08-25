@@ -14,7 +14,8 @@
 
 use crate::config::UpstreamConf;
 use crate::discovery::{
-    is_dns_discovery, new_common_discover_backends, new_dns_discover_backends,
+    is_dns_discovery, is_docker_discovery, new_common_discover_backends,
+    new_dns_discover_backends, new_docker_discover_backends,
 };
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::State;
@@ -321,6 +322,13 @@ fn new_backends(
         new_dns_discover_backends(addrs, tls, ipv4_only).map_err(|e| {
             Error::Common {
                 category: "dns_discovery".to_string(),
+                message: e.to_string(),
+            }
+        })
+    } else if is_docker_discovery(discovery) {
+        new_docker_discover_backends(addrs, tls, ipv4_only).map_err(|e| {
+            Error::Common {
+                category: "docker_discovery".to_string(),
                 message: e.to_string(),
             }
         })

@@ -56,6 +56,11 @@ export default function UpstreamInfo() {
           value: "dns",
         },
         {
+          label: "docker",
+          option: 3,
+          value: "docker",
+        },
+        {
           label: "None",
           option: -1,
           value: null,

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{Error, Result};
-use crate::discovery::is_dns_discovery;
+use crate::discovery::is_static_discovery;
 use crate::plugin::parse_plugins;
 use crate::proxy::Parser;
 use crate::util::{self, base64_decode};
@@ -232,7 +232,7 @@ impl UpstreamConf {
             });
         }
         // validate upstream addr
-        if !is_dns_discovery(&self.discovery.clone().unwrap_or_default()) {
+        if is_static_discovery(&self.discovery.clone().unwrap_or_default()) {
             for addr in self.addrs.iter() {
                 let arr: Vec<_> = addr.split(' ').collect();
                 let mut addr = arr[0].to_string();
