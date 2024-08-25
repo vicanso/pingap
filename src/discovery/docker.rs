@@ -123,10 +123,10 @@ impl Docker {
     }
     async fn list_containers_by_names(
         &self,
-        names: &[String],
+        filter_names: &[String],
     ) -> Result<Vec<ContainerSummary>> {
         let mut filters = HashMap::new();
-        filters.insert("name".to_string(), names.to_owned());
+        filters.insert("name".to_string(), filter_names.to_owned());
         let containers = self
             .docker
             .list_containers(Some(ListContainersOptions {
@@ -145,7 +145,9 @@ impl Docker {
                 let Some(name) = names.first() else {
                     return false;
                 };
-                if !names.contains(&name.substring(1, name.len()).to_string()) {
+                if !filter_names
+                    .contains(&name.substring(1, name.len()).to_string())
+                {
                     return false;
                 }
                 true
