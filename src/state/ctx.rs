@@ -58,6 +58,7 @@ impl OtelTracer {
     }
 }
 
+#[derive(Default)]
 pub struct State {
     // current processing request
     pub processing: i32,
@@ -124,46 +125,11 @@ pub struct State {
     pub upstream_span: Option<BoxedSpan>,
 }
 
-impl Default for State {
-    fn default() -> Self {
-        State {
-            processing: 0,
-            accepted: 0,
-            location_processing: 0,
-            location_accepted: 0,
-            tls_version: None,
-            tls_cipher: None,
-            tls_handshake_time: None,
-            status: None,
-            connection_time: 0,
-            connection_reused: false,
+impl State {
+    pub fn new() -> Self {
+        Self {
             created_at: util::now().as_millis() as u64,
-            upstream_reused: false,
-            location: None,
-            upstream_address: "".to_string(),
-            client_ip: None,
-            remote_addr: None,
-            guard: None,
-            request_id: None,
-            cache_prefix: None,
-            cache_lookup_time: None,
-            cache_lock_time: None,
-            cache_max_ttl: None,
-            upstream_processing: None,
-            upstream_connect_time: None,
-            upstream_connected: None,
-            upstream_tcp_connect_time: None,
-            upstream_tls_handshake_time: None,
-            upstream_processing_time: None,
-            upstream_response_time: None,
-            payload_size: 0,
-            compression_stat: None,
-            modify_response_body: None,
-            response_body: None,
-            cache_reading: None,
-            cache_writing: None,
-            otel_tracer: None,
-            upstream_span: None,
+            ..Default::default()
         }
     }
 }
@@ -318,9 +284,7 @@ mod tests {
 
     #[test]
     fn test_state() {
-        let mut ctx = State {
-            ..Default::default()
-        };
+        let mut ctx = State::new();
 
         assert_eq!(
             b"false",

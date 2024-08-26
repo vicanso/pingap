@@ -88,6 +88,8 @@ impl Prometheus {
             code = status.as_u16();
         }
         self.http_request_processing.dec();
+
+        // http response code
         let label_values = match code {
             100..=199 => Some(["1xx"]),
             200..=299 => Some(["2xx"]),
@@ -101,20 +103,30 @@ impl Prometheus {
                 .with_label_values(label_values)
                 .inc();
         }
+
+        // response time x second
         self.http_response_time.observe(ms as f64 / SECOND);
+
+        // reused connection
         if ctx.connection_reused {
             self.connection_reused.inc();
         }
+
         if let Some(tls_handshake_time) = ctx.tls_handshake_time {
             self.tls_handshake_time
                 .observe(tls_handshake_time as f64 / SECOND);
         }
+        // response body size(kb)
         self.http_response_body_sent
             .observe(session.body_bytes_sent() as f64 / 1024.0);
+
+        // payload size(kb)
         if ctx.payload_size != 0 {
             self.http_reqesut_body_received
                 .observe(ctx.payload_size as f64 / 1024.0);
         }
+
+        // location stats
         if let Some(lo) = &ctx.location {
             if let Some(count) = ctx.upstream_connected {
                 self.upstream_connected
@@ -127,6 +139,8 @@ impl Prometheus {
                     .set(count as i64);
             }
         }
+
+        // upstream stats
         if let Some(upstream_tcp_connect_time) = ctx.upstream_tcp_connect_time {
             self.upstream_tcp_connect_time
                 .observe(upstream_tcp_connect_time as f64 / SECOND);
@@ -148,6 +162,8 @@ impl Prometheus {
             self.upstream_response_time
                 .observe(upstream_response_time as f64 / SECOND);
         }
+
+        // cache stats
         if let Some(cache_lookup_time) = ctx.cache_lookup_time {
             self.cache_lookup_time
                 .observe(cache_lookup_time as f64 / SECOND);
@@ -163,6 +179,7 @@ impl Prometheus {
             self.cache_writing.set(cache_writing as i64);
         }
 
+        // compression stats
         if let Some(compression_stat) = &ctx.compression_stat {
             self.compression_ratio.observe(compression_stat.ratio());
         }
@@ -181,6 +198,7 @@ impl Prometheus {
     }
 }
 
+/// Create a new prometheus push service
 pub fn new_prometheus_push_service(
     name: &str,
     url: &str,
@@ -193,6 +211,7 @@ pub fn new_prometheus_push_service(
     let _ = info.set_username("");
     let _ = info.set_password(None);
     let mut interval = Duration::from_secs(60);
+    // push interval
     for (key, value) in info.query_pairs().into_iter() {
         if key == "interval" {
             if let Ok(v) = parse_duration(&value) {
@@ -230,6 +249,7 @@ struct PrometheusPush {
 #[async_trait]
 impl ServiceTask for PrometheusPush {
     async fn run(&self) -> Option<bool> {
+        // http push metrics
         let encoder = ProtobufEncoder::new();
         let mut buf = Vec::new();
 

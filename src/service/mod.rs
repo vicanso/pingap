@@ -40,8 +40,7 @@ impl CommonServiceTask {
     ) -> Self {
         Self {
             task: Box::new(task),
-            // interval should gt 1s
-            interval: interval.max(Duration::from_secs(1)),
+            interval,
             name: name.to_string(),
         }
     }
@@ -51,6 +50,9 @@ impl CommonServiceTask {
 impl BackgroundService for CommonServiceTask {
     async fn start(&self, mut shutdown: ShutdownWatch) {
         let period_human: humantime::Duration = self.interval.into();
+        // if interval is less than 1s
+        // the task should only run once
+        let once = self.interval.as_millis() < 1000;
 
         info!(
             name = self.name,
@@ -78,7 +80,7 @@ impl BackgroundService for CommonServiceTask {
                         ),
                         description,
                     );
-                    if done {
+                    if once || done {
                         break;
                     }
                 }

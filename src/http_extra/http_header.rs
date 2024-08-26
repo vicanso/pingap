@@ -85,15 +85,15 @@ pub fn convert_header_value(
                 let value = if let Some(value) = session
                     .get_header(util::HTTP_HEADER_X_FORWARDED_FOR.clone())
                 {
-                    &format!(
+                    format!(
                         "{}, {}",
                         value.to_str().unwrap_or_default(),
                         remote_addr
                     )
                 } else {
-                    remote_addr
+                    remote_addr.to_string()
                 };
-                return HeaderValue::from_str(value).ok();
+                return HeaderValue::from_str(&value).ok();
             }
         },
         HTTP_ORIGIN_TAG => {

@@ -46,12 +46,11 @@ pub enum NotificationCategory {
     DiffConfig,
     Restart,
     RestartFail,
-    ReloadFail,
+    ReloadConfig,
+    ReloadConfigFail,
     TlsValidity,
     ParseCertificateFail,
     ServiceDiscoverFail,
-    LocationUpdated,
-    UpstreamUpdated,
 }
 
 impl Display for NotificationLevel {

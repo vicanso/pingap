@@ -86,13 +86,14 @@ static LOCATION_MAP: Lazy<ArcSwap<ServerLocations>> =
 pub fn try_init_server_locations(
     servers: &HashMap<String, config::ServerConf>,
     locations: &HashMap<String, config::LocationConf>,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     // get the location weight
     let mut location_weights = HashMap::new();
     for (name, item) in locations.iter() {
         location_weights.insert(name.to_string(), item.get_weight());
     }
     let mut server_locations = AHashMap::new();
+    let mut updated_servers = vec![];
     for (name, server) in servers.iter() {
         if let Some(items) = &server.locations {
             let mut items = items.clone();
@@ -104,11 +105,21 @@ pub fn try_init_server_locations(
                     .unwrap_or_default();
                 std::cmp::Reverse(weight)
             });
+            let mut not_modified = false;
+            if let Some(current_locations) = get_server_locations(name) {
+                if current_locations.join(",") == items.join(",") {
+                    not_modified = true;
+                }
+            }
+            if !not_modified {
+                updated_servers.push(name.to_string());
+            }
+
             server_locations.insert(name.to_string(), Arc::new(items));
         }
     }
     LOCATION_MAP.store(Arc::new(server_locations));
-    Ok(())
+    Ok(updated_servers)
 }
 
 #[inline]
@@ -433,9 +444,7 @@ fn get_digest_detail(digest: &Digest) -> DigestDeailt {
 impl ProxyHttp for Server {
     type CTX = State;
     fn new_ctx(&self) -> Self::CTX {
-        State {
-            ..Default::default()
-        }
+        State::new()
     }
     async fn early_request_filter(
         &self,

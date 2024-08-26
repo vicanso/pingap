@@ -289,7 +289,9 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
     Ok(plguins)
 }
 
-pub fn try_init_plugins(plugins: &HashMap<String, PluginConf>) -> Result<()> {
+pub fn try_init_plugins(
+    plugins: &HashMap<String, PluginConf>,
+) -> Result<Vec<String>> {
     let mut plugin_confs: Vec<(String, PluginConf)> = plugins
         .iter()
         .map(|(name, value)| (name.to_string(), value.clone()))
@@ -303,6 +305,7 @@ pub fn try_init_plugins(plugins: &HashMap<String, PluginConf>) -> Result<()> {
 
     plugin_confs.extend(get_builtin_proxy_plugins());
 
+    let mut updated_plugins = vec![];
     let mut plugins = AHashMap::new();
     let plugin_confs: Vec<(String, PluginConf)> = plugin_confs
         .into_iter()
@@ -328,13 +331,14 @@ pub fn try_init_plugins(plugins: &HashMap<String, PluginConf>) -> Result<()> {
             } else {
                 info!(name, step, category, "plugin will be created");
             }
+            updated_plugins.push(name.to_string());
             true
         })
         .collect();
     plugins.extend(parse_plugins(plugin_confs)?);
     PLUGINS.store(Arc::new(plugins));
 
-    Ok(())
+    Ok(updated_plugins)
 }
 
 pub fn get_plugin(name: &str) -> Option<Arc<dyn Plugin>> {

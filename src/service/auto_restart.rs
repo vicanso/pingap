@@ -36,7 +36,7 @@ async fn diff_and_update_config(
         original_diff_result = original_diff_result.join("\n"),
         "current config diff from new config"
     );
-    // no update date
+    // no update config
     if original_diff_result.is_empty() {
         return Ok((false, vec![], "".to_string()));
     }
@@ -45,8 +45,12 @@ async fn diff_and_update_config(
     let mut hot_realod_config = current_config.clone();
     {
         // hot reload first,
-        // only validate server.locations, locations, and upstreams
+        // only validate server.locations, locations, upstreams and plugins
         let mut should_reload_server_location = false;
+        let mut should_reload_upstream = false;
+        let mut should_reload_location = false;
+        let mut should_reload_plugin = false;
+
         // update the values which can be hot reload
         // set server locations
         for (name, server) in new_config.servers.iter() {
@@ -60,13 +64,10 @@ async fn diff_and_update_config(
             }
         }
 
-        // set upstream and location value
+        // set upstream, location and plugin value
         hot_realod_config.upstreams = new_config.upstreams.clone();
         hot_realod_config.locations = new_config.locations.clone();
         hot_realod_config.plugins = new_config.plugins.clone();
-        let mut should_reload_upstream = false;
-        let mut should_reload_location = false;
-        let mut should_reload_plugin = false;
 
         for category in updated_category_list {
             match category.as_str() {
@@ -76,24 +77,31 @@ async fn diff_and_update_config(
                 _ => {},
             };
         }
+
+        let format_message = |name: &str, list: Vec<String>| -> String {
+            if list.len() > 1 {
+                return format!(
+                    "{name}s({}) are created or updated",
+                    list.join(",")
+                );
+            }
+            format!("{name}({}) is created or updated", list.join(","))
+        };
+
         if should_reload_upstream {
             match proxy::try_update_upstreams(&new_config.upstreams).await {
                 Err(e) => {
                     let error = e.to_string();
                     reload_fail_messages
-                        .push(format!("upstream reload fail: {error}",));
+                        .push(format!("upstream reload fail: {error}"));
                     error!(error, "reload upstream fail");
                 },
                 Ok(updated_upstreams) => {
                     info!("reload upstream success");
                     webhook::send(webhook::SendNotificationParams {
-                        category:
-                            webhook::NotificationCategory::UpstreamUpdated,
+                        category: webhook::NotificationCategory::ReloadConfig,
                         level: webhook::NotificationLevel::Info,
-                        msg: format!(
-                            "Upstreams({}) are created or updated",
-                            updated_upstreams.join(",")
-                        ),
+                        msg: format_message("Upstream", updated_upstreams),
                         ..Default::default()
                     });
                 },
@@ -110,13 +118,9 @@ async fn diff_and_update_config(
                 Ok(updated_locations) => {
                     info!("reload location success");
                     webhook::send(webhook::SendNotificationParams {
-                        category:
-                            webhook::NotificationCategory::LocationUpdated,
+                        category: webhook::NotificationCategory::ReloadConfig,
                         level: webhook::NotificationLevel::Info,
-                        msg: format!(
-                            "Locations({}) are created or updated",
-                            updated_locations.join(",")
-                        ),
+                        msg: format_message("Location", updated_locations),
                         ..Default::default()
                     });
                 },
@@ -130,8 +134,14 @@ async fn diff_and_update_config(
                         .push(format!("plugin reload fail: {error}"));
                     error!(error, "reload plugin fail");
                 },
-                Ok(()) => {
+                Ok(updated_plugins) => {
                     info!("reload plugin success");
+                    webhook::send(webhook::SendNotificationParams {
+                        category: webhook::NotificationCategory::ReloadConfig,
+                        level: webhook::NotificationLevel::Info,
+                        msg: format_message("Plugin", updated_plugins),
+                        ..Default::default()
+                    });
                 },
             };
         }
@@ -146,8 +156,14 @@ async fn diff_and_update_config(
                         .push(format!("server reload fail: {error}"));
                     error!(error, "reload server fail");
                 },
-                Ok(()) => {
+                Ok(updated_servers) => {
                     info!("reload server location success");
+                    webhook::send(webhook::SendNotificationParams {
+                        category: webhook::NotificationCategory::ReloadConfig,
+                        level: webhook::NotificationLevel::Info,
+                        msg: format_message("Server Location", updated_servers),
+                        ..Default::default()
+                    });
                 },
             };
         }
@@ -163,7 +179,7 @@ async fn diff_and_update_config(
             original_diff_result = original_diff_result.join("\n"),
             "current config diff from hot realod config"
         );
-        // no update date
+        // no update config
         if original_diff_result.is_empty() {
             return Ok((false, vec![], reload_fail_message));
         }
@@ -261,7 +277,8 @@ impl ServiceTask for AutoRestart {
                     });
                     if !reload_fail_message.is_empty() {
                         webhook::send(webhook::SendNotificationParams {
-                            category: webhook::NotificationCategory::ReloadFail,
+                            category:
+                                webhook::NotificationCategory::ReloadConfigFail,
                             msg: reload_fail_message,
                             remark: Some("reload config fail".to_string()),
                             ..Default::default()
