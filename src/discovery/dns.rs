@@ -21,15 +21,14 @@ use hickory_resolver::config::{
 use hickory_resolver::lookup_ip::LookupIp;
 use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_resolver::system_conf::read_system_conf;
-use hickory_resolver::{AsyncResolver, Resolver};
+use hickory_resolver::AsyncResolver;
 use http::Extensions;
 use pingora::lb::discovery::ServiceDiscovery;
 use pingora::lb::{Backend, Backends};
 use pingora::protocols::l4::socket::SocketAddr;
 use std::collections::{BTreeSet, HashMap};
 use std::net::ToSocketAddrs;
-use std::time::{Duration, SystemTime};
-use tokio::runtime::Handle;
+use std::time::SystemTime;
 use tracing::{debug, error, info};
 
 struct Dns {
@@ -60,28 +59,6 @@ impl Dns {
 
         Ok((config, options))
     }
-    fn lookup_ip(&self) -> Result<Vec<LookupIp>> {
-        let mut ip_list = vec![];
-        let (config, mut options) = self.read_system_conf()?;
-        // lookup ip only use for init,
-        // subsequent lookup will use async
-        // so set attempts to 1 and timeout 3s
-        options.attempts = 1;
-        options.timeout = Duration::from_secs(3);
-
-        let resolver =
-            Resolver::new(config, options).map_err(|e| Error::Io {
-                source: e,
-                content: "new resolver fail".to_string(),
-            })?;
-        for (host, _, _) in self.hosts.iter() {
-            let ip = resolver
-                .lookup_ip(host)
-                .map_err(|e| Error::Resolve { source: e })?;
-            ip_list.push(ip);
-        }
-        Ok(ip_list)
-    }
     async fn tokio_lookup_ip(&self) -> Result<Vec<LookupIp>> {
         let mut ip_list = vec![];
         let provider = TokioConnectionProvider::default();
@@ -100,18 +77,13 @@ impl Dns {
     async fn run_discover(
         &self,
     ) -> Result<(BTreeSet<Backend>, HashMap<u64, bool>)> {
-        let tokio_runtime = Handle::try_current().is_ok();
         let mut upstreams = BTreeSet::new();
         let mut backends = vec![];
         debug!(
             hosts = format!("{:?}", self.hosts),
             "dns discover is running"
         );
-        let lookup_ip_list = if tokio_runtime {
-            self.tokio_lookup_ip().await?
-        } else {
-            self.lookup_ip()?
-        };
+        let lookup_ip_list = self.tokio_lookup_ip().await?;
         for (index, (_, port, weight)) in self.hosts.iter().enumerate() {
             let lookup_ip =
                 lookup_ip_list.get(index).ok_or(Error::Invalid {
@@ -209,13 +181,6 @@ pub fn new_dns_discover_backends(
 mod tests {
     use super::Dns;
     use pretty_assertions::assert_eq;
-
-    #[test]
-    fn test_dns_discover() {
-        let dns = Dns::new(&["github.com".to_string()], true, true).unwrap();
-        let ip_list = dns.lookup_ip().unwrap();
-        assert_eq!(true, !ip_list.is_empty());
-    }
 
     #[tokio::test]
     async fn test_async_dns_discover() {

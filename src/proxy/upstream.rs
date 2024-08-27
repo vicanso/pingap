@@ -14,8 +14,9 @@
 
 use crate::config::UpstreamConf;
 use crate::discovery::{
-    is_dns_discovery, is_docker_discovery, new_common_discover_backends,
-    new_dns_discover_backends, new_docker_discover_backends,
+    is_dns_discovery, is_docker_discovery, is_static_discovery,
+    new_common_discover_backends, new_dns_discover_backends,
+    new_docker_discover_backends,
 };
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::State;
@@ -403,21 +404,7 @@ impl Upstream {
         let algo_method = conf.algo.clone().unwrap_or_default();
         let algo_params: Vec<&str> = algo_method.split(':').collect();
         let mut hash_key = "".to_string();
-        let check_result = |result: Option<Result<(), Box<pingora::Error>>>| {
-            let Some(result) = result else {
-                return;
-            };
-            let Err(err) = result else {
-                return;
-            };
 
-            if is_dns_discovery(&discovery) {
-                error!(error = err.to_string(), "dns discovery fail");
-                return;
-            }
-            // not dns discovery should panic
-            panic!("{err:?}");
-        };
         let lb = match algo_params[0] {
             "hash" => {
                 let mut lb =
@@ -428,8 +415,12 @@ impl Upstream {
                         hash_key = algo_params[2].to_string();
                     }
                 }
-                let result = lb.update().now_or_never();
-                check_result(result);
+                if is_static_discovery(&discovery) {
+                    lb.update()
+                        .now_or_never()
+                        .expect("static should not block")
+                        .expect("static should not error");
+                }
                 lb.set_health_check(hc);
                 lb.update_frequency = conf.update_frequency;
                 lb.health_check_frequency = Some(health_check_frequency);
@@ -438,8 +429,12 @@ impl Upstream {
             _ => {
                 let mut lb =
                     LoadBalancer::<RoundRobin>::from_backends(backends);
-                let result = lb.update().now_or_never();
-                check_result(result);
+                if is_static_discovery(&discovery) {
+                    lb.update()
+                        .now_or_never()
+                        .expect("static should not block")
+                        .expect("static should not error");
+                }
                 lb.set_health_check(hc);
                 lb.update_frequency = conf.update_frequency;
                 lb.health_check_frequency = Some(health_check_frequency);
