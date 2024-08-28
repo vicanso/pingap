@@ -27,7 +27,7 @@ use bytes::{BufMut, BytesMut};
 use bytesize::ByteSize;
 use http::Method;
 use humantime::parse_duration;
-use once_cell::sync::{Lazy, OnceCell};
+use once_cell::sync::OnceCell;
 use pingora::cache::eviction::simple_lru::Manager;
 use pingora::cache::eviction::EvictionManager;
 use pingora::cache::lock::CacheLock;
@@ -37,32 +37,18 @@ use std::str::FromStr;
 use std::time::Duration;
 use tracing::debug;
 
-static CACHE_BACKEND: OnceCell<HttpCache> = OnceCell::new();
-static PREDICTOR: Lazy<Predictor<32>> = Lazy::new(|| Predictor::new(128, None));
 // meomory limit size
 const MAX_MEMORY_SIZE: usize = 100 * 1024 * 1024;
-static EVICTION_MANAGER: Lazy<Manager> = Lazy::new(|| {
-    let size = if let Some(cache_max_size) =
-        get_current_config().basic.cache_max_size
-    {
-        cache_max_size.as_u64() as usize
-    } else {
-        MAX_MEMORY_SIZE
-    };
-    Manager::new(size)
-});
-static CACHE_LOCK_ONE_SECOND: Lazy<CacheLock> =
-    Lazy::new(|| CacheLock::new(std::time::Duration::from_secs(1)));
-static CACHE_LOCK_TWO_SECONDS: Lazy<CacheLock> =
-    Lazy::new(|| CacheLock::new(std::time::Duration::from_secs(2)));
-static CACHE_LOCK_THREE_SECONDS: Lazy<CacheLock> =
-    Lazy::new(|| CacheLock::new(std::time::Duration::from_secs(3)));
+static CACHE_BACKEND: OnceCell<HttpCache> = OnceCell::new();
+static PREDICTOR: OnceCell<Predictor<32>> = OnceCell::new();
+static EVICTION_MANAGER: OnceCell<Manager> = OnceCell::new();
+static CACHE_LOCK_ONE_SECOND: OnceCell<CacheLock> = OnceCell::new();
 
 pub struct Cache {
     plugin_step: PluginStep,
-    eviction: bool,
-    predictor: bool,
-    lock: u8,
+    eviction: Option<&'static (dyn EvictionManager + Sync)>,
+    predictor: Option<&'static (dyn CacheablePredictor + Sync)>,
+    lock: Option<&'static CacheLock>,
     http_cache: &'static HttpCache,
     max_file_size: usize,
     max_ttl: Option<Duration>,
@@ -71,27 +57,76 @@ pub struct Cache {
     hash_value: String,
 }
 
+fn get_cache_backend() -> Result<&'static HttpCache> {
+    // get global cache backend
+    CACHE_BACKEND.get_or_try_init(|| {
+        let basic_conf = &get_current_config().basic;
+        let size = if let Some(cache_max_size) = basic_conf.cache_max_size {
+            cache_max_size.as_u64() as usize
+        } else {
+            MAX_MEMORY_SIZE
+        };
+        // file cache
+        let cache = if let Some(dir) = &basic_conf.cache_directory {
+            new_file_cache(dir.as_str()).map_err(|e| Error::Invalid {
+                category: "cache_backend".to_string(),
+                message: e.to_string(),
+            })?
+        } else {
+            // tiny ufo cache
+            new_tiny_ufo_cache(size.min(ByteSize::gb(1).as_u64() as usize))
+        };
+        Ok(cache)
+    })
+}
+
+fn get_eviction_manager() -> &'static Manager {
+    EVICTION_MANAGER.get_or_init(|| {
+        let size = if let Some(cache_max_size) =
+            get_current_config().basic.cache_max_size
+        {
+            cache_max_size.as_u64() as usize
+        } else {
+            MAX_MEMORY_SIZE
+        };
+        Manager::new(size)
+    })
+}
+
+fn get_cache_lock(lock: Duration) -> Option<&'static CacheLock> {
+    match lock.as_secs() {
+        1 => Some(
+            CACHE_LOCK_ONE_SECOND
+                .get_or_init(|| CacheLock::new(Duration::from_secs(1))),
+        ),
+        2 => Some(
+            CACHE_LOCK_ONE_SECOND
+                .get_or_init(|| CacheLock::new(Duration::from_secs(2))),
+        ),
+        3 => Some(
+            CACHE_LOCK_ONE_SECOND
+                .get_or_init(|| CacheLock::new(Duration::from_secs(3))),
+        ),
+        _ => None,
+    }
+}
+
+fn get_predictor() -> &'static (dyn CacheablePredictor + Sync) {
+    PREDICTOR.get_or_init(|| Predictor::new(128, None))
+}
+
 impl TryFrom<&PluginConf> for Cache {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let cache = CACHE_BACKEND.get_or_try_init(|| {
-            let basic_conf = &get_current_config().basic;
-            let size = if let Some(cache_max_size) = basic_conf.cache_max_size {
-                cache_max_size.as_u64() as usize
-            } else {
-                MAX_MEMORY_SIZE
-            };
-            let cache = if let Some(dir) = &basic_conf.cache_directory {
-                new_file_cache(dir.as_str()).map_err(|e| Error::Invalid {
-                    category: "cache_backend".to_string(),
-                    message: e.to_string(),
-                })?
-            } else {
-                new_tiny_ufo_cache(size.min(ByteSize::gb(1).as_u64() as usize))
-            };
-            Ok(cache)
-        })?;
+        let cache = get_cache_backend()?;
+        let eviction = if value.contains_key("eviction") {
+            let eviction = get_eviction_manager();
+            Some(eviction as &'static (dyn EvictionManager + Sync))
+        } else {
+            None
+        };
+
         let step = get_step_conf(value);
 
         let lock = get_str_conf(value, "lock");
@@ -135,13 +170,20 @@ impl TryFrom<&PluginConf> for Cache {
         } else {
             Some(headers)
         };
+
+        let predictor = if value.contains_key("predictor") {
+            Some(get_predictor())
+        } else {
+            None
+        };
+
         let params = Self {
             hash_value,
             http_cache: cache,
             plugin_step: step,
-            eviction: value.contains_key("eviction"),
-            predictor: value.contains_key("predictor"),
-            lock: lock.as_secs().max(1) as u8,
+            eviction,
+            predictor,
+            lock: get_cache_lock(lock),
             max_ttl,
             max_file_size: max_file_size.as_u64() as usize,
             namespace,
@@ -181,31 +223,20 @@ impl Plugin for Cache {
         if step != self.plugin_step {
             return Ok(None);
         }
+        // cache only support get or head
         if ![Method::GET, Method::HEAD].contains(&session.req_header().method) {
             return Ok(None);
         }
+        // max age of cache control
         ctx.cache_max_ttl = self.max_ttl;
-        let eviction = if self.eviction {
-            None
-        } else {
-            Some(&*EVICTION_MANAGER as &'static (dyn EvictionManager + Sync))
-        };
 
-        let lock = match self.lock {
-            1 => Some(&*CACHE_LOCK_ONE_SECOND),
-            2 => Some(&*CACHE_LOCK_TWO_SECONDS),
-            3 => Some(&*CACHE_LOCK_THREE_SECONDS),
-            _ => None,
-        };
-        let predictor: Option<&'static (dyn CacheablePredictor + Sync)> =
-            if self.predictor {
-                Some(&*PREDICTOR)
-            } else {
-                None
-            };
-        session
-            .cache
-            .enable(self.http_cache, eviction, predictor, lock);
+        session.cache.enable(
+            self.http_cache,
+            self.eviction,
+            self.predictor,
+            self.lock,
+        );
+        // set max size of cache response body
         if self.max_file_size > 0 {
             session.cache.set_max_file_size_bytes(self.max_file_size);
         }
@@ -264,15 +295,15 @@ max_ttl = "1m"
             .unwrap(),
         )
         .unwrap();
-        assert_eq!(true, params.eviction);
+        assert_eq!(true, params.eviction.is_some());
         assert_eq!(
             r#"Some(["Accept-Encoding"])"#,
             format!("{:?}", params.headers)
         );
-        assert_eq!(2, params.lock);
+        assert_eq!(true, params.lock.is_some());
         assert_eq!(100 * 1000, params.max_file_size);
         assert_eq!(60, params.max_ttl.unwrap().as_secs());
-        assert_eq!(true, params.predictor);
+        assert_eq!(true, params.predictor.is_some());
     }
     #[tokio::test]
     async fn test_cache() {

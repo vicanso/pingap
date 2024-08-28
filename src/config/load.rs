@@ -16,7 +16,7 @@ use super::{
     ConfigStorage, EtcdStorage, FileStorage, PingapConf, Result, ETCD_PROTOCOL,
 };
 
-/// Save the confog to path.
+/// Save the config to path.
 ///
 /// Validate the config before save.
 pub async fn save_config(

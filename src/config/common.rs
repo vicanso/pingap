@@ -122,6 +122,16 @@ impl<'de> Deserialize<'de> for PluginStep {
     }
 }
 
+/// Convert pem to [u8]
+fn convert_pem(value: &str) -> Result<Vec<u8>> {
+    let buf = if util::is_pem(value) {
+        value.as_bytes().to_vec()
+    } else {
+        base64_decode(value).map_err(|e| Error::Base64Decode { source: e })?
+    };
+    Ok(buf)
+}
+
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
 pub struct CertificateConf {
     pub domains: Option<String>,
@@ -136,38 +146,25 @@ pub struct CertificateConf {
 impl CertificateConf {
     /// Validate the options of certificate config.
     pub fn validate(&self) -> Result<()> {
+        // convert private key
         if let Some(value) = &self.tls_key {
-            let buf = if util::is_pem(value) {
-                value.as_bytes().to_vec()
-            } else {
-                base64_decode(value)
-                    .map_err(|e| Error::Base64Decode { source: e })?
-            };
-
+            let buf = convert_pem(value)?;
             let _ = PKey::private_key_from_pem(&buf).map_err(|e| {
                 Error::Invalid {
                     message: e.to_string(),
                 }
             })?;
         }
+        // convert certificate
         if let Some(value) = &self.tls_cert {
-            let buf = if util::is_pem(value) {
-                value.as_bytes().to_vec()
-            } else {
-                base64_decode(value)
-                    .map_err(|e| Error::Base64Decode { source: e })?
-            };
+            let buf = convert_pem(value)?;
             let _ = X509::from_pem(&buf).map_err(|e| Error::Invalid {
                 message: e.to_string(),
             })?;
         }
+        // convert certificate chain
         if let Some(value) = &self.tls_chain {
-            let buf = if util::is_pem(value) {
-                value.as_bytes().to_vec()
-            } else {
-                base64_decode(value)
-                    .map_err(|e| Error::Base64Decode { source: e })?
-            };
+            let buf = convert_pem(value)?;
             let _ = X509::from_pem(&buf).map_err(|e| Error::Invalid {
                 message: e.to_string(),
             })?;
@@ -217,6 +214,7 @@ pub struct UpstreamConf {
     pub remark: Option<String>,
 }
 impl UpstreamConf {
+    /// Get hash key of upstream config
     pub fn hash_key(&self) -> String {
         let mut hasher = DefaultHasher::new();
         self.hash(&mut hasher);
@@ -231,7 +229,7 @@ impl UpstreamConf {
                 message: "upstream addrs is empty".to_string(),
             });
         }
-        // validate upstream addr
+        // only validate upstream addr for static discovery
         if is_static_discovery(&self.discovery.clone().unwrap_or_default()) {
             for addr in self.addrs.iter() {
                 let arr: Vec<_> = addr.split(' ').collect();
@@ -273,6 +271,7 @@ pub struct LocationConf {
 }
 
 impl LocationConf {
+    /// Get hash key of location config
     pub fn hash_key(&self) -> String {
         let mut hasher = DefaultHasher::new();
         self.hash(&mut hasher);
@@ -410,13 +409,7 @@ impl ServerConf {
             }
         }
         if let Some(value) = &self.tls_key {
-            let buf = if util::is_pem(value) {
-                value.as_bytes().to_vec()
-            } else {
-                base64_decode(value)
-                    .map_err(|e| Error::Base64Decode { source: e })?
-            };
-
+            let buf = convert_pem(value)?;
             let _ = PKey::private_key_from_pem(&buf).map_err(|e| {
                 Error::Invalid {
                     message: e.to_string(),
@@ -424,12 +417,7 @@ impl ServerConf {
             })?;
         }
         if let Some(value) = &self.tls_cert {
-            let buf = if util::is_pem(value) {
-                value.as_bytes().to_vec()
-            } else {
-                base64_decode(value)
-                    .map_err(|e| Error::Base64Decode { source: e })?
-            };
+            let buf = convert_pem(value)?;
             let _ = X509::from_pem(&buf).map_err(|e| Error::Invalid {
                 message: e.to_string(),
             })?;
@@ -897,7 +885,7 @@ pub fn get_current_config() -> Arc<PingapConf> {
 static DEFAULT_APP_NAME: &str = "Pingap";
 
 static APP_NAME: OnceCell<String> = OnceCell::new();
-/// Sets app name
+/// Set app name, it only can set once
 pub fn set_app_name(name: &str) {
     APP_NAME.get_or_init(|| {
         if name.is_empty() {
@@ -907,6 +895,8 @@ pub fn set_app_name(name: &str) {
         }
     });
 }
+
+/// Get app name
 pub fn get_app_name() -> String {
     if let Some(name) = APP_NAME.get() {
         name.to_string()
@@ -915,7 +905,7 @@ pub fn get_app_name() -> String {
     }
 }
 
-/// Returns current running pingap's config crc hash
+/// Get current running pingap's config crc hash
 pub fn get_config_hash() -> String {
     get_current_config().hash().unwrap_or_default()
 }
