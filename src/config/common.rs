@@ -856,20 +856,6 @@ impl PingapConf {
     }
 }
 
-static CONFIG_PATH: OnceCell<String> = OnceCell::new();
-/// Set config path.
-pub fn set_config_path(conf_path: &str) {
-    CONFIG_PATH.get_or_init(|| conf_path.to_string());
-}
-/// Get config path
-pub fn get_config_path() -> String {
-    if let Some(value) = CONFIG_PATH.get() {
-        value.to_string()
-    } else {
-        "".to_string()
-    }
-}
-
 static CURRENT_CONFIG: Lazy<ArcSwap<PingapConf>> =
     Lazy::new(|| ArcSwap::from_pointee(PingapConf::default()));
 /// Set current config of pingap.

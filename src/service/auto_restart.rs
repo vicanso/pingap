@@ -13,15 +13,18 @@
 // limitations under the License.
 
 use crate::config::{
-    get_config_path, get_current_config, load_config, set_current_config,
+    get_config_storage, get_current_config, load_config, set_current_config,
     PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_UPSTREAM,
 };
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::restart;
 use crate::{plugin, proxy, webhook};
 use async_trait::async_trait;
+use pingora::server::ShutdownWatch;
+use pingora::services::background::BackgroundService;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
+use tokio::time::interval;
 use tracing::{debug, error, info};
 
 async fn diff_and_update_config(
@@ -210,7 +213,7 @@ async fn diff_and_update_config(
 async fn update_application_config(
     hot_reload_only: bool,
 ) -> Result<(bool, Vec<String>, String), Box<dyn std::error::Error>> {
-    let new_config = load_config(&get_config_path(), false).await?;
+    let new_config = load_config(false).await?;
     new_config.validate()?;
     let current_config: PingapConf = get_current_config().as_ref().clone();
 
@@ -246,6 +249,112 @@ pub fn new_auto_restart_service(
     )
 }
 
+pub struct ConfigObserverService {
+    interval: Duration,
+    only_hot_reload: bool,
+}
+
+pub fn new_observer_service(
+    interval: Duration,
+    only_hot_reload: bool,
+) -> ConfigObserverService {
+    ConfigObserverService {
+        interval,
+        only_hot_reload,
+    }
+}
+
+#[async_trait]
+impl BackgroundService for ConfigObserverService {
+    async fn start(&self, mut shutdown: ShutdownWatch) {
+        let Some(storage) = get_config_storage() else {
+            return;
+        };
+        let period_human: humantime::Duration = self.interval.into();
+
+        info!(
+            name = "Config observer",
+            interval = period_human.to_string(),
+            "background service is running",
+        );
+        let mut period = interval(self.interval);
+
+        let result = storage.observe().await;
+        if let Err(e) = result {
+            error!(error = e.to_string(), "create storage observe fail");
+            return;
+        }
+
+        let mut observer = result.unwrap();
+
+        loop {
+            tokio::select! {
+                _ = shutdown.changed() => {
+                    break;
+                }
+                // 逻辑并不完善，有可能因为变更处理中途又发生其它变更导致缺失
+                // 因此还需配合fetch的形式比对
+                _ = period.tick() => {
+                    // fetch and diff update
+                    run_update_application_config(self.only_hot_reload).await;
+                }
+                result = observer.watch() => {
+                    match result {
+                       Ok(updated)  => {
+                           if !updated {
+                               continue
+                           }
+                           // only hot reload for observe updated
+                           run_update_application_config(true).await;
+                       },
+                       Err(e) => {
+                           error!(error = e.to_string(), "observe updated fail");
+                       }
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn run_update_application_config(hot_reload_only: bool) {
+    match update_application_config(hot_reload_only).await {
+        Ok((should_restart, diff_result, reload_fail_message)) => {
+            if !diff_result.is_empty() {
+                // add more message for auto reload
+                let remark = if !should_restart {
+                    "Configuration has been hot reloaded".to_string()
+                } else {
+                    "Pingap will restart due to configuration updates"
+                        .to_string()
+                };
+                webhook::send(webhook::SendNotificationParams {
+                    category: webhook::NotificationCategory::DiffConfig,
+                    msg: diff_result.join("\n").trim().to_string(),
+                    remark: Some(remark),
+                    ..Default::default()
+                });
+                if !reload_fail_message.is_empty() {
+                    webhook::send(webhook::SendNotificationParams {
+                        category:
+                            webhook::NotificationCategory::ReloadConfigFail,
+                        msg: reload_fail_message,
+                        remark: Some("reload config fail".to_string()),
+                        ..Default::default()
+                    });
+                }
+            }
+
+            if should_restart {
+                restart();
+            }
+        },
+        Err(e) => {
+            error!(error = e.to_string(), "auto restart validate fail");
+        },
+    }
+}
+
 #[async_trait]
 impl ServiceTask for AutoRestart {
     async fn run(&self) -> Option<bool> {
@@ -259,41 +368,7 @@ impl ServiceTask for AutoRestart {
         };
         self.running_hot_reload
             .store(hot_reload_only, Ordering::Relaxed);
-        match update_application_config(hot_reload_only).await {
-            Ok((should_restart, diff_result, reload_fail_message)) => {
-                if !diff_result.is_empty() {
-                    // add more message for auto reload
-                    let remark = if !should_restart {
-                        "Configuration has been hot reloaded".to_string()
-                    } else {
-                        "Pingap will restart due to configuration updates"
-                            .to_string()
-                    };
-                    webhook::send(webhook::SendNotificationParams {
-                        category: webhook::NotificationCategory::DiffConfig,
-                        msg: diff_result.join("\n").trim().to_string(),
-                        remark: Some(remark),
-                        ..Default::default()
-                    });
-                    if !reload_fail_message.is_empty() {
-                        webhook::send(webhook::SendNotificationParams {
-                            category:
-                                webhook::NotificationCategory::ReloadConfigFail,
-                            msg: reload_fail_message,
-                            remark: Some("reload config fail".to_string()),
-                            ..Default::default()
-                        });
-                    }
-                }
-
-                if should_restart {
-                    restart();
-                }
-            },
-            Err(e) => {
-                error!(error = e.to_string(), "auto restart validate fail");
-            },
-        }
+        run_update_application_config(hot_reload_only).await;
         None
     }
     fn description(&self) -> String {

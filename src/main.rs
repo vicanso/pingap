@@ -14,7 +14,7 @@
 
 use crate::acme::{new_lets_encrypt_service, new_tls_validity_service};
 use crate::config::ETCD_PROTOCOL;
-use crate::service::new_auto_restart_service;
+use crate::service::{new_auto_restart_service, new_observer_service};
 use clap::Parser;
 use config::PingapConf;
 use crossbeam_channel::Sender;
@@ -134,16 +134,12 @@ fn new_server_conf(
     server_conf
 }
 
-fn get_config(
-    conf: String,
-    admin: bool,
-    s: Sender<Result<PingapConf, config::Error>>,
-) {
+fn get_config(admin: bool, s: Sender<Result<PingapConf, config::Error>>) {
     std::thread::spawn(move || {
         match tokio::runtime::Runtime::new() {
             Ok(rt) => {
                 let send = async move {
-                    let result = config::load_config(&conf, admin).await;
+                    let result = config::load_config(admin).await;
                     if let Err(e) = s.send(result) {
                         // use pringln because log is not init
                         println!("sender fail, {e}");
@@ -175,7 +171,8 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     {
         error!(error = e.to_string(), "init plugins fail",);
     }
-    config::set_config_path(&args.conf);
+    config::try_init_config_storage(&args.conf)?;
+    // config::set_config_path(&args.conf);
     let mut my_server = server::Server::new(None)?;
     let ps = Server::new(&server_conf)?;
     let services = ps.run(&my_server.configuration)?;
@@ -264,8 +261,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         return run_admin_node(args);
     }
 
+    config::try_init_config_storage(&args.conf)?;
     let (s, r) = crossbeam_channel::bounded(0);
-    get_config(args.conf.clone(), args.admin.is_some(), s);
+    get_config(args.admin.is_some(), s);
     let conf = r.recv()??;
     logger::logger_try_init(logger::LoggerParams {
         capacity: conf.basic.log_buffered_size.unwrap_or_default().as_u64(),
@@ -301,8 +299,6 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     #[cfg(feature = "perf")]
     info!("Enable feature perf");
-
-    config::set_config_path(&args.conf);
 
     if let Ok(exec_path) = std::env::current_exe() {
         let mut cmd = state::RestartProcessCommand {
@@ -466,13 +462,23 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     if args.autorestart || args.autoreload {
         let only_hot_reload = !args.autorestart;
-        my_server.add_service(background_service(
-            "AutoRestart",
-            new_auto_restart_service(
-                auto_restart_check_interval,
-                only_hot_reload,
-            ),
-        ));
+        if config::support_observer() {
+            my_server.add_service(background_service(
+                "Observer",
+                new_observer_service(
+                    auto_restart_check_interval,
+                    only_hot_reload,
+                ),
+            ));
+        } else {
+            my_server.add_service(background_service(
+                "AutoRestart",
+                new_auto_restart_service(
+                    auto_restart_check_interval,
+                    only_hot_reload,
+                ),
+            ));
+        }
     }
 
     if !certificate_info_list.is_empty() {

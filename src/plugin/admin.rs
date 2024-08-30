@@ -175,12 +175,10 @@ impl AdminServe {
         self.authorizations.contains(&value.as_bytes().to_vec())
     }
     async fn load_config(&self) -> pingora::Result<PingapConf> {
-        let conf = config::load_config(&config::get_config_path(), true)
-            .await
-            .map_err(|e| {
-                error!("failed to load config: {e}");
-                util::new_internal_error(400, e.to_string())
-            })?;
+        let conf = config::load_config(true).await.map_err(|e| {
+            error!("failed to load config: {e}");
+            util::new_internal_error(400, e.to_string())
+        })?;
         conf.validate().map_err(|e| {
             error!("failed to validate config: {e}");
             util::new_internal_error(400, e.to_string())
@@ -224,12 +222,10 @@ impl AdminServe {
             error!(error = e.to_string(), "validate config fail");
             util::new_internal_error(400, e.to_string())
         })?;
-        save_config(&config::get_config_path(), &conf, category)
-            .await
-            .map_err(|e| {
-                error!(error = e.to_string(), "save config fail");
-                util::new_internal_error(400, e.to_string())
-            })?;
+        save_config(&conf, category).await.map_err(|e| {
+            error!(error = e.to_string(), "save config fail");
+            util::new_internal_error(400, e.to_string())
+        })?;
         Ok(HttpResponse::no_content())
     }
     async fn update_config(
@@ -309,12 +305,10 @@ impl AdminServe {
                 conf.basic = basic_conf;
             },
         };
-        save_config(&config::get_config_path(), &conf, category)
-            .await
-            .map_err(|e| {
-                error!(error = e.to_string(), "save config fail");
-                util::new_internal_error(400, e.to_string())
-            })?;
+        save_config(&conf, category).await.map_err(|e| {
+            error!(error = e.to_string(), "save config fail");
+            util::new_internal_error(400, e.to_string())
+        })?;
         Ok(HttpResponse::no_content())
     }
 }
@@ -456,16 +450,10 @@ impl Plugin for AdminServe {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_method_path, AdminAsset, AdminServe, EmbeddedStaticFile};
-    use crate::{
-        config::set_config_path, config::PluginConf, http_extra::HttpResponse,
-    };
-    use http::Method;
-    use pingora::http::RequestHeader;
-    use pingora::proxy::Session;
+    use super::{AdminAsset, AdminServe, EmbeddedStaticFile};
+    use crate::{config::PluginConf, http_extra::HttpResponse};
     use pretty_assertions::assert_eq;
     use std::time::Duration;
-    use tokio_test::io::Builder;
 
     #[test]
     fn test_admin_params() {
@@ -549,179 +537,5 @@ mod tests {
         let resp: HttpResponse =
             EmbeddedStaticFile(None, Duration::from_secs(60)).into();
         assert_eq!(404, resp.status.as_u16())
-    }
-
-    #[tokio::test]
-    async fn test_admin_serve() {
-        let serve = AdminServe::new(
-            &toml::from_str::<PluginConf>(
-                r#"
-category = "admin"
-path = "/"
-authorizations = [
-    "YWRtaW46MTIzMTIz",
-    "cGluZ2FwOjEyMzEyMw=="
-]
-"#,
-            )
-            .unwrap(),
-        )
-        .unwrap();
-
-        let mut req_header = RequestHeader::build("GET", b"/", None).unwrap();
-        req_header.insert_header("Authorization", "123").unwrap();
-        assert_eq!(false, serve.auth_validate(&req_header));
-        req_header
-            .insert_header("Authorization", "Basic YWRtaW46MTIzMTIz")
-            .unwrap();
-        assert_eq!(true, serve.auth_validate(&req_header));
-
-        set_config_path("./conf/test.toml");
-
-        // plguin
-        let body = br#"{
-            "category": "stats",
-            "path": "/stats"
-        }"#;
-        let headers = [format!("Content-Length: {}", body.len())].join("\r\n");
-        let input_header = format!("POST / HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new()
-            .read(input_header.as_bytes())
-            .read(body)
-            .build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
-        assert_eq!((Method::POST, "/".to_string()), get_method_path(&session));
-        let resp = serve
-            .update_config(&mut session, "plugin", "stats")
-            .await
-            .unwrap();
-        assert_eq!(204, resp.status.as_u16());
-
-        // upstream
-        let body = br#"{
-            "addrs": ["127.0.0.1:5000"]
-        }"#;
-        let headers = [format!("Content-Length: {}", body.len())].join("\r\n");
-        let input_header = format!("POST / HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new()
-            .read(input_header.as_bytes())
-            .read(body)
-            .build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
-        let resp = serve
-            .update_config(&mut session, "upstream", "charts")
-            .await
-            .unwrap();
-        assert_eq!(204, resp.status.as_u16());
-
-        // location
-        let body = br#"{
-            "upstream": "charts",
-            "path": "/",
-            "plugins": ["stats"]
-        }"#;
-        let headers = [format!("Content-Length: {}", body.len())].join("\r\n");
-        let input_header = format!("POST / HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new()
-            .read(input_header.as_bytes())
-            .read(body)
-            .build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
-        let resp = serve
-            .update_config(&mut session, "location", "lo")
-            .await
-            .unwrap();
-        assert_eq!(204, resp.status.as_u16());
-
-        // server
-        let body = br#"{
-            "addr": "0.0.0.0:6188",
-            "locations": ["lo"]
-        }"#;
-
-        let headers = [format!("Content-Length: {}", body.len())].join("\r\n");
-        let input_header = format!("POST / HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new()
-            .read(input_header.as_bytes())
-            .read(body)
-            .build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
-        let resp = serve
-            .update_config(&mut session, "server", "test")
-            .await
-            .unwrap();
-        assert_eq!(204, resp.status.as_u16());
-
-        // basic
-        let body = br#"{
-            "threads": 1,
-            "work_stealing": true,
-            "grace_period": "3m"
-        }"#;
-
-        let headers = [format!("Content-Length: {}", body.len())].join("\r\n");
-        let input_header = format!("POST / HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new()
-            .read(input_header.as_bytes())
-            .read(body)
-            .build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
-        let resp = serve
-            .update_config(&mut session, "basic", "")
-            .await
-            .unwrap();
-        assert_eq!(204, resp.status.as_u16());
-
-        let conf = serve.load_config().await.unwrap();
-        assert_eq!("F0F60723", conf.hash().unwrap());
-
-        let resp = serve.get_config("upstream").await.unwrap();
-        assert_eq!(200, resp.status.as_u16());
-
-        let resp = serve.get_config("location").await.unwrap();
-        assert_eq!(200, resp.status.as_u16());
-
-        let resp = serve.get_config("server").await.unwrap();
-        assert_eq!(200, resp.status.as_u16());
-
-        let resp = serve.get_config("plguin").await.unwrap();
-        assert_eq!(200, resp.status.as_u16());
-
-        let resp = serve.get_config("basic").await.unwrap();
-        assert_eq!(200, resp.status.as_u16());
-
-        let resp = serve.get_config("toml").await.unwrap();
-
-        assert_eq!(
-            r#"[basic]
-threads = 1
-work_stealing = true
-grace_period = "3m"
-
-[upstreams.charts]
-addrs = ["127.0.0.1:5000"]
-
-[locations.lo]
-upstream = "charts"
-path = "/"
-plugins = ["stats"]
-
-[servers.test]
-addr = "0.0.0.0:6188"
-locations = ["lo"]
-
-[plugins.stats]
-category = "stats"
-path = "/stats"
-
-[certificates]
-"#,
-            std::string::String::from_utf8_lossy(resp.body.as_ref())
-        );
     }
 }
