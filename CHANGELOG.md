@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.8.0](https://github.com/vicanso/pingap/compare/v0.7.0..0.8.0) - 2024-08-31
+
+### ⛰️  Features
+
+- Support observe config update for etcd storage - ([622ef94](https://github.com/vicanso/pingap/commit/622ef94cc2a5648f00f27503435691b571d2cf30))
+- Support docker service discovery - ([3bed37b](https://github.com/vicanso/pingap/commit/3bed37b19e24cf5f6cf137c117bd185c84430232))
+- Support upstream and location updated notification - ([ee73fac](https://github.com/vicanso/pingap/commit/ee73fac1774612c2da34c5665114e6bf651976ef))
+
+### 🐛 Bug Fixes
+
+- Fix docker discovery find by name - ([8aaec59](https://github.com/vicanso/pingap/commit/8aaec59dfc5accfab6c88de58e418a401d55d230))
+- Fix get version of rustc - ([c03b4ac](https://github.com/vicanso/pingap/commit/c03b4ac253d98bf888f58cdca80e66ff15aa56ff))
+
+### 🚜 Refactor
+
+- Adjust http cache plugin - ([0401080](https://github.com/vicanso/pingap/commit/0401080c14d7cc29768e28f2c786f307041e4076))
+- Adjust docker service discover for label filter - ([925a105](https://github.com/vicanso/pingap/commit/925a1057ba857b7e9af3a211a17220a02ce4becf))
+- Adjust config reload handle - ([fc4d6e7](https://github.com/vicanso/pingap/commit/fc4d6e7a8434ac891ad3d1a522ec804e3f9fc5a0))
+- Adjust proxy server - ([15e6143](https://github.com/vicanso/pingap/commit/15e61436320cb906774e189bb4c297954edecd50))
+- Adjust discovery and otel - ([7a61860](https://github.com/vicanso/pingap/commit/7a61860a00e55901fea0836edc5ef93f3a514637))
+- Adjust cache modules - ([ef7ce98](https://github.com/vicanso/pingap/commit/ef7ce9831875e37aaf08b3ae3134930db6e915aa))
+- Adjust acme handler - ([c6ea96c](https://github.com/vicanso/pingap/commit/c6ea96cb344cbacfc1a441f7831e67534877beb1))
+- Remove unused features - ([a39b1ce](https://github.com/vicanso/pingap/commit/a39b1ce752b663d2dde3d0db3b8d953061d5f191))
+- Adjust dns service discovery - ([ec2f190](https://github.com/vicanso/pingap/commit/ec2f190db3a7d7f48dab7399fabf33ebb9ce9464))
+- Adjust tls validity handle - ([87f8a74](https://github.com/vicanso/pingap/commit/87f8a744b5d31f0b19cad4074bc98e04943537aa))
+- Add realod fail notification for web hook - ([85be103](https://github.com/vicanso/pingap/commit/85be1035f40dbe2ba9a73a6814395632511d589a))
+- Adjust plugin reload function - ([cf5e8f5](https://github.com/vicanso/pingap/commit/cf5e8f5f66fb7621f87c899e797f97e8931c01a4))
+- Adjust sentry client options - ([46f85e6](https://github.com/vicanso/pingap/commit/46f85e610a58233dd086cb080ece4c9b8929f5ec))
+- Support auto reload plugin handler - ([f8ea609](https://github.com/vicanso/pingap/commit/f8ea6090f785ef33558cbab241d903917db14644))
+- Adjust scopeguard for reading writing count - ([44234e0](https://github.com/vicanso/pingap/commit/44234e00e3870070184060a3c4f285b8517ce35f))
+- Adjust backend observe notification - ([6065894](https://github.com/vicanso/pingap/commit/6065894448cfb538ee98454574042377d92c306d))
+- Adjust base64 encode and decode - ([69a84af](https://github.com/vicanso/pingap/commit/69a84af7fdaefaef15fbcfda0b44eb20a68ff98d))
+- Adjust error handler - ([121f428](https://github.com/vicanso/pingap/commit/121f428c71c2e3d1c7c6566cfdc6e4b6a4a5ae8a))
+
+### 📚 Documentation
+
+- Update documents, #21 - ([8d39a6b](https://github.com/vicanso/pingap/commit/8d39a6bd3ded554323041cc0d0c11560e377b449))
+
+### ⚙️ Miscellaneous Tasks
+
+- Version 0.8.0 - ([27cdc8e](https://github.com/vicanso/pingap/commit/27cdc8edefda33e79148be1ab8ee9ce7b4da9a67))
+- Update dependencies - ([3d54394](https://github.com/vicanso/pingap/commit/3d543941308c9fe27a476a614b3563c509a9dd54))
+- Add security audit - ([fc281c9](https://github.com/vicanso/pingap/commit/fc281c9e76b694860fc70c13fb925778177d9c28))
+
 ## [0.7.0](https://github.com/vicanso/pingap/compare/v0.6.2..0.7.0) - 2024-08-10
 
 ### ⛰️  Features
