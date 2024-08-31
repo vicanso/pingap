@@ -1086,7 +1086,7 @@ mod tests {
     };
     use crate::state::State;
     use pingora::http::ResponseHeader;
-    use pingora::protocols::{ssl::SslDigest, Digest, TimingDigest};
+    use pingora::protocols::{Digest, TimingDigest};
     use pingora::proxy::{ProxyHttp, Session};
     use pingora::server::configuration;
     use pingora::services::Service;
@@ -1103,22 +1103,11 @@ mod tests {
                     .checked_add(Duration::from_secs(10))
                     .unwrap(),
             })],
-            ssl_digest: Some(Arc::new(SslDigest {
-                version: "1.3",
-                cipher: "ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
-                organization: None,
-                serial_number: None,
-                cert_digest: vec![],
-            })),
+            ssl_digest: None,
             ..Default::default()
         };
         let result = get_digest_detail(&digest);
         assert_eq!(10000, result.tcp_established);
-        assert_eq!("1.3", result.tls_version.unwrap_or_default());
-        assert_eq!(
-            "ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
-            result.tls_cipher.unwrap_or_default()
-        );
     }
 
     fn new_server() -> Server {

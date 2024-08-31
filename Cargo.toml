@@ -1,6 +1,6 @@
 [package]
 name = "pingap"
-version = "0.7.0"
+version = "0.8.0"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 edition = "2021"
 categories = ["network-programming", "web-programming::http-server"]
@@ -53,7 +53,7 @@ instant-acme = "0.7.1"
 ipnet = "2.9.0"
 itoa = "1.0.11"
 libc = "0.2.158"
-local-ip-address = "0.6.1"
+local-ip-address = "0.6.2"
 memory-stats = { version = "1.2.0", features = ["always_use_statm"] }
 mime_guess = "2.0.5"
 nanoid = "0.4.0"
@@ -73,7 +73,7 @@ opentelemetry_sdk = { version = "0.24.1", features = [
     "rt-tokio",
 ], default-features = false }
 path-absolutize = "3.1.1"
-pingora = { git = "https://github.com/cloudflare/pingora", rev = "d8f3ffae77ddc1edd285ab1d517a1b6748ce3d58", default-features = false, features = [
+pingora = { git = "https://github.com/cloudflare/pingora", rev = "acffb8aaf2a76e3ab8a4db698ed2f151cfb64566", default-features = false, features = [
     # pingora = { version = "0.3.0", default-features = false, features = [
     "lb",
     "openssl",
@@ -97,7 +97,7 @@ rust-embed = { version = "8.5.0", features = [
 rustc_version_runtime = "0.3.0"
 scopeguard = "1.2.0"
 sentry = { version = "0.26", default-features = false }
-serde = "1.0.208"
+serde = "1.0.209"
 serde_json = "1.0.127"
 sha2 = { version = "0.10.8", default-features = false }
 snafu = { version = "0.8.4", features = ["std"], default-features = false }
@@ -105,7 +105,7 @@ strum = { version = "0.26.3", features = ["derive"] }
 substring = "1.4.5"
 tempfile = "3.12.0"
 time = { version = "0.3.36", features = ["local-offset"] }
-tokio = { version = "1.39.3", default-features = false, features = ["fs"] }
+tokio = { version = "1.40.0", default-features = false, features = ["fs"] }
 toml = "0.8.19"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = [
