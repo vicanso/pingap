@@ -42,6 +42,17 @@ pub const CATEGORY_SERVER: &str = "server";
 pub const CATEGORY_PLUGIN: &str = "plugin";
 pub const CATEGORY_BASIC: &str = "basic";
 
+pub fn list_category() -> Vec<String> {
+    vec![
+        CATEGORY_CERTIFICATE.to_string(),
+        CATEGORY_UPSTREAM.to_string(),
+        CATEGORY_LOCATION.to_string(),
+        CATEGORY_SERVER.to_string(),
+        CATEGORY_PLUGIN.to_string(),
+        CATEGORY_BASIC.to_string(),
+    ]
+}
+
 #[derive(PartialEq, Debug, Default, Clone, EnumString, strum::Display)]
 #[strum(serialize_all = "snake_case")]
 pub enum PluginCategory {

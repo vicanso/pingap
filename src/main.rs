@@ -92,6 +92,9 @@ struct Args {
     /// Whether this server should try to auto reload configuration
     #[arg(long)]
     autoreload: bool,
+    /// Sync config to other storage
+    #[arg(long)]
+    sync: Option<String>,
 }
 
 fn new_server_conf(
@@ -140,6 +143,31 @@ fn get_config(admin: bool, s: Sender<Result<PingapConf, config::Error>>) {
             Ok(rt) => {
                 let send = async move {
                     let result = config::load_config(admin).await;
+                    if let Err(e) = s.send(result) {
+                        // use pringln because log is not init
+                        println!("sender fail, {e}");
+                    }
+                };
+                rt.block_on(send);
+            },
+            Err(e) => {
+                if let Err(e) = s.send(Err(config::Error::Invalid {
+                    message: e.to_string(),
+                })) {
+                    // use pringln because log is not init
+                    println!("sender fail, {e}");
+                }
+            },
+        };
+    });
+}
+
+fn sync_config(path: String, s: Sender<Result<(), config::Error>>) {
+    std::thread::spawn(move || {
+        match tokio::runtime::Runtime::new() {
+            Ok(rt) => {
+                let send = async move {
+                    let result = config::sync_config(&path).await;
                     if let Err(e) = s.send(result) {
                         // use pringln because log is not init
                         println!("sender fail, {e}");
@@ -276,6 +304,15 @@ fn run() -> Result<(), Box<dyn Error>> {
     // so set the current conf first
     config::set_current_config(&conf);
     conf.validate()?;
+
+    // sync config to other storage
+    if let Some(sync_path) = args.sync {
+        let (s, r) = crossbeam_channel::bounded(0);
+        sync_config(sync_path, s);
+        r.recv()??;
+        info!("sync config success");
+        return Ok(());
+    }
 
     let basic_conf = &conf.basic;
     config::set_app_name(&basic_conf.name.clone().unwrap_or_default());

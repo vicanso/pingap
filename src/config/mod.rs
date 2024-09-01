@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::time::Duration;
-
 use async_trait::async_trait;
 use etcd_client::WatchStream;
 use once_cell::sync::OnceCell;
 use snafu::Snafu;
+use std::time::Duration;
 
 mod common;
 mod etcd;
@@ -104,20 +103,24 @@ pub trait ConfigStorage {
 static CONFIG_STORAGE: OnceCell<Box<(dyn ConfigStorage + Sync + Send)>> =
     OnceCell::new();
 
+fn new_config_storage(
+    path: &str,
+) -> Result<Box<(dyn ConfigStorage + Sync + Send)>> {
+    let s: Box<(dyn ConfigStorage + Sync + Send)> =
+        if path.starts_with(ETCD_PROTOCOL) {
+            let storage = EtcdStorage::new(path)?;
+            Box::new(storage)
+        } else {
+            let storage = FileStorage::new(path)?;
+            Box::new(storage)
+        };
+    Ok(s)
+}
+
 pub fn try_init_config_storage(
     path: &str,
 ) -> Result<&'static (dyn ConfigStorage + Sync + Send)> {
-    let conf = CONFIG_STORAGE.get_or_try_init(|| {
-        let s: Box<(dyn ConfigStorage + Sync + Send)> =
-            if path.starts_with(ETCD_PROTOCOL) {
-                let storage = EtcdStorage::new(path)?;
-                Box::new(storage)
-            } else {
-                let storage = FileStorage::new(path)?;
-                Box::new(storage)
-            };
-        Ok(s)
-    })?;
+    let conf = CONFIG_STORAGE.get_or_try_init(|| new_config_storage(path))?;
     Ok(conf.as_ref())
 }
 
@@ -154,6 +157,15 @@ pub async fn save_config(conf: &PingapConf, category: &str) -> Result<()> {
         });
     };
     storage.save_config(conf, category).await
+}
+
+pub async fn sync_config(path: &str) -> Result<()> {
+    let conf = get_current_config();
+    let storage = new_config_storage(path)?;
+    for category in common::list_category() {
+        storage.save_config(&conf, &category).await?;
+    }
+    Ok(())
 }
 
 pub use common::*;
