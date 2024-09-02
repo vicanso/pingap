@@ -66,7 +66,7 @@ export default {
   "server.tcpFastOpen": "Tcp快速连接的backlog大小(如设置为10)",
   "server.tcpIdle": "Tcp保持连接的空闲时长(如2m)",
   "server.tcpInterval": "Tcp保持连接探针的发送间隔(如60s)",
-  "server.tcpProbeCount": "Tcp保持连接探针发送的最大次数(如1000)",
+  "server.tcpProbeCount": "Tcp保持连接探针发送的最大次数(如9)",
   "server.prometheusMetrics":
     "Prometheus的量度指标数据请求路径(若为完整的http链接由使用push方式，若为路径则pull)",
   "server.otlpExporter": "Open Telemetry 输出连接地址",

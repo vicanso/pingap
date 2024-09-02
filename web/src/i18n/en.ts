@@ -67,7 +67,7 @@ export default {
   "server.tcpFastOpen": "The Backlog Size Of Tcp Fast Open(e.g. 10)",
   "server.tcpIdle": "Tcp Keepalive Idle Duration(e.g. 2m)",
   "server.tcpInterval": "Tcp Keepalive Interval Duration(e.g. 60s)",
-  "server.tcpProbeCount": "Tcp Keepalive Probe Max Number(e.g. 1000)",
+  "server.tcpProbeCount": "Tcp Keepalive Probe Max Number(e.g. 9)",
   "server.prometheusMetrics":
     "The Metrics Path Of Prometheus(it can be push gateway uri or path for pull mode)",
   "server.otlpExporter": "Open Telemetry Exporter Url",

@@ -262,6 +262,14 @@ impl UpstreamConf {
                 url: health_check,
             })?;
         }
+        let max_tcp_probe_count = 16;
+        if self.tcp_probe_count.unwrap_or_default() > max_tcp_probe_count {
+            return Err(Error::Invalid {
+                message: format!(
+                    "tcp probe count should be <= {max_tcp_probe_count}"
+                ),
+            });
+        }
 
         Ok(())
     }
@@ -1116,7 +1124,7 @@ locations = ["lo"]
 prometheus_metrics = ""
 tcp_idle = "2m"
 tcp_interval = "1m"
-tcp_probe_count = 100
+tcp_probe_count = 9
 threads = 1
 tls_cipher_list = ""
 tls_ciphersuites = ""
@@ -1164,7 +1172,7 @@ sni = ""
 tcp_fast_open = true
 tcp_idle = "2m"
 tcp_interval = "1m"
-tcp_probe_count = 100
+tcp_probe_count = 9
 tcp_recv_buf = "4.0 KB"
 total_connection_timeout = "30s"
 update_frequency = "1m"
