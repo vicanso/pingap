@@ -102,7 +102,7 @@ tcp_interval = "1m"
 
 # the maximum number of TCP keep-alive probes to send
 # before giving up and killing the connection
-tcp_probe_count = 100
+tcp_probe_count = 9
 
 # tcp receive buffer size (default none)
 tcp_recv_buf = "4kb"
@@ -194,7 +194,7 @@ tcp_interval = "1m"
 
 # the maximum number of TCP keep-alive probes to send
 # before giving up and killing the connection
-tcp_probe_count = 100
+tcp_probe_count = 9
 
 # enable TCP fast open and set the backlog size of it (defualt none)
 tcp_fast_open = 10

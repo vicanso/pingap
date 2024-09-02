@@ -18,6 +18,7 @@ use crate::http_extra::HttpResponse;
 use crate::state::{get_hostname, get_start_time, State};
 use crate::util;
 use async_trait::async_trait;
+use bytes::Bytes;
 use bytesize::ByteSize;
 use memory_stats::memory_stats;
 use pingora::proxy::Session;
@@ -112,7 +113,9 @@ impl Plugin for Stats {
                 start_time: get_start_time(),
                 uptime: uptime.to_string(),
             })
-            .map_err(|e| util::new_internal_error(500, e.to_string()))?;
+            .unwrap_or_else(|e| {
+                HttpResponse::unknown_error(Bytes::from(e.to_string()))
+            });
             return Ok(Some(resp));
         }
         Ok(None)

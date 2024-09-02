@@ -55,11 +55,9 @@ pub struct EmbeddedStaticFile(pub Option<EmbeddedFile>, pub Duration);
 
 impl From<EmbeddedStaticFile> for HttpResponse {
     fn from(value: EmbeddedStaticFile) -> Self {
-        if value.0.is_none() {
+        let Some(file) = value.0 else {
             return HttpResponse::not_found("Not Found".into());
-        }
-        // value 0 is some
-        let file = value.0.unwrap();
+        };
         // generate content hash
         let str = &encode(file.metadata.sha256_hash())[0..8];
         let mime_type = file.metadata.mimetype();

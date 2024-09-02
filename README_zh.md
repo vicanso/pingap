@@ -15,6 +15,7 @@ flowchart LR
 - 服务支持配置多个Location，通过host与path筛选对应的location，按权重逐一匹配选择
 - 支持正则形式配置重写Path，方便应用按前缀区分转发
 - HTTP 1/2 的全链路支持，包括h2c的支持
+- 支持静态配置、DNS以及docker label的三种服务发现形式
 - 基于TOML格式的配置，配置方式非常简洁，可保存至文件或etcd
 - 支持10多个Prometheus指标，可以使用pull与push的形式收集相关指标
 - Opentelemetry支持w3c context trace与jaeger trace的形式

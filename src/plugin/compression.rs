@@ -98,66 +98,59 @@ impl Plugin for Compression {
             return Ok(None);
         }
         let header = session.req_header_mut();
-        if let Some(accept_encoding) =
+        let Some(accept_encoding) =
             header.headers.get(http::header::ACCEPT_ENCODING)
-        {
-            let accept_encoding = accept_encoding.to_str().unwrap_or_default();
-            if accept_encoding.is_empty() {
-                return Ok(None);
-            }
-            // compression order, zstd > br > gzip
-            // Wait for pingora support to specify the order
-            let level = if self.zstd_level > 0 && accept_encoding.contains(ZSTD)
-            {
-                let _ = header.insert_header(
-                    http::header::ACCEPT_ENCODING,
-                    ZSTD_ENCODING.clone(),
-                );
-                self.zstd_level
-            } else if self.br_level > 0 && accept_encoding.contains(BR) {
-                let _ = header.insert_header(
-                    http::header::ACCEPT_ENCODING,
-                    BR_ENCODING.clone(),
-                );
-                self.br_level
-            } else if self.gzip_level > 0 && accept_encoding.contains(GZIP) {
-                let _ = header.insert_header(
-                    http::header::ACCEPT_ENCODING,
-                    GZIP_ENCODING.clone(),
-                );
-                self.gzip_level
-            } else {
-                0
-            };
-            debug!(level, "compression level");
-            if level > 0 {
-                if let Some(c) = session
-                    .downstream_modules_ctx
-                    .get_mut::<ResponseCompression>()
-                {
-                    if let Some(decompression) = self.decompression {
-                        c.adjust_decompression(decompression);
-                    }
-                    if self.zstd_level > 0 {
-                        c.adjust_algorithm_level(
-                            Algorithm::Zstd,
-                            self.zstd_level,
-                        );
-                    }
-                    if self.br_level > 0 {
-                        c.adjust_algorithm_level(
-                            Algorithm::Brotli,
-                            self.br_level,
-                        );
-                    }
-                    if self.gzip_level > 0 {
-                        c.adjust_algorithm_level(
-                            Algorithm::Gzip,
-                            self.gzip_level,
-                        );
-                    }
-                }
-            }
+        else {
+            return Ok(None);
+        };
+        let accept_encoding = accept_encoding.to_str().unwrap_or_default();
+        if accept_encoding.is_empty() {
+            return Ok(None);
+        }
+        // compression order, zstd > br > gzip
+        // Wait for pingora support to specify the order
+        let level = if self.zstd_level > 0 && accept_encoding.contains(ZSTD) {
+            let _ = header.insert_header(
+                http::header::ACCEPT_ENCODING,
+                ZSTD_ENCODING.clone(),
+            );
+            self.zstd_level
+        } else if self.br_level > 0 && accept_encoding.contains(BR) {
+            let _ = header.insert_header(
+                http::header::ACCEPT_ENCODING,
+                BR_ENCODING.clone(),
+            );
+            self.br_level
+        } else if self.gzip_level > 0 && accept_encoding.contains(GZIP) {
+            let _ = header.insert_header(
+                http::header::ACCEPT_ENCODING,
+                GZIP_ENCODING.clone(),
+            );
+            self.gzip_level
+        } else {
+            0
+        };
+        debug!(level, "compression level");
+        if level == 0 {
+            return Ok(None);
+        }
+        let Some(c) = session
+            .downstream_modules_ctx
+            .get_mut::<ResponseCompression>()
+        else {
+            return Ok(None);
+        };
+        if let Some(decompression) = self.decompression {
+            c.adjust_decompression(decompression);
+        }
+        if self.zstd_level > 0 {
+            c.adjust_algorithm_level(Algorithm::Zstd, self.zstd_level);
+        }
+        if self.br_level > 0 {
+            c.adjust_algorithm_level(Algorithm::Brotli, self.br_level);
+        }
+        if self.gzip_level > 0 {
+            c.adjust_algorithm_level(Algorithm::Gzip, self.gzip_level);
         }
         Ok(None)
     }

@@ -21,6 +21,7 @@ flowchart LR
 - The service supports configuring multiple Locations, filtering locations by host and path, and matching and selecting them one by one according to the weight
 - Supports regular form configuration to rewrite Path
 - Support HTTP 1/2, including h2c
+- Support static, dns and docker label service discovery
 - Configuration based on TOML format, the configuration method is very simple, and can be saved to files or etcd
 - Supports more than 10 Prometheus indicators, pull and push mode
 - Opentelemetry supports w3c context trace and jaeger trace
