@@ -13,9 +13,8 @@
 // limitations under the License.
 
 use crate::config::PingapConf;
-use crate::util;
 use pingora::protocols::l4::ext::TcpKeepalive;
-use std::{fmt, path::PathBuf};
+use std::fmt;
 
 static ERROR_TEMPLATE: &str = include_str!("../../error.html");
 
@@ -26,16 +25,12 @@ pub struct ServerConf {
     pub addr: String,
     pub access_log: Option<String>,
     pub locations: Vec<String>,
-    pub tls_cert: Option<Vec<u8>>,
-    pub tls_key: Option<Vec<u8>>,
     pub tls_cipher_list: Option<String>,
     pub tls_ciphersuites: Option<String>,
     pub tls_min_version: Option<String>,
     pub tls_max_version: Option<String>,
     pub threads: Option<usize>,
     pub error_template: String,
-    pub lets_encrypt: Option<String>,
-    pub certificate_file: Option<String>,
     pub tcp_keepalive: Option<TcpKeepalive>,
     pub tcp_fastopen: Option<usize>,
     pub global_certificates: bool,
@@ -44,29 +39,13 @@ pub struct ServerConf {
     pub otlp_exporter: Option<String>,
 }
 
-impl ServerConf {
-    pub fn get_certificate_file(&self) -> PathBuf {
-        if let Some(file) = &self.certificate_file {
-            util::resolve_path(file).into()
-        } else {
-            std::env::temp_dir()
-                .join(format!("pingap-certificates-server-{}.json", self.name))
-        }
-    }
-}
-
 impl fmt::Display for ServerConf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "name:{} ", self.name)?;
         write!(f, "addr:{} ", self.addr)?;
         write!(f, "locations:{:?} ", self.locations)?;
-        write!(
-            f,
-            "tls:{} ",
-            self.tls_cert.is_some() || self.lets_encrypt.is_some()
-        )?;
         write!(f, "threads:{:?} ", self.threads)?;
-        write!(f, "lets_encrypt:{:?} ", self.lets_encrypt)?;
+        write!(f, "{} ", self.global_certificates)?;
         write!(f, "tcp_keepalive:{:?} ", self.tcp_keepalive)?;
         write!(f, "tcp_fastopen:{:?} ", self.tcp_fastopen)?;
         write!(f, "http2:{}", self.enbaled_h2)
@@ -89,8 +68,6 @@ impl From<PingapConf> for Vec<ServerConf> {
         for (name, item) in conf.servers {
             // load config validate base64
             // so ignore error
-            let tls_cert = util::convert_certificate_bytes(&item.tls_cert);
-            let tls_key = util::convert_certificate_bytes(&item.tls_key);
 
             let mut error_template =
                 conf.basic.error_template.clone().unwrap_or_default();
@@ -114,8 +91,6 @@ impl From<PingapConf> for Vec<ServerConf> {
             servers.push(ServerConf {
                 name,
                 admin: false,
-                tls_cert,
-                tls_key,
                 tls_cipher_list: item.tls_cipher_list.clone(),
                 tls_ciphersuites: item.tls_ciphersuites.clone(),
                 tls_min_version: item.tls_min_version.clone(),
@@ -124,11 +99,9 @@ impl From<PingapConf> for Vec<ServerConf> {
                 access_log: item.access_log,
                 locations: item.locations.unwrap_or_default(),
                 threads: item.threads,
-                lets_encrypt: item.lets_encrypt,
                 global_certificates: item
                     .global_certificates
                     .unwrap_or_default(),
-                certificate_file: item.certificate_file,
                 enbaled_h2: item.enabled_h2.unwrap_or_default(),
                 tcp_keepalive,
                 tcp_fastopen: item.tcp_fastopen,
@@ -160,7 +133,6 @@ mod tests {
             locations: vec!["charts-location".to_string()],
             threads: Some(4),
             error_template: "<html></html>".to_string(),
-            lets_encrypt: Some("pingap".to_string()),
             tcp_keepalive: Some(TcpKeepalive {
                 idle: Duration::from_secs(10),
                 interval: Duration::from_secs(5),
@@ -172,7 +144,7 @@ mod tests {
         };
 
         assert_eq!(
-            r#"name:pingap addr:127.0.0.1:3000,127.0.0.1:3001 locations:["charts-location"] tls:true threads:Some(4) lets_encrypt:Some("pingap") tcp_keepalive:Some(TcpKeepalive { idle: 10s, interval: 5s, count: 10 }) tcp_fastopen:Some(10) http2:true"#,
+            r#"name:pingap addr:127.0.0.1:3000,127.0.0.1:3001 locations:["charts-location"] threads:Some(4) false tcp_keepalive:Some(TcpKeepalive { idle: 10s, interval: 5s, count: 10 }) tcp_fastopen:Some(10) http2:true"#,
             conf.to_string()
         );
     }

@@ -430,19 +430,6 @@ fn run() -> Result<(), Box<dyn Error>> {
                 TracerService::new(&serve_conf.name, otlp_exporter),
             ));
         }
-
-        if let Some(value) = &serve_conf.lets_encrypt {
-            enabled_lets_encrypt = true;
-            let domains: Vec<String> =
-                value.split(',').map(|item| item.to_string()).collect();
-            my_server.add_service(background_service(
-                &format!("LetsEncrypt: {}", serve_conf.name),
-                new_lets_encrypt_service(
-                    serve_conf.get_certificate_file(),
-                    domains,
-                ),
-            ));
-        }
     }
     for (name, certificate) in certificates.iter() {
         let acme = certificate.acme.clone().unwrap_or_default();
@@ -465,8 +452,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             ),
         ));
     }
-    let mut certificate_info_list =
-        proxy::try_init_certificates(&certificates)?;
+    let certificate_info_list = proxy::try_init_certificates(&certificates)?;
 
     // no server listen 80 and lets encrypt domains is not empty
     if !exits_80_server && enabled_lets_encrypt {
@@ -479,7 +465,6 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     for server_conf in server_conf_list.iter() {
         let listen_80_port = server_conf.addr.ends_with(":80");
-        let name = server_conf.name.clone();
         let mut ps = Server::new(server_conf)?;
         if enabled_lets_encrypt && listen_80_port {
             ps.enable_lets_encrypt();
@@ -492,9 +477,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         let services = ps.run(&my_server.configuration)?;
         my_server.add_service(services.lb);
-        if let Some(tls_cert_info) = services.tls_cert_info {
-            certificate_info_list.push((name, tls_cert_info));
-        }
     }
 
     if args.autorestart || args.autoreload {

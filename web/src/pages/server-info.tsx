@@ -86,65 +86,6 @@ export default function ServerInfo() {
       category: FormItemCategory.NUMBER,
     },
     {
-      id: "access_log",
-      label: t("server.accessLog"),
-      defaultValue: server.access_log,
-      span: 12,
-      category: FormItemCategory.TEXT,
-    },
-    {
-      id: "tls_cert",
-      label: t("server.tlsCert"),
-      defaultValue: server.tls_cert,
-      span: 12,
-      category: FormItemCategory.TEXTAREA,
-    },
-    {
-      id: "tls_key",
-      label: t("server.tlsKey"),
-      defaultValue: server.tls_key,
-      span: 12,
-      category: FormItemCategory.TEXTAREA,
-    },
-    {
-      id: "lets_encrypt",
-      label: t("server.letsEncrypt"),
-      defaultValue: server.lets_encrypt,
-      span: 6,
-      category: FormItemCategory.TEXT,
-    },
-    {
-      id: "certificate_file",
-      label: t("server.certificateFile"),
-      defaultValue: server.certificate_file,
-      span: 6,
-      category: FormItemCategory.TEXT,
-    },
-    {
-      id: "enabled_h2",
-      label: t("server.enabledH2"),
-      defaultValue: server.enabled_h2,
-      span: 6,
-      category: FormItemCategory.CHECKBOX,
-      options: [
-        {
-          label: "Enable",
-          option: 1,
-          value: true,
-        },
-        {
-          label: "Disable",
-          option: 2,
-          value: false,
-        },
-        {
-          label: "None",
-          option: -1,
-          value: null,
-        },
-      ],
-    },
-    {
       id: "global_certificates",
       label: t("server.globalCertificates"),
       defaultValue: server.global_certificates,
@@ -168,6 +109,38 @@ export default function ServerInfo() {
         },
       ],
     },
+    {
+      id: "access_log",
+      label: t("server.accessLog"),
+      defaultValue: server.access_log,
+      span: 12,
+      category: FormItemCategory.TEXT,
+    },
+    {
+      id: "enabled_h2",
+      label: t("server.enabledH2"),
+      defaultValue: server.enabled_h2,
+      span: 12,
+      category: FormItemCategory.CHECKBOX,
+      options: [
+        {
+          label: "Enable",
+          option: 1,
+          value: true,
+        },
+        {
+          label: "Disable",
+          option: 2,
+          value: false,
+        },
+        {
+          label: "None",
+          option: -1,
+          value: null,
+        },
+      ],
+    },
+
     {
       id: "tls_cipher_list",
       label: t("server.tlsCipherList"),
@@ -275,7 +248,7 @@ export default function ServerInfo() {
       onRemove={onRemove}
       created={created}
       currentNames={currentNames}
-      hiddenIndex={5}
+      hiddenIndex={4}
     />
   );
 }

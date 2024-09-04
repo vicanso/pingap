@@ -71,13 +71,37 @@ export default function CertificateInfo() {
       id: "acme",
       label: t("certificate.acme"),
       defaultValue: certificate.acme,
-      span: 12,
+      span: 6,
       category: FormItemCategory.CHECKBOX,
       options: [
         {
           label: "Let's Encrypt",
           option: 1,
           value: "lets_encrypt",
+        },
+        {
+          label: "None",
+          option: -1,
+          value: null,
+        },
+      ],
+    },
+    {
+      id: "is_default",
+      label: t("certificate.isDefault"),
+      defaultValue: certificate.is_default,
+      span: 6,
+      category: FormItemCategory.CHECKBOX,
+      options: [
+        {
+          label: "Yes",
+          option: 1,
+          value: true,
+        },
+        {
+          label: "No",
+          option: 0,
+          value: false,
         },
         {
           label: "None",

@@ -51,13 +51,7 @@ export default {
   "server.threads": "该服务的线程数(默认:1)",
   "server.accessLog":
     "访问日志格式化模板(可以配置为简化的tiny, short, combined等)",
-  "server.tlsCert": "Tls证书(Pem格式)",
-  "server.tlsKey": "Tls密钥(Pem格式)",
-  "server.globalCertificates": "使用应用的全局证书(多个不同证书时使用)",
-  "server.letsEncrypt":
-    "使用let's encrypt的域名列表(指定后则通过let's encrypt生成证书)",
-  "server.certificateFile":
-    "保存tls证书的文件(保存let's encrypt生成的证书信息)",
+  "server.globalCertificates": "使用应用的全局证书(https网站使用)",
   "server.enabledH2": "是否启用http2(若是http则使用h2c)",
   "server.tlsCipherList": "指定tls1.3之前版本使用的加密套件",
   "server.tlsCiphersuites": "指定tls1.3版本使用的加密套件",
@@ -119,6 +113,7 @@ export default {
   "certificate.domains":
     "请求Let's Encrypt申请证书时的域名列表(多个域名用`,`分隔)",
   "certificate.acme": "选择使用acme生成证书的服务",
+  "certificate.isDefault": "默认的https证书",
 
   // plugin info
   "plugin.title": "各类插件的配置",

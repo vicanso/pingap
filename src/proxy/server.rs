@@ -16,9 +16,7 @@ use super::dynamic_certificate::DynamicCertificate;
 use super::logger::Parser;
 use super::upstream::get_upstream;
 use super::ServerConf;
-use crate::acme::get_certificate_info;
-use crate::acme::CertificateInfo;
-use crate::acme::{get_lets_encrypt_certificate, handle_lets_encrypt};
+use crate::acme::handle_lets_encrypt;
 use crate::config;
 use crate::config::PluginStep;
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
@@ -64,7 +62,6 @@ use pingora::services::listening::Service;
 use pingora::upstreams::peer::{HttpPeer, Peer};
 use snafu::Snafu;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -136,8 +133,6 @@ pub struct Server {
     log_parser: Option<Parser>,
     error_template: String,
     threads: Option<usize>,
-    tls_cert: Option<Vec<u8>>,
-    tls_key: Option<Vec<u8>>,
     tls_cipher_list: Option<String>,
     tls_ciphersuites: Option<String>,
     tls_min_version: Option<String>,
@@ -145,8 +140,6 @@ pub struct Server {
     enbaled_h2: bool,
     lets_encrypt_enabled: bool,
     global_certificates: bool,
-    certificate_file: PathBuf,
-    tls_from_lets_encrypt: bool,
     tcp_socket_options: Option<TcpSocketOptions>,
     prometheus: Option<Arc<Prometheus>>,
     prometheus_push_mode: bool,
@@ -155,7 +148,6 @@ pub struct Server {
 }
 
 pub struct ServerServices {
-    pub tls_cert_info: Option<CertificateInfo>,
     pub lb: Service<HttpProxy<Server>>,
 }
 
@@ -201,19 +193,15 @@ impl Server {
             addr: conf.addr.clone(),
             log_parser: p,
             error_template: conf.error_template.clone(),
-            tls_key: conf.tls_key.clone(),
-            tls_cert: conf.tls_cert.clone(),
             tls_cipher_list: conf.tls_cipher_list.clone(),
             tls_ciphersuites: conf.tls_ciphersuites.clone(),
             tls_min_version: conf.tls_min_version.clone(),
             tls_max_version: conf.tls_max_version.clone(),
             threads: conf.threads,
             lets_encrypt_enabled: false,
-            certificate_file: conf.get_certificate_file(),
             global_certificates: conf.global_certificates,
             enbaled_h2: conf.enbaled_h2,
             tcp_socket_options,
-            tls_from_lets_encrypt: conf.lets_encrypt.is_some(),
             prometheus_push_mode: prometheus_metrics.contains("://"),
             enabled_otel: conf.otlp_exporter.is_some(),
             prometheus_metrics,
@@ -254,48 +242,14 @@ impl Server {
         self,
         conf: &Arc<configuration::ServerConf>,
     ) -> Result<ServerServices> {
-        let tls_from_lets_encrypt = self.tls_from_lets_encrypt;
         let addr = self.addr.clone();
         let tcp_socket_options = self.tcp_socket_options.clone();
 
         let name = self.name.clone();
         let mut dynamic_cert = None;
-        let mut tls_cert_info = None;
         // tls
         if self.global_certificates {
             dynamic_cert = Some(DynamicCertificate::new_global());
-        } else {
-            let mut tls_cert = self.tls_cert.clone();
-            let mut tls_key = self.tls_key.clone();
-
-            if tls_cert.is_none() && tls_from_lets_encrypt {
-                match get_lets_encrypt_certificate(&self.certificate_file) {
-                    Ok(cert_info) => {
-                        tls_cert = Some(cert_info.get_cert());
-                        tls_key = Some(cert_info.get_key());
-                    },
-                    Err(e) => error!(
-                        error = e.to_string(),
-                        name, "get lets encrypt cert fail"
-                    ),
-                };
-            }
-            if tls_cert.is_some() {
-                let cert = tls_cert.unwrap_or_default();
-                if let Ok(info) = get_certificate_info(&cert) {
-                    tls_cert_info = Some(info)
-                }
-
-                let d = DynamicCertificate::new(
-                    &cert,
-                    &tls_key.unwrap_or_default(),
-                )
-                .map_err(|e| Error::Common {
-                    category: "tls".to_string(),
-                    message: e.to_string(),
-                })?;
-                dynamic_cert = Some(d);
-            };
         }
 
         let is_tls = dynamic_cert.is_some();
@@ -362,7 +316,7 @@ impl Server {
                 lb.add_tcp(addr);
             }
         }
-        Ok(ServerServices { tls_cert_info, lb })
+        Ok(ServerServices { lb })
     }
     async fn serve_admin(
         &self,

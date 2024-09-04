@@ -150,6 +150,7 @@ pub struct CertificateConf {
     pub tls_key: Option<String>,
     pub tls_chain: Option<String>,
     pub certificate_file: Option<String>,
+    pub is_default: Option<bool>,
     pub acme: Option<String>,
     pub remark: Option<String>,
 }
@@ -379,14 +380,10 @@ pub struct ServerConf {
     pub access_log: Option<String>,
     pub locations: Option<Vec<String>>,
     pub threads: Option<usize>,
-    pub tls_cert: Option<String>,
-    pub tls_key: Option<String>,
     pub tls_cipher_list: Option<String>,
     pub tls_ciphersuites: Option<String>,
     pub tls_min_version: Option<String>,
     pub tls_max_version: Option<String>,
-    pub lets_encrypt: Option<String>,
-    pub certificate_file: Option<String>,
     pub global_certificates: Option<bool>,
     pub enabled_h2: Option<bool>,
     #[serde(default)]
@@ -427,20 +424,7 @@ impl ServerConf {
                 }
             }
         }
-        if let Some(value) = &self.tls_key {
-            let buf = convert_pem(value)?;
-            let _ = PKey::private_key_from_pem(&buf).map_err(|e| {
-                Error::Invalid {
-                    message: e.to_string(),
-                }
-            })?;
-        }
-        if let Some(value) = &self.tls_cert {
-            let buf = convert_pem(value)?;
-            let _ = X509::from_pem(&buf).map_err(|e| Error::Invalid {
-                message: e.to_string(),
-            })?;
-        }
+
         if let Some(access_log) = &self.access_log {
             let logger = Parser::from(access_log.as_str());
             if logger.tags.is_empty() {
@@ -1097,7 +1081,6 @@ mod tests {
         );
 
         conf.locations = Some(vec!["lo".to_string()]);
-        conf.tls_key = Some("ab".to_string());
         let result = conf.validate("test", &location_names);
         assert_eq!(true, result.is_err());
         assert_eq!(
@@ -1117,7 +1100,6 @@ mod tests {
             r###"[servers.test]
 access_log = "tiny"
 addr = "0.0.0.0:6188"
-certificate_file = ""
 enabled_h2 = false
 global_certificates = false
 locations = ["lo"]

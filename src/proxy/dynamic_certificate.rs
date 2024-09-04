@@ -140,6 +140,8 @@ fn parse_certificate(
     Ok((domains, d, info))
 }
 
+static DEFAULT_SERVER_NAME: &str = "*";
+
 /// Try to init certificates, which use for global tls callback
 pub fn try_init_certificates(
     certificate_configs: &HashMap<String, CertificateConf>,
@@ -160,6 +162,13 @@ pub fn try_init_certificates(
                     for name in names.iter() {
                         dynamic_certs
                             .insert(name.to_string(), dynamic_cert.clone());
+                    }
+                    let is_default = certificate.is_default.unwrap_or_default();
+                    if is_default {
+                        dynamic_certs.insert(
+                            DEFAULT_SERVER_NAME.to_string(),
+                            dynamic_cert.clone(),
+                        );
                     }
                     info!(
                         name,
@@ -274,31 +283,6 @@ impl DynamicCertificate {
 
         Ok(tls_settings)
     }
-    /// New a dynamic certificate from pem data
-    pub fn new(cert: &[u8], key: &[u8]) -> Result<Self> {
-        let cert = X509::from_pem(cert).map_err(|e| Error::Invalid {
-            category: "x509_from_pem".to_string(),
-            message: e.to_string(),
-        })?;
-        let names: Vec<String> = cert
-            .subject_alt_names()
-            .iter()
-            .map(|name| format!("{name:?}"))
-            .collect();
-        info!(
-            subject_alt_names = names.join(","),
-            "get subject alt name from cert"
-        );
-        let key =
-            PKey::private_key_from_pem(key).map_err(|e| Error::Invalid {
-                category: "private_key_from_pem".to_string(),
-                message: e.to_string(),
-            })?;
-        Ok(Self {
-            chain_certificate: None,
-            certificate: Some((cert, key)),
-        })
-    }
 }
 
 #[inline]
@@ -356,6 +340,10 @@ impl pingora::listeners::TlsAccept for DynamicCertificate {
                     dynamic_certificate = Some(d);
                     break;
                 }
+            }
+            // get default certificate
+            if dynamic_certificate.is_none() {
+                dynamic_certificate = m.get(DEFAULT_SERVER_NAME);
             }
         }
         let Some(d) = dynamic_certificate else {
@@ -500,16 +488,5 @@ aqcrKJfS+xaKWxXPiNlpBMG5
             .get("pingap.io")
             .unwrap();
         assert_eq!(true, cert.certificate.is_some());
-    }
-
-    #[test]
-    fn test_dynamic_certificate() {
-        let (tls_cert, tls_key) = get_tls_pem();
-        let dynamic_certificate =
-            DynamicCertificate::new(tls_cert.as_bytes(), tls_key.as_bytes())
-                .unwrap();
-
-        assert_eq!(true, dynamic_certificate.certificate.is_some());
-        assert_eq!(true, dynamic_certificate.chain_certificate.is_none());
     }
 }

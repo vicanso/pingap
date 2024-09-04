@@ -89,6 +89,7 @@ interface Certificate {
   tls_chain?: string;
   certificate_file?: string;
   acme?: string;
+  is_default?: boolean;
   remark?: string;
 }
 

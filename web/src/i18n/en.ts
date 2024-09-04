@@ -53,12 +53,7 @@ export default {
   "server.locations": "Select Locations",
   "server.threads": "The Threads Of Server(default:1)",
   "server.accessLog": "Access Log Format Layout(e.g. thiny, short, combined)",
-  "server.tlsCert": "Tls Cert Pem",
-  "server.tlsKey": "Tls Key Pem",
-  "server.globalCertificates":
-    "Use The Global Certificates(for different certificates)",
-  "server.letsEncrypt": "Let's Encrypt Domain List",
-  "server.certificateFile": "The File For Saving Certificate",
+  "server.globalCertificates": "Use The Global Certificates(for https)",
   "server.enabledH2": "Enable Http2(h2c for http)",
   "server.tlsCipherList": "Tls Ciphers For Protocols Before TLSv1.3",
   "server.tlsCiphersuites": "Tls Ciphers For Protocols TLSv1.3",
@@ -123,6 +118,7 @@ export default {
   "certificate.certificateFile":
     "The File For Saving Let's Encrypt Certificate",
   "certificate.acme": "The Acme For Generating Certificate",
+  "certificate.isDefault": "Default certificate for https",
   // plugin info
   "plugin.title": "Modify plugin configuration",
   "plugin.description": "All plugin configuration of pingap",
