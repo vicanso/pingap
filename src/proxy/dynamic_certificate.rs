@@ -18,8 +18,9 @@ use crate::acme::{
 use crate::config::CertificateConf;
 use crate::{util, webhook};
 use ahash::AHashMap;
+use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use once_cell::sync::{Lazy, OnceCell};
+use once_cell::sync::Lazy;
 use pingora::listeners::TlsSettings;
 use pingora::tls::ext;
 use pingora::tls::pkey::{PKey, Private};
@@ -28,6 +29,7 @@ use pingora::tls::x509::X509;
 use snafu::Snafu;
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use substring::Substring;
 use tracing::{debug, error, info};
 
@@ -38,9 +40,12 @@ pub enum Error {
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-type DynamicCertificates = AHashMap<String, DynamicCertificate>;
+type DynamicCertificates = AHashMap<String, Arc<DynamicCertificate>>;
 // global dynamic certificates
-static DYNAMIC_CERTIFICATE_MAP: OnceCell<DynamicCertificates> = OnceCell::new();
+// static DYNAMIC_CERTIFICATE_MAP: OnceCell<DynamicCertificates> = OnceCell::new();
+static DYNAMIC_CERTIFICATE_MAP: Lazy<ArcSwap<DynamicCertificates>> =
+    Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
+
 const E5: &[u8] = include_bytes!("../assets/e5.pem");
 const E6: &[u8] = include_bytes!("../assets/e6.pem");
 const R10: &[u8] = include_bytes!("../assets/r10.pem");
@@ -67,7 +72,7 @@ static LETS_ENCRYPT: &str = "lets_encrypt";
 
 fn parse_certificate(
     certificate_config: &CertificateConf,
-) -> Result<(Vec<String>, DynamicCertificate, CertificateInfo)> {
+) -> Result<DynamicCertificate> {
     // parse certificate
     let (cert, key, category) =
         if let Some(file) = &certificate_config.certificate_file {
@@ -98,6 +103,20 @@ fn parse_certificate(
         category: "get_certificate_info".to_string(),
         message: e.to_string(),
     })?;
+
+    // TODO for certificate diff
+    // let mut buffer = BytesMut::new();
+    // buffer.extend(cert.clone());
+    // buffer.extend(key.clone());
+    // buffer.extend(
+    //     certificate_config
+    //         .tls_chain
+    //         .clone()
+    //         .unwrap_or_default()
+    //         .as_bytes()
+    //         .to_vec(),
+    // );
+    // let hash_key = format!("{:x}", crc32fast::hash(buffer.as_ref()));
 
     let tls_chain =
         util::convert_certificate_bytes(&certificate_config.tls_chain);
@@ -133,77 +152,84 @@ fn parse_certificate(
         category: "private_key_from_pem".to_string(),
         message: e.to_string(),
     })?;
-    let d = DynamicCertificate {
+    Ok(DynamicCertificate {
         chain_certificate,
+        domains,
         certificate: Some((cert, key)),
-    };
-    Ok((domains, d, info))
+        info: Some(info),
+    })
 }
 
 static DEFAULT_SERVER_NAME: &str = "*";
 
-/// Try to init certificates, which use for global tls callback
-pub fn try_init_certificates(
+fn parse_certificates(
     certificate_configs: &HashMap<String, CertificateConf>,
-) -> Result<Vec<(String, CertificateInfo)>> {
-    let mut certificate_info_list = vec![];
-    DYNAMIC_CERTIFICATE_MAP.get_or_try_init(|| {
-        let mut dynamic_certs = AHashMap::new();
-        for (name, certificate) in certificate_configs.iter() {
-            match parse_certificate(certificate) {
-                Ok((domains, dynamic_cert, certificate_info)) => {
-                    let mut names = domains;
-                    if let Some(value) = &certificate.domains {
-                        names = value
-                            .split(',')
-                            .map(|item| item.to_string())
-                            .collect();
-                    }
-                    for name in names.iter() {
-                        dynamic_certs
-                            .insert(name.to_string(), dynamic_cert.clone());
-                    }
-                    let is_default = certificate.is_default.unwrap_or_default();
-                    if is_default {
-                        dynamic_certs.insert(
-                            DEFAULT_SERVER_NAME.to_string(),
-                            dynamic_cert.clone(),
-                        );
-                    }
-                    info!(
-                        name,
-                        subject_alt_names = names.join(","),
-                        "init certificates success"
-                    );
-                    certificate_info_list
-                        .push((name.to_string(), certificate_info));
-                },
-                Err(e) => {
-                    error!(
-                        error = e.to_string(),
-                        name, "parse certificate fail"
-                    );
-                    // not return error
-                    // so send a webhook notification
-                    webhook::send(webhook::SendNotificationParams {
-                        category:
-                            webhook::NotificationCategory::ParseCertificateFail,
-                        level: webhook::NotificationLevel::Error,
-                        msg: e.to_string(),
-                        remark: None,
-                    });
-                },
-            };
+) -> (DynamicCertificates, Vec<(String, String)>) {
+    let mut dynamic_certs = AHashMap::new();
+    let mut errors = vec![];
+    for (name, certificate) in certificate_configs.iter() {
+        match parse_certificate(certificate) {
+            Ok(dynamic_cert) => {
+                let mut names = dynamic_cert.domains.clone();
+                let cert = Arc::new(dynamic_cert);
+                if let Some(value) = &certificate.domains {
+                    names =
+                        value.split(',').map(|item| item.to_string()).collect();
+                }
+                for name in names.iter() {
+                    dynamic_certs.insert(name.to_string(), cert.clone());
+                }
+                let is_default = certificate.is_default.unwrap_or_default();
+                if is_default {
+                    dynamic_certs
+                        .insert(DEFAULT_SERVER_NAME.to_string(), cert.clone());
+                }
+            },
+            Err(e) => {
+                errors.push((name.to_string(), e.to_string()));
+            },
+        };
+    }
+    (dynamic_certs, errors)
+}
+
+/// Init certificates, which use for global tls callback
+pub fn init_certificates(
+    certificate_configs: &HashMap<String, CertificateConf>,
+) {
+    let (dynamic_certs, errors) = parse_certificates(certificate_configs);
+    if !errors.is_empty() {
+        let msg_list: Vec<String> = errors
+            .iter()
+            .map(|item| format!("name:{}, error:{}", item.0, item.1))
+            .collect();
+        webhook::send(webhook::SendNotificationParams {
+            category: webhook::NotificationCategory::ParseCertificateFail,
+            level: webhook::NotificationLevel::Error,
+            msg: msg_list.join(";"),
+            remark: None,
+        });
+    }
+    DYNAMIC_CERTIFICATE_MAP.store(Arc::new(dynamic_certs));
+}
+
+/// Get certificate info list
+pub fn get_certificate_info_list() -> Vec<(String, CertificateInfo)> {
+    let mut infos = vec![];
+    for (name, cert) in DYNAMIC_CERTIFICATE_MAP.load().iter() {
+        if let Some(info) = &cert.info {
+            infos.push((name.to_string(), info.clone()));
         }
-        Ok(dynamic_certs)
-    })?;
-    Ok(certificate_info_list)
+    }
+    infos
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct DynamicCertificate {
     chain_certificate: Option<X509>,
     certificate: Option<(X509, PKey<Private>)>,
+    domains: Vec<String>,
+    info: Option<CertificateInfo>,
 }
 
 pub struct TlsSettingParams {
@@ -221,6 +247,7 @@ impl DynamicCertificate {
         Self {
             chain_certificate: None,
             certificate: None,
+            ..Default::default()
         }
     }
     /// New a dynamic certificate from tls setting parameters
@@ -323,15 +350,12 @@ impl pingora::listeners::TlsAccept for DynamicCertificate {
             error!(ssl = format!("{ssl:?}"), "get server name fail");
             return;
         };
-        let Some(m) = DYNAMIC_CERTIFICATE_MAP.get() else {
-            error!(ssl = format!("{ssl:?}"), "get dynamic cert map fail");
-            return;
-        };
         let mut dynamic_certificate = None;
-        if let Some(d) = m.get(sni) {
+        let certs = DYNAMIC_CERTIFICATE_MAP.load();
+        if let Some(d) = certs.get(sni) {
             dynamic_certificate = Some(d);
         } else {
-            for (name, d) in m.iter() {
+            for (name, d) in certs.iter() {
                 // not wildcard
                 if !name.starts_with("*.") {
                     continue;
@@ -343,7 +367,7 @@ impl pingora::listeners::TlsAccept for DynamicCertificate {
             }
             // get default certificate
             if dynamic_certificate.is_none() {
-                dynamic_certificate = m.get(DEFAULT_SERVER_NAME);
+                dynamic_certificate = certs.get(DEFAULT_SERVER_NAME);
             }
         }
         let Some(d) = dynamic_certificate else {
@@ -363,7 +387,7 @@ mod tests {
         config::CertificateConf,
         proxy::{
             dynamic_certificate::{DYNAMIC_CERTIFICATE_MAP, E5},
-            try_init_certificates,
+            init_certificates,
         },
     };
     use pretty_assertions::assert_eq;
@@ -459,10 +483,10 @@ aqcrKJfS+xaKWxXPiNlpBMG5
             tls_chain: Some(std::str::from_utf8(E5).unwrap().to_string()),
             ..Default::default()
         };
-        let (domains, dynamic_certificate, info) =
-            parse_certificate(&cert_info).unwrap();
+        let dynamic_certificate = parse_certificate(&cert_info).unwrap();
+        let info = dynamic_certificate.info.unwrap_or_default();
 
-        assert_eq!("pingap.io", domains.join(","));
+        assert_eq!("pingap.io", dynamic_certificate.domains.join(","));
         assert_eq!(
             "O=mkcert development CA, OU=vicanso@tree, CN=mkcert vicanso@tree",
             info.issuer
@@ -474,19 +498,18 @@ aqcrKJfS+xaKWxXPiNlpBMG5
 
         let mut map = HashMap::new();
         map.insert("pingap".to_string(), cert_info);
-        let result = try_init_certificates(&map).unwrap();
-        assert_eq!(1, result.len());
-        assert_eq!("pingap".to_string(), result[0].0);
+        init_certificates(&map);
+
+        let cert = DYNAMIC_CERTIFICATE_MAP
+            .load()
+            .get("pingap.io")
+            .cloned()
+            .unwrap();
+        assert_eq!(true, cert.certificate.is_some());
         assert_eq!(
             "O=mkcert development CA, OU=vicanso@tree, CN=mkcert vicanso@tree"
                 .to_string(),
-            result[0].1.issuer
+            cert.info.clone().unwrap().issuer
         );
-        let cert = DYNAMIC_CERTIFICATE_MAP
-            .get()
-            .unwrap()
-            .get("pingap.io")
-            .unwrap();
-        assert_eq!(true, cert.certificate.is_some());
     }
 }

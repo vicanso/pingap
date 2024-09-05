@@ -13,9 +13,11 @@
 // limitations under the License.
 
 use super::{get_certificate_info, Certificate, Error, Result};
+use crate::config::get_current_config;
 use crate::http_extra::HttpResponse;
+use crate::proxy::init_certificates;
 use crate::service::{CommonServiceTask, ServiceTask};
-use crate::state::{restart_now, State};
+use crate::state::State;
 use crate::util::{self, base64_encode};
 use crate::webhook;
 use async_trait::async_trait;
@@ -95,14 +97,7 @@ impl ServiceTask for LetsEncryptService {
                     remark: Some(format!("Domains: {domains:?}")),
                     ..Default::default()
                 });
-
-                if let Err(e) = restart_now() {
-                    error!(
-                        error = e.to_string(),
-                        domains = domains.join(","),
-                        "restart fail"
-                    );
-                }
+                init_certificates(&get_current_config().certificates);
             },
             Err(e) => error!(
                 error = e.to_string(),

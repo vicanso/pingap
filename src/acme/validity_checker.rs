@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::CertificateInfo;
+use crate::proxy::get_certificate_info_list;
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::util;
 use crate::webhook;
@@ -22,7 +23,6 @@ use tracing::warn;
 
 struct ValidityChecker {
     time_offset: i64,
-    tls_certificate_info_list: Vec<(String, CertificateInfo)>,
 }
 
 // Verify the validity period of tls certificate,
@@ -56,8 +56,9 @@ fn validity_check(
 #[async_trait]
 impl ServiceTask for ValidityChecker {
     async fn run(&self) -> Option<bool> {
+        let certificate_info_list = get_certificate_info_list();
         if let Err(message) =
-            validity_check(&self.tls_certificate_info_list, self.time_offset)
+            validity_check(&certificate_info_list, self.time_offset)
         {
             // certificate will be expired
             warn!(message);
@@ -71,11 +72,13 @@ impl ServiceTask for ValidityChecker {
         None
     }
     fn description(&self) -> String {
+        let certificate_info_list = get_certificate_info_list();
+
         let offset_human: humantime::Duration =
             Duration::from_secs(self.time_offset as u64).into();
         format!(
-            "offset: {offset_human}, tls_certificate_info_list: {:?}",
-            self.tls_certificate_info_list
+            "offset: {offset_human}, certificate_info_list: {:?}",
+            certificate_info_list
         )
     }
 }
@@ -83,11 +86,8 @@ impl ServiceTask for ValidityChecker {
 /// Create a tls certificate validity checker service,
 /// if the certificate will be expired or not valid,
 /// it will send webhook notificateion message.
-pub fn new_tls_validity_service(
-    tls_certificate_info_list: Vec<(String, CertificateInfo)>,
-) -> CommonServiceTask {
+pub fn new_tls_validity_service() -> CommonServiceTask {
     let checker = ValidityChecker {
-        tls_certificate_info_list,
         // cert will be expired 7 days later
         time_offset: 7 * 24 * 3600_i64,
     };
@@ -101,8 +101,8 @@ pub fn new_tls_validity_service(
 
 #[cfg(test)]
 mod tests {
-    use super::{new_tls_validity_service, validity_check, ValidityChecker};
-    use crate::{acme::CertificateInfo, service::ServiceTask};
+    use super::validity_check;
+    use crate::acme::CertificateInfo;
     use pretty_assertions::assert_eq;
     use x509_parser::time::ASN1Time;
 
@@ -148,41 +148,5 @@ mod tests {
             "Pingap cert is not valid, issuer: pingap, valid date: 2651852800",
             result.unwrap_err()
         );
-    }
-    #[tokio::test]
-    async fn test_validity_service() {
-        let _ = new_tls_validity_service(vec![(
-            "Pingap".to_string(),
-            CertificateInfo {
-                not_after: ASN1Time::from_timestamp(2651852800)
-                    .unwrap()
-                    .timestamp(),
-                not_before: ASN1Time::from_timestamp(2651852800)
-                    .unwrap()
-                    .timestamp(),
-                issuer: "".to_string(),
-            },
-        )]);
-        let checker = ValidityChecker {
-            tls_certificate_info_list: vec![(
-                "Pingap".to_string(),
-                CertificateInfo {
-                    not_after: ASN1Time::from_timestamp(2651852800)
-                        .unwrap()
-                        .timestamp(),
-                    not_before: ASN1Time::from_timestamp(2651852800)
-                        .unwrap()
-                        .timestamp(),
-                    issuer: "".to_string(),
-                },
-            )],
-            time_offset: 7 * 24 * 3600_i64,
-        };
-        assert_eq!(
-            r#"offset: 7days, tls_certificate_info_list: [("Pingap", CertificateInfo { not_after: 2651852800, not_before: 2651852800, issuer: "" })]"#,
-            checker.description()
-        );
-        let result = checker.run().await;
-        assert_eq!(true, result.is_none());
     }
 }

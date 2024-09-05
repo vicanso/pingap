@@ -403,9 +403,7 @@ impl ServerConf {
     /// Validate the options of server config.
     /// 1. Parse listen addr to socket addr.
     /// 2. Check the locations are exists.
-    /// 3. Parse tls key to `Pkey` success.
-    /// 4. Parse tls cert to `X509` success.
-    /// 5. Parse access log layout success.
+    /// 3. Parse access log layout success.
     fn validate(&self, name: &str, location_names: &[String]) -> Result<()> {
         for addr in self.addr.split(',') {
             let _ = addr.to_socket_addrs().map_err(|e| Error::Io {
@@ -1082,11 +1080,7 @@ mod tests {
 
         conf.locations = Some(vec!["lo".to_string()]);
         let result = conf.validate("test", &location_names);
-        assert_eq!(true, result.is_err());
-        assert_eq!(
-            "Base64 decode error Invalid padding",
-            result.expect_err("").to_string()
-        );
+        assert_eq!(true, result.is_ok());
     }
 
     #[test]

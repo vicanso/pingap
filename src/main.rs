@@ -452,7 +452,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             ),
         ));
     }
-    let certificate_info_list = proxy::try_init_certificates(&certificates)?;
+    proxy::init_certificates(&certificates);
 
     // no server listen 80 and lets encrypt domains is not empty
     if !exits_80_server && enabled_lets_encrypt {
@@ -500,12 +500,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    if !certificate_info_list.is_empty() {
-        my_server.add_service(background_service(
-            "TlsValidity",
-            new_tls_validity_service(certificate_info_list),
-        ));
-    }
+    my_server.add_service(background_service(
+        "TlsValidity",
+        new_tls_validity_service(),
+    ));
     my_server.add_service(background_service(
         "UpstreamHc",
         new_upstream_health_check_task(Duration::from_secs(10)),
