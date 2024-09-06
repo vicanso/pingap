@@ -143,7 +143,7 @@ fn convert_pem(value: &str) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-#[derive(Debug, Default, Deserialize, Clone, Serialize)]
+#[derive(Debug, Default, Deserialize, Clone, Serialize, Hash)]
 pub struct CertificateConf {
     pub domains: Option<String>,
     pub tls_cert: Option<String>,
@@ -156,6 +156,12 @@ pub struct CertificateConf {
 }
 
 impl CertificateConf {
+    /// Get hash key of certificate config
+    pub fn hash_key(&self) -> String {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        format!("{:x}", hasher.finish())
+    }
     /// Validate the options of certificate config.
     pub fn validate(&self) -> Result<()> {
         // convert private key

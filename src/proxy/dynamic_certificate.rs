@@ -104,19 +104,7 @@ fn parse_certificate(
         message: e.to_string(),
     })?;
 
-    // TODO for certificate diff
-    // let mut buffer = BytesMut::new();
-    // buffer.extend(cert.clone());
-    // buffer.extend(key.clone());
-    // buffer.extend(
-    //     certificate_config
-    //         .tls_chain
-    //         .clone()
-    //         .unwrap_or_default()
-    //         .as_bytes()
-    //         .to_vec(),
-    // );
-    // let hash_key = format!("{:x}", crc32fast::hash(buffer.as_ref()));
+    let hash_key = certificate_config.hash_key();
 
     let tls_chain =
         util::convert_certificate_bytes(&certificate_config.tls_chain);
@@ -153,6 +141,7 @@ fn parse_certificate(
         message: e.to_string(),
     })?;
     Ok(DynamicCertificate {
+        hash_key,
         chain_certificate,
         domains,
         certificate: Some((cert, key)),
@@ -196,7 +185,7 @@ fn parse_certificates(
 /// Init certificates, which use for global tls callback
 pub fn init_certificates(
     certificate_configs: &HashMap<String, CertificateConf>,
-) {
+) -> Vec<String> {
     let (dynamic_certs, errors) = parse_certificates(certificate_configs);
     if !errors.is_empty() {
         let msg_list: Vec<String> = errors
@@ -210,7 +199,18 @@ pub fn init_certificates(
             remark: None,
         });
     }
+    let certs = DYNAMIC_CERTIFICATE_MAP.load();
+    let mut updated_certificates = vec![];
+    for (name, cert) in dynamic_certs.iter() {
+        if let Some(value) = certs.get(name) {
+            if value.hash_key == cert.hash_key {
+                break;
+            }
+        }
+        updated_certificates.push(name.clone());
+    }
     DYNAMIC_CERTIFICATE_MAP.store(Arc::new(dynamic_certs));
+    updated_certificates
 }
 
 /// Get certificate info list
@@ -230,6 +230,7 @@ pub struct DynamicCertificate {
     certificate: Option<(X509, PKey<Private>)>,
     domains: Vec<String>,
     info: Option<CertificateInfo>,
+    hash_key: String,
 }
 
 pub struct TlsSettingParams {

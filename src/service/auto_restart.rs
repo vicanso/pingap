@@ -14,7 +14,8 @@
 
 use crate::config::{
     get_config_storage, get_current_config, load_config, set_current_config,
-    PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_UPSTREAM,
+    PingapConf, CATEGORY_CERTIFICATE, CATEGORY_LOCATION, CATEGORY_PLUGIN,
+    CATEGORY_UPSTREAM,
 };
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::restart;
@@ -53,6 +54,7 @@ async fn diff_and_update_config(
         let mut should_reload_upstream = false;
         let mut should_reload_location = false;
         let mut should_reload_plugin = false;
+        let mut should_reload_certificate = false;
 
         // update the values which can be hot reload
         // set server locations
@@ -72,11 +74,30 @@ async fn diff_and_update_config(
         hot_realod_config.locations = new_config.locations.clone();
         hot_realod_config.plugins = new_config.plugins.clone();
 
+        // acem will create a let's encrypt service
+        // so it can't be reloaded.
+        let mut exists_acme = false;
+        for (_, cert) in new_config.certificates.iter() {
+            if cert.acme.is_some() {
+                exists_acme = true;
+            }
+        }
+        if !exists_acme {
+            hot_realod_config.certificates = new_config.certificates.clone();
+        }
+
+        // new_config.certificates
+
         for category in updated_category_list {
             match category.as_str() {
                 CATEGORY_LOCATION => should_reload_location = true,
                 CATEGORY_UPSTREAM => should_reload_upstream = true,
                 CATEGORY_PLUGIN => should_reload_plugin = true,
+                CATEGORY_CERTIFICATE => {
+                    if !exists_acme {
+                        should_reload_certificate = true;
+                    }
+                },
                 _ => {},
             };
         }
@@ -147,6 +168,17 @@ async fn diff_and_update_config(
                     });
                 },
             };
+        }
+        if should_reload_certificate {
+            let updated_certificates =
+                proxy::init_certificates(&new_config.certificates);
+            info!("reload certificate success");
+            webhook::send(webhook::SendNotificationParams {
+                category: webhook::NotificationCategory::ReloadConfig,
+                level: webhook::NotificationLevel::Info,
+                msg: format_message("Certificate", updated_certificates),
+                ..Default::default()
+            });
         }
         if should_reload_server_location {
             match proxy::try_init_server_locations(

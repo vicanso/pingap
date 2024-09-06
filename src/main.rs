@@ -452,7 +452,13 @@ fn run() -> Result<(), Box<dyn Error>> {
             ),
         ));
     }
-    proxy::init_certificates(&certificates);
+    let updated_certificates = proxy::init_certificates(&certificates);
+    if !updated_certificates.is_empty() {
+        info!(
+            updated_certificates = updated_certificates.join(","),
+            "init certificates success"
+        );
+    }
 
     // no server listen 80 and lets encrypt domains is not empty
     if !exits_80_server && enabled_lets_encrypt {
