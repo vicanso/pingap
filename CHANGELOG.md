@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.8.1](https://github.com/vicanso/pingap/compare/v0.8.0..0.8.1) - 2024-09-07
+
+### ⛰️  Features
+
+- Support hot reload certificates - ([202c5d7](https://github.com/vicanso/pingap/commit/202c5d799fa566dd60165a49a39148e8342bde40))
+- Support sync config to other storage - ([e66740d](https://github.com/vicanso/pingap/commit/e66740d389ef5a792131a6e0b9d0c1908ab866d2))
+
+### 🚜 Refactor
+
+- Adjust certificate reload - ([e6b5e04](https://github.com/vicanso/pingap/commit/e6b5e0496cab829b1021e74f7ff51965587fcfa7))
+- Adjust certificate of config - ([a5e484a](https://github.com/vicanso/pingap/commit/a5e484af9634d8cab8e29436656f6e891ea0c8a3))
+- Adjust stats and compression plugin - ([2334f5a](https://github.com/vicanso/pingap/commit/2334f5a395c5cde8e1650b2fc27c3626193a9239))
+- Set max limit for tcp probe count - ([8da5d08](https://github.com/vicanso/pingap/commit/8da5d08cc059d5ae58912a1d4a546b2c0b4f8d72))
+
+### ⚙️ Miscellaneous Tasks
+
+- Version 0.8.1 - ([8083922](https://github.com/vicanso/pingap/commit/80839223e8f1aae688cf7314cdf849d07064966e))
+- Update dependencies - ([a612d45](https://github.com/vicanso/pingap/commit/a612d45b88ac4ab2f86b4f5a4124681c9d23a4b4))
+
 ## [0.8.0](https://github.com/vicanso/pingap/compare/v0.7.0..0.8.0) - 2024-08-31
 
 ### ⛰️  Features
