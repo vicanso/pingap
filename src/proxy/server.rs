@@ -682,10 +682,10 @@ impl ProxyHttp for Server {
         session: &Session,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<CacheKey> {
-        let key = CacheKey::new(
-            ctx.cache_prefix.clone().unwrap_or_default(),
-            format!("{}", session.req_header().uri),
-            "".to_string(),
+        let key = util::get_cache_key(
+            &ctx.cache_prefix.clone().unwrap_or_default(),
+            session.req_header().method.as_ref(),
+            &session.req_header().uri,
         );
         debug!(key = format!("{key:?}"), "cache key callback");
         Ok(key)
@@ -1144,7 +1144,7 @@ mod tests {
             },
         );
         assert_eq!(
-            r#"Ok(CacheKey { namespace: "ss:", primary: "/vicanso/pingap?size=1", primary_bin_override: None, variance: None, user_tag: "" })"#,
+            r#"Ok(CacheKey { namespace: "GET:ss:", primary: "/vicanso/pingap?size=1", primary_bin_override: None, variance: None, user_tag: "" })"#,
             format!("{key:?}")
         );
     }

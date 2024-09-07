@@ -238,6 +238,8 @@ export default {
   "form.cacheEviction": "是否启用缓存清除方式",
   "form.cachePredictor": "是否启用缓存预测方式",
   "form.cacheMaxTtl": "缓存的最长有效期(如10m)",
+  "form.cachePurgeIpList": "允许清除缓存的IP列表",
+  "form.cachePurgeIpListAdd": "添加更多的IP或IP段",
   // cors
   "form.corsPath": "设置支持cors的正则路径(可选)",
   "form.corsAllowOrigin": "允许的来源",

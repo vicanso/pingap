@@ -22,14 +22,16 @@ use crate::config::{
 };
 use crate::http_extra::HttpResponse;
 use crate::state::State;
+use crate::util;
 use async_trait::async_trait;
-use bytes::{BufMut, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use bytesize::ByteSize;
-use http::Method;
+use http::{Method, StatusCode};
 use humantime::parse_duration;
-use once_cell::sync::OnceCell;
+use once_cell::sync::{Lazy, OnceCell};
 use pingora::cache::eviction::simple_lru::Manager;
 use pingora::cache::eviction::EvictionManager;
+use pingora::cache::key::CacheHashKey;
 use pingora::cache::lock::CacheLock;
 use pingora::cache::predictor::{CacheablePredictor, Predictor};
 use pingora::proxy::Session;
@@ -54,6 +56,7 @@ pub struct Cache {
     max_ttl: Option<Duration>,
     namespace: Option<String>,
     headers: Option<Vec<String>>,
+    purge_ip_rules: util::IpRules,
     hash_value: String,
 }
 
@@ -177,6 +180,9 @@ impl TryFrom<&PluginConf> for Cache {
             None
         };
 
+        let purge_ip_rules =
+            util::IpRules::new(&get_str_slice_conf(value, "purge_ip_list"));
+
         let params = Self {
             hash_value,
             http_cache: cache,
@@ -188,6 +194,7 @@ impl TryFrom<&PluginConf> for Cache {
             max_file_size: max_file_size.as_u64() as usize,
             namespace,
             headers,
+            purge_ip_rules,
         };
         if params.plugin_step != PluginStep::Request {
             return Err(Error::Invalid {
@@ -207,6 +214,9 @@ impl Cache {
     }
 }
 
+static METHOD_PURGE: Lazy<Method> =
+    Lazy::new(|| Method::from_bytes(b"PURGE").unwrap());
+
 #[async_trait]
 impl Plugin for Cache {
     #[inline]
@@ -224,26 +234,13 @@ impl Plugin for Cache {
             return Ok(None);
         }
         // cache only support get or head
-        if ![Method::GET, Method::HEAD].contains(&session.req_header().method) {
+        let method = &session.req_header().method;
+        if ![Method::GET, Method::HEAD, METHOD_PURGE.to_owned()]
+            .contains(method)
+        {
             return Ok(None);
         }
-        // max age of cache control
-        ctx.cache_max_ttl = self.max_ttl;
 
-        session.cache.enable(
-            self.http_cache,
-            self.eviction,
-            self.predictor,
-            self.lock,
-        );
-        // set max size of cache response body
-        if self.max_file_size > 0 {
-            session.cache.set_max_file_size_bytes(self.max_file_size);
-        }
-        if let Some(stats) = self.http_cache.stats() {
-            ctx.cache_reading = Some(stats.reading);
-            ctx.cache_writing = Some(stats.writing);
-        }
         let mut keys = BytesMut::with_capacity(64);
         if let Some(namespace) = &self.namespace {
             keys.put(namespace.as_bytes());
@@ -263,6 +260,52 @@ impl Plugin for Cache {
                 std::str::from_utf8(&keys).unwrap_or_default().to_string();
             debug!("Cache prefix: {prefix}");
             ctx.cache_prefix = Some(prefix);
+        }
+        if method == METHOD_PURGE.to_owned() {
+            let found = match self
+                .purge_ip_rules
+                .matched(&util::get_client_ip(session))
+            {
+                Ok(matched) => matched,
+                Err(e) => {
+                    return Ok(Some(HttpResponse::bad_request(
+                        e.to_string().into(),
+                    )));
+                },
+            };
+            if !found {
+                return Ok(Some(HttpResponse {
+                    status: StatusCode::FORBIDDEN,
+                    body: Bytes::from_static(b"Forbidden, ip is not allowed"),
+                    ..Default::default()
+                }));
+            }
+
+            let key = util::get_cache_key(
+                &ctx.cache_prefix.clone().unwrap_or_default(),
+                Method::GET.as_ref(),
+                &session.req_header().uri,
+            );
+            self.http_cache.cached.remove(&key.combined()).await?;
+            return Ok(Some(HttpResponse::no_content()));
+        }
+
+        // max age of cache control
+        ctx.cache_max_ttl = self.max_ttl;
+
+        session.cache.enable(
+            self.http_cache,
+            self.eviction,
+            self.predictor,
+            self.lock,
+        );
+        // set max size of cache response body
+        if self.max_file_size > 0 {
+            session.cache.set_max_file_size_bytes(self.max_file_size);
+        }
+        if let Some(stats) = self.http_cache.stats() {
+            ctx.cache_reading = Some(stats.reading);
+            ctx.cache_writing = Some(stats.writing);
         }
 
         Ok(None)

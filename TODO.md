@@ -3,6 +3,8 @@
 - [ ] log rotate
 - [ ] secret storage
 - [ ] support include comnand for configuraion
+- [ ] accept encoding adjustment plugin
+- [x] support purge http cache
 - [x] support docker service discovery
 - [x] upstream and location update notification
 - [x] support validate config for plugin

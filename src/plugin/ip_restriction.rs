@@ -23,16 +23,12 @@ use crate::util;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
-use ipnet::IpNet;
 use pingora::proxy::Session;
-use std::net::IpAddr;
-use std::str::FromStr;
 use tracing::debug;
 
 pub struct IpRestriction {
     plugin_step: PluginStep,
-    ip_net_list: Vec<IpNet>,
-    ip_list: Vec<String>,
+    ip_rules: util::IpRules,
     restriction_category: String,
     forbidden_resp: HttpResponse,
     hash_value: String,
@@ -44,15 +40,8 @@ impl TryFrom<&PluginConf> for IpRestriction {
         let hash_value = get_hash_key(value);
         let step = get_step_conf(value);
 
-        let mut ip_net_list = vec![];
-        let mut ip_list = vec![];
-        for item in get_str_slice_conf(value, "ip_list") {
-            if let Ok(value) = IpNet::from_str(&item) {
-                ip_net_list.push(value);
-            } else {
-                ip_list.push(item);
-            }
-        }
+        let ip_rules =
+            util::IpRules::new(&get_str_slice_conf(value, "ip_list"));
         let mut message = get_str_conf(value, "message");
         if message.is_empty() {
             message = "Request is forbidden".to_string();
@@ -60,8 +49,7 @@ impl TryFrom<&PluginConf> for IpRestriction {
         let params = Self {
             hash_value,
             plugin_step: step,
-            ip_list,
-            ip_net_list,
+            ip_rules,
             restriction_category: get_str_conf(value, "type"),
             forbidden_resp: HttpResponse {
                 status: StatusCode::FORBIDDEN,
@@ -112,20 +100,15 @@ impl Plugin for IpRestriction {
             ip
         };
 
-        let found = if self.ip_list.contains(&ip) {
-            true
-        } else {
-            match ip.parse::<IpAddr>() {
-                Ok(addr) => {
-                    self.ip_net_list.iter().any(|item| item.contains(&addr))
-                },
-                Err(e) => {
-                    return Ok(Some(HttpResponse::bad_request(
-                        e.to_string().into(),
-                    )));
-                },
-            }
+        let found = match self.ip_rules.matched(&ip) {
+            Ok(matched) => matched,
+            Err(e) => {
+                return Ok(Some(HttpResponse::bad_request(
+                    e.to_string().into(),
+                )));
+            },
         };
+
         // deny ip
         let allow = if self.restriction_category == "deny" {
             !found
@@ -167,15 +150,9 @@ type = "deny"
         )
         .unwrap();
         assert_eq!("request", params.plugin_step.to_string());
-        assert_eq!("192.168.1.1,10.1.1.1", params.ip_list.join(","));
         assert_eq!(
-            "1.1.1.0/24,2.1.1.0/24",
-            params
-                .ip_net_list
-                .iter()
-                .map(|item| item.to_string())
-                .collect::<Vec<_>>()
-                .join(",")
+            r#"IpRules { ip_net_list: [1.1.1.0/24, 2.1.1.0/24], ip_list: ["192.168.1.1", "10.1.1.1"] }"#,
+            format!("{:?}", params.ip_rules)
         );
 
         let result = IpRestriction::try_from(

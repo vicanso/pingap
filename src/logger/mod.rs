@@ -20,7 +20,6 @@ use std::path::Path;
 use std::sync::Mutex;
 use tracing::{info, Level};
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
-
 use crate::util;
 
 #[derive(Default, Debug)]

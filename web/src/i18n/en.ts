@@ -243,6 +243,8 @@ export default {
   "form.cacheEviction": "Enable Evicted From Storage",
   "form.cachePredictor": "Enable Predictor",
   "form.cacheMaxTtl": "Max Ttl Of Cache(e.g. 10m)",
+  "form.cachePurgeIpList": "The ip list are allowed to purge cache",
+  "form.cachePurgeIpListAdd": "Add more ip or ip net",
   // cors
   "form.corsPath": "The Gegexp Path For Cors(optional)",
   "form.corsAllowOrigin": "The Allow Origin",

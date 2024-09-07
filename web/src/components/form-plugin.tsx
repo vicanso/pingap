@@ -758,6 +758,14 @@ export function FormPluginField({
           addLabel: t("form.cacheHeadersAdd"),
           span: 12,
         },
+        {
+          category: "textlist",
+          key: "purge_ip_list",
+          label: t("form.cachePurgeIpList"),
+          addLabel: t("form.cachePurgeIpListAdd"),
+          id: "purge-ip-restriction-list",
+          span: 12,
+        },
       );
       break;
     }
