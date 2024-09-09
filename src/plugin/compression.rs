@@ -17,8 +17,6 @@ use crate::config::{PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
-use http::HeaderValue;
-use once_cell::sync::Lazy;
 use pingora::modules::http::compression::ResponseCompression;
 use pingora::protocols::http::compression::Algorithm;
 use pingora::proxy::Session;
@@ -28,11 +26,6 @@ const ZSTD: &str = "zstd";
 const BR: &str = "br";
 const GZIP: &str = "gzip";
 
-static ZSTD_ENCODING: Lazy<HeaderValue> =
-    Lazy::new(|| ZSTD.try_into().unwrap());
-static BR_ENCODING: Lazy<HeaderValue> = Lazy::new(|| BR.try_into().unwrap());
-static GZIP_ENCODING: Lazy<HeaderValue> =
-    Lazy::new(|| GZIP.try_into().unwrap());
 
 pub struct Compression {
     gzip_level: u32,
@@ -107,25 +100,13 @@ impl Plugin for Compression {
         if accept_encoding.is_empty() {
             return Ok(None);
         }
-        // compression order, zstd > br > gzip
-        // Wait for pingora support to specify the order
+        // compression order should be set from accept encoding plugin,
+        // zstd > br > gzip, Wait for pingora support to specify the order
         let level = if self.zstd_level > 0 && accept_encoding.contains(ZSTD) {
-            let _ = header.insert_header(
-                http::header::ACCEPT_ENCODING,
-                ZSTD_ENCODING.clone(),
-            );
             self.zstd_level
         } else if self.br_level > 0 && accept_encoding.contains(BR) {
-            let _ = header.insert_header(
-                http::header::ACCEPT_ENCODING,
-                BR_ENCODING.clone(),
-            );
             self.br_level
         } else if self.gzip_level > 0 && accept_encoding.contains(GZIP) {
-            let _ = header.insert_header(
-                http::header::ACCEPT_ENCODING,
-                GZIP_ENCODING.clone(),
-            );
             self.gzip_level
         } else {
             0

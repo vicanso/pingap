@@ -252,5 +252,8 @@ export default {
   "form.corsAllowHeaders": "The Allow Headers",
   "form.corsMaxAge": "The Cache Max Age(default:1h)",
   "form.corsAllowCredentials": "Allow Credentials",
-  "form.corsExposeHeaders": "The expose headers",
+  "form.corsExposeHeaders": "The Expose Headers",
+  // accept encoding
+  "form.acceptEncodingList": "The Accept Encodings, Separated By Comma",
+  "form.acceptEncodingOnlyOne": "Set Only One Accept Encoding",
 };

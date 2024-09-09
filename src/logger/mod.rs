@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::util;
 use std::error::Error;
 use std::fs;
 use std::io;
@@ -20,7 +21,6 @@ use std::path::Path;
 use std::sync::Mutex;
 use tracing::{info, Level};
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
-use crate::util;
 
 #[derive(Default, Debug)]
 pub struct LoggerParams {

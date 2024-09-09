@@ -44,6 +44,7 @@ export default function ProxyPluginInfo() {
 
     PluginCategory.REQUEST_ID,
     PluginCategory.COMPRESSION,
+    PluginCategory.ACCEPT_ENCODING,
 
     // auth
     PluginCategory.KEY_AUTH,

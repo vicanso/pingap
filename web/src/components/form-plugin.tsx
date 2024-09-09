@@ -18,6 +18,7 @@ export enum PluginCategory {
   STATS = "stats",
   LIMIT = "limit",
   COMPRESSION = "compression",
+  ACCEPT_ENCODING = "accept_encoding",
   ADMIN = "admin",
   DIRECTORY = "directory",
   MOCK = "mock",
@@ -58,6 +59,7 @@ export function getPluginSteps(category: string) {
   pluginSupportSteps[PluginCategory.STATS] = [0, 1];
   pluginSupportSteps[PluginCategory.LIMIT] = [0, 1];
   pluginSupportSteps[PluginCategory.COMPRESSION] = [];
+  pluginSupportSteps[PluginCategory.ACCEPT_ENCODING] = [];
   pluginSupportSteps[PluginCategory.ADMIN] = [0, 1];
   pluginSupportSteps[PluginCategory.DIRECTORY] = [0, 1];
   pluginSupportSteps[PluginCategory.MOCK] = [0, 1];
@@ -820,6 +822,26 @@ export function FormPluginField({
           label: t("form.corsExposeHeaders"),
           id: "cors-expose-headers",
           span: 12,
+        },
+      );
+      break;
+    }
+    case PluginCategory.ACCEPT_ENCODING: {
+      fields.push(
+        {
+          category: "text",
+          key: "encodings",
+          label: t("form.acceptEncodingList"),
+          id: "accept-encoding-list",
+          span: 6,
+        },
+        {
+          category: "checkbox",
+          key: "only_one_encoding",
+          label: t("form.acceptEncodingOnlyOne"),
+          id: "accept-encoding-only-one",
+          span: 6,
+          options: boolOptions,
         },
       );
       break;

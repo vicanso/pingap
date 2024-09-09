@@ -28,6 +28,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tracing::info;
 
+mod accept_encoding;
 mod admin;
 mod basic_auth;
 mod cache;
@@ -282,6 +283,11 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
             PluginCategory::Cors => {
                 let cors = cors::Cors::new(conf)?;
                 plguins.insert(name.clone(), Arc::new(cors));
+            },
+            PluginCategory::AcceptEncoding => {
+                let accept_encoding =
+                    accept_encoding::AcceptEncoding::new(conf)?;
+                plguins.insert(name.clone(), Arc::new(accept_encoding));
             },
         };
     }

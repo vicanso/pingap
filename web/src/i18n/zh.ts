@@ -62,7 +62,7 @@ export default {
   "server.tcpInterval": "Tcp保持连接探针的发送间隔(如60s)",
   "server.tcpProbeCount": "Tcp保持连接探针发送的最大次数(如9)",
   "server.prometheusMetrics":
-    "Prometheus的量度指标数据请求路径(若为完整的http链接由使用push方式，若为路径则pull)",
+    "Prometheus的量度指标数据请求路径(若为完整的http链接使用push方式，若为路径则pull)",
   "server.otlpExporter": "Open Telemetry 输出连接地址",
   "server.remark": "备注",
   // location info
@@ -248,4 +248,7 @@ export default {
   "form.corsMaxAge": "预检请求的缓存有效期(默认1h)",
   "form.corsAllowCredentials": "是否允许 HTTP 跨源请求携带凭据",
   "form.corsExposeHeaders": "允许可以暴露给客户端的响应头",
+  // accept encoding
+  "form.acceptEncodingList": "允许的接受的编码，多个编码以`,`分隔",
+  "form.acceptEncodingOnlyOne": "是否设置为只允许单一编码",
 };
