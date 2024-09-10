@@ -545,7 +545,7 @@ impl Upstream {
     }
 
     #[inline]
-    pub fn as_round_robind(&self) -> Option<Arc<LoadBalancer<RoundRobin>>> {
+    pub fn as_round_robin(&self) -> Option<Arc<LoadBalancer<RoundRobin>>> {
         match &self.lb {
             SelectionLb::RoundRobin(lb) => Some(lb.clone()),
             _ => None,
@@ -600,7 +600,7 @@ pub fn try_init_upstreams(confs: &HashMap<String, UpstreamConf>) -> Result<()> {
 }
 
 async fn run_health_check(up: &Arc<Upstream>) -> Result<()> {
-    if let Some(lb) = up.as_round_robind() {
+    if let Some(lb) = up.as_round_robin() {
         lb.update().await.map_err(|e| Error::Common {
             category: "run_health_check".to_string(),
             message: e.to_string(),
@@ -669,7 +669,7 @@ impl ServiceTask for HealthCheckTask {
                 // get update frequecy(update service)
                 // and health check frequency
                 let (update_frequency, health_check_frequency) =
-                    if let Some(lb) = up.as_round_robind() {
+                    if let Some(lb) = up.as_round_robin() {
                         let update_frequency =
                             lb.update_frequency.unwrap_or_default().as_secs();
                         let health_check_frequency = lb
@@ -695,7 +695,7 @@ impl ServiceTask for HealthCheckTask {
                     || (update_frequency > 0
                         && check_frequency_matched(update_frequency))
                 {
-                    let result = if let Some(lb) = up.as_round_robind() {
+                    let result = if let Some(lb) = up.as_round_robin() {
                         lb.update().await
                     } else if let Some(lb) = up.as_consistent() {
                         lb.update().await
@@ -717,7 +717,7 @@ impl ServiceTask for HealthCheckTask {
                     return;
                 }
 
-                if let Some(lb) = up.as_round_robind() {
+                if let Some(lb) = up.as_round_robin() {
                     lb.backends()
                         .run_health_check(lb.parallel_health_check)
                         .await;
@@ -953,7 +953,7 @@ mod tests {
             true,
             up.new_http_peer(&session, &State::default(),).is_some()
         );
-        assert_eq!(true, up.as_round_robind().is_some());
+        assert_eq!(true, up.as_round_robin().is_some());
     }
     #[test]
     fn test_upstream_peer_tracer() {

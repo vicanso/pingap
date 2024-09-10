@@ -26,7 +26,6 @@ const ZSTD: &str = "zstd";
 const BR: &str = "br";
 const GZIP: &str = "gzip";
 
-
 pub struct Compression {
     gzip_level: u32,
     br_level: u32,

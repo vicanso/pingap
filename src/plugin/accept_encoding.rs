@@ -231,14 +231,12 @@ encodings = "zstd, br, gzip"
             .unwrap();
 
         assert_eq!(
-            "",
+            true,
             session
                 .req_header()
                 .headers
                 .get("Accept-Encoding")
-                .unwrap()
-                .to_str()
-                .unwrap()
+                .is_none()
         );
     }
 }
