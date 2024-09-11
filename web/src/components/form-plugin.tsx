@@ -26,6 +26,7 @@ export enum PluginCategory {
   IP_RESTRICTION = "ip_restriction",
   KEY_AUTH = "key_auth",
   BASIC_AUTH = "basic_auth",
+  COMBINED_AUTH = "combined_auth",
   JWT = "jwt",
   CACHE = "cache",
   REDIRECT = "redirect",
@@ -67,6 +68,7 @@ export function getPluginSteps(category: string) {
   pluginSupportSteps[PluginCategory.IP_RESTRICTION] = [0, 1];
   pluginSupportSteps[PluginCategory.KEY_AUTH] = [0, 1];
   pluginSupportSteps[PluginCategory.BASIC_AUTH] = [0];
+  pluginSupportSteps[PluginCategory.COMBINED_AUTH] = [0];
   pluginSupportSteps[PluginCategory.JWT] = [0, 1];
   pluginSupportSteps[PluginCategory.CACHE] = [0];
   pluginSupportSteps[PluginCategory.REDIRECT] = [0];
@@ -108,7 +110,8 @@ export function FormPluginField({
       | "select"
       | "checkbox"
       | "textlist"
-      | "textarea";
+      | "textarea"
+      | "json";
     key: string;
     label: string;
     valueLabel?: string;
@@ -494,6 +497,16 @@ export function FormPluginField({
           options: boolOptions,
         },
       );
+      break;
+    }
+    case PluginCategory.COMBINED_AUTH: {
+      fields.push({
+        category: "json",
+        key: "authorizations",
+        label: t("form.combinedAuthxAauthorizations"),
+        id: "combined-auth-authorizations",
+        span: 12,
+      });
       break;
     }
     case PluginCategory.JWT: {
@@ -978,6 +991,32 @@ export function FormPluginField({
           />
         );
 
+        break;
+      }
+      case "json": {
+        dom = (
+          <TextField
+            fullWidth={true}
+            label={field.label}
+            variant="outlined"
+            style={{
+              marginLeft: 0,
+            }}
+            multiline={true}
+            minRows={4}
+            required={field.required || false}
+            defaultValue={JSON.stringify(data[field.key]) || ""}
+            sx={{ ml: 1, flex: 1 }}
+            onChange={(e) => {
+              const value = e.target.value.trim();
+              const current: Record<string, unknown> = {};
+              current[field.key] = JSON.parse(value);
+              const newValues = Object.assign({}, data, current);
+              setData(newValues);
+              onUpdate(newValues);
+            }}
+          />
+        );
         break;
       }
       default: {

@@ -32,6 +32,7 @@ mod accept_encoding;
 mod admin;
 mod basic_auth;
 mod cache;
+mod combined_auth;
 mod compression;
 mod cors;
 mod csrf;
@@ -251,6 +252,10 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
             PluginCategory::BasicAuth => {
                 let b = basic_auth::BasicAuth::new(conf)?;
                 plguins.insert(name, Arc::new(b));
+            },
+            PluginCategory::CombinedAuth => {
+                let c = combined_auth::CombinedAuth::new(conf)?;
+                plguins.insert(name, Arc::new(c));
             },
             PluginCategory::Cache => {
                 let c = cache::Cache::new(conf)?;
