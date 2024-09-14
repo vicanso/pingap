@@ -8,6 +8,9 @@ export default {
   "nav.certificate": "证书配置",
 
   // header
+  "header.themeSystem": "跟随系统",
+  "header.themeDark": "深色主题",
+  "header.themeLight": "浅色主题",
   "header.title": "应用信息",
   "header.startTime": "启动时间：",
   "header.memory": "内存占用：",

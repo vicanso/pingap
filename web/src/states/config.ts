@@ -43,7 +43,7 @@ export function getLocationWeight(location: Location) {
     return location.weight;
   }
   let weight = 0;
-  let path = location.path || "";
+  const path = location.path || "";
   if (path.startsWith("=")) {
     weight += 1024;
   } else if (path.startsWith("~")) {
@@ -144,7 +144,8 @@ interface ConfigState {
 
 const random = (length = 8) => {
   // Declare all characters
-  let chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  const chars =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
   // Pick characers randomly
   let str = "";
@@ -155,7 +156,7 @@ const random = (length = 8) => {
   return str;
 };
 
-const useConfigStore = create<ConfigState>()((set, get) => ({
+const useConfigState = create<ConfigState>()((set, get) => ({
   data: {
     basic: {} as Basic,
   },
@@ -204,4 +205,4 @@ const useConfigStore = create<ConfigState>()((set, get) => ({
   },
 }));
 
-export default useConfigStore;
+export default useConfigState;

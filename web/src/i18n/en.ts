@@ -7,6 +7,9 @@ export default {
   "nav.plugin": "Plugin",
   "nav.certificate": "Certificate",
   // header
+  "header.themeSystem": "System",
+  "header.themeDark": "Dark",
+  "header.themeLight": "Light",
   "header.title": "Informations",
   "header.startTime": "Start Time: ",
   "header.memory": "Memory: ",
