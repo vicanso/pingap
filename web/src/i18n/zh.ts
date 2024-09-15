@@ -1,11 +1,16 @@
 export default {
-  // navigation
-  "nav.basic": "基础配置",
-  "nav.server": "服务配置",
-  "nav.location": "Location配置",
-  "nav.upstream": "上游服务配置",
-  "nav.plugin": "插件配置",
-  "nav.certificate": "证书配置",
+  themeSystem: "系统主题",
+  themeDark: "深色主题",
+  themeLight: "浅色主题",
+
+  nav: {
+    basic: "基础配置",
+    server: "服务配置",
+    location: "Location配置",
+    upstream: "上游服务配置",
+    plugin: "插件配置",
+    certificate: "插件配置",
+  },
 
   // header
   "header.themeSystem": "跟随系统",

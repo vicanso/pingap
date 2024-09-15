@@ -1,11 +1,23 @@
 export default {
-  // navigation
-  "nav.basic": "Basic",
-  "nav.server": "Server",
-  "nav.location": "Location",
-  "nav.upstream": "Upstream",
-  "nav.plugin": "Plugin",
-  "nav.certificate": "Certificate",
+  themeSystem: "System Theme",
+  themeDark: "Dark Theme",
+  themeLight: "Light Theme",
+  nav: {
+    basic: "Basic",
+    server: "Server",
+    location: "Location",
+    upstream: "Upstream",
+    plugin: "Plugin",
+    certificate: "Certificate",
+  },
+  basic: {
+    name: "Name",
+    namePlaceholder: "Please input the name of pingap process",
+    threads: "Threads",
+    threadsPlaceholder: "Please input the default thread count",
+    workStealing: "Work Strealing",
+  },
+
   // header
   "header.themeSystem": "System",
   "header.themeDark": "Dark",

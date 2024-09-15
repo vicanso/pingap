@@ -64,7 +64,7 @@ export function MainHeader({
           >
             {theme == "system" && <Check className={iconClassName} />}
             {theme != "system" && <SunMoon className={iconClassName} />}
-            <span>{t("header.themeSystem")}</span>
+            <span>{t("themeSystem")}</span>
           </DropdownMenuItem>
           <DropdownMenuItem
             className="cursor-pointer"
@@ -74,7 +74,7 @@ export function MainHeader({
           >
             {theme == "dark" && <Check className={iconClassName} />}
             {theme != "dark" && <Moon className={iconClassName} />}
-            <span>{t("header.themeDark")}</span>
+            <span>{t("themeDark")}</span>
           </DropdownMenuItem>
           <DropdownMenuItem
             className="cursor-pointer"
@@ -84,7 +84,7 @@ export function MainHeader({
           >
             {theme == "light" && <Check className={iconClassName} />}
             {theme != "light" && <Sun className={iconClassName} />}
-            <span>{t("header.themeLight")}</span>
+            <span>{t("themeLight")}</span>
           </DropdownMenuItem>
         </DropdownMenuGroup>
       </DropdownMenuContent>
