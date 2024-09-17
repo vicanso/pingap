@@ -58,7 +58,7 @@ export function getLocationWeight(location: Location) {
   return weight;
 }
 
-interface Server {
+export interface Server {
   addr: string;
   access_log?: string;
   locations?: string[];
