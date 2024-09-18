@@ -1,4 +1,5 @@
-import request from "../helpers/request";
+import request from "@/helpers/request";
+import { random } from "@/helpers/util";
 import { create } from "zustand";
 
 interface Upstream {
@@ -25,7 +26,7 @@ interface Upstream {
   remark?: string;
 }
 
-interface Location {
+export interface Location {
   upstream: string;
   path?: string;
   host?: string;
@@ -141,20 +142,6 @@ interface ConfigState {
   ) => Promise<void>;
   remove: (category: string, name: string) => Promise<void>;
 }
-
-const random = (length = 8) => {
-  // Declare all characters
-  const chars =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-
-  // Pick characers randomly
-  let str = "";
-  for (let i = 0; i < length; i++) {
-    str += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-
-  return str;
-};
 
 const useConfigState = create<ConfigState>()((set, get) => ({
   data: {

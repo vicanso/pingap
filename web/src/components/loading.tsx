@@ -19,7 +19,7 @@ export function Loading({ className, tips }: LoadingProps) {
 
 export function LoadingPage() {
   return (
-    <div>
+    <>
       <MainHeader />
       <div className="flex">
         <MainSidebar className="h-screen flex-none w-[230px]" />
@@ -27,6 +27,6 @@ export function LoadingPage() {
           <Loading />
         </div>
       </div>
-    </div>
+    </>
   );
 }

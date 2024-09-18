@@ -1,4 +1,10 @@
-import { LucideIcon, Cog, LoaderCircle } from "lucide-react";
+import {
+  LucideIcon,
+  Cog,
+  LoaderCircle,
+  ChevronsDown,
+  ChevronsUp,
+} from "lucide-react";
 import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
@@ -33,6 +39,7 @@ import { Button } from "@/components/ui/button";
 import React from "react";
 import { useTranslation } from "react-i18next";
 import { formatError } from "@/helpers/util";
+import { KvInputs } from "@/components/kv-inputs";
 
 export enum ExFormItemCategory {
   TEXT = "text",
@@ -46,6 +53,7 @@ export enum ExFormItemCategory {
   EDITOR = "editor",
   TEXTS = "texts",
   JSON = "json",
+  KV_LIST = "kvList",
 }
 
 interface ExFormOption {
@@ -103,7 +111,7 @@ export function getBooleanOptions() {
   return options;
 }
 
-export function getStringOptions(values: string[]) {
+export function getStringOptions(values: string[], withNone = false) {
   const options: ExFormOption[] = values.map((value) => {
     return {
       label: pascal(value),
@@ -111,6 +119,13 @@ export function getStringOptions(values: string[]) {
       value: value,
     };
   });
+  if (withNone) {
+    options.unshift({
+      label: "None",
+      option: "none",
+      value: "",
+    });
+  }
   return options;
 }
 
@@ -134,7 +149,7 @@ type FormContextValue = {
 interface ExFormProps {
   schema: z.Schema;
   items: ExFormItem[];
-  defaultShow: number;
+  defaultShow?: number;
   onlyModified?: boolean;
   onSave?: FormContextValue["onSave"];
 }
@@ -142,7 +157,7 @@ interface ExFormProps {
 export function ExForm({
   schema,
   items,
-  defaultShow,
+  defaultShow = 0,
   onlyModified,
   onSave,
 }: ExFormProps) {
@@ -212,38 +227,7 @@ export function ExForm({
 
   items.map((item, index) => {
     if (defaultShow > 0) {
-      if (index == defaultShow && index !== maxCount - 1) {
-        let tips = t("moreSettings");
-        if (showCount > defaultShow) {
-          tips = t("lessSettings");
-        }
-
-        fields.push(
-          <Separator
-            key="show-hide"
-            className="col-span-4 flex justify-center my-4"
-          >
-            <Button
-              variant="ghost"
-              onClick={(e) => {
-                if (showCount > defaultShow) {
-                  setShowCount(defaultShow);
-                } else {
-                  setShowCount(maxCount);
-                }
-                e.preventDefault();
-              }}
-              style={{
-                marginTop: "-18px",
-              }}
-            >
-              <Cog className="mr-2" />
-              {tips}
-            </Button>
-          </Separator>,
-        );
-      }
-      if (index >= showCount) {
+      if (index > showCount - 1) {
         return;
       }
     }
@@ -274,7 +258,6 @@ export function ExForm({
                     );
                   },
                 );
-
                 return (
                   <FormItem>
                     <FormLabel>{item.label}</FormLabel>
@@ -311,6 +294,7 @@ export function ExForm({
                     <FormLabel>{item.label}</FormLabel>
                     <FormControl>
                       <MultiSelect
+                        defaultValue={(item.defaultValue || []) as string[]}
                         options={options || []}
                         onValueChange={(values) => {
                           setUpdated(item.name, values);
@@ -398,15 +382,34 @@ export function ExForm({
                   </FormItem>
                 );
               }
+              case ExFormItemCategory.KV_LIST: {
+                const placeholders = item.placehodler.split(":");
+                return (
+                  <FormItem>
+                    <FormLabel>{item.label}</FormLabel>
+                    <FormControl>
+                      <KvInputs
+                        defaultValue={(item.defaultValue || []) as string[]}
+                        keyPlaceholder={placeholders[0]}
+                        valuePlaceholder={placeholders[1]}
+                        onValuesChange={(values) => {
+                          setUpdated(item.name, values);
+                        }}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                );
+              }
               default: {
                 return (
                   <FormItem>
                     <FormLabel>{item.label}</FormLabel>
                     <FormControl>
                       <Input
+                        type={item.category}
                         placeholder={item.placehodler}
                         readOnly={item.readOnly}
-                        type={item.category}
                         onInput={(e) => {
                           const value = e.target.value as string;
                           setUpdated(item.name, value.trim());
@@ -426,6 +429,40 @@ export function ExForm({
 
     fields.push(field);
   });
+
+  if (defaultShow > 0 && defaultShow < maxCount) {
+    let tips = t("moreSettings");
+    let icon = <ChevronsDown className="mr-2" />;
+    if (showCount > defaultShow) {
+      tips = t("lessSettings");
+      icon = <ChevronsUp className="mr-2" />;
+    }
+
+    fields.push(
+      <Separator
+        key="show-hide"
+        className="col-span-4 flex justify-center my-4"
+      >
+        <Button
+          variant="ghost"
+          onClick={(e) => {
+            if (showCount > defaultShow) {
+              setShowCount(defaultShow);
+            } else {
+              setShowCount(maxCount);
+            }
+            e.preventDefault();
+          }}
+          style={{
+            marginTop: "-18px",
+          }}
+        >
+          {icon}
+          {tips}
+        </Button>
+      </Separator>,
+    );
+  }
 
   return (
     <Form {...form}>

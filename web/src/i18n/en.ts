@@ -13,7 +13,6 @@ export default {
     plugin: "Plugin",
     certificate: "Certificate",
   },
-
   basic: {
     name: "Name",
     namePlaceholder: "Input the name of pingap process",
@@ -61,8 +60,64 @@ export default {
       "Input the error template, it should be html or json",
   },
   server: {
+    name: "Name",
+    namePlaceholder: "Input the name of server",
     addr: "Listen Addresses",
     addrPlaceholder: "Input listen addresses, separated by comma",
+    locations: "Locations",
+    locationsPlaceholder: "Select the locations for server",
+    threads: "Threads",
+    threadsPlaceholder: "Input the thread count of server",
+    globalCertificates: "Using Global Certificates",
+    accessLog: "Access Log Format",
+    accessLogPlaceholder: "Input the format layout for access",
+    enabledH2: "Enable Http2(h2c)",
+    tlsCipherList: "Tls Cipher List",
+    tlsCipherListPlaceholder:
+      "Input the cipher list for protocols before tlsv1.3",
+    tlsCiphersuites: "Tls Ciphers",
+    tlsCiphersuitesPlaceholder: "Input the ciphers for protocol tlsv1.3",
+    tlsMinVersion: "Min Tls",
+    tlsMaxVersion: "Max Tls",
+    tcpFastOpen: "Tcp Fast Open",
+    tcpFastOpenPlaceholder: "Input the backlog size of tcp fast open(e.g. 10)",
+    tcpIdle: "Tcp Keepalive Idle",
+    tcpIdlePlaceholder: "Input tcp keepalive idle duration(e.g. 2m)",
+    tcpInterval: "Tcp Keepalive Interval",
+    tcpIntervalPlaceholder: "Input tcp keepalive interval duration(e.g. 30s)",
+    tcpProbeCount: "Tcp Keepalive Probe Count",
+    tcpProbeCountPlaceholder: "Input tcp keepalive probe count(e.g. 9)",
+    prometheusMetrics: "Prometheus",
+    prometheusMetricsPlaceholder:
+      "Input the pull path of push gateway for prometheus",
+    otlpExporter: "Otlp Exporter",
+    otlpExporterPlaceholder: "Input the exporter for opentelemetry",
+    remark: "Remark",
+  },
+  location: {
+    host: "Host",
+    hostPlaceholder:
+      "Input the host for location, multiple hosts separated by comma",
+    path: "Path",
+    pathPlaceholder:
+      "Input the path for location, supports regexp, prefix and equal mode",
+    upstream: "Upstream",
+    upstreamPlaceholder: "Select the upstream for location",
+    rewrite: "Path Rewrite",
+    rewritePlaceholder: "Input the rewrite for path(e.g. ^/api/ /)",
+    proxySetHeaders: "Proxy Set Headers",
+    proxySetHeadersPlaceholder:
+      "Input the http header name:Input the http header value",
+    proxyAddHeaders: "Proxy Add Headers",
+    proxyAddHeadersPlaceholder:
+      "Input the http header name:Input the http header value",
+    weight: "Weight",
+    weightPlaceholder: "Input the weight of location",
+    clientMaxBodySize: "Client Max Body Size",
+    clientMaxBodySizePlaceholder: "Input the max body size(e.g. 1mb)",
+    plugins: "Plugins",
+    pluginsPlaceholder: "Select the plugins for location",
+    remark: "Remark",
   },
 
   // header

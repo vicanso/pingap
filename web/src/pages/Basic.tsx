@@ -215,7 +215,7 @@ export default function Basic() {
     threads: z.string().optional(),
   });
   return (
-    <div>
+    <>
       <MainHeader />
       <div className="flex">
         <MainSidebar className="h-screen flex-none w-[230px]" />
@@ -228,6 +228,6 @@ export default function Basic() {
           />
         </div>
       </div>
-    </div>
+    </>
   );
 }
