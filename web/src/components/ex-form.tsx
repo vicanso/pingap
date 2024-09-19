@@ -1,14 +1,5 @@
-import {
-  LucideIcon,
-  Cog,
-  LoaderCircle,
-  ChevronsDown,
-  ChevronsUp,
-} from "lucide-react";
-import { Link } from "react-router-dom";
-import { cn } from "@/lib/utils";
+import { LoaderCircle, ChevronsDown, ChevronsUp } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -24,11 +15,10 @@ import {
 import {
   Form,
   FormControl,
-  FormDescription,
-  FormField,
   FormItem,
   FormLabel,
   FormMessage,
+  FormField,
 } from "@/components/ui/form";
 import { pascal } from "radash";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -40,6 +30,7 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { formatError } from "@/helpers/util";
 import { KvInputs } from "@/components/kv-inputs";
+import { SortCheckboxs } from "@/components/sort-checkboxs";
 
 export enum ExFormItemCategory {
   TEXT = "text",
@@ -54,6 +45,7 @@ export enum ExFormItemCategory {
   TEXTS = "texts",
   JSON = "json",
   KV_LIST = "kvList",
+  SORT_CHECKBOXS = "sortCheckboxs",
 }
 
 interface ExFormOption {
@@ -90,7 +82,7 @@ function getOptionValue(option: string, options?: ExFormOption[]) {
   return found.value;
 }
 
-export function getBooleanOptions() {
+export function newBooleanOptions() {
   const options: ExFormOption[] = [
     {
       label: "Yes",
@@ -111,7 +103,7 @@ export function getBooleanOptions() {
   return options;
 }
 
-export function getStringOptions(values: string[], withNone = false) {
+export function newStringOptions(values: string[], withNone = false) {
   const options: ExFormOption[] = values.map((value) => {
     return {
       label: pascal(value),
@@ -132,13 +124,14 @@ export function getStringOptions(values: string[], withNone = false) {
 export interface ExFormItem {
   name: string;
   label: string;
-  placehodler: string;
+  placeholder: string;
   category: ExFormItemCategory;
   readOnly?: boolean;
   width?: number;
   options?: ExFormOption[];
   span: number;
   rows?: number;
+  cols?: number[];
   defaultValue: string[] | string | number | boolean | null | undefined;
 }
 
@@ -299,7 +292,7 @@ export function ExForm({
                         onValueChange={(values) => {
                           setUpdated(item.name, values);
                         }}
-                        placeholder={item.placehodler}
+                        placeholder={item.placeholder}
                       />
                     </FormControl>
                     <FormMessage />
@@ -331,7 +324,7 @@ export function ExForm({
                         }}
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder={item.placehodler} />
+                          <SelectValue placeholder={item.placeholder} />
                         </SelectTrigger>
                         <SelectContent>{options}</SelectContent>
                       </Select>
@@ -346,7 +339,7 @@ export function ExForm({
                     <FormLabel>{item.label}</FormLabel>
                     <FormControl>
                       <Textarea
-                        placeholder={item.placehodler}
+                        placeholder={item.placeholder}
                         rows={item.rows}
                         readOnly={item.readOnly}
                         onChange={(e) => {
@@ -364,7 +357,7 @@ export function ExForm({
                     <FormLabel>{item.label}</FormLabel>
                     <FormControl>
                       <Input
-                        placeholder={item.placehodler}
+                        placeholder={item.placeholder}
                         readOnly={item.readOnly}
                         type="number"
                         onInput={(e) => {
@@ -383,16 +376,40 @@ export function ExForm({
                 );
               }
               case ExFormItemCategory.KV_LIST: {
-                const placeholders = item.placehodler.split(":");
+                const placeholders = item.placeholder.split(" : ");
                 return (
                   <FormItem>
                     <FormLabel>{item.label}</FormLabel>
                     <FormControl>
                       <KvInputs
+                        cols={item.cols}
                         defaultValue={(item.defaultValue || []) as string[]}
                         keyPlaceholder={placeholders[0]}
                         valuePlaceholder={placeholders[1]}
-                        onValuesChange={(values) => {
+                        onValueChange={(values) => {
+                          setUpdated(item.name, values);
+                        }}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                );
+              }
+              case ExFormItemCategory.SORT_CHECKBOXS: {
+                const options = item.options?.map((item) => {
+                  return {
+                    label: item.label,
+                    value: item.value as string,
+                  };
+                });
+                return (
+                  <FormItem>
+                    <FormLabel>{item.label}</FormLabel>
+                    <FormControl>
+                      <SortCheckboxs
+                        options={options || []}
+                        defaultValue={(item.defaultValue || []) as string[]}
+                        onValueChange={(values) => {
                           setUpdated(item.name, values);
                         }}
                       />
@@ -408,7 +425,7 @@ export function ExForm({
                     <FormControl>
                       <Input
                         type={item.category}
-                        placeholder={item.placehodler}
+                        placeholder={item.placeholder}
                         readOnly={item.readOnly}
                         onInput={(e) => {
                           const value = e.target.value as string;
@@ -441,7 +458,7 @@ export function ExForm({
     fields.push(
       <Separator
         key="show-hide"
-        className="col-span-4 flex justify-center my-4"
+        className="col-span-6 flex justify-center my-4"
       >
         <Button
           variant="ghost"
@@ -467,9 +484,9 @@ export function ExForm({
   return (
     <Form {...form}>
       {/* 因为col-span是动态生成，因此先引入，否则tailwind并未编译该类 */}
-      <span className="col-span-1 col-span-2 col-span-3 col-span-4" />
+      <span className="col-span-1 col-span-2 col-span-3 col-span-4 col-span-5 col-span-6" />
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
-        <div className="grid grid-cols-4 gap-4">{fields}</div>
+        <div className="grid grid-cols-6 gap-4">{fields}</div>
         {onSave && (
           <Button
             type="submit"

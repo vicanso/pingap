@@ -2,7 +2,7 @@ import request from "@/helpers/request";
 import { random } from "@/helpers/util";
 import { create } from "zustand";
 
-interface Upstream {
+export interface Upstream {
   addrs: string[];
   discovery?: string;
   update_frequency?: string;
@@ -83,7 +83,7 @@ export interface Server {
   remark?: string;
 }
 
-interface Certificate {
+export interface Certificate {
   domains?: string;
   tls_cert?: string;
   tls_key?: string;

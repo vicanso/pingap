@@ -95,6 +95,8 @@ export default {
     remark: "Remark",
   },
   location: {
+    name: "Name",
+    namePlaceholder: "Input the name of location",
     host: "Host",
     hostPlaceholder:
       "Input the host for location, multiple hosts separated by comma",
@@ -110,7 +112,7 @@ export default {
       "Input the http header name:Input the http header value",
     proxyAddHeaders: "Proxy Add Headers",
     proxyAddHeadersPlaceholder:
-      "Input the http header name:Input the http header value",
+      "Input the http header name : Input the http header value",
     weight: "Weight",
     weightPlaceholder: "Input the weight of location",
     clientMaxBodySize: "Client Max Body Size",
@@ -118,6 +120,68 @@ export default {
     plugins: "Plugins",
     pluginsPlaceholder: "Select the plugins for location",
     remark: "Remark",
+  },
+  upstream: {
+    name: "Name",
+    namePlaceholder: "Input the name of upstream",
+    addrs: "Uptream Address",
+    addrsPlaceholder:
+      "Input the address of upstream(e.g. 127.0.0.1:3000) : Input the weight of upstream",
+    discovery: "Service Discovery",
+    discoveryPlaceholder: "Select a discovery for upstream",
+    updateFrequency: "Discovery Update Frequency",
+    updateFrequencyPlaceholder:
+      "Input the update frequency of discovery(e.g. 30s)",
+    algo: "Load Balancer Algorithm",
+    algoPlaceholder: "Input algorithm for load balance(e.g. hash:ip)",
+    healthCheck: "Health Check",
+    healthCheckPlaceholder:
+      "Input upstream health check url, supports http or tcp",
+    connectionTimeout: "Connection Timeout",
+    connectionTimeoutPlaceholder:
+      "Input the connection timeout for upstream(e.g. 30s)",
+    totalConnectionTimeout: "Total Connection Timeout",
+    totalConnectionTimeoutPlaceholder:
+      "Input the total connection timeout for upstream(e.g. 1m)",
+    readTimeout: "Read Timeout",
+    readTimeoutPlaceholder: "Input the read timeout for upstream(e.g. 30s)",
+    writeTimeout: "Write Timeout",
+    writeTimeoutPlaceholder: "Input the write timeout for upstream(e.g. 10s)",
+    idleTimeout: "Idle Timeout",
+    idleTimeoutPlaceholder:
+      "Input the idle timeout for upstream connection(e.g. 2m)",
+    alpn: "Alpn",
+    sni: "Sni",
+    sniPlaceholder: "Input server name indication for tls protocol",
+    verifyCert: "Verify Certificate",
+    ipv4Only: "Ipv4 Only",
+    enableTracer: "Enable Tracer",
+    tcpRecvBuf: "Tcp Recv Buf",
+    tcp_recv_bufPlaceholder: "Input the tcp receive buffer limit size",
+    tcpIdle: "Tcp Idle",
+    tcpIdlePlaceholder: "Input the idle timeout for tcp connection",
+    tcpInterval: "Tcp Keepalive Probe Interval",
+    tcpIntervalPlaceholder: "Input the interval for tcp keepalive probe",
+    tcpProbeCount: "Tcp Probe Count",
+    tcpProbeCountPlaceholder: "Input the probe count(e.g. 9)",
+    remark: "Remark",
+  },
+  certificate: {
+    name: "Name",
+    namePlaceholder: "Input the name of certificate",
+    tlsCert: "Tls Cert",
+    tlsCertPlaceholder: "Input the pem format certificate of tls",
+    tlsKey: "Tls Key",
+    tlsKeyPlaceholder: "Input the pem format key of tls",
+    tlsChain: "Tls Chain",
+    tlsChainPlaceholder: "Input the pem format chain of tls",
+    domains: "Acme Domains",
+    domainsPlaceholder:
+      "Input the domains of acme, multiple domains separated by comma",
+    certificateFile: "Certificate File",
+    certificateFilePlaceholder: "Input the file for saving certificate",
+    acme: "Acme",
+    isDefault: "Default Certificate",
   },
 
   // header

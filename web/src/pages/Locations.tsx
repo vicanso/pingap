@@ -9,11 +9,9 @@ import {
   ExForm,
   ExFormItem,
   ExFormItemCategory,
-  getBooleanOptions,
-  getStringOptions,
+  newStringOptions,
 } from "@/components/ex-form";
 import { pascal } from "radash";
-
 import { z } from "zod";
 
 function getLocationConfig(name: string, locations?: Record<string, Location>) {
@@ -45,11 +43,9 @@ export default function Locations() {
   }
 
   const triggers = locations.map((item) => {
-    let label: string;
-    if (item === newLocation) {
+    let label = item;
+    if (label === newLocation) {
       label = "New";
-    } else {
-      label = item;
     }
     return (
       <TabsTrigger key={item} value={item} className="px-6">
@@ -73,7 +69,7 @@ export default function Locations() {
     </Tabs>
   );
 
-  const plugins = getStringOptions([
+  const plugins = newStringOptions([
     "pingap:stats",
     "pingap:compression",
     "pingap:requestId",
@@ -96,87 +92,97 @@ export default function Locations() {
     {
       name: "host",
       label: locationI18n("host"),
-      placehodler: locationI18n("hostPlaceholder"),
+      placeholder: locationI18n("hostPlaceholder"),
       defaultValue: locationConfig.host,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.TEXT,
     },
     {
       name: "path",
       label: locationI18n("path"),
-      placehodler: locationI18n("pathPlaceholder"),
+      placeholder: locationI18n("pathPlaceholder"),
       defaultValue: locationConfig.path,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.TEXT,
     },
     {
       name: "upstream",
       label: locationI18n("upstream"),
-      placehodler: locationI18n("upstreamPlaceholder"),
+      placeholder: locationI18n("upstreamPlaceholder"),
       defaultValue: locationConfig.upstream,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.SELECT,
-      options: getStringOptions(upstreams, true),
+      options: newStringOptions(upstreams, true),
     },
     {
       name: "rewrite",
       label: locationI18n("rewrite"),
-      placehodler: locationI18n("rewritePlaceholder"),
+      placeholder: locationI18n("rewritePlaceholder"),
       defaultValue: locationConfig.rewrite,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.TEXT,
     },
     {
       name: "proxy_set_headers",
       label: locationI18n("proxySetHeaders"),
-      placehodler: locationI18n("proxySetHeadersPlaceholder"),
+      placeholder: locationI18n("proxySetHeadersPlaceholder"),
       defaultValue: locationConfig.proxy_set_headers,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.KV_LIST,
     },
     {
       name: "proxy_add_headers",
       label: locationI18n("proxyAddHeaders"),
-      placehodler: locationI18n("proxyAddHeadersPlaceholder"),
+      placeholder: locationI18n("proxyAddHeadersPlaceholder"),
       defaultValue: locationConfig.proxy_add_headers,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.KV_LIST,
     },
     {
       name: "weight",
       label: locationI18n("weight"),
-      placehodler: locationI18n("weightPlaceholder"),
+      placeholder: locationI18n("weightPlaceholder"),
       defaultValue: locationConfig.weight,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.NUMBER,
     },
     {
       name: "client_max_body_size",
       label: locationI18n("clientMaxBodySize"),
-      placehodler: locationI18n("clientMaxBodySizePlaceholder"),
+      placeholder: locationI18n("clientMaxBodySizePlaceholder"),
       defaultValue: locationConfig.client_max_body_size,
-      span: 2,
+      span: 3,
       category: ExFormItemCategory.TEXT,
     },
 
     {
       name: "plugins",
       label: locationI18n("plugins"),
-      placehodler: locationI18n("pluginsPlaceholder"),
+      placeholder: locationI18n("pluginsPlaceholder"),
       defaultValue: locationConfig.plugins || [],
-      span: 4,
-      category: ExFormItemCategory.MULTI_SELECT,
+      span: 6,
+      category: ExFormItemCategory.SORT_CHECKBOXS,
       options: plugins,
     },
     {
       name: "remark",
       label: locationI18n("remark"),
-      placehodler: "",
+      placeholder: "",
       defaultValue: locationConfig.remark,
-      span: 4,
+      span: 6,
       category: ExFormItemCategory.TEXTAREA,
     },
   ];
+  if (currentLocation === newLocation) {
+    items.unshift({
+      name: "name",
+      label: locationI18n("name"),
+      placeholder: locationI18n("namePlaceholder"),
+      defaultValue: "",
+      span: 6,
+      category: ExFormItemCategory.TEXT,
+    });
+  }
 
   const schema = z.object({});
 
@@ -192,7 +198,7 @@ export default function Locations() {
             key={currentLocation}
             items={items}
             schema={schema}
-            // defaultShow={6}
+            defaultShow={6}
             onSave={async (value) => {
               let name = currentLocation;
               if (name === newLocation) {

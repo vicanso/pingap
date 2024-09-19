@@ -4,13 +4,14 @@ import { Input } from "@/components/ui/input";
 import { X, Plus } from "lucide-react";
 import { random } from "@/helpers/util";
 
-interface KvInputsProps extends React.ButtonHTMLAttributes<HTMLInputElement> {
+interface KvInputsProps extends React.InputHTMLAttributes<HTMLInputElement> {
   defaultValue?: string[];
   separator?: string;
-  onValuesChange: (values: string[]) => void;
+  onValueChange: (values: string[]) => void;
   keyPlaceholder?: string;
   valuePlaceholder?: string;
   className?: string;
+  cols?: number[];
 }
 
 export const KvInputs = React.forwardRef<HTMLInputElement, KvInputsProps>(
@@ -21,7 +22,8 @@ export const KvInputs = React.forwardRef<HTMLInputElement, KvInputsProps>(
       keyPlaceholder = "Input key",
       valuePlaceholder = "Input value",
       className,
-      onValuesChange,
+      onValueChange,
+      cols = [2, 2],
       ...props
     },
     ref,
@@ -57,7 +59,7 @@ export const KvInputs = React.forwardRef<HTMLInputElement, KvInputsProps>(
           values.push(`${key}:${value}`);
         }
       });
-      onValuesChange(values);
+      onValueChange(values);
     };
     const updateKey = (index: number, value: string) => {
       updateKeyValue(index, value, true);
@@ -72,19 +74,21 @@ export const KvInputs = React.forwardRef<HTMLInputElement, KvInputsProps>(
       if (last) {
         mbClass = "";
       }
+      const col1 = "col-span-" + (cols[0] || 2);
+      const col2 = "col-span-" + (cols[1] || 2);
 
       return (
-        <div key={id} className={cn("grid grid-cols-2 gap-4", mbClass)}>
+        <div key={id} className={cn("grid grid-cols-4 gap-4", mbClass)}>
           <Input
             type="text"
-            className="col-span-1"
+            className={col1}
             placeholder={keyPlaceholder}
             defaultValue={key}
             onChange={(e) => {
               updateKey(index, e.target.value);
             }}
           />
-          <div className="relative col-span-1">
+          <div className={cn("relative", col2)}>
             <span
               className="absolute pt-1"
               style={{
@@ -140,4 +144,4 @@ export const KvInputs = React.forwardRef<HTMLInputElement, KvInputsProps>(
   },
 );
 
-KvInputs.displayName = "KvInput";
+KvInputs.displayName = "KvInputs";
