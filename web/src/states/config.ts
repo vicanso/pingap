@@ -1,7 +1,8 @@
-import request from "../helpers/request";
+import request from "@/helpers/request";
+import { random } from "@/helpers/util";
 import { create } from "zustand";
 
-interface Upstream {
+export interface Upstream {
   addrs: string[];
   discovery?: string;
   update_frequency?: string;
@@ -25,7 +26,7 @@ interface Upstream {
   remark?: string;
 }
 
-interface Location {
+export interface Location {
   upstream: string;
   path?: string;
   host?: string;
@@ -43,7 +44,7 @@ export function getLocationWeight(location: Location) {
     return location.weight;
   }
   let weight = 0;
-  let path = location.path || "";
+  const path = location.path || "";
   if (path.startsWith("=")) {
     weight += 1024;
   } else if (path.startsWith("~")) {
@@ -58,7 +59,7 @@ export function getLocationWeight(location: Location) {
   return weight;
 }
 
-interface Server {
+export interface Server {
   addr: string;
   access_log?: string;
   locations?: string[];
@@ -82,7 +83,7 @@ interface Server {
   remark?: string;
 }
 
-interface Certificate {
+export interface Certificate {
   domains?: string;
   tls_cert?: string;
   tls_key?: string;
@@ -142,20 +143,7 @@ interface ConfigState {
   remove: (category: string, name: string) => Promise<void>;
 }
 
-const random = (length = 8) => {
-  // Declare all characters
-  let chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-
-  // Pick characers randomly
-  let str = "";
-  for (let i = 0; i < length; i++) {
-    str += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-
-  return str;
-};
-
-const useConfigStore = create<ConfigState>()((set, get) => ({
+const useConfigState = create<ConfigState>()((set, get) => ({
   data: {
     basic: {} as Basic,
   },
@@ -204,4 +192,4 @@ const useConfigStore = create<ConfigState>()((set, get) => ({
   },
 }));
 
-export default useConfigStore;
+export default useConfigState;

@@ -1,9 +1,26 @@
+import { z } from "zod";
+
 import HTTPError from "./http-error";
 export function isError(err: Error | HTTPError | unknown, category: string) {
   if (err instanceof HTTPError) {
     return err.category === category;
   }
   return false;
+}
+
+export function newZodNumber() {
+  const reg = /(^$)|(\d+)/i;
+  return z.string().regex(reg);
+}
+
+export function newZodBytes() {
+  const reg = /(^$)|([(\d+)|(\d+.\d+)]\s?[kmg]b)/i;
+  return z.string().regex(reg);
+}
+
+export function newZodDuration() {
+  const reg = /(^$)|(\d+[smhd])/i;
+  return z.string().regex(reg);
 }
 
 export function formatError(err: Error | HTTPError | unknown): string {
@@ -30,4 +47,18 @@ export function formatError(err: Error | HTTPError | unknown): string {
     message = (err as Error).message;
   }
   return message;
+}
+
+export function random(length = 8) {
+  // Declare all characters
+  const chars =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+  // Pick characers randomly
+  let str = "";
+  for (let i = 0; i < length; i++) {
+    str += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+
+  return str;
 }

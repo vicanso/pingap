@@ -7,7 +7,7 @@ fmt:
 build-web:
 	rm -rf dist \
 	&& cd web \
-	&& yarn install --network-timeout 600000 && yarn build \
+	&& npm install && npm run  build \
 	&& cp -rf dist ../
 
 bench:

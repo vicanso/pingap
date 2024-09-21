@@ -1,16 +1,24 @@
 import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
+import path from "path";
+import react from "@vitejs/plugin-react-swc";
 
 function manualChunks(id: string) {
   if (id.includes("node_modules")) {
     return "vendor";
+  }
+  if (id.includes("components/ui")) {
+    return "ui";
   }
 }
 
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
-  base: "./",
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
   build: {
     chunkSizeWarningLimit: 1024 * 1024,
     rollupOptions: {

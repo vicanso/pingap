@@ -1,4 +1,4 @@
-import request from "../helpers/request";
+import request from "@/helpers/request";
 import { create } from "zustand";
 
 interface Basic {
@@ -16,7 +16,7 @@ interface ConfigState {
   fetch: () => Promise<Basic>;
 }
 
-const useBasicStore = create<ConfigState>()((set, get) => ({
+const useBasicState = create<ConfigState>()((set) => ({
   data: {
     start_time: 0,
     version: "",
@@ -36,4 +36,4 @@ const useBasicStore = create<ConfigState>()((set, get) => ({
   },
 }));
 
-export default useBasicStore;
+export default useBasicState;
