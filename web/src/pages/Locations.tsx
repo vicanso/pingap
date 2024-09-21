@@ -5,14 +5,11 @@ import { useI18n } from "@/i18n";
 import useConfigState, { Location } from "@/states/config";
 import React from "react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  ExForm,
-  ExFormItem,
-  ExFormItemCategory,
-  newStringOptions,
-} from "@/components/ex-form";
+import { ExForm, ExFormItem } from "@/components/ex-form";
 import { pascal } from "radash";
 import { z } from "zod";
+import { ExFormItemCategory, newStringOptions } from "@/constants";
+import { newZodBytes } from "@/helpers/util";
 
 function getLocationConfig(name: string, locations?: Record<string, Location>) {
   if (!locations) {
@@ -184,7 +181,9 @@ export default function Locations() {
     });
   }
 
-  const schema = z.object({});
+  const schema = z.object({
+    client_max_body_size: newZodBytes().optional(),
+  });
 
   return (
     <>

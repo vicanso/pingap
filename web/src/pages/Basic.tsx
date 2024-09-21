@@ -2,15 +2,15 @@ import { MainHeader } from "@/components/header";
 import { MainSidebar } from "@/components/sidebar-nav";
 import { LoadingPage } from "@/components/loading";
 import useConfigState from "@/states/config";
-import {
-  ExForm,
-  ExFormItem,
-  ExFormItemCategory,
-  newBooleanOptions,
-  newStringOptions,
-} from "@/components/ex-form";
+import { ExForm, ExFormItem } from "@/components/ex-form";
 import { z } from "zod";
 import { useI18n } from "@/i18n";
+import {
+  ExFormItemCategory,
+  newStringOptions,
+  newBooleanOptions,
+} from "@/constants";
+import { newZodBytes, newZodDuration, newZodNumber } from "@/helpers/util";
 
 export default function Basic() {
   const basicI18n = useI18n("basic");
@@ -56,7 +56,8 @@ export default function Basic() {
       placeholder: basicI18n("logLevelPlaceholder"),
       defaultValue: basic.log_level,
       span: 3,
-      category: ExFormItemCategory.TEXT,
+      category: ExFormItemCategory.SELECT,
+      options: newStringOptions(["INFO", "WARN", "DEBUG", "ERROR"], true),
     },
     {
       name: "log_format_json",
@@ -211,8 +212,16 @@ export default function Basic() {
       category: ExFormItemCategory.TEXTAREA,
     },
   ];
+
   const schema = z.object({
-    threads: z.string().optional(),
+    name: z.string().optional(),
+    threads: newZodNumber().optional(),
+    log_level: z.string().optional(),
+    log_buffered_size: newZodBytes().optional(),
+    grace_period: newZodDuration().optional(),
+    graceful_shutdown_timeout: newZodDuration().optional(),
+    auto_restart_check_interval: newZodDuration().optional(),
+    cache_max_size: newZodBytes().optional(),
   });
   return (
     <>

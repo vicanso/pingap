@@ -1,8 +1,6 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import { Input } from "@/components/ui/input";
-import { ChevronUp, ChevronDown } from "lucide-react";
-import { random } from "@/helpers/util";
+import { ChevronUp } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 
 interface SortCheckboxsProps

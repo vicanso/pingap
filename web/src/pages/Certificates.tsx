@@ -5,14 +5,13 @@ import { useI18n } from "@/i18n";
 import useConfigState, { Certificate } from "@/states/config";
 import React from "react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  ExForm,
-  ExFormItem,
-  ExFormItemCategory,
-  newBooleanOptions,
-  newStringOptions,
-} from "@/components/ex-form";
+import { ExForm, ExFormItem } from "@/components/ex-form";
 import { z } from "zod";
+import {
+  ExFormItemCategory,
+  newStringOptions,
+  newBooleanOptions,
+} from "@/constants";
 
 function getCertificateConfig(
   name: string,

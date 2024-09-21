@@ -5,6 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import {
   Select,
   SelectContent,
@@ -20,7 +21,6 @@ import {
   FormMessage,
   FormField,
 } from "@/components/ui/form";
-import { pascal } from "radash";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -31,28 +31,8 @@ import { useTranslation } from "react-i18next";
 import { formatError } from "@/helpers/util";
 import { KvInputs } from "@/components/kv-inputs";
 import { SortCheckboxs } from "@/components/sort-checkboxs";
-
-export enum ExFormItemCategory {
-  TEXT = "text",
-  CHECKBOX = "checkbox",
-  TEXTAREA = "textarea",
-  SELECT = "select",
-  MULTI_SELECT = "multiSelect",
-  RADIOS = "radios",
-  NUMBER = "number",
-  DATETIME = "datetime",
-  EDITOR = "editor",
-  TEXTS = "texts",
-  JSON = "json",
-  KV_LIST = "kvList",
-  SORT_CHECKBOXS = "sortCheckboxs",
-}
-
-interface ExFormOption {
-  label: string;
-  option: string;
-  value: string | number | boolean | null;
-}
+import { ExFormOption, ExFormItemCategory } from "@/constants";
+import { Inputs } from "@/components/inputs";
 
 function getOption(
   value: string | number | boolean | null | undefined,
@@ -82,45 +62,6 @@ function getOptionValue(option: string, options?: ExFormOption[]) {
   return found.value;
 }
 
-export function newBooleanOptions() {
-  const options: ExFormOption[] = [
-    {
-      label: "Yes",
-      option: "yes",
-      value: true,
-    },
-    {
-      label: "No",
-      option: "no",
-      value: false,
-    },
-    {
-      label: "None",
-      option: "none",
-      value: null,
-    },
-  ];
-  return options;
-}
-
-export function newStringOptions(values: string[], withNone = false) {
-  const options: ExFormOption[] = values.map((value) => {
-    return {
-      label: pascal(value),
-      option: value,
-      value: value,
-    };
-  });
-  if (withNone) {
-    options.unshift({
-      label: "None",
-      option: "none",
-      value: "",
-    });
-  }
-  return options;
-}
-
 export interface ExFormItem {
   name: string;
   label: string;
@@ -132,11 +73,13 @@ export interface ExFormItem {
   span: number;
   rows?: number;
   cols?: number[];
+  separator?: string;
   defaultValue: string[] | string | number | boolean | null | undefined;
 }
 
 type FormContextValue = {
   onSave(data: Record<string, unknown>): Promise<void>;
+  onValueChange(data: Record<string, unknown>): void;
 };
 
 interface ExFormProps {
@@ -144,7 +87,9 @@ interface ExFormProps {
   items: ExFormItem[];
   defaultShow?: number;
   onlyModified?: boolean;
+  cols?: number;
   onSave?: FormContextValue["onSave"];
+  onValueChange?: FormContextValue["onValueChange"];
 }
 
 export function ExForm({
@@ -153,6 +98,8 @@ export function ExForm({
   defaultShow = 0,
   onlyModified,
   onSave,
+  onValueChange,
+  cols = 6,
 }: ExFormProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -171,8 +118,16 @@ export function ExForm({
     if (defaultValue == null) {
       switch (item.category) {
         case ExFormItemCategory.NUMBER:
+        case ExFormItemCategory.TEXTAREA:
         case ExFormItemCategory.TEXT: {
           defaultValue = "";
+          break;
+        }
+      }
+    } else {
+      switch (item.category) {
+        case ExFormItemCategory.NUMBER: {
+          defaultValue = defaultValue.toString();
           break;
         }
       }
@@ -188,6 +143,9 @@ export function ExForm({
     }
     setUpdatedCount(Object.keys(values).length);
     setUpdatedValues(values);
+    if (onValueChange) {
+      onValueChange(values);
+    }
   };
   const form = useForm<z.infer<typeof schema>>({
     resolver: zodResolver(schema),
@@ -241,12 +199,11 @@ export function ExForm({
                   (opt: ExFormOption, index: number) => {
                     const id = `${item.name}-${index}`;
                     return (
-                      <div
-                        className="flex items-center space-x-2 mr-4"
-                        key={id}
-                      >
+                      <div className="flex items-center mr-4" key={id}>
                         <RadioGroupItem value={opt.option} id={id} />
-                        <Label htmlFor={id}>{opt.label}</Label>
+                        <Label className="pl-2 cursor-pointer" htmlFor={id}>
+                          {opt.label}
+                        </Label>
                       </div>
                     );
                   },
@@ -256,11 +213,12 @@ export function ExForm({
                     <FormLabel>{item.label}</FormLabel>
                     <FormControl>
                       <RadioGroup
+                        disabled={item.readOnly || false}
                         defaultValue={getOption(
                           item.defaultValue as string,
                           item.options,
                         )}
-                        className="flex items-stretch pt-2"
+                        className="flex flex-wrap items-start pt-2"
                         onValueChange={(option) => {
                           setUpdated(
                             item.name,
@@ -342,6 +300,7 @@ export function ExForm({
                         placeholder={item.placeholder}
                         rows={item.rows}
                         readOnly={item.readOnly}
+                        defaultValue={(item.defaultValue as string) || ""}
                         onChange={(e) => {
                           setUpdated(item.name, e.target.value.trim());
                         }}
@@ -361,7 +320,8 @@ export function ExForm({
                         readOnly={item.readOnly}
                         type="number"
                         onInput={(e) => {
-                          const value = e.target.value || "";
+                          const value =
+                            (e.target as HTMLInputElement).value || "";
                           if (!value) {
                             setUpdated(item.name, null);
                           } else {
@@ -383,9 +343,28 @@ export function ExForm({
                     <FormControl>
                       <KvInputs
                         cols={item.cols}
+                        separator={item.separator}
                         defaultValue={(item.defaultValue || []) as string[]}
                         keyPlaceholder={placeholders[0]}
                         valuePlaceholder={placeholders[1]}
+                        onValueChange={(values) => {
+                          setUpdated(item.name, values);
+                          form.setValue(item.name, values);
+                        }}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                );
+              }
+              case ExFormItemCategory.TEXTS: {
+                return (
+                  <FormItem>
+                    <FormLabel>{item.label}</FormLabel>
+                    <FormControl>
+                      <Inputs
+                        defaultValue={(item.defaultValue || []) as string[]}
+                        placeholder={item.placeholder}
                         onValueChange={(values) => {
                           setUpdated(item.name, values);
                         }}
@@ -418,6 +397,15 @@ export function ExForm({
                   </FormItem>
                 );
               }
+              case ExFormItemCategory.LABEL: {
+                return (
+                  <FormItem>
+                    <FormLabel>
+                      {item.label}: {item.defaultValue}
+                    </FormLabel>
+                  </FormItem>
+                );
+              }
               default: {
                 return (
                   <FormItem>
@@ -428,7 +416,8 @@ export function ExForm({
                         placeholder={item.placeholder}
                         readOnly={item.readOnly}
                         onInput={(e) => {
-                          const value = e.target.value as string;
+                          const value =
+                            (e.target as HTMLInputElement).value || "";
                           setUpdated(item.name, value.trim());
                         }}
                         {...field}
@@ -486,7 +475,7 @@ export function ExForm({
       {/* 因为col-span是动态生成，因此先引入，否则tailwind并未编译该类 */}
       <span className="col-span-1 col-span-2 col-span-3 col-span-4 col-span-5 col-span-6" />
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
-        <div className="grid grid-cols-6 gap-4">{fields}</div>
+        <div className={cn("grid gap-4", `grid-cols-${cols}`)}>{fields}</div>
         {onSave && (
           <Button
             type="submit"

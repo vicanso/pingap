@@ -5,14 +5,14 @@ import { useI18n } from "@/i18n";
 import useConfigState, { Upstream } from "@/states/config";
 import React from "react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  ExForm,
-  ExFormItem,
-  ExFormItemCategory,
-  newBooleanOptions,
-  newStringOptions,
-} from "@/components/ex-form";
+import { ExForm, ExFormItem } from "@/components/ex-form";
 import { z } from "zod";
+import {
+  ExFormItemCategory,
+  newStringOptions,
+  newBooleanOptions,
+} from "@/constants";
+import { newZodBytes, newZodDuration } from "@/helpers/util";
 
 function getUpstreamConfig(name: string, upstreams?: Record<string, Upstream>) {
   if (!upstreams) {
@@ -74,6 +74,7 @@ export default function Upstreams() {
       defaultValue: upstreamConfig.addrs,
       span: 6,
       category: ExFormItemCategory.KV_LIST,
+      separator: " ",
       cols: [3, 1],
     },
     {
@@ -275,7 +276,18 @@ export default function Upstreams() {
     });
   }
 
-  const schema = z.object({});
+  const schema = z.object({
+    addrs: z.array(z.string()),
+    update_frequency: newZodDuration().optional(),
+    connection_timeout: newZodDuration().optional(),
+    total_connection_timeout: newZodDuration().optional(),
+    read_timeout: newZodDuration().optional(),
+    idle_timeout: newZodDuration().optional(),
+    write_timeout: newZodDuration().optional(),
+    tcp_idle: newZodDuration().optional(),
+    tcp_interval: newZodDuration().optional(),
+    tcp_recv_buf: newZodBytes().optional(),
+  });
 
   return (
     <div>

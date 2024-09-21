@@ -1,9 +1,26 @@
+import { z } from "zod";
+
 import HTTPError from "./http-error";
 export function isError(err: Error | HTTPError | unknown, category: string) {
   if (err instanceof HTTPError) {
     return err.category === category;
   }
   return false;
+}
+
+export function newZodNumber() {
+  const reg = /(^$)|(\d+)/i;
+  return z.string().regex(reg);
+}
+
+export function newZodBytes() {
+  const reg = /(^$)|([(\d+)|(\d+.\d+)]\s?[kmg]b)/i;
+  return z.string().regex(reg);
+}
+
+export function newZodDuration() {
+  const reg = /(^$)|(\d+[smhd])/i;
+  return z.string().regex(reg);
 }
 
 export function formatError(err: Error | HTTPError | unknown): string {

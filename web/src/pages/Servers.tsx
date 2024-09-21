@@ -2,17 +2,17 @@ import { MainHeader } from "@/components/header";
 import { MainSidebar } from "@/components/sidebar-nav";
 import { LoadingPage } from "@/components/loading";
 import useConfigState, { getLocationWeight, Server } from "@/states/config";
-import {
-  ExForm,
-  ExFormItem,
-  ExFormItemCategory,
-  newBooleanOptions,
-  newStringOptions,
-} from "@/components/ex-form";
+import { ExForm, ExFormItem } from "@/components/ex-form";
 import { z } from "zod";
 import { useI18n } from "@/i18n";
 import React from "react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  ExFormItemCategory,
+  newStringOptions,
+  newBooleanOptions,
+} from "@/constants";
+import { newZodDuration } from "@/helpers/util";
 
 function getServerConfig(name: string, servers?: Record<string, Server>) {
   if (!servers) {
@@ -236,6 +236,8 @@ export default function Servers() {
 
   const schema = z.object({
     addr: z.string().min(1),
+    tcp_idle: newZodDuration().optional(),
+    tcp_interval: newZodDuration().optional(),
   });
 
   return (

@@ -29,7 +29,7 @@ export const KvInputs = React.forwardRef<HTMLInputElement, KvInputsProps>(
     ref,
   ) => {
     const arr = defaultValue.map((item) => {
-      const tmpArr = item.split(":");
+      const tmpArr = item.split(separator);
       return {
         id: random(),
         key: tmpArr[0] || "",
@@ -47,16 +47,16 @@ export const KvInputs = React.forwardRef<HTMLInputElement, KvInputsProps>(
     const updateKeyValue = (index: number, value: string, isKey: boolean) => {
       const arr = inputs.slice(0);
       if (isKey) {
-        arr[index].key = value;
+        arr[index].key = value.trim();
       } else {
-        arr[index].value = value;
+        arr[index].value = value.trim();
       }
       setInputs(arr);
       const values: string[] = [];
       arr.forEach((item) => {
         const { key, value } = item;
-        if (key && value) {
-          values.push(`${key}:${value}`);
+        if (key || value) {
+          values.push(`${key}${separator}${value}`);
         }
       });
       onValueChange(values);
