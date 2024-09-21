@@ -21,13 +21,13 @@ arc-swap = "1.7.1"
 async-trait = "0.1.82"
 base64 = "0.22.1"
 bollard = { version = "0.17.1", default-features = false }
-bytes = "1.7.1"
+bytes = "1.7.2"
 bytesize = { version = "1.3.0", features = ["serde"] }
 chrono = { version = "0.4.38", default-features = false, features = [
     "std",
     "clock",
 ] }
-clap = { version = "4.5.17", features = [
+clap = { version = "4.5.18", features = [
     "derive",
     "std",
 ], default-features = false }
@@ -50,10 +50,10 @@ http = "1.1.0"
 humantime = "2.1.0"
 humantime-serde = "1.1.1"
 instant-acme = "0.7.1"
-ipnet = "2.9.0"
+ipnet = "2.10.0"
 itoa = "1.0.11"
 libc = "0.2.158"
-local-ip-address = "0.6.2"
+local-ip-address = "0.6.3"
 memory-stats = { version = "1.2.0", features = ["always_use_statm"] }
 mime_guess = "2.0.5"
 nanoid = "0.4.0"
@@ -73,7 +73,7 @@ opentelemetry_sdk = { version = "0.24.1", features = [
     "rt-tokio",
 ], default-features = false }
 path-absolutize = "3.1.1"
-pingora = { git = "https://github.com/cloudflare/pingora", rev = "e288bfe8f036d995d74367acef4b2fa0f04ecf26", default-features = false, features = [
+pingora = { git = "https://github.com/cloudflare/pingora", rev = "0df7b0de1652e5a2639a6e0fd330516bf28d5999", default-features = false, features = [
     # pingora = { version = "0.3.0", default-features = false, features = [
     "lb",
     "openssl",
