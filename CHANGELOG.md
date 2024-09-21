@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.8.2](https://github.com/vicanso/pingap/compare/v0.8.1..0.8.2) - 2024-09-21
+
+### ⛰️  Features
+
+- Add combined auth plugin - ([69f931b](https://github.com/vicanso/pingap/commit/69f931b1bfec44f712712187ed4b476b7982d300))
+- Support accept encoding adjustment plugin - ([aebc237](https://github.com/vicanso/pingap/commit/aebc237d657910653642d86f0330ed8c9f7da235))
+- Support purge http cache - ([0e0ffa7](https://github.com/vicanso/pingap/commit/0e0ffa7fb3fb79e3cf505cb5fde67b8c51aced33))
+
+### 🐛 Bug Fixes
+
+- Fix lint - ([0351267](https://github.com/vicanso/pingap/commit/0351267779ab81804ab11bb132a5e235d577221e))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update dependencies - ([ca80442](https://github.com/vicanso/pingap/commit/ca80442b8d55cfc87328c8d5626cff3fb3c7bc39))
+
 ## [0.8.1](https://github.com/vicanso/pingap/compare/v0.8.0..0.8.1) - 2024-09-07
 
 ### ⛰️  Features
