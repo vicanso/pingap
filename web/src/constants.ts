@@ -6,11 +6,10 @@ export interface ExFormOption {
 import { pascal } from "radash";
 
 export function getPluginSteps(category: string) {
-  const defaultPluginSteps = newStringOptions([
-    "request",
-    "proxy_upstream",
-    "response",
-  ]);
+  const defaultPluginSteps = newStringOptions(
+    ["request", "proxy_upstream", "response"],
+    true,
+  );
 
   const pluginSupportSteps: Record<string, number[]> = {};
   pluginSupportSteps[PluginCategory.STATS] = [0, 1];
@@ -68,10 +67,18 @@ export function newBooleanOptions() {
   return options;
 }
 
-export function newStringOptions(values: string[], withNone = false) {
+export function newStringOptions(
+  values: string[],
+  pascalFormat: boolean,
+  withNone = false,
+) {
   const options: ExFormOption[] = values.map((value) => {
+    let label = value;
+    if (pascalFormat) {
+      label = pascal(value);
+    }
     return {
-      label: pascal(value),
+      label,
       option: value,
       value: value,
     };

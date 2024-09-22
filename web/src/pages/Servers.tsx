@@ -61,7 +61,7 @@ export default function Servers() {
       label = item;
     }
     return (
-      <TabsTrigger key={item} value={item} className="px-6">
+      <TabsTrigger key={item} value={item} className="px-4">
         {label}
       </TabsTrigger>
     );
@@ -96,7 +96,7 @@ export default function Servers() {
       span: 3,
       defaultValue: serverConfig.locations,
       category: ExFormItemCategory.MULTI_SELECT,
-      options: newStringOptions(locations),
+      options: newStringOptions(locations, false),
     },
     {
       name: "threads",
@@ -155,7 +155,7 @@ export default function Servers() {
       defaultValue: serverConfig.tls_min_version,
       span: 3,
       category: ExFormItemCategory.RADIOS,
-      options: newStringOptions(["tlsv1.1", "tlsv1.2", "tlsv1.3"]),
+      options: newStringOptions(["tlsv1.1", "tlsv1.2", "tlsv1.3"], false),
     },
     {
       name: "tls_max_version",
@@ -164,7 +164,7 @@ export default function Servers() {
       defaultValue: serverConfig.tls_max_version,
       span: 3,
       category: ExFormItemCategory.RADIOS,
-      options: newStringOptions(["tlsv1.1", "tlsv1.2", "tlsv1.3"]),
+      options: newStringOptions(["tlsv1.1", "tlsv1.2", "tlsv1.3"], false),
     },
     {
       name: "tcp_fastopen",

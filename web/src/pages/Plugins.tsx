@@ -60,7 +60,7 @@ export default function Plugins() {
       label = item;
     }
     return (
-      <TabsTrigger key={item} value={item} className="px-6">
+      <TabsTrigger key={item} value={item} className="px-4">
         {label}
       </TabsTrigger>
     );
@@ -99,35 +99,38 @@ export default function Plugins() {
         defaultValue: currentCategory,
         category: ExFormItemCategory.RADIOS,
         span: 6,
-        options: newStringOptions([
-          PluginCategory.STATS,
-          PluginCategory.PING,
-          PluginCategory.ADMIN,
-          PluginCategory.DIRECTORY,
-          PluginCategory.MOCK,
-          PluginCategory.REDIRECT,
-          PluginCategory.CACHE,
+        options: newStringOptions(
+          [
+            PluginCategory.STATS,
+            PluginCategory.PING,
+            PluginCategory.ADMIN,
+            PluginCategory.DIRECTORY,
+            PluginCategory.MOCK,
+            PluginCategory.REDIRECT,
+            PluginCategory.CACHE,
 
-          PluginCategory.REQUEST_ID,
-          PluginCategory.COMPRESSION,
-          PluginCategory.ACCEPT_ENCODING,
+            PluginCategory.REQUEST_ID,
+            PluginCategory.COMPRESSION,
+            PluginCategory.ACCEPT_ENCODING,
 
-          // auth
-          PluginCategory.KEY_AUTH,
-          PluginCategory.BASIC_AUTH,
-          PluginCategory.JWT,
-          PluginCategory.COMBINED_AUTH,
+            // auth
+            PluginCategory.KEY_AUTH,
+            PluginCategory.BASIC_AUTH,
+            PluginCategory.JWT,
+            PluginCategory.COMBINED_AUTH,
 
-          // limit
-          PluginCategory.LIMIT,
-          PluginCategory.IP_RESTRICTION,
-          PluginCategory.REFERER_RESTRICTION,
-          PluginCategory.CSRF,
-          PluginCategory.CORS,
+            // limit
+            PluginCategory.LIMIT,
+            PluginCategory.IP_RESTRICTION,
+            PluginCategory.REFERER_RESTRICTION,
+            PluginCategory.CSRF,
+            PluginCategory.CORS,
 
-          // response
-          PluginCategory.RESPONSE_HEADERS,
-        ]),
+            // response
+            PluginCategory.RESPONSE_HEADERS,
+          ],
+          true,
+        ),
       },
     );
   } else {
@@ -435,7 +438,7 @@ export default function Plugins() {
           defaultValue: pluginConfig.algorithm as string,
           span: 2,
           category: ExFormItemCategory.RADIOS,
-          options: newStringOptions(["uuid", "nanoid"]),
+          options: newStringOptions(["uuid", "nanoid"], false),
         },
         {
           name: "size",
@@ -641,7 +644,7 @@ export default function Plugins() {
           defaultValue: pluginConfig.algorithm as string,
           span: 3,
           category: ExFormItemCategory.RADIOS,
-          options: newStringOptions(["HS256", "HS512"]),
+          options: newStringOptions(["HS256", "HS512"], false),
         },
         {
           name: "secret",
@@ -667,7 +670,7 @@ export default function Plugins() {
           defaultValue: pluginConfig.type as string,
           span: 3,
           category: ExFormItemCategory.RADIOS,
-          options: newStringOptions(["rate", "inflight"]),
+          options: newStringOptions(["rate", "inflight"], true),
         },
         {
           name: "tag",
@@ -676,7 +679,7 @@ export default function Plugins() {
           defaultValue: pluginConfig.tag as string,
           span: 3,
           category: ExFormItemCategory.RADIOS,
-          options: newStringOptions(["cookie", "header", "query", "ip"]),
+          options: newStringOptions(["cookie", "header", "query", "ip"], true),
         },
         {
           name: "key",
@@ -714,7 +717,7 @@ export default function Plugins() {
           defaultValue: pluginConfig.type as string,
           span: 6,
           category: ExFormItemCategory.RADIOS,
-          options: newStringOptions(["allow", "deny"]),
+          options: newStringOptions(["allow", "deny"], true),
         },
         {
           name: "ip_list",
@@ -744,7 +747,7 @@ export default function Plugins() {
           defaultValue: pluginConfig.type as string,
           span: 6,
           category: ExFormItemCategory.RADIOS,
-          options: newStringOptions(["allow", "deny"]),
+          options: newStringOptions(["allow", "deny"], true),
         },
         {
           name: "referer_list",

@@ -57,7 +57,11 @@ export default function Basic() {
       defaultValue: basic.log_level,
       span: 3,
       category: ExFormItemCategory.SELECT,
-      options: newStringOptions(["INFO", "WARN", "DEBUG", "ERROR"], true),
+      options: newStringOptions(
+        ["INFO", "WARN", "DEBUG", "ERROR"],
+        false,
+        true,
+      ),
     },
     {
       name: "log_format_json",
@@ -155,7 +159,7 @@ export default function Basic() {
       defaultValue: basic.webhook_type,
       span: 3,
       category: ExFormItemCategory.SELECT,
-      options: newStringOptions(["normal", "wecom", "dingtalk"]),
+      options: newStringOptions(["normal", "wecom", "dingtalk"], true),
     },
     {
       name: "webhook_notifications",
@@ -176,6 +180,7 @@ export default function Basic() {
           "tls_validity",
           "service_discover_fail",
         ].sort(),
+        true,
       ),
     },
     {

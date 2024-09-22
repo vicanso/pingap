@@ -47,7 +47,7 @@ export default function Certificates() {
       label = "New";
     }
     return (
-      <TabsTrigger key={item} value={item} className="px-6">
+      <TabsTrigger key={item} value={item} className="px-4">
         {label}
       </TabsTrigger>
     );

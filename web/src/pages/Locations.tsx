@@ -45,7 +45,7 @@ export default function Locations() {
       label = "New";
     }
     return (
-      <TabsTrigger key={item} value={item} className="px-6">
+      <TabsTrigger key={item} value={item} className="px-4">
         {label}
       </TabsTrigger>
     );
@@ -66,12 +66,10 @@ export default function Locations() {
     </Tabs>
   );
 
-  const plugins = newStringOptions([
-    "pingap:stats",
-    "pingap:compression",
-    "pingap:requestId",
-    "pingap:ping",
-  ]);
+  const plugins = newStringOptions(
+    ["pingap:stats", "pingap:compression", "pingap:requestId", "pingap:ping"],
+    false,
+  );
 
   const currentPlugins = config.plugins || {};
   Object.keys(currentPlugins).forEach((name) => {
@@ -109,7 +107,7 @@ export default function Locations() {
       defaultValue: locationConfig.upstream,
       span: 3,
       category: ExFormItemCategory.SELECT,
-      options: newStringOptions(upstreams, true),
+      options: newStringOptions(upstreams, false, true),
     },
     {
       name: "rewrite",

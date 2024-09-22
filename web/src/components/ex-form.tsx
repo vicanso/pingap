@@ -1,9 +1,8 @@
-import { LoaderCircle, ChevronsDown, ChevronsUp } from "lucide-react";
+import { LoaderCircle, UnfoldVertical, FoldVertical } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
@@ -164,9 +163,13 @@ export function ExForm({
     try {
       await onSave(data);
       setUpdatedCount(0);
+      toast({
+        title: t("saveSuccessTitle"),
+        description: t("saveSuccessDescription"),
+      });
     } catch (err) {
       toast({
-        title: "Save Fail",
+        title: t("saveConfigFail"),
         description: formatError(err),
       });
     } finally {
@@ -436,37 +439,34 @@ export function ExForm({
     fields.push(field);
   });
 
+  let showButton: JSX.Element = <> </>;
   if (defaultShow > 0 && defaultShow < maxCount) {
     let tips = t("moreSettings");
-    let icon = <ChevronsDown className="mr-2" />;
+    let icon = <UnfoldVertical />;
     if (showCount > defaultShow) {
       tips = t("lessSettings");
-      icon = <ChevronsUp className="mr-2" />;
+      icon = <FoldVertical />;
     }
 
-    fields.push(
-      <Separator
-        key="show-hide"
-        className="col-span-6 flex justify-center my-4"
+    showButton = (
+      <Button
+        variant="ghost"
+        className="absolute right-0 top-2"
+        title={tips}
+        onClick={(e) => {
+          if (showCount > defaultShow) {
+            setShowCount(defaultShow);
+          } else {
+            setShowCount(maxCount);
+          }
+          e.preventDefault();
+        }}
+        style={{
+          marginTop: "-18px",
+        }}
       >
-        <Button
-          variant="ghost"
-          onClick={(e) => {
-            if (showCount > defaultShow) {
-              setShowCount(defaultShow);
-            } else {
-              setShowCount(maxCount);
-            }
-            e.preventDefault();
-          }}
-          style={{
-            marginTop: "-18px",
-          }}
-        >
-          {icon}
-          {tips}
-        </Button>
-      </Separator>,
+        {icon}
+      </Button>
     );
   }
 
@@ -474,7 +474,10 @@ export function ExForm({
     <Form {...form}>
       {/* 因为col-span是动态生成，因此先引入，否则tailwind并未编译该类 */}
       <span className="col-span-1 col-span-2 col-span-3 col-span-4 col-span-5 col-span-6" />
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+      <form
+        onSubmit={form.handleSubmit(onSubmit)}
+        className="space-y-8 relative"
+      >
         <div className={cn("grid gap-4", `grid-cols-${cols}`)}>{fields}</div>
         {onSave && (
           <Button
@@ -488,6 +491,7 @@ export function ExForm({
             {t("save")}
           </Button>
         )}
+        {showButton}
       </form>
     </Form>
   );

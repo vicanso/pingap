@@ -41,7 +41,7 @@ export function MainHeader({
       await fetchConfig();
     } catch (err) {
       toast({
-        title: "Fetch data fail",
+        title: "Fetch Fail",
         description: formatError(err),
       });
     }
