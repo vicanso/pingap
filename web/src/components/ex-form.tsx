@@ -32,6 +32,7 @@ import { KvInputs } from "@/components/kv-inputs";
 import { SortCheckboxs } from "@/components/sort-checkboxs";
 import { ExFormOption, ExFormItemCategory } from "@/constants";
 import { Inputs } from "@/components/inputs";
+import { CombinedAuths } from "@/components/combined-auths";
 
 function getOption(
   value: string | number | boolean | null | undefined,
@@ -406,6 +407,22 @@ export function ExForm({
                     <FormLabel>
                       {item.label}: {item.defaultValue}
                     </FormLabel>
+                  </FormItem>
+                );
+              }
+              case ExFormItemCategory.COMBINED_AUTHS: {
+                return (
+                  <FormItem>
+                    <FormLabel>{item.label}</FormLabel>
+                    <FormControl>
+                      <CombinedAuths
+                        defaultValue={item.defaultValue as []}
+                        onValueChange={(value) => {
+                          setUpdated(item.name, value);
+                        }}
+                      />
+                    </FormControl>
+                    <FormMessage />
                   </FormItem>
                 );
               }

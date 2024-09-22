@@ -14,7 +14,6 @@ import {
   PluginCategory,
   getPluginSteps,
 } from "@/constants";
-import { pascal } from "radash";
 
 function getPluginConfig(
   name: string,
@@ -138,7 +137,7 @@ export default function Plugins() {
       name: "category",
       label: pluginI18n("category"),
       placeholder: "",
-      defaultValue: pascal(pluginConfig.category as string),
+      defaultValue: pluginConfig.category as string,
       category: ExFormItemCategory.LABEL,
       span: 6,
     });
@@ -658,7 +657,14 @@ export default function Plugins() {
       break;
     }
     case PluginCategory.COMBINED_AUTH: {
-      // TODO combined auth
+      items.push({
+        name: "authorizations",
+        label: pluginI18n("combinedAuthAuthorizations"),
+        placeholder: "",
+        defaultValue: pluginConfig.authorizations as [],
+        span: 6,
+        category: ExFormItemCategory.COMBINED_AUTHS,
+      });
       break;
     }
     case PluginCategory.LIMIT: {
