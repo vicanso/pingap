@@ -26,10 +26,11 @@ function getCertificateConfig(
 export default function Certificates() {
   const certificateCurrentKey = "certificates.current";
   const certificateI18n = useI18n("certificate");
-  const [config, initialized, update] = useConfigState((state) => [
+  const [config, initialized, update, remove] = useConfigState((state) => [
     state.data,
     state.initialized,
     state.update,
+    state.remove,
   ]);
   const newCertificate = "*";
   const certificates = Object.keys(config.certificates || {});
@@ -132,7 +133,9 @@ export default function Certificates() {
     },
   ];
 
+  let defaultShow = 2;
   if (currentCertificate === newCertificate) {
+    defaultShow++;
     items.unshift({
       name: "name",
       label: certificateI18n("name"),
@@ -156,7 +159,12 @@ export default function Certificates() {
             key={currentCertificate}
             items={items}
             schema={schema}
-            defaultShow={3}
+            defaultShow={defaultShow}
+            onRemove={async () => {
+              return remove("certificate", currentCertificate).then(() => {
+                handleSelectCertificate(newCertificate);
+              });
+            }}
             onSave={async (value) => {
               let name = currentCertificate;
               if (name === newCertificate) {

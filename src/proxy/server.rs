@@ -257,13 +257,14 @@ impl Server {
         let enbaled_h2 = self.enbaled_h2;
         let threads = if let Some(threads) = self.threads {
             // use cpus when set threads:0
-            if threads == 0 {
+            let value = if threads == 0 {
                 num_cpus::get()
             } else {
                 threads
-            }
+            };
+            Some(value)
         } else {
-            1
+            None
         };
 
         info!(
@@ -287,7 +288,7 @@ impl Server {
                 http_logic.server_options = Some(http_server_options);
             }
         }
-        lb.threads = Some(threads);
+        lb.threads = threads;
         // support listen multi adddress
         for addr in addr.split(',') {
             // tls

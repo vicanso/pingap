@@ -21,10 +21,11 @@ function getLocationConfig(name: string, locations?: Record<string, Location>) {
 export default function Locations() {
   const locationCurrentKey = "locations.current";
   const locationI18n = useI18n("location");
-  const [config, initialized, update] = useConfigState((state) => [
+  const [config, initialized, update, remove] = useConfigState((state) => [
     state.data,
     state.initialized,
     state.update,
+    state.remove,
   ]);
 
   const newLocation = "*";
@@ -168,7 +169,9 @@ export default function Locations() {
       category: ExFormItemCategory.TEXTAREA,
     },
   ];
+  let defaultShow = 6;
   if (currentLocation === newLocation) {
+    defaultShow++;
     items.unshift({
       name: "name",
       label: locationI18n("name"),
@@ -195,7 +198,12 @@ export default function Locations() {
             key={currentLocation}
             items={items}
             schema={schema}
-            defaultShow={6}
+            defaultShow={defaultShow}
+            onRemove={async () => {
+              return remove("location", currentLocation).then(() => {
+                handleSelectLocation(newLocation);
+              });
+            }}
             onSave={async (value) => {
               let name = currentLocation;
               if (name === newLocation) {

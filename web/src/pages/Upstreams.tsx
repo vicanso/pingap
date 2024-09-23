@@ -24,10 +24,11 @@ function getUpstreamConfig(name: string, upstreams?: Record<string, Upstream>) {
 export default function Upstreams() {
   const upstreamCurrentKey = "upstreams.current";
   const upstreamI18n = useI18n("upstream");
-  const [config, initialized, update] = useConfigState((state) => [
+  const [config, initialized, update, remove] = useConfigState((state) => [
     state.data,
     state.initialized,
     state.update,
+    state.remove,
   ]);
   const newUpstream = "*";
   const upstreams = Object.keys(config.upstreams || {});
@@ -265,7 +266,9 @@ export default function Upstreams() {
       category: ExFormItemCategory.TEXTAREA,
     },
   ];
+  let defaultShow = 3;
   if (currentUpstream === newUpstream) {
+    defaultShow++;
     items.unshift({
       name: "name",
       label: upstreamI18n("name"),
@@ -301,7 +304,12 @@ export default function Upstreams() {
             key={currentUpstream}
             items={items}
             schema={schema}
-            defaultShow={5}
+            defaultShow={defaultShow}
+            onRemove={async () => {
+              return remove("upstream", currentUpstream).then(() => {
+                handleSelectUpstream(newUpstream);
+              });
+            }}
             onSave={async (value) => {
               let name = currentUpstream;
               if (name === newUpstream) {

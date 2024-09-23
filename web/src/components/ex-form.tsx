@@ -77,9 +77,10 @@ export interface ExFormItem {
   defaultValue: string[] | string | number | boolean | null | undefined;
 }
 
-type FormContextValue = {
+export type FormContextValue = {
   onSave(data: Record<string, unknown>): Promise<void>;
   onValueChange(data: Record<string, unknown>): void;
+  onRemove(): Promise<void>;
 };
 
 interface ExFormProps {
@@ -90,6 +91,7 @@ interface ExFormProps {
   cols?: number;
   onSave?: FormContextValue["onSave"];
   onValueChange?: FormContextValue["onValueChange"];
+  onRemove?: FormContextValue["onRemove"];
 }
 
 export function ExForm({
@@ -98,6 +100,7 @@ export function ExForm({
   defaultShow = 0,
   onlyModified,
   onSave,
+  onRemove,
   onValueChange,
   cols = 6,
 }: ExFormProps) {
@@ -177,6 +180,28 @@ export function ExForm({
       setProcessing(false);
     }
   }
+
+  async function handleRemove() {
+    if (!onRemove || processing) {
+      return;
+    }
+    setProcessing(true);
+    try {
+      await onRemove();
+      toast({
+        title: t("removeSuccessTitle"),
+        description: t("removeSuccessDescription"),
+      });
+    } catch (err) {
+      toast({
+        title: t("removeFailTitle"),
+        description: formatError(err),
+      });
+    } finally {
+      setProcessing(false);
+    }
+  }
+
   const fields: JSX.Element[] = [];
   const maxCount = items.length;
 
@@ -224,10 +249,9 @@ export function ExForm({
                         )}
                         className="flex flex-wrap items-start pt-2"
                         onValueChange={(option) => {
-                          setUpdated(
-                            item.name,
-                            getOptionValue(option, item.options),
-                          );
+                          const value = getOptionValue(option, item.options);
+                          form.setValue(item.name, value);
+                          setUpdated(item.name, value);
                         }}
                       >
                         {radios}
@@ -279,10 +303,9 @@ export function ExForm({
                       <Select
                         defaultValue={(item.defaultValue || "") as string}
                         onValueChange={(option) => {
-                          setUpdated(
-                            item.name,
-                            getOptionValue(option, item.options),
-                          );
+                          const value = getOptionValue(option, item.options);
+                          form.setValue(item.name, value);
+                          setUpdated(item.name, value);
                         }}
                       >
                         <SelectTrigger>
@@ -486,6 +509,13 @@ export function ExForm({
       </Button>
     );
   }
+  let columns = 0;
+  if (onSave) {
+    columns++;
+  }
+  if (onRemove) {
+    columns++;
+  }
 
   return (
     <Form {...form}>
@@ -496,18 +526,39 @@ export function ExForm({
         className="space-y-8 relative"
       >
         <div className={cn("grid gap-4", `grid-cols-${cols}`)}>{fields}</div>
-        {onSave && (
-          <Button
-            type="submit"
-            className="w-full"
-            disabled={updatedCount === 0}
-          >
-            {processing && (
-              <LoaderCircle className="mr-2 h-4 w-4 inline animate-spin" />
-            )}
-            {t("save")}
-          </Button>
-        )}
+        <div className={`grid gap-4 grid-cols-${columns}`}>
+          {onSave && (
+            <div className="grid-cols-1">
+              <Button
+                className="w-full"
+                type="submit"
+                disabled={updatedCount === 0}
+              >
+                {processing && (
+                  <LoaderCircle className="mr-2 h-4 w-4 inline animate-spin" />
+                )}
+                {t("save")}
+              </Button>
+            </div>
+          )}
+          {onRemove && (
+            <div className="grid-cols-1">
+              <Button
+                type="reset"
+                className="w-full"
+                onClick={async (e) => {
+                  await handleRemove();
+                  e.preventDefault();
+                }}
+              >
+                {processing && (
+                  <LoaderCircle className="mr-2 h-4 w-4 inline animate-spin" />
+                )}
+                {t("remove")}
+              </Button>
+            </div>
+          )}
+        </div>
         {showButton}
       </form>
     </Form>

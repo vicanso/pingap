@@ -28,10 +28,11 @@ function getPluginConfig(
 export default function Plugins() {
   const pluginCurrentKey = "plugins.current";
   const pluginI18n = useI18n("plugin");
-  const [config, initialized, update] = useConfigState((state) => [
+  const [config, initialized, update, remove] = useConfigState((state) => [
     state.data,
     state.initialized,
     state.update,
+    state.remove,
   ]);
 
   const newPlugin = "*";
@@ -918,7 +919,7 @@ export default function Plugins() {
   }
 
   const schema = z.object({
-    // path: z.string(),
+    step: z.string(),
   });
   let key = currentPlugin;
   if (currentPlugin == newPlugin) {
@@ -942,6 +943,11 @@ export default function Plugins() {
               if (category && category !== currentCategory) {
                 setCurrentCategory(category);
               }
+            }}
+            onRemove={async () => {
+              return remove("plugin", currentPlugin).then(() => {
+                handleSelectPlugin(newPlugin);
+              });
             }}
             onSave={async (value) => {
               let name = currentPlugin;

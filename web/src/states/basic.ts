@@ -8,6 +8,10 @@ interface Basic {
   memory: string;
   arch: string;
   config_hash: string;
+  pid: string;
+  user: string;
+  group: string;
+  threads: number;
 }
 
 interface ConfigState {
@@ -24,6 +28,10 @@ const useBasicState = create<ConfigState>()((set) => ({
     memory: "",
     arch: "",
     config_hash: "",
+    pid: "",
+    user: "",
+    group: "",
+    threads: 0,
   },
   initialized: false,
   fetch: async () => {

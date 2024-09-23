@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { LoaderCircle } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { MainHeader } from "@/components/header";
 import { MainSidebar } from "@/components/sidebar-nav";
 
@@ -8,11 +8,18 @@ interface LoadingProps extends React.HTMLAttributes<HTMLDivElement> {
 }
 export function Loading({ className, tips }: LoadingProps) {
   return (
-    <div className={cn("text-center m-4", className)}>
-      <p className="text-sm leading-[32px]">
-        <LoaderCircle className="mr-2 h-4 w-4 inline animate-spin" />
-        {tips || "Loading..."}
-      </p>
+    <div
+      className={cn(
+        "flex justify-center items-center space-x-4 mt-10",
+        className,
+      )}
+    >
+      <Skeleton className="h-12 w-12 rounded-full" />
+      <div className="space-y-2">
+        <Skeleton className="h-4 w-[250px]" />
+        <Skeleton className="h-4 w-[200px]" />
+      </div>
+      {tips && <p>{tips}</p>}
     </div>
   );
 }

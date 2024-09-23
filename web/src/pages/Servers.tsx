@@ -24,10 +24,11 @@ function getServerConfig(name: string, servers?: Record<string, Server>) {
 export default function Servers() {
   const serverCurrentKey = "servers.current";
   const serverI18n = useI18n("server");
-  const [config, initialized, update] = useConfigState((state) => [
+  const [config, initialized, update, remove] = useConfigState((state) => [
     state.data,
     state.initialized,
     state.update,
+    state.remove,
   ]);
 
   const newServer = "*";
@@ -223,7 +224,9 @@ export default function Servers() {
       category: ExFormItemCategory.TEXTAREA,
     },
   ];
+  let defaultShow = 5;
   if (currentServer === newServer) {
+    defaultShow++;
     items.unshift({
       name: "name",
       label: serverI18n("name"),
@@ -252,7 +255,12 @@ export default function Servers() {
             key={currentServer}
             items={items}
             schema={schema}
-            defaultShow={6}
+            defaultShow={defaultShow}
+            onRemove={async () => {
+              return remove("server", currentServer).then(() => {
+                handleSelectServer(newServer);
+              });
+            }}
             onSave={async (value) => {
               let name = currentServer;
               if (name === newServer) {

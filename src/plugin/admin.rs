@@ -17,9 +17,9 @@ use super::{
     get_str_slice_conf, Error, Plugin, Result,
 };
 use crate::config::{
-    self, save_config, BasicConf, CertificateConf, LocationConf,
-    PluginCategory, PluginConf, PluginStep, ServerConf, UpstreamConf,
-    CATEGORY_CERTIFICATE,
+    self, get_current_config, save_config, BasicConf, CertificateConf,
+    LocationConf, PluginCategory, PluginConf, PluginStep, ServerConf,
+    UpstreamConf, CATEGORY_CERTIFICATE,
 };
 use crate::config::{
     PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
@@ -109,6 +109,10 @@ struct BasicInfo {
     memory: String,
     arch: String,
     config_hash: String,
+    pid: String,
+    user: String,
+    group: String,
+    threads: usize,
 }
 
 impl TryFrom<&PluginConf> for AdminServe {
@@ -414,6 +418,26 @@ impl Plugin for AdminServe {
                 } else {
                     "x86"
                 };
+            let mut pid = "".to_string();
+            let current_config = get_current_config();
+            if let Some(pid_file) = &current_config.basic.pid_file {
+                let data = tokio::fs::read(pid_file).await.unwrap_or_default();
+                pid = std::string::String::from_utf8_lossy(&data).to_string();
+            }
+            let mut threads = 0;
+            let cpu_count = num_cpus::get();
+            let mut default_threads = current_config.basic.threads.unwrap_or(1);
+            if default_threads == 0 {
+                default_threads = cpu_count;
+            }
+            for (_, server) in current_config.servers.iter() {
+                let count = server.threads.unwrap_or(1);
+                if count == 0 {
+                    threads += default_threads;
+                } else {
+                    threads += count;
+                }
+            }
 
             HttpResponse::try_from_json(&BasicInfo {
                 start_time: get_start_time(),
@@ -421,7 +445,11 @@ impl Plugin for AdminServe {
                 rustc_version: util::get_rustc_version(),
                 arch: arch.to_string(),
                 config_hash: config::get_config_hash(),
+                user: current_config.basic.user.clone().unwrap_or_default(),
+                group: current_config.basic.group.clone().unwrap_or_default(),
+                pid,
                 memory,
+                threads,
             })
             .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
         } else if path == "/restart" && method == Method::POST {
