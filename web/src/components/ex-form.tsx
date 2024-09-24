@@ -482,10 +482,20 @@ export function ExForm({
   let showButton: JSX.Element = <> </>;
   if (defaultShow > 0 && defaultShow < maxCount) {
     let tips = t("moreSettings");
-    let icon = <UnfoldVertical />;
+    let icon = (
+      <>
+        <UnfoldVertical />
+        <span className="ml-2">{tips}</span>
+      </>
+    );
     if (showCount > defaultShow) {
       tips = t("lessSettings");
-      icon = <FoldVertical />;
+      icon = (
+        <>
+          <FoldVertical />
+          <span className="ml-2">{tips}</span>
+        </>
+      );
     }
 
     showButton = (

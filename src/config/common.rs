@@ -475,6 +475,16 @@ pub struct BasicConf {
     pub cache_max_size: Option<ByteSize>,
 }
 
+impl BasicConf {
+    pub fn get_pid_file(&self) -> String {
+        if let Some(pid_file) = &self.pid_file {
+            pid_file.clone()
+        } else {
+            format!("/tmp/{}.pid", util::get_pkg_name())
+        }
+    }
+}
+
 #[derive(Deserialize, Debug, Serialize)]
 struct TomlConfig {
     basic: Option<BasicConf>,

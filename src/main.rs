@@ -103,7 +103,7 @@ fn new_server_conf(
 ) -> server::configuration::ServerConf {
     let basic_conf = &conf.basic;
     let mut server_conf = server::configuration::ServerConf {
-        pid_file: format!("/tmp/{}.pid", util::get_pkg_name()),
+        pid_file: basic_conf.get_pid_file(),
         upgrade_sock: format!("/tmp/{}_upgrade.sock", util::get_pkg_name()),
         user: basic_conf.user.clone(),
         group: basic_conf.group.clone(),
@@ -120,9 +120,6 @@ fn new_server_conf(
         basic_conf.upstream_keepalive_pool_size
     {
         server_conf.upstream_keepalive_pool_size = upstream_keepalive_pool_size;
-    }
-    if let Some(pid_file) = &basic_conf.pid_file {
-        server_conf.pid_file = pid_file.to_string();
     }
     if let Some(upgrade_sock) = &basic_conf.upgrade_sock {
         server_conf.upgrade_sock = upgrade_sock.to_string();

@@ -13,6 +13,7 @@ import {
   newBooleanOptions,
 } from "@/constants";
 import { newZodBytes, newZodDuration } from "@/helpers/util";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 
 function getUpstreamConfig(name: string, upstreams?: Record<string, Upstream>) {
   if (!upstreams) {
@@ -58,11 +59,14 @@ export default function Upstreams() {
   };
 
   const tabs = (
-    <Tabs value={currentUpstream} onValueChange={handleSelectUpstream}>
-      <TabsList className="grid grid-flow-col auto-cols-max">
-        {triggers}
-      </TabsList>
-    </Tabs>
+    <ScrollArea className="pb-3">
+      <Tabs value={currentUpstream} onValueChange={handleSelectUpstream}>
+        <TabsList className="grid grid-flow-col auto-cols-max">
+          {triggers}
+        </TabsList>
+      </Tabs>
+      <ScrollBar orientation="horizontal" />
+    </ScrollArea>
   );
 
   const upstreamConfig = getUpstreamConfig(currentUpstream, config.upstreams);

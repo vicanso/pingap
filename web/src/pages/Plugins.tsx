@@ -14,6 +14,7 @@ import {
   PluginCategory,
   getPluginSteps,
 } from "@/constants";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 
 function getPluginConfig(
   name: string,
@@ -74,11 +75,14 @@ export default function Plugins() {
   };
 
   const tabs = (
-    <Tabs value={currentPlugin} onValueChange={handleSelectPlugin}>
-      <TabsList className="grid grid-flow-col auto-cols-max">
-        {triggers}
-      </TabsList>
-    </Tabs>
+    <ScrollArea className="pb-3">
+      <Tabs value={currentPlugin} onValueChange={handleSelectPlugin}>
+        <TabsList className="grid grid-flow-col auto-cols-max">
+          {triggers}
+        </TabsList>
+      </Tabs>
+      <ScrollBar orientation="horizontal" />
+    </ScrollArea>
   );
 
   const items: ExFormItem[] = [];

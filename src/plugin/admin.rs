@@ -418,12 +418,11 @@ impl Plugin for AdminServe {
                 } else {
                     "x86"
                 };
-            let mut pid = "".to_string();
             let current_config = get_current_config();
-            if let Some(pid_file) = &current_config.basic.pid_file {
-                let data = tokio::fs::read(pid_file).await.unwrap_or_default();
-                pid = std::string::String::from_utf8_lossy(&data).to_string();
-            }
+            let data = tokio::fs::read(current_config.basic.get_pid_file())
+                .await
+                .unwrap_or_default();
+            let pid = std::string::String::from_utf8_lossy(&data).to_string();
             let mut threads = 0;
             let cpu_count = num_cpus::get();
             let mut default_threads = current_config.basic.threads.unwrap_or(1);

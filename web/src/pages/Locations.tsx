@@ -10,6 +10,7 @@ import { pascal } from "radash";
 import { z } from "zod";
 import { ExFormItemCategory, newStringOptions } from "@/constants";
 import { newZodBytes } from "@/helpers/util";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 
 function getLocationConfig(name: string, locations?: Record<string, Location>) {
   if (!locations) {
@@ -60,11 +61,14 @@ export default function Locations() {
   };
 
   const tabs = (
-    <Tabs value={currentLocation} onValueChange={handleSelectLocation}>
-      <TabsList className="grid grid-flow-col auto-cols-max">
-        {triggers}
-      </TabsList>
-    </Tabs>
+    <ScrollArea className="pb-3">
+      <Tabs value={currentLocation} onValueChange={handleSelectLocation}>
+        <TabsList className="grid grid-flow-col auto-cols-max">
+          {triggers}
+        </TabsList>
+      </Tabs>
+      <ScrollBar orientation="horizontal" />
+    </ScrollArea>
   );
 
   const plugins = newStringOptions(
