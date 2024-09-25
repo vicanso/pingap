@@ -6,7 +6,6 @@ import { ExForm, ExFormItem } from "@/components/ex-form";
 import { z } from "zod";
 import { useI18n } from "@/i18n";
 import React from "react";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   ExFormItemCategory,
   newStringOptions,
@@ -14,7 +13,8 @@ import {
   PluginCategory,
   getPluginSteps,
 } from "@/constants";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { useSearchParams } from "react-router-dom";
+import { useEffect } from "react";
 
 function getPluginConfig(
   name: string,
@@ -27,8 +27,9 @@ function getPluginConfig(
 }
 
 export default function Plugins() {
-  const pluginCurrentKey = "plugins.current";
   const pluginI18n = useI18n("plugin");
+  const [searchParams] = useSearchParams();
+
   const [config, initialized, update, remove] = useConfigState((state) => [
     state.data,
     state.initialized,
@@ -42,48 +43,25 @@ export default function Plugins() {
   plugins.unshift(newPlugin);
 
   const [currentPlugin, setCurrentPlugin] = React.useState(
-    localStorage.getItem(pluginCurrentKey) || plugins[0],
+    searchParams.get("name") || newPlugin,
   );
   const pluginConfig = getPluginConfig(currentPlugin, config.plugins);
   const [currentCategory, setCurrentCategory] = React.useState(
     (pluginConfig.catregory as string) || "",
   );
 
+  useEffect(() => {
+    setCurrentPlugin(searchParams.get("name") || newPlugin);
+  }, [searchParams]);
   if (!initialized) {
     return <LoadingPage />;
   }
 
-  const triggers = plugins.map((item) => {
-    let label: string;
-    if (item === newPlugin) {
-      label = "New";
-    } else {
-      label = item;
-    }
-    return (
-      <TabsTrigger key={item} value={item} className="px-4">
-        {label}
-      </TabsTrigger>
-    );
-  });
-
   const handleSelectPlugin = (name: string) => {
-    localStorage.setItem(pluginCurrentKey, name);
     setCurrentPlugin(name);
     const conf = getPluginConfig(name, config.plugins);
     setCurrentCategory(conf.category as string);
   };
-
-  const tabs = (
-    <ScrollArea className="pb-3">
-      <Tabs value={currentPlugin} onValueChange={handleSelectPlugin}>
-        <TabsList className="grid grid-flow-col auto-cols-max">
-          {triggers}
-        </TabsList>
-      </Tabs>
-      <ScrollBar orientation="horizontal" />
-    </ScrollArea>
-  );
 
   const items: ExFormItem[] = [];
   if (currentPlugin === newPlugin) {
@@ -936,8 +914,6 @@ export default function Plugins() {
       <div className="flex">
         <MainSidebar className="h-screen flex-none w-[230px]" />
         <div className="grow lg:border-l overflow-auto p-4">
-          {tabs}
-          <div className="p-2" />
           <ExForm
             key={key}
             items={items}

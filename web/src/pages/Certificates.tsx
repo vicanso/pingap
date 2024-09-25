@@ -4,7 +4,6 @@ import { MainSidebar } from "@/components/sidebar-nav";
 import { useI18n } from "@/i18n";
 import useConfigState, { Certificate } from "@/states/config";
 import React from "react";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ExForm, ExFormItem } from "@/components/ex-form";
 import { z } from "zod";
 import {
@@ -12,6 +11,8 @@ import {
   newStringOptions,
   newBooleanOptions,
 } from "@/constants";
+import { useSearchParams } from "react-router-dom";
+import { useEffect } from "react";
 
 function getCertificateConfig(
   name: string,
@@ -24,8 +25,9 @@ function getCertificateConfig(
 }
 
 export default function Certificates() {
-  const certificateCurrentKey = "certificates.current";
   const certificateI18n = useI18n("certificate");
+  const [searchParams] = useSearchParams();
+
   const [config, initialized, update, remove] = useConfigState((state) => [
     state.data,
     state.initialized,
@@ -37,35 +39,18 @@ export default function Certificates() {
   certificates.sort();
   certificates.unshift(newCertificate);
   const [currentCertificate, setCurrentCertificate] = React.useState(
-    localStorage.getItem(certificateCurrentKey) || certificates[0],
+    searchParams.get("name") || newCertificate,
   );
+  useEffect(() => {
+    setCurrentCertificate(searchParams.get("name") || newCertificate);
+  }, [searchParams]);
   if (!initialized) {
     return <LoadingPage />;
   }
-  const triggers = certificates.map((item) => {
-    let label = item;
-    if (label === newCertificate) {
-      label = "New";
-    }
-    return (
-      <TabsTrigger key={item} value={item} className="px-4">
-        {label}
-      </TabsTrigger>
-    );
-  });
 
   const handleSelectCertificate = (name: string) => {
-    localStorage.setItem(certificateCurrentKey, name);
     setCurrentCertificate(name);
   };
-
-  const tabs = (
-    <Tabs value={currentCertificate} onValueChange={handleSelectCertificate}>
-      <TabsList className="grid grid-flow-col auto-cols-max">
-        {triggers}
-      </TabsList>
-    </Tabs>
-  );
 
   const certificateConfig = getCertificateConfig(
     currentCertificate,
@@ -153,8 +138,6 @@ export default function Certificates() {
       <div className="flex">
         <MainSidebar className="h-screen flex-none w-[230px]" />
         <div className="grow lg:border-l overflow-auto p-4">
-          {tabs}
-          <div className="p-2" />
           <ExForm
             key={currentCertificate}
             items={items}

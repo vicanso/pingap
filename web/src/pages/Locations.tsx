@@ -4,13 +4,13 @@ import { MainSidebar } from "@/components/sidebar-nav";
 import { useI18n } from "@/i18n";
 import useConfigState, { Location } from "@/states/config";
 import React from "react";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ExForm, ExFormItem } from "@/components/ex-form";
 import { pascal } from "radash";
 import { z } from "zod";
 import { ExFormItemCategory, newStringOptions } from "@/constants";
 import { newZodBytes } from "@/helpers/util";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { useSearchParams } from "react-router-dom";
+import { useEffect } from "react";
 
 function getLocationConfig(name: string, locations?: Record<string, Location>) {
   if (!locations) {
@@ -20,8 +20,9 @@ function getLocationConfig(name: string, locations?: Record<string, Location>) {
 }
 
 export default function Locations() {
-  const locationCurrentKey = "locations.current";
   const locationI18n = useI18n("location");
+  const [searchParams] = useSearchParams();
+
   const [config, initialized, update, remove] = useConfigState((state) => [
     state.data,
     state.initialized,
@@ -34,42 +35,21 @@ export default function Locations() {
   locations.sort();
   locations.unshift(newLocation);
   const [currentLocation, setCurrentLocation] = React.useState(
-    localStorage.getItem(locationCurrentKey) || locations[0],
+    searchParams.get("name") || newLocation,
   );
+  useEffect(() => {
+    setCurrentLocation(searchParams.get("name") || newLocation);
+  }, [searchParams]);
 
   if (!initialized) {
     return <LoadingPage />;
   }
 
-  const triggers = locations.map((item) => {
-    let label = item;
-    if (label === newLocation) {
-      label = "New";
-    }
-    return (
-      <TabsTrigger key={item} value={item} className="px-4">
-        {label}
-      </TabsTrigger>
-    );
-  });
-
   const upstreams = Object.keys(config.upstreams || {});
 
   const handleSelectLocation = (name: string) => {
-    localStorage.setItem(locationCurrentKey, name);
     setCurrentLocation(name);
   };
-
-  const tabs = (
-    <ScrollArea className="pb-3">
-      <Tabs value={currentLocation} onValueChange={handleSelectLocation}>
-        <TabsList className="grid grid-flow-col auto-cols-max">
-          {triggers}
-        </TabsList>
-      </Tabs>
-      <ScrollBar orientation="horizontal" />
-    </ScrollArea>
-  );
 
   const plugins = newStringOptions(
     ["pingap:stats", "pingap:compression", "pingap:requestId", "pingap:ping"],
@@ -196,8 +176,6 @@ export default function Locations() {
       <div className="flex">
         <MainSidebar className="h-screen flex-none w-[230px]" />
         <div className="grow lg:border-l overflow-auto p-4">
-          {tabs}
-          <div className="p-2" />
           <ExForm
             key={currentLocation}
             items={items}

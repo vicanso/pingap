@@ -6,13 +6,14 @@ import { ExForm, ExFormItem } from "@/components/ex-form";
 import { z } from "zod";
 import { useI18n } from "@/i18n";
 import React from "react";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   ExFormItemCategory,
   newStringOptions,
   newBooleanOptions,
 } from "@/constants";
 import { newZodDuration } from "@/helpers/util";
+import { useSearchParams } from "react-router-dom";
+import { useEffect } from "react";
 
 function getServerConfig(name: string, servers?: Record<string, Server>) {
   if (!servers) {
@@ -22,8 +23,8 @@ function getServerConfig(name: string, servers?: Record<string, Server>) {
 }
 
 export default function Servers() {
-  const serverCurrentKey = "servers.current";
   const serverI18n = useI18n("server");
+  const [searchParams] = useSearchParams();
   const [config, initialized, update, remove] = useConfigState((state) => [
     state.data,
     state.initialized,
@@ -37,8 +38,11 @@ export default function Servers() {
   servers.unshift(newServer);
 
   const [currentServer, setCurrentServer] = React.useState(
-    localStorage.getItem(serverCurrentKey) || servers[0],
+    searchParams.get("name") || newServer,
   );
+  useEffect(() => {
+    setCurrentServer(searchParams.get("name") || newServer);
+  }, [searchParams]);
   if (!initialized) {
     return <LoadingPage />;
   }
@@ -54,32 +58,10 @@ export default function Servers() {
     return getWeight(b) - getWeight(a);
   });
 
-  const triggers = servers.map((item) => {
-    let label: string;
-    if (item === newServer) {
-      label = "New";
-    } else {
-      label = item;
-    }
-    return (
-      <TabsTrigger key={item} value={item} className="px-4">
-        {label}
-      </TabsTrigger>
-    );
-  });
-
   const handleSelectServer = (name: string) => {
-    localStorage.setItem(serverCurrentKey, name);
     setCurrentServer(name);
   };
 
-  const tabs = (
-    <Tabs value={currentServer} onValueChange={handleSelectServer}>
-      <TabsList className="grid grid-flow-col auto-cols-max">
-        {triggers}
-      </TabsList>
-    </Tabs>
-  );
   const serverConfig = getServerConfig(currentServer, config.servers);
   const items: ExFormItem[] = [
     {
@@ -249,8 +231,6 @@ export default function Servers() {
       <div className="flex">
         <MainSidebar className="h-screen flex-none w-[230px]" />
         <div className="grow lg:border-l overflow-auto p-4">
-          {tabs}
-          <div className="p-2" />
           <ExForm
             key={currentServer}
             items={items}

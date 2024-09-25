@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { Nav } from "@/components/nav";
+import { Nav, NavLink } from "@/components/nav";
 import {
   AppWindow,
   Server,
@@ -23,9 +23,9 @@ export function MainSidebar({
   className,
 }: React.HTMLAttributes<HTMLDivElement>) {
   const navI18n = useI18n("nav");
-  const { pathname } = router.state.location;
+  const { pathname, search } = router.state.location;
   const getVariant = (path: string) => {
-    if (pathname.startsWith(path)) {
+    if (path === `${pathname}${search}`) {
       return "default";
     }
     return "ghost";
@@ -34,30 +34,51 @@ export function MainSidebar({
     state.data,
     state.initialized,
   ]);
+
+  const servers = Object.keys(config.servers || {}).sort();
+  const locations = Object.keys(config.locations || {}).sort();
+  const upstreams = Object.keys(config.upstreams || {}).sort();
+  const plugins = Object.keys(config.plugins || {}).sort();
+  const certificates = Object.keys(config.certificates || {}).sort();
   const getLabel = (category: string) => {
     if (!initialized) {
       return "--";
     }
     switch (category) {
       case "server": {
-        return Object.keys(config.servers || {}).length.toString();
+        return servers.length.toString();
       }
       case "location": {
-        return Object.keys(config.locations || {}).length.toString();
+        return locations.length.toString();
       }
       case "upstream": {
-        return Object.keys(config.upstreams || {}).length.toString();
+        return upstreams.length.toString();
       }
       case "plugin": {
-        return Object.keys(config.plugins || {}).length.toString();
+        return plugins.length.toString();
       }
       case "certificate": {
-        return Object.keys(config.certificates || {}).length.toString();
+        return certificates.length.toString();
       }
       default: {
         return "--";
       }
     }
+  };
+
+  const generateChildren = (baseUrl: string, items: string[]) => {
+    if (!pathname.startsWith(baseUrl)) {
+      return [] as NavLink[];
+    }
+    return items.map((item) => {
+      const path = `${baseUrl}?name=${item}`;
+      return {
+        title: item,
+        variant: getVariant(path),
+        label: "",
+        path,
+      } as NavLink;
+    });
   };
   const nav = (
     <Nav
@@ -76,6 +97,7 @@ export function MainSidebar({
           variant: getVariant(SERVERS),
           label: getLabel("server"),
           path: SERVERS,
+          children: generateChildren(SERVERS, servers),
         },
         {
           title: navI18n("location"),
@@ -83,6 +105,7 @@ export function MainSidebar({
           variant: getVariant(LOCATIONS),
           label: getLabel("location"),
           path: LOCATIONS,
+          children: generateChildren(LOCATIONS, locations),
         },
         {
           title: navI18n("upstream"),
@@ -90,6 +113,7 @@ export function MainSidebar({
           variant: getVariant(UPSTREMAS),
           label: getLabel("upstream"),
           path: UPSTREMAS,
+          children: generateChildren(UPSTREMAS, upstreams),
         },
         {
           title: navI18n("plugin"),
@@ -97,6 +121,7 @@ export function MainSidebar({
           variant: getVariant(PLUGINS),
           label: getLabel("plugin"),
           path: PLUGINS,
+          children: generateChildren(PLUGINS, plugins),
         },
         {
           title: navI18n("certificate"),
@@ -104,6 +129,7 @@ export function MainSidebar({
           variant: getVariant(CERTIFICATES),
           label: getLabel("certificate"),
           path: CERTIFICATES,
+          children: generateChildren(CERTIFICATES, certificates),
         },
       ]}
     ></Nav>

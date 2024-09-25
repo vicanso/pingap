@@ -1,6 +1,14 @@
 import React from "react";
 import { cn } from "@/lib/utils";
-import { Check, Sun, Moon, SunMoon, LoaderCircle, Cog } from "lucide-react";
+import {
+  Check,
+  Sun,
+  Moon,
+  SunMoon,
+  LoaderCircle,
+  Cog,
+  Languages,
+} from "lucide-react";
 import { Link } from "react-router-dom";
 import { HOME } from "@/routers";
 import { useTheme } from "@/components/theme-provider";
@@ -10,6 +18,7 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useTranslation } from "react-i18next";
@@ -19,13 +28,16 @@ import useConfigState from "@/states/config";
 import { useAsync } from "react-async-hook";
 import { useToast } from "@/hooks/use-toast";
 import { formatError } from "@/helpers/util";
+import i18n from "@/i18n";
 
 export function MainHeader({
   className,
 }: React.HTMLAttributes<HTMLDivElement>) {
+  console.dir(i18n.language);
   const { t } = useTranslation();
   const iconClassName = "mr-2 h-4 w-4";
   const { setTheme, theme } = useTheme();
+  const lang = i18n.language;
   const [fetchBasicInfo, basicInfo] = useBasicState((state) => [
     state.fetch,
     state.data,
@@ -46,6 +58,8 @@ export function MainHeader({
       });
     }
   }, []);
+  const zhLang = "zh";
+  const enLang = "en";
 
   const tips = (
     <DropdownMenu>
@@ -85,6 +99,27 @@ export function MainHeader({
             {theme == "light" && <Check className={iconClassName} />}
             {theme != "light" && <Sun className={iconClassName} />}
             <span>{t("themeLight")}</span>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className="cursor-pointer"
+            onClick={() => {
+              i18n.changeLanguage(zhLang);
+            }}
+          >
+            {lang == zhLang && <Check className={iconClassName} />}
+            {lang != zhLang && <Languages className={iconClassName} />}
+            中文
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="cursor-pointe"
+            onClick={() => {
+              i18n.changeLanguage(enLang);
+            }}
+          >
+            {lang == enLang && <Check className={iconClassName} />}
+            {lang != enLang && <Languages className={iconClassName} />}
+            English
           </DropdownMenuItem>
         </DropdownMenuGroup>
       </DropdownMenuContent>

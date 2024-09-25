@@ -14,6 +14,12 @@ import {
 import { LoadingPage } from "@/components/loading";
 import useBasicState from "@/states/basic";
 import { useI18n } from "@/i18n";
+import { listify } from "radash";
+
+interface Summary {
+  name: string;
+  value: string;
+}
 
 export default function Home() {
   const homeI18n = useI18n("home");
@@ -27,62 +33,55 @@ export default function Home() {
   }
 
   let serverDescription = "";
-  let serverSummary = "";
+  const serverSummary: Summary[] = [];
   if (config.servers) {
     const serverCount = Object.keys(config.servers).length;
     serverDescription =
       serverCount > 1 ? `${serverCount} Servers` : `${serverCount} Server`;
-    const addrs: string[] = [];
-    Object.values(config.servers).forEach((server) => {
-      if (server.addr) {
-        addrs.push(server.addr);
-      }
+    listify(config.servers, (name, value) => {
+      serverSummary.push({
+        name,
+        value: value.addr,
+      });
     });
-    if (addrs.length !== 0) {
-      serverSummary = `Addrs: ${addrs.join("; ")}`;
-    }
   }
   let locationDescription = "";
-  let locationSummary = "";
+  const locationSummary: Summary[] = [];
   if (config.locations) {
     const locationCount = Object.keys(config.locations).length;
     locationDescription =
       locationCount > 1
         ? `${locationCount} Locations`
         : `${locationCount} Location`;
-    const arr: string[] = [];
-    Object.values(config.locations).forEach((location) => {
+    listify(config.locations, (name, value) => {
       const tmpArr: string[] = [];
-      if (location.host) {
-        tmpArr.push(`Host: ${location.host}`);
+      if (value.host) {
+        tmpArr.push(`Host: ${value.host}`);
       }
-      if (location.path) {
-        tmpArr.push(`Path: ${location.path}`);
+      if (value.path) {
+        tmpArr.push(`Path: ${value.path}`);
       }
-      if (tmpArr.length !== 0) {
-        arr.push(tmpArr.join(" "));
-      }
+      locationSummary.push({
+        name,
+        value: tmpArr.join(" "),
+      });
     });
-    locationSummary = arr.join("; ");
   }
 
   let upstreamDescription = "";
-  let upstreamSummary = "";
+  const upstreamSummary: Summary[] = [];
   if (config.upstreams) {
     const upstreamCount = Object.keys(config.upstreams).length;
     upstreamDescription =
       upstreamCount > 1
         ? `${upstreamCount} Upstreams`
         : `${upstreamCount} Upstream`;
-    const arr: string[] = [];
-    Object.values(config.upstreams).forEach((upstream) => {
-      if (upstream.addrs.length !== 0) {
-        arr.push(upstream.addrs.join(","));
-      }
+    listify(config.upstreams, (name, value) => {
+      upstreamSummary.push({
+        name,
+        value: value.addrs.join(","),
+      });
     });
-    if (arr.length !== 0) {
-      upstreamSummary = `Addrs: ${arr.join("; ")}`;
-    }
   }
 
   let pluginDescription = "";
@@ -124,13 +123,13 @@ export default function Home() {
       title: "Plugin",
       path: PLUGINS,
       description: pluginDescription,
-      summary: "",
+      summary: [],
     },
     {
       title: "Certificate",
       path: CERTIFICATES,
       description: certificateDescription,
-      summary: "",
+      summary: [],
     },
   ];
   const cards = items.map((item) => {
@@ -144,7 +143,18 @@ export default function Home() {
         </CardHeader>
         <CardContent>
           <div className="text-2xl font-bold">{item.description}</div>
-          <p className="text-xs text-muted-foreground">{item.summary}</p>
+          {item.summary.length !== 0 && (
+            <ul className="text-sm">
+              {item.summary.map((item) => {
+                return (
+                  <li key={item.name} className="break-all mt-2">
+                    <span className="text-muted-foreground">{item.name}:</span>{" "}
+                    {item.value}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </CardContent>
       </Card>
     );

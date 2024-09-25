@@ -4,7 +4,6 @@ import { MainSidebar } from "@/components/sidebar-nav";
 import { useI18n } from "@/i18n";
 import useConfigState, { Upstream } from "@/states/config";
 import React from "react";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ExForm, ExFormItem } from "@/components/ex-form";
 import { z } from "zod";
 import {
@@ -13,7 +12,8 @@ import {
   newBooleanOptions,
 } from "@/constants";
 import { newZodBytes, newZodDuration } from "@/helpers/util";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { useSearchParams } from "react-router-dom";
+import { useEffect } from "react";
 
 function getUpstreamConfig(name: string, upstreams?: Record<string, Upstream>) {
   if (!upstreams) {
@@ -23,8 +23,9 @@ function getUpstreamConfig(name: string, upstreams?: Record<string, Upstream>) {
 }
 
 export default function Upstreams() {
-  const upstreamCurrentKey = "upstreams.current";
   const upstreamI18n = useI18n("upstream");
+  const [searchParams] = useSearchParams();
+
   const [config, initialized, update, remove] = useConfigState((state) => [
     state.data,
     state.initialized,
@@ -36,38 +37,18 @@ export default function Upstreams() {
   upstreams.sort();
   upstreams.unshift(newUpstream);
   const [currentUpstream, setCurrentUpstream] = React.useState(
-    localStorage.getItem(upstreamCurrentKey) || upstreams[0],
+    searchParams.get("name") || newUpstream,
   );
+  useEffect(() => {
+    setCurrentUpstream(searchParams.get("name") || newUpstream);
+  }, [searchParams]);
   if (!initialized) {
     return <LoadingPage />;
   }
-  const triggers = upstreams.map((item) => {
-    let label = item;
-    if (label === newUpstream) {
-      label = "New";
-    }
-    return (
-      <TabsTrigger key={item} value={item} className="px-4">
-        {label}
-      </TabsTrigger>
-    );
-  });
 
   const handleSelectUpstream = (name: string) => {
-    localStorage.setItem(upstreamCurrentKey, name);
     setCurrentUpstream(name);
   };
-
-  const tabs = (
-    <ScrollArea className="pb-3">
-      <Tabs value={currentUpstream} onValueChange={handleSelectUpstream}>
-        <TabsList className="grid grid-flow-col auto-cols-max">
-          {triggers}
-        </TabsList>
-      </Tabs>
-      <ScrollBar orientation="horizontal" />
-    </ScrollArea>
-  );
 
   const upstreamConfig = getUpstreamConfig(currentUpstream, config.upstreams);
 
@@ -302,8 +283,6 @@ export default function Upstreams() {
       <div className="flex">
         <MainSidebar className="h-screen flex-none w-[230px]" />
         <div className="grow lg:border-l overflow-auto p-4">
-          {tabs}
-          <div className="p-2" />
           <ExForm
             key={currentUpstream}
             items={items}
