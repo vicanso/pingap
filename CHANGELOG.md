@@ -21,6 +21,37 @@
 - Adjust config editor - ([cb0ea53](https://github.com/vicanso/pingap/commit/cb0ea53e7e7085e78ca53e68c6df1b658a2e1626))
 - Adjust i18n - ([4c4b8b6](https://github.com/vicanso/pingap/commit/4c4b8b6c48a24e88712536397896a18fc451a1a1))
 
+### 📚 Documentation
+
+- Update CHANGELOG - ([b8498b8](https://github.com/vicanso/pingap/commit/b8498b8ca44e9c6b6fc20023f9251148122b26ce))
+
+### ⚙️ Miscellaneous Tasks
+
+- Version 0.8.3 - ([9c139b8](https://github.com/vicanso/pingap/commit/9c139b8d4ff5af5ab4cee3a7408f8a532687407b))
+- Version 0.8.2 - ([daf9a19](https://github.com/vicanso/pingap/commit/daf9a19516d63162a6f4bcd415f7a0cdef71f40b))
+- Update dependencies - ([ca80442](https://github.com/vicanso/pingap/commit/ca80442b8d55cfc87328c8d5626cff3fb3c7bc39))
+
+## [0.8.3](https://github.com/vicanso/pingap/compare/v0.8.1..0.8.3) - 2024-09-25
+
+### ⛰️  Features
+
+- Web admin supports combined auth plugin config - ([8ec0960](https://github.com/vicanso/pingap/commit/8ec09600d280aace01390ce89a64ca95f7ea50cb))
+- Add combined auth plugin - ([69f931b](https://github.com/vicanso/pingap/commit/69f931b1bfec44f712712187ed4b476b7982d300))
+- Support accept encoding adjustment plugin - ([aebc237](https://github.com/vicanso/pingap/commit/aebc237d657910653642d86f0330ed8c9f7da235))
+- Support purge http cache - ([0e0ffa7](https://github.com/vicanso/pingap/commit/0e0ffa7fb3fb79e3cf505cb5fde67b8c51aced33))
+
+### 🐛 Bug Fixes
+
+- Adjust base path for static serve - ([64cdf29](https://github.com/vicanso/pingap/commit/64cdf29c5f91aa5437ce3cb8247f4ba6837b76f4))
+- Fix lint - ([0351267](https://github.com/vicanso/pingap/commit/0351267779ab81804ab11bb132a5e235d577221e))
+
+### 🚜 Refactor
+
+- Adjust home page - ([e322dc4](https://github.com/vicanso/pingap/commit/e322dc4ed86ee9bdbafe04c580832126ace707e8))
+- Adjust config tabs - ([48989db](https://github.com/vicanso/pingap/commit/48989dba1971eca181acf12d97e1eecc9ec55007))
+- Adjust config editor - ([cb0ea53](https://github.com/vicanso/pingap/commit/cb0ea53e7e7085e78ca53e68c6df1b658a2e1626))
+- Adjust i18n - ([4c4b8b6](https://github.com/vicanso/pingap/commit/4c4b8b6c48a24e88712536397896a18fc451a1a1))
+
 ### ⚙️ Miscellaneous Tasks
 
 - Version 0.8.3 - ([9c139b8](https://github.com/vicanso/pingap/commit/9c139b8d4ff5af5ab4cee3a7408f8a532687407b))
