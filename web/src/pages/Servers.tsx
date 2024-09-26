@@ -14,6 +14,7 @@ import {
 import { newZodDuration } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
+import { ScrollRestoration } from "react-router-dom";
 
 function getServerConfig(name: string, servers?: Record<string, Server>) {
   if (!servers) {
@@ -232,6 +233,7 @@ export default function Servers() {
         <MainSidebar className="h-screen flex-none w-[230px]" />
         <div className="grow lg:border-l overflow-auto p-4">
           <ExForm
+            category="server"
             key={currentServer}
             items={items}
             schema={schema}
@@ -252,6 +254,7 @@ export default function Servers() {
           />
         </div>
       </div>
+      <ScrollRestoration />
     </>
   );
 }

@@ -84,6 +84,7 @@ export type FormContextValue = {
 };
 
 interface ExFormProps {
+  category?: string;
   schema: z.Schema;
   items: ExFormItem[];
   defaultShow?: number;
@@ -95,6 +96,7 @@ interface ExFormProps {
 }
 
 export function ExForm({
+  category = "",
   schema,
   items,
   defaultShow = 0,
@@ -106,7 +108,17 @@ export function ExForm({
 }: ExFormProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
-  const [showCount, setShowCount] = React.useState(defaultShow);
+  const maxCount = items.length;
+  let showCountDefaultValue = defaultShow;
+  let showAllKey = "";
+  if (category) {
+    showAllKey = `${category}.showAll`;
+  }
+  if (showAllKey && localStorage.getItem(showAllKey)) {
+    showCountDefaultValue = maxCount;
+  }
+
+  const [showCount, setShowCount] = React.useState(showCountDefaultValue);
   const [processing, setProcessing] = React.useState(false);
   const [updatedValues, setUpdatedValues] = React.useState(
     {} as Record<string, unknown>,
@@ -114,7 +126,6 @@ export function ExForm({
   const [updatedCount, setUpdatedCount] = React.useState(0);
   const defaultValues: Record<string, unknown> = {};
   const originalValues: Record<string, unknown> = {};
-  // const updatedValues: Record<string, unknown> = {};
   items.forEach((item) => {
     let { defaultValue } = item;
     originalValues[item.name] = defaultValue;
@@ -203,7 +214,6 @@ export function ExForm({
   }
 
   const fields: JSX.Element[] = [];
-  const maxCount = items.length;
 
   items.map((item, index) => {
     if (defaultShow > 0) {
@@ -505,9 +515,11 @@ export function ExForm({
         title={tips}
         onClick={(e) => {
           if (showCount > defaultShow) {
+            localStorage.removeItem(showAllKey);
             setShowCount(defaultShow);
           } else {
             setShowCount(maxCount);
+            localStorage.setItem(showAllKey, "all");
           }
           e.preventDefault();
         }}

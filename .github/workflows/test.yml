@@ -45,8 +45,8 @@ jobs:
         run: make test
       - name: Run cargo msrv
         run: |
-          cargo install cargo-msrv
-          cargo msrv verify
+          cargo install cargo-msrv --version 0.16.0-beta.25
+          cargo msrv list
       - name: Run cargo cov
         run: |
           cargo install cargo-llvm-cov

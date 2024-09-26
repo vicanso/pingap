@@ -13,6 +13,7 @@ import {
 } from "@/constants";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
+import { ScrollRestoration } from "react-router-dom";
 
 function getCertificateConfig(
   name: string,
@@ -133,12 +134,13 @@ export default function Certificates() {
   const schema = z.object({});
 
   return (
-    <div>
+    <>
       <MainHeader />
       <div className="flex">
         <MainSidebar className="h-screen flex-none w-[230px]" />
         <div className="grow lg:border-l overflow-auto p-4">
           <ExForm
+            category="certificate"
             key={currentCertificate}
             items={items}
             schema={schema}
@@ -159,6 +161,7 @@ export default function Certificates() {
           />
         </div>
       </div>
-    </div>
+      <ScrollRestoration />
+    </>
   );
 }

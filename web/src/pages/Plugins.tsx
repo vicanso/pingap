@@ -15,6 +15,7 @@ import {
 } from "@/constants";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
+import { ScrollRestoration } from "react-router-dom";
 
 function getPluginConfig(
   name: string,
@@ -915,6 +916,7 @@ export default function Plugins() {
         <MainSidebar className="h-screen flex-none w-[230px]" />
         <div className="grow lg:border-l overflow-auto p-4">
           <ExForm
+            category="plugin"
             key={key}
             items={items}
             schema={schema}
@@ -940,6 +942,7 @@ export default function Plugins() {
           />
         </div>
       </div>
+      <ScrollRestoration />
     </>
   );
 }

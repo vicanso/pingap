@@ -33,7 +33,6 @@ import i18n from "@/i18n";
 export function MainHeader({
   className,
 }: React.HTMLAttributes<HTMLDivElement>) {
-  console.dir(i18n.language);
   const { t } = useTranslation();
   const iconClassName = "mr-2 h-4 w-4";
   const { setTheme, theme } = useTheme();

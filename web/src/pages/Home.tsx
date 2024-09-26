@@ -1,8 +1,8 @@
 import { MainHeader } from "@/components/header";
 import { MainSidebar } from "@/components/sidebar-nav";
-import useConfigState from "@/states/config";
+import useConfigState, { getLocationWeight } from "@/states/config";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Menu } from "lucide-react";
+import { FilePlus2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
   CERTIFICATES,
@@ -19,6 +19,7 @@ import { listify } from "radash";
 interface Summary {
   name: string;
   value: string;
+  link: string;
 }
 
 export default function Home() {
@@ -41,6 +42,7 @@ export default function Home() {
     listify(config.servers, (name, value) => {
       serverSummary.push({
         name,
+        link: `${SERVERS}?name=${name}`,
         value: value.addr,
       });
     });
@@ -53,18 +55,25 @@ export default function Home() {
       locationCount > 1
         ? `${locationCount} Locations`
         : `${locationCount} Location`;
+    const locationSummaryWeight: Record<string, number> = {};
     listify(config.locations, (name, value) => {
+      const weight = getLocationWeight(value);
+      locationSummaryWeight[name] = weight;
       const tmpArr: string[] = [];
       if (value.host) {
         tmpArr.push(`Host: ${value.host}`);
       }
-      if (value.path) {
-        tmpArr.push(`Path: ${value.path}`);
-      }
+      tmpArr.push(`Path: ${value.path || "/"}`);
       locationSummary.push({
         name,
+        link: `${LOCATIONS}?name=${name}`,
         value: tmpArr.join(" "),
       });
+    });
+    locationSummary.sort((item1, item2) => {
+      const weight1 = locationSummaryWeight[item1.name] || 0;
+      const weight2 = locationSummaryWeight[item2.name] || 0;
+      return weight2 - weight1;
     });
   }
 
@@ -79,16 +88,26 @@ export default function Home() {
     listify(config.upstreams, (name, value) => {
       upstreamSummary.push({
         name,
+        link: `${UPSTREMAS}?name=${name}`,
         value: value.addrs.join(","),
       });
     });
   }
 
   let pluginDescription = "";
+  const pluginSummary: Summary[] = [];
   if (config.plugins) {
     const pluginCount = Object.keys(config.plugins).length;
     pluginDescription =
       pluginCount > 1 ? `${pluginCount} Plugins` : `${pluginCount} Plugin`;
+    listify(config.plugins, (name, value) => {
+      pluginSummary.push({
+        name,
+        link: `${PLUGINS}?name=${name}`,
+        value: value.category as string,
+      });
+    });
+    pluginSummary.sort((item1, item2) => item1.name.localeCompare(item2.name));
   }
 
   let certificateDescription = "";
@@ -98,6 +117,13 @@ export default function Home() {
       certificateCount > 1
         ? `${certificateCount} Certificates`
         : `${certificateCount} Certificate`;
+    listify(config.certificates, (name, value) => {
+      pluginSummary.push({
+        name,
+        link: `${CERTIFICATES}?name=${name}`,
+        value: value.domains || "",
+      });
+    });
   }
 
   const items = [
@@ -123,7 +149,7 @@ export default function Home() {
       title: "Plugin",
       path: PLUGINS,
       description: pluginDescription,
-      summary: [],
+      summary: pluginSummary,
     },
     {
       title: "Certificate",
@@ -138,7 +164,7 @@ export default function Home() {
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 relative">
           <CardTitle className="text-sm font-medium ">{item.title}</CardTitle>
           <Link to={item.path} className="absolute top-3 right-3">
-            <Menu className="w-5 h-5" />
+            <FilePlus2 className="w-5 h-5" />
           </Link>
         </CardHeader>
         <CardContent>
@@ -148,7 +174,9 @@ export default function Home() {
               {item.summary.map((item) => {
                 return (
                   <li key={item.name} className="break-all mt-2">
-                    <span className="text-muted-foreground">{item.name}:</span>{" "}
+                    <Link to={item.link} className="text-muted-foreground">
+                      {item.name}:
+                    </Link>{" "}
                     {item.value}
                   </li>
                 );

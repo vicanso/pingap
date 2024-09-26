@@ -11,6 +11,7 @@ import { ExFormItemCategory, newStringOptions } from "@/constants";
 import { newZodBytes } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
+import { ScrollRestoration } from "react-router-dom";
 
 function getLocationConfig(name: string, locations?: Record<string, Location>) {
   if (!locations) {
@@ -177,6 +178,7 @@ export default function Locations() {
         <MainSidebar className="h-screen flex-none w-[230px]" />
         <div className="grow lg:border-l overflow-auto p-4">
           <ExForm
+            category="location"
             key={currentLocation}
             items={items}
             schema={schema}
@@ -197,6 +199,7 @@ export default function Locations() {
           />
         </div>
       </div>
+      <ScrollRestoration />
     </>
   );
 }

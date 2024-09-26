@@ -14,6 +14,7 @@ import {
 import { newZodBytes, newZodDuration } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
+import { ScrollRestoration } from "react-router-dom";
 
 function getUpstreamConfig(name: string, upstreams?: Record<string, Upstream>) {
   if (!upstreams) {
@@ -278,12 +279,13 @@ export default function Upstreams() {
   });
 
   return (
-    <div>
+    <>
       <MainHeader />
       <div className="flex">
         <MainSidebar className="h-screen flex-none w-[230px]" />
         <div className="grow lg:border-l overflow-auto p-4">
           <ExForm
+            category="upstream"
             key={currentUpstream}
             items={items}
             schema={schema}
@@ -304,6 +306,7 @@ export default function Upstreams() {
           />
         </div>
       </div>
-    </div>
+      <ScrollRestoration />
+    </>
   );
 }
