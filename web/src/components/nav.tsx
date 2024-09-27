@@ -30,9 +30,10 @@ export function Nav({ links, isCollapsed, size }: NavProps) {
         <Link
           key={link.path}
           to={link.path}
+          title={link.title}
           className={cn(
             buttonVariants({ variant: link.variant, size }),
-            "px-8",
+            "px-8 truncate",
             link.variant === "default" &&
               "dark:bg-muted dark:text-white dark:hover:bg-muted dark:hover:text-white",
             "justify-start",
@@ -49,6 +50,7 @@ export function Nav({ links, isCollapsed, size }: NavProps) {
         <TooltipTrigger asChild>
           <Link
             to={link.path}
+            title={link.title}
             className={cn(
               buttonVariants({ variant: link.variant, size: "icon" }),
               "h-9 w-9",
@@ -74,6 +76,7 @@ export function Nav({ links, isCollapsed, size }: NavProps) {
       <Link
         key={link.path}
         to={link.path}
+        title={link.title}
         className={cn(
           buttonVariants({ variant: link.variant, size }),
           "px-4",

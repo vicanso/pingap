@@ -18,6 +18,7 @@ import router, {
 } from "@/routers.tsx";
 import useConfigState from "@/states/config";
 import { useI18n } from "@/i18n";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 export function MainSidebar({
   className,
@@ -134,5 +135,9 @@ export function MainSidebar({
       ]}
     ></Nav>
   );
-  return <div className={cn("pb-12", className)}>{nav}</div>;
+  return (
+    <div className={cn("pb-12", className)}>
+      <ScrollArea className="h-full">{nav}</ScrollArea>
+    </div>
+  );
 }

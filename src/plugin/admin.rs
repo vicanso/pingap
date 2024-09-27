@@ -34,6 +34,8 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use bytes::{BufMut, BytesMut};
 use bytesize::ByteSize;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use hex::encode;
 use http::Method;
 use http::{header, HeaderValue, StatusCode};
@@ -43,6 +45,7 @@ use pingora::proxy::Session;
 use rust_embed::EmbeddedFile;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 use std::time::Duration;
 use substring::Substring;
 use tracing::{debug, error};
@@ -78,9 +81,26 @@ impl From<EmbeddedStaticFile> for HttpResponse {
             headers.push((header::ETAG, value));
         }
 
+        let mut gzip_body = None;
+        if file.data.len() > 1024 {
+            let mut d = GzEncoder::new(vec![], Compression::best());
+            let _ = d.write_all(&file.data);
+            if let Ok(w) = d.finish() {
+                gzip_body = Some(Bytes::copy_from_slice(w.as_ref()));
+                if let Ok(value) = HeaderValue::from_str("gzip") {
+                    headers.push((header::CONTENT_ENCODING, value));
+                }
+            }
+        }
+        let body = if let Some(data) = gzip_body {
+            data
+        } else {
+            Bytes::copy_from_slice(&file.data)
+        };
+
         HttpResponse {
             status: StatusCode::OK,
-            body: Bytes::copy_from_slice(&file.data),
+            body,
             max_age: Some(max_age as u32),
             headers: Some(headers),
             ..Default::default()

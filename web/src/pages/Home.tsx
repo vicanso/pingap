@@ -61,9 +61,9 @@ export default function Home() {
       locationSummaryWeight[name] = weight;
       const tmpArr: string[] = [];
       if (value.host) {
-        tmpArr.push(`Host: ${value.host}`);
+        tmpArr.push(`host: ${value.host}`);
       }
-      tmpArr.push(`Path: ${value.path || "/"}`);
+      tmpArr.push(`path: ${value.path || "/"}`);
       locationSummary.push({
         name,
         link: `${LOCATIONS}?name=${name}`,
@@ -107,7 +107,9 @@ export default function Home() {
         value: value.category as string,
       });
     });
-    pluginSummary.sort((item1, item2) => item1.name.localeCompare(item2.name));
+    pluginSummary.sort((item1, item2) =>
+      item1.value.localeCompare(item2.value),
+    );
   }
 
   let certificateDescription = "";
@@ -174,10 +176,10 @@ export default function Home() {
               {item.summary.map((item) => {
                 return (
                   <li key={item.name} className="break-all mt-2">
-                    <Link to={item.link} className="text-muted-foreground">
-                      {item.name}:
-                    </Link>{" "}
-                    {item.value}
+                    <span className="text-muted-foreground mr-1">
+                      {item.value}
+                    </span>
+                    <Link to={item.link}>{item.name}</Link>
                   </li>
                 );
               })}
