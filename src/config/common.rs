@@ -365,7 +365,8 @@ impl LocationConf {
         // ~ 256
         // host exist 128
         let mut weight: u16 = 0;
-        if let Some(path) = &self.path {
+        let path = self.path.clone().unwrap_or("".to_string());
+        if path.len() > 1 {
             if path.starts_with('=') {
                 weight += 1024;
             } else if path.starts_with('~') {
