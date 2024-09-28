@@ -33,6 +33,11 @@ import { SortCheckboxs } from "@/components/sort-checkboxs";
 import { ExFormOption, ExFormItemCategory } from "@/constants";
 import { Inputs } from "@/components/inputs";
 import { CombinedAuths } from "@/components/combined-auths";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 function getOption(
   value: string | number | boolean | null | undefined,
@@ -565,19 +570,36 @@ export function ExForm({
           )}
           {onRemove && (
             <div className="grid-cols-1">
-              <Button
-                type="reset"
-                className="w-full"
-                onClick={async (e) => {
-                  await handleRemove();
-                  e.preventDefault();
-                }}
-              >
-                {processing && (
-                  <LoaderCircle className="mr-2 h-4 w-4 inline animate-spin" />
-                )}
-                {t("remove")}
-              </Button>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="secondary" type="reset" className="w-full">
+                    {processing && (
+                      <LoaderCircle className="mr-2 h-4 w-4 inline animate-spin" />
+                    )}
+                    {t("remove")}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-60">
+                  <div className="grid gap-4">
+                    <div className="space-y-2">
+                      <h4 className="font-medium leading-none">
+                        {t("removeConfirm")}
+                      </h4>
+                      <p className="text-sm text-muted-foreground mb-2">
+                        {t("removeTips")}
+                      </p>
+                    </div>
+                    <Button
+                      size={"sm"}
+                      onClick={async () => {
+                        await handleRemove();
+                      }}
+                    >
+                      {t("confirm")}
+                    </Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
             </div>
           )}
         </div>

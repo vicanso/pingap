@@ -132,6 +132,11 @@ export default function Certificates() {
     });
   }
   const schema = z.object({});
+  const onRemove = async () => {
+    return remove("certificate", currentCertificate).then(() => {
+      handleSelectCertificate(newCertificate);
+    });
+  };
 
   return (
     <>
@@ -145,11 +150,9 @@ export default function Certificates() {
             items={items}
             schema={schema}
             defaultShow={defaultShow}
-            onRemove={async () => {
-              return remove("certificate", currentCertificate).then(() => {
-                handleSelectCertificate(newCertificate);
-              });
-            }}
+            onRemove={
+              currentCertificate === newCertificate ? undefined : onRemove
+            }
             onSave={async (value) => {
               let name = currentCertificate;
               if (name === newCertificate) {

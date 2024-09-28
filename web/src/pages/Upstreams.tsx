@@ -278,6 +278,12 @@ export default function Upstreams() {
     tcp_recv_buf: newZodBytes().optional(),
   });
 
+  const onRemove = async () => {
+    return remove("upstream", currentUpstream).then(() => {
+      handleSelectUpstream(newUpstream);
+    });
+  };
+
   return (
     <>
       <MainHeader />
@@ -290,11 +296,7 @@ export default function Upstreams() {
             items={items}
             schema={schema}
             defaultShow={defaultShow}
-            onRemove={async () => {
-              return remove("upstream", currentUpstream).then(() => {
-                handleSelectUpstream(newUpstream);
-              });
-            }}
+            onRemove={currentUpstream === newUpstream ? undefined : onRemove}
             onSave={async (value) => {
               let name = currentUpstream;
               if (name === newUpstream) {

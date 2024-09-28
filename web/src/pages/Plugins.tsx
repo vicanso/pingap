@@ -908,6 +908,11 @@ export default function Plugins() {
   if (currentPlugin == newPlugin) {
     key = `new-plugin-${category}`;
   }
+  const onRemove = async () => {
+    return remove("plugin", currentPlugin).then(() => {
+      handleSelectPlugin(newPlugin);
+    });
+  };
 
   return (
     <>
@@ -926,11 +931,7 @@ export default function Plugins() {
                 setCurrentCategory(category);
               }
             }}
-            onRemove={async () => {
-              return remove("plugin", currentPlugin).then(() => {
-                handleSelectPlugin(newPlugin);
-              });
-            }}
+            onRemove={currentPlugin === newPlugin ? undefined : onRemove}
             onSave={async (value) => {
               let name = currentPlugin;
               if (name === newPlugin) {

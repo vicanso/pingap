@@ -17,7 +17,7 @@ jobs:
         uses: actions/setup-node@v4
       - uses: actions-rs/toolchain@v1
         with:
-          toolchain: 1.80.1
+          toolchain: 1.81.0
       - name: build-web
         run: make build-web
       - name: Install target

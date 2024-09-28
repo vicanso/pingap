@@ -226,6 +226,12 @@ export default function Servers() {
     tcp_interval: newZodDuration().optional(),
   });
 
+  const onRemove = async () => {
+    return remove("server", currentServer).then(() => {
+      handleSelectServer(newServer);
+    });
+  };
+
   return (
     <>
       <MainHeader />
@@ -238,11 +244,7 @@ export default function Servers() {
             items={items}
             schema={schema}
             defaultShow={defaultShow}
-            onRemove={async () => {
-              return remove("server", currentServer).then(() => {
-                handleSelectServer(newServer);
-              });
-            }}
+            onRemove={currentServer === newServer ? undefined : onRemove}
             onSave={async (value) => {
               let name = currentServer;
               if (name === newServer) {

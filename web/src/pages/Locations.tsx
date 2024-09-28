@@ -170,6 +170,11 @@ export default function Locations() {
   const schema = z.object({
     client_max_body_size: newZodBytes().optional(),
   });
+  const onRemove = async () => {
+    return remove("location", currentLocation).then(() => {
+      handleSelectLocation(newLocation);
+    });
+  };
 
   return (
     <>
@@ -183,11 +188,7 @@ export default function Locations() {
             items={items}
             schema={schema}
             defaultShow={defaultShow}
-            onRemove={async () => {
-              return remove("location", currentLocation).then(() => {
-                handleSelectLocation(newLocation);
-              });
-            }}
+            onRemove={currentLocation === newLocation ? undefined : onRemove}
             onSave={async (value) => {
               let name = currentLocation;
               if (name === newLocation) {
