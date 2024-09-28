@@ -14,8 +14,8 @@ export function getPluginSteps(category: string) {
   const pluginSupportSteps: Record<string, number[]> = {};
   pluginSupportSteps[PluginCategory.STATS] = [0, 1];
   pluginSupportSteps[PluginCategory.LIMIT] = [0, 1];
-  pluginSupportSteps[PluginCategory.COMPRESSION] = [];
-  pluginSupportSteps[PluginCategory.ACCEPT_ENCODING] = [];
+  pluginSupportSteps[PluginCategory.COMPRESSION] = [0];
+  pluginSupportSteps[PluginCategory.ACCEPT_ENCODING] = [0];
   pluginSupportSteps[PluginCategory.ADMIN] = [0, 1];
   pluginSupportSteps[PluginCategory.DIRECTORY] = [0, 1];
   pluginSupportSteps[PluginCategory.MOCK] = [0, 1];

@@ -267,7 +267,7 @@ export default {
     cacheEviction: "Support Eviction",
     cachePredictor: "Support Predictor",
     cacheHeaders: "Headers",
-    cacheHeadersPlaceholder: "Input the header name : Input the header value",
+    cacheHeadersPlaceholder: "Input the header for cache key",
     cachePurgeIpList: "Ip Allow Purge",
     cachePurgeIpListPlaceholder: "Input the ip which allow purge",
     requestIdAlgo: "Algorithm",

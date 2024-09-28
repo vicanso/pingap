@@ -68,14 +68,6 @@ export default function Plugins() {
   if (currentPlugin === newPlugin) {
     items.unshift(
       {
-        name: "name",
-        label: pluginI18n("name"),
-        placeholder: pluginI18n("namePlaceholder"),
-        defaultValue: "",
-        span: 6,
-        category: ExFormItemCategory.TEXT,
-      },
-      {
         name: "category",
         label: pluginI18n("category"),
         placeholder: "",
@@ -115,6 +107,14 @@ export default function Plugins() {
           true,
         ),
       },
+      {
+        name: "_name_",
+        label: pluginI18n("name"),
+        placeholder: pluginI18n("namePlaceholder"),
+        defaultValue: "",
+        span: 6,
+        category: ExFormItemCategory.TEXT,
+      },
     );
   } else {
     items.unshift({
@@ -134,7 +134,7 @@ export default function Plugins() {
         name: "step",
         label: pluginI18n("step"),
         placeholder: "",
-        defaultValue: pluginConfig.step as string,
+        defaultValue: (pluginConfig.step as string) || options[0].value,
         category: ExFormItemCategory.RADIOS,
         options,
         span: 6,
@@ -217,7 +217,7 @@ export default function Plugins() {
           placeholder: pluginI18n("dirChunkSizePlaceholder"),
           defaultValue: pluginConfig.chunk_size as string,
           span: 3,
-          category: ExFormItemCategory.NUMBER,
+          category: ExFormItemCategory.TEXT,
         },
         {
           name: "autoindex",
@@ -399,7 +399,7 @@ export default function Plugins() {
           placeholder: pluginI18n("cacheHeadersPlaceholder"),
           defaultValue: pluginConfig.headers as string[],
           span: 6,
-          category: ExFormItemCategory.KV_LIST,
+          category: ExFormItemCategory.TEXTS,
         },
         {
           name: "purge_ip_list",
@@ -407,7 +407,7 @@ export default function Plugins() {
           placeholder: pluginI18n("cachePurgeIpListPlaceholder"),
           defaultValue: pluginConfig.purge_ip_list as string[],
           span: 6,
-          category: ExFormItemCategory.TEXT,
+          category: ExFormItemCategory.TEXTS,
         },
       );
       break;
@@ -934,8 +934,9 @@ export default function Plugins() {
             onSave={async (value) => {
               let name = currentPlugin;
               if (name === newPlugin) {
-                name = value["name"] as string;
+                name = value["_name_"] as string;
               }
+              delete value["_name_"];
               await update("plugin", name, value);
               handleSelectPlugin(name);
             }}
