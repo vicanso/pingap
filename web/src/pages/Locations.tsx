@@ -58,14 +58,16 @@ export default function Locations() {
   );
 
   const currentPlugins = config.plugins || {};
-  Object.keys(currentPlugins).forEach((name) => {
-    const item = currentPlugins[name];
-    plugins.push({
-      label: pascal(`${name}(${item.category || ""})`),
-      option: name,
-      value: name,
+  Object.keys(currentPlugins)
+    .sort()
+    .forEach((name) => {
+      const item = currentPlugins[name];
+      plugins.push({
+        label: pascal(`${name}(${item.category || ""})`),
+        option: name,
+        value: name,
+      });
     });
-  });
 
   const locationConfig = getLocationConfig(currentLocation, config.locations);
 

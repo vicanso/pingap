@@ -376,7 +376,7 @@ impl LocationConf {
             }
             weight += path.len().min(64) as u16;
         };
-        if self.host.is_some() {
+        if !self.host.clone().unwrap_or_default().is_empty() {
             weight += 128;
         }
         weight
