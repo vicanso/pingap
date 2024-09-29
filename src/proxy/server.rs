@@ -25,7 +25,7 @@ use crate::plugin::{get_plugin, ADMIN_SERVER_PLUGIN};
 use crate::proxy::dynamic_certificate::TlsSettingParams;
 use crate::proxy::location::get_location;
 use crate::service::CommonServiceTask;
-use crate::state::OtelTracer;
+use crate::state::{accept_request, end_request, OtelTracer};
 use crate::state::{new_prometheus, new_prometheus_push_service};
 use crate::state::{CompressionStat, Prometheus, State};
 use crate::util;
@@ -427,6 +427,7 @@ impl ProxyHttp for Server {
             ctx.tls_cipher = digest_detail.tls_cipher;
             ctx.tls_version = digest_detail.tls_version;
         };
+        accept_request();
 
         ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
         ctx.accepted = self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
@@ -967,6 +968,7 @@ impl ProxyHttp for Server {
     ) where
         Self::CTX: Send + Sync,
     {
+        end_request();
         self.processing.fetch_sub(1, Ordering::Relaxed);
         if let Some(location) = &ctx.location {
             location.processing.fetch_sub(1, Ordering::Relaxed);

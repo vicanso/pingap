@@ -20,13 +20,31 @@ use std::io;
 use std::path::PathBuf;
 use std::process;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicU8, Ordering};
 use std::time::Duration;
 use tracing::{error, info};
 
 static START_TIME: Lazy<Duration> = Lazy::new(util::now);
 
 static ADMIN_ADDR: OnceCell<String> = OnceCell::new();
+
+static ACCEPTED: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
+static PROCESSING: Lazy<AtomicI32> = Lazy::new(|| AtomicI32::new(0));
+
+pub fn accept_request() {
+    ACCEPTED.fetch_add(1, Ordering::Relaxed);
+    PROCESSING.fetch_add(1, Ordering::Relaxed);
+}
+
+pub fn end_request() {
+    PROCESSING.fetch_sub(1, Ordering::Relaxed);
+}
+
+pub fn get_processing_accepted() -> (i32, u64) {
+    let processing = PROCESSING.load(Ordering::Relaxed);
+    let accepted = ACCEPTED.load(Ordering::Relaxed);
+    (processing, accepted)
+}
 
 pub fn set_admin_addr(addr: &str) {
     ADMIN_ADDR.get_or_init(|| addr.to_string());

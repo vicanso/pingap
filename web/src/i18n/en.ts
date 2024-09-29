@@ -32,6 +32,8 @@ export default {
     basic: "Basic Information",
     pid: "Daemon Process Id",
     threads: "Threads",
+    accepted: "Accepted",
+    processing: "Processing",
     memory: "Memory",
     startTime: "Start Time",
     arch: "Arch",

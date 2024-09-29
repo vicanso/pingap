@@ -208,6 +208,14 @@ export default function Home() {
       value: new Date(basicInfo.start_time * 1000).toLocaleString(),
     },
     {
+      name: "processing",
+      value: basicInfo.processing.toLocaleString(),
+    },
+    {
+      name: "accepted",
+      value: basicInfo.accepted.toLocaleString(),
+    },
+    {
       name: "arch",
       value: basicInfo.arch,
     },

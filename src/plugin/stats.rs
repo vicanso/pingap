@@ -15,7 +15,9 @@
 use super::{get_hash_key, get_step_conf, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
-use crate::state::{get_hostname, get_start_time, State};
+use crate::state::{
+    get_hostname, get_processing_accepted, get_start_time, State,
+};
 use crate::util;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -100,9 +102,10 @@ impl Plugin for Stats {
             let uptime: humantime::Duration =
                 Duration::from_secs(util::now().as_secs() - get_start_time())
                     .into();
+            let (processing, accepted) = get_processing_accepted();
             let resp = HttpResponse::try_from_json(&ServerStats {
-                accepted: ctx.accepted,
-                processing: ctx.processing,
+                accepted,
+                processing,
                 location_processing: ctx.location_processing,
                 location_accepted: ctx.location_accepted,
                 hostname: get_hostname().to_string(),

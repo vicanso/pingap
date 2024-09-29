@@ -12,6 +12,8 @@ interface Basic {
   user: string;
   group: string;
   threads: number;
+  accepted: number;
+  processing: number;
 }
 
 interface ConfigState {
@@ -32,6 +34,8 @@ const useBasicState = create<ConfigState>()((set) => ({
     user: "",
     group: "",
     threads: 0,
+    accepted: 0,
+    processing: 0,
   },
   initialized: false,
   fetch: async () => {

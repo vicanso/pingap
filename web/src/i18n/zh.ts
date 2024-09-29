@@ -32,6 +32,8 @@ export default {
     basic: "基础信息",
     pid: "后台服务进程id",
     threads: "线程数",
+    accepted: "处理请求数",
+    processing: "正在处理请求数",
     memory: "内存",
     startTime: "启用时间",
     arch: "架构",

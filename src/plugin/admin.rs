@@ -27,7 +27,7 @@ use crate::config::{
 };
 use crate::http_extra::{HttpResponse, HTTP_HEADER_WWW_AUTHENTICATE};
 use crate::limit::TtlLruLimit;
-use crate::state::get_start_time;
+use crate::state::{get_processing_accepted, get_start_time};
 use crate::state::{restart_now, State};
 use crate::util::{self, base64_decode};
 use async_trait::async_trait;
@@ -133,6 +133,8 @@ struct BasicInfo {
     user: String,
     group: String,
     threads: usize,
+    processing: i32,
+    accepted: u64,
 }
 
 impl TryFrom<&PluginConf> for AdminServe {
@@ -457,6 +459,7 @@ impl Plugin for AdminServe {
                     threads += count;
                 }
             }
+            let (processing, accepted) = get_processing_accepted();
 
             HttpResponse::try_from_json(&BasicInfo {
                 start_time: get_start_time(),
@@ -469,6 +472,8 @@ impl Plugin for AdminServe {
                 pid,
                 memory,
                 threads,
+                accepted,
+                processing,
             })
             .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
         } else if path == "/restart" && method == Method::POST {
