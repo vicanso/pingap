@@ -214,7 +214,7 @@ impl HandleMiss for ObjectMissHandler {
                     meta: self.meta,
                     body: self.body.into(),
                 },
-                get_wegith(size),
+                get_wegiht(size),
             )
             .await?;
 
@@ -222,7 +222,7 @@ impl HandleMiss for ObjectMissHandler {
     }
 }
 
-fn get_wegith(size: usize) -> u16 {
+fn get_wegiht(size: usize) -> u16 {
     if size < 50 * 1024 {
         return 4;
     }
@@ -313,7 +313,7 @@ impl Storage for HttpCache {
         if let Some(mut obj) = self.cached.get(&hash).await? {
             obj.meta = meta.serialize()?;
             let size = obj.body.len();
-            let _ = self.cached.put(hash, obj, get_wegith(size)).await?;
+            let _ = self.cached.put(hash, obj, get_wegiht(size)).await?;
             Ok(true)
         } else {
             Err(Error::Invalid {

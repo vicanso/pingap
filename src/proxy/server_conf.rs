@@ -34,7 +34,7 @@ pub struct ServerConf {
     pub tcp_keepalive: Option<TcpKeepalive>,
     pub tcp_fastopen: Option<usize>,
     pub global_certificates: bool,
-    pub enbaled_h2: bool,
+    pub enabled_h2: bool,
     pub prometheus_metrics: Option<String>,
     pub otlp_exporter: Option<String>,
 }
@@ -48,7 +48,7 @@ impl fmt::Display for ServerConf {
         write!(f, "{} ", self.global_certificates)?;
         write!(f, "tcp_keepalive:{:?} ", self.tcp_keepalive)?;
         write!(f, "tcp_fastopen:{:?} ", self.tcp_fastopen)?;
-        write!(f, "http2:{}", self.enbaled_h2)
+        write!(f, "http2:{}", self.enabled_h2)
     }
 }
 
@@ -102,7 +102,7 @@ impl From<PingapConf> for Vec<ServerConf> {
                 global_certificates: item
                     .global_certificates
                     .unwrap_or_default(),
-                enbaled_h2: item.enabled_h2.unwrap_or_default(),
+                enabled_h2: item.enabled_h2.unwrap_or_default(),
                 tcp_keepalive,
                 tcp_fastopen: item.tcp_fastopen,
                 prometheus_metrics: item.prometheus_metrics,
@@ -139,7 +139,7 @@ mod tests {
                 count: 10,
             }),
             tcp_fastopen: Some(10),
-            enbaled_h2: true,
+            enabled_h2: true,
             ..Default::default()
         };
 

@@ -235,7 +235,7 @@ pub struct DynamicCertificate {
 
 pub struct TlsSettingParams {
     pub server_name: String,
-    pub enbaled_h2: bool,
+    pub enabled_h2: bool,
     pub cipher_list: Option<String>,
     pub ciphersuites: Option<String>,
     pub tls_min_version: Option<String>,
@@ -264,7 +264,7 @@ impl DynamicCertificate {
             category: "new_tls_settings".to_string(),
             message: e.to_string(),
         })?;
-        if params.enbaled_h2 {
+        if params.enabled_h2 {
             tls_settings.enable_h2();
         }
         if let Some(cipher_list) = &params.cipher_list {
@@ -459,7 +459,7 @@ aqcrKJfS+xaKWxXPiNlpBMG5
         let mut tls_setings = dynamic
             .new_tls_settings(&TlsSettingParams {
                 server_name: "pingap".to_string(),
-                enbaled_h2: true,
+                enabled_h2: true,
                 cipher_list: Some(
                     "ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES128-SHA".to_string(),
                 ),

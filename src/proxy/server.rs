@@ -137,7 +137,7 @@ pub struct Server {
     tls_ciphersuites: Option<String>,
     tls_min_version: Option<String>,
     tls_max_version: Option<String>,
-    enbaled_h2: bool,
+    enabled_h2: bool,
     lets_encrypt_enabled: bool,
     global_certificates: bool,
     tcp_socket_options: Option<TcpSocketOptions>,
@@ -200,7 +200,7 @@ impl Server {
             threads: conf.threads,
             lets_encrypt_enabled: false,
             global_certificates: conf.global_certificates,
-            enbaled_h2: conf.enbaled_h2,
+            enabled_h2: conf.enabled_h2,
             tcp_socket_options,
             prometheus_push_mode: prometheus_metrics.contains("://"),
             enabled_otel: conf.otlp_exporter.is_some(),
@@ -254,7 +254,7 @@ impl Server {
 
         let is_tls = dynamic_cert.is_some();
 
-        let enbaled_h2 = self.enbaled_h2;
+        let enabled_h2 = self.enabled_h2;
         let threads = if let Some(threads) = self.threads {
             // use cpus when set threads:0
             let value = if threads == 0 {
@@ -272,7 +272,7 @@ impl Server {
             addr,
             threads,
             is_tls,
-            h2 = enbaled_h2,
+            h2 = enabled_h2,
             "server is listening"
         );
         let cipher_list = self.tls_cipher_list.clone();
@@ -281,7 +281,7 @@ impl Server {
         let tls_max_version = self.tls_max_version.clone();
         let mut lb = http_proxy_service(conf, self);
         // use h2c if not tls and enable http2
-        if !is_tls && enbaled_h2 {
+        if !is_tls && enabled_h2 {
             if let Some(http_logic) = lb.app_logic_mut() {
                 let mut http_server_options = HttpServerOptions::default();
                 http_server_options.h2c = true;
@@ -296,7 +296,7 @@ impl Server {
                 let tls_settings = dynamic_cert
                     .new_tls_settings(&TlsSettingParams {
                         server_name: name.clone(),
-                        enbaled_h2,
+                        enabled_h2,
                         cipher_list: cipher_list.clone(),
                         ciphersuites: ciphersuites.clone(),
                         tls_min_version: tls_min_version.clone(),
