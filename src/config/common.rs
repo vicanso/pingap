@@ -1074,6 +1074,9 @@ mod tests {
         conf.path = None;
         conf.host = Some("github.com".to_string());
         assert_eq!(128, conf.get_weight());
+
+        conf.host = Some("".to_string());
+        assert_eq!(0, conf.get_weight());
     }
 
     #[test]

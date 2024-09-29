@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.8.7](https://github.com/vicanso/pingap/compare/v0.8.1..0.8.7) - 2024-09-29
+
+### ⛰️  Features
+
+- Support gzip for admin - ([308d226](https://github.com/vicanso/pingap/commit/308d2266487a8b4a8d6e13eb1c17240df0772ae8))
+- Web admin supports combined auth plugin config - ([8ec0960](https://github.com/vicanso/pingap/commit/8ec09600d280aace01390ce89a64ca95f7ea50cb))
+- Add combined auth plugin - ([69f931b](https://github.com/vicanso/pingap/commit/69f931b1bfec44f712712187ed4b476b7982d300))
+- Support accept encoding adjustment plugin - ([aebc237](https://github.com/vicanso/pingap/commit/aebc237d657910653642d86f0330ed8c9f7da235))
+- Support purge http cache - ([0e0ffa7](https://github.com/vicanso/pingap/commit/0e0ffa7fb3fb79e3cf505cb5fde67b8c51aced33))
+
+### 🐛 Bug Fixes
+
+- Fix get location of empty host - ([30b48ea](https://github.com/vicanso/pingap/commit/30b48ea88c0bb2a92c3045a0d3a6c1ac2d66290f))
+- Fix certificate summary list - ([c176296](https://github.com/vicanso/pingap/commit/c17629668d8d4de4703cb11a917b93a3d3642847))
+- Fix get weight of location - ([1b8d094](https://github.com/vicanso/pingap/commit/1b8d09413030a56501f431e91c1846f2a2b7dc98))
+- Fix select category of plugin - ([1ad25aa](https://github.com/vicanso/pingap/commit/1ad25aa15179cb324008346b598d5f97fde6e9de))
+- Adjust base path for static serve - ([64cdf29](https://github.com/vicanso/pingap/commit/64cdf29c5f91aa5437ce3cb8247f4ba6837b76f4))
+- Fix lint - ([0351267](https://github.com/vicanso/pingap/commit/0351267779ab81804ab11bb132a5e235d577221e))
+
+### 🚜 Refactor
+
+- Adjust remove popup over - ([cff3354](https://github.com/vicanso/pingap/commit/cff3354d9f90eea6e053bff05734232a07144814))
+- Adjust home page - ([53e006b](https://github.com/vicanso/pingap/commit/53e006bb31a111a41d5a5483b345e0a1cb24bf6a))
+- Adjust home page - ([e322dc4](https://github.com/vicanso/pingap/commit/e322dc4ed86ee9bdbafe04c580832126ace707e8))
+- Adjust config tabs - ([48989db](https://github.com/vicanso/pingap/commit/48989dba1971eca181acf12d97e1eecc9ec55007))
+- Adjust config editor - ([cb0ea53](https://github.com/vicanso/pingap/commit/cb0ea53e7e7085e78ca53e68c6df1b658a2e1626))
+- Adjust i18n - ([4c4b8b6](https://github.com/vicanso/pingap/commit/4c4b8b6c48a24e88712536397896a18fc451a1a1))
+
+### 📚 Documentation
+
+- Update CHANGELOG - ([b8498b8](https://github.com/vicanso/pingap/commit/b8498b8ca44e9c6b6fc20023f9251148122b26ce))
+
+### ⚙️ Miscellaneous Tasks
+
+- Version 0.8.6 - ([5bf9602](https://github.com/vicanso/pingap/commit/5bf9602b599305ff40aaacf0f7237ed4280a8394))
+- Fix spelling - ([0ffb5e1](https://github.com/vicanso/pingap/commit/0ffb5e17c284ed9ae039897764036754718a86bc))
+- Version 0.8.5 - ([80c0253](https://github.com/vicanso/pingap/commit/80c0253ba829d64b9cf9b428b80a7128e45e6218))
+- Update cargo msrv - ([0f73b82](https://github.com/vicanso/pingap/commit/0f73b824257ca47395fb0f9519be2c1bb6940428))
+- Version 0.8.4 - ([a870107](https://github.com/vicanso/pingap/commit/a87010770dd5ad10d5a4de8d6c59a23bf3c3de9d))
+- Version 0.8.3 - ([9c139b8](https://github.com/vicanso/pingap/commit/9c139b8d4ff5af5ab4cee3a7408f8a532687407b))
+- Version 0.8.2 - ([daf9a19](https://github.com/vicanso/pingap/commit/daf9a19516d63162a6f4bcd415f7a0cdef71f40b))
+- Update dependencies - ([ca80442](https://github.com/vicanso/pingap/commit/ca80442b8d55cfc87328c8d5626cff3fb3c7bc39))
+
 ## [0.8.6](https://github.com/vicanso/pingap/compare/v0.8.1..0.8.6) - 2024-09-29
 
 ### ⛰️  Features
