@@ -113,6 +113,7 @@ export default function Home() {
   }
 
   let certificateDescription = "";
+  const certificateSummary: Summary[] = [];
   if (config.certificates) {
     const certificateCount = Object.keys(config.certificates).length;
     certificateDescription =
@@ -120,7 +121,7 @@ export default function Home() {
         ? `${certificateCount} Certificates`
         : `${certificateCount} Certificate`;
     listify(config.certificates, (name, value) => {
-      pluginSummary.push({
+      certificateSummary.push({
         name,
         link: `${CERTIFICATES}?name=${name}`,
         value: value.domains || "",
@@ -157,7 +158,7 @@ export default function Home() {
       title: "Certificate",
       path: CERTIFICATES,
       description: certificateDescription,
-      summary: [],
+      summary: certificateSummary,
     },
   ];
   const cards = items.map((item) => {

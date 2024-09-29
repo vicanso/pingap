@@ -45,12 +45,14 @@ export function getLocationWeight(location: Location) {
   }
   let weight = 0;
   const path = location.path || "";
-  if (path.startsWith("=")) {
-    weight += 1024;
-  } else if (path.startsWith("~")) {
-    weight += 256;
-  } else {
-    weight += 512;
+  if (path.length > 1) {
+    if (path.startsWith("=")) {
+      weight += 1024;
+    } else if (path.startsWith("~")) {
+      weight += 256;
+    } else {
+      weight += 512;
+    }
   }
   weight += path.length;
   if (location.host) {
