@@ -25,7 +25,7 @@ function getUpstreamConfig(name: string, upstreams?: Record<string, Upstream>) {
 
 export default function Upstreams() {
   const upstreamI18n = useI18n("upstream");
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [config, initialized, update, remove] = useConfigState((state) => [
     state.data,
@@ -49,6 +49,12 @@ export default function Upstreams() {
 
   const handleSelectUpstream = (name: string) => {
     setCurrentUpstream(name);
+    if (name === newUpstream) {
+      searchParams.delete("name");
+    } else {
+      searchParams.set("name", name);
+    }
+    setSearchParams(searchParams);
   };
 
   const upstreamConfig = getUpstreamConfig(currentUpstream, config.upstreams);

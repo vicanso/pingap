@@ -22,7 +22,7 @@ function getLocationConfig(name: string, locations?: Record<string, Location>) {
 
 export default function Locations() {
   const locationI18n = useI18n("location");
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [config, initialized, update, remove] = useConfigState((state) => [
     state.data,
@@ -50,6 +50,12 @@ export default function Locations() {
 
   const handleSelectLocation = (name: string) => {
     setCurrentLocation(name);
+    if (name === newLocation) {
+      searchParams.delete("name");
+    } else {
+      searchParams.set("name", name);
+    }
+    setSearchParams(searchParams);
   };
 
   const plugins = newStringOptions(

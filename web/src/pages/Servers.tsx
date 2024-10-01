@@ -25,7 +25,7 @@ function getServerConfig(name: string, servers?: Record<string, Server>) {
 
 export default function Servers() {
   const serverI18n = useI18n("server");
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [config, initialized, update, remove] = useConfigState((state) => [
     state.data,
     state.initialized,
@@ -61,6 +61,12 @@ export default function Servers() {
 
   const handleSelectServer = (name: string) => {
     setCurrentServer(name);
+    if (name === newServer) {
+      searchParams.delete("name");
+    } else {
+      searchParams.set("name", name);
+    }
+    setSearchParams(searchParams);
   };
 
   const serverConfig = getServerConfig(currentServer, config.servers);

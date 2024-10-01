@@ -235,6 +235,7 @@ export default function Basic() {
         <MainSidebar className="h-screen flex-none w-[230px]" />
         <div className="grow lg:border-l overflow-auto p-4">
           <ExForm
+            category="basic"
             items={items}
             schema={schema}
             defaultShow={9}
