@@ -27,7 +27,7 @@ function getCertificateConfig(
 
 export default function Certificates() {
   const certificateI18n = useI18n("certificate");
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [config, initialized, update, remove] = useConfigState((state) => [
     state.data,
@@ -51,6 +51,12 @@ export default function Certificates() {
 
   const handleSelectCertificate = (name: string) => {
     setCurrentCertificate(name);
+    if (name === newCertificate) {
+      searchParams.delete("name");
+    } else {
+      searchParams.set("name", name);
+    }
+    setSearchParams(searchParams);
   };
 
   const certificateConfig = getCertificateConfig(

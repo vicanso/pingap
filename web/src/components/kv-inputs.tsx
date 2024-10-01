@@ -56,7 +56,7 @@ export const KvInputs = React.forwardRef<HTMLInputElement, KvInputsProps>(
       arr.forEach((item) => {
         const { key, value } = item;
         if (key || value) {
-          values.push(`${key}${separator}${value}`);
+          values.push(`${key}${separator}${value}`.trim());
         }
       });
       onValueChange(values);

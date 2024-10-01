@@ -15,6 +15,7 @@ import { LoadingPage } from "@/components/loading";
 import useBasicState from "@/states/basic";
 import { useI18n } from "@/i18n";
 import { listify } from "radash";
+import { Button } from "@/components/ui/button";
 
 interface Summary {
   name: string;
@@ -167,7 +168,9 @@ export default function Home() {
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 relative">
           <CardTitle className="text-sm font-medium ">{item.title}</CardTitle>
           <Link to={item.path} className="absolute top-3 right-3">
-            <FilePlus2 className="w-5 h-5" />
+            <Button variant="ghost" size="icon">
+              <FilePlus2 className="w-5 h-5" />
+            </Button>
           </Link>
         </CardHeader>
         <CardContent>
@@ -177,10 +180,12 @@ export default function Home() {
               {item.summary.map((item) => {
                 return (
                   <li key={item.name} className="break-all mt-2">
-                    <span className="text-muted-foreground mr-1">
-                      {item.value}
-                    </span>
-                    <Link to={item.link}>{item.name}</Link>
+                    <Link className="mr-1" to={item.link}>
+                      <Button variant="link" size={null}>
+                        [{item.name}]
+                      </Button>
+                    </Link>
+                    <span className="text-muted-foreground">{item.value}</span>
                   </li>
                 );
               })}

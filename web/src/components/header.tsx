@@ -63,7 +63,7 @@ export function MainHeader({
   const tips = (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="link">
+        <Button variant="ghost" size="icon">
           <Cog />
         </Button>
       </DropdownMenuTrigger>
@@ -142,11 +142,13 @@ export function MainHeader({
           src={Logo}
         />
         <Link to={HOME} className="font-bold">
-          Pingap
-          {!initialized && (
-            <LoaderCircle className="ml-2 h-4 w-4 inline animate-spin" />
-          )}
-          <span className="ml-2">{basicInfo.version}</span>
+          <Button variant="link" className="px-0">
+            Pingap
+            {!initialized && (
+              <LoaderCircle className="ml-2 h-4 w-4 inline animate-spin" />
+            )}
+            <span className="ml-2">{basicInfo.version}</span>
+          </Button>
         </Link>
         <div className="flex flex-1 items-center justify-between space-x-2 md:justify-end mr-5">
           {tips}
