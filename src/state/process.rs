@@ -14,14 +14,19 @@
 
 use crate::util;
 use crate::webhook;
+use bytesize::ByteSize;
+use memory_stats::memory_stats;
 use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
+use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::PathBuf;
 use std::process;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, AtomicU8, Ordering};
 use std::time::Duration;
+use sysinfo::MemoryRefreshKind;
+use sysinfo::{RefreshKind, System};
 use tracing::{error, info};
 
 static START_TIME: Lazy<Duration> = Lazy::new(util::now);
@@ -44,6 +49,47 @@ pub fn get_processing_accepted() -> (i32, u64) {
     let processing = PROCESSING.load(Ordering::Relaxed);
     let accepted = ACCEPTED.load(Ordering::Relaxed);
     (processing, accepted)
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct SystemInfo {
+    pub memory_mb: usize,
+    pub memory: String,
+    pub arch: String,
+    pub cpus: usize,
+    pub physical_cpus: usize,
+    pub total_memory: String,
+    pub used_memory: String,
+}
+
+pub fn get_system_info() -> SystemInfo {
+    let mut memory = "".to_string();
+    let mut memory_mb = 0;
+    if let Some(value) = memory_stats() {
+        memory_mb = value.physical_mem / (1024 * 1024);
+        memory = ByteSize(value.physical_mem as u64).to_string_as(true);
+    }
+    let arch = if cfg!(any(target_arch = "arm", target_arch = "aarch64")) {
+        "arm64"
+    } else {
+        "x86"
+    };
+    let cpus = num_cpus::get();
+    let physical_cpus = num_cpus::get_physical();
+    let kind = MemoryRefreshKind::new().with_ram();
+    let mut sys =
+        System::new_with_specifics(RefreshKind::new().with_memory(kind));
+    sys.refresh_memory();
+
+    SystemInfo {
+        memory,
+        memory_mb,
+        arch: arch.to_string(),
+        cpus,
+        physical_cpus,
+        total_memory: ByteSize(sys.total_memory()).to_string_as(true),
+        used_memory: ByteSize(sys.used_memory()).to_string_as(true),
+    }
 }
 
 pub fn set_admin_addr(addr: &str) {

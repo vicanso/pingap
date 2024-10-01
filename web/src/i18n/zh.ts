@@ -41,6 +41,8 @@ export default {
     group: "后台服务用户组",
     configHash: "应用配置哈希",
     rustc: "Rust编译器版本",
+    machineCpu: "机器CPU",
+    machineMemory: "机器内存",
   },
   basic: {
     name: "名称",

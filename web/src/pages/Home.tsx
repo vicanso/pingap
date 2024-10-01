@@ -201,17 +201,26 @@ export default function Home() {
       value: basicInfo.pid,
     },
     {
+      name: "startTime",
+      value: new Date(basicInfo.start_time * 1000).toLocaleString(),
+    },
+    {
       name: "threads",
       value: basicInfo.threads,
+    },
+    {
+      name: "machineCpu",
+      value: `${basicInfo.cpus} / ${basicInfo.physical_cpus}`,
     },
     {
       name: "memory",
       value: basicInfo.memory,
     },
     {
-      name: "startTime",
-      value: new Date(basicInfo.start_time * 1000).toLocaleString(),
+      name: "machineMemory",
+      value: `${basicInfo.used_memory} / ${basicInfo.total_memory}`,
     },
+
     {
       name: "processing",
       value: basicInfo.processing.toLocaleString(),
@@ -225,6 +234,10 @@ export default function Home() {
       value: basicInfo.arch,
     },
     {
+      name: "rustc",
+      value: basicInfo.rustc_version,
+    },
+    {
       name: "user",
       value: basicInfo.user,
     },
@@ -235,11 +248,6 @@ export default function Home() {
     {
       name: "configHash",
       value: basicInfo.config_hash,
-    },
-
-    {
-      name: "rustc",
-      value: basicInfo.rustc_version,
     },
   ];
 

@@ -16,13 +16,12 @@ use super::{get_hash_key, get_step_conf, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::{
-    get_hostname, get_processing_accepted, get_start_time, State,
+    get_hostname, get_processing_accepted, get_start_time, get_system_info,
+    State,
 };
 use crate::util;
 use async_trait::async_trait;
 use bytes::Bytes;
-use bytesize::ByteSize;
-use memory_stats::memory_stats;
 use pingora::proxy::Session;
 use serde::Serialize;
 use std::time::Duration;
@@ -35,12 +34,17 @@ struct ServerStats {
     location_processing: i32,
     location_accepted: u64,
     hostname: String,
-    physical_mem_mb: usize,
-    physical_mem: String,
     version: String,
     rustc_version: String,
     start_time: u64,
     uptime: String,
+    memory_mb: usize,
+    memory: String,
+    arch: String,
+    cpus: usize,
+    physical_cpus: usize,
+    total_memory: String,
+    used_memory: String,
 }
 pub struct Stats {
     path: String,
@@ -95,26 +99,28 @@ impl Plugin for Stats {
             return Ok(None);
         }
         if session.req_header().uri.path() == self.path {
-            let mut physical_mem = 0;
-            if let Some(value) = memory_stats() {
-                physical_mem = value.physical_mem;
-            }
             let uptime: humantime::Duration =
                 Duration::from_secs(util::now().as_secs() - get_start_time())
                     .into();
             let (processing, accepted) = get_processing_accepted();
+            let system_info = get_system_info();
             let resp = HttpResponse::try_from_json(&ServerStats {
                 accepted,
                 processing,
                 location_processing: ctx.location_processing,
                 location_accepted: ctx.location_accepted,
                 hostname: get_hostname().to_string(),
-                physical_mem: ByteSize(physical_mem as u64).to_string_as(true),
-                physical_mem_mb: physical_mem / (1024 * 1024),
                 version: util::get_pkg_version().to_string(),
                 rustc_version: util::get_rustc_version(),
                 start_time: get_start_time(),
                 uptime: uptime.to_string(),
+                memory_mb: system_info.memory_mb,
+                memory: system_info.memory,
+                arch: system_info.arch,
+                cpus: system_info.cpus,
+                physical_cpus: system_info.physical_cpus,
+                total_memory: system_info.total_memory,
+                used_memory: system_info.used_memory,
             })
             .unwrap_or_else(|e| {
                 HttpResponse::unknown_error(Bytes::from(e.to_string()))

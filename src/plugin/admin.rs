@@ -27,19 +27,17 @@ use crate::config::{
 };
 use crate::http_extra::{HttpResponse, HTTP_HEADER_WWW_AUTHENTICATE};
 use crate::limit::TtlLruLimit;
-use crate::state::{get_processing_accepted, get_start_time};
+use crate::state::{get_processing_accepted, get_start_time, get_system_info};
 use crate::state::{restart_now, State};
 use crate::util::{self, base64_decode};
 use async_trait::async_trait;
 use bytes::Bytes;
 use bytes::{BufMut, BytesMut};
-use bytesize::ByteSize;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use hex::encode;
 use http::Method;
 use http::{header, HeaderValue, StatusCode};
-use memory_stats::memory_stats;
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
 use rust_embed::EmbeddedFile;
@@ -126,8 +124,6 @@ struct BasicInfo {
     start_time: u64,
     version: String,
     rustc_version: String,
-    memory: String,
-    arch: String,
     config_hash: String,
     pid: String,
     user: String,
@@ -135,6 +131,13 @@ struct BasicInfo {
     threads: usize,
     processing: i32,
     accepted: u64,
+    memory_mb: usize,
+    memory: String,
+    arch: String,
+    cpus: usize,
+    physical_cpus: usize,
+    total_memory: String,
+    used_memory: String,
 }
 
 impl TryFrom<&PluginConf> for AdminServe {
@@ -430,16 +433,7 @@ impl Plugin for AdminServe {
                 ))
             })
         } else if path == "/basic" {
-            let mut memory = "".to_string();
-            if let Some(value) = memory_stats() {
-                memory = ByteSize(value.physical_mem as u64).to_string_as(true);
-            }
-            let arch =
-                if cfg!(any(target_arch = "arm", target_arch = "aarch64")) {
-                    "arm64"
-                } else {
-                    "x86"
-                };
+            let system_info = get_system_info();
             let current_config = get_current_config();
             let data = tokio::fs::read(current_config.basic.get_pid_file())
                 .await
@@ -465,15 +459,20 @@ impl Plugin for AdminServe {
                 start_time: get_start_time(),
                 version: util::get_pkg_version().to_string(),
                 rustc_version: util::get_rustc_version(),
-                arch: arch.to_string(),
                 config_hash: config::get_config_hash(),
                 user: current_config.basic.user.clone().unwrap_or_default(),
                 group: current_config.basic.group.clone().unwrap_or_default(),
                 pid,
-                memory,
                 threads,
                 accepted,
                 processing,
+                memory_mb: system_info.memory_mb,
+                memory: system_info.memory,
+                arch: system_info.arch,
+                cpus: system_info.cpus,
+                physical_cpus: system_info.physical_cpus,
+                total_memory: system_info.total_memory,
+                used_memory: system_info.used_memory,
             })
             .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
         } else if path == "/restart" && method == Method::POST {

@@ -41,6 +41,8 @@ export default {
     group: "Daemon Group",
     configHash: "Config Hash",
     rustc: "Rustc",
+    machineCpu: "Machine CPU",
+    machineMemory: "Machine Memory",
   },
   basic: {
     name: "Name",

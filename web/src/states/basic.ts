@@ -14,6 +14,10 @@ interface Basic {
   threads: number;
   accepted: number;
   processing: number;
+  cpus: number;
+  physical_cpus: number;
+  used_memory: string;
+  total_memory: string;
 }
 
 interface ConfigState {
@@ -36,6 +40,10 @@ const useBasicState = create<ConfigState>()((set) => ({
     threads: 0,
     accepted: 0,
     processing: 0,
+    cpus: 0,
+    physical_cpus: 0,
+    used_memory: "",
+    total_memory: "",
   },
   initialized: false,
   fetch: async () => {
