@@ -74,7 +74,7 @@ opentelemetry_sdk = { version = "0.24.1", features = [
     "rt-tokio",
 ], default-features = false }
 path-absolutize = "3.1.1"
-pingora = { git = "https://github.com/cloudflare/pingora", rev = "ab1b717bf587723c1c537d6549a8f8096f0900d4", default-features = false, features = [
+pingora = { git = "https://github.com/cloudflare/pingora", rev = "9921fe422274ced5ef14eb582d63529859fed441", default-features = false, features = [
     # pingora = { version = "0.3.0", default-features = false, features = [
     "lb",
     "openssl",
@@ -130,8 +130,7 @@ x509-parser = "0.16.0"
 [features]
 pyro = ["pyroscope", "pyroscope_pprofrs"]
 perf = ["pyro", "dhat"]
-# "pingora/sentry"
-tracking = ["sentry"]
+tracking = ["sentry", "pingora/sentry"]
 
 
 [dev-dependencies]

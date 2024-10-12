@@ -49,6 +49,10 @@ release:
 	cargo build --release
 	ls -lh target/release
 
+release-sentry:
+	cargo build --release --features=tracking
+	ls -lh target/release
+
 perf:
 	cargo build --profile=release-perf --features=perf
 	ls -lh target/release-perf
