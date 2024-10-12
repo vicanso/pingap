@@ -10,6 +10,9 @@ build-web:
 	&& npm install && npm run  build \
 	&& cp -rf dist ../
 
+update-shadcn:
+	cd web && for file in src/components/ui/*.tsx; do npx shadcn@latest add -y -o $(basename "$file" .tsx); done
+
 bench:
 	cargo bench
 
