@@ -558,7 +558,7 @@ mod tests {
             &mut req_header,
         );
         assert_eq!(
-            r###"RequestHeader { base: Parts { method: GET, uri: , version: HTTP/1.1, headers: {"cache-control": "no-store", "x-user": "pingap"} }, header_name_map: None, raw_path_fallback: [] }"###,
+            r###"RequestHeader { base: Parts { method: GET, uri: , version: HTTP/1.1, headers: {"cache-control": "no-store", "x-user": "pingap"} }, header_name_map: None, raw_path_fallback: [], send_end_stream: true }"###,
             format!("{req_header:?}")
         );
     }
