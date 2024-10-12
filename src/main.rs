@@ -27,7 +27,6 @@ use state::{get_admin_addr, get_start_time, set_admin_addr};
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::Path;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info};
@@ -44,6 +43,8 @@ mod plugin;
 mod proxy;
 #[cfg(feature = "pyro")]
 mod pyro;
+#[cfg(feature = "tracking")]
+mod sentry;
 mod service;
 mod state;
 mod util;
@@ -380,13 +381,12 @@ fn run() -> Result<(), Box<dyn Error>> {
     };
     let mut my_server = server::Server::new(Some(opt))?;
     my_server.configuration = Arc::new(new_server_conf(&args, &conf));
+    #[cfg(feature = "tracking")]
     if let Some(dsn) = &basic_conf.sentry {
-        match sentry::types::Dsn::from_str(dsn) {
-            Ok(dsn) => {
-                my_server.sentry = Some(sentry::ClientOptions {
-                    dsn: Some(dsn),
-                    ..Default::default()
-                });
+        match sentry::new_sentry_options(dsn) {
+            Ok(_opts) => {
+                // TODO enable pingora sentry
+                // my_server.sentry = Some(opts);
             },
             Err(e) => {
                 error!(error = e.to_string(), "sentry init fail");

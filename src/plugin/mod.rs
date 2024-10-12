@@ -50,7 +50,7 @@ mod response_headers;
 mod stats;
 
 pub static ADMIN_SERVER_PLUGIN: Lazy<String> =
-    Lazy::new(|| uuid::Uuid::new_v4().to_string());
+    Lazy::new(|| uuid::Uuid::now_v7().to_string());
 
 pub fn parse_admin_plugin(addr: &str) -> (ServerConf, String, PluginConf) {
     let arr: Vec<&str> = addr.split('@').collect();

@@ -55,6 +55,8 @@ jobs:
         run: |
           make release
           ldd target/release/pingap
+          make release-sentry
+          ldd target/release/pingap
   docker:
     runs-on: ubuntu-latest
     timeout-minutes: 3600
