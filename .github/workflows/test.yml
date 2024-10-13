@@ -45,7 +45,7 @@ jobs:
         run: make test
       - name: Run cargo msrv
         run: |
-          cargo install cargo-msrv --version 0.16.0-beta.25
+          cargo install cargo-msrv --version 0.16.2
           cargo msrv list
       - name: Run cargo cov
         run: |
@@ -53,9 +53,7 @@ jobs:
           cargo llvm-cov
       - name: Run cargo release
         run: |
-          make release
-          ldd target/release/pingap
-          make release-sentry
+          make release-all
           ldd target/release/pingap
   docker:
     runs-on: ubuntu-latest
@@ -65,8 +63,6 @@ jobs:
         run: |
           swapon --show=NAME | tail -n 1
           df -lh
-          du -sh /usr/share/dotnet
-          sudo rm -rf /usr/share/dotnet
           du -sh /usr/local/lib/android
           sudo rm -rf /usr/local/lib/android
           export SWAP_FILE=$(swapon --show=NAME | tail -n 1)
