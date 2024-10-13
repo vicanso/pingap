@@ -52,8 +52,10 @@ release:
 	cargo build --release
 	ls -lh target/release
 
-release-sentry:
+release-all:
 	cargo build --release --features=tracking
+	mv target/release/pingap target/release/pingap-sentry
+	cargo build --release
 	ls -lh target/release
 
 perf:

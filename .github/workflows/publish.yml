@@ -10,7 +10,7 @@ env:
 
 jobs:
   macos:
-    runs-on: macos-latest
+    runs-on: macos-latest-xlarge
     steps:
       - uses: actions/checkout@v4
       - name: setup node
