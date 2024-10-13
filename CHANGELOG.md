@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.8.10](https://github.com/vicanso/pingap/compare/v0.8.8..0.8.10) - 2024-10-13
+
+### ⛰️  Features
+
+- Support more infomations for stats - ([ec74050](https://github.com/vicanso/pingap/commit/ec74050f5ee59016a3ea2c9fab99598aa5751ce6))
+
+### 🧪 Testing
+
+- Fix test - ([acda41e](https://github.com/vicanso/pingap/commit/acda41e40772859f9acc00eb85f1d7b5578d6ac0))
+
+### ⚙️ Miscellaneous Tasks
+
+- Use ubuntu 20.04 for workflow - ([af70c91](https://github.com/vicanso/pingap/commit/af70c913bbc974a09e8a2a5215b8045b8ffe5fba))
+- Version 0.8.9 - ([9241030](https://github.com/vicanso/pingap/commit/9241030ea2ffa29987549a6b9e89fec93d2c9a15))
+- Version 0.8.8 - ([bcb5ef4](https://github.com/vicanso/pingap/commit/bcb5ef46f1f1be374b6e5e932451bc0ad11684fe))
+- Update components - ([746294e](https://github.com/vicanso/pingap/commit/746294e32be82b149071e51bc4465f4bb3de9daa))
+
 ## [0.8.9](https://github.com/vicanso/pingap/compare/v0.8.8..0.8.9) - 2024-10-13
 
 ### ⛰️  Features

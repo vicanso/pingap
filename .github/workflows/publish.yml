@@ -52,7 +52,7 @@ jobs:
           ./.github/workflows/upload_asset.sh ./pingap-sentry-darwin-x86.tar.gz $GITHUB_TOKEN
 
   linux-musl-x86:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v4
       - name: setup node
@@ -82,7 +82,7 @@ jobs:
           ./.github/workflows/upload_asset.sh ./pingap-sentry-linux-musl-x86.tar.gz $GITHUB_TOKEN
 
   linux-musl-aarch64:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v4
       - name: setup node
@@ -112,7 +112,7 @@ jobs:
           ./.github/workflows/upload_asset.sh ./pingap-sentry-linux-musl-aarch64.tar.gz $GITHUB_TOKEN
 
   linux-gnu-x86:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     timeout-minutes: 3600
     steps:
       - uses: actions/checkout@v4
@@ -142,7 +142,7 @@ jobs:
           ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-x86.tar.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./pingap-sentry-linux-gnu-x86.tar.gz $GITHUB_TOKEN
   linux-gnu-aarch64:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     timeout-minutes: 3600
     steps:
       - name: Change Swap Space
@@ -197,7 +197,7 @@ jobs:
 
           ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-aarch64.tar.gz $GITHUB_TOKEN
   docker:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
     timeout-minutes: 3600
     steps:
       - name: Change Swap Space
