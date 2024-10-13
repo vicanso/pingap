@@ -7,6 +7,7 @@ interface Basic {
   rustc_version: string;
   memory: string;
   arch: string;
+  kernel: string;
   config_hash: string;
   pid: string;
   user: string;

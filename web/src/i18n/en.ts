@@ -37,6 +37,7 @@ export default {
     memory: "Memory",
     startTime: "Start Time",
     arch: "Arch",
+    kernel: "Kernel",
     user: "Daemon User",
     group: "Daemon Group",
     configHash: "Config Hash",

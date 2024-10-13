@@ -60,6 +60,7 @@ pub struct SystemInfo {
     pub physical_cpus: usize,
     pub total_memory: String,
     pub used_memory: String,
+    pub kernel: String,
 }
 
 pub fn get_system_info() -> SystemInfo {
@@ -69,11 +70,6 @@ pub fn get_system_info() -> SystemInfo {
         memory_mb = value.physical_mem / (1024 * 1024);
         memory = ByteSize(value.physical_mem as u64).to_string_as(true);
     }
-    let arch = if cfg!(any(target_arch = "arm", target_arch = "aarch64")) {
-        "arm64"
-    } else {
-        "x86"
-    };
     let cpus = num_cpus::get();
     let physical_cpus = num_cpus::get_physical();
     let kind = MemoryRefreshKind::new().with_ram();
@@ -84,9 +80,10 @@ pub fn get_system_info() -> SystemInfo {
     SystemInfo {
         memory,
         memory_mb,
-        arch: arch.to_string(),
+        arch: System::cpu_arch().unwrap_or_default(),
         cpus,
         physical_cpus,
+        kernel: System::kernel_version().unwrap_or_default(),
         total_memory: ByteSize(sys.total_memory()).to_string_as(true),
         used_memory: ByteSize(sys.used_memory()).to_string_as(true),
     }

@@ -37,6 +37,7 @@ export default {
     memory: "内存",
     startTime: "启用时间",
     arch: "架构",
+    kernel: "内核版本",
     user: "后台服务用户",
     group: "后台服务用户组",
     configHash: "应用配置哈希",

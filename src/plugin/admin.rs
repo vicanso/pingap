@@ -124,6 +124,7 @@ struct BasicInfo {
     start_time: u64,
     version: String,
     rustc_version: String,
+    kernel: String,
     config_hash: String,
     pid: String,
     user: String,
@@ -138,6 +139,7 @@ struct BasicInfo {
     physical_cpus: usize,
     total_memory: String,
     used_memory: String,
+    enabled_tracking: bool,
 }
 
 impl TryFrom<&PluginConf> for AdminServe {
@@ -438,7 +440,9 @@ impl Plugin for AdminServe {
             let data = tokio::fs::read(current_config.basic.get_pid_file())
                 .await
                 .unwrap_or_default();
-            let pid = std::string::String::from_utf8_lossy(&data).to_string();
+            let pid = std::string::String::from_utf8_lossy(&data)
+                .trim()
+                .to_string();
             let mut threads = 0;
             let cpu_count = num_cpus::get();
             let mut default_threads = current_config.basic.threads.unwrap_or(1);
@@ -454,6 +458,13 @@ impl Plugin for AdminServe {
                 }
             }
             let (processing, accepted) = get_processing_accepted();
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "tracking")] {
+                    let enabled_tracking = true;
+                } else {
+                    let enabled_tracking = false;
+                }
+            }
 
             HttpResponse::try_from_json(&BasicInfo {
                 start_time: get_start_time(),
@@ -466,6 +477,7 @@ impl Plugin for AdminServe {
                 threads,
                 accepted,
                 processing,
+                kernel: system_info.kernel,
                 memory_mb: system_info.memory_mb,
                 memory: system_info.memory,
                 arch: system_info.arch,
@@ -473,6 +485,7 @@ impl Plugin for AdminServe {
                 physical_cpus: system_info.physical_cpus,
                 total_memory: system_info.total_memory,
                 used_memory: system_info.used_memory,
+                enabled_tracking,
             })
             .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
         } else if path == "/restart" && method == Method::POST {

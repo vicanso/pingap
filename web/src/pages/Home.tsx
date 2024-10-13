@@ -234,8 +234,8 @@ export default function Home() {
       value: basicInfo.arch,
     },
     {
-      name: "rustc",
-      value: basicInfo.rustc_version,
+      name: "kernel",
+      value: basicInfo.kernel,
     },
     {
       name: "user",
@@ -244,6 +244,10 @@ export default function Home() {
     {
       name: "group",
       value: basicInfo.group,
+    },
+    {
+      name: "rustc",
+      value: basicInfo.rustc_version,
     },
     {
       name: "configHash",
