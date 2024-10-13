@@ -382,15 +382,17 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut my_server = server::Server::new(Some(opt))?;
     my_server.configuration = Arc::new(new_server_conf(&args, &conf));
     #[cfg(feature = "tracking")]
-    if let Some(dsn) = &basic_conf.sentry {
-        match sentry::new_sentry_options(dsn) {
-            Ok(_opts) => {
-                // TODO enable pingora sentry
-                // my_server.sentry = Some(opts);
-            },
-            Err(e) => {
-                error!(error = e.to_string(), "sentry init fail");
-            },
+    {
+        let sentry_dsn = basic_conf.sentry.clone().unwrap_or_default();
+        if !sentry_dsn.is_empty() {
+            match sentry::new_sentry_options(&sentry_dsn) {
+                Ok(opts) => {
+                    my_server.sentry = Some(opts);
+                },
+                Err(e) => {
+                    error!(error = e.to_string(), "sentry init fail");
+                },
+            }
         }
     }
     my_server.bootstrap();

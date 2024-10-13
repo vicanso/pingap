@@ -131,6 +131,7 @@ x509-parser = "0.16.0"
 pyro = ["pyroscope", "pyroscope_pprofrs"]
 perf = ["pyro", "dhat"]
 tracking = ["sentry", "pingora/sentry"]
+default = []
 
 
 [dev-dependencies]
