@@ -10,7 +10,7 @@ env:
 
 jobs:
   macos:
-    runs-on: macos-latest-xlarge
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: setup node
@@ -33,10 +33,20 @@ jobs:
           tar -czvf pingap-darwin-aarch64.tar.gz pingap-darwin-aarch64
           ./.github/workflows/upload_asset.sh ./pingap-darwin-aarch64.tar.gz $GITHUB_TOKEN
 
+          cargo build --release --target=aarch64-apple-darwin --features=tracking
+          mv target/aarch64-apple-darwin/release/pingap ./pingap-sentry-darwin-aarch64
+          tar -czvf pingap-sentry-darwin-aarch64.tar.gz pingap-sentry-darwin-aarch64
+          ./.github/workflows/upload_asset.sh ./pingap-sentry-darwin-aarch64.tar.gz $GITHUB_TOKEN
+
           cargo build --release --target=x86_64-apple-darwin
           mv target/x86_64-apple-darwin/release/pingap ./pingap-darwin-x86
           tar -czvf pingap-darwin-x86.tar.gz pingap-darwin-x86
           ./.github/workflows/upload_asset.sh ./pingap-darwin-x86.tar.gz $GITHUB_TOKEN
+
+          cargo build --release --target=x86_64-apple-darwin --features=tracking
+          mv target/x86_64-apple-darwin/release/pingap ./pingap-sentry-darwin-x86
+          tar -czvf pingap-sentry-darwin-x86.tar.gz pingap-sentry-darwin-x86
+          ./.github/workflows/upload_asset.sh ./pingap-sentry-darwin-x86.tar.gz $GITHUB_TOKEN
 
   linux-musl-x86:
     runs-on: ubuntu-latest
@@ -54,12 +64,16 @@ jobs:
           run: |
             apt-get update
             apt-get install protobuf-compiler -y
-            make release
+            make release-all
             mv target/x86_64-unknown-linux-musl/release/pingap ./pingap-linux-musl-x86
+            mv target/x86_64-unknown-linux-musl/release/pingap-sentry ./pingap-sentry-linux-musl-x86
       - name: Upload Assets
         run: |
           tar -czvf pingap-linux-musl-x86.tar.gz pingap-linux-musl-x86
           ./.github/workflows/upload_asset.sh ./pingap-linux-musl-x86.tar.gz $GITHUB_TOKEN
+
+          tar -czvf pingap-sentry-linux-musl-x86.tar.gz pingap-sentry-linux-musl-x86
+          ./.github/workflows/upload_asset.sh ./pingap-sentry-linux-musl-x86.tar.gz $GITHUB_TOKEN
 
   linux-musl-aarch64:
     runs-on: ubuntu-latest
@@ -77,12 +91,16 @@ jobs:
           run: |
             apt-get update
             apt-get install protobuf-compiler -y
-            make release
+            make release-all
             mv target/aarch64-unknown-linux-musl/release/pingap ./pingap-linux-musl-aarch64
+            mv target/aarch64-unknown-linux-musl/release/pingap-sentry ./pingap-sentry-linux-musl-aarch64
       - name: Upload Assets
         run: |
           tar -czvf pingap-linux-musl-aarch64.tar.gz pingap-linux-musl-aarch64
           ./.github/workflows/upload_asset.sh ./pingap-linux-musl-aarch64.tar.gz $GITHUB_TOKEN
+
+          tar -czvf pingap-sentry-linux-musl-aarch64.tar.gz pingap-sentry-linux-musl-aarch64
+          ./.github/workflows/upload_asset.sh ./pingap-sentry-linux-musl-aarch64.tar.gz $GITHUB_TOKEN
 
   linux-gnu-x86:
     runs-on: ubuntu-latest
@@ -103,13 +121,13 @@ jobs:
         run: |
           make release-all
           ldd target/release/pingap
+          mv target/release/pingap ./pingap-linux-gnu-x86
+          mv target/release/pingap-sentry ./pingap-sentry-linux-gnu-x86
       - name: Upload Assets
         run: |
-          mv target/release/pingap ./pingap-linux-gnu-x86
           tar -czvf pingap-linux-gnu-x86.tar.gz ./pingap-linux-gnu-x86
           ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-x86.tar.gz $GITHUB_TOKEN
 
-          mv target/release/pingap-sentry ./pingap-sentry-linux-gnu-x86
           tar -czvf pingap-sentry-linux-gnu-x86.tar.gz ./pingap-sentry-linux-gnu-x86
           ./.github/workflows/upload_asset.sh ./pingap-sentry-linux-gnu-x86.tar.gz $GITHUB_TOKEN
   linux-gnu-aarch64:
