@@ -1,6 +1,6 @@
 [package]
 name = "pingap"
-version = "0.8.7"
+version = "0.8.8"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 edition = "2021"
 categories = ["network-programming", "web-programming::http-server"]
@@ -74,7 +74,7 @@ opentelemetry_sdk = { version = "0.24.1", features = [
     "rt-tokio",
 ], default-features = false }
 path-absolutize = "3.1.1"
-pingora = { git = "https://github.com/cloudflare/pingora", rev = "9921fe422274ced5ef14eb582d63529859fed441", default-features = false, features = [
+pingora = { git = "https://github.com/cloudflare/pingora", rev = "51516839f7155dd74d5cf93006ec1df9ea126b11", default-features = false, features = [
     # pingora = { version = "0.3.0", default-features = false, features = [
     "lb",
     "openssl",

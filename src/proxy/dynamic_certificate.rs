@@ -21,7 +21,7 @@ use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
-use pingora::listeners::TlsSettings;
+use pingora::listeners::tls::TlsSettings;
 use pingora::tls::ext;
 use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::ssl::{NameType, SslRef};
