@@ -62,3 +62,10 @@ export function random(length = 8) {
 
   return str;
 }
+
+export function formatLabel(label: string) {
+  if (label === "*") {
+    return "NEW";
+  }
+  return label;
+}

@@ -14,6 +14,7 @@ import {
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 import { ScrollRestoration } from "react-router-dom";
+import { formatLabel } from "@/helpers/util";
 
 function getCertificateConfig(
   name: string,
@@ -150,6 +151,11 @@ export default function Certificates() {
       <div className="flex">
         <MainSidebar className="h-screen flex-none w-[230px]" />
         <div className="grow lg:border-l overflow-auto p-4">
+          <h2 className="h-8 mb-1">
+            <span className="border-b-2 border-solid p-1 border-[rgb(var(--foreground-rgb))]">
+              {formatLabel(currentCertificate).toUpperCase()}
+            </span>
+          </h2>
           <ExForm
             category="certificate"
             key={currentCertificate}

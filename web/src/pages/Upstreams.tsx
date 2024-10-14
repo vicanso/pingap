@@ -11,7 +11,7 @@ import {
   newStringOptions,
   newBooleanOptions,
 } from "@/constants";
-import { newZodBytes, newZodDuration } from "@/helpers/util";
+import { formatLabel, newZodBytes, newZodDuration } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 import { ScrollRestoration } from "react-router-dom";
@@ -296,6 +296,11 @@ export default function Upstreams() {
       <div className="flex">
         <MainSidebar className="h-screen flex-none w-[230px]" />
         <div className="grow lg:border-l overflow-auto p-4">
+          <h2 className="h-8 mb-1">
+            <span className="border-b-2 border-solid p-1 border-[rgb(var(--foreground-rgb))]">
+              {formatLabel(currentUpstream).toUpperCase()}
+            </span>
+          </h2>
           <ExForm
             category="upstream"
             key={currentUpstream}
