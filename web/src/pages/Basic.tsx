@@ -11,9 +11,11 @@ import {
   newBooleanOptions,
 } from "@/constants";
 import { newZodBytes, newZodDuration, newZodNumber } from "@/helpers/util";
+import useBasicState from "@/states/basic";
 
 export default function Basic() {
   const basicI18n = useI18n("basic");
+  const [basicInfo] = useBasicState((state) => [state.data]);
   const [config, initialized, update] = useConfigState((state) => [
     state.data,
     state.initialized,
@@ -191,14 +193,19 @@ export default function Basic() {
       span: 6,
       category: ExFormItemCategory.TEXT,
     },
-    {
+  ];
+  if (basicInfo.enabled_tracking) {
+    items.push({
       name: "sentry",
       label: basicI18n("sentry"),
       placeholder: basicI18n("sentryPlaceholder"),
       defaultValue: basic.sentry,
       span: 6,
       category: ExFormItemCategory.TEXT,
-    },
+    });
+  }
+
+  items.push(
     {
       name: "pyroscope",
       label: basicI18n("pyroscope"),
@@ -216,7 +223,7 @@ export default function Basic() {
       rows: 8,
       category: ExFormItemCategory.TEXTAREA,
     },
-  ];
+  );
 
   const schema = z.object({
     name: z.string().optional(),

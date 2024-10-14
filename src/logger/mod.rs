@@ -16,7 +16,6 @@ use crate::util;
 use std::error::Error;
 use std::fs;
 use std::io;
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::sync::Mutex;
 use tracing::{info, Level};
@@ -62,23 +61,26 @@ pub fn logger_try_init(params: LoggerParams) -> Result<(), Box<dyn Error>> {
     } else {
         let file = util::resolve_path(&params.file);
         let filepath = Path::new(&file);
-        if let Some(dir) = filepath.parent() {
-            fs::create_dir_all(dir)?;
-        }
-        let file = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            // open read() in case there are no readers
-            // available otherwise we will panic with
-            .read(true)
-            .custom_flags(libc::O_NONBLOCK)
-            .open(filepath)?;
+        let dir = filepath.parent().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                "parent of file log is invalid",
+            )
+        })?;
+        fs::create_dir_all(dir)?;
+        let filename = filepath.file_name().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::Other, "file log is invalid")
+        })?;
+
+        let file_appender = tracing_appender::rolling::daily(dir, filename);
         if params.capacity < 4096 {
-            BoxMakeWriter::new(file)
+            BoxMakeWriter::new(file_appender)
         } else {
             // buffer writer for better performance
-            let w =
-                io::BufWriter::with_capacity(params.capacity as usize, file);
+            let w = io::BufWriter::with_capacity(
+                params.capacity as usize,
+                file_appender,
+            );
             BoxMakeWriter::new(Mutex::new(w))
         }
     };

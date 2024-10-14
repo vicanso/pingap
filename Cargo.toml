@@ -113,6 +113,7 @@ time = { version = "0.3.36", features = ["local-offset"] }
 tokio = { version = "1.40.0", default-features = false, features = ["fs"] }
 toml = "0.8.19"
 tracing = "0.1.40"
+tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.18", features = [
     "local-time",
     "json",

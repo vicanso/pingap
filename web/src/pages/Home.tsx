@@ -246,6 +246,10 @@ export default function Home() {
       value: basicInfo.group,
     },
     {
+      name: "enabledTracking",
+      value: basicInfo.enabled_tracking ? homeI18n("yes") : homeI18n("no"),
+    },
+    {
       name: "rustc",
       value: basicInfo.rustc_version,
     },

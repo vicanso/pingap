@@ -41,9 +41,12 @@ export default {
     user: "Daemon User",
     group: "Daemon Group",
     configHash: "Config Hash",
+    enabledTracking: "Enable Tracking",
     rustc: "Rustc",
     machineCpu: "Machine CPU",
     machineMemory: "Machine Memory",
+    yes: "Yes",
+    no: "No",
   },
   basic: {
     name: "Name",

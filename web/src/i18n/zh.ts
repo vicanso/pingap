@@ -41,9 +41,12 @@ export default {
     user: "后台服务用户",
     group: "后台服务用户组",
     configHash: "应用配置哈希",
+    enabledTracking: "启用Tracking",
     rustc: "Rust编译器版本",
     machineCpu: "机器CPU",
     machineMemory: "机器内存",
+    yes: "是",
+    no: "否",
   },
   basic: {
     name: "名称",
