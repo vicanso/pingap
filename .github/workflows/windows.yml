@@ -19,6 +19,9 @@ jobs:
         run: make build-web
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-gnu
       - name: Run cargo release
         run: |
           cargo build --release --features=tracking
