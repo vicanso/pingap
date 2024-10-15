@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::util;
+use crate::util::convert_query_map;
 use std::error::Error;
 use std::fs;
 use std::io;
@@ -59,20 +60,46 @@ pub fn logger_try_init(params: LoggerParams) -> Result<(), Box<dyn Error>> {
     let writer = if params.file.is_empty() {
         BoxMakeWriter::new(std::io::stderr)
     } else {
-        let file = util::resolve_path(&params.file);
-        let filepath = Path::new(&file);
-        let dir = filepath.parent().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                "parent of file log is invalid",
-            )
-        })?;
-        fs::create_dir_all(dir)?;
-        let filename = filepath.file_name().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, "file log is invalid")
-        })?;
+        let mut file = util::resolve_path(&params.file);
+        let mut rolling_type = "".to_string();
+        if let Some((_, query)) = params.file.split_once('?') {
+            file = file.replace(&format!("?{query}"), "");
+            let m = convert_query_map(query);
+            if let Some(value) = m.get("rolling") {
+                rolling_type = value.to_string();
+            }
+        }
 
-        let file_appender = tracing_appender::rolling::daily(dir, filename);
+        let filepath = Path::new(&file);
+        let dir = if filepath.is_dir() {
+            filepath
+        } else {
+            filepath.parent().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    "parent of file log is invalid",
+                )
+            })?
+        };
+        fs::create_dir_all(dir)?;
+        let filename = if filepath.is_dir() {
+            "".to_string()
+        } else {
+            filepath
+                .file_name()
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::Other, "file log is invalid")
+                })?
+                .to_string_lossy()
+                .to_string()
+        };
+        let file_appender = match rolling_type.as_str() {
+            "minutely" => tracing_appender::rolling::minutely(dir, filename),
+            "hourly" => tracing_appender::rolling::hourly(dir, filename),
+            "never" => tracing_appender::rolling::never(dir, filename),
+            _ => tracing_appender::rolling::daily(dir, filename),
+        };
+
         if params.capacity < 4096 {
             BoxMakeWriter::new(file_appender)
         } else {

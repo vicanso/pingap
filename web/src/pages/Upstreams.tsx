@@ -298,7 +298,7 @@ export default function Upstreams() {
         <div className="grow lg:border-l overflow-auto p-4">
           <h2 className="h-8 mb-1">
             <span className="border-b-2 border-solid p-1 border-[rgb(var(--foreground-rgb))]">
-              {formatLabel(currentUpstream).toUpperCase()}
+              {formatLabel(currentUpstream)}
             </span>
           </h2>
           <ExForm

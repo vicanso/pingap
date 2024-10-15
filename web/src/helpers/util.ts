@@ -65,7 +65,7 @@ export function random(length = 8) {
 
 export function formatLabel(label: string) {
   if (label === "*") {
-    return "NEW";
+    return "New";
   }
   return label;
 }

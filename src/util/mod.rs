@@ -20,6 +20,7 @@ use path_absolutize::*;
 use pingora::cache::CacheKey;
 use pingora::tls::ssl::SslVersion;
 use pingora::{http::RequestHeader, proxy::Session};
+use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{path::Path, str::FromStr};
 use substring::Substring;
@@ -128,6 +129,17 @@ pub fn get_cookie_value<'a>(
         }
     }
     None
+}
+
+/// Converts query string to map.
+pub fn convert_query_map(query: &str) -> HashMap<String, String> {
+    let mut m = HashMap::new();
+    for item in query.split('&') {
+        if let Some((key, value)) = item.split_once('=') {
+            m.insert(key.to_string(), value.to_string());
+        }
+    }
+    m
 }
 
 /// Gets query value from req header.
