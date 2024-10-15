@@ -49,6 +49,9 @@ jobs:
         if: matrix.target == 'x86_64-pc-windows-gnu' && matrix.channel == 'nightly'
         shell: bash
 
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+
       - name: Set Perl environment variables
         if: runner.os == 'Windows'
         run: |
