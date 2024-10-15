@@ -1,0 +1,27 @@
+name: "publish"
+on:
+  push:
+    # tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+    branches: [windows]
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: setup node
+        uses: actions/setup-node@v4
+      - name: build-web
+        run: make build-web
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: rustfmt, clippy
+      - name: Run cargo release
+        run: |
+          cargo build --release --features=tracking
