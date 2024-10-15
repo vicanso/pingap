@@ -27,8 +27,11 @@ jobs:
       # which causes failures for some of rustfmt's line-ending sensitive tests
       - name: disable git eol translation
         run: git config --global core.autocrlf false
-      - name: checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - name: setup node
+        uses: actions/setup-node@v4
+      - name: build-web
+        run: make build-web
 
         # Run build
       - name: Install Rustup using win.rustup.rs
@@ -46,7 +49,8 @@ jobs:
         if: matrix.target == 'x86_64-pc-windows-gnu' && matrix.channel == 'nightly'
         shell: bash
 
-      - name: Build and Test
+      - name: Run cargo release
         shell: bash
         run: |
           cargo --version
+          cargo build --release --features=tracking
