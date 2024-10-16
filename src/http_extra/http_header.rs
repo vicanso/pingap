@@ -23,10 +23,15 @@ use snafu::{ResultExt, Snafu};
 use std::str::FromStr;
 
 pub const HOST_NAME_TAG: &[u8] = b"$hostname";
+const HOST_TAG: &[u8] = b"$host";
+const SCHEME_TAG: &[u8] = b"$scheme";
 const REMOTE_ADDR_TAG: &[u8] = b"$remote_addr";
+const REMOTE_PORT_TAG: &[u8] = b"$remote_port";
 const PROXY_ADD_FORWARDED_TAG: &[u8] = b"$proxy_add_x_forwarded_for";
-const HTTP_ORIGIN_TAG: &[u8] = b"$http_origin";
 const UPSTREAM_ADDR_TAG: &[u8] = b"$upstream_addr";
+
+static SCHEME_HTTPS: HeaderValue = HeaderValue::from_static("https");
+static SCHEME_HTTP: HeaderValue = HeaderValue::from_static("http");
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -67,12 +72,28 @@ pub fn convert_header_value(
 ) -> Option<HeaderValue> {
     let buf = value.as_bytes();
     match buf {
+        HOST_TAG => {
+            if let Some(value) = util::get_host(session.req_header()) {
+                return HeaderValue::from_str(value).ok();
+            }
+        },
+        SCHEME_TAG => {
+            if ctx.tls_version.is_some() {
+                return Some(SCHEME_HTTPS.clone());
+            }
+            return Some(SCHEME_HTTP.clone());
+        },
         HOST_NAME_TAG => {
             return HeaderValue::from_str(get_hostname()).ok();
         },
         REMOTE_ADDR_TAG => {
             if let Some(remote_addr) = &ctx.remote_addr {
                 return HeaderValue::from_str(remote_addr).ok();
+            }
+        },
+        REMOTE_PORT_TAG => {
+            if let Some(remote_port) = &ctx.remote_port {
+                return HeaderValue::from_str(&remote_port.to_string()).ok();
             }
         },
         UPSTREAM_ADDR_TAG => {
@@ -96,11 +117,14 @@ pub fn convert_header_value(
                 return HeaderValue::from_str(&value).ok();
             }
         },
-        HTTP_ORIGIN_TAG => {
-            return session.get_header("origin").cloned();
-        },
         _ => {
-            if buf.starts_with(b"$") {
+            let http_prefix = b"$http_";
+            if buf.starts_with(http_prefix) {
+                let key =
+                    std::str::from_utf8(&buf[http_prefix.len()..buf.len()])
+                        .unwrap_or_default();
+                return session.get_header(key).cloned();
+            } else if buf.starts_with(b"$") {
                 if let Ok(value) = std::env::var(
                     std::str::from_utf8(&buf[1..buf.len()]).unwrap_or_default(),
                 ) {

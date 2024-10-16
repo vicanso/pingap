@@ -88,6 +88,7 @@ pub struct State {
     // the upstream address
     pub upstream_address: String,
     pub client_ip: Option<String>,
+    pub remote_port: Option<u16>,
     pub remote_addr: Option<String>,
     pub guard: Option<Guard>,
     pub request_id: Option<String>,

@@ -71,10 +71,10 @@ pub static HTTP_HEADER_X_FORWARDED_FOR: Lazy<http::HeaderName> =
 pub static HTTP_HEADER_X_REAL_IP: Lazy<http::HeaderName> =
     Lazy::new(|| HeaderName::from_str("X-Real-Ip").unwrap());
 
-pub fn get_remote_addr(session: &Session) -> Option<String> {
+pub fn get_remote_addr(session: &Session) -> Option<(String, u16)> {
     if let Some(addr) = session.client_addr() {
         if let Some(addr) = addr.as_inet() {
-            return Some(addr.ip().to_string());
+            return Some((addr.ip().to_string(), addr.port()));
         }
     }
     None
@@ -95,7 +95,7 @@ pub fn get_client_ip(session: &Session) -> String {
     if let Some(value) = session.get_header(HTTP_HEADER_X_REAL_IP.clone()) {
         return value.to_str().unwrap_or_default().to_string();
     }
-    if let Some(addr) = get_remote_addr(session) {
+    if let Some((addr, _)) = get_remote_addr(session) {
         return addr;
     }
     "".to_string()

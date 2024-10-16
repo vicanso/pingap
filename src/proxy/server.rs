@@ -431,7 +431,11 @@ impl ProxyHttp for Server {
 
         ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
         ctx.accepted = self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
-        ctx.remote_addr = util::get_remote_addr(session);
+        if let Some((remote_addr, remote_port)) = util::get_remote_addr(session)
+        {
+            ctx.remote_addr = Some(remote_addr);
+            ctx.remote_port = Some(remote_port);
+        }
 
         let header = session.req_header_mut();
         let host = util::get_host(header).unwrap_or_default();
