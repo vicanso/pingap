@@ -1,6 +1,5 @@
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
-import { MainHeader } from "@/components/header";
 import { MainSidebar } from "@/components/sidebar-nav";
 
 interface LoadingProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -26,14 +25,11 @@ export function Loading({ className, tips }: LoadingProps) {
 
 export function LoadingPage() {
   return (
-    <>
-      <MainHeader />
-      <div className="flex">
-        <MainSidebar className="h-screen flex-none w-[230px]" />
-        <div className="grow lg:border-l overflow-auto p-4">
-          <Loading />
-        </div>
+    <div className="flex">
+      <MainSidebar className="h-screen flex-none w-[230px]" />
+      <div className="grow lg:border-l overflow-auto p-4">
+        <Loading />
       </div>
-    </>
+    </div>
   );
 }

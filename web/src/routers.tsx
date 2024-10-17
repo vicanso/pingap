@@ -47,3 +47,7 @@ const router = createHashRouter([
 ]);
 
 export default router;
+
+export function goToHome() {
+  router.navigate(HOME);
+}

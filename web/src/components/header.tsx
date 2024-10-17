@@ -9,8 +9,7 @@ import {
   Cog,
   Languages,
 } from "lucide-react";
-import { Link } from "react-router-dom";
-import { HOME } from "@/routers";
+import { goToHome } from "@/routers";
 import { useTheme } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
 import {
@@ -141,15 +140,20 @@ export function MainHeader({
           }}
           src={Logo}
         />
-        <Link to={HOME} className="font-bold">
-          <Button variant="link" className="px-0">
-            Pingap
-            {!initialized && (
-              <LoaderCircle className="ml-2 h-4 w-4 inline animate-spin" />
-            )}
-            <span className="ml-2">{basicInfo.version}</span>
-          </Button>
-        </Link>
+        <Button
+          variant="link"
+          className="px-0"
+          onClick={(e) => {
+            e.preventDefault();
+            goToHome();
+          }}
+        >
+          Pingap
+          {!initialized && (
+            <LoaderCircle className="ml-2 h-4 w-4 inline animate-spin" />
+          )}
+          <span className="ml-2">{basicInfo.version}</span>
+        </Button>
         <div className="flex flex-1 items-center justify-between space-x-2 md:justify-end mr-5">
           {tips}
         </div>

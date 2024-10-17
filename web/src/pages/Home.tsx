@@ -1,4 +1,3 @@
-import { MainHeader } from "@/components/header";
 import { MainSidebar } from "@/components/sidebar-nav";
 import useConfigState, { getLocationWeight } from "@/states/config";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -260,37 +259,32 @@ export default function Home() {
   ];
 
   return (
-    <div>
-      <MainHeader />
-      <div className="flex">
-        <MainSidebar className="h-screen flex-none w-[230px]" />
-        <div className="grow lg:border-l overflow-auto p-4">
-          <h3>{homeI18n("dashboard")}</h3>
-          <Card className="my-4">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 col-span-2">
-              <CardTitle className="text-sm font-medium ">
-                {homeI18n("basic")}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid gap-4 grid-cols-2">
-                {basicInfos.map((item) => {
-                  return (
-                    <p key={item.name} className="text-xs">
-                      <span className="text-muted-foreground mr-2">
-                        {homeI18n(item.name)}:
-                      </span>
-                      {item.value || "--"}
-                    </p>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            {cards}
-          </div>
-        </div>
+    <div className="flex">
+      <MainSidebar className="h-screen flex-none w-[230px]" />
+      <div className="grow lg:border-l overflow-auto p-4">
+        <h3>{homeI18n("dashboard")}</h3>
+        <Card className="my-4">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 col-span-2">
+            <CardTitle className="text-sm font-medium ">
+              {homeI18n("basic")}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 grid-cols-2">
+              {basicInfos.map((item) => {
+                return (
+                  <p key={item.name} className="text-xs">
+                    <span className="text-muted-foreground mr-2">
+                      {homeI18n(item.name)}:
+                    </span>
+                    {item.value || "--"}
+                  </p>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">{cards}</div>
       </div>
     </div>
   );

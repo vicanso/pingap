@@ -1,4 +1,3 @@
-import { MainHeader } from "@/components/header";
 import { LoadingPage } from "@/components/loading";
 import { MainSidebar } from "@/components/sidebar-nav";
 import { useI18n } from "@/i18n";
@@ -292,7 +291,6 @@ export default function Upstreams() {
 
   return (
     <>
-      <MainHeader />
       <div className="flex">
         <MainSidebar className="h-screen flex-none w-[230px]" />
         <div className="grow lg:border-l overflow-auto p-4">
