@@ -174,6 +174,7 @@ impl BackgroundService for TracerService {
                 let mut propagators: Vec<
                     Box<dyn TextMapPropagator + Send + Sync>,
                 > = vec![Box::new(TraceContextPropagator::new())];
+                #[cfg(feature = "full")]
                 if self.support_jaeger_propagator {
                     propagators.push(Box::new(
                         opentelemetry_jaeger_propagator::Propagator::new(),

@@ -14,14 +14,17 @@
 
 use super::http_cache::{CacheObject, HttpCacheStats, HttpCacheStorage};
 use super::{Error, Result};
+#[cfg(feature = "full")]
 use crate::state::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use crate::util;
 use async_trait::async_trait;
 use bytes::Bytes;
+#[cfg(feature = "full")]
 use prometheus::Histogram;
 use scopeguard::defer;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
+#[cfg(feature = "full")]
 use std::time::SystemTime;
 use tinyufo::TinyUfo;
 use tokio::fs;
@@ -31,9 +34,11 @@ pub struct FileCache {
     directory: String,
     reading: AtomicU32,
     reading_max: u32,
+    #[cfg(feature = "full")]
     read_time: Histogram,
     writing: AtomicU32,
     writing_max: u32,
+    #[cfg(feature = "full")]
     write_time: Histogram,
     cache: TinyUfo<String, CacheObject>,
 }
@@ -52,15 +57,18 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
         reading: AtomicU32::new(0),
         // TODO get max value from query string
         reading_max: 10 * 1000,
+        #[cfg(feature = "full")]
         read_time: CACHE_READING_TIME.clone(),
         writing: AtomicU32::new(0),
         // TODO get max value from query string
         writing_max: 1000,
+        #[cfg(feature = "full")]
         write_time: CACHE_WRITING_TIME.clone(),
         cache: TinyUfo::new(100, 100),
     })
 }
 
+#[cfg(feature = "full")]
 #[inline]
 fn elapsed(time: SystemTime) -> f64 {
     let ms = time.elapsed().unwrap_or_default().as_millis();
@@ -75,6 +83,7 @@ impl HttpCacheStorage for FileCache {
         if let Some(obj) = self.cache.get(&key.to_string()) {
             return Ok(Some(obj));
         }
+        #[cfg(feature = "full")]
         let start = SystemTime::now();
         let file = Path::new(&self.directory).join(key);
         // add reading count
@@ -87,6 +96,7 @@ impl HttpCacheStorage for FileCache {
             });
         }
         let result = fs::read(file).await;
+        #[cfg(feature = "full")]
         self.read_time.observe(elapsed(start));
         let buf = match result {
             Ok(buf) => Ok(buf),
@@ -112,6 +122,7 @@ impl HttpCacheStorage for FileCache {
         weight: u16,
     ) -> Result<()> {
         self.cache.put(key.clone(), data.clone(), weight);
+        #[cfg(feature = "full")]
         let start = SystemTime::now();
         let buf: Bytes = data.into();
         let file = Path::new(&self.directory).join(key);
@@ -125,6 +136,7 @@ impl HttpCacheStorage for FileCache {
             });
         }
         let result = fs::write(file, buf).await;
+        #[cfg(feature = "full")]
         self.write_time.observe(elapsed(start));
         result.map_err(|e| Error::Io { source: e })
     }

@@ -191,9 +191,11 @@ impl Prometheus {
         let mut buffer = vec![];
         let encoder = TextEncoder::new();
         let metrics = self.r.gather();
-        encoder
-            .encode(&metrics, &mut buffer)
-            .map_err(|e| Error::Prometheus { source: e })?;
+        encoder.encode(&metrics, &mut buffer).map_err(|e| {
+            Error::Prometheus {
+                message: e.to_string(),
+            }
+        })?;
         Ok(buffer)
     }
 }
@@ -294,16 +296,19 @@ impl ServiceTask for PrometheusPush {
 fn new_int_counter(server: &str, name: &str, help: &str) -> Result<IntCounter> {
     let mut opts = Opts::new(name, help);
     opts = opts.const_label("server", server);
-    let counter = IntCounter::with_opts(opts)
-        .map_err(|e| Error::Prometheus { source: e })?;
+    let counter =
+        IntCounter::with_opts(opts).map_err(|e| Error::Prometheus {
+            message: e.to_string(),
+        })?;
     Ok(counter)
 }
 
 fn new_int_gauge(server: &str, name: &str, help: &str) -> Result<IntGauge> {
     let mut opts = Opts::new(name, help);
     opts = opts.const_label("server", server);
-    let guage = IntGauge::with_opts(opts)
-        .map_err(|e| Error::Prometheus { source: e })?;
+    let guage = IntGauge::with_opts(opts).map_err(|e| Error::Prometheus {
+        message: e.to_string(),
+    })?;
     Ok(guage)
 }
 
@@ -315,8 +320,11 @@ fn new_int_counter_vec(
 ) -> Result<IntCounterVec> {
     let mut opts = Opts::new(name, help);
     opts = opts.const_label("server", server);
-    let counter = IntCounterVec::new(opts, label_names)
-        .map_err(|e| Error::Prometheus { source: e })?;
+    let counter = IntCounterVec::new(opts, label_names).map_err(|e| {
+        Error::Prometheus {
+            message: e.to_string(),
+        }
+    })?;
     Ok(counter)
 }
 
@@ -328,8 +336,10 @@ fn new_intgauge_vec(
 ) -> Result<IntGaugeVec> {
     let mut opts = Opts::new(name, help);
     opts = opts.const_label("server", server);
-    let guage = IntGaugeVec::new(opts, label_names)
-        .map_err(|e| Error::Prometheus { source: e })?;
+    let guage =
+        IntGaugeVec::new(opts, label_names).map_err(|e| Error::Prometheus {
+            message: e.to_string(),
+        })?;
     Ok(guage)
 }
 
@@ -347,7 +357,9 @@ fn new_histogram(
         common_opts: opts,
         buckets: Vec::from(buckets),
     })
-    .map_err(|e| Error::Prometheus { source: e })?;
+    .map_err(|e| Error::Prometheus {
+        message: e.to_string(),
+    })?;
     Ok(histogram)
 }
 
@@ -497,7 +509,9 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         Box::new(compression_ratio.clone()),
     ];
     for c in collectors {
-        r.register(c).map_err(|e| Error::Prometheus { source: e })?;
+        r.register(c).map_err(|e| Error::Prometheus {
+            message: e.to_string(),
+        })?;
     }
 
     Ok(Prometheus {

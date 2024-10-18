@@ -19,7 +19,7 @@ interface Basic {
   physical_cpus: number;
   used_memory: string;
   total_memory: string;
-  enabled_tracking: boolean;
+  enabled_full: boolean;
 }
 
 interface ConfigState {
@@ -47,7 +47,7 @@ const useBasicState = create<ConfigState>()((set) => ({
     physical_cpus: 0,
     used_memory: "",
     total_memory: "",
-    enabled_tracking: false,
+    enabled_full: false,
   },
   initialized: false,
   fetch: async () => {
