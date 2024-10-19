@@ -30,7 +30,10 @@ use humantime::parse_duration;
 use once_cell::sync::Lazy;
 use pingora::proxy::Session;
 use std::fs::Metadata;
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::UNIX_EPOCH;
@@ -152,7 +155,10 @@ fn get_cacheable_and_headers_from_meta(
     let content_type = HeaderValue::from_str(&value).unwrap();
     let mut headers = vec![(header::CONTENT_TYPE, content_type)];
 
+    #[cfg(unix)]
     let size = meta.size() as usize;
+    #[cfg(windows)]
+    let size = meta.file_size() as usize;
     if let Ok(mod_time) = meta.modified() {
         let value = mod_time
             .duration_since(UNIX_EPOCH)
@@ -254,6 +260,7 @@ fn get_autoindex_html(path: &Path) -> Result<String, String> {
         let mut is_file = false;
         if f.is_file() {
             is_file = true;
+            #[cfg(unix)]
             let _ = f.metadata().map(|meta| {
                 size = ByteSize(meta.size()).to_string();
                 last_modified =
@@ -390,7 +397,11 @@ mod tests {
     use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use pingora::proxy::Session;
     use pretty_assertions::{assert_eq, assert_ne};
-    use std::{os::unix::fs::MetadataExt, path::Path};
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+    #[cfg(windows)]
+    use std::os::windows::fs::MetadataExt;
+    use std::path::Path;
     use tokio_test::io::Builder;
 
     #[test]
