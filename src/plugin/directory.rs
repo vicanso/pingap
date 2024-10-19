@@ -155,7 +155,10 @@ fn get_cacheable_and_headers_from_meta(
     let content_type = HeaderValue::from_str(&value).unwrap();
     let mut headers = vec![(header::CONTENT_TYPE, content_type)];
 
+    #[cfg(unix)]
     let size = meta.size() as usize;
+    #[cfg(windows)]
+    let size = meta.file_size() as usize;
     if let Ok(mod_time) = meta.modified() {
         let value = mod_time
             .duration_since(UNIX_EPOCH)
@@ -257,6 +260,7 @@ fn get_autoindex_html(path: &Path) -> Result<String, String> {
         let mut is_file = false;
         if f.is_file() {
             is_file = true;
+            #[cfg(unix)]
             let _ = f.metadata().map(|meta| {
                 size = ByteSize(meta.size()).to_string();
                 last_modified =
