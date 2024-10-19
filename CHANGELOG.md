@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.8.11](https://github.com/vicanso/pingap/compare/v0.8.10..0.8.11) - 2024-10-19
+
+### ⛰️  Features
+
+- Support daily rolling log - ([34c99e1](https://github.com/vicanso/pingap/commit/34c99e1aa8f8f67340cb6044f46b2ef45c7033bb))
+
+### 🐛 Bug Fixes
+
+- Fix lint error - ([fc40efe](https://github.com/vicanso/pingap/commit/fc40efe8eec386f36add0937f87a87dcf312e8bb))
+
+### 🚜 Refactor
+
+- Support windows ([#47](https://github.com/orhun/git-cliff/issues/47)) - ([ede1024](https://github.com/vicanso/pingap/commit/ede1024e88d75ab7167781c22864bf59b31c748a))
+- Adjust tracking feature for prometheus and open telemetry ([#46](https://github.com/orhun/git-cliff/issues/46)) - ([f46edc8](https://github.com/vicanso/pingap/commit/f46edc879290e8dc9050bee949e868295e24b0ae))
+- Adjust main header - ([0e38e1f](https://github.com/vicanso/pingap/commit/0e38e1feb8032ad5a43faa05eaeb5fbb29c88ab6))
+- Support more header for http - ([24267bd](https://github.com/vicanso/pingap/commit/24267bd2055844e5118a9d0e13abf582986feb74))
+- Support more rolling type - ([538ba7a](https://github.com/vicanso/pingap/commit/538ba7a95bb5fb850c613c1495ad0391657f3811))
+- Adjust label of pingap config web page - ([2b917cf](https://github.com/vicanso/pingap/commit/2b917cf60dfd6eeba2ba3fc2f1574aeed6b51fbf))
+- Add tracking and kernel for basic info - ([d7ed17d](https://github.com/vicanso/pingap/commit/d7ed17dffeeaba065f641cc3e0faa6c2412b18dc))
+- Adjust sentry optional - ([d778449](https://github.com/vicanso/pingap/commit/d778449e13008b17d0d53ea05e459e0341b569a1))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update workflow - ([adc53e8](https://github.com/vicanso/pingap/commit/adc53e8fc77f780b6685be17fb3a3bfe8ae6c94a))
+- Update workflow - ([681620d](https://github.com/vicanso/pingap/commit/681620d8d3943432b8984e2c2eef91a6567ce248))
+
 ## [0.8.10](https://github.com/vicanso/pingap/compare/v0.8.8..0.8.10) - 2024-10-13
 
 ### ⛰️  Features
