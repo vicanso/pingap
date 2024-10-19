@@ -150,7 +150,9 @@ pub struct Server {
     #[cfg(feature = "full")]
     prometheus: Option<Arc<Prometheus>>,
     prometheus_push_mode: bool,
+    #[cfg(feature = "full")]
     prometheus_metrics: String,
+    #[cfg(feature = "full")]
     enabled_otel: bool,
 }
 
@@ -211,7 +213,9 @@ impl Server {
             enabled_h2: conf.enabled_h2,
             tcp_socket_options,
             prometheus_push_mode: prometheus_metrics.contains("://"),
+            #[cfg(feature = "full")]
             enabled_otel: conf.otlp_exporter.is_some(),
+            #[cfg(feature = "full")]
             prometheus_metrics,
             #[cfg(feature = "full")]
             prometheus,

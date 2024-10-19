@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#[cfg(feature = "full")]
 use snafu::Snafu;
 
 mod ctx;
@@ -26,6 +27,7 @@ pub use prom::{
     CACHE_READING_TIME, CACHE_WRITING_TIME,
 };
 
+#[cfg(feature = "full")]
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("{source}"))]
@@ -33,4 +35,5 @@ pub enum Error {
     #[snafu(display("{message}"))]
     Prometheus { message: String },
 }
+#[cfg(feature = "full")]
 pub type Result<T, E = Error> = std::result::Result<T, E>;

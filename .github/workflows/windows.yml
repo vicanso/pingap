@@ -62,4 +62,4 @@ jobs:
         shell: bash
         run: |
           cargo --version
-          cargo build --release --features=tracking
+          cargo build --release --features=full

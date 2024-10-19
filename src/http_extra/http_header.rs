@@ -192,6 +192,7 @@ pub static HTTP_HEADER_CONTENT_HTML: Lazy<HttpHeader> = Lazy::new(|| {
     )
 });
 
+#[cfg(feature = "full")]
 pub static HTTP_HEADER_CONTENT_TEXT: Lazy<HttpHeader> = Lazy::new(|| {
     (
         header::CONTENT_TYPE,
