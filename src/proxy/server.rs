@@ -613,7 +613,8 @@ impl ProxyHttp for Server {
         _session: &mut Session,
         reused: bool,
         peer: &HttpPeer,
-        _fd: std::os::unix::io::RawFd,
+        #[cfg(unix)] _fd: std::os::unix::io::RawFd,
+        #[cfg(windows)] _sock: std::os::windows::io::RawSocket,
         digest: Option<&Digest>,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<()>

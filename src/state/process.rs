@@ -139,6 +139,7 @@ static PROCESS_RESTAR_COUNT: Lazy<AtomicU8> = Lazy::new(|| AtomicU8::new(0));
 static PROCESS_RESTARTING: Lazy<AtomicBool> =
     Lazy::new(|| AtomicBool::new(false));
 
+#[cfg(unix)]
 pub fn restart_now() -> io::Result<process::Output> {
     let restarting = PROCESS_RESTARTING.swap(true, Ordering::Relaxed);
     if restarting {
@@ -166,6 +167,13 @@ pub fn restart_now() -> io::Result<process::Output> {
             "Command not found",
         ))
     }
+}
+#[cfg(windows)]
+pub fn restart_now() -> io::Result<process::Output> {
+    return Err(io::Error::new(
+        io::ErrorKind::Other,
+        "Not support restart".to_string(),
+    ));
 }
 
 pub fn restart() {

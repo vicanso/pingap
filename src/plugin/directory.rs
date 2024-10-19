@@ -30,7 +30,10 @@ use humantime::parse_duration;
 use once_cell::sync::Lazy;
 use pingora::proxy::Session;
 use std::fs::Metadata;
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::UNIX_EPOCH;
@@ -390,7 +393,11 @@ mod tests {
     use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use pingora::proxy::Session;
     use pretty_assertions::{assert_eq, assert_ne};
-    use std::{os::unix::fs::MetadataExt, path::Path};
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+    #[cfg(windows)]
+    use std::os::windows::fs::MetadataExt;
+    use std::path::Path;
     use tokio_test::io::Builder;
 
     #[test]
