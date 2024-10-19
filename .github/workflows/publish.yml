@@ -191,8 +191,8 @@ jobs:
       # TODO 后续调整为不再使用docker的形式构建再支持full版本
       - name: Upload Assets
         run: |
-          cp /tmp/pingap/usr/local/bin/pingap ./pingap
-          tar -czvf pingap-linux-gnu-aarch64.tar.gz ./pingap
+          cp /tmp/pingap/usr/local/bin/pingap ./pingap-linux-gnu-aarch64-full
+          tar -czvf pingap-linux-gnu-aarch64.tar.gz ./pingap-linux-gnu-aarch64-full
 
           ls -lh pingap*.gz
 

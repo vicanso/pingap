@@ -192,33 +192,33 @@ export default function Servers() {
   ];
 
   if (basicInfo.enabled_full) {
-    items.push({
-      name: "prometheus_metrics",
-      label: serverI18n("prometheusMetrics"),
-      placeholder: serverI18n("prometheusMetricsPlaceholder"),
-      defaultValue: serverConfig.prometheus_metrics,
-      span: 6,
-      category: ExFormItemCategory.TEXT,
-    });
+    items.push(
+      {
+        name: "prometheus_metrics",
+        label: serverI18n("prometheusMetrics"),
+        placeholder: serverI18n("prometheusMetricsPlaceholder"),
+        defaultValue: serverConfig.prometheus_metrics,
+        span: 6,
+        category: ExFormItemCategory.TEXT,
+      },
+      {
+        name: "otlp_exporter",
+        label: serverI18n("otlpExporter"),
+        placeholder: serverI18n("otlpExporterPlaceholder"),
+        defaultValue: serverConfig.otlp_exporter,
+        span: 6,
+        category: ExFormItemCategory.TEXT,
+      },
+    );
   }
-  items.push(
-    {
-      name: "otlp_exporter",
-      label: serverI18n("otlpExporter"),
-      placeholder: serverI18n("otlpExporterPlaceholder"),
-      defaultValue: serverConfig.otlp_exporter,
-      span: 6,
-      category: ExFormItemCategory.TEXT,
-    },
-    {
-      name: "remark",
-      label: serverI18n("remark"),
-      placeholder: "",
-      defaultValue: serverConfig.remark,
-      span: 6,
-      category: ExFormItemCategory.TEXTAREA,
-    },
-  );
+  items.push({
+    name: "remark",
+    label: serverI18n("remark"),
+    placeholder: "",
+    defaultValue: serverConfig.remark,
+    span: 6,
+    category: ExFormItemCategory.TEXTAREA,
+  });
   let defaultShow = 5;
   if (currentServer === newServer) {
     defaultShow++;

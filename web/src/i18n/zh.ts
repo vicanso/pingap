@@ -30,7 +30,7 @@ export default {
   home: {
     dashboard: "面板",
     basic: "基础信息",
-    pid: "后台服务进程id",
+    pid: "进程id",
     threads: "线程数",
     accepted: "处理请求数",
     processing: "正在处理请求数",

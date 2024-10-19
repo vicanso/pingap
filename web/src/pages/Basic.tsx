@@ -203,26 +203,26 @@ export default function Basic() {
       category: ExFormItemCategory.TEXT,
     });
   }
-
-  items.push(
-    {
+  if (basicInfo.enabled_pyroscope) {
+    items.push({
       name: "pyroscope",
       label: basicI18n("pyroscope"),
       placeholder: basicI18n("pyroscopePlaceholder"),
       defaultValue: basic.pyroscope,
       span: 6,
       category: ExFormItemCategory.TEXT,
-    },
-    {
-      name: "error_template",
-      label: basicI18n("errorTemplate"),
-      placeholder: basicI18n("errorTemplatePlaceholder"),
-      defaultValue: basic.error_template,
-      span: 6,
-      rows: 8,
-      category: ExFormItemCategory.TEXTAREA,
-    },
-  );
+    });
+  }
+
+  items.push({
+    name: "error_template",
+    label: basicI18n("errorTemplate"),
+    placeholder: basicI18n("errorTemplatePlaceholder"),
+    defaultValue: basic.error_template,
+    span: 6,
+    rows: 8,
+    category: ExFormItemCategory.TEXTAREA,
+  });
 
   const schema = z.object({
     name: z.string().optional(),

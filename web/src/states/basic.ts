@@ -20,6 +20,7 @@ interface Basic {
   used_memory: string;
   total_memory: string;
   enabled_full: boolean;
+  enabled_pyroscope: boolean;
 }
 
 interface ConfigState {
@@ -48,6 +49,7 @@ const useBasicState = create<ConfigState>()((set) => ({
     used_memory: "",
     total_memory: "",
     enabled_full: false,
+    enabled_pyroscope: false,
   },
   initialized: false,
   fetch: async () => {

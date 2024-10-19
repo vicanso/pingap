@@ -2,6 +2,9 @@
 
 Pingap是类似于nginx的反向代理，基于[pingora](https://github.com/cloudflare/pingora)构建，简单而高效。
 
+Sentry与opentelemetry为可选的特性，在全功能版本中支持。
+
+
 ```mermaid
 flowchart LR
   internet("互联网") -- 客户端请求 --> pingap["Pingap"]

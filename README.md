@@ -6,6 +6,8 @@
 
 A reverse proxy like nginx, built on [pingora](https://github.com/cloudflare/pingora), simple and efficient.
 
+Sentry and opentelemetry are optional, they are supported in the full-featured version.
+
 [中文说明](./README_zh.md)
 
 ```mermaid

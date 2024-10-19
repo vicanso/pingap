@@ -140,6 +140,7 @@ struct BasicInfo {
     total_memory: String,
     used_memory: String,
     enabled_full: bool,
+    enabled_pyroscope: bool,
 }
 
 impl TryFrom<&PluginConf> for AdminServe {
@@ -440,9 +441,12 @@ impl Plugin for AdminServe {
             let data = tokio::fs::read(current_config.basic.get_pid_file())
                 .await
                 .unwrap_or_default();
-            let pid = std::string::String::from_utf8_lossy(&data)
+            let mut pid = std::string::String::from_utf8_lossy(&data)
                 .trim()
                 .to_string();
+            if pid.is_empty() {
+                pid = std::process::id().to_string();
+            }
             let mut threads = 0;
             let cpu_count = num_cpus::get();
             let mut default_threads = current_config.basic.threads.unwrap_or(1);
@@ -463,6 +467,13 @@ impl Plugin for AdminServe {
                     let enabled_full = true;
                 } else {
                     let enabled_full = false;
+                }
+            }
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "pyro")] {
+                    let enabled_pyroscope = true;
+                } else {
+                    let enabled_pyroscope = false;
                 }
             }
 
@@ -486,6 +497,7 @@ impl Plugin for AdminServe {
                 total_memory: system_info.total_memory,
                 used_memory: system_info.used_memory,
                 enabled_full,
+                enabled_pyroscope,
             })
             .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
         } else if path == "/restart" && method == Method::POST {

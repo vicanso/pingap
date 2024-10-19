@@ -30,7 +30,7 @@ export default {
   home: {
     dashboard: "Dashboard",
     basic: "Basic Information",
-    pid: "Daemon Process Id",
+    pid: "Process Id",
     threads: "Threads",
     accepted: "Accepted",
     processing: "Processing",
