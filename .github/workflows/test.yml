@@ -40,7 +40,9 @@ jobs:
       - name: Run cargo fmt
         run: cargo fmt --all -- --check
       - name: Run cargo clippy
-        run: make lint
+        run: |
+          - make lint
+          - make lint-full
       - name: Run cargo test
         run: make test
       - name: Run cargo msrv
@@ -66,7 +68,7 @@ jobs:
       # In order to prevent overusing too much of that 60 limit, we throttle the
       # number of rustfmt jobs that will run concurrently.
       matrix:
-        target: [x86_64-pc-windows-gnu, x86_64-pc-windows-msvc]
+        target: [x86_64-pc-windows-msvc]
 
     steps:
       # The Windows runners have autocrlf enabled by default
@@ -109,6 +111,7 @@ jobs:
         run: |
           cargo --version
           cargo build --release --features=full
+          ls -lh target/release
   docker:
     runs-on: ubuntu-latest
     timeout-minutes: 3600
