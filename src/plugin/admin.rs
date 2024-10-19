@@ -139,7 +139,7 @@ struct BasicInfo {
     physical_cpus: usize,
     total_memory: String,
     used_memory: String,
-    enabled_tracking: bool,
+    enabled_full: bool,
 }
 
 impl TryFrom<&PluginConf> for AdminServe {
@@ -459,10 +459,10 @@ impl Plugin for AdminServe {
             }
             let (processing, accepted) = get_processing_accepted();
             cfg_if::cfg_if! {
-                if #[cfg(feature = "tracking")] {
-                    let enabled_tracking = true;
+                if #[cfg(feature = "full")] {
+                    let enabled_full = true;
                 } else {
-                    let enabled_tracking = false;
+                    let enabled_full = false;
                 }
             }
 
@@ -485,7 +485,7 @@ impl Plugin for AdminServe {
                 physical_cpus: system_info.physical_cpus,
                 total_memory: system_info.total_memory,
                 used_memory: system_info.used_memory,
-                enabled_tracking,
+                enabled_full,
             })
             .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
         } else if path == "/restart" && method == Method::POST {

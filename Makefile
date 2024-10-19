@@ -1,5 +1,7 @@
 lint:
 	cargo clippy --all-targets --all -- --deny=warnings
+lint-full:
+	cargo clippy --features=full --all-targets --all -- --deny=warnings
 
 fmt:
 	cargo fmt
@@ -52,14 +54,14 @@ release:
 	cargo build --release
 	ls -lh target/release
 
-release-sentry:
-	cargo build --release --features=tracking
+release-full:
+	cargo build --release --features=full
 	ls -lh target/release
 
 
 release-all:
-	cargo build --release --features=tracking
-	mv target/release/pingap target/release/pingap-sentry
+	cargo build --release --features=full
+	mv target/release/pingap target/release/pingap-full
 	cargo build --release
 	ls -lh target/release
 

@@ -1,5 +1,6 @@
 import { MainSidebar } from "@/components/sidebar-nav";
 import { LoadingPage } from "@/components/loading";
+import useBasicState from "@/states/basic";
 import useConfigState, { getLocationWeight, Server } from "@/states/config";
 import { ExForm, ExFormItem } from "@/components/ex-form";
 import { z } from "zod";
@@ -31,6 +32,7 @@ export default function Servers() {
     state.update,
     state.remove,
   ]);
+  const [basicInfo] = useBasicState((state) => [state.data]);
 
   const newServer = "*";
   const servers = Object.keys(config.servers || {});
@@ -187,14 +189,19 @@ export default function Servers() {
       span: 3,
       category: ExFormItemCategory.NUMBER,
     },
-    {
+  ];
+
+  if (basicInfo.enabled_full) {
+    items.push({
       name: "prometheus_metrics",
       label: serverI18n("prometheusMetrics"),
       placeholder: serverI18n("prometheusMetricsPlaceholder"),
       defaultValue: serverConfig.prometheus_metrics,
       span: 6,
       category: ExFormItemCategory.TEXT,
-    },
+    });
+  }
+  items.push(
     {
       name: "otlp_exporter",
       label: serverI18n("otlpExporter"),
@@ -211,7 +218,7 @@ export default function Servers() {
       span: 6,
       category: ExFormItemCategory.TEXTAREA,
     },
-  ];
+  );
   let defaultShow = 5;
   if (currentServer === newServer) {
     defaultShow++;

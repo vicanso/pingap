@@ -14,7 +14,7 @@ RUN apt update \
   && apt install -y cmake libclang-dev wget gnupg ca-certificates lsb-release protobuf-compiler --no-install-recommends
 RUN rustup target list --installed
 RUN cd /pingap \
-  && make release
+  && make release-full
 
 FROM ubuntu:24.04
 

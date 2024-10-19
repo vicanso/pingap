@@ -16,9 +16,12 @@ use crate::util::format_duration;
 use crate::{proxy::Location, util};
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
-use opentelemetry::global::{BoxedSpan, BoxedTracer, ObjectSafeSpan};
-use opentelemetry::trace::{SpanKind, TraceContextExt, Tracer};
-use opentelemetry::Context;
+#[cfg(feature = "full")]
+use opentelemetry::{
+    global::{BoxedSpan, BoxedTracer, ObjectSafeSpan},
+    trace::{SpanKind, TraceContextExt, Tracer},
+    Context,
+};
 use pingora_limits::inflight::Guard;
 use std::{sync::Arc, time::Duration};
 
@@ -38,11 +41,13 @@ impl CompressionStat {
     }
 }
 
+#[cfg(feature = "full")]
 pub struct OtelTracer {
     pub tracer: BoxedTracer,
     pub http_request_span: BoxedSpan,
 }
 
+#[cfg(feature = "full")]
 impl OtelTracer {
     #[inline]
     pub fn new_upstream_span(&self, name: &str) -> BoxedSpan {
@@ -122,7 +127,9 @@ pub struct State {
     pub cache_reading: Option<u32>,
     // cache writing count
     pub cache_writing: Option<u32>,
+    #[cfg(feature = "full")]
     pub otel_tracer: Option<OtelTracer>,
+    #[cfg(feature = "full")]
     pub upstream_span: Option<BoxedSpan>,
 }
 

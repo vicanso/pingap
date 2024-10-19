@@ -18,6 +18,7 @@ use crate::service::{new_auto_restart_service, new_observer_service};
 use clap::Parser;
 use config::PingapConf;
 use crossbeam_channel::Sender;
+#[cfg(feature = "full")]
 use otel::TracerService;
 use pingora::server;
 use pingora::server::configuration::Opt;
@@ -38,12 +39,13 @@ mod discovery;
 mod http_extra;
 mod limit;
 mod logger;
+#[cfg(feature = "full")]
 mod otel;
 mod plugin;
 mod proxy;
 #[cfg(feature = "pyro")]
 mod pyro;
-#[cfg(feature = "tracking")]
+#[cfg(feature = "full")]
 mod sentry;
 mod service;
 mod state;
@@ -381,7 +383,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     };
     let mut my_server = server::Server::new(Some(opt))?;
     my_server.configuration = Arc::new(new_server_conf(&args, &conf));
-    #[cfg(feature = "tracking")]
+    #[cfg(feature = "full")]
     {
         let sentry_dsn = basic_conf.sentry.clone().unwrap_or_default();
         if !sentry_dsn.is_empty() {
@@ -422,6 +424,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         if serve_conf.addr.ends_with(":80") {
             exits_80_server = true;
         }
+        #[cfg(feature = "full")]
         // add otlp service
         if let Some(otlp_exporter) = &serve_conf.otlp_exporter {
             my_server.add_service(background_service(

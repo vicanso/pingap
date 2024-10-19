@@ -20,14 +20,18 @@ use crate::acme::handle_lets_encrypt;
 use crate::config;
 use crate::config::PluginStep;
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
+#[cfg(feature = "full")]
 use crate::otel;
 use crate::plugin::{get_plugin, ADMIN_SERVER_PLUGIN};
 use crate::proxy::dynamic_certificate::TlsSettingParams;
 use crate::proxy::location::get_location;
 use crate::service::CommonServiceTask;
-use crate::state::{accept_request, end_request, OtelTracer};
-use crate::state::{new_prometheus, new_prometheus_push_service};
-use crate::state::{CompressionStat, Prometheus, State};
+#[cfg(feature = "full")]
+use crate::state::OtelTracer;
+use crate::state::{accept_request, end_request};
+#[cfg(feature = "full")]
+use crate::state::{new_prometheus, new_prometheus_push_service, Prometheus};
+use crate::state::{CompressionStat, State};
 use crate::util;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
@@ -35,11 +39,13 @@ use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
 use once_cell::sync::Lazy;
+#[cfg(feature = "full")]
 use opentelemetry::{
     global,
     trace::{Span, SpanKind, Tracer},
     KeyValue,
 };
+#[cfg(feature = "full")]
 use opentelemetry_http::HeaderExtractor;
 use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::CacheControl;
@@ -141,6 +147,7 @@ pub struct Server {
     lets_encrypt_enabled: bool,
     global_certificates: bool,
     tcp_socket_options: Option<TcpSocketOptions>,
+    #[cfg(feature = "full")]
     prometheus: Option<Arc<Prometheus>>,
     prometheus_push_mode: bool,
     prometheus_metrics: String,
@@ -176,6 +183,7 @@ impl Server {
             };
         let prometheus_metrics =
             conf.prometheus_metrics.clone().unwrap_or_default();
+        #[cfg(feature = "full")]
         let prometheus = if prometheus_metrics.is_empty() {
             None
         } else {
@@ -205,6 +213,7 @@ impl Server {
             prometheus_push_mode: prometheus_metrics.contains("://"),
             enabled_otel: conf.otlp_exporter.is_some(),
             prometheus_metrics,
+            #[cfg(feature = "full")]
             prometheus,
         };
         Ok(s)
@@ -218,22 +227,28 @@ impl Server {
         if !self.prometheus_push_mode {
             return None;
         }
-        let Some(prometheus) = &self.prometheus else {
-            return None;
-        };
-        match new_prometheus_push_service(
-            &self.name,
-            &self.prometheus_metrics,
-            prometheus.clone(),
-        ) {
-            Ok(serivce) => Some(serivce),
-            Err(e) => {
-                error!(
-                    error = e.to_string(),
-                    "new prometheus push service fail"
-                );
-                None
-            },
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "full")] {
+                let Some(prometheus) = &self.prometheus else {
+                    return None;
+                };
+                match new_prometheus_push_service(
+                    &self.name,
+                    &self.prometheus_metrics,
+                    prometheus.clone(),
+                ) {
+                    Ok(serivce) => Some(serivce),
+                    Err(e) => {
+                        error!(
+                            error = e.to_string(),
+                            "new prometheus push service fail"
+                        );
+                        None
+                    },
+                }
+            } else {
+               None
+            }
         }
     }
 
@@ -442,6 +457,8 @@ impl ProxyHttp for Server {
         let path = header.uri.path();
 
         // enable open telemtery
+
+        #[cfg(feature = "full")]
         if self.enabled_otel {
             if let Some(tracer) = otel::new_tracer(&self.name) {
                 let cx = global::get_text_map_propagator(|propagator| {
@@ -460,6 +477,7 @@ impl ProxyHttp for Server {
         }
 
         // set perometheus stats
+        #[cfg(feature = "full")]
         if let Some(prom) = &self.prometheus {
             prom.before();
         }
@@ -513,6 +531,7 @@ impl ProxyHttp for Server {
         let header = session.req_header_mut();
 
         // prometheus pull metric
+        #[cfg(feature = "full")]
         if !self.prometheus_push_mode
             && self.prometheus.is_some()
             && header.uri.path() == self.prometheus_metrics
@@ -584,6 +603,7 @@ impl ProxyHttp for Server {
             location_name.clone_from(&location.name);
             if let Some(up) = get_upstream(&location.upstream) {
                 ctx.upstream_connected = up.connected();
+                #[cfg(feature = "full")]
                 if let Some(tracer) = &ctx.otel_tracer {
                     let name = format!("upstream.{}", &location.upstream);
                     let mut span = tracer.new_upstream_span(&name);
@@ -811,7 +831,7 @@ impl ProxyHttp for Server {
         if end_of_stream {
             ctx.upstream_response_time =
                 util::get_latency(&ctx.upstream_response_time);
-
+            #[cfg(feature = "full")]
             if let Some(ref mut span) = ctx.upstream_span.as_mut() {
                 span.set_attributes([
                     KeyValue::new(
@@ -985,6 +1005,7 @@ impl ProxyHttp for Server {
                 ctx.status = Some(header.status);
             }
         }
+        #[cfg(feature = "full")]
         // enable open telemetry and proxy upstream fail
         if let Some(ref mut span) = ctx.upstream_span.as_mut() {
             span.end();
@@ -1003,10 +1024,12 @@ impl ProxyHttp for Server {
                 }
             }
         }
+        #[cfg(feature = "full")]
         if let Some(prom) = &self.prometheus {
             prom.after(session, ctx);
         }
 
+        #[cfg(feature = "full")]
         // open telemetry
         if let Some(ref mut tracer) = ctx.otel_tracer.as_mut() {
             let ip = if let Some(ip) = &ctx.client_ip {

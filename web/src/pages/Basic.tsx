@@ -193,7 +193,7 @@ export default function Basic() {
       category: ExFormItemCategory.TEXT,
     },
   ];
-  if (basicInfo.enabled_tracking) {
+  if (basicInfo.enabled_full) {
     items.push({
       name: "sentry",
       label: basicI18n("sentry"),

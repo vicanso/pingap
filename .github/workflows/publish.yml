@@ -32,24 +32,24 @@ jobs:
           mv target/aarch64-apple-darwin/release/pingap ./pingap-darwin-aarch64
           tar -czvf pingap-darwin-aarch64.tar.gz pingap-darwin-aarch64
 
-          cargo build --release --target=aarch64-apple-darwin --features=tracking
-          mv target/aarch64-apple-darwin/release/pingap ./pingap-sentry-darwin-aarch64
-          tar -czvf pingap-sentry-darwin-aarch64.tar.gz pingap-sentry-darwin-aarch64
+          cargo build --release --target=aarch64-apple-darwin --features=full
+          mv target/aarch64-apple-darwin/release/pingap ./pingap-darwin-aarch64-full
+          tar -czvf pingap-darwin-aarch64-full.tar.gz pingap-darwin-aarch64-full
 
           cargo build --release --target=x86_64-apple-darwin
           mv target/x86_64-apple-darwin/release/pingap ./pingap-darwin-x86
           tar -czvf pingap-darwin-x86.tar.gz pingap-darwin-x86
 
-          cargo build --release --target=x86_64-apple-darwin --features=tracking
-          mv target/x86_64-apple-darwin/release/pingap ./pingap-sentry-darwin-x86
-          tar -czvf pingap-sentry-darwin-x86.tar.gz pingap-sentry-darwin-x86
+          cargo build --release --target=x86_64-apple-darwin --features=full
+          mv target/x86_64-apple-darwin/release/pingap ./pingap-darwin-x86-full
+          tar -czvf pingap-darwin-x86-full.tar.gz pingap-darwin-x86-full
 
           ls -lh pingap*.gz
 
           ./.github/workflows/upload_asset.sh ./pingap-darwin-aarch64.tar.gz $GITHUB_TOKEN
-          ./.github/workflows/upload_asset.sh ./pingap-sentry-darwin-aarch64.tar.gz $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./pingap-darwin-aarch64-full.tar.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./pingap-darwin-x86.tar.gz $GITHUB_TOKEN
-          ./.github/workflows/upload_asset.sh ./pingap-sentry-darwin-x86.tar.gz $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./pingap-darwin-x86-full.tar.gz $GITHUB_TOKEN
 
   linux-musl-x86:
     runs-on: ubuntu-20.04
@@ -67,19 +67,19 @@ jobs:
           run: |
             apt-get update
             apt-get install protobuf-compiler -y
-            make release-sentry
-            mv target/x86_64-unknown-linux-musl/release/pingap ./pingap-sentry-linux-musl-x86
+            make release-full
+            mv target/x86_64-unknown-linux-musl/release/pingap ./pingap-linux-musl-x86-full
             make release
             mv target/x86_64-unknown-linux-musl/release/pingap ./pingap-linux-musl-x86
       - name: Upload Assets
         run: |
           tar -czvf pingap-linux-musl-x86.tar.gz pingap-linux-musl-x86
-          tar -czvf pingap-sentry-linux-musl-x86.tar.gz pingap-sentry-linux-musl-x86
+          tar -czvf pingap-linux-musl-x86-full.tar.gz pingap-linux-musl-x86-full
 
           ls -lh pingap*.gz
 
           ./.github/workflows/upload_asset.sh ./pingap-linux-musl-x86.tar.gz $GITHUB_TOKEN
-          ./.github/workflows/upload_asset.sh ./pingap-sentry-linux-musl-x86.tar.gz $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./pingap-linux-musl-x86-full.tar.gz $GITHUB_TOKEN
 
   linux-musl-aarch64:
     runs-on: ubuntu-20.04
@@ -97,19 +97,19 @@ jobs:
           run: |
             apt-get update
             apt-get install protobuf-compiler -y
-            make release-sentry
-            mv target/aarch64-unknown-linux-musl/release/pingap ./pingap-sentry-linux-musl-aarch64
+            make release-all
+            mv target/aarch64-unknown-linux-musl/release/pingap ./pingap-linux-musl-aarch64-full
             make release
             mv target/aarch64-unknown-linux-musl/release/pingap ./pingap-linux-musl-aarch64
       - name: Upload Assets
         run: |
           tar -czvf pingap-linux-musl-aarch64.tar.gz pingap-linux-musl-aarch64
-          tar -czvf pingap-sentry-linux-musl-aarch64.tar.gz pingap-sentry-linux-musl-aarch64
+          tar -czvf pingap-linux-musl-aarch64-full.tar.gz pingap-linux-musl-aarch64-full
 
           ls -lh pingap*.gz
 
           ./.github/workflows/upload_asset.sh ./pingap-linux-musl-aarch64.tar.gz $GITHUB_TOKEN
-          ./.github/workflows/upload_asset.sh ./pingap-sentry-linux-musl-aarch64.tar.gz $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./pingap-linux-musl-aarch64-full.tar.gz $GITHUB_TOKEN
 
   linux-gnu-x86:
     runs-on: ubuntu-20.04
@@ -131,16 +131,16 @@ jobs:
           make release-all
           ldd target/release/pingap
           mv target/release/pingap ./pingap-linux-gnu-x86
-          mv target/release/pingap-sentry ./pingap-sentry-linux-gnu-x86
+          mv target/release/pingap-full ./pingap-linux-gnu-x86-full
       - name: Upload Assets
         run: |
           tar -czvf pingap-linux-gnu-x86.tar.gz ./pingap-linux-gnu-x86
-          tar -czvf pingap-sentry-linux-gnu-x86.tar.gz ./pingap-sentry-linux-gnu-x86
+          tar -czvf pingap-linux-gnu-x86-full.tar.gz ./pingap-linux-gnu-x86-full
 
           ls -lh pingap*.gz
 
           ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-x86.tar.gz $GITHUB_TOKEN
-          ./.github/workflows/upload_asset.sh ./pingap-sentry-linux-gnu-x86.tar.gz $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-x86-full.tar.gz $GITHUB_TOKEN
   linux-gnu-aarch64:
     runs-on: ubuntu-20.04
     timeout-minutes: 3600
@@ -188,6 +188,7 @@ jobs:
         with:
           platforms: linux/arm64
           outputs: type=local,dest=/tmp/pingap
+      # TODO 后续调整为不再使用docker的形式构建再支持full版本
       - name: Upload Assets
         run: |
           cp /tmp/pingap/usr/local/bin/pingap ./pingap

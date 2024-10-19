@@ -245,8 +245,8 @@ export default function Home() {
       value: basicInfo.group,
     },
     {
-      name: "enabledTracking",
-      value: basicInfo.enabled_tracking ? homeI18n("yes") : homeI18n("no"),
+      name: "enabledFull",
+      value: basicInfo.enabled_full ? homeI18n("yes") : homeI18n("no"),
     },
     {
       name: "rustc",
