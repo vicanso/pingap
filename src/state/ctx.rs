@@ -65,6 +65,8 @@ impl OtelTracer {
 
 #[derive(Default)]
 pub struct State {
+    // connection id
+    pub connection_id: i32,
     // current processing request
     pub processing: i32,
     // accepted request
@@ -175,6 +177,11 @@ impl State {
     #[inline]
     pub fn append_value(&self, mut buf: BytesMut, key: &str) -> BytesMut {
         match key {
+            "connection_id" => {
+                buf.extend(
+                    itoa::Buffer::new().format(self.connection_id).as_bytes(),
+                );
+            },
             "upstream_reused" => {
                 if self.upstream_reused {
                     buf.extend(b"true");
@@ -293,6 +300,12 @@ mod tests {
     #[test]
     fn test_state() {
         let mut ctx = State::new();
+
+        ctx.connection_id = 10;
+        assert_eq!(
+            b"10",
+            ctx.append_value(BytesMut::new(), "connection_id").as_ref()
+        );
 
         assert_eq!(
             b"false",

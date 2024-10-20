@@ -428,6 +428,9 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
+        if let Some(stream) = session.stream() {
+            ctx.connection_id = stream.id();
+        }
         // get digest of timing and tls
         if let Some(digest) = session.digest() {
             let digest_detail = get_digest_detail(digest);
