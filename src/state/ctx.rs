@@ -66,7 +66,7 @@ impl OtelTracer {
 #[derive(Default)]
 pub struct State {
     // connection id
-    pub connection_id: i32,
+    pub connection_id: usize,
     // current processing request
     pub processing: i32,
     // accepted request

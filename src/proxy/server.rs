@@ -429,7 +429,7 @@ impl ProxyHttp for Server {
         Self::CTX: Send + Sync,
     {
         if let Some(stream) = session.stream() {
-            ctx.connection_id = stream.id();
+            ctx.connection_id = stream.id() as usize;
         }
         // get digest of timing and tls
         if let Some(digest) = session.digest() {
