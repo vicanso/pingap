@@ -46,9 +46,15 @@ impl Redirect {
                         .to_string(),
             });
         }
+        let mut prefix = get_str_conf(params, "prefix");
+        if prefix.len() <= 1 {
+            prefix = "".to_string();
+        } else if !prefix.starts_with("/") {
+            prefix = format!("/{prefix}");
+        }
         Ok(Self {
             hash_value,
-            prefix: get_str_conf(params, "prefix"),
+            prefix,
             http_to_https: get_bool_conf(params, "http_to_https"),
             plugin_step: step,
         })
