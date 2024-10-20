@@ -8,8 +8,9 @@ import {
   LoaderCircle,
   Cog,
   Languages,
+  FileCode2,
 } from "lucide-react";
-import { goToHome } from "@/routers";
+import { goToConfig, goToHome } from "@/routers";
 import { useTheme } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
 import {
@@ -155,6 +156,16 @@ export function MainHeader({
           <span className="ml-2">{basicInfo.version}</span>
         </Button>
         <div className="flex flex-1 items-center justify-between space-x-2 md:justify-end mr-5">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={(e) => {
+              e.preventDefault();
+              goToConfig();
+            }}
+          >
+            <FileCode2 />
+          </Button>
           {tips}
         </div>
       </div>
