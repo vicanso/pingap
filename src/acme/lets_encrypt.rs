@@ -18,7 +18,7 @@ use crate::http_extra::HttpResponse;
 use crate::proxy::init_certificates;
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::State;
-use crate::util::{self, base64_encode};
+use crate::util;
 use crate::webhook;
 use async_trait::async_trait;
 use http::StatusCode;
@@ -369,8 +369,8 @@ async fn new_lets_encrypt(
         domains: domains.to_vec(),
         not_after,
         not_before,
-        pem: base64_encode(&cert_chain_pem),
-        key: base64_encode(private_key.serialize_pem()),
+        pem: util::base64_encode(&cert_chain_pem),
+        key: util::base64_encode(private_key.serialize_pem()),
     };
     let buf = serde_json::to_vec(&info).map_err(|e| Error::SerdeJson {
         category: "serde_certificate".to_string(),
