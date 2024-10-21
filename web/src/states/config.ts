@@ -96,6 +96,13 @@ export interface Certificate {
   remark?: string;
 }
 
+export interface Storage {
+  category: string;
+  secret?: string;
+  value: string;
+  remark?: string;
+}
+
 interface Basic {
   error_template?: string;
   name?: string;
@@ -128,6 +135,7 @@ interface Config {
   servers?: Record<string, Server>;
   plugins?: Record<string, Record<string, unknown>>;
   certificates?: Record<string, Certificate>;
+  storages?: Record<string, Storage>;
 }
 
 interface ConfigState {

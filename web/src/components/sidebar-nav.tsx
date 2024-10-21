@@ -7,6 +7,7 @@ import {
   TrendingUpDown,
   PlugZap,
   ShieldCheck,
+  Container,
 } from "lucide-react";
 import router, {
   BASIC,
@@ -15,6 +16,7 @@ import router, {
   UPSTREMAS,
   PLUGINS,
   CERTIFICATES,
+  STORAGES,
 } from "@/routers.tsx";
 import useConfigState from "@/states/config";
 import { useI18n } from "@/i18n";
@@ -41,6 +43,7 @@ export function MainSidebar({
   const upstreams = Object.keys(config.upstreams || {}).sort();
   const plugins = Object.keys(config.plugins || {}).sort();
   const certificates = Object.keys(config.certificates || {}).sort();
+  const storages = Object.keys(config.storages || {}).sort();
   const getLabel = (category: string) => {
     if (!initialized) {
       return "--";
@@ -60,6 +63,9 @@ export function MainSidebar({
       }
       case "certificate": {
         return certificates.length.toString();
+      }
+      case "storage": {
+        return storages.length.toString();
       }
       default: {
         return "--";
@@ -131,6 +137,14 @@ export function MainSidebar({
           label: getLabel("certificate"),
           path: CERTIFICATES,
           children: generateChildren(CERTIFICATES, certificates),
+        },
+        {
+          title: navI18n("storage"),
+          icon: Container,
+          variant: getVariant(STORAGES),
+          label: getLabel("storage"),
+          path: STORAGES,
+          children: generateChildren(STORAGES, storages),
         },
       ]}
     ></Nav>

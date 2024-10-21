@@ -19,7 +19,7 @@ use super::{
 use crate::config::{
     self, get_current_config, save_config, BasicConf, CertificateConf,
     LocationConf, PluginCategory, PluginConf, PluginStep, ServerConf,
-    UpstreamConf, CATEGORY_CERTIFICATE,
+    StorageConf, UpstreamConf, CATEGORY_CERTIFICATE, CATEGORY_STORAGE,
 };
 use crate::config::{
     PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
@@ -325,6 +325,17 @@ impl AdminServe {
                         util::new_internal_error(400, e.to_string())
                     })?;
                 conf.certificates.insert(key, certificate);
+            },
+            CATEGORY_STORAGE => {
+                let storage: StorageConf = serde_json::from_slice(&buf)
+                    .map_err(|e| {
+                        error!(
+                            error = e.to_string(),
+                            "descrialize storage fail"
+                        );
+                        util::new_internal_error(400, e.to_string())
+                    })?;
+                conf.storages.insert(key, storage);
             },
             _ => {
                 let basic_conf: BasicConf = serde_json::from_slice(&buf)

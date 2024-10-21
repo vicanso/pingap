@@ -26,6 +26,7 @@ export default {
     upstream: "Upstream",
     plugin: "Plugin",
     certificate: "Certificate",
+    storage: "Storage",
   },
   home: {
     dashboard: "Dashboard",
@@ -380,6 +381,16 @@ export default {
     combinedAuthAuthDeviationPlaceholder: "Input the deviation(e.g. 10)",
     combinedAuthAuthAdd: "Add",
     combinedAuthAuthRemove: "Remove",
+    remark: "Remark",
+  },
+  storage: {
+    name: "Name",
+    namePlaceholder: "Input the name of storage",
+    category: "Category",
+    categoryPlaceholder: "Select the category of storage",
+    secret: "Secret",
+    secretPlaceholder: "Input the secret for encrypt value",
+    value: "Value",
     remark: "Remark",
   },
 };

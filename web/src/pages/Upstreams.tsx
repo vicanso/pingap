@@ -295,7 +295,7 @@ export default function Upstreams() {
         <MainSidebar className="h-screen flex-none w-[230px]" />
         <div className="grow lg:border-l overflow-auto p-4">
           <h2 className="h-8 mb-1">
-            <span className="border-b-2 border-solid p-1 border-[rgb(var(--foreground-rgb))]">
+            <span className="border-b-2 border-solid py-1 border-[rgb(var(--foreground-rgb))]">
               {formatLabel(currentUpstream)}
             </span>
           </h2>

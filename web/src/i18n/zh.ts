@@ -363,4 +363,14 @@ export default {
     combinedAuthAuthRemove: "删除",
     remark: "备注",
   },
+  storage: {
+    name: "名称",
+    namePlaceholder: "输入存储数据的名称",
+    category: "类型",
+    categoryPlaceholder: "选择存储数据的类型",
+    secret: "密钥",
+    secretPlaceholder: "输入加密数据的密钥",
+    value: "数据",
+    remark: "备注",
+  },
 };

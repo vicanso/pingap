@@ -7,6 +7,7 @@ import Upstreams from "@/pages/Upstreams";
 import Plugins from "@/pages/Plugins";
 import Certificates from "@/pages/Certificates";
 import Config from "@/pages/Config";
+import Storages from "@/pages/Storages";
 
 export const HOME = "/";
 export const BASIC = "/basic";
@@ -15,6 +16,7 @@ export const LOCATIONS = "/locations";
 export const UPSTREMAS = "/upstreams";
 export const PLUGINS = "/plugins";
 export const CERTIFICATES = "/certificates";
+export const STORAGES = "/storages";
 export const CONFIG = "/config";
 
 const router = createHashRouter([
@@ -49,6 +51,10 @@ const router = createHashRouter([
   {
     path: CONFIG,
     element: <Config />,
+  },
+  {
+    path: STORAGES,
+    element: <Storages />,
   },
 ]);
 

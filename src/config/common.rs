@@ -40,6 +40,7 @@ pub const CATEGORY_UPSTREAM: &str = "upstream";
 pub const CATEGORY_LOCATION: &str = "location";
 pub const CATEGORY_SERVER: &str = "server";
 pub const CATEGORY_PLUGIN: &str = "plugin";
+pub const CATEGORY_STORAGE: &str = "storage";
 pub const CATEGORY_BASIC: &str = "basic";
 
 pub fn list_category() -> Vec<String> {
@@ -49,6 +50,7 @@ pub fn list_category() -> Vec<String> {
         CATEGORY_LOCATION.to_string(),
         CATEGORY_SERVER.to_string(),
         CATEGORY_PLUGIN.to_string(),
+        CATEGORY_STORAGE.to_string(),
         CATEGORY_BASIC.to_string(),
     ]
 }
@@ -486,6 +488,14 @@ impl BasicConf {
     }
 }
 
+#[derive(Debug, Default, Deserialize, Clone, Serialize)]
+pub struct StorageConf {
+    pub category: String,
+    pub value: String,
+    pub secret: Option<String>,
+    pub remark: Option<String>,
+}
+
 #[derive(Deserialize, Debug, Serialize)]
 struct TomlConfig {
     basic: Option<BasicConf>,
@@ -494,6 +504,7 @@ struct TomlConfig {
     locations: Option<Map<String, Value>>,
     plugins: Option<Map<String, Value>>,
     certificates: Option<Map<String, Value>>,
+    storages: Option<Map<String, Value>>,
 }
 
 fn format_toml(value: &Value) -> String {
@@ -514,6 +525,7 @@ pub struct PingapConf {
     pub servers: HashMap<String, ServerConf>,
     pub plugins: HashMap<String, PluginConf>,
     pub certificates: HashMap<String, CertificateConf>,
+    pub storages: HashMap<String, StorageConf>,
 }
 
 impl PingapConf {
@@ -573,12 +585,23 @@ impl PingapConf {
                     .map_err(|e| Error::Ser { source: e })?;
                 ("/certificates.toml".to_string(), value)
             },
+            CATEGORY_STORAGE => {
+                let mut m = Map::new();
+                let _ = m.insert(
+                    "storages".to_string(),
+                    toml::Value::Table(data.storages.unwrap_or_default()),
+                );
+                let value = toml::to_string_pretty(&m)
+                    .map_err(|e| Error::Ser { source: e })?;
+                ("/storages.toml".to_string(), value)
+            },
             _ => {
                 data.servers = None;
                 data.locations = None;
                 data.upstreams = None;
                 data.plugins = None;
                 data.certificates = None;
+                data.storages = None;
                 let value = toml::to_string_pretty(&data)
                     .map_err(|e| Error::Ser { source: e })?;
                 ("/basic.toml".to_string(), value)
@@ -634,6 +657,12 @@ impl TryFrom<&[u8]> for PingapConf {
             conf.certificates.insert(name, certificate);
         }
 
+        for (name, value) in data.storages.unwrap_or_default() {
+            let storages: StorageConf =
+                toml::from_str(format_toml(&value).as_str())
+                    .map_err(|e| Error::De { source: e })?;
+            conf.storages.insert(name, storages);
+        }
         Ok(conf)
     }
 }
