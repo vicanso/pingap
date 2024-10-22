@@ -128,7 +128,7 @@ fn new_server_conf(
         server_conf.upgrade_sock = upgrade_sock.to_string();
     }
     if let Some(threads) = basic_conf.threads {
-        server_conf.threads = threads;
+        server_conf.threads = threads.max(1);
     }
     if let Some(work_stealing) = basic_conf.work_stealing {
         server_conf.work_stealing = work_stealing
