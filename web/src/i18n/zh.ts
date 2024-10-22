@@ -19,6 +19,8 @@ export default {
   removeFailTitle: "删除配置失败",
   removeSuccessTitle: "删除配置成功",
   removeSuccessDescription: "配置已成功删除",
+  includes: "引入配置",
+  includesPlaceholder: "选择要引入的配置",
   nav: {
     basic: "基础配置",
     server: "服务配置",
@@ -26,6 +28,7 @@ export default {
     upstream: "上游服务配置",
     plugin: "插件配置",
     certificate: "证书配置",
+    storage: "存储配置",
   },
   home: {
     dashboard: "面板",

@@ -21,14 +21,17 @@ function getLocationConfig(name: string, locations?: Record<string, Location>) {
 
 export default function Locations() {
   const locationI18n = useI18n("location");
+  const i18n = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [config, initialized, update, remove] = useConfigState((state) => [
-    state.data,
-    state.initialized,
-    state.update,
-    state.remove,
-  ]);
+  const [config, initialized, update, remove, getIncludeOptions] =
+    useConfigState((state) => [
+      state.data,
+      state.initialized,
+      state.update,
+      state.remove,
+      state.getIncludeOptions,
+    ]);
 
   const newLocation = "*";
   const locations = Object.keys(config.locations || {});
@@ -127,6 +130,15 @@ export default function Locations() {
       category: ExFormItemCategory.KV_LIST,
     },
     {
+      name: "includes",
+      label: i18n("includes"),
+      placeholder: i18n("includesPlaceholder"),
+      defaultValue: locationConfig.includes,
+      span: 6,
+      category: ExFormItemCategory.MULTI_SELECT,
+      options: newStringOptions(getIncludeOptions(), false),
+    },
+    {
       name: "weight",
       label: locationI18n("weight"),
       placeholder: locationI18n("weightPlaceholder"),
@@ -142,7 +154,6 @@ export default function Locations() {
       span: 3,
       category: ExFormItemCategory.TEXT,
     },
-
     {
       name: "plugins",
       label: locationI18n("plugins"),
@@ -161,7 +172,7 @@ export default function Locations() {
       category: ExFormItemCategory.TEXTAREA,
     },
   ];
-  let defaultShow = 6;
+  let defaultShow = 7;
   if (currentLocation === newLocation) {
     defaultShow++;
     items.unshift({

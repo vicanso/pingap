@@ -233,6 +233,7 @@ pub struct UpstreamConf {
     pub tcp_probe_count: Option<usize>,
     pub tcp_recv_buf: Option<ByteSize>,
     pub tcp_fast_open: Option<bool>,
+    pub includes: Option<Vec<String>>,
     pub remark: Option<String>,
 }
 impl UpstreamConf {
@@ -297,6 +298,7 @@ pub struct LocationConf {
     pub weight: Option<u16>,
     pub plugins: Option<Vec<String>>,
     pub client_max_body_size: Option<ByteSize>,
+    pub includes: Option<Vec<String>>,
     pub remark: Option<String>,
 }
 
@@ -407,6 +409,7 @@ pub struct ServerConf {
     pub tcp_fastopen: Option<usize>,
     pub prometheus_metrics: Option<String>,
     pub otlp_exporter: Option<String>,
+    pub includes: Option<Vec<String>>,
     pub remark: Option<String>,
 }
 
@@ -611,59 +614,115 @@ impl PingapConf {
     }
 }
 
+fn get_include_toml(
+    data: &HashMap<String, String>,
+    value: &Value,
+) -> Option<String> {
+    let Some(m) = value.as_table() else {
+        return None;
+    };
+    let Some(includes) = m.get("includes") else {
+        return None;
+    };
+    let Some(values) = includes.as_array() else {
+        return None;
+    };
+    println!("{values:?}");
+    let arr: Vec<String> = values
+        .iter()
+        .map(|item| {
+            let key = item.as_str().clone().unwrap_or_default();
+            println!("{key:?}");
+            if let Some(value) = data.get(key) {
+                value.clone()
+            } else {
+                "".to_string()
+            }
+        })
+        .collect();
+    Some(arr.join("\n"))
+}
+
+fn convert_pingap_config(
+    data: &[u8],
+    replace_includes: bool,
+) -> Result<PingapConf, Error> {
+    let data: TomlConfig = toml::from_str(
+        std::string::String::from_utf8_lossy(data)
+            .to_string()
+            .as_str(),
+    )
+    .map_err(|e| Error::De { source: e })?;
+
+    let mut conf = PingapConf {
+        basic: data.basic.unwrap_or_default(),
+        ..Default::default()
+    };
+    let mut includes = HashMap::new();
+    for (name, value) in data.storages.unwrap_or_default() {
+        let toml = format_toml(&value);
+        let storage: StorageConf = toml::from_str(toml.as_str())
+            .map_err(|e| Error::De { source: e })?;
+        includes.insert(name.clone(), storage.value.clone());
+        conf.storages.insert(name, storage);
+    }
+
+    for (name, value) in data.upstreams.unwrap_or_default() {
+        let mut toml = format_toml(&value);
+        if replace_includes {
+            if let Some(include_values) = get_include_toml(&includes, &value) {
+                toml = format!("{include_values}\n{toml}");
+            }
+        }
+
+        let upstream: UpstreamConf = toml::from_str(toml.as_str())
+            .map_err(|e| Error::De { source: e })?;
+        conf.upstreams.insert(name, upstream);
+    }
+    for (name, value) in data.locations.unwrap_or_default() {
+        let mut toml = format_toml(&value);
+        if replace_includes {
+            if let Some(include_values) = get_include_toml(&includes, &value) {
+                toml = format!("{include_values}\n{toml}");
+            }
+        }
+
+        let location: LocationConf = toml::from_str(toml.as_str())
+            .map_err(|e| Error::De { source: e })?;
+        conf.locations.insert(name, location);
+    }
+    for (name, value) in data.servers.unwrap_or_default() {
+        let mut toml = format_toml(&value);
+        if replace_includes {
+            if let Some(include_values) = get_include_toml(&includes, &value) {
+                toml = format!("{include_values}\n{toml}");
+            }
+        }
+
+        let server: ServerConf = toml::from_str(toml.as_str())
+            .map_err(|e| Error::De { source: e })?;
+        conf.servers.insert(name, server);
+    }
+    for (name, value) in data.plugins.unwrap_or_default() {
+        let plugin: PluginConf = toml::from_str(format_toml(&value).as_str())
+            .map_err(|e| Error::De { source: e })?;
+        conf.plugins.insert(name, plugin);
+    }
+
+    for (name, value) in data.certificates.unwrap_or_default() {
+        let certificate: CertificateConf =
+            toml::from_str(format_toml(&value).as_str())
+                .map_err(|e| Error::De { source: e })?;
+        conf.certificates.insert(name, certificate);
+    }
+
+    Ok(conf)
+}
+
 impl TryFrom<&[u8]> for PingapConf {
     type Error = Error;
     fn try_from(data: &[u8]) -> Result<Self, self::Error> {
-        let data: TomlConfig = toml::from_str(
-            std::string::String::from_utf8_lossy(data)
-                .to_string()
-                .as_str(),
-        )
-        .map_err(|e| Error::De { source: e })?;
-
-        let mut conf = PingapConf {
-            basic: data.basic.unwrap_or_default(),
-            ..Default::default()
-        };
-        for (name, value) in data.upstreams.unwrap_or_default() {
-            let upstream: UpstreamConf =
-                toml::from_str(format_toml(&value).as_str())
-                    .map_err(|e| Error::De { source: e })?;
-            conf.upstreams.insert(name, upstream);
-        }
-        for (name, value) in data.locations.unwrap_or_default() {
-            let location: LocationConf =
-                toml::from_str(format_toml(&value).as_str())
-                    .map_err(|e| Error::De { source: e })?;
-            conf.locations.insert(name, location);
-        }
-        for (name, value) in data.servers.unwrap_or_default() {
-            let server: ServerConf =
-                toml::from_str(format_toml(&value).as_str())
-                    .map_err(|e| Error::De { source: e })?;
-            conf.servers.insert(name, server);
-        }
-        for (name, value) in data.plugins.unwrap_or_default() {
-            let plugin: PluginConf =
-                toml::from_str(format_toml(&value).as_str())
-                    .map_err(|e| Error::De { source: e })?;
-            conf.plugins.insert(name, plugin);
-        }
-
-        for (name, value) in data.certificates.unwrap_or_default() {
-            let certificate: CertificateConf =
-                toml::from_str(format_toml(&value).as_str())
-                    .map_err(|e| Error::De { source: e })?;
-            conf.certificates.insert(name, certificate);
-        }
-
-        for (name, value) in data.storages.unwrap_or_default() {
-            let storages: StorageConf =
-                toml::from_str(format_toml(&value).as_str())
-                    .map_err(|e| Error::De { source: e })?;
-            conf.storages.insert(name, storages);
-        }
-        Ok(conf)
+        convert_pingap_config(data, false)
     }
 }
 

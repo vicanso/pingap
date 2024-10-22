@@ -19,6 +19,8 @@ export default {
   removeFailTitle: "Remove Config Fail",
   removeSuccessTitle: "Remove Config Success",
   removeSuccessDescription: "Config is removed from storage",
+  includes: "Includes",
+  includesPlaceholder: "Select the include config",
   nav: {
     basic: "Basic",
     server: "Server",

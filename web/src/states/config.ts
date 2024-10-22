@@ -23,6 +23,7 @@ export interface Upstream {
   tcp_probe_count?: number;
   tcp_recv_buf?: number;
   tcp_fast_open?: boolean;
+  includes?: string[];
   remark?: string;
 }
 
@@ -36,6 +37,7 @@ export interface Location {
   rewrite?: string;
   client_max_body_size?: string;
   plugins?: string[];
+  includes?: string[];
   remark?: string;
 }
 
@@ -82,6 +84,7 @@ export interface Server {
   tcp_fastopen?: number;
   prometheus_metrics?: string;
   otlp_exporter?: string;
+  includes?: string[];
   remark?: string;
 }
 
@@ -151,6 +154,7 @@ interface ConfigState {
     data: Record<string, unknown>,
   ) => Promise<void>;
   remove: (category: string, name: string) => Promise<void>;
+  getIncludeOptions: () => string[];
 }
 
 const useConfigState = create<ConfigState>()((set, get) => ({
@@ -199,6 +203,21 @@ const useConfigState = create<ConfigState>()((set, get) => ({
       version: random(),
     });
     await get().fetch();
+  },
+  getIncludeOptions: (category?: string) => {
+    const storages = get().data.storages || {};
+    const keys = Object.keys(storages);
+    if (!category) {
+      return keys;
+    }
+    const includes: string[] = [];
+    keys.forEach((key) => {
+      const storage = storages[key];
+      if (storage.category === category) {
+        includes.push(key);
+      }
+    });
+    return includes;
   },
 }));
 

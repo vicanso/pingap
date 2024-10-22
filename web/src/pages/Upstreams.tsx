@@ -24,14 +24,17 @@ function getUpstreamConfig(name: string, upstreams?: Record<string, Upstream>) {
 
 export default function Upstreams() {
   const upstreamI18n = useI18n("upstream");
+  const i18n = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [config, initialized, update, remove] = useConfigState((state) => [
-    state.data,
-    state.initialized,
-    state.update,
-    state.remove,
-  ]);
+  const [config, initialized, update, remove, getIncludeOptions] =
+    useConfigState((state) => [
+      state.data,
+      state.initialized,
+      state.update,
+      state.remove,
+      state.getIncludeOptions,
+    ]);
   const newUpstream = "*";
   const upstreams = Object.keys(config.upstreams || {});
   upstreams.sort();
@@ -85,6 +88,15 @@ export default function Upstreams() {
       defaultValue: upstreamConfig.update_frequency,
       span: 3,
       category: ExFormItemCategory.TEXT,
+    },
+    {
+      name: "includes",
+      label: i18n("includes"),
+      placeholder: i18n("includesPlaceholder"),
+      defaultValue: upstreamConfig.includes,
+      span: 6,
+      category: ExFormItemCategory.MULTI_SELECT,
+      options: newStringOptions(getIncludeOptions(), false),
     },
     {
       name: "algo",
@@ -257,7 +269,7 @@ export default function Upstreams() {
       category: ExFormItemCategory.TEXTAREA,
     },
   ];
-  let defaultShow = 3;
+  let defaultShow = 4;
   if (currentUpstream === newUpstream) {
     defaultShow++;
     items.unshift({
