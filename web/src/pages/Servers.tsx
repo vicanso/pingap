@@ -11,7 +11,7 @@ import {
   newStringOptions,
   newBooleanOptions,
 } from "@/constants";
-import { formatLabel, newZodDuration } from "@/helpers/util";
+import { formatLabel, newZodDuration, omitEmptyArray } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 import { ScrollRestoration } from "react-router-dom";
@@ -278,6 +278,7 @@ export default function Servers() {
               if (name === newServer) {
                 name = value["name"] as string;
               }
+              omitEmptyArray(value);
               await update("server", name, value);
               handleSelectServer(name);
             }}

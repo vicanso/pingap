@@ -204,11 +204,17 @@ impl AdminServe {
         }
         self.authorizations.contains(&value.as_bytes().to_vec())
     }
-    async fn load_config(&self) -> pingora::Result<PingapConf> {
-        let conf = config::load_config(true).await.map_err(|e| {
-            error!("failed to load config: {e}");
-            util::new_internal_error(400, e.to_string())
-        })?;
+    async fn load_config(
+        &self,
+        replace_includes: bool,
+    ) -> pingora::Result<PingapConf> {
+        let conf =
+            config::load_config(replace_includes, true)
+                .await
+                .map_err(|e| {
+                    error!("failed to load config: {e}");
+                    util::new_internal_error(400, e.to_string())
+                })?;
         conf.validate().map_err(|e| {
             error!("failed to validate config: {e}");
             util::new_internal_error(400, e.to_string())
@@ -219,8 +225,8 @@ impl AdminServe {
         &self,
         category: &str,
     ) -> pingora::Result<HttpResponse> {
-        let conf = self.load_config().await?;
         if category == "toml" {
+            let conf = self.load_config(true).await?;
             let data = toml::to_string_pretty(&conf)
                 .map_err(|e| util::new_internal_error(400, e.to_string()))?;
             return Ok(HttpResponse {
@@ -229,6 +235,7 @@ impl AdminServe {
                 ..Default::default()
             });
         }
+        let conf = self.load_config(false).await?;
         let resp = match category {
             CATEGORY_UPSTREAM => HttpResponse::try_from_json(&conf.upstreams)?,
             CATEGORY_LOCATION => HttpResponse::try_from_json(&conf.locations)?,
@@ -247,7 +254,7 @@ impl AdminServe {
         category: &str,
         name: &str,
     ) -> pingora::Result<HttpResponse> {
-        let mut conf = self.load_config().await?;
+        let mut conf = self.load_config(false).await?;
         conf.remove(category, name).map_err(|e| {
             error!(error = e.to_string(), "validate config fail");
             util::new_internal_error(400, e.to_string())
@@ -264,12 +271,18 @@ impl AdminServe {
         category: &str,
         name: &str,
     ) -> pingora::Result<HttpResponse> {
+        if name.is_empty() {
+            return Err(util::new_internal_error(
+                400,
+                "name is empty".to_string(),
+            ));
+        }
         let mut buf = BytesMut::with_capacity(4096);
         while let Some(value) = session.read_request_body().await? {
             buf.put(value.as_ref());
         }
         let key = name.to_string();
-        let mut conf = self.load_config().await?;
+        let mut conf = self.load_config(false).await?;
         match category {
             CATEGORY_UPSTREAM => {
                 let upstream: UpstreamConf = serde_json::from_slice(&buf)

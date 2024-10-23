@@ -90,7 +90,11 @@ impl EtcdStorage {
 #[async_trait]
 impl ConfigStorage for EtcdStorage {
     /// Load config from etcd.
-    async fn load_config(&self, _admin: bool) -> Result<PingapConf> {
+    async fn load_config(
+        &self,
+        replace_include: bool,
+        _admin: bool,
+    ) -> Result<PingapConf> {
         let mut c = self.connect().await?;
         let mut opts = GetOptions::new();
         opts = opts.with_prefix();
@@ -104,7 +108,7 @@ impl ConfigStorage for EtcdStorage {
             buffer.extend(item.value());
             buffer.push(0x0a);
         }
-        PingapConf::try_from(buffer.as_slice())
+        PingapConf::new(buffer.as_slice(), replace_include)
     }
     /// Save config to etcd by category.
     async fn save_config(
@@ -160,7 +164,8 @@ mod tests {
         );
         let storage = EtcdStorage::new(&url).unwrap();
         let toml_data = include_bytes!("../../conf/pingap.toml");
-        let conf = PingapConf::try_from(toml_data.to_vec().as_slice()).unwrap();
+        let conf =
+            PingapConf::new(toml_data.to_vec().as_slice(), false).unwrap();
 
         storage.save_config(&conf, CATEGORY_BASIC).await.unwrap();
         storage.save_config(&conf, CATEGORY_UPSTREAM).await.unwrap();
@@ -168,7 +173,7 @@ mod tests {
         storage.save_config(&conf, CATEGORY_PLUGIN).await.unwrap();
         storage.save_config(&conf, CATEGORY_SERVER).await.unwrap();
 
-        let current_conf = storage.load_config(false).await.unwrap();
+        let current_conf = storage.load_config(false, false).await.unwrap();
         assert_eq!(current_conf.hash().unwrap(), conf.hash().unwrap());
     }
 }

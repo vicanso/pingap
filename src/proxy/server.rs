@@ -1104,7 +1104,7 @@ mod tests {
 
     fn new_server() -> Server {
         let toml_data = include_bytes!("../../conf/pingap.toml");
-        let pingap_conf = PingapConf::try_from(toml_data.as_ref()).unwrap();
+        let pingap_conf = PingapConf::new(toml_data.as_ref(), false).unwrap();
         try_init_upstreams(&pingap_conf.upstreams).unwrap();
         try_init_locations(&pingap_conf.locations).unwrap();
         try_init_server_locations(&pingap_conf.servers, &pingap_conf.locations)

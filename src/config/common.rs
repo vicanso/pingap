@@ -32,6 +32,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{collections::HashMap, str::FromStr};
 use strum::EnumString;
+use toml::Table;
 use toml::{map::Map, Value};
 use url::Url;
 
@@ -614,25 +615,38 @@ impl PingapConf {
     }
 }
 
+fn convert_include_toml(
+    data: &HashMap<String, String>,
+    replace_includes: bool,
+    mut value: Value,
+) -> String {
+    let Some(m) = value.as_table_mut() else {
+        return "".to_string();
+    };
+    if !replace_includes {
+        return m.to_string();
+    }
+    if let Some(includes) = m.remove("includes") {
+        if let Some(includes) = get_include_toml(data, includes) {
+            if let Ok(includes) = toml::from_str::<Table>(&includes) {
+                for (key, value) in includes.iter() {
+                    m.insert(key.to_string(), value.clone());
+                }
+            }
+        }
+    }
+    m.to_string()
+}
+
 fn get_include_toml(
     data: &HashMap<String, String>,
-    value: &Value,
+    includes: Value,
 ) -> Option<String> {
-    let Some(m) = value.as_table() else {
-        return None;
-    };
-    let Some(includes) = m.get("includes") else {
-        return None;
-    };
-    let Some(values) = includes.as_array() else {
-        return None;
-    };
-    println!("{values:?}");
+    let values = includes.as_array()?;
     let arr: Vec<String> = values
         .iter()
         .map(|item| {
-            let key = item.as_str().clone().unwrap_or_default();
-            println!("{key:?}");
+            let key = item.as_str().unwrap_or_default();
             if let Some(value) = data.get(key) {
                 value.clone()
             } else {
@@ -668,36 +682,21 @@ fn convert_pingap_config(
     }
 
     for (name, value) in data.upstreams.unwrap_or_default() {
-        let mut toml = format_toml(&value);
-        if replace_includes {
-            if let Some(include_values) = get_include_toml(&includes, &value) {
-                toml = format!("{include_values}\n{toml}");
-            }
-        }
+        let toml = convert_include_toml(&includes, replace_includes, value);
 
         let upstream: UpstreamConf = toml::from_str(toml.as_str())
             .map_err(|e| Error::De { source: e })?;
         conf.upstreams.insert(name, upstream);
     }
     for (name, value) in data.locations.unwrap_or_default() {
-        let mut toml = format_toml(&value);
-        if replace_includes {
-            if let Some(include_values) = get_include_toml(&includes, &value) {
-                toml = format!("{include_values}\n{toml}");
-            }
-        }
+        let toml = convert_include_toml(&includes, replace_includes, value);
 
         let location: LocationConf = toml::from_str(toml.as_str())
             .map_err(|e| Error::De { source: e })?;
         conf.locations.insert(name, location);
     }
     for (name, value) in data.servers.unwrap_or_default() {
-        let mut toml = format_toml(&value);
-        if replace_includes {
-            if let Some(include_values) = get_include_toml(&includes, &value) {
-                toml = format!("{include_values}\n{toml}");
-            }
-        }
+        let toml = convert_include_toml(&includes, replace_includes, value);
 
         let server: ServerConf = toml::from_str(toml.as_str())
             .map_err(|e| Error::De { source: e })?;
@@ -719,13 +718,6 @@ fn convert_pingap_config(
     Ok(conf)
 }
 
-impl TryFrom<&[u8]> for PingapConf {
-    type Error = Error;
-    fn try_from(data: &[u8]) -> Result<Self, self::Error> {
-        convert_pingap_config(data, false)
-    }
-}
-
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 struct Description {
     category: String,
@@ -734,6 +726,9 @@ struct Description {
 }
 
 impl PingapConf {
+    pub fn new(data: &[u8], replace_includes: bool) -> Result<Self> {
+        convert_pingap_config(data, replace_includes)
+    }
     /// Validate the options of pinggap config.
     pub fn validate(&self) -> Result<()> {
         let mut upstream_names = vec![];
@@ -768,6 +763,9 @@ impl PingapConf {
         for (_, certificate) in self.certificates.iter() {
             certificate.validate()?;
         }
+        let ping_conf = toml::to_string_pretty(self)
+            .map_err(|e| Error::Ser { source: e })?;
+        convert_pingap_config(ping_conf.as_bytes(), true)?;
         Ok(())
     }
     /// Generate the content hash of config.
@@ -875,11 +873,19 @@ impl PingapConf {
                 data: toml::to_string_pretty(data).unwrap_or_default(),
             });
         }
+        for (name, data) in value.storages.iter() {
+            descriptions.push(Description {
+                category: CATEGORY_STORAGE.to_string(),
+                name: format!("storage:{name}"),
+                data: toml::to_string_pretty(data).unwrap_or_default(),
+            });
+        }
         value.servers = HashMap::new();
         value.locations = HashMap::new();
         value.upstreams = HashMap::new();
         value.plugins = HashMap::new();
         value.certificates = HashMap::new();
+        value.storages = HashMap::new();
         descriptions.push(Description {
             category: CATEGORY_BASIC.to_string(),
             name: CATEGORY_BASIC.to_string(),
@@ -1196,7 +1202,8 @@ mod tests {
     #[test]
     fn test_pingap_conf() {
         let toml_data = include_bytes!("../../conf/pingap.toml");
-        let conf = PingapConf::try_from(toml_data.to_vec().as_slice()).unwrap();
+        let conf =
+            PingapConf::new(toml_data.to_vec().as_slice(), false).unwrap();
 
         let (key, data) = conf.get_toml(CATEGORY_SERVER).unwrap();
         assert_eq!("/servers.toml", key);
@@ -1307,7 +1314,8 @@ cache_max_size = "100.0 MB"
     #[test]
     fn test_pingap_diff() {
         let toml_data = include_bytes!("../../conf/pingap.toml");
-        let conf = PingapConf::try_from(toml_data.to_vec().as_slice()).unwrap();
+        let conf =
+            PingapConf::new(toml_data.to_vec().as_slice(), false).unwrap();
 
         let mut other = conf.clone();
         other.servers.insert(
@@ -1341,7 +1349,7 @@ basic
     fn test_config_remove() {
         let toml_data = include_bytes!("../../conf/pingap.toml");
         let mut conf =
-            PingapConf::try_from(toml_data.to_vec().as_slice()).unwrap();
+            PingapConf::new(toml_data.to_vec().as_slice(), false).unwrap();
 
         let result = conf.remove("plugin", "stats");
         assert_eq!(

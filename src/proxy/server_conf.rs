@@ -151,7 +151,7 @@ mod tests {
     #[test]
     fn test_server_conf_from() {
         let toml_data = include_bytes!("../../conf/pingap.toml");
-        let pingap_conf = PingapConf::try_from(toml_data.as_ref()).unwrap();
+        let pingap_conf = PingapConf::new(toml_data.as_ref(), false).unwrap();
         let confs: Vec<ServerConf> = pingap_conf.into();
 
         assert_eq!(1, confs.len());

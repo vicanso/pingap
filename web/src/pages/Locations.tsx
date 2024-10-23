@@ -7,7 +7,7 @@ import { ExForm, ExFormItem } from "@/components/ex-form";
 import { pascal } from "radash";
 import { z } from "zod";
 import { ExFormItemCategory, newStringOptions } from "@/constants";
-import { formatLabel, newZodBytes } from "@/helpers/util";
+import { formatLabel, newZodBytes, omitEmptyArray } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 import { ScrollRestoration } from "react-router-dom";
@@ -216,6 +216,7 @@ export default function Locations() {
               if (name === newLocation) {
                 name = value["name"] as string;
               }
+              omitEmptyArray(value);
               await update("location", name, value);
               handleSelectLocation(name);
             }}

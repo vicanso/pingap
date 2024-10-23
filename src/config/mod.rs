@@ -84,7 +84,11 @@ impl Observer {
 
 #[async_trait]
 pub trait ConfigStorage {
-    async fn load_config(&self, admin: bool) -> Result<PingapConf>;
+    async fn load_config(
+        &self,
+        replace_include: bool,
+        admin: bool,
+    ) -> Result<PingapConf>;
     async fn save_config(
         &self,
         conf: &PingapConf,
@@ -124,13 +128,16 @@ pub fn try_init_config_storage(
     Ok(conf.as_ref())
 }
 
-pub async fn load_config(admin: bool) -> Result<PingapConf> {
+pub async fn load_config(
+    replace_include: bool,
+    admin: bool,
+) -> Result<PingapConf> {
     let Some(storage) = CONFIG_STORAGE.get() else {
         return Err(Error::Invalid {
             message: "storage is not inited".to_string(),
         });
     };
-    storage.load_config(admin).await
+    storage.load_config(replace_include, admin).await
 }
 
 pub fn support_observer() -> bool {
