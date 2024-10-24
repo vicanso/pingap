@@ -1,5 +1,4 @@
 import { LoadingPage } from "@/components/loading";
-import { MainSidebar } from "@/components/sidebar-nav";
 import { useI18n } from "@/i18n";
 import useConfigState, { Location } from "@/states/config";
 import React from "react";
@@ -10,7 +9,6 @@ import { ExFormItemCategory, newStringOptions } from "@/constants";
 import { formatLabel, newZodBytes } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
-import { ScrollRestoration } from "react-router-dom";
 
 function getLocationConfig(name: string, locations?: Record<string, Location>) {
   if (!locations) {
@@ -21,14 +19,17 @@ function getLocationConfig(name: string, locations?: Record<string, Location>) {
 
 export default function Locations() {
   const locationI18n = useI18n("location");
+  const i18n = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [config, initialized, update, remove] = useConfigState((state) => [
-    state.data,
-    state.initialized,
-    state.update,
-    state.remove,
-  ]);
+  const [config, initialized, update, remove, getIncludeOptions] =
+    useConfigState((state) => [
+      state.data,
+      state.initialized,
+      state.update,
+      state.remove,
+      state.getIncludeOptions,
+    ]);
 
   const newLocation = "*";
   const locations = Object.keys(config.locations || {});
@@ -127,6 +128,15 @@ export default function Locations() {
       category: ExFormItemCategory.KV_LIST,
     },
     {
+      name: "includes",
+      label: i18n("includes"),
+      placeholder: i18n("includesPlaceholder"),
+      defaultValue: locationConfig.includes,
+      span: 6,
+      category: ExFormItemCategory.MULTI_SELECT,
+      options: newStringOptions(getIncludeOptions(), false),
+    },
+    {
       name: "weight",
       label: locationI18n("weight"),
       placeholder: locationI18n("weightPlaceholder"),
@@ -142,7 +152,6 @@ export default function Locations() {
       span: 3,
       category: ExFormItemCategory.TEXT,
     },
-
     {
       name: "plugins",
       label: locationI18n("plugins"),
@@ -161,7 +170,7 @@ export default function Locations() {
       category: ExFormItemCategory.TEXTAREA,
     },
   ];
-  let defaultShow = 6;
+  let defaultShow = 7;
   if (currentLocation === newLocation) {
     defaultShow++;
     items.unshift({
@@ -184,34 +193,28 @@ export default function Locations() {
   };
 
   return (
-    <>
-      <div className="flex">
-        <MainSidebar className="h-screen flex-none w-[230px]" />
-        <div className="grow lg:border-l overflow-auto p-4">
-          <h2 className="h-8 mb-1">
-            <span className="border-b-2 border-solid p-1 border-[rgb(var(--foreground-rgb))]">
-              {formatLabel(currentLocation)}
-            </span>
-          </h2>
-          <ExForm
-            category="location"
-            key={currentLocation}
-            items={items}
-            schema={schema}
-            defaultShow={defaultShow}
-            onRemove={currentLocation === newLocation ? undefined : onRemove}
-            onSave={async (value) => {
-              let name = currentLocation;
-              if (name === newLocation) {
-                name = value["name"] as string;
-              }
-              await update("location", name, value);
-              handleSelectLocation(name);
-            }}
-          />
-        </div>
-      </div>
-      <ScrollRestoration />
-    </>
+    <div className="grow lg:border-l overflow-auto p-4">
+      <h2 className="h-8 mb-1">
+        <span className="border-b-2 border-solid py-1 border-[rgb(var(--foreground-rgb))]">
+          {formatLabel(currentLocation)}
+        </span>
+      </h2>
+      <ExForm
+        category="location"
+        key={currentLocation}
+        items={items}
+        schema={schema}
+        defaultShow={defaultShow}
+        onRemove={currentLocation === newLocation ? undefined : onRemove}
+        onSave={async (value) => {
+          let name = currentLocation;
+          if (name === newLocation) {
+            name = value["name"] as string;
+          }
+          await update("location", name, value);
+          handleSelectLocation(name);
+        }}
+      />
+    </div>
   );
 }

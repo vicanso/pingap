@@ -1,4 +1,3 @@
-import { MainSidebar } from "@/components/sidebar-nav";
 import { LoadingPage } from "@/components/loading";
 import useConfigState from "@/states/config";
 import { ExForm, ExFormItem } from "@/components/ex-form";
@@ -14,7 +13,6 @@ import {
 } from "@/constants";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
-import { ScrollRestoration } from "react-router-dom";
 
 function getPluginConfig(
   name: string,
@@ -914,35 +912,29 @@ export default function Plugins() {
   };
 
   return (
-    <>
-      <div className="flex">
-        <MainSidebar className="h-screen flex-none w-[230px]" />
-        <div className="grow lg:border-l overflow-auto p-4">
-          <ExForm
-            category="plugin"
-            key={key}
-            items={items}
-            schema={schema}
-            onValueChange={(value) => {
-              const category = value.category as string;
-              if (category && category !== currentCategory) {
-                setCurrentCategory(category);
-              }
-            }}
-            onRemove={currentPlugin === newPlugin ? undefined : onRemove}
-            onSave={async (value) => {
-              let name = currentPlugin;
-              if (name === newPlugin) {
-                name = value["_name_"] as string;
-              }
-              delete value["_name_"];
-              await update("plugin", name, value);
-              handleSelectPlugin(name);
-            }}
-          />
-        </div>
-      </div>
-      <ScrollRestoration />
-    </>
+    <div className="grow lg:border-l overflow-auto p-4">
+      <ExForm
+        category="plugin"
+        key={key}
+        items={items}
+        schema={schema}
+        onValueChange={(value) => {
+          const category = value.category as string;
+          if (category && category !== currentCategory) {
+            setCurrentCategory(category);
+          }
+        }}
+        onRemove={currentPlugin === newPlugin ? undefined : onRemove}
+        onSave={async (value) => {
+          let name = currentPlugin;
+          if (name === newPlugin) {
+            name = value["_name_"] as string;
+          }
+          delete value["_name_"];
+          await update("plugin", name, value);
+          handleSelectPlugin(name);
+        }}
+      />
+    </div>
   );
 }

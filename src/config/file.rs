@@ -41,7 +41,11 @@ impl FileStorage {
 #[async_trait]
 impl ConfigStorage for FileStorage {
     /// Load config from file.
-    async fn load_config(&self, admin: bool) -> Result<PingapConf> {
+    async fn load_config(
+        &self,
+        replace_include: bool,
+        admin: bool,
+    ) -> Result<PingapConf> {
         let filepath = self.path.clone();
         let dir = Path::new(&filepath);
         if admin && !dir.exists() {
@@ -83,7 +87,7 @@ impl ConfigStorage for FileStorage {
             })?;
             data.append(&mut buf);
         }
-        PingapConf::try_from(data.as_slice())
+        PingapConf::new(data.as_slice(), replace_include)
     }
     /// Save config to file by category.
     async fn save_config(
@@ -136,11 +140,12 @@ mod tests {
         let path = format!("/tmp/{}", nanoid!(16));
         tokio::fs::create_dir(&path).await.unwrap();
         let storage = FileStorage::new(&path).unwrap();
-        let result = storage.load_config(false).await;
+        let result = storage.load_config(false, false).await;
         assert_eq!(true, result.is_ok());
 
         let toml_data = include_bytes!("../../conf/pingap.toml");
-        let conf = PingapConf::try_from(toml_data.to_vec().as_slice()).unwrap();
+        let conf =
+            PingapConf::new(toml_data.to_vec().as_slice(), false).unwrap();
 
         storage.save_config(&conf, CATEGORY_BASIC).await.unwrap();
         storage.save_config(&conf, CATEGORY_UPSTREAM).await.unwrap();
@@ -148,7 +153,7 @@ mod tests {
         storage.save_config(&conf, CATEGORY_PLUGIN).await.unwrap();
         storage.save_config(&conf, CATEGORY_SERVER).await.unwrap();
 
-        let current_conf = storage.load_config(false).await.unwrap();
+        let current_conf = storage.load_config(false, false).await.unwrap();
         assert_eq!(current_conf.hash().unwrap(), conf.hash().unwrap());
     }
 }

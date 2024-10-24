@@ -1,17 +1,18 @@
-import { MainSidebar } from "@/components/sidebar-nav";
 import useConfigState from "@/states/config";
 import { formatError } from "@/helpers/util";
 import { useAsync } from "react-async-hook";
-import { ScrollRestoration } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "react-i18next";
+import { Card } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Config() {
   const { t } = useTranslation();
   const { toast } = useToast();
-  const [fetchToml, toml] = useConfigState((state) => [
+  const [fetchToml, fullToml, originalToml] = useConfigState((state) => [
     state.fetchToml,
-    state.toml,
+    state.fullToml,
+    state.originalToml,
   ]);
   useAsync(async () => {
     try {
@@ -24,14 +25,23 @@ export default function Config() {
     }
   }, []);
   return (
-    <>
-      <div className="flex">
-        <MainSidebar className="h-screen flex-none w-[230px]" />
-        <div className="grow lg:border-l overflow-auto p-4">
-          <pre>{toml}</pre>
-        </div>
-      </div>
-      <ScrollRestoration />
-    </>
+    <div className="grow lg:border-l overflow-auto p-4">
+      <Tabs defaultValue="original">
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="original">{t("original")}</TabsTrigger>
+          <TabsTrigger value="full">{t("full")}</TabsTrigger>
+        </TabsList>
+        <TabsContent value="full">
+          <Card className="p-4">
+            <pre>{fullToml}</pre>
+          </Card>
+        </TabsContent>
+        <TabsContent value="original">
+          <Card className="p-4">
+            <pre>{originalToml}</pre>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </div>
   );
 }

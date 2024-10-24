@@ -32,6 +32,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{collections::HashMap, str::FromStr};
 use strum::EnumString;
+use toml::Table;
 use toml::{map::Map, Value};
 use url::Url;
 
@@ -40,6 +41,7 @@ pub const CATEGORY_UPSTREAM: &str = "upstream";
 pub const CATEGORY_LOCATION: &str = "location";
 pub const CATEGORY_SERVER: &str = "server";
 pub const CATEGORY_PLUGIN: &str = "plugin";
+pub const CATEGORY_STORAGE: &str = "storage";
 pub const CATEGORY_BASIC: &str = "basic";
 
 pub fn list_category() -> Vec<String> {
@@ -49,6 +51,7 @@ pub fn list_category() -> Vec<String> {
         CATEGORY_LOCATION.to_string(),
         CATEGORY_SERVER.to_string(),
         CATEGORY_PLUGIN.to_string(),
+        CATEGORY_STORAGE.to_string(),
         CATEGORY_BASIC.to_string(),
     ]
 }
@@ -231,6 +234,7 @@ pub struct UpstreamConf {
     pub tcp_probe_count: Option<usize>,
     pub tcp_recv_buf: Option<ByteSize>,
     pub tcp_fast_open: Option<bool>,
+    pub includes: Option<Vec<String>>,
     pub remark: Option<String>,
 }
 impl UpstreamConf {
@@ -295,6 +299,7 @@ pub struct LocationConf {
     pub weight: Option<u16>,
     pub plugins: Option<Vec<String>>,
     pub client_max_body_size: Option<ByteSize>,
+    pub includes: Option<Vec<String>>,
     pub remark: Option<String>,
 }
 
@@ -405,6 +410,7 @@ pub struct ServerConf {
     pub tcp_fastopen: Option<usize>,
     pub prometheus_metrics: Option<String>,
     pub otlp_exporter: Option<String>,
+    pub includes: Option<Vec<String>>,
     pub remark: Option<String>,
 }
 
@@ -486,6 +492,14 @@ impl BasicConf {
     }
 }
 
+#[derive(Debug, Default, Deserialize, Clone, Serialize)]
+pub struct StorageConf {
+    pub category: String,
+    pub value: String,
+    pub secret: Option<String>,
+    pub remark: Option<String>,
+}
+
 #[derive(Deserialize, Debug, Serialize)]
 struct TomlConfig {
     basic: Option<BasicConf>,
@@ -494,6 +508,7 @@ struct TomlConfig {
     locations: Option<Map<String, Value>>,
     plugins: Option<Map<String, Value>>,
     certificates: Option<Map<String, Value>>,
+    storages: Option<Map<String, Value>>,
 }
 
 fn format_toml(value: &Value) -> String {
@@ -514,6 +529,7 @@ pub struct PingapConf {
     pub servers: HashMap<String, ServerConf>,
     pub plugins: HashMap<String, PluginConf>,
     pub certificates: HashMap<String, CertificateConf>,
+    pub storages: HashMap<String, StorageConf>,
 }
 
 impl PingapConf {
@@ -573,12 +589,23 @@ impl PingapConf {
                     .map_err(|e| Error::Ser { source: e })?;
                 ("/certificates.toml".to_string(), value)
             },
+            CATEGORY_STORAGE => {
+                let mut m = Map::new();
+                let _ = m.insert(
+                    "storages".to_string(),
+                    toml::Value::Table(data.storages.unwrap_or_default()),
+                );
+                let value = toml::to_string_pretty(&m)
+                    .map_err(|e| Error::Ser { source: e })?;
+                ("/storages.toml".to_string(), value)
+            },
             _ => {
                 data.servers = None;
                 data.locations = None;
                 data.upstreams = None;
                 data.plugins = None;
                 data.certificates = None;
+                data.storages = None;
                 let value = toml::to_string_pretty(&data)
                     .map_err(|e| Error::Ser { source: e })?;
                 ("/basic.toml".to_string(), value)
@@ -588,54 +615,107 @@ impl PingapConf {
     }
 }
 
-impl TryFrom<&[u8]> for PingapConf {
-    type Error = Error;
-    fn try_from(data: &[u8]) -> Result<Self, self::Error> {
-        let data: TomlConfig = toml::from_str(
-            std::string::String::from_utf8_lossy(data)
-                .to_string()
-                .as_str(),
-        )
-        .map_err(|e| Error::De { source: e })?;
-
-        let mut conf = PingapConf {
-            basic: data.basic.unwrap_or_default(),
-            ..Default::default()
-        };
-        for (name, value) in data.upstreams.unwrap_or_default() {
-            let upstream: UpstreamConf =
-                toml::from_str(format_toml(&value).as_str())
-                    .map_err(|e| Error::De { source: e })?;
-            conf.upstreams.insert(name, upstream);
-        }
-        for (name, value) in data.locations.unwrap_or_default() {
-            let location: LocationConf =
-                toml::from_str(format_toml(&value).as_str())
-                    .map_err(|e| Error::De { source: e })?;
-            conf.locations.insert(name, location);
-        }
-        for (name, value) in data.servers.unwrap_or_default() {
-            let server: ServerConf =
-                toml::from_str(format_toml(&value).as_str())
-                    .map_err(|e| Error::De { source: e })?;
-            conf.servers.insert(name, server);
-        }
-        for (name, value) in data.plugins.unwrap_or_default() {
-            let plugin: PluginConf =
-                toml::from_str(format_toml(&value).as_str())
-                    .map_err(|e| Error::De { source: e })?;
-            conf.plugins.insert(name, plugin);
-        }
-
-        for (name, value) in data.certificates.unwrap_or_default() {
-            let certificate: CertificateConf =
-                toml::from_str(format_toml(&value).as_str())
-                    .map_err(|e| Error::De { source: e })?;
-            conf.certificates.insert(name, certificate);
-        }
-
-        Ok(conf)
+fn convert_include_toml(
+    data: &HashMap<String, String>,
+    replace_includes: bool,
+    mut value: Value,
+) -> String {
+    let Some(m) = value.as_table_mut() else {
+        return "".to_string();
+    };
+    if !replace_includes {
+        return m.to_string();
     }
+    if let Some(includes) = m.remove("includes") {
+        if let Some(includes) = get_include_toml(data, includes) {
+            if let Ok(includes) = toml::from_str::<Table>(&includes) {
+                for (key, value) in includes.iter() {
+                    m.insert(key.to_string(), value.clone());
+                }
+            }
+        }
+    }
+    m.to_string()
+}
+
+fn get_include_toml(
+    data: &HashMap<String, String>,
+    includes: Value,
+) -> Option<String> {
+    let values = includes.as_array()?;
+    let arr: Vec<String> = values
+        .iter()
+        .map(|item| {
+            let key = item.as_str().unwrap_or_default();
+            if let Some(value) = data.get(key) {
+                value.clone()
+            } else {
+                "".to_string()
+            }
+        })
+        .collect();
+    Some(arr.join("\n"))
+}
+
+fn convert_pingap_config(
+    data: &[u8],
+    replace_includes: bool,
+) -> Result<PingapConf, Error> {
+    let data: TomlConfig = toml::from_str(
+        std::string::String::from_utf8_lossy(data)
+            .to_string()
+            .as_str(),
+    )
+    .map_err(|e| Error::De { source: e })?;
+
+    let mut conf = PingapConf {
+        basic: data.basic.unwrap_or_default(),
+        ..Default::default()
+    };
+    let mut includes = HashMap::new();
+    for (name, value) in data.storages.unwrap_or_default() {
+        let toml = format_toml(&value);
+        let storage: StorageConf = toml::from_str(toml.as_str())
+            .map_err(|e| Error::De { source: e })?;
+        includes.insert(name.clone(), storage.value.clone());
+        conf.storages.insert(name, storage);
+    }
+
+    for (name, value) in data.upstreams.unwrap_or_default() {
+        let toml = convert_include_toml(&includes, replace_includes, value);
+
+        let upstream: UpstreamConf = toml::from_str(toml.as_str())
+            .map_err(|e| Error::De { source: e })?;
+        conf.upstreams.insert(name, upstream);
+    }
+    for (name, value) in data.locations.unwrap_or_default() {
+        let toml = convert_include_toml(&includes, replace_includes, value);
+
+        let location: LocationConf = toml::from_str(toml.as_str())
+            .map_err(|e| Error::De { source: e })?;
+        conf.locations.insert(name, location);
+    }
+    for (name, value) in data.servers.unwrap_or_default() {
+        let toml = convert_include_toml(&includes, replace_includes, value);
+
+        let server: ServerConf = toml::from_str(toml.as_str())
+            .map_err(|e| Error::De { source: e })?;
+        conf.servers.insert(name, server);
+    }
+    for (name, value) in data.plugins.unwrap_or_default() {
+        let plugin: PluginConf = toml::from_str(format_toml(&value).as_str())
+            .map_err(|e| Error::De { source: e })?;
+        conf.plugins.insert(name, plugin);
+    }
+
+    for (name, value) in data.certificates.unwrap_or_default() {
+        let certificate: CertificateConf =
+            toml::from_str(format_toml(&value).as_str())
+                .map_err(|e| Error::De { source: e })?;
+        conf.certificates.insert(name, certificate);
+    }
+
+    Ok(conf)
 }
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
@@ -646,6 +726,9 @@ struct Description {
 }
 
 impl PingapConf {
+    pub fn new(data: &[u8], replace_includes: bool) -> Result<Self> {
+        convert_pingap_config(data, replace_includes)
+    }
     /// Validate the options of pinggap config.
     pub fn validate(&self) -> Result<()> {
         let mut upstream_names = vec![];
@@ -680,6 +763,9 @@ impl PingapConf {
         for (_, certificate) in self.certificates.iter() {
             certificate.validate()?;
         }
+        let ping_conf = toml::to_string_pretty(self)
+            .map_err(|e| Error::Ser { source: e })?;
+        convert_pingap_config(ping_conf.as_bytes(), true)?;
         Ok(())
     }
     /// Generate the content hash of config.
@@ -787,11 +873,19 @@ impl PingapConf {
                 data: toml::to_string_pretty(data).unwrap_or_default(),
             });
         }
+        for (name, data) in value.storages.iter() {
+            descriptions.push(Description {
+                category: CATEGORY_STORAGE.to_string(),
+                name: format!("storage:{name}"),
+                data: toml::to_string_pretty(data).unwrap_or_default(),
+            });
+        }
         value.servers = HashMap::new();
         value.locations = HashMap::new();
         value.upstreams = HashMap::new();
         value.plugins = HashMap::new();
         value.certificates = HashMap::new();
+        value.storages = HashMap::new();
         descriptions.push(Description {
             category: CATEGORY_BASIC.to_string(),
             name: CATEGORY_BASIC.to_string(),
@@ -1108,7 +1202,8 @@ mod tests {
     #[test]
     fn test_pingap_conf() {
         let toml_data = include_bytes!("../../conf/pingap.toml");
-        let conf = PingapConf::try_from(toml_data.to_vec().as_slice()).unwrap();
+        let conf =
+            PingapConf::new(toml_data.to_vec().as_slice(), false).unwrap();
 
         let (key, data) = conf.get_toml(CATEGORY_SERVER).unwrap();
         assert_eq!("/servers.toml", key);
@@ -1219,7 +1314,8 @@ cache_max_size = "100.0 MB"
     #[test]
     fn test_pingap_diff() {
         let toml_data = include_bytes!("../../conf/pingap.toml");
-        let conf = PingapConf::try_from(toml_data.to_vec().as_slice()).unwrap();
+        let conf =
+            PingapConf::new(toml_data.to_vec().as_slice(), false).unwrap();
 
         let mut other = conf.clone();
         other.servers.insert(
@@ -1253,7 +1349,7 @@ basic
     fn test_config_remove() {
         let toml_data = include_bytes!("../../conf/pingap.toml");
         let mut conf =
-            PingapConf::try_from(toml_data.to_vec().as_slice()).unwrap();
+            PingapConf::new(toml_data.to_vec().as_slice(), false).unwrap();
 
         let result = conf.remove("plugin", "stats");
         assert_eq!(

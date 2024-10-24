@@ -142,7 +142,7 @@ fn get_config(admin: bool, s: Sender<Result<PingapConf, config::Error>>) {
         match tokio::runtime::Runtime::new() {
             Ok(rt) => {
                 let send = async move {
-                    let result = config::load_config(admin).await;
+                    let result = config::load_config(true, admin).await;
                     if let Err(e) = s.send(result) {
                         // use pringln because log is not init
                         println!("sender fail, {e}");

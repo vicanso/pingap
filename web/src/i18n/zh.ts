@@ -19,6 +19,10 @@ export default {
   removeFailTitle: "删除配置失败",
   removeSuccessTitle: "删除配置成功",
   removeSuccessDescription: "配置已成功删除",
+  includes: "引入配置",
+  includesPlaceholder: "选择要引入的配置",
+  full: "全配置",
+  original: "原始配置",
   nav: {
     basic: "基础配置",
     server: "服务配置",
@@ -26,6 +30,8 @@ export default {
     upstream: "上游服务配置",
     plugin: "插件配置",
     certificate: "证书配置",
+    storage: "存储配置",
+    searchPlaceholder: "输入关键字",
   },
   home: {
     dashboard: "面板",
@@ -361,6 +367,16 @@ export default {
     combinedAuthAuthDeviationPlaceholder: "输入允许时间偏移量(e.g. 10)",
     combinedAuthAuthAdd: "添加",
     combinedAuthAuthRemove: "删除",
+    remark: "备注",
+  },
+  storage: {
+    name: "名称",
+    namePlaceholder: "输入存储数据的名称",
+    category: "类型",
+    categoryPlaceholder: "选择存储数据的类型",
+    secret: "密钥",
+    secretPlaceholder: "输入加密数据的密钥",
+    value: "数据",
     remark: "备注",
   },
 };

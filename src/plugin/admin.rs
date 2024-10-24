@@ -19,7 +19,7 @@ use super::{
 use crate::config::{
     self, get_current_config, save_config, BasicConf, CertificateConf,
     LocationConf, PluginCategory, PluginConf, PluginStep, ServerConf,
-    UpstreamConf, CATEGORY_CERTIFICATE,
+    StorageConf, UpstreamConf, CATEGORY_CERTIFICATE, CATEGORY_STORAGE,
 };
 use crate::config::{
     PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
@@ -143,6 +143,12 @@ struct BasicInfo {
     enabled_pyroscope: bool,
 }
 
+#[derive(Serialize, Deserialize)]
+struct TomlJson {
+    pub full: String,
+    pub original: String,
+}
+
 impl TryFrom<&PluginConf> for AdminServe {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
@@ -204,11 +210,17 @@ impl AdminServe {
         }
         self.authorizations.contains(&value.as_bytes().to_vec())
     }
-    async fn load_config(&self) -> pingora::Result<PingapConf> {
-        let conf = config::load_config(true).await.map_err(|e| {
-            error!("failed to load config: {e}");
-            util::new_internal_error(400, e.to_string())
-        })?;
+    async fn load_config(
+        &self,
+        replace_includes: bool,
+    ) -> pingora::Result<PingapConf> {
+        let conf =
+            config::load_config(replace_includes, true)
+                .await
+                .map_err(|e| {
+                    error!("failed to load config: {e}");
+                    util::new_internal_error(400, e.to_string())
+                })?;
         conf.validate().map_err(|e| {
             error!("failed to validate config: {e}");
             util::new_internal_error(400, e.to_string())
@@ -219,14 +231,16 @@ impl AdminServe {
         &self,
         category: &str,
     ) -> pingora::Result<HttpResponse> {
-        let conf = self.load_config().await?;
+        let conf = self.load_config(false).await?;
         if category == "toml" {
-            let data = toml::to_string_pretty(&conf)
+            let full_conf = self.load_config(true).await?;
+            let full_toml = toml::to_string_pretty(&full_conf)
                 .map_err(|e| util::new_internal_error(400, e.to_string()))?;
-            return Ok(HttpResponse {
-                status: StatusCode::OK,
-                body: data.into(),
-                ..Default::default()
+            let original_toml = toml::to_string_pretty(&conf)
+                .map_err(|e| util::new_internal_error(400, e.to_string()))?;
+            return HttpResponse::try_from_json(&TomlJson {
+                full: full_toml,
+                original: original_toml,
             });
         }
         let resp = match category {
@@ -247,7 +261,7 @@ impl AdminServe {
         category: &str,
         name: &str,
     ) -> pingora::Result<HttpResponse> {
-        let mut conf = self.load_config().await?;
+        let mut conf = self.load_config(false).await?;
         conf.remove(category, name).map_err(|e| {
             error!(error = e.to_string(), "validate config fail");
             util::new_internal_error(400, e.to_string())
@@ -264,12 +278,18 @@ impl AdminServe {
         category: &str,
         name: &str,
     ) -> pingora::Result<HttpResponse> {
+        if name.is_empty() {
+            return Err(util::new_internal_error(
+                400,
+                "name is empty".to_string(),
+            ));
+        }
         let mut buf = BytesMut::with_capacity(4096);
         while let Some(value) = session.read_request_body().await? {
             buf.put(value.as_ref());
         }
         let key = name.to_string();
-        let mut conf = self.load_config().await?;
+        let mut conf = self.load_config(false).await?;
         match category {
             CATEGORY_UPSTREAM => {
                 let upstream: UpstreamConf = serde_json::from_slice(&buf)
@@ -325,6 +345,17 @@ impl AdminServe {
                         util::new_internal_error(400, e.to_string())
                     })?;
                 conf.certificates.insert(key, certificate);
+            },
+            CATEGORY_STORAGE => {
+                let storage: StorageConf = serde_json::from_slice(&buf)
+                    .map_err(|e| {
+                        error!(
+                            error = e.to_string(),
+                            "descrialize storage fail"
+                        );
+                        util::new_internal_error(400, e.to_string())
+                    })?;
+                conf.storages.insert(key, storage);
             },
             _ => {
                 let basic_conf: BasicConf = serde_json::from_slice(&buf)

@@ -23,6 +23,7 @@ export interface Upstream {
   tcp_probe_count?: number;
   tcp_recv_buf?: number;
   tcp_fast_open?: boolean;
+  includes?: string[];
   remark?: string;
 }
 
@@ -36,6 +37,7 @@ export interface Location {
   rewrite?: string;
   client_max_body_size?: string;
   plugins?: string[];
+  includes?: string[];
   remark?: string;
 }
 
@@ -82,6 +84,7 @@ export interface Server {
   tcp_fastopen?: number;
   prometheus_metrics?: string;
   otlp_exporter?: string;
+  includes?: string[];
   remark?: string;
 }
 
@@ -93,6 +96,13 @@ export interface Certificate {
   certificate_file?: string;
   acme?: string;
   is_default?: boolean;
+  remark?: string;
+}
+
+export interface Storage {
+  category: string;
+  secret?: string;
+  value: string;
   remark?: string;
 }
 
@@ -128,28 +138,32 @@ interface Config {
   servers?: Record<string, Server>;
   plugins?: Record<string, Record<string, unknown>>;
   certificates?: Record<string, Certificate>;
+  storages?: Record<string, Storage>;
 }
 
 interface ConfigState {
   data: Config;
-  toml: string;
+  originalToml: string;
+  fullToml: string;
   initialized: boolean;
   version: string;
   fetch: () => Promise<Config>;
-  fetchToml: () => Promise<string>;
+  fetchToml: () => Promise<void>;
   update: (
     category: string,
     name: string,
     data: Record<string, unknown>,
   ) => Promise<void>;
   remove: (category: string, name: string) => Promise<void>;
+  getIncludeOptions: () => string[];
 }
 
 const useConfigState = create<ConfigState>()((set, get) => ({
   data: {
     basic: {} as Basic,
   },
-  toml: "",
+  fullToml: "",
+  originalToml: "",
   version: random(),
   initialized: false,
   fetch: async () => {
@@ -161,11 +175,15 @@ const useConfigState = create<ConfigState>()((set, get) => ({
     return data;
   },
   fetchToml: async () => {
-    const { data } = await request.get<string>("/configs/toml");
+    const { data } = await request.get<{
+      full: string;
+      original: string;
+    }>("/configs/toml");
     set({
-      toml: data,
+      fullToml: data.full,
+      originalToml: data.original,
     });
-    return data;
+    return;
   },
   update: async (
     category: string,
@@ -191,6 +209,21 @@ const useConfigState = create<ConfigState>()((set, get) => ({
       version: random(),
     });
     await get().fetch();
+  },
+  getIncludeOptions: (category?: string) => {
+    const storages = get().data.storages || {};
+    const keys = Object.keys(storages);
+    if (!category) {
+      return keys;
+    }
+    const includes: string[] = [];
+    keys.forEach((key) => {
+      const storage = storages[key];
+      if (storage.category === category) {
+        includes.push(key);
+      }
+    });
+    return includes;
   },
 }));
 

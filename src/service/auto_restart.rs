@@ -30,9 +30,11 @@ use tracing::{debug, error, info};
 
 async fn diff_and_update_config(
     hot_reload_only: bool,
-    current_config: PingapConf,
-    new_config: PingapConf,
 ) -> Result<(bool, Vec<String>, String), Box<dyn std::error::Error>> {
+    let new_config = load_config(true, false).await?;
+    new_config.validate()?;
+    let current_config: PingapConf = get_current_config().as_ref().clone();
+
     let (updated_category_list, original_diff_result) =
         current_config.diff(&new_config);
     debug!(
@@ -242,16 +244,6 @@ async fn diff_and_update_config(
     Ok((should_restart, original_diff_result, reload_fail_message))
 }
 
-async fn update_application_config(
-    hot_reload_only: bool,
-) -> Result<(bool, Vec<String>, String), Box<dyn std::error::Error>> {
-    let new_config = load_config(false).await?;
-    new_config.validate()?;
-    let current_config: PingapConf = get_current_config().as_ref().clone();
-
-    diff_and_update_config(hot_reload_only, current_config, new_config).await
-}
-
 struct AutoRestart {
     restart_unit: u32,
     only_hot_reload: bool,
@@ -328,7 +320,7 @@ impl BackgroundService for ConfigObserverService {
                 // 因此还需配合fetch的形式比对
                 _ = period.tick() => {
                     // fetch and diff update
-                    run_update_application_config(self.only_hot_reload).await;
+                    run_diff_and_update_config(self.only_hot_reload).await;
                 }
                 result = observer.watch() => {
                     match result {
@@ -337,7 +329,7 @@ impl BackgroundService for ConfigObserverService {
                                continue
                            }
                            // only hot reload for observe updated
-                           run_update_application_config(true).await;
+                           run_diff_and_update_config(true).await;
                        },
                        Err(e) => {
                            error!(error = e.to_string(), "observe updated fail");
@@ -349,8 +341,8 @@ impl BackgroundService for ConfigObserverService {
     }
 }
 
-async fn run_update_application_config(hot_reload_only: bool) {
-    match update_application_config(hot_reload_only).await {
+async fn run_diff_and_update_config(hot_reload_only: bool) {
+    match diff_and_update_config(hot_reload_only).await {
         Ok((should_restart, diff_result, reload_fail_message)) => {
             if !diff_result.is_empty() {
                 // add more message for auto reload
@@ -400,7 +392,7 @@ impl ServiceTask for AutoRestart {
         };
         self.running_hot_reload
             .store(hot_reload_only, Ordering::Relaxed);
-        run_update_application_config(hot_reload_only).await;
+        run_diff_and_update_config(hot_reload_only).await;
         None
     }
     fn description(&self) -> String {

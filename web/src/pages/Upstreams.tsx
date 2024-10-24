@@ -1,5 +1,4 @@
 import { LoadingPage } from "@/components/loading";
-import { MainSidebar } from "@/components/sidebar-nav";
 import { useI18n } from "@/i18n";
 import useConfigState, { Upstream } from "@/states/config";
 import React from "react";
@@ -13,7 +12,6 @@ import {
 import { formatLabel, newZodBytes, newZodDuration } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
-import { ScrollRestoration } from "react-router-dom";
 
 function getUpstreamConfig(name: string, upstreams?: Record<string, Upstream>) {
   if (!upstreams) {
@@ -24,14 +22,17 @@ function getUpstreamConfig(name: string, upstreams?: Record<string, Upstream>) {
 
 export default function Upstreams() {
   const upstreamI18n = useI18n("upstream");
+  const i18n = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [config, initialized, update, remove] = useConfigState((state) => [
-    state.data,
-    state.initialized,
-    state.update,
-    state.remove,
-  ]);
+  const [config, initialized, update, remove, getIncludeOptions] =
+    useConfigState((state) => [
+      state.data,
+      state.initialized,
+      state.update,
+      state.remove,
+      state.getIncludeOptions,
+    ]);
   const newUpstream = "*";
   const upstreams = Object.keys(config.upstreams || {});
   upstreams.sort();
@@ -85,6 +86,15 @@ export default function Upstreams() {
       defaultValue: upstreamConfig.update_frequency,
       span: 3,
       category: ExFormItemCategory.TEXT,
+    },
+    {
+      name: "includes",
+      label: i18n("includes"),
+      placeholder: i18n("includesPlaceholder"),
+      defaultValue: upstreamConfig.includes,
+      span: 6,
+      category: ExFormItemCategory.MULTI_SELECT,
+      options: newStringOptions(getIncludeOptions(), false),
     },
     {
       name: "algo",
@@ -257,7 +267,7 @@ export default function Upstreams() {
       category: ExFormItemCategory.TEXTAREA,
     },
   ];
-  let defaultShow = 3;
+  let defaultShow = 4;
   if (currentUpstream === newUpstream) {
     defaultShow++;
     items.unshift({
@@ -290,34 +300,28 @@ export default function Upstreams() {
   };
 
   return (
-    <>
-      <div className="flex">
-        <MainSidebar className="h-screen flex-none w-[230px]" />
-        <div className="grow lg:border-l overflow-auto p-4">
-          <h2 className="h-8 mb-1">
-            <span className="border-b-2 border-solid p-1 border-[rgb(var(--foreground-rgb))]">
-              {formatLabel(currentUpstream)}
-            </span>
-          </h2>
-          <ExForm
-            category="upstream"
-            key={currentUpstream}
-            items={items}
-            schema={schema}
-            defaultShow={defaultShow}
-            onRemove={currentUpstream === newUpstream ? undefined : onRemove}
-            onSave={async (value) => {
-              let name = currentUpstream;
-              if (name === newUpstream) {
-                name = value["name"] as string;
-              }
-              await update("upstream", name, value);
-              handleSelectUpstream(name);
-            }}
-          />
-        </div>
-      </div>
-      <ScrollRestoration />
-    </>
+    <div className="grow lg:border-l overflow-auto p-4">
+      <h2 className="h-8 mb-1">
+        <span className="border-b-2 border-solid py-1 border-[rgb(var(--foreground-rgb))]">
+          {formatLabel(currentUpstream)}
+        </span>
+      </h2>
+      <ExForm
+        category="upstream"
+        key={currentUpstream}
+        items={items}
+        schema={schema}
+        defaultShow={defaultShow}
+        onRemove={currentUpstream === newUpstream ? undefined : onRemove}
+        onSave={async (value) => {
+          let name = currentUpstream;
+          if (name === newUpstream) {
+            name = value["name"] as string;
+          }
+          await update("upstream", name, value);
+          handleSelectUpstream(name);
+        }}
+      />
+    </div>
   );
 }

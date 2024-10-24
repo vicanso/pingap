@@ -1,4 +1,3 @@
-import { MainSidebar } from "@/components/sidebar-nav";
 import { LoadingPage } from "@/components/loading";
 import useBasicState from "@/states/basic";
 import useConfigState, { getLocationWeight, Server } from "@/states/config";
@@ -14,7 +13,6 @@ import {
 import { formatLabel, newZodDuration } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
-import { ScrollRestoration } from "react-router-dom";
 
 function getServerConfig(name: string, servers?: Record<string, Server>) {
   if (!servers) {
@@ -25,13 +23,16 @@ function getServerConfig(name: string, servers?: Record<string, Server>) {
 
 export default function Servers() {
   const serverI18n = useI18n("server");
+  const i18n = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [config, initialized, update, remove] = useConfigState((state) => [
-    state.data,
-    state.initialized,
-    state.update,
-    state.remove,
-  ]);
+  const [config, initialized, update, remove, getIncludeOptions] =
+    useConfigState((state) => [
+      state.data,
+      state.initialized,
+      state.update,
+      state.remove,
+      state.getIncludeOptions,
+    ]);
   const [basicInfo] = useBasicState((state) => [state.data]);
 
   const newServer = "*";
@@ -122,6 +123,15 @@ export default function Servers() {
       span: 3,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
+    },
+    {
+      name: "includes",
+      label: i18n("includes"),
+      placeholder: i18n("includesPlaceholder"),
+      defaultValue: serverConfig.includes,
+      span: 3,
+      category: ExFormItemCategory.MULTI_SELECT,
+      options: newStringOptions(getIncludeOptions(), false),
     },
     {
       name: "tls_cipher_list",
@@ -219,7 +229,7 @@ export default function Servers() {
     span: 6,
     category: ExFormItemCategory.TEXTAREA,
   });
-  let defaultShow = 5;
+  let defaultShow = 7;
   if (currentServer === newServer) {
     defaultShow++;
     items.unshift({
@@ -245,34 +255,28 @@ export default function Servers() {
   };
 
   return (
-    <>
-      <div className="flex">
-        <MainSidebar className="h-screen flex-none w-[230px]" />
-        <div className="grow lg:border-l overflow-auto p-4">
-          <h2 className="h-8 mb-1">
-            <span className="border-b-2 border-solid p-1 border-[rgb(var(--foreground-rgb))]">
-              {formatLabel(currentServer)}
-            </span>
-          </h2>
-          <ExForm
-            category="server"
-            key={currentServer}
-            items={items}
-            schema={schema}
-            defaultShow={defaultShow}
-            onRemove={currentServer === newServer ? undefined : onRemove}
-            onSave={async (value) => {
-              let name = currentServer;
-              if (name === newServer) {
-                name = value["name"] as string;
-              }
-              await update("server", name, value);
-              handleSelectServer(name);
-            }}
-          />
-        </div>
-      </div>
-      <ScrollRestoration />
-    </>
+    <div className="grow lg:border-l overflow-auto p-4">
+      <h2 className="h-8 mb-1">
+        <span className="border-b-2 border-solid py-1 border-[rgb(var(--foreground-rgb))]">
+          {formatLabel(currentServer)}
+        </span>
+      </h2>
+      <ExForm
+        category="server"
+        key={currentServer}
+        items={items}
+        schema={schema}
+        defaultShow={defaultShow}
+        onRemove={currentServer === newServer ? undefined : onRemove}
+        onSave={async (value) => {
+          let name = currentServer;
+          if (name === newServer) {
+            name = value["name"] as string;
+          }
+          await update("server", name, value);
+          handleSelectServer(name);
+        }}
+      />
+    </div>
   );
 }

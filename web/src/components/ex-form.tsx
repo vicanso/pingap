@@ -79,6 +79,7 @@ export interface ExFormItem {
   rows?: number;
   cols?: number[];
   separator?: string;
+  notTrim?: boolean;
   defaultValue: string[] | string | number | boolean | null | undefined;
 }
 
@@ -344,7 +345,11 @@ export function ExForm({
                         readOnly={item.readOnly}
                         defaultValue={(item.defaultValue as string) || ""}
                         onChange={(e) => {
-                          setUpdated(item.name, e.target.value.trim());
+                          let value = e.target.value;
+                          if (!item.notTrim) {
+                            value = value.trim();
+                          }
+                          setUpdated(item.name, value);
                         }}
                       />
                     </FormControl>
@@ -474,9 +479,12 @@ export function ExForm({
                         placeholder={item.placeholder}
                         readOnly={item.readOnly}
                         onInput={(e) => {
-                          const value =
+                          let value =
                             (e.target as HTMLInputElement).value || "";
-                          setUpdated(item.name, value.trim());
+                          if (!item.notTrim) {
+                            value = value.trim();
+                          }
+                          setUpdated(item.name, value);
                         }}
                         {...field}
                       />
