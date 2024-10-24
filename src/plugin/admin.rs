@@ -143,6 +143,12 @@ struct BasicInfo {
     enabled_pyroscope: bool,
 }
 
+#[derive(Serialize, Deserialize)]
+struct TomlJson {
+    pub full: String,
+    pub original: String,
+}
+
 impl TryFrom<&PluginConf> for AdminServe {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
@@ -225,17 +231,18 @@ impl AdminServe {
         &self,
         category: &str,
     ) -> pingora::Result<HttpResponse> {
+        let conf = self.load_config(false).await?;
         if category == "toml" {
-            let conf = self.load_config(true).await?;
-            let data = toml::to_string_pretty(&conf)
+            let full_conf = self.load_config(true).await?;
+            let full_toml = toml::to_string_pretty(&full_conf)
                 .map_err(|e| util::new_internal_error(400, e.to_string()))?;
-            return Ok(HttpResponse {
-                status: StatusCode::OK,
-                body: data.into(),
-                ..Default::default()
+            let original_toml = toml::to_string_pretty(&conf)
+                .map_err(|e| util::new_internal_error(400, e.to_string()))?;
+            return HttpResponse::try_from_json(&TomlJson {
+                full: full_toml,
+                original: original_toml,
             });
         }
-        let conf = self.load_config(false).await?;
         let resp = match category {
             CATEGORY_UPSTREAM => HttpResponse::try_from_json(&conf.upstreams)?,
             CATEGORY_LOCATION => HttpResponse::try_from_json(&conf.locations)?,

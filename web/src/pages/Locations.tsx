@@ -1,5 +1,4 @@
 import { LoadingPage } from "@/components/loading";
-import { MainSidebar } from "@/components/sidebar-nav";
 import { useI18n } from "@/i18n";
 import useConfigState, { Location } from "@/states/config";
 import React from "react";
@@ -7,10 +6,9 @@ import { ExForm, ExFormItem } from "@/components/ex-form";
 import { pascal } from "radash";
 import { z } from "zod";
 import { ExFormItemCategory, newStringOptions } from "@/constants";
-import { formatLabel, newZodBytes, omitEmptyArray } from "@/helpers/util";
+import { formatLabel, newZodBytes } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
-import { ScrollRestoration } from "react-router-dom";
 
 function getLocationConfig(name: string, locations?: Record<string, Location>) {
   if (!locations) {
@@ -195,35 +193,28 @@ export default function Locations() {
   };
 
   return (
-    <>
-      <div className="flex">
-        <MainSidebar className="h-screen flex-none w-[230px]" />
-        <div className="grow lg:border-l overflow-auto p-4">
-          <h2 className="h-8 mb-1">
-            <span className="border-b-2 border-solid py-1 border-[rgb(var(--foreground-rgb))]">
-              {formatLabel(currentLocation)}
-            </span>
-          </h2>
-          <ExForm
-            category="location"
-            key={currentLocation}
-            items={items}
-            schema={schema}
-            defaultShow={defaultShow}
-            onRemove={currentLocation === newLocation ? undefined : onRemove}
-            onSave={async (value) => {
-              let name = currentLocation;
-              if (name === newLocation) {
-                name = value["name"] as string;
-              }
-              omitEmptyArray(value);
-              await update("location", name, value);
-              handleSelectLocation(name);
-            }}
-          />
-        </div>
-      </div>
-      <ScrollRestoration />
-    </>
+    <div className="grow lg:border-l overflow-auto p-4">
+      <h2 className="h-8 mb-1">
+        <span className="border-b-2 border-solid py-1 border-[rgb(var(--foreground-rgb))]">
+          {formatLabel(currentLocation)}
+        </span>
+      </h2>
+      <ExForm
+        category="location"
+        key={currentLocation}
+        items={items}
+        schema={schema}
+        defaultShow={defaultShow}
+        onRemove={currentLocation === newLocation ? undefined : onRemove}
+        onSave={async (value) => {
+          let name = currentLocation;
+          if (name === newLocation) {
+            name = value["name"] as string;
+          }
+          await update("location", name, value);
+          handleSelectLocation(name);
+        }}
+      />
+    </div>
   );
 }

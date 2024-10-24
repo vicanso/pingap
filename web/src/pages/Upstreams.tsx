@@ -1,5 +1,4 @@
 import { LoadingPage } from "@/components/loading";
-import { MainSidebar } from "@/components/sidebar-nav";
 import { useI18n } from "@/i18n";
 import useConfigState, { Upstream } from "@/states/config";
 import React from "react";
@@ -10,15 +9,9 @@ import {
   newStringOptions,
   newBooleanOptions,
 } from "@/constants";
-import {
-  formatLabel,
-  newZodBytes,
-  newZodDuration,
-  omitEmptyArray,
-} from "@/helpers/util";
+import { formatLabel, newZodBytes, newZodDuration } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
-import { ScrollRestoration } from "react-router-dom";
 
 function getUpstreamConfig(name: string, upstreams?: Record<string, Upstream>) {
   if (!upstreams) {
@@ -307,35 +300,28 @@ export default function Upstreams() {
   };
 
   return (
-    <>
-      <div className="flex">
-        <MainSidebar className="h-screen flex-none w-[230px]" />
-        <div className="grow lg:border-l overflow-auto p-4">
-          <h2 className="h-8 mb-1">
-            <span className="border-b-2 border-solid py-1 border-[rgb(var(--foreground-rgb))]">
-              {formatLabel(currentUpstream)}
-            </span>
-          </h2>
-          <ExForm
-            category="upstream"
-            key={currentUpstream}
-            items={items}
-            schema={schema}
-            defaultShow={defaultShow}
-            onRemove={currentUpstream === newUpstream ? undefined : onRemove}
-            onSave={async (value) => {
-              let name = currentUpstream;
-              if (name === newUpstream) {
-                name = value["name"] as string;
-              }
-              omitEmptyArray(value);
-              await update("upstream", name, value);
-              handleSelectUpstream(name);
-            }}
-          />
-        </div>
-      </div>
-      <ScrollRestoration />
-    </>
+    <div className="grow lg:border-l overflow-auto p-4">
+      <h2 className="h-8 mb-1">
+        <span className="border-b-2 border-solid py-1 border-[rgb(var(--foreground-rgb))]">
+          {formatLabel(currentUpstream)}
+        </span>
+      </h2>
+      <ExForm
+        category="upstream"
+        key={currentUpstream}
+        items={items}
+        schema={schema}
+        defaultShow={defaultShow}
+        onRemove={currentUpstream === newUpstream ? undefined : onRemove}
+        onSave={async (value) => {
+          let name = currentUpstream;
+          if (name === newUpstream) {
+            name = value["name"] as string;
+          }
+          await update("upstream", name, value);
+          handleSelectUpstream(name);
+        }}
+      />
+    </div>
   );
 }

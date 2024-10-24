@@ -1,4 +1,3 @@
-import { MainSidebar } from "@/components/sidebar-nav";
 import { LoadingPage } from "@/components/loading";
 import useConfigState, { Storage } from "@/states/config";
 import { ExForm, ExFormItem } from "@/components/ex-form";
@@ -8,7 +7,6 @@ import React from "react";
 import { ExFormItemCategory, newStringOptions } from "@/constants";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
-import { ScrollRestoration } from "react-router-dom";
 import { formatLabel } from "@/helpers/util";
 
 function getStorageConfig(name: string, storages?: Record<string, Storage>) {
@@ -116,33 +114,27 @@ export default function Storages() {
   };
 
   return (
-    <>
-      <div className="flex">
-        <MainSidebar className="h-screen flex-none w-[230px]" />
-        <div className="grow lg:border-l overflow-auto p-4">
-          <h2 className="h-8 mb-1">
-            <span className="border-b-2 border-solid py-1 border-[rgb(var(--foreground-rgb))]">
-              {formatLabel(currentStorage)}
-            </span>
-          </h2>
-          <ExForm
-            category="storage"
-            key={currentStorage}
-            items={items}
-            schema={schema}
-            onRemove={currentStorage === newStorage ? undefined : onRemove}
-            onSave={async (value) => {
-              let name = currentStorage;
-              if (name === newStorage) {
-                name = value["name"] as string;
-              }
-              await update("storage", name, value);
-              handleSelectStorage(name);
-            }}
-          />
-        </div>
-      </div>
-      <ScrollRestoration />
-    </>
+    <div className="grow lg:border-l overflow-auto p-4">
+      <h2 className="h-8 mb-1">
+        <span className="border-b-2 border-solid py-1 border-[rgb(var(--foreground-rgb))]">
+          {formatLabel(currentStorage)}
+        </span>
+      </h2>
+      <ExForm
+        category="storage"
+        key={currentStorage}
+        items={items}
+        schema={schema}
+        onRemove={currentStorage === newStorage ? undefined : onRemove}
+        onSave={async (value) => {
+          let name = currentStorage;
+          if (name === newStorage) {
+            name = value["name"] as string;
+          }
+          await update("storage", name, value);
+          handleSelectStorage(name);
+        }}
+      />
+    </div>
   );
 }

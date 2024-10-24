@@ -155,7 +155,7 @@ export function MainHeader({
           )}
           <span className="ml-2">{basicInfo.version}</span>
         </Button>
-        <div className="flex flex-1 items-center justify-between space-x-2 md:justify-end mr-5">
+        <div className="flex flex-1 items-center space-x-2 justify-end mr-5">
           <Button
             variant="ghost"
             size="icon"

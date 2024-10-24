@@ -143,11 +143,12 @@ interface Config {
 
 interface ConfigState {
   data: Config;
-  toml: string;
+  originalToml: string;
+  fullToml: string;
   initialized: boolean;
   version: string;
   fetch: () => Promise<Config>;
-  fetchToml: () => Promise<string>;
+  fetchToml: () => Promise<void>;
   update: (
     category: string,
     name: string,
@@ -161,7 +162,8 @@ const useConfigState = create<ConfigState>()((set, get) => ({
   data: {
     basic: {} as Basic,
   },
-  toml: "",
+  fullToml: "",
+  originalToml: "",
   version: random(),
   initialized: false,
   fetch: async () => {
@@ -173,11 +175,15 @@ const useConfigState = create<ConfigState>()((set, get) => ({
     return data;
   },
   fetchToml: async () => {
-    const { data } = await request.get<string>("/configs/toml");
+    const { data } = await request.get<{
+      full: string;
+      original: string;
+    }>("/configs/toml");
     set({
-      toml: data,
+      fullToml: data.full,
+      originalToml: data.original,
     });
-    return data;
+    return;
   },
   update: async (
     category: string,

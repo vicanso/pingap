@@ -21,6 +21,8 @@ export default {
   removeSuccessDescription: "配置已成功删除",
   includes: "引入配置",
   includesPlaceholder: "选择要引入的配置",
+  full: "全配置",
+  original: "原始配置",
   nav: {
     basic: "基础配置",
     server: "服务配置",
@@ -29,6 +31,7 @@ export default {
     plugin: "插件配置",
     certificate: "证书配置",
     storage: "存储配置",
+    searchPlaceholder: "输入关键字",
   },
   home: {
     dashboard: "面板",

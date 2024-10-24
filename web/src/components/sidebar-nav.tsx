@@ -8,6 +8,7 @@ import {
   PlugZap,
   ShieldCheck,
   Container,
+  Search,
 } from "lucide-react";
 import router, {
   BASIC,
@@ -21,22 +22,35 @@ import router, {
 import useConfigState from "@/states/config";
 import { useI18n } from "@/i18n";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Input } from "@/components/ui/input";
+import React, { useEffect } from "react";
+import { useLocation } from "react-router-dom";
 
 export function MainSidebar({
   className,
 }: React.HTMLAttributes<HTMLDivElement>) {
   const navI18n = useI18n("nav");
-  const { pathname, search } = router.state.location;
-  const getVariant = (path: string) => {
-    if (path === `${pathname}${search}`) {
-      return "default";
-    }
-    return "ghost";
-  };
+  const [keyword, setKeyword] = React.useState("");
+  const [pathname, setPathname] = React.useState(
+    router.state.location.pathname,
+  );
   const [config, initialized] = useConfigState((state) => [
     state.data,
     state.initialized,
   ]);
+
+  const location = useLocation();
+
+  useEffect(() => {
+    setPathname(location.pathname);
+  }, [location]);
+
+  const getVariant = (path: string) => {
+    if (path === `${pathname}${location.search}`) {
+      return "default";
+    }
+    return "ghost";
+  };
 
   const servers = Object.keys(config.servers || {}).sort();
   const locations = Object.keys(config.locations || {}).sort();
@@ -74,18 +88,23 @@ export function MainSidebar({
   };
 
   const generateChildren = (baseUrl: string, items: string[]) => {
-    if (!pathname.startsWith(baseUrl)) {
+    if (!keyword && !pathname.startsWith(baseUrl)) {
       return [] as NavLink[];
     }
-    return items.map((item) => {
+    const arr: NavLink[] = [];
+    items.forEach((item) => {
+      if (keyword && !item.toLowerCase().includes(keyword)) {
+        return;
+      }
       const path = `${baseUrl}?name=${item}`;
-      return {
+      arr.push({
         title: item,
         variant: getVariant(path),
         label: "",
         path,
-      } as NavLink;
+      } as NavLink);
     });
+    return arr;
   };
   const nav = (
     <Nav
@@ -151,7 +170,20 @@ export function MainSidebar({
   );
   return (
     <div className={cn("pb-12", className)}>
-      <ScrollArea className="h-full">{nav}</ScrollArea>
+      <ScrollArea className="h-full">
+        <div className="m-2 mb-0 relative">
+          <Input
+            type="search"
+            placeholder={navI18n("searchPlaceholder")}
+            className="pl-8"
+            onChange={(e) => {
+              setKeyword(e.target.value.trim().toLowerCase());
+            }}
+          />
+          <Search className="pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 select-none opacity-50" />
+        </div>
+        {nav}
+      </ScrollArea>
     </div>
   );
 }

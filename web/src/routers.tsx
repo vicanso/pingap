@@ -1,4 +1,5 @@
 import { createHashRouter } from "react-router-dom";
+import Root from "@/pages/Root";
 import Home from "@/pages/Home";
 import Basic from "@/pages/Basic";
 import Servers from "@/pages/Servers";
@@ -21,40 +22,45 @@ export const CONFIG = "/config";
 
 const router = createHashRouter([
   {
-    path: HOME,
-    element: <Home />,
-  },
-  {
-    path: BASIC,
-    element: <Basic />,
-  },
-  {
-    path: SERVERS,
-    element: <Servers />,
-  },
-  {
-    path: LOCATIONS,
-    element: <Locations />,
-  },
-  {
-    path: UPSTREMAS,
-    element: <Upstreams />,
-  },
-  {
-    path: PLUGINS,
-    element: <Plugins />,
-  },
-  {
-    path: CERTIFICATES,
-    element: <Certificates />,
-  },
-  {
-    path: CONFIG,
-    element: <Config />,
-  },
-  {
-    path: STORAGES,
-    element: <Storages />,
+    element: <Root />,
+    children: [
+      {
+        path: HOME,
+        element: <Home />,
+      },
+      {
+        path: BASIC,
+        element: <Basic />,
+      },
+      {
+        path: SERVERS,
+        element: <Servers />,
+      },
+      {
+        path: LOCATIONS,
+        element: <Locations />,
+      },
+      {
+        path: UPSTREMAS,
+        element: <Upstreams />,
+      },
+      {
+        path: PLUGINS,
+        element: <Plugins />,
+      },
+      {
+        path: CERTIFICATES,
+        element: <Certificates />,
+      },
+      {
+        path: CONFIG,
+        element: <Config />,
+      },
+      {
+        path: STORAGES,
+        element: <Storages />,
+      },
+    ],
   },
 ]);
 

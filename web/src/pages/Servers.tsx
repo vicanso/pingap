@@ -1,4 +1,3 @@
-import { MainSidebar } from "@/components/sidebar-nav";
 import { LoadingPage } from "@/components/loading";
 import useBasicState from "@/states/basic";
 import useConfigState, { getLocationWeight, Server } from "@/states/config";
@@ -11,10 +10,9 @@ import {
   newStringOptions,
   newBooleanOptions,
 } from "@/constants";
-import { formatLabel, newZodDuration, omitEmptyArray } from "@/helpers/util";
+import { formatLabel, newZodDuration } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
-import { ScrollRestoration } from "react-router-dom";
 
 function getServerConfig(name: string, servers?: Record<string, Server>) {
   if (!servers) {
@@ -257,35 +255,28 @@ export default function Servers() {
   };
 
   return (
-    <>
-      <div className="flex">
-        <MainSidebar className="h-screen flex-none w-[230px]" />
-        <div className="grow lg:border-l overflow-auto p-4">
-          <h2 className="h-8 mb-1">
-            <span className="border-b-2 border-solid py-1 border-[rgb(var(--foreground-rgb))]">
-              {formatLabel(currentServer)}
-            </span>
-          </h2>
-          <ExForm
-            category="server"
-            key={currentServer}
-            items={items}
-            schema={schema}
-            defaultShow={defaultShow}
-            onRemove={currentServer === newServer ? undefined : onRemove}
-            onSave={async (value) => {
-              let name = currentServer;
-              if (name === newServer) {
-                name = value["name"] as string;
-              }
-              omitEmptyArray(value);
-              await update("server", name, value);
-              handleSelectServer(name);
-            }}
-          />
-        </div>
-      </div>
-      <ScrollRestoration />
-    </>
+    <div className="grow lg:border-l overflow-auto p-4">
+      <h2 className="h-8 mb-1">
+        <span className="border-b-2 border-solid py-1 border-[rgb(var(--foreground-rgb))]">
+          {formatLabel(currentServer)}
+        </span>
+      </h2>
+      <ExForm
+        category="server"
+        key={currentServer}
+        items={items}
+        schema={schema}
+        defaultShow={defaultShow}
+        onRemove={currentServer === newServer ? undefined : onRemove}
+        onSave={async (value) => {
+          let name = currentServer;
+          if (name === newServer) {
+            name = value["name"] as string;
+          }
+          await update("server", name, value);
+          handleSelectServer(name);
+        }}
+      />
+    </div>
   );
 }

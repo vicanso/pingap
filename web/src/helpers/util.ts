@@ -23,19 +23,6 @@ export function newZodDuration() {
   return z.string().regex(reg);
 }
 
-export function omitEmptyArray(data: Record<string, unknown>) {
-  Object.keys(data).forEach((key) => {
-    const value = data[key];
-    if (!Array.isArray(value)) {
-      return;
-    }
-    const arr = value as unknown[];
-    if (arr.length === 0) {
-      delete data[key];
-    }
-  });
-}
-
 export function formatError(err: Error | HTTPError | unknown): string {
   let message = "";
   if (err instanceof HTTPError) {

@@ -1,5 +1,4 @@
 import { LoadingPage } from "@/components/loading";
-import { MainSidebar } from "@/components/sidebar-nav";
 import { useI18n } from "@/i18n";
 import useConfigState, { Certificate } from "@/states/config";
 import React from "react";
@@ -12,7 +11,6 @@ import {
 } from "@/constants";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
-import { ScrollRestoration } from "react-router-dom";
 import { formatLabel } from "@/helpers/util";
 
 function getCertificateConfig(
@@ -145,36 +143,28 @@ export default function Certificates() {
   };
 
   return (
-    <>
-      <div className="flex">
-        <MainSidebar className="h-screen flex-none w-[230px]" />
-        <div className="grow lg:border-l overflow-auto p-4">
-          <h2 className="h-8 mb-1">
-            <span className="border-b-2 border-solid py-1 border-[rgb(var(--foreground-rgb))]">
-              {formatLabel(currentCertificate)}
-            </span>
-          </h2>
-          <ExForm
-            category="certificate"
-            key={currentCertificate}
-            items={items}
-            schema={schema}
-            defaultShow={defaultShow}
-            onRemove={
-              currentCertificate === newCertificate ? undefined : onRemove
-            }
-            onSave={async (value) => {
-              let name = currentCertificate;
-              if (name === newCertificate) {
-                name = value["name"] as string;
-              }
-              await update("certificate", name, value);
-              handleSelectCertificate(name);
-            }}
-          />
-        </div>
-      </div>
-      <ScrollRestoration />
-    </>
+    <div className="grow lg:border-l overflow-auto p-4">
+      <h2 className="h-8 mb-1">
+        <span className="border-b-2 border-solid py-1 border-[rgb(var(--foreground-rgb))]">
+          {formatLabel(currentCertificate)}
+        </span>
+      </h2>
+      <ExForm
+        category="certificate"
+        key={currentCertificate}
+        items={items}
+        schema={schema}
+        defaultShow={defaultShow}
+        onRemove={currentCertificate === newCertificate ? undefined : onRemove}
+        onSave={async (value) => {
+          let name = currentCertificate;
+          if (name === newCertificate) {
+            name = value["name"] as string;
+          }
+          await update("certificate", name, value);
+          handleSelectCertificate(name);
+        }}
+      />
+    </div>
   );
 }

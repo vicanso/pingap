@@ -21,6 +21,8 @@ export default {
   removeSuccessDescription: "Config is removed from storage",
   includes: "Includes",
   includesPlaceholder: "Select the include config",
+  full: "Full",
+  original: "Original",
   nav: {
     basic: "Basic",
     server: "Server",
@@ -29,6 +31,7 @@ export default {
     plugin: "Plugin",
     certificate: "Certificate",
     storage: "Storage",
+    searchPlaceholder: "Input the keyword",
   },
   home: {
     dashboard: "Dashboard",
