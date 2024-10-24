@@ -731,6 +731,13 @@ impl ProxyHttp for Server {
         resp: &ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<RespCacheable> {
+        if ctx.check_cache_control
+            && resp.headers.get("Cache-Control").is_none()
+        {
+            return Ok(RespCacheable::Uncacheable(
+                NoCacheReason::OriginNotCache,
+            ));
+        }
         let mut cc = CacheControl::from_resp_headers(resp);
         if let Some(ref mut c) = &mut cc {
             if c.no_cache() || c.no_store() || c.private() {

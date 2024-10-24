@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_hash_key, get_step_conf, get_str_conf, get_str_slice_conf, Error,
-    Plugin, Result,
+    get_bool_conf, get_hash_key, get_step_conf, get_str_conf,
+    get_str_slice_conf, Error, Plugin, Result,
 };
 use crate::cache::{new_file_cache, new_tiny_ufo_cache, HttpCache};
 use crate::config::{
@@ -56,6 +56,7 @@ pub struct Cache {
     max_ttl: Option<Duration>,
     namespace: Option<String>,
     headers: Option<Vec<String>>,
+    check_cache_control: bool,
     purge_ip_rules: util::IpRules,
     hash_value: String,
 }
@@ -195,6 +196,7 @@ impl TryFrom<&PluginConf> for Cache {
             namespace,
             headers,
             purge_ip_rules,
+            check_cache_control: get_bool_conf(value, "check_cache_control"),
         };
         if params.plugin_step != PluginStep::Request {
             return Err(Error::Invalid {
@@ -292,6 +294,7 @@ impl Plugin for Cache {
 
         // max age of cache control
         ctx.cache_max_ttl = self.max_ttl;
+        ctx.check_cache_control = self.check_cache_control;
 
         session.cache.enable(
             self.http_cache,

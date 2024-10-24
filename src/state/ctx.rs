@@ -100,6 +100,7 @@ pub struct State {
     pub guard: Option<Guard>,
     pub request_id: Option<String>,
     pub cache_prefix: Option<String>,
+    pub check_cache_control: bool,
     pub cache_lookup_time: Option<u64>,
     pub cache_lock_time: Option<u64>,
     pub cache_max_ttl: Option<Duration>,
