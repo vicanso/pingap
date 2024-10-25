@@ -71,13 +71,12 @@ pub static HTTP_HEADER_X_FORWARDED_FOR: Lazy<http::HeaderName> =
 pub static HTTP_HEADER_X_REAL_IP: Lazy<http::HeaderName> =
     Lazy::new(|| HeaderName::from_str("X-Real-Ip").unwrap());
 
+/// Get remote addr from session
 pub fn get_remote_addr(session: &Session) -> Option<(String, u16)> {
-    if let Some(addr) = session.client_addr() {
-        if let Some(addr) = addr.as_inet() {
-            return Some((addr.ip().to_string(), addr.port()));
-        }
-    }
-    None
+    session
+        .client_addr()
+        .and_then(|addr| addr.as_inet())
+        .map(|addr| (addr.ip().to_string(), addr.port()))
 }
 
 /// Gets client ip from X-Forwarded-For,

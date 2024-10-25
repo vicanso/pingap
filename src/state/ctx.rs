@@ -97,6 +97,8 @@ pub struct State {
     pub client_ip: Option<String>,
     pub remote_port: Option<u16>,
     pub remote_addr: Option<String>,
+    pub server_port: Option<u16>,
+    pub server_addr: Option<String>,
     pub guard: Option<Guard>,
     pub request_id: Option<String>,
     pub cache_prefix: Option<String>,

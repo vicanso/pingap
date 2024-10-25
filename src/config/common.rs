@@ -1041,7 +1041,7 @@ mod tests {
             ..Default::default()
         };
         set_current_config(&conf);
-        assert_eq!("3605BCA7", get_config_hash());
+        assert_eq!("B7B8046B", get_config_hash());
     }
 
     #[test]

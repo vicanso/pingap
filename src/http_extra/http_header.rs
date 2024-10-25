@@ -27,6 +27,8 @@ const HOST_TAG: &[u8] = b"$host";
 const SCHEME_TAG: &[u8] = b"$scheme";
 const REMOTE_ADDR_TAG: &[u8] = b"$remote_addr";
 const REMOTE_PORT_TAG: &[u8] = b"$remote_port";
+const SERVER_ADDR_TAG: &[u8] = b"$server_addr";
+const SERVER_PORT_TAG: &[u8] = b"$server_port";
 const PROXY_ADD_FORWARDED_TAG: &[u8] = b"$proxy_add_x_forwarded_for";
 const UPSTREAM_ADDR_TAG: &[u8] = b"$upstream_addr";
 
@@ -92,8 +94,18 @@ pub fn convert_header_value(
             }
         },
         REMOTE_PORT_TAG => {
-            if let Some(remote_port) = &ctx.remote_port {
+            if let Some(remote_port) = ctx.remote_port {
                 return HeaderValue::from_str(&remote_port.to_string()).ok();
+            }
+        },
+        SERVER_ADDR_TAG => {
+            if let Some(server_addr) = &ctx.server_addr {
+                return HeaderValue::from_str(server_addr).ok();
+            }
+        },
+        SERVER_PORT_TAG => {
+            if let Some(server_port) = ctx.server_port {
+                return HeaderValue::from_str(&server_port.to_string()).ok();
             }
         },
         UPSTREAM_ADDR_TAG => {

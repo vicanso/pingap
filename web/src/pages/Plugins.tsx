@@ -26,7 +26,7 @@ function getPluginConfig(
 
 export default function Plugins() {
   const pluginI18n = useI18n("plugin");
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [config, initialized, update, remove] = useConfigState((state) => [
     state.data,
@@ -59,6 +59,12 @@ export default function Plugins() {
     setCurrentPlugin(name);
     const conf = getPluginConfig(name, config.plugins);
     setCurrentCategory(conf.category as string);
+    if (name === newPlugin) {
+      searchParams.delete("name");
+    } else {
+      searchParams.set("name", name);
+    }
+    setSearchParams(searchParams);
   };
 
   const items: ExFormItem[] = [];
@@ -377,7 +383,7 @@ export default function Plugins() {
           label: pluginI18n("cacheEviction"),
           placeholder: "",
           defaultValue: pluginConfig.eviction as boolean,
-          span: 3,
+          span: 2,
           category: ExFormItemCategory.RADIOS,
           options: newBooleanOptions(),
         },
@@ -386,7 +392,16 @@ export default function Plugins() {
           label: pluginI18n("cachePredictor"),
           placeholder: "",
           defaultValue: pluginConfig.predictor as boolean,
-          span: 3,
+          span: 2,
+          category: ExFormItemCategory.RADIOS,
+          options: newBooleanOptions(),
+        },
+        {
+          name: "check_cache_control",
+          label: pluginI18n("checkCacheControl"),
+          placeholder: "",
+          defaultValue: pluginConfig.check_cache_control as boolean,
+          span: 2,
           category: ExFormItemCategory.RADIOS,
           options: newBooleanOptions(),
         },

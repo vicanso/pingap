@@ -458,6 +458,12 @@ impl ProxyHttp for Server {
             ctx.remote_addr = Some(remote_addr);
             ctx.remote_port = Some(remote_port);
         }
+        if let Some(addr) =
+            session.server_addr().and_then(|addr| addr.as_inet())
+        {
+            ctx.server_addr = Some(addr.ip().to_string());
+            ctx.server_port = Some(addr.port());
+        }
 
         let header = session.req_header_mut();
         let host = util::get_host(header).unwrap_or_default();

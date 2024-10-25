@@ -283,6 +283,7 @@ export default {
     cacheMaxTtlPlaceholder: "Input the max cache ttl of cache(e.g. 1h)",
     cacheEviction: "Support Eviction",
     cachePredictor: "Support Predictor",
+    checkCacheControl: "Check Cache-Control response header",
     cacheHeaders: "Headers",
     cacheHeadersPlaceholder: "Input the header for cache key",
     cachePurgeIpList: "Ip Allow Purge",
