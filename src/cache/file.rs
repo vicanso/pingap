@@ -24,11 +24,11 @@ use prometheus::Histogram;
 use scopeguard::defer;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
-#[cfg(feature = "full")]
 use std::time::SystemTime;
 use tinyufo::TinyUfo;
 use tokio::fs;
 use tracing::info;
+use walkdir::WalkDir;
 
 pub struct FileCache {
     directory: String,
@@ -156,6 +156,33 @@ impl HttpCacheStorage for FileCache {
             reading: self.reading.load(Ordering::Relaxed),
             writing: self.writing.load(Ordering::Relaxed),
         })
+    }
+    async fn clear(&self, access_before: SystemTime) -> Result<(i32, i32)> {
+        let mut success = 0;
+        let mut fail = 0;
+        for entry in WalkDir::new(&self.directory)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            let Ok(accessed) = metadata.accessed() else {
+                continue;
+            };
+            if accessed > access_before {
+                continue;
+            }
+            match std::fs::remove_file(entry.path()) {
+                Ok(()) => {
+                    success += 1;
+                },
+                Err(_e) => {
+                    fail += 1;
+                },
+            };
+        }
+        Ok((success, fail))
     }
 }
 

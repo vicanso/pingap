@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::acme::{new_lets_encrypt_service, new_tls_validity_service};
+use crate::cache::new_file_storage_clear_service;
 use crate::config::ETCD_PROTOCOL;
 use crate::service::{new_auto_restart_service, new_observer_service};
 use clap::Parser;
@@ -405,6 +406,13 @@ fn run() -> Result<(), Box<dyn Error>> {
             "PyroAgent",
             pyro::new_agent_service(url),
         ));
+    }
+
+    if let Some(dir) = &conf.basic.cache_directory {
+        if let Some(task) = new_file_storage_clear_service(dir) {
+            my_server
+                .add_service(background_service("file storage clear", task));
+        }
     }
 
     if let Err(e) = plugin::try_init_plugins(&conf.plugins) {

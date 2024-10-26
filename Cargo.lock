@@ -2537,6 +2537,7 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
+ "walkdir",
  "x509-parser",
 ]
 

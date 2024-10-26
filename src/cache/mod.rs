@@ -48,7 +48,7 @@ pub fn new_file_cache(dir: &str) -> Result<HttpCache> {
     })
 }
 
-pub use http_cache::HttpCache;
+pub use http_cache::{new_file_storage_clear_service, HttpCache};
 
 #[cfg(test)]
 mod tests {

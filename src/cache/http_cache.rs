@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::file;
 use super::{Error, Result};
+use crate::service::CommonServiceTask;
+use crate::service::ServiceTask;
 use async_trait::async_trait;
 use bytes::Buf;
 use bytes::BufMut;
@@ -27,6 +30,8 @@ use pingora::cache::{
 };
 use std::any::Any;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
+use tracing::info;
 
 type BinaryMeta = (Vec<u8>, Vec<u8>);
 
@@ -99,9 +104,57 @@ pub trait HttpCacheStorage: Sync + Send {
     async fn remove(&self, _key: &str) -> Result<Option<CacheObject>> {
         Ok(None)
     }
+    async fn clear(
+        &self,
+        _access_before: std::time::SystemTime,
+    ) -> Result<(i32, i32)> {
+        Ok((-1, -1))
+    }
     // get reading and writing stats of storage
     fn stats(&self) -> Option<HttpCacheStats> {
         None
+    }
+}
+
+struct CacheStorageClearTask {
+    storage: Box<dyn HttpCacheStorage>,
+}
+
+pub fn new_file_storage_clear_service(dir: &str) -> Option<CommonServiceTask> {
+    let Ok(c) = file::new_file_cache(dir) else {
+        return None;
+    };
+    Some(CommonServiceTask::new(
+        "cache storage clear service",
+        Duration::from_secs(3600),
+        CacheStorageClearTask {
+            storage: Box::new(c),
+        },
+    ))
+}
+
+#[async_trait]
+impl ServiceTask for CacheStorageClearTask {
+    async fn run(&self) -> Option<bool> {
+        let Some(access_before) =
+            SystemTime::now().checked_sub(Duration::from_secs(24 * 3600))
+        else {
+            return Some(false);
+        };
+
+        let Ok((success, fail)) = self.storage.clear(access_before).await
+        else {
+            return Some(false);
+        };
+        if success < 0 {
+            return Some(true);
+        }
+        info!(success, fail, "cache storage clear");
+
+        Some(false)
+    }
+    fn description(&self) -> String {
+        "cace storage clear".to_string()
     }
 }
 

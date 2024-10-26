@@ -127,6 +127,7 @@ uuid = { version = "1.10.0", features = [
     "std",
     "fast-rng",
 ], default-features = false }
+walkdir = "2.5.0"
 x509-parser = "0.16.0"
 
 [features]
