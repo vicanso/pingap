@@ -77,7 +77,7 @@ impl ServiceTask for ValidityChecker {
         let offset_human: humantime::Duration =
             Duration::from_secs(self.time_offset as u64).into();
         format!(
-            "offset: {offset_human}, certificate_info_list: {:?}",
+            "ValidityChecker: {offset_human}, {:?}",
             certificate_info_list
         )
     }
@@ -92,7 +92,6 @@ pub fn new_tls_validity_service() -> CommonServiceTask {
         time_offset: 7 * 24 * 3600_i64,
     };
     CommonServiceTask::new(
-        "Tls validity checker",
         // check interval: one day
         Duration::from_secs(24 * 60 * 60),
         checker,

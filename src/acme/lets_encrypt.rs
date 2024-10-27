@@ -63,7 +63,6 @@ pub fn new_lets_encrypt_service(
     domains.sort();
 
     CommonServiceTask::new(
-        "LetsEncrypt",
         Duration::from_secs(30 * 60),
         LetsEncryptService {
             certificate_file,
@@ -108,7 +107,7 @@ impl ServiceTask for LetsEncryptService {
         None
     }
     fn description(&self) -> String {
-        format!("domains: {:?}", self.domains)
+        format!("LetsEncrypt: {:?}", self.domains)
     }
 }
 

@@ -125,7 +125,6 @@ pub fn new_file_storage_clear_service(dir: &str) -> Option<CommonServiceTask> {
         return None;
     };
     Some(CommonServiceTask::new(
-        "cache storage clear service",
         Duration::from_secs(3600),
         CacheStorageClearTask {
             storage: Box::new(c),
@@ -154,7 +153,7 @@ impl ServiceTask for CacheStorageClearTask {
         Some(false)
     }
     fn description(&self) -> String {
-        "cace storage clear".to_string()
+        "CacheStorageClear".to_string()
     }
 }
 

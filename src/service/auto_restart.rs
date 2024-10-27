@@ -262,7 +262,6 @@ pub fn new_auto_restart_service(
     }
 
     CommonServiceTask::new(
-        "Auto restart detector",
         interval.min(unit),
         AutoRestart {
             running_hot_reload: AtomicBool::new(false),
@@ -397,9 +396,9 @@ impl ServiceTask for AutoRestart {
     }
     fn description(&self) -> String {
         if self.running_hot_reload.load(Ordering::Relaxed) {
-            "configuration hot reload detect".to_string()
+            "HotReloadDetctor".to_string()
         } else {
-            "configuration restart detect".to_string()
+            "RestartDetector".to_string()
         }
     }
 }

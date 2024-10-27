@@ -233,11 +233,7 @@ pub fn new_prometheus_push_service(
         password,
         p,
     };
-    Ok(CommonServiceTask::new(
-        &format!("Prometheus push service, server:{name}"),
-        interval,
-        push,
-    ))
+    Ok(CommonServiceTask::new(interval, push))
 }
 
 struct PrometheusPush {
@@ -290,6 +286,9 @@ impl ServiceTask for PrometheusPush {
         }
 
         None
+    }
+    fn description(&self) -> String {
+        "PrometheusPush".to_string()
     }
 }
 

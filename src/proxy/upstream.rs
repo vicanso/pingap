@@ -733,7 +733,7 @@ impl ServiceTask for HealthCheckTask {
         None
     }
     fn description(&self) -> String {
-        "Upstream health check task".to_string()
+        "UpstreamHC".to_string()
     }
 }
 
@@ -745,7 +745,6 @@ struct HealthCheckTask {
 pub fn new_upstream_health_check_task(interval: Duration) -> CommonServiceTask {
     let interval = interval.max(Duration::from_secs(10));
     CommonServiceTask::new(
-        "Upstream health check task",
         interval,
         HealthCheckTask {
             interval,
