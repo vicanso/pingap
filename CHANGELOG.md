@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.8.12](https://github.com/vicanso/pingap/compare/v0.8.11..0.8.12) - 2024-10-27
+
+### ⛰️  Features
+
+- Support file storage clear background service - ([4e4afcd](https://github.com/vicanso/pingap/commit/4e4afcdda32670589b4bf58f933b04c46d72e70d))
+- Support server addr and port for response header - ([7ae4ed1](https://github.com/vicanso/pingap/commit/7ae4ed1575ec8457dd86f263011a8a109a84a6dc))
+- Support check cache control for cache plugin - ([ba48ed5](https://github.com/vicanso/pingap/commit/ba48ed5a4016b66fcff709ec85751619be07ef8f))
+- Support pingap config preview - ([42b3ff8](https://github.com/vicanso/pingap/commit/42b3ff858775dd7325bebc214ecb50d99aa77576))
+- Support get connection id from context - ([139c04c](https://github.com/vicanso/pingap/commit/139c04c071c7bda8f0afd43e7cc26c1450b359b7))
+
+### 🐛 Bug Fixes
+
+- Fix fd and connection count - ([9def503](https://github.com/vicanso/pingap/commit/9def50380444dd33524dfabf79a7e3c481e7487e))
+- Fix process id - ([ae4f946](https://github.com/vicanso/pingap/commit/ae4f946b1cc5cb5d8a725edd7407e2454e90579a))
+- Fix default threads of service - ([e2a2a68](https://github.com/vicanso/pingap/commit/e2a2a68b48a1cc5212a6437b22b99904a9c140d8))
+- Fix prefix of redirect plugin - ([97fc5e0](https://github.com/vicanso/pingap/commit/97fc5e06815d8403baa5a92954024a83cdce2212))
+- Fix connection id for windows - ([1d21562](https://github.com/vicanso/pingap/commit/1d21562e03080d3b7b50740c4cdce2c468154cb9))
+
+### 🚜 Refactor
+
+- Add fd and tcp default for home page - ([9b824f8](https://github.com/vicanso/pingap/commit/9b824f8395f6995fb3c1e598be2bcee806e66b62))
+- Adjust stats of pingap - ([99f0183](https://github.com/vicanso/pingap/commit/99f0183357c573c15349a819942f16263a80f602))
+- Adjust common service task - ([718ab0e](https://github.com/vicanso/pingap/commit/718ab0e687931e39b5f43f5a4fe73c52c8cd87b5))
+- Set default certificate for none server name - ([d5fb595](https://github.com/vicanso/pingap/commit/d5fb59540fcdc9566957450d292e0151d428f802))
+- Adjust web admin for open telemetry and pyroscope - ([3a79342](https://github.com/vicanso/pingap/commit/3a7934283d78364fb6b7d8c2320fad1341f82c87))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update dependencies - ([296fd10](https://github.com/vicanso/pingap/commit/296fd1034fc365016a63eb6aa0149a61ea5eb328))
+
 ## [0.8.11](https://github.com/vicanso/pingap/compare/v0.8.10..0.8.11) - 2024-10-19
 
 ### ⛰️  Features
