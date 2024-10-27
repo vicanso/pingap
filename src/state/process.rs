@@ -83,10 +83,13 @@ pub fn get_process_system_info() -> ProcessSystemInfo {
 
     cfg_if::cfg_if! {
         if #[cfg(target_os = "linux")] {
+            let mut fd_count = 0;
+            let mut tcp_count = 0;
+            let mut tcp6_count =0;
             if let Ok(p) = procfs::process::Process::new(pid as i32) {
-                let fd_count = p.fd_count().unwrap_or_default();
-                let tcp_count = p.tcp().unwrap_or_default().len();
-                let tcp6_count = p.tcp6().unwrap_or_default().len();
+                fd_count = p.fd_count().unwrap_or_default();
+                tcp_count = p.tcp().unwrap_or_default().len();
+                tcp6_count = p.tcp6().unwrap_or_default().len();
             }
         } else {
             let fd_count = 0;
