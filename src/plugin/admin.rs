@@ -27,7 +27,9 @@ use crate::config::{
 };
 use crate::http_extra::{HttpResponse, HTTP_HEADER_WWW_AUTHENTICATE};
 use crate::limit::TtlLruLimit;
-use crate::state::{get_processing_accepted, get_start_time, get_system_info};
+use crate::state::{
+    get_process_system_info, get_processing_accepted, get_start_time,
+};
 use crate::state::{restart_now, State};
 use crate::util::{self, base64_decode};
 use async_trait::async_trait;
@@ -141,6 +143,9 @@ struct BasicInfo {
     used_memory: String,
     enabled_full: bool,
     enabled_pyroscope: bool,
+    fd_count: usize,
+    tcp_count: usize,
+    tcp6_count: usize,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -467,31 +472,9 @@ impl Plugin for AdminServe {
                 ))
             })
         } else if path == "/basic" {
-            let system_info = get_system_info();
             let current_config = get_current_config();
-            let data = tokio::fs::read(current_config.basic.get_pid_file())
-                .await
-                .unwrap_or_default();
-            let mut pid = std::string::String::from_utf8_lossy(&data)
-                .trim()
-                .to_string();
-            if pid.is_empty() {
-                pid = std::process::id().to_string();
-            }
-            let mut threads = 0;
-            let cpu_count = num_cpus::get();
-            let mut default_threads = current_config.basic.threads.unwrap_or(1);
-            if default_threads == 0 {
-                default_threads = cpu_count;
-            }
-            for (_, server) in current_config.servers.iter() {
-                let count = server.threads.unwrap_or(1);
-                if count == 0 {
-                    threads += default_threads;
-                } else {
-                    threads += count;
-                }
-            }
+            let info = get_process_system_info();
+
             let (processing, accepted) = get_processing_accepted();
             cfg_if::cfg_if! {
                 if #[cfg(feature = "full")] {
@@ -515,20 +498,23 @@ impl Plugin for AdminServe {
                 config_hash: config::get_config_hash(),
                 user: current_config.basic.user.clone().unwrap_or_default(),
                 group: current_config.basic.group.clone().unwrap_or_default(),
-                pid,
-                threads,
+                pid: info.pid.to_string(),
+                threads: info.threads,
                 accepted,
                 processing,
-                kernel: system_info.kernel,
-                memory_mb: system_info.memory_mb,
-                memory: system_info.memory,
-                arch: system_info.arch,
-                cpus: system_info.cpus,
-                physical_cpus: system_info.physical_cpus,
-                total_memory: system_info.total_memory,
-                used_memory: system_info.used_memory,
+                kernel: info.kernel,
+                memory_mb: info.memory_mb,
+                memory: info.memory,
+                arch: info.arch,
+                cpus: info.cpus,
+                physical_cpus: info.physical_cpus,
+                total_memory: info.total_memory,
+                used_memory: info.used_memory,
                 enabled_full,
                 enabled_pyroscope,
+                fd_count: info.fd_count,
+                tcp_count: info.tcp_count,
+                tcp6_count: info.tcp6_count,
             })
             .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
         } else if path == "/restart" && method == Method::POST {

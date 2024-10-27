@@ -16,8 +16,8 @@ use super::{get_hash_key, get_step_conf, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::{
-    get_hostname, get_processing_accepted, get_start_time, get_system_info,
-    State,
+    get_hostname, get_process_system_info, get_processing_accepted,
+    get_start_time, State,
 };
 use crate::util;
 use async_trait::async_trait;
@@ -45,6 +45,10 @@ struct ServerStats {
     physical_cpus: usize,
     total_memory: String,
     used_memory: String,
+    threads: usize,
+    fd_count: usize,
+    tcp_count: usize,
+    tcp6_count: usize,
 }
 pub struct Stats {
     path: String,
@@ -103,7 +107,7 @@ impl Plugin for Stats {
                 Duration::from_secs(util::now().as_secs() - get_start_time())
                     .into();
             let (processing, accepted) = get_processing_accepted();
-            let system_info = get_system_info();
+            let info = get_process_system_info();
             let resp = HttpResponse::try_from_json(&ServerStats {
                 accepted,
                 processing,
@@ -114,13 +118,17 @@ impl Plugin for Stats {
                 rustc_version: util::get_rustc_version(),
                 start_time: get_start_time(),
                 uptime: uptime.to_string(),
-                memory_mb: system_info.memory_mb,
-                memory: system_info.memory,
-                arch: system_info.arch,
-                cpus: system_info.cpus,
-                physical_cpus: system_info.physical_cpus,
-                total_memory: system_info.total_memory,
-                used_memory: system_info.used_memory,
+                memory_mb: info.memory_mb,
+                memory: info.memory,
+                arch: info.arch,
+                cpus: info.cpus,
+                physical_cpus: info.physical_cpus,
+                total_memory: info.total_memory,
+                used_memory: info.used_memory,
+                threads: info.threads,
+                fd_count: info.fd_count,
+                tcp_count: info.tcp_count,
+                tcp6_count: info.tcp6_count,
             })
             .unwrap_or_else(|e| {
                 HttpResponse::unknown_error(Bytes::from(e.to_string()))

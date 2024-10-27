@@ -47,7 +47,7 @@ export default {
     user: "Daemon User",
     group: "Daemon Group",
     configHash: "Config Hash",
-    enabledFull: "Enable Full",
+    enabledFull: "Enable Full Features",
     rustc: "Rustc",
     machineCpu: "Machine CPU",
     machineMemory: "Machine Memory",

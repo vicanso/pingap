@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::config::get_current_config;
 use crate::util;
 use crate::webhook;
 use bytesize::ByteSize;
@@ -52,7 +53,7 @@ pub fn get_processing_accepted() -> (i32, u64) {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct SystemInfo {
+pub struct ProcessSystemInfo {
     pub memory_mb: usize,
     pub memory: String,
     pub arch: String,
@@ -61,9 +62,54 @@ pub struct SystemInfo {
     pub total_memory: String,
     pub used_memory: String,
     pub kernel: String,
+    pub pid: u32,
+    pub threads: usize,
+    pub fd_count: usize,
+    pub tcp_count: usize,
+    pub tcp6_count: usize,
 }
 
-pub fn get_system_info() -> SystemInfo {
+pub fn get_process_system_info() -> ProcessSystemInfo {
+    let current_config = get_current_config();
+    let data =
+        std::fs::read(current_config.basic.get_pid_file()).unwrap_or_default();
+    let mut pid = std::string::String::from_utf8_lossy(&data)
+        .trim()
+        .parse::<u32>()
+        .unwrap_or_default();
+    if pid == 0 {
+        pid = process::id();
+    }
+
+    cfg_if::cfg_if! {
+        if #[cfg(target_os = "linux")] {
+            if let Ok(p) = procfs::process::Process::new(id) {
+                let fd_count = p.fd_count().unwrap_or_default();
+                let tcp_count = p.tcp().unwrap_or_default().len();
+                let tcp6_count = p.tcp6().unwrap_or_default().len();
+            }
+        } else {
+            let fd_count = 0;
+            let tcp_count = 0;
+            let tcp6_count =0;
+        }
+    }
+
+    let mut threads = 0;
+    let cpu_count = num_cpus::get();
+    let mut default_threads = current_config.basic.threads.unwrap_or(1);
+    if default_threads == 0 {
+        default_threads = cpu_count;
+    }
+    for (_, server) in current_config.servers.iter() {
+        let count = server.threads.unwrap_or(1);
+        if count == 0 {
+            threads += default_threads;
+        } else {
+            threads += count;
+        }
+    }
+
     let mut memory = "".to_string();
     let mut memory_mb = 0;
     if let Some(value) = memory_stats() {
@@ -77,7 +123,7 @@ pub fn get_system_info() -> SystemInfo {
         System::new_with_specifics(RefreshKind::new().with_memory(kind));
     sys.refresh_memory();
 
-    SystemInfo {
+    ProcessSystemInfo {
         memory,
         memory_mb,
         arch: System::cpu_arch().unwrap_or_default(),
@@ -86,6 +132,11 @@ pub fn get_system_info() -> SystemInfo {
         kernel: System::kernel_version().unwrap_or_default(),
         total_memory: ByteSize(sys.total_memory()).to_string_as(true),
         used_memory: ByteSize(sys.used_memory()).to_string_as(true),
+        pid,
+        threads,
+        fd_count,
+        tcp_count,
+        tcp6_count,
     }
 }
 
