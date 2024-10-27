@@ -21,6 +21,9 @@ interface Basic {
   total_memory: string;
   enabled_full: boolean;
   enabled_pyroscope: boolean;
+  fd_count: number;
+  tcp_count: number;
+  tcp6_count: number;
 }
 
 interface ConfigState {
@@ -50,6 +53,9 @@ const useBasicState = create<ConfigState>()((set) => ({
     total_memory: "",
     enabled_full: false,
     enabled_pyroscope: false,
+    fd_count: 0,
+    tcp_count: 0,
+    tcp6_count: 0,
   },
   initialized: false,
   fetch: async () => {

@@ -218,7 +218,6 @@ export default function Home() {
       name: "machineMemory",
       value: `${basicInfo.used_memory} / ${basicInfo.total_memory}`,
     },
-
     {
       name: "processing",
       value: basicInfo.processing.toLocaleString(),
@@ -226,6 +225,18 @@ export default function Home() {
     {
       name: "accepted",
       value: basicInfo.accepted.toLocaleString(),
+    },
+    {
+      name: "tcpCount",
+      value: basicInfo.tcp_count.toLocaleString(),
+    },
+    {
+      name: "tcp6Count",
+      value: basicInfo.tcp6_count.toLocaleString(),
+    },
+    {
+      name: "fdCount",
+      value: basicInfo.fd_count.toLocaleString(),
     },
     {
       name: "arch",
