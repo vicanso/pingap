@@ -9,7 +9,12 @@ import {
   newStringOptions,
   newBooleanOptions,
 } from "@/constants";
-import { formatLabel, newZodBytes, newZodDuration } from "@/helpers/util";
+import {
+  formatLabel,
+  newZodBytes,
+  newZodDuration,
+  omitEmptyArray,
+} from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 
@@ -318,6 +323,7 @@ export default function Upstreams() {
           if (name === newUpstream) {
             name = value["name"] as string;
           }
+          omitEmptyArray(value);
           await update("upstream", name, value);
           handleSelectUpstream(name);
         }}

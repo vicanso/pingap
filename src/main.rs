@@ -296,7 +296,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let conf = r.recv()??;
     logger::logger_try_init(logger::LoggerParams {
         capacity: conf.basic.log_buffered_size.unwrap_or_default().as_u64(),
-        file: args.log.clone().unwrap_or_default(),
+        log: args.log.clone().unwrap_or_default(),
         level: conf.basic.log_level.clone().unwrap_or_default(),
         json: conf.basic.log_format_json.unwrap_or_default(),
     })?;
@@ -410,8 +410,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     if let Some(dir) = &conf.basic.cache_directory {
         if let Some(task) = new_file_storage_clear_service(dir) {
-            my_server
-                .add_service(background_service("file storage clear", task));
+            my_server.add_service(background_service("StorageClear", task));
         }
     }
 

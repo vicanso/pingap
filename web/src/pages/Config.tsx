@@ -24,13 +24,16 @@ export default function Config() {
       });
     }
   }, []);
+  const different = fullToml != originalToml;
   return (
     <div className="grow lg:border-l overflow-auto p-4">
       <Tabs defaultValue="original">
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="original">{t("original")}</TabsTrigger>
-          <TabsTrigger value="full">{t("full")}</TabsTrigger>
-        </TabsList>
+        {different && (
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="original">{t("original")}</TabsTrigger>
+            <TabsTrigger value="full">{t("full")}</TabsTrigger>
+          </TabsList>
+        )}
         <TabsContent value="full">
           <Card className="p-4">
             <pre>{fullToml}</pre>

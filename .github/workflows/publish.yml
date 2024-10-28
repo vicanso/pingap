@@ -192,11 +192,11 @@ jobs:
       - name: Upload Assets
         run: |
           cp /tmp/pingap/usr/local/bin/pingap ./pingap-linux-gnu-aarch64-full
-          tar -czvf pingap-linux-gnu-aarch64.tar.gz ./pingap-linux-gnu-aarch64-full
+          tar -czvf pingap-linux-gnu-aarch64-full.tar.gz ./pingap-linux-gnu-aarch64-full
 
           ls -lh pingap*.gz
 
-          ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-aarch64.tar.gz $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-aarch64-full.tar.gz $GITHUB_TOKEN
   windows:
     runs-on: windows-latest
     name: ${{ matrix.target }}

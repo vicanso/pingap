@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::SystemTime;
 use tinyufo::TinyUfo;
 use tokio::fs;
-use tracing::info;
+use tracing::{error, info};
 use walkdir::WalkDir;
 
 pub struct FileCache {
@@ -177,8 +177,13 @@ impl HttpCacheStorage for FileCache {
                 Ok(()) => {
                     success += 1;
                 },
-                Err(_e) => {
+                Err(e) => {
                     fail += 1;
+                    error!(
+                        err = e.to_string(),
+                        entry = entry.path().to_string_lossy().to_string(),
+                        "remove cache file fail"
+                    );
                 },
             };
         }

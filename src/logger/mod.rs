@@ -24,7 +24,7 @@ use tracing_subscriber::fmt::writer::BoxMakeWriter;
 
 #[derive(Default, Debug)]
 pub struct LoggerParams {
-    pub file: String,
+    pub log: String,
     pub level: String,
     pub capacity: u64,
     pub json: bool,
@@ -57,12 +57,12 @@ pub fn logger_try_init(params: LoggerParams) -> Result<(), Box<dyn Error>> {
             time::format_description::well_known::Rfc3339,
         ))
         .with_target(is_dev);
-    let writer = if params.file.is_empty() {
+    let writer = if params.log.is_empty() {
         BoxMakeWriter::new(std::io::stderr)
     } else {
-        let mut file = util::resolve_path(&params.file);
+        let mut file = util::resolve_path(&params.log);
         let mut rolling_type = "".to_string();
-        if let Some((_, query)) = params.file.split_once('?') {
+        if let Some((_, query)) = params.log.split_once('?') {
             file = file.replace(&format!("?{query}"), "");
             let m = convert_query_map(query);
             if let Some(value) = m.get("rolling") {
