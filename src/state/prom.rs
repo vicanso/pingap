@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_hostname, Error, Result, State};
+use super::{get_hostname, get_process_system_info, Error, Result, State};
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::util;
 use async_trait::async_trait;
@@ -31,47 +31,55 @@ use url::Url;
 
 static HOST_NAME_TAG: &str = "$HOSTNAME";
 
-pub static CACHE_READING_TIME: Lazy<Histogram> = Lazy::new(|| {
-    new_histogram(
-        "",
-        "pingap_cache_storage_read_time",
-        "pingap cache storage read time(second)",
-        &[0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0],
+pub static CACHE_READING_TIME: Lazy<Box<Histogram>> = Lazy::new(|| {
+    Box::new(
+        new_histogram(
+            "",
+            "pingap_cache_storage_read_time",
+            "pingap cache storage read time(second)",
+            &[0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0],
+        )
+        .unwrap(),
     )
-    .unwrap()
 });
-pub static CACHE_WRITING_TIME: Lazy<Histogram> = Lazy::new(|| {
-    new_histogram(
-        "",
-        "pingap_cache_storage_write_time",
-        "pingap cache storage write time(second)",
-        &[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0],
+pub static CACHE_WRITING_TIME: Lazy<Box<Histogram>> = Lazy::new(|| {
+    Box::new(
+        new_histogram(
+            "",
+            "pingap_cache_storage_write_time",
+            "pingap cache storage write time(second)",
+            &[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0],
+        )
+        .unwrap(),
     )
-    .unwrap()
 });
 
 pub struct Prometheus {
     r: Registry,
-    http_request_accepted: IntCounter,
-    http_request_processing: IntGauge,
-    http_reqesut_body_received: Histogram,
-    http_response_codes: IntCounterVec,
-    http_response_time: Histogram,
-    http_response_body_sent: Histogram,
-    connection_reused: IntCounter,
-    tls_handshake_time: Histogram,
-    upstream_connected: IntGaugeVec,
-    upstream_processing: IntGaugeVec,
-    upstream_tcp_connect_time: Histogram,
-    upstream_tls_handshake_time: Histogram,
-    upstream_reused: IntCounter,
-    upstream_processing_time: Histogram,
-    upstream_response_time: Histogram,
-    cache_lookup_time: Histogram,
-    cache_lock_time: Histogram,
-    cache_reading: IntGauge,
-    cache_writing: IntGauge,
-    compression_ratio: Histogram,
+    http_request_accepted: Box<IntCounter>,
+    http_request_processing: Box<IntGauge>,
+    http_reqesut_body_received: Box<Histogram>,
+    http_response_codes: Box<IntCounterVec>,
+    http_response_time: Box<Histogram>,
+    http_response_body_sent: Box<Histogram>,
+    connection_reused: Box<IntCounter>,
+    tls_handshake_time: Box<Histogram>,
+    upstream_connected: Box<IntGaugeVec>,
+    upstream_processing: Box<IntGaugeVec>,
+    upstream_tcp_connect_time: Box<Histogram>,
+    upstream_tls_handshake_time: Box<Histogram>,
+    upstream_reused: Box<IntCounter>,
+    upstream_processing_time: Box<Histogram>,
+    upstream_response_time: Box<Histogram>,
+    cache_lookup_time: Box<Histogram>,
+    cache_lock_time: Box<Histogram>,
+    cache_reading: Box<IntGauge>,
+    cache_writing: Box<IntGauge>,
+    compression_ratio: Box<Histogram>,
+    memory: Box<IntGauge>,
+    fd_count: Box<IntGauge>,
+    tcp_count: Box<IntGauge>,
+    tcp6_count: Box<IntGauge>,
 }
 
 const SECOND: f64 = 1000.0;
@@ -185,12 +193,17 @@ impl Prometheus {
         }
     }
     fn gather(&self) -> Vec<prometheus::proto::MetricFamily> {
+        let info = get_process_system_info();
+        self.memory.set(info.memory_mb as i64);
+        self.fd_count.set(info.fd_count as i64);
+        self.tcp_count.set(info.tcp_count as i64);
+        self.tcp6_count.set(info.tcp6_count as i64);
         self.r.gather()
     }
     pub fn metrics(&self) -> Result<Vec<u8>> {
         let mut buffer = vec![];
         let encoder = TextEncoder::new();
-        let metrics = self.r.gather();
+        let metrics = self.gather();
         encoder.encode(&metrics, &mut buffer).map_err(|e| {
             Error::Prometheus {
                 message: e.to_string(),
@@ -365,147 +378,172 @@ fn new_histogram(
 /// Create a prometheus metrics for server
 pub fn new_prometheus(server: &str) -> Result<Prometheus> {
     let r = Registry::new();
-    let http_request_accepted = new_int_counter(
+    let http_request_accepted = Box::new(new_int_counter(
         server,
         "pingap_http_request_accepted",
         "pingap http request accepted count",
-    )?;
-    let http_request_processing = new_int_gauge(
+    )?);
+    let http_request_processing = Box::new(new_int_gauge(
         server,
         "pingap_http_request_processing",
         "pingap http request processing count",
-    )?;
-    let http_reqesut_body_received = new_histogram(
+    )?);
+    let http_reqesut_body_received = Box::new(new_histogram(
         server,
         "pingap_http_reqesut_body_received",
         "pingap http request body received(KB)",
         &[1.0, 5.0, 10.0, 50.0, 100.0, 1000.0],
-    )?;
-    let http_response_codes = new_int_counter_vec(
+    )?);
+    let http_response_codes = Box::new(new_int_counter_vec(
         server,
         "pingap_http_response_codes",
         "pingap http response codes",
         &["status_code"],
-    )?;
-    let http_response_time = new_histogram(
+    )?);
+    let http_response_time = Box::new(new_histogram(
         server,
         "pingap_http_response_time",
         "pingap http response time(second)",
         &[
             0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
         ],
-    )?;
-    let http_response_body_sent = new_histogram(
+    )?);
+    let http_response_body_sent = Box::new(new_histogram(
         server,
         "pingap_http_response_body_sent",
         "pingap http resonse body send(KB)",
         &[1.0, 5.0, 10.0, 50.0, 100.0, 1000.0, 10000.0],
-    )?;
-    let connection_reused = new_int_counter(
+    )?);
+    let connection_reused = Box::new(new_int_counter(
         server,
         "pingap_connection_reused",
         "pingap connection reused count",
-    )?;
-    let tls_handshake_time = new_histogram(
+    )?);
+    let tls_handshake_time = Box::new(new_histogram(
         server,
         "pingap_tls_handshake_time",
         "pingap tls handshake time(second)",
         &[0.01, 0.05, 0.1, 0.5, 1.0],
-    )?;
+    )?);
 
-    let upstream_connected = new_intgauge_vec(
+    let upstream_connected = Box::new(new_intgauge_vec(
         server,
         "pingap_upstream_connected",
         "pingap upstream connnected count",
         &["upstream"],
-    )?;
-    let upstream_processing = new_intgauge_vec(
+    )?);
+    let upstream_processing = Box::new(new_intgauge_vec(
         server,
         "pingap_upstream_processing",
         "pingap upstream processing count",
         &["upstream"],
-    )?;
-    let upstream_tcp_connect_time = new_histogram(
+    )?);
+    let upstream_tcp_connect_time = Box::new(new_histogram(
         server,
         "pingap_upstream_tcp_connect_time",
         "pingap upstream tcp connect time(second)",
         &[0.005, 0.01, 0.05, 0.1, 0.5, 1.0],
-    )?;
-    let upstream_tls_handshake_time = new_histogram(
+    )?);
+    let upstream_tls_handshake_time = Box::new(new_histogram(
         server,
         "pingap_upstream_tls_handshake_time",
         "pingap upstream tsl handshake time(second)",
         &[0.01, 0.05, 0.1, 0.5, 1.0],
-    )?;
-    let upstream_reused = new_int_counter(
+    )?);
+    let upstream_reused = Box::new(new_int_counter(
         server,
         "pingap_upstream_reused",
         "pingap upstream reused count",
-    )?;
-    let upstream_processing_time = new_histogram(
+    )?);
+    let upstream_processing_time = Box::new(new_histogram(
         server,
         "pingap_upstream_processing_time",
         "pingap upstream processing time(second)",
         &[0.01, 0.02, 0.1, 0.5, 1.0, 5.0, 10.0],
-    )?;
-    let upstream_response_time = new_histogram(
+    )?);
+    let upstream_response_time = Box::new(new_histogram(
         server,
         "pingap_upstream_response_time",
         "pingap upstream response time(second)",
         &[0.005, 0.01, 0.05, 0.1, 0.5, 1.0],
-    )?;
-    let cache_lookup_time = new_histogram(
+    )?);
+    let cache_lookup_time = Box::new(new_histogram(
         server,
         "pingap_cache_lookup_time",
         "pingap cache lookup time(second)",
         &[0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0],
-    )?;
-    let cache_lock_time = new_histogram(
+    )?);
+    let cache_lock_time = Box::new(new_histogram(
         server,
         "pingap_cache_lock_time",
         "pingap cache lock time(second)",
         &[0.01, 0.05, 0.1, 1.0, 3.0],
-    )?;
-    let cache_reading = new_int_gauge(
+    )?);
+    let cache_reading = Box::new(new_int_gauge(
         server,
         "pingap_cache_reading",
         "pingap cache reading count",
-    )?;
-    let cache_writing = new_int_gauge(
+    )?);
+    let cache_writing = Box::new(new_int_gauge(
         server,
         "pingap_cache_writing",
         "pingap cache writing count",
-    )?;
-    let compression_ratio = new_histogram(
+    )?);
+    let compression_ratio = Box::new(new_histogram(
         server,
         "pingap_compression_ratio",
         "pingap response compression ratio",
         &[1.0, 2.0, 3.0, 5.0, 10.0],
-    )?;
+    )?);
+
+    let memory = Box::new(new_int_gauge(
+        server,
+        "pingap_memory",
+        "pingap memory size(mb)",
+    )?);
+    let fd_count = Box::new(new_int_gauge(
+        server,
+        "pingap_fd_count",
+        "pingap open file count",
+    )?);
+    let tcp_count = Box::new(new_int_gauge(
+        server,
+        "pingap_tcp_count",
+        "pingap tcp connections",
+    )?);
+    let tcp6_count = Box::new(new_int_gauge(
+        server,
+        "pingap_tcp6_count",
+        "pingap tcp6 connections",
+    )?);
 
     let collectors: Vec<Box<dyn Collector>> = vec![
-        Box::new(http_request_accepted.clone()),
-        Box::new(http_request_processing.clone()),
-        Box::new(http_reqesut_body_received.clone()),
-        Box::new(http_response_codes.clone()),
-        Box::new(http_response_time.clone()),
-        Box::new(http_response_body_sent.clone()),
-        Box::new(connection_reused.clone()),
-        Box::new(tls_handshake_time.clone()),
-        Box::new(upstream_connected.clone()),
-        Box::new(upstream_processing.clone()),
-        Box::new(upstream_tcp_connect_time.clone()),
-        Box::new(upstream_tls_handshake_time.clone()),
-        Box::new(upstream_reused.clone()),
-        Box::new(upstream_processing_time.clone()),
-        Box::new(upstream_response_time.clone()),
-        Box::new(cache_lookup_time.clone()),
-        Box::new(cache_lock_time.clone()),
-        Box::new(cache_reading.clone()),
-        Box::new(cache_writing.clone()),
-        Box::new(CACHE_READING_TIME.clone()),
-        Box::new(CACHE_WRITING_TIME.clone()),
-        Box::new(compression_ratio.clone()),
+        http_request_accepted.clone(),
+        http_request_processing.clone(),
+        http_reqesut_body_received.clone(),
+        http_response_codes.clone(),
+        http_response_time.clone(),
+        http_response_body_sent.clone(),
+        connection_reused.clone(),
+        tls_handshake_time.clone(),
+        upstream_connected.clone(),
+        upstream_processing.clone(),
+        upstream_tcp_connect_time.clone(),
+        upstream_tls_handshake_time.clone(),
+        upstream_reused.clone(),
+        upstream_processing_time.clone(),
+        upstream_response_time.clone(),
+        cache_lookup_time.clone(),
+        cache_lock_time.clone(),
+        cache_reading.clone(),
+        cache_writing.clone(),
+        CACHE_READING_TIME.clone(),
+        CACHE_WRITING_TIME.clone(),
+        compression_ratio.clone(),
+        memory.clone(),
+        fd_count.clone(),
+        tcp_count.clone(),
+        tcp6_count.clone(),
     ];
     for c in collectors {
         r.register(c).map_err(|e| Error::Prometheus {
@@ -535,6 +573,10 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         cache_reading,
         cache_writing,
         compression_ratio,
+        memory,
+        fd_count,
+        tcp_count,
+        tcp6_count,
     })
 }
 

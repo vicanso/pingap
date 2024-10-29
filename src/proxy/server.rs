@@ -776,7 +776,12 @@ impl ProxyHttp for Server {
             }
         }
 
-        Ok(resp_cacheable(cc.as_ref(), resp, false, &META_DEFAULTS))
+        Ok(resp_cacheable(
+            cc.as_ref(),
+            resp.clone(),
+            false,
+            &META_DEFAULTS,
+        ))
     }
 
     async fn response_filter(

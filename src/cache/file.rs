@@ -35,11 +35,11 @@ pub struct FileCache {
     reading: AtomicU32,
     reading_max: u32,
     #[cfg(feature = "full")]
-    read_time: Histogram,
+    read_time: Box<Histogram>,
     writing: AtomicU32,
     writing_max: u32,
     #[cfg(feature = "full")]
-    write_time: Histogram,
+    write_time: Box<Histogram>,
     cache: TinyUfo<String, CacheObject>,
 }
 

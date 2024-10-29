@@ -75,7 +75,7 @@ opentelemetry_sdk = { version = "0.24.1", features = [
     "rt-tokio",
 ], default-features = false, optional = true }
 path-absolutize = "3.1.1"
-pingora = { git = "https://github.com/cloudflare/pingora", rev = "3f60857993925c87aecfbaf0799358baabf7d436", default-features = false, features = [
+pingora = { git = "https://github.com/cloudflare/pingora", rev = "1c6eed066b57e5bf387b7ebcad9e447515dece80", default-features = false, features = [
     # pingora = { version = "0.3.0", default-features = false, features = [
     "lb",
     "openssl",
@@ -97,6 +97,7 @@ rust-embed = { version = "8.5.0", features = [
     "compression",
 ], default-features = false }
 rustc_version_runtime = "0.3.0"
+rustls-pemfile = "2.2.0"
 scopeguard = "1.2.0"
 sentry = { version = "0.26", default-features = false, optional = true }
 serde = "1.0.213"

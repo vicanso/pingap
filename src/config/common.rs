@@ -22,11 +22,10 @@ use bytesize::ByteSize;
 use http::{HeaderName, HeaderValue};
 use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
-use pingora::tls::pkey::PKey;
-use pingora::tls::x509::X509;
 use regex::Regex;
 use serde::{Deserialize, Serialize, Serializer};
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::io::Cursor;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::Duration;
@@ -160,6 +159,27 @@ pub struct CertificateConf {
     pub remark: Option<String>,
 }
 
+fn validate_cert(value: &str) -> Result<()> {
+    let buf = convert_pem(value)?;
+    let mut key = Cursor::new(&buf);
+    let mut err = None;
+    let success = rustls_pemfile::certs(&mut key).all(|item| {
+        if let Err(e) = &item {
+            err = Some(Error::Invalid {
+                message: e.to_string(),
+            });
+            return false;
+        }
+        true
+    });
+    if !success && err.is_some() {
+        return Err(err.unwrap_or(Error::Invalid {
+            message: "Invalid certitificate".to_string(),
+        }));
+    }
+    Ok(())
+}
+
 impl CertificateConf {
     /// Get hash key of certificate config
     pub fn hash_key(&self) -> String {
@@ -172,7 +192,8 @@ impl CertificateConf {
         // convert private key
         if let Some(value) = &self.tls_key {
             let buf = convert_pem(value)?;
-            let _ = PKey::private_key_from_pem(&buf).map_err(|e| {
+            let mut key = Cursor::new(buf);
+            let _ = rustls_pemfile::private_key(&mut key).map_err(|e| {
                 Error::Invalid {
                     message: e.to_string(),
                 }
@@ -180,17 +201,11 @@ impl CertificateConf {
         }
         // convert certificate
         if let Some(value) = &self.tls_cert {
-            let buf = convert_pem(value)?;
-            let _ = X509::from_pem(&buf).map_err(|e| Error::Invalid {
-                message: e.to_string(),
-            })?;
+            validate_cert(value)?;
         }
         // convert certificate chain
         if let Some(value) = &self.tls_chain {
-            let buf = convert_pem(value)?;
-            let _ = X509::from_pem(&buf).map_err(|e| Error::Invalid {
-                message: e.to_string(),
-            })?;
+            validate_cert(value)?;
         }
         Ok(())
     }

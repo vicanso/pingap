@@ -153,7 +153,7 @@ export function MainHeader({
           {!initialized && (
             <LoaderCircle className="ml-2 h-4 w-4 inline animate-spin" />
           )}
-          <span className="ml-2">{basicInfo.version}</span>
+          <span>{basicInfo.version}</span>
         </Button>
         <div className="flex flex-1 items-center space-x-2 justify-end mr-5">
           <Button
