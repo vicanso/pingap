@@ -197,6 +197,26 @@ impl TryFrom<&PluginConf> for AdminServe {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct AesParmas {
+    category: String,
+    key: String,
+    data: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct AesResp {
+    value: String,
+}
+
+async fn get_request_body(session: &mut Session) -> pingora::Result<BytesMut> {
+    let mut buf = BytesMut::with_capacity(4096);
+    while let Some(value) = session.read_request_body().await? {
+        buf.put(value.as_ref());
+    }
+    Ok(buf)
+}
+
 impl AdminServe {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new admin server plugin");
@@ -289,10 +309,7 @@ impl AdminServe {
                 "name is empty".to_string(),
             ));
         }
-        let mut buf = BytesMut::with_capacity(4096);
-        while let Some(value) = session.read_request_body().await? {
-            buf.put(value.as_ref());
-        }
+        let buf = get_request_body(session).await?;
         let key = name.to_string();
         let mut conf = self.load_config(false).await?;
         match category {
@@ -524,6 +541,19 @@ impl Plugin for AdminServe {
             } else {
                 HttpResponse::no_content()
             }
+        } else if path == "/aes" {
+            let buf = get_request_body(session).await?;
+            let params: AesParmas = serde_json::from_slice(buf.as_ref())
+                .map_err(|e| util::new_internal_error(400, e.to_string()))?;
+            let value = if params.category == "encrypt" {
+                util::aes_encrypt(&params.key, &params.data)
+            } else {
+                util::aes_decrypt(&params.key, &params.data)
+            }
+            .map_err(|e| util::new_internal_error(400, e.to_string()))?;
+            HttpResponse::try_from_json(&AesResp { value }).unwrap_or(
+                HttpResponse::unknown_error("Json serde fail".into()),
+            )
         } else {
             let mut file = path.substring(1, path.len());
             if file.is_empty() {

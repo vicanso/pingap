@@ -16,6 +16,10 @@ rust-version = "1.74"
 
 [dependencies]
 TinyUFO = "0.3.0"
+aes-gcm-siv = { version = "0.11.1", default-features = false, features = [
+    "aes",
+    "alloc",
+] }
 ahash = { version = "0.8.11", default-features = false }
 arc-swap = "1.7.1"
 async-trait = "0.1.83"

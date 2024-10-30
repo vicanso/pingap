@@ -23,6 +23,10 @@ export default {
   includesPlaceholder: "Select the include config",
   full: "Full",
   original: "Original",
+  aesGcm: "AES-GCM",
+  aesTips: "Use AES-GCM to encrypt and decrypt data",
+  secret: "Secret",
+  value: "Value",
   nav: {
     basic: "Basic",
     server: "Server",

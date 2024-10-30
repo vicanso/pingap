@@ -733,7 +733,7 @@ impl ServiceTask for HealthCheckTask {
         None
     }
     fn description(&self) -> String {
-        "UpstreamHC".to_string()
+        "UpstreamHc".to_string()
     }
 }
 

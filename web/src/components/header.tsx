@@ -9,6 +9,7 @@ import {
   Cog,
   Languages,
   FileCode2,
+  AudioWaveform,
 } from "lucide-react";
 import { goToConfig, goToHome } from "@/routers";
 import { useTheme } from "@/components/theme-provider";
@@ -29,6 +30,14 @@ import { useAsync } from "react-async-hook";
 import { useToast } from "@/hooks/use-toast";
 import { formatError } from "@/helpers/util";
 import i18n from "@/i18n";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 
 export function MainHeader({
   className,
@@ -156,6 +165,52 @@ export function MainHeader({
           <span>{basicInfo.version}</span>
         </Button>
         <div className="flex flex-1 items-center space-x-2 justify-end mr-5">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="ghost" size="icon">
+                <AudioWaveform />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-300" align="end">
+              <div className="grid gap-4">
+                <div className="space-y-2">
+                  <h4 className="font-medium leading-none">{t("aesGcm")}</h4>
+                  <p className="text-sm text-muted-foreground">
+                    {t("aesTips")}
+                  </p>
+                </div>
+                <div className="grid gap-2">
+                  <RadioGroup
+                    className="flex flex-wrap items-start"
+                    onValueChange={(option) => {
+                      console.dir(option);
+                    }}
+                  >
+                    <RadioGroupItem value="encrypt" id="encrypt" />
+                    <Label className="pl-2 cursor-pointer" htmlFor="encrypt">
+                      Encrypt
+                    </Label>
+                    <RadioGroupItem value="decrypt" id="decrypt" />
+                    <Label className="pl-2 cursor-pointer" htmlFor="decrypt">
+                      Decrypt
+                    </Label>
+                  </RadioGroup>
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="secret">{t("secret")}</Label>
+                    <Input id="secret" className="col-span-3 h-8" />
+                  </div>
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="value">{t("value")}</Label>
+                    <Input id="value" className="col-span-3 h-8" />
+                  </div>
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="value">{t("result")}</Label>
+                    <p>Result</p>
+                  </div>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
           <Button
             variant="ghost"
             size="icon"

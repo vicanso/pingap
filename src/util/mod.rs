@@ -20,13 +20,26 @@ use path_absolutize::*;
 use pingora::cache::CacheKey;
 use pingora::tls::ssl::SslVersion;
 use pingora::{http::RequestHeader, proxy::Session};
+use snafu::Snafu;
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{path::Path, str::FromStr};
 use substring::Substring;
 
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("Encrypt error {message}"))]
+    Aes { message: String },
+    #[snafu(display("Base64 decode {source}"))]
+    Base64Decode { source: base64::DecodeError },
+    #[snafu(display("Invalid {message}"))]
+    Invalid { message: String },
+}
+
+mod crypto;
 mod ip;
 
+pub use crypto::{aes_decrypt, aes_encrypt};
 pub use ip::IpRules;
 
 const NAME: &str = env!("CARGO_PKG_NAME");
