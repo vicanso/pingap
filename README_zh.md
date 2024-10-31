@@ -55,7 +55,7 @@ RUST_LOG=INFO pingap -c=/opt/pingap/conf -t \
 
 ```bash
 RUST_LOG=INFO pingap -c=/opt/pingap/conf \
-  && -a -d --autoreload --log=/opt/pingap/pingap.log
+  -a -d --autoreload --log=/opt/pingap/pingap.log
 ```
 
 ## 应用配置

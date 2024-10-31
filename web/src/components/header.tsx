@@ -10,6 +10,7 @@ import {
   Languages,
   FileCode2,
   AudioWaveform,
+  ClipboardCopy,
 } from "lucide-react";
 import { goToConfig, goToHome } from "@/routers";
 import { useTheme } from "@/components/theme-provider";
@@ -38,14 +39,24 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import request from "@/helpers/request";
 
 export function MainHeader({
   className,
 }: React.HTMLAttributes<HTMLDivElement>) {
   const { t } = useTranslation();
+  const { toast } = useToast();
+
   const iconClassName = "mr-2 h-4 w-4";
   const { setTheme, theme } = useTheme();
   const lang = i18n.language;
+  const [aesType, setAesType] = React.useState("encrypt");
+  const [aesProcessing, setAesProcessing] = React.useState(false);
+  const [aesData, setAesData] = React.useState({
+    key: "",
+    data: "",
+  });
+  const [aesResult, setAesResult] = React.useState("");
   const [fetchBasicInfo, basicInfo] = useBasicState((state) => [
     state.fetch,
     state.data,
@@ -54,7 +65,40 @@ export function MainHeader({
     state.fetch,
     state.initialized,
   ]);
-  const { toast } = useToast();
+
+  const handleAes = async () => {
+    const secret = aesData.key;
+    const value = aesData.data;
+    if (!secret || !value) {
+      setAesResult("");
+      return;
+    }
+    const key = `${secret}-${value}`;
+    setAesProcessing(true);
+    try {
+      const { data } = await request.post<{
+        value: string;
+      }>("/aes", {
+        category: aesType,
+        key: secret,
+        data: value,
+      });
+      if (key == `${secret}-${value}`) {
+        setAesResult(data.value);
+        await navigator.clipboard.writeText(data.value);
+      }
+    } catch (err) {
+      toast({
+        title: t("aesFail"),
+        description: formatError(err),
+      });
+    } finally {
+      if (key == `${secret}-${value}`) {
+        setAesProcessing(false);
+      }
+    }
+  };
+
   useAsync(async () => {
     try {
       await fetchBasicInfo();
@@ -171,7 +215,7 @@ export function MainHeader({
                 <AudioWaveform />
               </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-300" align="end">
+            <PopoverContent className="w-[400px]" align="end">
               <div className="grid gap-4">
                 <div className="space-y-2">
                   <h4 className="font-medium leading-none">{t("aesGcm")}</h4>
@@ -183,29 +227,76 @@ export function MainHeader({
                   <RadioGroup
                     className="flex flex-wrap items-start"
                     onValueChange={(option) => {
-                      console.dir(option);
+                      setAesType(option);
                     }}
+                    defaultValue={aesType}
                   >
                     <RadioGroupItem value="encrypt" id="encrypt" />
                     <Label className="pl-2 cursor-pointer" htmlFor="encrypt">
-                      Encrypt
+                      {t("encrypt")}
                     </Label>
                     <RadioGroupItem value="decrypt" id="decrypt" />
                     <Label className="pl-2 cursor-pointer" htmlFor="decrypt">
-                      Decrypt
+                      {t("decrypt")}
                     </Label>
                   </RadioGroup>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="secret">{t("secret")}</Label>
-                    <Input id="secret" className="col-span-3 h-8" />
+                  <div className="flex">
+                    <Label
+                      htmlFor="secret"
+                      className="flex-none leading-9 mr-4"
+                    >
+                      {t("secret")}
+                    </Label>
+                    <Input
+                      id="secret"
+                      className="grow"
+                      onChange={(e) => {
+                        aesData.key = e.target.value.trim();
+                        setAesData(aesData);
+                      }}
+                    />
                   </div>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="value">{t("value")}</Label>
-                    <Input id="value" className="col-span-3 h-8" />
+                  <div className="flex">
+                    <Label htmlFor="value" className="flex-none leading-9 mr-4">
+                      {t("value")}
+                    </Label>
+                    <Input
+                      id="value"
+                      className="grow"
+                      onChange={(e) => {
+                        aesData.data = e.target.value.trim();
+                        setAesData(aesData);
+                      }}
+                    />
                   </div>
-                  <div className="grid grid-cols-4 items-center gap-4">
-                    <Label htmlFor="value">{t("result")}</Label>
-                    <p>Result</p>
+                  <div className="flex">
+                    <Label htmlFor="value" className="flex-none leading-9 mr-4">
+                      {t("result")}
+                    </Label>
+                    <p className="grow text-sm text-muted-foreground leading-9 relative">
+                      <Button
+                        className="absolute right-0"
+                        variant="ghost"
+                        size="icon"
+                        onClick={async (e) => {
+                          e.preventDefault();
+                          handleAes();
+                        }}
+                      >
+                        <ClipboardCopy />
+                      </Button>
+                      {!aesProcessing && (
+                        <Input
+                          id="value"
+                          className="grow"
+                          value={aesResult}
+                          readOnly
+                        />
+                      )}
+                      {aesProcessing && (
+                        <LoaderCircle className="ml-2 h-4 w-4 inline animate-spin" />
+                      )}
+                    </p>
                   </div>
                 </div>
               </div>

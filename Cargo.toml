@@ -35,6 +35,8 @@ chrono = { version = "0.4.38", default-features = false, features = [
 clap = { version = "4.5.20", features = [
     "derive",
     "std",
+    "help",
+    "usage",
 ], default-features = false }
 cookie = "0.18.1"
 crc32fast = "1.4.2"

@@ -25,8 +25,11 @@ export default {
   original: "Original",
   aesGcm: "AES-GCM",
   aesTips: "Use AES-GCM to encrypt and decrypt data",
+  encrypt: "Encrypt",
+  decrypt: "Decrypt",
   secret: "Secret",
   value: "Value",
+  result: "Result",
   nav: {
     basic: "Basic",
     server: "Server",

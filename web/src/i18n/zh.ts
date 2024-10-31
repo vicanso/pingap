@@ -25,8 +25,11 @@ export default {
   original: "原始配置",
   aesGcm: "AES-GCM",
   aesTips: "使用AES-GCM加解密数据",
+  encrypt: "加密",
+  decrypt: "解密",
   secret: "密钥",
   value: "数据",
+  result: "结果",
   nav: {
     basic: "基础配置",
     server: "服务配置",

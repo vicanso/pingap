@@ -60,7 +60,7 @@ Watch the configurations, if one of them changes, graceful restart pingap. `auto
 
 ```bash
 RUST_LOG=INFO pingap -c=/opt/pingap/conf \
-  && -a -d --autoreload --log=/opt/pingap/pingap.log
+  -a -d --autoreload --log=/opt/pingap/pingap.log
 ```
 
 ## Docker
