@@ -45,7 +45,7 @@ unused-features:
 	unused-features analyze
 
 test:
-	cargo test
+	cargo test --features=full
 
 cov:
 	cargo llvm-cov --html --open

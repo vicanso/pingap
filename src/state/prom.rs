@@ -639,6 +639,6 @@ mod tests {
             },
         );
         let buf = p.metrics().unwrap();
-        assert_eq!(174, std::str::from_utf8(&buf).unwrap().split('\n').count());
+        assert_eq!(186, std::str::from_utf8(&buf).unwrap().split('\n').count());
     }
 }
