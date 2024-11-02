@@ -15,7 +15,7 @@ rust-version = "1.74"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-TinyUFO = "0.3.0"
+TinyUFO = "0.4.0"
 aes-gcm-siv = { version = "0.11.1", default-features = false, features = [
     "aes",
     "alloc",
@@ -81,20 +81,20 @@ opentelemetry_sdk = { version = "0.24.1", features = [
     "rt-tokio",
 ], default-features = false, optional = true }
 path-absolutize = "3.1.1"
-pingora = { git = "https://github.com/cloudflare/pingora", rev = "1c6eed066b57e5bf387b7ebcad9e447515dece80", default-features = false, features = [
-    # pingora = { version = "0.3.0", default-features = false, features = [
+# pingora = { git = "https://github.com/cloudflare/pingora", rev = "1c6eed066b57e5bf387b7ebcad9e447515dece80", default-features = false, features = [
+pingora = { version = "0.4.0", default-features = false, features = [
     "lb",
     "openssl",
     "cache",
 ] }
-pingora-limits = "0.3.0"
-pingora-runtime = "0.3.0"
+pingora-limits = "0.4.0"
+pingora-runtime = "0.4.0"
 prometheus = { version = "0.13.4", default-features = false, optional = true }
 pyroscope = { version = "0.5.7", optional = true }
 pyroscope_pprofrs = { version = "0.2.7", optional = true }
 rcgen = "0.13.1"
 regex = { version = "1.11.1", default-features = false }
-reqwest = { version = "0.12.8", default-features = false, features = [
+reqwest = { version = "0.12.9", default-features = false, features = [
     "json",
     "default-tls",
 ] }
@@ -106,7 +106,7 @@ rustc_version_runtime = "0.3.0"
 rustls-pemfile = "2.2.0"
 scopeguard = "1.2.0"
 sentry = { version = "0.26", default-features = false, optional = true }
-serde = "1.0.213"
+serde = "1.0.214"
 serde_json = "1.0.132"
 sha2 = { version = "0.10.8", default-features = false }
 snafu = { version = "0.8.5", features = ["std"], default-features = false }
