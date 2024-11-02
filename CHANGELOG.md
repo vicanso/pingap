@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.9.0](https://github.com/vicanso/pingap/compare/v0.8.12..0.9.0) - 2024-11-02
+
+### ⛰️  Features
+
+- Support user agent restriction plugin - ([c97adcd](https://github.com/vicanso/pingap/commit/c97adcd5ff8eb317ac1161e77139b8ddec713005))
+- Support get storage value for pingap - ([e51a076](https://github.com/vicanso/pingap/commit/e51a076529c73bf7c07cca145d570f484051fc95))
+- Support aes encrypt and decrypt - ([b38843f](https://github.com/vicanso/pingap/commit/b38843f83eca7221467648c3eaca1565e179fbf8))
+
+### 🚜 Refactor
+
+- Adjust aes encrypt and decrypt - ([f700ff7](https://github.com/vicanso/pingap/commit/f700ff789329ff5e2ac8eefd2c72ce8dc0a7447f))
+- Adjust prometheus - ([2c86d21](https://github.com/vicanso/pingap/commit/2c86d217108a0b093239c3b76e2c29d24d5442d3))
+- Adjust omit includes value - ([d2b2306](https://github.com/vicanso/pingap/commit/d2b23063157e5ac154bb005d67ab63ddcea09201))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update pingora version - ([b9533d6](https://github.com/vicanso/pingap/commit/b9533d67c437d1dbb5b8dd11b48e91ac59934ed0))
+
 ## [0.8.12](https://github.com/vicanso/pingap/compare/v0.8.11..0.8.12) - 2024-10-27
 
 ### ⛰️  Features
