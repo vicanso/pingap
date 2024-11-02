@@ -100,6 +100,7 @@ export default function Plugins() {
             // limit
             PluginCategory.LIMIT,
             PluginCategory.IP_RESTRICTION,
+            PluginCategory.UA_RESTRICTION,
             PluginCategory.REFERER_RESTRICTION,
             PluginCategory.CSRF,
             PluginCategory.CORS,
@@ -763,6 +764,36 @@ export default function Plugins() {
           name: "message",
           label: pluginI18n("refererRestrictionMessage"),
           placeholder: pluginI18n("refererRestrictionMessagePlaceholder"),
+          defaultValue: pluginConfig.message as string,
+          span: 6,
+          category: ExFormItemCategory.TEXT,
+        },
+      );
+      break;
+    }
+    case PluginCategory.UA_RESTRICTION: {
+      items.push(
+        {
+          name: "type",
+          label: pluginI18n("uaRestrictionMode"),
+          placeholder: "",
+          defaultValue: pluginConfig.type as string,
+          span: 6,
+          category: ExFormItemCategory.RADIOS,
+          options: newStringOptions(["allow", "deny"], true),
+        },
+        {
+          name: "ua_list",
+          label: pluginI18n("uaList"),
+          placeholder: pluginI18n("uaListPlaceholder"),
+          defaultValue: pluginConfig.ua_list as string[],
+          span: 6,
+          category: ExFormItemCategory.TEXTS,
+        },
+        {
+          name: "message",
+          label: pluginI18n("uaRestrictionMessage"),
+          placeholder: pluginI18n("uaRestrictionMessagePlaceholder"),
           defaultValue: pluginConfig.message as string,
           span: 6,
           category: ExFormItemCategory.TEXT,

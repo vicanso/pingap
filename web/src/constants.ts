@@ -121,6 +121,7 @@ export enum PluginCategory {
   MOCK = "mock",
   REQUEST_ID = "request_id",
   IP_RESTRICTION = "ip_restriction",
+  UA_RESTRICTION = "ua_restriction",
   KEY_AUTH = "key_auth",
   BASIC_AUTH = "basic_auth",
   COMBINED_AUTH = "combined_auth",

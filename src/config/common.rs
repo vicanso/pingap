@@ -76,6 +76,7 @@ pub enum PluginCategory {
     Ping,
     ResponseHeaders,
     RefererRestriction,
+    UaRestriction,
     Csrf,
     Cors,
     AcceptEncoding,

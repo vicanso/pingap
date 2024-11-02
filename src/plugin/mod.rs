@@ -48,6 +48,7 @@ mod referer_restriction;
 mod request_id;
 mod response_headers;
 mod stats;
+mod ua_restriction;
 
 pub static ADMIN_SERVER_PLUGIN: Lazy<String> =
     Lazy::new(|| uuid::Uuid::now_v7().to_string());
@@ -276,6 +277,10 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
             PluginCategory::RefererRestriction => {
                 let r = referer_restriction::RefererRestriction::new(conf)?;
                 plguins.insert(name, Arc::new(r));
+            },
+            PluginCategory::UaRestriction => {
+                let u = ua_restriction::UaRestriction::new(conf)?;
+                plguins.insert(name, Arc::new(u));
             },
             PluginCategory::Csrf => {
                 let c = csrf::Csrf::new(conf)?;
