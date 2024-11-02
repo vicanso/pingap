@@ -16,7 +16,7 @@ use super::{Error, Result};
 use crate::discovery::is_static_discovery;
 use crate::plugin::parse_plugins;
 use crate::proxy::Parser;
-use crate::util::{self, base64_decode};
+use crate::util::{self, aes_decrypt, base64_decode};
 use arc_swap::ArcSwap;
 use bytesize::ByteSize;
 use http::{HeaderName, HeaderValue};
@@ -627,6 +627,23 @@ impl PingapConf {
             },
         };
         Ok(result)
+    }
+    pub fn get_storage_value(&self, name: &str) -> Result<String> {
+        for (key, item) in self.storages.iter() {
+            if key != name {
+                continue;
+            }
+
+            if let Some(key) = &item.secret {
+                return aes_decrypt(key, &item.value).map_err(|e| {
+                    Error::Invalid {
+                        message: e.to_string(),
+                    }
+                });
+            }
+            return Ok(item.value.clone());
+        }
+        Ok("".to_string())
     }
 }
 
