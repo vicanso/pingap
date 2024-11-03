@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use ahash::AHashMap;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::BytesMut;
 use http::{HeaderName, Uri};
@@ -20,6 +21,7 @@ use path_absolutize::*;
 use pingora::cache::CacheKey;
 use pingora::tls::ssl::SslVersion;
 use pingora::{http::RequestHeader, proxy::Session};
+use regex::Regex;
 use snafu::Snafu;
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -333,6 +335,37 @@ pub fn base64_decode<T: AsRef<[u8]>>(
     data: T,
 ) -> Result<Vec<u8>, base64::DecodeError> {
     STANDARD.decode(data)
+}
+
+pub fn regex_capture(
+    re: &Regex,
+    value: &str,
+) -> Result<(bool, Option<AHashMap<String, String>>), Error> {
+    if !re.is_match(value) {
+        return Ok((false, None));
+    }
+    let mut m = AHashMap::new();
+    let mut keys = vec![];
+    for name in re.capture_names() {
+        keys.push(name.unwrap_or_default());
+    }
+    let Some(cap) = re.captures(value) else {
+        return Ok((true, Some(m)));
+    };
+    for (index, value) in cap.iter().enumerate() {
+        if index >= keys.len() {
+            continue;
+        }
+        let key = keys[index];
+        if key.is_empty() {
+            continue;
+        }
+        let Some(value) = value else {
+            continue;
+        };
+        m.insert(key.to_string(), value.as_str().to_string());
+    }
+    Ok((true, Some(m)))
 }
 
 const B_100: usize = 100;

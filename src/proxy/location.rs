@@ -85,12 +85,56 @@ fn new_path_selector(path: &str) -> Result<PathSelector> {
     Ok(se)
 }
 
+#[derive(Debug)]
+struct RegexHost {
+    value: Regex,
+}
+
+#[derive(Debug)]
+struct EqualHost {
+    value: String,
+}
+
+#[derive(Debug)]
+enum HostSelector {
+    RegexHost(RegexHost),
+    EqualHost(EqualHost),
+}
+
+/// New a host selector, regex or  equal selector
+fn new_host_selector(host: &str) -> Result<HostSelector> {
+    let host = host.trim();
+    if host.is_empty() {
+        return Ok(HostSelector::EqualHost(EqualHost {
+            value: host.to_string(),
+        }));
+    }
+    let first = host.chars().next().unwrap_or_default();
+    let last = host.substring(1, host.len()).trim();
+    let se = match first {
+        '~' => {
+            let re = Regex::new(last).context(RegexSnafu {
+                value: last.to_string(),
+            })?;
+            HostSelector::RegexHost(RegexHost { value: re })
+        },
+        _ => {
+            // trim
+            HostSelector::EqualHost(EqualHost {
+                value: host.trim().to_string(),
+            })
+        },
+    };
+
+    Ok(se)
+}
+
 pub struct Location {
     pub name: String,
     pub key: String,
     path: String,
     path_selector: PathSelector,
-    hosts: Vec<String>,
+    hosts: Vec<HostSelector>,
     reg_rewrite: Option<(Regex, String)>,
     proxy_add_headers: Option<Vec<HttpHeader>>,
     proxy_set_headers: Option<Vec<HttpHeader>>,
@@ -149,10 +193,19 @@ impl Location {
         let mut hosts = vec![];
         for item in conf.host.clone().unwrap_or_default().split(',') {
             let host = item.trim().to_string();
-            if !host.is_empty() {
-                hosts.push(host);
+            if host.is_empty() {
+                continue;
             }
+            hosts.push(new_host_selector(&host)?);
         }
+        // sort hosts regexp --> equal
+        hosts.sort_by_key(|host| match host {
+            HostSelector::RegexHost(RegexHost { value }) => {
+                1000 + value.to_string().len()
+            },
+            HostSelector::EqualHost(EqualHost { value }) => value.len(),
+        });
+        hosts.reverse();
 
         let path = conf.path.clone().unwrap_or_default();
 
@@ -201,7 +254,14 @@ impl Location {
             return true;
         }
 
-        self.hosts.iter().any(|item| item == host)
+        self.hosts.iter().any(|item| match item {
+            HostSelector::RegexHost(RegexHost { value }) => {
+                let (matched, _) =
+                    util::regex_capture(value, host).unwrap_or_default();
+                matched
+            },
+            HostSelector::EqualHost(EqualHost { value }) => value == host,
+        })
     }
     /// Sets the maximum allowed size of the client request body.
     /// If the size in a request exceeds the configured value, the 413 (Request Entity Too Large) error
