@@ -53,7 +53,11 @@ impl HttpCacheStorage for TinyUfoCache {
         self.cache.put(key, data, weight);
         Ok(())
     }
-    // TODO remove
+    // remove object from storage
+    async fn remove(&self, key: &str) -> Result<Option<CacheObject>> {
+        let result = self.cache.remove(&key.to_string());
+        Ok(result)
+    }
 }
 
 #[cfg(test)]
