@@ -87,7 +87,7 @@ fn new_path_selector(path: &str) -> Result<PathSelector> {
 
 #[derive(Debug)]
 struct RegexHost {
-    value: Regex,
+    value: util::RegexCapture,
 }
 
 #[derive(Debug)]
@@ -113,7 +113,7 @@ fn new_host_selector(host: &str) -> Result<HostSelector> {
     let last = host.substring(1, host.len()).trim();
     let se = match first {
         '~' => {
-            let re = Regex::new(last).context(RegexSnafu {
+            let re = util::RegexCapture::new(last).context(RegexSnafu {
                 value: last.to_string(),
             })?;
             HostSelector::RegexHost(RegexHost { value: re })
@@ -198,14 +198,6 @@ impl Location {
             }
             hosts.push(new_host_selector(&host)?);
         }
-        // sort hosts regexp --> equal
-        hosts.sort_by_key(|host| match host {
-            HostSelector::RegexHost(RegexHost { value }) => {
-                1000 + value.to_string().len()
-            },
-            HostSelector::EqualHost(EqualHost { value }) => value.len(),
-        });
-        hosts.reverse();
 
         let path = conf.path.clone().unwrap_or_default();
 
@@ -256,8 +248,7 @@ impl Location {
 
         self.hosts.iter().any(|item| match item {
             HostSelector::RegexHost(RegexHost { value }) => {
-                let (matched, _) =
-                    util::regex_capture(value, host).unwrap_or_default();
+                let (matched, _) = value.captures(host);
                 matched
             },
             HostSelector::EqualHost(EqualHost { value }) => value == host,

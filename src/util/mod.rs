@@ -337,35 +337,49 @@ pub fn base64_decode<T: AsRef<[u8]>>(
     STANDARD.decode(data)
 }
 
-pub fn regex_capture(
-    re: &Regex,
-    value: &str,
-) -> Result<(bool, Option<AHashMap<String, String>>), Error> {
-    if !re.is_match(value) {
-        return Ok((false, None));
-    }
-    let mut m = AHashMap::new();
-    let mut keys = vec![];
-    for name in re.capture_names() {
-        keys.push(name.unwrap_or_default());
-    }
-    let Some(cap) = re.captures(value) else {
-        return Ok((true, Some(m)));
-    };
-    for (index, value) in cap.iter().enumerate() {
-        if index >= keys.len() {
-            continue;
+#[derive(Debug, Clone)]
+pub struct RegexCapture {
+    re: Regex,
+    keys: Vec<String>,
+}
+
+impl RegexCapture {
+    pub fn new(value: &str) -> Result<Self, regex::Error> {
+        let re = Regex::new(value)?;
+        let mut keys = vec![];
+        for name in re.capture_names() {
+            keys.push(name.unwrap_or_default().to_string());
         }
-        let key = keys[index];
-        if key.is_empty() {
-            continue;
+        Ok(RegexCapture { re, keys })
+    }
+    pub fn captures(
+        &self,
+        value: &str,
+    ) -> (bool, Option<AHashMap<String, String>>) {
+        let re = &self.re;
+        if !re.is_match(value) {
+            return (false, None);
         }
-        let Some(value) = value else {
-            continue;
+        let mut m = AHashMap::new();
+        let Some(cap) = re.captures(value) else {
+            return (true, Some(m));
         };
-        m.insert(key.to_string(), value.as_str().to_string());
+        let keys = &self.keys;
+        for (index, value) in cap.iter().enumerate() {
+            if index >= keys.len() {
+                continue;
+            }
+            let key = &keys[index];
+            if key.is_empty() {
+                continue;
+            }
+            let Some(value) = value else {
+                continue;
+            };
+            m.insert(key.to_string(), value.as_str().to_string());
+        }
+        (true, Some(m))
     }
-    Ok((true, Some(m)))
 }
 
 const B_100: usize = 100;
