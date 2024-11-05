@@ -197,6 +197,7 @@ mod tests {
     use crate::cache::http_cache::{CacheObject, HttpCacheStorage};
     use bytes::Bytes;
     use pretty_assertions::assert_eq;
+    use std::time::{Duration, SystemTime};
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -223,6 +224,16 @@ mod tests {
         cache.remove(&key).await.unwrap();
         let result = cache.get(&key).await.unwrap();
         assert_eq!(true, result.is_none());
+
+        cache.put(key.clone(), obj.clone(), 1).await.unwrap();
+        cache
+            .clear(
+                SystemTime::now()
+                    .checked_add(Duration::from_secs(365 * 24 * 3600))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
     }
 
     #[test]

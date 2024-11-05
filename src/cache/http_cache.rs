@@ -386,12 +386,16 @@ impl Storage for HttpCache {
 
 #[cfg(test)]
 mod tests {
-    use super::{CompleteHit, HttpCacheStorage, ObjectMissHandler};
+    use super::{
+        new_file_storage_clear_service, CompleteHit, HttpCacheStorage,
+        ObjectMissHandler,
+    };
     use crate::cache::tiny::new_tiny_ufo_cache;
     use bytes::{Bytes, BytesMut};
     use pingora::cache::storage::{HitHandler, MissHandler};
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_complete_hit() {
@@ -435,5 +439,12 @@ mod tests {
 
         let data = cache.get(key).await.unwrap().unwrap();
         assert_eq!("Hello World!", std::str::from_utf8(&data.body).unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_file_storage_clear_service() {
+        let dir = TempDir::new().unwrap();
+        let dir = dir.into_path().to_string_lossy().to_string();
+        let _ = new_file_storage_clear_service(&dir).unwrap();
     }
 }

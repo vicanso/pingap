@@ -79,5 +79,9 @@ mod tests {
         cache.put(key.clone(), obj.clone(), 1).await.unwrap();
         let result = cache.get(&key).await.unwrap().unwrap();
         assert_eq!(obj, result);
+
+        cache.remove(&key).await.unwrap().unwrap();
+        let result = cache.get(&key).await.unwrap();
+        assert_eq!(true, result.is_none());
     }
 }

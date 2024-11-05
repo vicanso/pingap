@@ -151,7 +151,7 @@ mod tests {
     use super::EtcdStorage;
     use crate::config::{
         ConfigStorage, PingapConf, CATEGORY_BASIC, CATEGORY_LOCATION,
-        CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
+        CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_STORAGE, CATEGORY_UPSTREAM,
     };
     use nanoid::nanoid;
     use pretty_assertions::assert_eq;
@@ -172,6 +172,7 @@ mod tests {
         storage.save_config(&conf, CATEGORY_LOCATION).await.unwrap();
         storage.save_config(&conf, CATEGORY_PLUGIN).await.unwrap();
         storage.save_config(&conf, CATEGORY_SERVER).await.unwrap();
+        storage.save_config(&conf, CATEGORY_STORAGE).await.unwrap();
 
         let current_conf = storage.load_config(false, false).await.unwrap();
         assert_eq!(current_conf.hash().unwrap(), conf.hash().unwrap());

@@ -225,7 +225,11 @@ impl Location {
     }
     /// Return `true` if the host and path match location.
     #[inline]
-    pub fn matched(&self, host: &str, path: &str) -> bool {
+    pub fn matched(
+        &self,
+        host: &str,
+        path: &str,
+    ) -> (bool, Option<Vec<(String, String)>>) {
         if !self.path.is_empty() {
             let matched = match &self.path_selector {
                 PathSelector::EqualPath(EqualPath { value }) => value == path,
@@ -238,21 +242,26 @@ impl Location {
                 PathSelector::Empty => true,
             };
             if !matched {
-                return false;
+                return (false, None);
             }
         }
 
         if self.hosts.is_empty() {
-            return true;
+            return (true, None);
         }
 
-        self.hosts.iter().any(|item| match item {
+        let mut variables = None;
+        let matched = self.hosts.iter().any(|item| match item {
             HostSelector::RegexHost(RegexHost { value }) => {
-                let (matched, _) = value.captures(host);
+                let (matched, value) = value.captures(host);
+                if matched {
+                    variables = value;
+                }
                 matched
             },
             HostSelector::EqualHost(EqualHost { value }) => value == host,
-        })
+        });
+        (matched, variables)
     }
     /// Sets the maximum allowed size of the client request body.
     /// If the size in a request exceeds the configured value, the 413 (Request Entity Too Large) error
@@ -476,8 +485,8 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(true, lo.matched("pingap", "/api"));
-        assert_eq!(true, lo.matched("", ""));
+        assert_eq!(true, lo.matched("pingap", "/api").0);
+        assert_eq!(true, lo.matched("", "").0);
 
         assert_eq!("name:lo path: hosts:[] reg_rewrite:None proxy_set_headers:None proxy_add_headers:None plugins:None upstream:charts", lo.to_string());
 
@@ -491,9 +500,9 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(true, lo.matched("pingap", "/api"));
-        assert_eq!(true, lo.matched("pingap", ""));
-        assert_eq!(false, lo.matched("", "/api"));
+        assert_eq!(true, lo.matched("pingap", "/api").0);
+        assert_eq!(true, lo.matched("pingap", "").0);
+        assert_eq!(false, lo.matched("", "/api").0);
 
         // regex
         let lo = Location::new(
@@ -505,9 +514,9 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(true, lo.matched("", "/api/users"));
-        assert_eq!(true, lo.matched("", "/users"));
-        assert_eq!(false, lo.matched("", "/api"));
+        assert_eq!(true, lo.matched("", "/api/users").0);
+        assert_eq!(true, lo.matched("", "/users").0);
+        assert_eq!(false, lo.matched("", "/api").0);
 
         // regex ^/api
         let lo = Location::new(
@@ -519,9 +528,9 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(true, lo.matched("", "/api/users"));
-        assert_eq!(false, lo.matched("", "/users"));
-        assert_eq!(true, lo.matched("", "/api"));
+        assert_eq!(true, lo.matched("", "/api/users").0);
+        assert_eq!(false, lo.matched("", "/users").0);
+        assert_eq!(true, lo.matched("", "/api").0);
 
         // prefix
         let lo = Location::new(
@@ -533,9 +542,9 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(true, lo.matched("", "/api/users"));
-        assert_eq!(false, lo.matched("", "/users"));
-        assert_eq!(true, lo.matched("", "/api"));
+        assert_eq!(true, lo.matched("", "/api/users").0);
+        assert_eq!(false, lo.matched("", "/users").0);
+        assert_eq!(true, lo.matched("", "/api").0);
 
         // equal
         let lo = Location::new(
@@ -547,9 +556,9 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(false, lo.matched("", "/api/users"));
-        assert_eq!(false, lo.matched("", "/users"));
-        assert_eq!(true, lo.matched("", "/api"));
+        assert_eq!(false, lo.matched("", "/api/users").0);
+        assert_eq!(false, lo.matched("", "/users").0);
+        assert_eq!(true, lo.matched("", "/api").0);
     }
 
     #[test]

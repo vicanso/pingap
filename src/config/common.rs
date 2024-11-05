@@ -1046,15 +1046,71 @@ pub fn get_config_hash() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        get_app_name, get_config_hash, set_app_name, set_current_config,
-        BasicConf,
+        get_app_name, get_config_hash, list_category, set_app_name,
+        set_current_config, validate_cert, BasicConf, CertificateConf,
+        PluginStep,
     };
     use super::{
         LocationConf, PingapConf, PluginCategory, ServerConf, UpstreamConf,
         CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
     };
+    use crate::util::base64_encode;
     use pretty_assertions::assert_eq;
     use serde::{Deserialize, Serialize};
+    use std::str::FromStr;
+
+    #[test]
+    fn test_list_category() {
+        assert_eq!(
+            "certificate,upstream,location,server,plugin,storage,basic",
+            list_category().join(",")
+        );
+    }
+
+    #[test]
+    fn test_plugin_step() {
+        let step = PluginStep::from_str("early_request").unwrap();
+        assert_eq!(step, PluginStep::EarlyRequest);
+
+        assert_eq!("early_request", step.to_string());
+    }
+
+    #[test]
+    fn test_validate_cert() {
+        let pem = r#"-----BEGIN CERTIFICATE-----
+MIIEljCCAv6gAwIBAgIQeYUdeFj3gpzhQes3aGaMZTANBgkqhkiG9w0BAQsFADCB
+pTEeMBwGA1UEChMVbWtjZXJ0IGRldmVsb3BtZW50IENBMT0wOwYDVQQLDDR4aWVz
+aHV6aG91QHhpZXNodXpob3VzLU1hY0Jvb2stQWlyLmxvY2FsICjosKLmoJHmtLIp
+MUQwQgYDVQQDDDtta2NlcnQgeGllc2h1emhvdUB4aWVzaHV6aG91cy1NYWNCb29r
+LUFpci5sb2NhbCAo6LCi5qCR5rSyKTAeFw0yMzA5MjQxMzA1MjdaFw0yNTEyMjQx
+MzA1MjdaMGgxJzAlBgNVBAoTHm1rY2VydCBkZXZlbG9wbWVudCBjZXJ0aWZpY2F0
+ZTE9MDsGA1UECww0eGllc2h1emhvdUB4aWVzaHV6aG91cy1NYWNCb29rLUFpci5s
+b2NhbCAo6LCi5qCR5rSyKTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEB
+ALuJ8lYEj9uf4iE9hguASq7re87Np+zJc2x/eqr1cR/SgXRStBsjxqI7i3xwMRqX
+AuhAnM6ktlGuqidl7D9y6AN/UchqgX8AetslRJTpCcEDfL/q24zy0MqOS0FlYEgh
+s4PIjWsSNoglBDeaIdUpN9cM/64IkAAtHndNt2p2vPfjrPeixLjese096SKEnZM/
+xBdWF491hx06IyzjtWKqLm9OUmYZB9d/gDGnDsKpqClw8m95opKD4TBHAoE//WvI
+m1mZnjNTNR27vVbmnc57d2Lx2Ib2eqJG5zMsP2hPBoqS8CKEwMRFLHAcclNkI67U
+kcSEGaWgr15QGHJPN/FtjDsCAwEAAaN+MHwwDgYDVR0PAQH/BAQDAgWgMBMGA1Ud
+JQQMMAoGCCsGAQUFBwMBMB8GA1UdIwQYMBaAFJo0y9bYUM/OuenDjsJ1RyHJfL3n
+MDQGA1UdEQQtMCuCBm1lLmRldoIJbG9jYWxob3N0hwR/AAABhxAAAAAAAAAAAAAA
+AAAAAAABMA0GCSqGSIb3DQEBCwUAA4IBgQAlQbow3+4UyQx+E+J0RwmHBltU6i+K
+soFfza6FWRfAbTyv+4KEWl2mx51IfHhJHYZvsZqPqGWxm5UvBecskegDExFMNFVm
+O5QixydQzHHY2krmBwmDZ6Ao88oW/qw4xmMUhzKAZbsqeQyE/uiUdyI4pfDcduLB
+rol31g9OFsgwZrZr0d1ZiezeYEhemnSlh9xRZW3veKx9axgFttzCMmWdpGTCvnav
+ZVc3rB+KBMjdCwsS37zmrNm9syCjW1O5a1qphwuMpqSnDHBgKWNpbsgqyZM0oyOc
+9Bkja+BV5wFO+4zH5WtestcrNMeoQ83a5lI0m42u/bUEJ/T/5BQBSFidNuvS7Ylw
+IZpXa00xvlnm1BOHOfRI4Ehlfa5jmfcdnrGkQLGjiyygQtKcc7rOXGK+mSeyxwhs
+sIARwslSQd4q0dbYTPKvvUHxTYiCv78vQBAsE15T2GGS80pAFDBW9vOf3upANvOf
+EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
+-----END CERTIFICATE-----"#;
+        let result = validate_cert(pem);
+        assert_eq!(true, result.is_ok());
+
+        let value = base64_encode(pem);
+        let result = validate_cert(&value);
+        assert_eq!(true, result.is_ok());
+    }
 
     #[test]
     fn test_app_name() {
@@ -1233,10 +1289,80 @@ mod tests {
     }
 
     #[test]
+    fn test_certificate_conf() {
+        let pem = r#"-----BEGIN CERTIFICATE-----
+MIIEljCCAv6gAwIBAgIQeYUdeFj3gpzhQes3aGaMZTANBgkqhkiG9w0BAQsFADCB
+pTEeMBwGA1UEChMVbWtjZXJ0IGRldmVsb3BtZW50IENBMT0wOwYDVQQLDDR4aWVz
+aHV6aG91QHhpZXNodXpob3VzLU1hY0Jvb2stQWlyLmxvY2FsICjosKLmoJHmtLIp
+MUQwQgYDVQQDDDtta2NlcnQgeGllc2h1emhvdUB4aWVzaHV6aG91cy1NYWNCb29r
+LUFpci5sb2NhbCAo6LCi5qCR5rSyKTAeFw0yMzA5MjQxMzA1MjdaFw0yNTEyMjQx
+MzA1MjdaMGgxJzAlBgNVBAoTHm1rY2VydCBkZXZlbG9wbWVudCBjZXJ0aWZpY2F0
+ZTE9MDsGA1UECww0eGllc2h1emhvdUB4aWVzaHV6aG91cy1NYWNCb29rLUFpci5s
+b2NhbCAo6LCi5qCR5rSyKTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEB
+ALuJ8lYEj9uf4iE9hguASq7re87Np+zJc2x/eqr1cR/SgXRStBsjxqI7i3xwMRqX
+AuhAnM6ktlGuqidl7D9y6AN/UchqgX8AetslRJTpCcEDfL/q24zy0MqOS0FlYEgh
+s4PIjWsSNoglBDeaIdUpN9cM/64IkAAtHndNt2p2vPfjrPeixLjese096SKEnZM/
+xBdWF491hx06IyzjtWKqLm9OUmYZB9d/gDGnDsKpqClw8m95opKD4TBHAoE//WvI
+m1mZnjNTNR27vVbmnc57d2Lx2Ib2eqJG5zMsP2hPBoqS8CKEwMRFLHAcclNkI67U
+kcSEGaWgr15QGHJPN/FtjDsCAwEAAaN+MHwwDgYDVR0PAQH/BAQDAgWgMBMGA1Ud
+JQQMMAoGCCsGAQUFBwMBMB8GA1UdIwQYMBaAFJo0y9bYUM/OuenDjsJ1RyHJfL3n
+MDQGA1UdEQQtMCuCBm1lLmRldoIJbG9jYWxob3N0hwR/AAABhxAAAAAAAAAAAAAA
+AAAAAAABMA0GCSqGSIb3DQEBCwUAA4IBgQAlQbow3+4UyQx+E+J0RwmHBltU6i+K
+soFfza6FWRfAbTyv+4KEWl2mx51IfHhJHYZvsZqPqGWxm5UvBecskegDExFMNFVm
+O5QixydQzHHY2krmBwmDZ6Ao88oW/qw4xmMUhzKAZbsqeQyE/uiUdyI4pfDcduLB
+rol31g9OFsgwZrZr0d1ZiezeYEhemnSlh9xRZW3veKx9axgFttzCMmWdpGTCvnav
+ZVc3rB+KBMjdCwsS37zmrNm9syCjW1O5a1qphwuMpqSnDHBgKWNpbsgqyZM0oyOc
+9Bkja+BV5wFO+4zH5WtestcrNMeoQ83a5lI0m42u/bUEJ/T/5BQBSFidNuvS7Ylw
+IZpXa00xvlnm1BOHOfRI4Ehlfa5jmfcdnrGkQLGjiyygQtKcc7rOXGK+mSeyxwhs
+sIARwslSQd4q0dbYTPKvvUHxTYiCv78vQBAsE15T2GGS80pAFDBW9vOf3upANvOf
+EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
+-----END CERTIFICATE-----"#;
+        let key = r#"-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7ifJWBI/bn+Ih
+PYYLgEqu63vOzafsyXNsf3qq9XEf0oF0UrQbI8aiO4t8cDEalwLoQJzOpLZRrqon
+Zew/cugDf1HIaoF/AHrbJUSU6QnBA3y/6tuM8tDKjktBZWBIIbODyI1rEjaIJQQ3
+miHVKTfXDP+uCJAALR53Tbdqdrz346z3osS43rHtPekihJ2TP8QXVhePdYcdOiMs
+47Viqi5vTlJmGQfXf4Axpw7CqagpcPJveaKSg+EwRwKBP/1ryJtZmZ4zUzUdu71W
+5p3Oe3di8diG9nqiRuczLD9oTwaKkvAihMDERSxwHHJTZCOu1JHEhBmloK9eUBhy
+TzfxbYw7AgMBAAECggEALjed0FMJfO+XE+gMm9L/FMKV3W5TXwh6eJemDHG2ckg3
+fQpQtouHjT2tb3par5ndro0V19tBzzmDV3hH048m3I3JAuI0ja75l/5EO4p+y+Fn
+IgjoGIFSsUiGBVTNeJlNm0GWkHeJlt3Af09t3RFuYIIklKgpjNGRu4ccl5ExmslF
+WHv7/1dwzeJCi8iOY2gJZz6N7qHD95VkgVyDj/EtLltONAtIGVdorgq70CYmtwSM
+9XgXszqOTtSJxle+UBmeQTL4ZkUR0W+h6JSpcTn0P9c3fiNDrHSKFZbbpAhO/wHd
+Ab4IK8IksVyg+tem3m5W9QiXn3WbgcvjJTi83Y3syQKBgQD5IsaSbqwEG3ruttQe
+yfMeq9NUGVfmj7qkj2JiF4niqXwTpvoaSq/5gM/p7lAtSMzhCKtlekP8VLuwx8ih
+n4hJAr8pGfyu/9IUghXsvP2DXsCKyypbhzY/F2m4WNIjtyLmed62Nt1PwWWUlo9Q
+igHI6pieT45vJTBICsRyqC/a/wKBgQDAtLXUsCABQDTPHdy/M/dHZA/QQ/xU8NOs
+ul5UMJCkSfFNk7b2etQG/iLlMSNup3bY3OPvaCGwwEy/gZ31tTSymgooXQMFxJ7G
+1S/DF45yKD6xJEmAUhwz/Hzor1cM95g78UpZFCEVMnEmkBNb9pmrXRLDuWb0vLE6
+B6YgiEP6xQKBgBOXuooVjg2co6RWWIQ7WZVV6f65J4KIVyNN62zPcRaUQZ/CB/U9
+Xm1+xdsd1Mxa51HjPqdyYBpeB4y1iX+8bhlfz+zJkGeq0riuKk895aoJL5c6txAP
+qCJ6EuReh9grNOFvQCaQVgNJsFVpKcgpsk48tNfuZcMz54Ii5qQlue29AoGAA2Sr
+Nv2K8rqws1zxQCSoHAe1B5PK46wB7i6x7oWUZnAu4ZDSTfDHvv/GmYaN+yrTuunY
+0aRhw3z/XPfpUiRIs0RnHWLV5MobiaDDYIoPpg7zW6cp7CqF+JxfjrFXtRC/C38q
+MftawcbLm0Q6MwpallvjMrMXDwQrkrwDvtrnZ4kCgYEA0oSvmSK5ADD0nqYFdaro
+K+hM90AVD1xmU7mxy3EDPwzjK1wZTj7u0fvcAtZJztIfL+lmVpkvK8KDLQ9wCWE7
+SGToOzVHYX7VazxioA9nhNne9kaixvnIUg3iowAz07J7o6EU8tfYsnHxsvjlIkBU
+ai02RHnemmqJaNepfmCdyec=
+-----END PRIVATE KEY-----"#;
+        let conf = CertificateConf {
+            tls_cert: Some(pem.to_string()),
+            tls_key: Some(key.to_string()),
+            ..Default::default()
+        };
+        let result = conf.validate();
+        assert_eq!(true, result.is_ok());
+
+        assert_eq!("df7255ff75e0f40c", conf.hash_key());
+    }
+
+    #[test]
     fn test_pingap_conf() {
         let toml_data = include_bytes!("../../conf/pingap.toml");
         let conf =
             PingapConf::new(toml_data.to_vec().as_slice(), false).unwrap();
+        let full_conf =
+            PingapConf::new(toml_data.to_vec().as_slice(), true).unwrap();
 
         let (key, data) = conf.get_toml(CATEGORY_SERVER).unwrap();
         assert_eq!("/servers.toml", key);
@@ -1262,6 +1388,25 @@ tls_min_version = ""
 
         let (key, data) = conf.get_toml(CATEGORY_LOCATION).unwrap();
         assert_eq!("/locations.toml", key);
+        assert_eq!(
+            r###"[locations.lo]
+client_max_body_size = "1000.0 KB"
+host = ""
+includes = ["proxySetHeader"]
+path = "/"
+plugins = [
+    "pingap:requestId",
+    "stats",
+]
+proxy_add_headers = ["name:value"]
+rewrite = ""
+upstream = "charts"
+weight = 1024
+"###,
+            data
+        );
+
+        let (_, data) = full_conf.get_toml(CATEGORY_LOCATION).unwrap();
         assert_eq!(
             r###"[locations.lo]
 client_max_body_size = "1000.0 KB"
@@ -1342,6 +1487,9 @@ cache_max_size = "100.0 MB"
 "###,
             data
         );
+
+        let auth_token = conf.get_storage_value("authToken").unwrap();
+        assert_eq!("47.107.66.241", auth_token);
     }
 
     #[test]

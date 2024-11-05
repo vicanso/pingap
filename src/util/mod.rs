@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use ahash::AHashMap;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::BytesMut;
 use http::{HeaderName, Uri};
@@ -355,14 +354,14 @@ impl RegexCapture {
     pub fn captures(
         &self,
         value: &str,
-    ) -> (bool, Option<AHashMap<String, String>>) {
+    ) -> (bool, Option<Vec<(String, String)>>) {
         let re = &self.re;
         if !re.is_match(value) {
             return (false, None);
         }
-        let mut m = AHashMap::new();
+        let mut arr = vec![];
         let Some(cap) = re.captures(value) else {
-            return (true, Some(m));
+            return (true, Some(arr));
         };
         let keys = &self.keys;
         for (index, value) in cap.iter().enumerate() {
@@ -376,9 +375,9 @@ impl RegexCapture {
             let Some(value) = value else {
                 continue;
             };
-            m.insert(key.to_string(), value.as_str().to_string());
+            arr.push((key.to_string(), value.as_str().to_string()));
         }
-        (true, Some(m))
+        (true, Some(arr))
     }
 }
 

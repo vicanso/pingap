@@ -14,6 +14,7 @@
 
 use crate::util::format_duration;
 use crate::{proxy::Location, util};
+use ahash::AHashMap;
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
 #[cfg(feature = "full")]
@@ -136,6 +137,7 @@ pub struct State {
     pub otel_tracer: Option<OtelTracer>,
     #[cfg(feature = "full")]
     pub upstream_span: Option<BoxedSpan>,
+    pub variables: Option<AHashMap<String, String>>,
 }
 
 impl State {
@@ -150,6 +152,16 @@ impl State {
 const ONE_HOUR_MS: u64 = 60 * 60 * 1000;
 
 impl State {
+    #[inline]
+    pub fn add_variable(&mut self, key: &str, value: &str) {
+        if let Some(variables) = self.variables.as_mut() {
+            variables.insert(key.to_string(), value.to_string());
+        } else {
+            let mut variables = AHashMap::new();
+            variables.insert(key.to_string(), value.to_string());
+            self.variables = Some(variables);
+        }
+    }
     #[inline]
     pub fn get_upstream_response_time(&self) -> Option<u64> {
         if let Some(value) = self.upstream_response_time {

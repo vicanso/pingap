@@ -504,8 +504,14 @@ impl ProxyHttp for Server {
             let Some(location) = get_location(name) else {
                 continue;
             };
-            if location.matched(host, path) {
+            let (matched, variables) = location.matched(host, path);
+            if matched {
                 ctx.location = Some(location);
+                if let Some(variables) = variables {
+                    for (key, value) in variables.iter() {
+                        ctx.add_variable(key, value);
+                    }
+                };
                 break;
             }
         }

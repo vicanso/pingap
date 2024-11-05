@@ -126,7 +126,7 @@ path = "/"
 host = ""
 
 # set headers to request (default none)
-proxy_set_headers = ["name:value"]
+includes = ["proxySetHeader"]
 
 # add headers to request (default none)
 proxy_add_headers = ["name:value"]
@@ -202,6 +202,16 @@ tcp_fast_open = 10
 # enable prometheus metrics, it can be a push gateway url or pull metrics path (default none)
 prometheus_metrics = ""
 
+
 [plugins.stats]
 value = "/stats"
 category = "stats"
+
+[storages.authToken]
+category = "secret"
+secret = "123123"
+value = "PLpKJqvfkjTcYTDpauJf+2JnEayP+bm+0Oe60Jk="
+
+[storages.proxySetHeader]
+category = "config"
+value = 'proxy_set_headers = ["name:value"]'
