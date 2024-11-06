@@ -178,3 +178,28 @@ pub async fn sync_config(path: &str) -> Result<()> {
 pub use common::*;
 pub use etcd::{EtcdStorage, ETCD_PROTOCOL};
 pub use file::FileStorage;
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        get_config_storage, load_config, support_observer, sync_config,
+        try_init_config_storage,
+    };
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_load_config() {
+        assert_eq!(true, get_config_storage().is_none());
+        try_init_config_storage("./conf/pingap.toml").unwrap();
+        let conf = load_config(true, false).await.unwrap();
+        assert_eq!("CAAD3074", conf.hash().unwrap());
+        assert_eq!(false, support_observer());
+        assert_eq!(true, get_config_storage().is_some());
+        let dir = TempDir::new().unwrap();
+        let file = dir.into_path().join("pingap.toml");
+        tokio::fs::write(&file, b"").await.unwrap();
+        sync_config(&file.to_string_lossy().to_string())
+            .await
+            .unwrap();
+    }
+}

@@ -122,10 +122,7 @@ impl ConfigStorage for FileStorage {
 #[cfg(test)]
 mod tests {
     use super::FileStorage;
-    use crate::config::{
-        ConfigStorage, PingapConf, CATEGORY_BASIC, CATEGORY_LOCATION,
-        CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_STORAGE, CATEGORY_UPSTREAM,
-    };
+    use crate::config::{list_category, ConfigStorage, PingapConf};
     use nanoid::nanoid;
     use pretty_assertions::assert_eq;
 
@@ -138,23 +135,26 @@ mod tests {
         );
 
         let path = format!("/tmp/{}", nanoid!(16));
-        tokio::fs::create_dir(&path).await.unwrap();
+        let file = format!("/tmp/{}.toml", nanoid!(16));
+        tokio::fs::write(&file, b"").await.unwrap();
         let storage = FileStorage::new(&path).unwrap();
+        let file_storage = FileStorage::new(&file).unwrap();
         let result = storage.load_config(false, false).await;
         assert_eq!(true, result.is_ok());
 
         let toml_data = include_bytes!("../../conf/pingap.toml");
         let conf =
             PingapConf::new(toml_data.to_vec().as_slice(), false).unwrap();
-
-        storage.save_config(&conf, CATEGORY_BASIC).await.unwrap();
-        storage.save_config(&conf, CATEGORY_UPSTREAM).await.unwrap();
-        storage.save_config(&conf, CATEGORY_LOCATION).await.unwrap();
-        storage.save_config(&conf, CATEGORY_PLUGIN).await.unwrap();
-        storage.save_config(&conf, CATEGORY_SERVER).await.unwrap();
-        storage.save_config(&conf, CATEGORY_STORAGE).await.unwrap();
+        for category in list_category().iter() {
+            storage.save_config(&conf, category).await.unwrap();
+            file_storage.save_config(&conf, category).await.unwrap();
+        }
 
         let current_conf = storage.load_config(false, false).await.unwrap();
+        assert_eq!(current_conf.hash().unwrap(), conf.hash().unwrap());
+
+        let current_conf =
+            file_storage.load_config(false, false).await.unwrap();
         assert_eq!(current_conf.hash().unwrap(), conf.hash().unwrap());
     }
 }
