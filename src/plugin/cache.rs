@@ -359,6 +359,7 @@ max_ttl = "1m"
 namespace = "pingap"
 eviction = true
 headers = ["Accept-Encoding"]
+purge_ip_list = ["127.0.0.1"]
 lock = "2s"
 max_file_size = "100kb"
 predictor = true
@@ -383,5 +384,20 @@ max_ttl = "1m"
         assert_eq!("pingap:gzip:", ctx.cache_prefix.unwrap());
         assert_eq!(true, session.cache.enabled());
         assert_eq!(100 * 1000, cache.max_file_size);
+
+        // purge
+        let headers = ["Accept-Encoding: gzip", "X-Forwarded-For: 127.0.0.1"]
+            .join("\r\n");
+        let input_header = format!(
+            "PURGE /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n"
+        );
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = State::default();
+        cache
+            .handle_request(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap();
     }
 }
