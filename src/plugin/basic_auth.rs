@@ -162,6 +162,7 @@ mod tests {
     use http::StatusCode;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
+    use std::time::Duration;
     use tokio_test::io::Builder;
 
     #[test]
@@ -173,6 +174,7 @@ authorizations = [
 "MTIz",
 "NDU2",
 ]
+delay = "10s"
 "###,
             )
             .unwrap(),
@@ -188,6 +190,8 @@ authorizations = [
                 .collect::<Vec<_>>()
                 .join(","),
         );
+        assert_eq!(Duration::from_secs(10), params.delay.unwrap());
+        assert_eq!("AC7E9E03", params.hash_key());
 
         let result = BasicAuth::try_from(
             &toml::from_str::<PluginConf>(
@@ -229,6 +233,7 @@ authorizations = [
 authorizations = [
     "YWRtaW46MTIzMTIz"
 ]
+hide_credentials = true
     "###,
             )
             .unwrap(),
@@ -251,6 +256,10 @@ authorizations = [
             .await
             .unwrap();
         assert_eq!(true, result.is_none());
+        assert_eq!(
+            false,
+            session.req_header().headers.contains_key("Authorization")
+        );
 
         // auth fail
         let headers = ["Authorization: Basic YWRtaW46MTIzMTIa"].join("\r\n");

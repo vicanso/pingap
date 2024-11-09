@@ -224,14 +224,13 @@ pub static HTTP_HEADER_NAME_X_REQUEST_ID: Lazy<HeaderName> =
 
 #[cfg(test)]
 mod tests {
-    use crate::state::State;
-
     use super::{
         convert_header_value, convert_headers, HTTP_HEADER_CONTENT_HTML,
         HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_NAME_X_REQUEST_ID,
         HTTP_HEADER_NO_CACHE, HTTP_HEADER_NO_STORE,
         HTTP_HEADER_TRANSFER_CHUNKED, HTTP_HEADER_WWW_AUTHENTICATE,
     };
+    use crate::state::State;
     use http::HeaderValue;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -255,22 +254,97 @@ mod tests {
 
     #[tokio::test]
     async fn test_convert_header_value() {
-        let headers = [""].join("\r\n");
+        let headers = ["Host: pingap.io"].join("\r\n");
         let input_header =
             format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
+        let default_state = &State {
+            tls_version: Some("tls1.3".to_string()),
+            remote_addr: Some("10.1.1.1".to_string()),
+            remote_port: Some(6000),
+            server_addr: Some("10.1.1.2".to_string()),
+            server_port: Some(6001),
+            upstream_address: "10.1.1.3:4123".to_string(),
+            connection_id: 102,
+            ..Default::default()
+        };
+
         let value = convert_header_value(
-            &HeaderValue::from_str("$remote_addr").unwrap(),
+            &HeaderValue::from_str("$host").unwrap(),
             &session,
             &State {
-                remote_addr: Some("10.1.1.1".to_string()),
                 ..Default::default()
             },
         );
         assert_eq!(true, value.is_some());
+        assert_eq!("pingap.io", value.unwrap().to_str().unwrap());
+
+        let value = convert_header_value(
+            &HeaderValue::from_str("$scheme").unwrap(),
+            &session,
+            &State {
+                ..Default::default()
+            },
+        );
+        assert_eq!(true, value.is_some());
+        assert_eq!("http", value.unwrap().to_str().unwrap());
+        let value = convert_header_value(
+            &HeaderValue::from_str("$scheme").unwrap(),
+            &session,
+            &default_state,
+        );
+        assert_eq!(true, value.is_some());
+        assert_eq!("https", value.unwrap().to_str().unwrap());
+
+        let value = convert_header_value(
+            &HeaderValue::from_str("$remote_addr").unwrap(),
+            &session,
+            &default_state,
+        );
+        assert_eq!(true, value.is_some());
         assert_eq!("10.1.1.1", value.unwrap().to_str().unwrap());
+
+        let value = convert_header_value(
+            &HeaderValue::from_str("$remote_port").unwrap(),
+            &session,
+            &default_state,
+        );
+        assert_eq!(true, value.is_some());
+        assert_eq!("6000", value.unwrap().to_str().unwrap());
+
+        let value = convert_header_value(
+            &HeaderValue::from_str("$server_addr").unwrap(),
+            &session,
+            &default_state,
+        );
+        assert_eq!(true, value.is_some());
+        assert_eq!("10.1.1.2", value.unwrap().to_str().unwrap());
+
+        let value = convert_header_value(
+            &HeaderValue::from_str("$server_port").unwrap(),
+            &session,
+            &default_state,
+        );
+        assert_eq!(true, value.is_some());
+        assert_eq!("6001", value.unwrap().to_str().unwrap());
+
+        let value = convert_header_value(
+            &HeaderValue::from_str("$upstream_addr").unwrap(),
+            &session,
+            &default_state,
+        );
+        assert_eq!(true, value.is_some());
+        assert_eq!("10.1.1.3:4123", value.unwrap().to_str().unwrap());
+
+        let value = convert_header_value(
+            &HeaderValue::from_str(":connection_id").unwrap(),
+            &session,
+            &default_state,
+        );
+        assert_eq!(true, value.is_some());
+        assert_eq!("102", value.unwrap().to_str().unwrap());
 
         let headers = ["X-Forwarded-For: 1.1.1.1, 2.2.2.2"].join("\r\n");
         let input_header =
