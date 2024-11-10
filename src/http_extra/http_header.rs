@@ -260,7 +260,7 @@ mod tests {
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let default_state = &State {
+        let default_state = State {
             tls_version: Some("tls1.3".to_string()),
             remote_addr: Some("10.1.1.1".to_string()),
             remote_port: Some(6000),

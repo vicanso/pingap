@@ -185,6 +185,7 @@ mod tests {
         get_config_storage, load_config, support_observer, sync_config,
         try_init_config_storage,
     };
+    use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -198,8 +199,6 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let file = dir.into_path().join("pingap.toml");
         tokio::fs::write(&file, b"").await.unwrap();
-        sync_config(&file.to_string_lossy().to_string())
-            .await
-            .unwrap();
+        sync_config(file.to_string_lossy().as_ref()).await.unwrap();
     }
 }
