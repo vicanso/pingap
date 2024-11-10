@@ -859,7 +859,7 @@ impl ProxyHttp for Server {
         _body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
         ctx: &mut Self::CTX,
-    ) {
+    ) -> pingora::Result<()> {
         if end_of_stream {
             ctx.upstream_response_time =
                 util::get_latency(&ctx.upstream_response_time);
@@ -897,6 +897,7 @@ impl ProxyHttp for Server {
                 ctx.upstream_span = None;
             }
         }
+        Ok(())
     }
 
     fn response_body_filter(
