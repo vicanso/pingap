@@ -123,6 +123,8 @@ export default {
     accessLog: "Access Log Format",
     accessLogPlaceholder: "Input the format layout for access",
     enabledH2: "Enable Http2(h2c)",
+    modules: "Http Modules",
+    moduleslaceholder: "Select http modules for server",
     tlsCipherList: "Tls Cipher List",
     tlsCipherListPlaceholder:
       "Input the cipher list for protocols before tlsv1.3",
@@ -170,6 +172,7 @@ export default {
     clientMaxBodySizePlaceholder: "Input the max body size(e.g. 1mb)",
     plugins: "Plugins",
     pluginsPlaceholder: "Select the plugins for location",
+    grpcWeb: "Grpc Web",
     remark: "Remark",
   },
   upstream: {

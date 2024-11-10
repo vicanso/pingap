@@ -37,6 +37,7 @@ pub struct ServerConf {
     pub enabled_h2: bool,
     pub prometheus_metrics: Option<String>,
     pub otlp_exporter: Option<String>,
+    pub modules: Option<Vec<String>>,
 }
 
 impl fmt::Display for ServerConf {
@@ -107,6 +108,7 @@ impl From<PingapConf> for Vec<ServerConf> {
                 tcp_fastopen: item.tcp_fastopen,
                 prometheus_metrics: item.prometheus_metrics,
                 otlp_exporter: item.otlp_exporter.clone(),
+                modules: item.modules.clone(),
                 error_template,
             });
         }

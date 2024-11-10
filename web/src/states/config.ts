@@ -38,6 +38,7 @@ export interface Location {
   client_max_body_size?: string;
   plugins?: string[];
   includes?: string[];
+  grpc_web?: boolean;
   remark?: string;
 }
 
@@ -85,6 +86,7 @@ export interface Server {
   prometheus_metrics?: string;
   otlp_exporter?: string;
   includes?: string[];
+  modules?: string[];
   remark?: string;
 }
 

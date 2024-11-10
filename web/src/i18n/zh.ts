@@ -120,6 +120,8 @@ export default {
     accessLog: "访问日志格式化",
     accessLogPlaceholder: "输入日志格式化模板",
     enabledH2: "启用http2(h2c)",
+    modules: "Http模块",
+    moduleslaceholder: "选择要使用的http模块",
     tlsCipherList: "tls密码套件列表",
     tlsCipherListPlaceholder: "输入tls密码套件列表，早于tls1.3版本认证使用",
     tlsCiphersuites: "tls密码套件列表",
@@ -162,6 +164,7 @@ export default {
     clientMaxBodySizePlaceholder: "输入请求实体限制大小(如1mb)",
     plugins: "插件列表",
     pluginsPlaceholder: "选择location使用的相关插件",
+    grpcWeb: "Grpc Web",
     remark: "备注",
   },
   upstream: {

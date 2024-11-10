@@ -142,6 +142,7 @@ pub struct Location {
     pub accepted: AtomicU64,
     pub processing: AtomicI32,
     pub upstream: String,
+    pub grpc_web: bool,
     client_max_body_size: usize,
 }
 
@@ -212,6 +213,7 @@ impl Location {
             plugins: conf.plugins.clone(),
             accepted: AtomicU64::new(0),
             processing: AtomicI32::new(0),
+            grpc_web: conf.grpc_web.unwrap_or_default(),
             proxy_add_headers: format_headers(&conf.proxy_add_headers)?,
             proxy_set_headers: format_headers(&conf.proxy_set_headers)?,
             client_max_body_size: conf

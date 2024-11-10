@@ -58,6 +58,8 @@ use pingora::cache::{
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::listeners::TcpSocketOptions;
 use pingora::modules::http::compression::ResponseCompression;
+use pingora::modules::http::grpc_web::{GrpcWeb, GrpcWebBridge};
+use pingora::modules::http::HttpModules;
 use pingora::protocols::http::error_resp;
 use pingora::protocols::Digest;
 use pingora::protocols::TimingDigest;
@@ -154,6 +156,7 @@ pub struct Server {
     prometheus_metrics: String,
     #[cfg(feature = "full")]
     enabled_otel: bool,
+    modules: Option<Vec<String>>,
 }
 
 pub struct ServerServices {
@@ -219,6 +222,7 @@ impl Server {
             prometheus_metrics,
             #[cfg(feature = "full")]
             prometheus,
+            modules: conf.modules.clone(),
         };
         Ok(s)
     }
@@ -420,6 +424,16 @@ impl ProxyHttp for Server {
     fn new_ctx(&self) -> Self::CTX {
         State::new()
     }
+    fn init_downstream_modules(&self, modules: &mut HttpModules) {
+        let Some(value) = &self.modules else {
+            return;
+        };
+        for item in value.iter() {
+            if item == "grpc-web" {
+                modules.add_module(Box::new(GrpcWeb));
+            }
+        }
+    }
     async fn early_request_filter(
         &self,
         session: &mut Session,
@@ -516,6 +530,21 @@ impl ProxyHttp for Server {
             }
         }
         if let Some(location) = &ctx.location {
+            if location.grpc_web {
+                // Initialize gRPC module for this request
+                let grpc = session
+                    .downstream_modules_ctx
+                    .get_mut::<GrpcWebBridge>()
+                    .ok_or_else(|| {
+                        util::new_internal_error(
+                            500,
+                            "grpc web bridge module should be added"
+                                .to_string(),
+                        )
+                    })?;
+                grpc.init();
+            }
+
             ctx.location_accepted =
                 location.accepted.fetch_add(1, Ordering::Relaxed) + 1;
             ctx.location_processing =

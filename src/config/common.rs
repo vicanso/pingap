@@ -316,6 +316,7 @@ pub struct LocationConf {
     pub plugins: Option<Vec<String>>,
     pub client_max_body_size: Option<ByteSize>,
     pub includes: Option<Vec<String>>,
+    pub grpc_web: Option<bool>,
     pub remark: Option<String>,
 }
 
@@ -427,6 +428,7 @@ pub struct ServerConf {
     pub prometheus_metrics: Option<String>,
     pub otlp_exporter: Option<String>,
     pub includes: Option<Vec<String>>,
+    pub modules: Option<Vec<String>>,
     pub remark: Option<String>,
 }
 

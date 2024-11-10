@@ -5,7 +5,11 @@ import React from "react";
 import { ExForm, ExFormItem } from "@/components/ex-form";
 import { pascal } from "radash";
 import { z } from "zod";
-import { ExFormItemCategory, newStringOptions } from "@/constants";
+import {
+  ExFormItemCategory,
+  newBooleanOptions,
+  newStringOptions,
+} from "@/constants";
 import { formatLabel, newZodBytes, omitEmptyArray } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
@@ -132,9 +136,18 @@ export default function Locations() {
       label: i18n("includes"),
       placeholder: i18n("includesPlaceholder"),
       defaultValue: locationConfig.includes,
-      span: 6,
+      span: 3,
       category: ExFormItemCategory.MULTI_SELECT,
       options: newStringOptions(getIncludeOptions(), false),
+    },
+    {
+      name: "grpc_web",
+      label: locationI18n("grpcWeb"),
+      placeholder: "",
+      defaultValue: locationConfig.grpc_web,
+      span: 3,
+      category: ExFormItemCategory.RADIOS,
+      options: newBooleanOptions(),
     },
     {
       name: "weight",
