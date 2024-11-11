@@ -154,11 +154,12 @@ const ONE_HOUR_MS: u64 = 60 * 60 * 1000;
 impl State {
     #[inline]
     pub fn add_variable(&mut self, key: &str, value: &str) {
+        let key = format!("${key}");
         if let Some(variables) = self.variables.as_mut() {
-            variables.insert(key.to_string(), value.to_string());
+            variables.insert(key, value.to_string());
         } else {
             let mut variables = AHashMap::new();
-            variables.insert(key.to_string(), value.to_string());
+            variables.insert(key, value.to_string());
             self.variables = Some(variables);
         }
     }

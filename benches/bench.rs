@@ -165,7 +165,7 @@ fn bench_location_rewrite_path(c: &mut Criterion) {
         b.iter(|| {
             let mut req_header =
                 RequestHeader::build("GET", b"/users/v1/me", None).unwrap();
-            let _ = lo.rewrite(&mut req_header);
+            let _ = lo.rewrite(&mut req_header, None);
         })
     });
 }

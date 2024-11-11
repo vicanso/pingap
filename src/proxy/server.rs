@@ -604,7 +604,7 @@ impl ProxyHttp for Server {
         };
 
         debug!(name = location.name, "location is matched");
-        location.rewrite(header);
+        location.rewrite(header, ctx.variables.as_ref());
 
         // body limit
         location.client_body_size_limit(Some(header), ctx)?;

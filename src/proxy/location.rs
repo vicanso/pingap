@@ -298,10 +298,20 @@ impl Location {
     /// Rewrite the path by the rule and returns true.
     /// If the rule is not exists, returns false.
     #[inline]
-    pub fn rewrite(&self, header: &mut RequestHeader) -> bool {
+    pub fn rewrite(
+        &self,
+        header: &mut RequestHeader,
+        variables: Option<&AHashMap<String, String>>,
+    ) -> bool {
         if let Some((re, value)) = &self.reg_rewrite {
+            let mut replae_value = value.to_string();
+            if let Some(variables) = variables {
+                for (k, v) in variables.iter() {
+                    replae_value = replae_value.replace(k, v);
+                }
+            }
             let path = header.uri.path();
-            let mut new_path = re.replace(path, value).to_string();
+            let mut new_path = re.replace(path, replae_value).to_string();
             if path == new_path {
                 return false;
             }
@@ -578,12 +588,12 @@ mod tests {
         .unwrap();
         let mut req_header =
             RequestHeader::build("GET", b"/users/me?abc=1", None).unwrap();
-        assert_eq!(true, lo.rewrite(&mut req_header));
+        assert_eq!(true, lo.rewrite(&mut req_header, None));
         assert_eq!("/me?abc=1", req_header.uri.to_string());
 
         let mut req_header =
             RequestHeader::build("GET", b"/api/me?abc=1", None).unwrap();
-        assert_eq!(false, lo.rewrite(&mut req_header));
+        assert_eq!(false, lo.rewrite(&mut req_header, None));
         assert_eq!("/api/me?abc=1", req_header.uri.to_string());
     }
 
