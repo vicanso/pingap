@@ -2,6 +2,11 @@ import request from "@/helpers/request";
 import { random } from "@/helpers/util";
 import { create } from "zustand";
 
+export interface CertificateInfo {
+  not_after: number;
+  not_before: number;
+}
+
 export interface Upstream {
   addrs: string[];
   discovery?: string;
@@ -158,6 +163,7 @@ interface ConfigState {
   ) => Promise<void>;
   remove: (category: string, name: string) => Promise<void>;
   getIncludeOptions: () => string[];
+  getCertificateInfos: () => Promise<Record<string, CertificateInfo>>;
 }
 
 const useConfigState = create<ConfigState>()((set, get) => ({
@@ -226,6 +232,11 @@ const useConfigState = create<ConfigState>()((set, get) => ({
       }
     });
     return includes;
+  },
+  getCertificateInfos: async () => {
+    const { data } =
+      await request.get<Record<string, CertificateInfo>>(`/certificates`);
+    return data;
   },
 }));
 

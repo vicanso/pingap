@@ -27,6 +27,7 @@ use crate::config::{
 };
 use crate::http_extra::{HttpResponse, HTTP_HEADER_WWW_AUTHENTICATE};
 use crate::limit::TtlLruLimit;
+use crate::proxy::get_certificate_info_list;
 use crate::state::{
     get_process_system_info, get_processing_accepted, get_start_time,
 };
@@ -45,6 +46,7 @@ use pingora::proxy::Session;
 use rust_embed::EmbeddedFile;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io::Write;
 use std::time::Duration;
 use substring::Substring;
@@ -552,6 +554,14 @@ impl Plugin for AdminServe {
             }
             .map_err(|e| util::new_internal_error(400, e.to_string()))?;
             HttpResponse::try_from_json(&AesResp { value }).unwrap_or(
+                HttpResponse::unknown_error("Json serde fail".into()),
+            )
+        } else if path == "/certificates" {
+            let mut infos = HashMap::new();
+            for (name, info) in get_certificate_info_list() {
+                infos.insert(name, info);
+            }
+            HttpResponse::try_from_json(&infos).unwrap_or(
                 HttpResponse::unknown_error("Json serde fail".into()),
             )
         } else {

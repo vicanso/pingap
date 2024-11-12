@@ -14,6 +14,8 @@ import useBasicState from "@/states/basic";
 import { useI18n } from "@/i18n";
 import { listify } from "radash";
 import { Button } from "@/components/ui/button";
+import { useAsync } from "react-async-hook";
+import React from "react";
 
 interface Summary {
   name: string;
@@ -23,11 +25,41 @@ interface Summary {
 
 export default function Home() {
   const homeI18n = useI18n("home");
-  const [config, initialized] = useConfigState((state) => [
+  const [config, initialized, getCertificateInfos] = useConfigState((state) => [
     state.data,
     state.initialized,
+    state.getCertificateInfos,
   ]);
   const [basicInfo] = useBasicState((state) => [state.data]);
+  const [validity, setValidity] = React.useState({} as Record<string, string>);
+  useAsync(async () => {
+    try {
+      const infos = await getCertificateInfos();
+      const formatDate = (value: number) => {
+        const date = new Date(value * 1000);
+        let month = `${date.getMonth()}`;
+        if (month.length === 1) {
+          month = `0${month}`;
+        }
+        let day = `${date.getDate()}`;
+        if (day.length === 1) {
+          day = `0${day}`;
+        }
+        return `${month}-${day}`;
+      };
+      const results = {} as Record<string, string>;
+      Object.keys(infos).forEach((name) => {
+        const data = infos[name];
+        if (data) {
+          results[name] =
+            formatDate(data.not_before) + " : " + formatDate(data.not_after);
+        }
+      });
+      setValidity(results);
+    } catch (err) {
+      console.error(err);
+    }
+  }, []);
   if (!initialized) {
     return <LoadingPage />;
   }
@@ -120,10 +152,14 @@ export default function Home() {
         ? `${certificateCount} Certificates`
         : `${certificateCount} Certificate`;
     listify(config.certificates, (name, value) => {
+      let date = validity[name] || "";
+      if (date) {
+        date = ` (${date})`;
+      }
       certificateSummary.push({
         name,
         link: `${CERTIFICATES}?name=${name}`,
-        value: value.domains || "",
+        value: (value.domains || "") + date,
       });
     });
   }

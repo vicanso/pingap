@@ -72,14 +72,16 @@ impl ServiceTask for ValidityChecker {
         None
     }
     fn description(&self) -> String {
-        let certificate_info_list = get_certificate_info_list();
+        let mut names = vec![];
+        for (name, _) in get_certificate_info_list().iter() {
+            if !names.contains(name) {
+                names.push(name.clone());
+            }
+        }
 
         let offset_human: humantime::Duration =
             Duration::from_secs(self.time_offset as u64).into();
-        format!(
-            "ValidityChecker: {offset_human}, {:?}",
-            certificate_info_list
-        )
+        format!("ValidityChecker: {names:?}, {offset_human}")
     }
 }
 

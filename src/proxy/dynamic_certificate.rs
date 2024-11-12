@@ -146,6 +146,7 @@ fn parse_certificate(
         domains,
         certificate: Some((cert, key)),
         info: Some(info),
+        ..Default::default()
     })
 }
 
@@ -158,15 +159,16 @@ fn parse_certificates(
     let mut errors = vec![];
     for (name, certificate) in certificate_configs.iter() {
         match parse_certificate(certificate) {
-            Ok(dynamic_cert) => {
-                let mut names = dynamic_cert.domains.clone();
+            Ok(mut dynamic_cert) => {
+                dynamic_cert.name = Some(name.clone());
+                let mut domains = dynamic_cert.domains.clone();
                 let cert = Arc::new(dynamic_cert);
                 if let Some(value) = &certificate.domains {
-                    names =
+                    domains =
                         value.split(',').map(|item| item.to_string()).collect();
                 }
-                for name in names.iter() {
-                    dynamic_certs.insert(name.to_string(), cert.clone());
+                for domain in domains.iter() {
+                    dynamic_certs.insert(domain.to_string(), cert.clone());
                 }
                 let is_default = certificate.is_default.unwrap_or_default();
                 if is_default {
@@ -218,7 +220,12 @@ pub fn get_certificate_info_list() -> Vec<(String, CertificateInfo)> {
     let mut infos = vec![];
     for (name, cert) in DYNAMIC_CERTIFICATE_MAP.load().iter() {
         if let Some(info) = &cert.info {
-            infos.push((name.to_string(), info.clone()));
+            let key = if let Some(name) = &cert.name {
+                name.clone()
+            } else {
+                name.clone()
+            };
+            infos.push((key, info.clone()));
         }
     }
     infos
@@ -226,6 +233,7 @@ pub fn get_certificate_info_list() -> Vec<(String, CertificateInfo)> {
 
 #[derive(Debug, Clone, Default)]
 pub struct DynamicCertificate {
+    name: Option<String>,
     chain_certificate: Option<X509>,
     certificate: Option<(X509, PKey<Private>)>,
     domains: Vec<String>,
