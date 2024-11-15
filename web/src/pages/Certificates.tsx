@@ -61,6 +61,10 @@ export default function Certificates() {
     currentCertificate,
     config.certificates,
   );
+  const countLines = (value: string) => {
+    const count = value.split("\n").length;
+    return Math.min(Math.max(3, count), 8);
+  };
 
   const items: ExFormItem[] = [
     {
@@ -70,6 +74,7 @@ export default function Certificates() {
       defaultValue: certificateConfig.tls_cert,
       span: 6,
       category: ExFormItemCategory.TEXTAREA,
+      rows: countLines(certificateConfig.tls_cert || ""),
     },
     {
       name: "tls_key",
@@ -78,6 +83,7 @@ export default function Certificates() {
       defaultValue: certificateConfig.tls_key,
       span: 6,
       category: ExFormItemCategory.TEXTAREA,
+      rows: countLines(certificateConfig.tls_key || ""),
     },
     {
       name: "tls_chain",

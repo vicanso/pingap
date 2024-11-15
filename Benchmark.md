@@ -40,29 +40,23 @@ Requests/sec: 117876.05
 Transfer/sec:     15.40MB
 ```
 
-## Nginx --> Nginx
-
-```bash
-wrk 'http://127.0.0.1:6200/ping' --latency
-
-Running 10s test @ http://127.0.0.1:6200/ping
-  2 threads and 10 connections
-  Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency   287.76us    2.00ms  43.08ms   98.30%
-    Req/Sec    64.58k     4.49k   79.88k    87.13%
-  Latency Distribution
-     50%   73.00us
-     75%   81.00us
-     90%   88.00us
-     99%    8.16ms
-  1298148 requests in 10.10s, 185.70MB read
-Requests/sec: 128518.38
-Transfer/sec:     18.38MB
-```
-
 
 ## Pingap --> Nginx
 
 ```bash
 wrk 'http://127.0.0.1:6101/ping' --latency
+
+Running 10s test @ http://127.0.0.1:6101/ping
+  2 threads and 10 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency   221.18us  394.85us  13.41ms   99.53%
+    Req/Sec    24.98k     0.90k   26.78k    89.60%
+  Latency Distribution
+     50%  212.00us
+     75%  226.00us
+     90%  240.00us
+     99%  305.00us
+  502003 requests in 10.10s, 71.81MB read
+Requests/sec:  49706.13
+Transfer/sec:      7.11MB
 ```

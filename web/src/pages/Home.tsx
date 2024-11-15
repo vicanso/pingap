@@ -52,7 +52,9 @@ export default function Home() {
         const data = infos[name];
         if (data) {
           results[name] =
-            formatDate(data.not_before) + " : " + formatDate(data.not_after);
+            formatDate(data.not_before) +
+            ` ${homeI18n("to")} ` +
+            formatDate(data.not_after);
         }
       });
       setValidity(results);

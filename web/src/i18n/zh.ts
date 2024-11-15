@@ -63,6 +63,7 @@ export default {
     machineMemory: "机器内存",
     yes: "是",
     no: "否",
+    to: "至",
   },
   basic: {
     name: "名称",
