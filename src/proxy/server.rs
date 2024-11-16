@@ -57,7 +57,9 @@ use pingora::cache::{
 };
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::listeners::TcpSocketOptions;
-use pingora::modules::http::compression::ResponseCompression;
+use pingora::modules::http::compression::{
+    ResponseCompression, ResponseCompressionBuilder,
+};
 use pingora::modules::http::grpc_web::{GrpcWeb, GrpcWebBridge};
 use pingora::modules::http::HttpModules;
 use pingora::protocols::http::error_resp;
@@ -425,6 +427,8 @@ impl ProxyHttp for Server {
         State::new()
     }
     fn init_downstream_modules(&self, modules: &mut HttpModules) {
+        // Add disabled downstream compression module by default
+        modules.add_module(ResponseCompressionBuilder::enable(0));
         let Some(value) = &self.modules else {
             return;
         };

@@ -100,6 +100,21 @@ impl ConfigStorage for FileStorage {
         if Path::new(&filepath).is_file() {
             let ping_conf = toml::to_string_pretty(&conf)
                 .map_err(|e| Error::Ser { source: e })?;
+            let mut values: toml::Table = toml::from_str(&ping_conf)
+                .map_err(|e| Error::De { source: e })?;
+            let mut omit_keys = vec![];
+            for key in values.keys() {
+                if let Some(value) = values.get(key) {
+                    if value.to_string() == "{}" {
+                        omit_keys.push(key.clone());
+                    }
+                }
+            }
+            for key in omit_keys {
+                values.remove(&key);
+            }
+            let ping_conf = toml::to_string_pretty(&values)
+                .map_err(|e| Error::Ser { source: e })?;
             return fs::write(&filepath, ping_conf).await.map_err(|e| {
                 Error::Io {
                     source: e,

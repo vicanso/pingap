@@ -316,7 +316,8 @@ export default {
     compressionZstdLevelPlaceholder: "Input the zstd level(1-22)",
     compressionDecompression: "Support Decompression",
     acceptEncodingList: "Accept Encoding",
-    acceptEncodingListPlaceholder: "Input the request accept encoding",
+    acceptEncodingListPlaceholder:
+      "Input the request accept encoding(e.g. zstd, br)",
     acceptEncodingOnlyOne: "Supports One Encoding",
     keyAuthQuery: "Query",
     keyAuthQueryPlaceholder: "Input the name of query",

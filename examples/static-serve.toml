@@ -1,0 +1,28 @@
+[locations.staticServe]
+plugins = [
+    "staticAcceptEncoding",
+    "staticCompression",
+    "staticServe",
+]
+
+[plugins.staticAcceptEncoding]
+category = "accept_encoding"
+encodings = "zstd, br, gzip"
+only_one_encoding = true
+step = "request"
+
+[plugins.staticCompression]
+br_level = 9
+category = "compression"
+gzip_level = 9
+step = "request"
+zstd_level = 9
+
+[plugins.staticServe]
+category = "directory"
+path = "~/github/pingap/dist"
+step = "request"
+
+[servers.staticServe]
+addr = "127.0.0.1:3000"
+locations = ["staticServe"]

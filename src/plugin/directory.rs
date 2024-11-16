@@ -210,10 +210,17 @@ impl TryFrom<&PluginConf> for Directory {
 
         let cache_private = get_bool_conf(value, "private");
         let cache_private = if cache_private { Some(true) } else { None };
+        let mut index = get_str_conf(value, "index");
+        if index.is_empty() {
+            index = "index.html".to_string();
+        }
+        if !index.starts_with("/") {
+            index = format!("/{index}");
+        }
         let params = Self {
             hash_value,
             autoindex: get_bool_conf(value, "autoindex"),
-            index: get_str_conf(value, "index"),
+            index,
             path: Path::new(&util::resolve_path(&get_str_conf(value, "path")))
                 .to_path_buf(),
             chunk_size,
