@@ -70,6 +70,7 @@ use pingora::proxy::{ProxyHttp, Session};
 use pingora::server::configuration;
 use pingora::services::listening::Service;
 use pingora::upstreams::peer::{HttpPeer, Peer};
+use scopeguard::defer;
 use snafu::Snafu;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
@@ -424,9 +425,12 @@ fn get_digest_detail(digest: &Digest) -> DigestDeailt {
 impl ProxyHttp for Server {
     type CTX = State;
     fn new_ctx(&self) -> Self::CTX {
+        debug!("new ctx");
         State::new()
     }
     fn init_downstream_modules(&self, modules: &mut HttpModules) {
+        debug!("--> init downstream modules");
+        defer!(debug!("<-- init downstream modules"););
         // Add disabled downstream compression module by default
         modules.add_module(ResponseCompressionBuilder::enable(0));
         let Some(value) = &self.modules else {
@@ -446,6 +450,9 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
+        debug!("--> early request filter");
+        defer!(debug!("<-- early request filter"););
+
         if let Some(stream) = session.stream() {
             ctx.connection_id = stream.id() as usize;
         }
@@ -568,6 +575,8 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
+        debug!("--> request filter");
+        defer!(debug!("<-- request filter"););
         if self.admin {
             self.serve_admin(session, ctx).await?;
             return Ok(true);
@@ -633,6 +642,8 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
+        debug!("--> proxy upstream filter");
+        defer!(debug!("<-- proxy upstream filter"););
         if let Some(location) = &ctx.location {
             let done = location
                 .clone()
@@ -650,6 +661,8 @@ impl ProxyHttp for Server {
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Box<HttpPeer>> {
+        debug!("--> upstream peer");
+        defer!(debug!("<-- upstream peer"););
         let mut location_name = "unknown".to_string();
         let peer = if let Some(location) = &ctx.location {
             location_name.clone_from(&location.name);
@@ -697,6 +710,8 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
+        debug!("--> connected to upstream");
+        defer!(debug!("<-- connected to upstream"););
         if !reused {
             if let Some(digest) = digest {
                 let detail = get_digest_detail(digest);
@@ -733,6 +748,8 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
+        debug!("--> upstream request filter");
+        defer!(debug!("<-- upstream request filter"););
         if let Some(location) = &ctx.location {
             location.set_append_proxy_headers(session, ctx, upstream_response);
         }
@@ -748,6 +765,8 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
+        debug!("--> request body filter");
+        defer!(debug!("<-- request body filter"););
         if let Some(buf) = body {
             ctx.payload_size += buf.len();
             if let Some(location) = &ctx.location {
@@ -761,6 +780,8 @@ impl ProxyHttp for Server {
         session: &Session,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<CacheKey> {
+        debug!("--> cache key callback");
+        defer!(debug!("<-- cache key callback"););
         let key = util::get_cache_key(
             &ctx.cache_prefix.clone().unwrap_or_default(),
             session.req_header().method.as_ref(),
@@ -776,6 +797,8 @@ impl ProxyHttp for Server {
         resp: &ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<RespCacheable> {
+        debug!("--> response cache filter");
+        defer!(debug!("<-- response cache filter"););
         if ctx.check_cache_control
             && resp.headers.get("Cache-Control").is_none()
         {
@@ -832,6 +855,8 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
+        debug!("--> response filter");
+        defer!(debug!("<-- response filter"););
         if session.cache.enabled() {
             // ignore insert header error
             let _ = upstream_response.insert_header(
@@ -873,6 +898,8 @@ impl ProxyHttp for Server {
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) {
+        debug!("--> upstream response filter");
+        defer!(debug!("<-- upstream response filter"););
         if ctx.status.is_none() {
             ctx.status = Some(upstream_response.status);
             ctx.upstream_response_time =
@@ -893,6 +920,8 @@ impl ProxyHttp for Server {
         end_of_stream: bool,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<()> {
+        debug!("--> upstream response body filter");
+        defer!(debug!("<-- upstream response body filter"););
         if end_of_stream {
             ctx.upstream_response_time =
                 util::get_latency(&ctx.upstream_response_time);
@@ -943,6 +972,8 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
+        debug!("--> response body filter");
+        defer!(debug!("<-- response body filter"););
         // set modify response body
         if let Some(modify) = &ctx.modify_response_body {
             if let Some(ref mut buf) = ctx.response_body {
@@ -978,6 +1009,8 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
+        debug!("--> fail to proxy");
+        defer!(debug!("<-- fail to proxy"););
         let server_session = session.as_mut();
 
         let code = match e.etype() {
@@ -1058,6 +1091,8 @@ impl ProxyHttp for Server {
     ) where
         Self::CTX: Send + Sync,
     {
+        debug!("--> logging");
+        defer!(debug!("<-- logging"););
         end_request();
         self.processing.fetch_sub(1, Ordering::Relaxed);
         if let Some(location) = &ctx.location {
