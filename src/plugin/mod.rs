@@ -192,6 +192,18 @@ remark = "Generate a request id for service"
             )
             .unwrap(),
         ),
+        (
+            "pingap:acceptEncodingAdjustment".to_string(),
+            toml::from_str::<PluginConf>(
+                r###"
+category = "accept_encoding"
+encodings = "zstd, br, gzip"
+only_one_encoding = true
+remark = "Adjust the accept encoding order and choose one econding"
+"###,
+            )
+            .unwrap(),
+        ),
     ]
 }
 

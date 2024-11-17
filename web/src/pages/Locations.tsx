@@ -63,7 +63,13 @@ export default function Locations() {
   };
 
   const plugins = newStringOptions(
-    ["pingap:stats", "pingap:compression", "pingap:requestId", "pingap:ping"],
+    [
+      "pingap:stats",
+      "pingap:compression",
+      "pingap:requestId",
+      "pingap:ping",
+      "pingap:acceptEncodingAdjustment",
+    ],
     false,
   );
 
