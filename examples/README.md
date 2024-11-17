@@ -21,3 +21,19 @@ Upstream features:
 ```bash
 cargo run -- -c=~/github/pingap/examples/proxy-upstream.toml --admin=127.0.0.1:3018
 ```
+
+## Grpc-Web
+
+- Insecure grpc-server
+- Commonjs example static
+- Locally trusted development certificates for 127.0.0.1
+
+The key points of configuration are as follows:
+
+- [upstreams.grpc-server] should choose h2 alpn
+- [servers.grpc-web] should select grpc-web module
+- [locations.grpc-server] should enable grpc_web
+
+```bash
+cargo run -- -c=~/github/pingap/examples/grpc-web.toml --admin=127.0.0.1:3018
+```
