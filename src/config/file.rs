@@ -97,7 +97,15 @@ impl ConfigStorage for FileStorage {
     ) -> Result<()> {
         let filepath = self.path.clone();
         conf.validate()?;
-        if Path::new(&filepath).is_file() {
+        let path = Path::new(&filepath);
+        if !path.exists() && path.extension().unwrap_or_default() == "toml" {
+            fs::File::create(&path).await.map_err(|e| Error::Io {
+                source: e,
+                file: filepath.clone(),
+            })?;
+        }
+
+        if path.is_file() {
             let ping_conf = toml::to_string_pretty(&conf)
                 .map_err(|e| Error::Ser { source: e })?;
             let mut values: toml::Table = toml::from_str(&ping_conf)
@@ -115,11 +123,9 @@ impl ConfigStorage for FileStorage {
             }
             let ping_conf = toml::to_string_pretty(&values)
                 .map_err(|e| Error::Ser { source: e })?;
-            return fs::write(&filepath, ping_conf).await.map_err(|e| {
-                Error::Io {
-                    source: e,
-                    file: filepath,
-                }
+            return fs::write(path, ping_conf).await.map_err(|e| Error::Io {
+                source: e,
+                file: filepath,
             });
         }
 
