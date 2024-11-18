@@ -51,6 +51,7 @@ use std::io::Write;
 use std::time::Duration;
 use substring::Substring;
 use tracing::{debug, error};
+use urlencoding::decode;
 
 #[derive(RustEmbed)]
 #[folder = "dist/"]
@@ -456,10 +457,13 @@ impl Plugin for AdminServe {
         if path.starts_with(api_prefix) {
             path = path.substring(api_prefix.len(), path.len()).to_string();
         }
-        let params: Vec<&str> = path.split('/').collect();
+        let params: Vec<String> = path
+            .split('/')
+            .map(|item| decode(item).unwrap_or_default().to_string())
+            .collect();
         let mut category = "";
         if params.len() >= 3 {
-            category = params[2];
+            category = &params[2];
         }
         let resp = if path.starts_with("/configs") {
             match method {
@@ -467,14 +471,14 @@ impl Plugin for AdminServe {
                     if params.len() < 4 {
                         Err(pingora::Error::new_str("Url is invalid(no name)"))
                     } else {
-                        self.update_config(session, category, params[3]).await
+                        self.update_config(session, category, &params[3]).await
                     }
                 },
                 Method::DELETE => {
                     if params.len() < 4 {
                         Err(pingora::Error::new_str("Url is invalid(no name)"))
                     } else {
-                        self.remove_config(category, params[3]).await
+                        self.remove_config(category, &params[3]).await
                     }
                 },
                 _ => self.get_config(category).await,
