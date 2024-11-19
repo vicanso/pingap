@@ -294,7 +294,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let (s, r) = crossbeam_channel::bounded(0);
     get_config(args.admin.is_some(), s);
     let conf = r.recv()??;
-    logger::logger_try_init(logger::LoggerParams {
+    let compression_task = logger::logger_try_init(logger::LoggerParams {
         capacity: conf.basic.log_buffered_size.unwrap_or_default().as_u64(),
         log: args.log.clone().unwrap_or_default(),
         level: conf.basic.log_level.clone().unwrap_or_default(),
@@ -399,6 +399,13 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
     }
     my_server.bootstrap();
+
+    if let Some(compression_task) = compression_task {
+        my_server.add_service(background_service(
+            "CompressionLog",
+            compression_task,
+        ));
+    }
 
     #[cfg(feature = "pyro")]
     if let Some(url) = &conf.basic.pyroscope {

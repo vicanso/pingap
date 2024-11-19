@@ -2770,6 +2770,7 @@ dependencies = [
  "uuid",
  "walkdir",
  "x509-parser",
+ "zstd",
 ]
 
 [[package]]

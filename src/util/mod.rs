@@ -440,6 +440,17 @@ pub fn format_duration(mut buf: BytesMut, ms: u64) -> BytesMut {
     buf
 }
 
+#[inline]
+pub fn elapsed_ms(time: SystemTime) -> u64 {
+    time.elapsed().unwrap_or_default().as_millis() as u64
+}
+
+#[cfg(feature = "full")]
+#[inline]
+pub fn elapsed_second(time: SystemTime) -> f64 {
+    elapsed_ms(time) as f64 / 1000.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

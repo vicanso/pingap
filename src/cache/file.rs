@@ -68,13 +68,6 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
     })
 }
 
-#[cfg(feature = "full")]
-#[inline]
-fn elapsed(time: SystemTime) -> f64 {
-    let ms = time.elapsed().unwrap_or_default().as_millis();
-    ms as f64 / 1000.0
-}
-
 #[async_trait]
 impl HttpCacheStorage for FileCache {
     /// Get cache object from tinyufo,
@@ -97,7 +90,7 @@ impl HttpCacheStorage for FileCache {
         }
         let result = fs::read(file).await;
         #[cfg(feature = "full")]
-        self.read_time.observe(elapsed(start));
+        self.read_time.observe(util::elapsed_second(start));
         let buf = match result {
             Ok(buf) => Ok(buf),
             Err(e) => {
@@ -137,7 +130,7 @@ impl HttpCacheStorage for FileCache {
         }
         let result = fs::write(file, buf).await;
         #[cfg(feature = "full")]
-        self.write_time.observe(elapsed(start));
+        self.write_time.observe(util::elapsed_second(start));
         result.map_err(|e| Error::Io { source: e })
     }
     /// Remove cache object from file, tinyufo doesn't support remove now.
