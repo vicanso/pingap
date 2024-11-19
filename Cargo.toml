@@ -119,6 +119,8 @@ tempfile = "3.13.0"
 time = { version = "0.3.36", features = ["local-offset"] }
 tokio = { version = "1.41.0", default-features = false, features = ["fs"] }
 toml = "0.8.19"
+tonic = "0.12.3"
+tonic-health = "0.12.3"
 tracing = "0.1.40"
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.18", features = [

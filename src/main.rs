@@ -37,6 +37,7 @@ mod acme;
 mod cache;
 mod config;
 mod discovery;
+mod health;
 mod http_extra;
 mod limit;
 mod logger;

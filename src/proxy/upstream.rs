@@ -18,41 +18,33 @@ use crate::discovery::{
     new_common_discover_backends, new_dns_discover_backends,
     new_docker_discover_backends,
 };
+use crate::health::new_health_check;
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::State;
-use crate::{util, webhook};
+use crate::util;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use futures_util::FutureExt;
-use humantime::parse_duration;
 use once_cell::sync::Lazy;
-use pingora::http::RequestHeader;
-use pingora::lb::health_check::{HealthCheck, HttpHealthCheck, TcpHealthCheck};
 use pingora::lb::selection::{Consistent, RoundRobin};
 use pingora::lb::{Backends, LoadBalancer};
 use pingora::protocols::l4::ext::TcpKeepalive;
 use pingora::protocols::ALPN;
 use pingora::proxy::Session;
-use pingora::upstreams::peer::{HttpPeer, PeerOptions, Tracer, Tracing};
-use snafu::{ResultExt, Snafu};
+use pingora::upstreams::peer::{HttpPeer, Tracer, Tracing};
+use snafu::Snafu;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, error, info};
-use url::Url;
+use tracing::{debug, error};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("Common error, category: {category}, {message}"))]
     Common { message: String, category: String },
-    #[snafu(display("Url parse error {source}, {url}"))]
-    UrlParse {
-        source: url::ParseError,
-        url: String,
-    },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -128,189 +120,6 @@ impl fmt::Display for Upstream {
         write!(f, "verify_cert:{:?} ", self.verify_cert)?;
         write!(f, "alpn:{:?}", self.alpn)
     }
-}
-
-#[derive(Debug)]
-pub struct HealthCheckConf {
-    pub schema: String,
-    pub host: String,
-    pub path: String,
-    pub connection_timeout: Duration,
-    pub read_timeout: Duration,
-    pub check_frequency: Duration,
-    pub reuse_connection: bool,
-    pub consecutive_success: usize,
-    pub consecutive_failure: usize,
-}
-
-impl TryFrom<&str> for HealthCheckConf {
-    type Error = Error;
-    fn try_from(value: &str) -> Result<Self> {
-        let value = Url::parse(value).context(UrlParseSnafu {
-            url: value.to_string(),
-        })?;
-        let mut connection_timeout = Duration::from_secs(3);
-        let mut read_timeout = Duration::from_secs(3);
-        let mut check_frequency = Duration::from_secs(10);
-        let mut consecutive_success = 1;
-        let mut consecutive_failure = 2;
-        let mut query_list = vec![];
-        let mut reuse_connection = false;
-        // HttpHealthCheck
-        for (key, value) in value.query_pairs().into_iter() {
-            match key.as_ref() {
-                "connection_timeout" => {
-                    if let Ok(d) = parse_duration(value.as_ref()) {
-                        connection_timeout = d;
-                    }
-                },
-                "read_timeout" => {
-                    if let Ok(d) = parse_duration(value.as_ref()) {
-                        read_timeout = d;
-                    }
-                },
-                "check_frequency" => {
-                    if let Ok(d) = parse_duration(value.as_ref()) {
-                        check_frequency = d;
-                    }
-                },
-                "success" => {
-                    if let Ok(v) = value.parse::<usize>() {
-                        consecutive_success = v;
-                    }
-                },
-                "failure" => {
-                    if let Ok(v) = value.parse::<usize>() {
-                        consecutive_failure = v;
-                    }
-                },
-                "reuse" => {
-                    reuse_connection = true;
-                },
-                _ => {
-                    if value.is_empty() {
-                        query_list.push(key.to_string());
-                    } else {
-                        query_list.push(format!("{key}={value}"));
-                    }
-                },
-            };
-        }
-        let host = if let Some(host) = value.host() {
-            host.to_string()
-        } else {
-            "".to_string()
-        };
-        let mut path = value.path().to_string();
-        if !query_list.is_empty() {
-            path += &format!("?{}", query_list.join("&"));
-        }
-        Ok(HealthCheckConf {
-            schema: value.scheme().to_string(),
-            host,
-            path,
-            read_timeout,
-            reuse_connection,
-            connection_timeout,
-            check_frequency,
-            consecutive_success,
-            consecutive_failure,
-        })
-    }
-}
-
-fn update_peer_options(
-    conf: &HealthCheckConf,
-    opt: PeerOptions,
-) -> PeerOptions {
-    let mut options = opt;
-    let timeout = Some(conf.connection_timeout);
-    options.connection_timeout = timeout;
-    options.total_connection_timeout = timeout;
-    options.read_timeout = Some(conf.read_timeout);
-    options.write_timeout = Some(conf.read_timeout);
-    options.idle_timeout = Some(Duration::from_secs(0));
-    options
-}
-
-fn new_tcp_health_check(name: &str, conf: &HealthCheckConf) -> TcpHealthCheck {
-    let mut check = TcpHealthCheck::default();
-    check.peer_template.options =
-        update_peer_options(conf, check.peer_template.options.clone());
-    check.consecutive_success = conf.consecutive_success;
-    check.consecutive_failure = conf.consecutive_failure;
-    check.health_changed_callback =
-        Some(webhook::new_backend_observe_notification(name));
-
-    check
-}
-
-fn new_http_health_check(
-    name: &str,
-    conf: &HealthCheckConf,
-) -> HttpHealthCheck {
-    let mut check = HttpHealthCheck::new(&conf.host, conf.schema == "https");
-    check.peer_template.options =
-        update_peer_options(conf, check.peer_template.options.clone());
-
-    check.consecutive_success = conf.consecutive_success;
-    check.consecutive_failure = conf.consecutive_failure;
-    check.reuse_connection = conf.reuse_connection;
-    check.health_changed_callback =
-        Some(webhook::new_backend_observe_notification(name));
-    // create http get request
-    match RequestHeader::build("GET", conf.path.as_bytes(), None) {
-        Ok(mut req) => {
-            // 忽略append header fail
-            if let Err(e) = req.append_header("Host", &conf.host) {
-                error!(
-                    error = e.to_string(),
-                    host = conf.host,
-                    "http health check append host fail"
-                );
-            }
-            check.req = req;
-        },
-        Err(e) => error!(error = e.to_string(), "http health check fail"),
-    }
-
-    check
-}
-
-fn new_health_check(
-    name: &str,
-    health_check: &str,
-) -> Result<(Box<dyn HealthCheck + Send + Sync + 'static>, Duration)> {
-    let mut health_check_frequency = Duration::from_secs(10);
-    let hc: Box<dyn HealthCheck + Send + Sync + 'static> =
-        if health_check.is_empty() {
-            let mut check = TcpHealthCheck::new();
-            check.health_changed_callback =
-                Some(webhook::new_backend_observe_notification(name));
-            check.peer_template.options.connection_timeout =
-                Some(Duration::from_secs(3));
-            info!(
-                name,
-                options = format!("{:?}", check.peer_template.options),
-                "new health check"
-            );
-            check
-        } else {
-            let health_check_conf: HealthCheckConf = health_check.try_into()?;
-            health_check_frequency = health_check_conf.check_frequency;
-            info!(
-                name,
-                health_check_conf = format!("{health_check_conf:?}"),
-                "new http health check"
-            );
-            match health_check_conf.schema.as_str() {
-                "http" | "https" => {
-                    Box::new(new_http_health_check(name, &health_check_conf))
-                },
-                _ => Box::new(new_tcp_health_check(name, &health_check_conf)),
-            }
-        };
-    Ok((hc, health_check_frequency))
 }
 
 fn new_backends(
@@ -400,7 +209,12 @@ impl Upstream {
         let (hc, health_check_frequency) = new_health_check(
             name,
             &conf.health_check.clone().unwrap_or_default(),
-        )?;
+        )
+        .map_err(|e| Error::Common {
+            message: e.to_string(),
+            category: "health".to_string(),
+        })?;
+
         let algo_method = conf.algo.clone().unwrap_or_default();
         let algo_params: Vec<&str> = algo_method.split(':').collect();
         let mut hash_key = "".to_string();
@@ -756,58 +570,17 @@ pub fn new_upstream_health_check_task(interval: Duration) -> CommonServiceTask {
 #[cfg(test)]
 mod tests {
     use super::{
-        get_hash_value, new_backends, new_health_check, new_http_health_check,
-        new_tcp_health_check, HealthCheckConf, State, Upstream, UpstreamConf,
+        get_hash_value, new_backends, State, Upstream, UpstreamConf,
         UpstreamPeerTracer,
     };
     use pingora::protocols::ALPN;
     use pingora::proxy::Session;
-    use pingora::upstreams::peer::{Peer, Tracing};
+    use pingora::upstreams::peer::Tracing;
     use pretty_assertions::assert_eq;
     use std::sync::atomic::Ordering;
     use std::time::Duration;
     use tokio_test::io::Builder;
-    #[test]
-    fn test_health_check_conf() {
-        let tcp_check: HealthCheckConf =
-            "tcp://upstreamname?connection_timeout=3s&success=2&failure=1&check_frequency=10s"
-                .try_into()
-                .unwrap();
-        assert_eq!(
-            r###"HealthCheckConf { schema: "tcp", host: "upstreamname", path: "", connection_timeout: 3s, read_timeout: 3s, check_frequency: 10s, reuse_connection: false, consecutive_success: 2, consecutive_failure: 1 }"###,
-            format!("{tcp_check:?}")
-        );
-        let tcp_check = new_tcp_health_check("", &tcp_check);
-        assert_eq!(1, tcp_check.consecutive_failure);
-        assert_eq!(2, tcp_check.consecutive_success);
-        assert_eq!(
-            Duration::from_secs(3),
-            tcp_check.peer_template.connection_timeout().unwrap()
-        );
 
-        let http_check: HealthCheckConf = "https://upstreamname/ping?connection_timeout=3s&read_timeout=1s&success=2&failure=1&check_frequency=10s&from=nginx&reuse".try_into().unwrap();
-        assert_eq!(
-            r###"HealthCheckConf { schema: "https", host: "upstreamname", path: "/ping?from=nginx", connection_timeout: 3s, read_timeout: 1s, check_frequency: 10s, reuse_connection: true, consecutive_success: 2, consecutive_failure: 1 }"###,
-            format!("{http_check:?}")
-        );
-        let http_check = new_http_health_check("", &http_check);
-        assert_eq!(1, http_check.consecutive_failure);
-        assert_eq!(2, http_check.consecutive_success);
-        assert_eq!(true, http_check.reuse_connection);
-        assert_eq!(
-            Duration::from_secs(3),
-            http_check.peer_template.options.connection_timeout.unwrap()
-        );
-        assert_eq!(
-            Duration::from_secs(1),
-            http_check.peer_template.options.read_timeout.unwrap()
-        );
-    }
-    #[test]
-    fn test_new_health_check() {
-        let (_, frequency) = new_health_check("upstreamname", "https://upstreamname/ping?connection_timeout=3s&read_timeout=1s&success=2&failure=1&check_frequency=10s&from=nginx&reuse").unwrap();
-        assert_eq!(Duration::from_secs(10), frequency);
-    }
     #[test]
     fn test_new_backends() {
         let _ = new_backends(
