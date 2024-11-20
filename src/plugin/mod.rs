@@ -61,16 +61,20 @@ pub fn parse_admin_plugin(addr: &str) -> (ServerConf, String, PluginConf) {
         authorization = arr[0].trim().to_string();
         addr = arr[1].trim().to_string();
     }
+    let mut path = "/".to_string();
+    if let Some(arr) = addr.clone().split_once("/") {
+        addr = arr.0.to_string();
+        path = format!("/{}", arr.1);
+    }
     let data = format!(
         r#"
     category = "admin"
-    path = "/"
+    path = "{path}"
     authorizations = [
-        "{}"
+        "{authorization}"
     ]
     remark = "Admin serve"
     "#,
-        authorization
     );
     (
         ServerConf {

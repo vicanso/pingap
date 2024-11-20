@@ -4,6 +4,8 @@ Pingap是类似于nginx的反向代理，基于[pingora](https://github.com/clou
 
 Sentry与opentelemetry为可选的特性，在全功能版本中支持。
 
+[例子](./examples/README.md)
+
 
 ```mermaid
 flowchart LR

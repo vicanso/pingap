@@ -73,7 +73,7 @@ pub struct LogCompressionTask {
 impl ServiceTask for LogCompressionTask {
     async fn run(&self) -> Option<bool> {
         let Some(access_before) =
-            SystemTime::now().checked_sub(Duration::from_secs(24 * 3600))
+            SystemTime::now().checked_sub(Duration::from_secs(7 * 24 * 3600))
         else {
             return Some(false);
         };
