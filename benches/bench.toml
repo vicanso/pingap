@@ -1,5 +1,3 @@
-[basic]
-
 [upstreams.backend]
 addrs = ["127.0.0.1:6200"]
 
@@ -17,9 +15,3 @@ threads = 1
 [servers.pingap-nginx]
 addr = "127.0.0.1:6101"
 locations = ["pingap-nginx"]
-
-[plugins]
-
-[certificates]
-
-[storages]

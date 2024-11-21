@@ -69,7 +69,7 @@ export default function Locations() {
       "pingap:requestId",
       "pingap:ping",
       "pingap:acceptEncodingAdjustment",
-    ],
+    ].sort(),
     false,
   );
 

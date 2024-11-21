@@ -16,6 +16,7 @@ use crate::service::{CommonServiceTask, ServiceTask};
 use crate::util;
 use crate::util::convert_query_map;
 use async_trait::async_trait;
+use chrono::Timelike;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::error::Error;
@@ -67,13 +68,22 @@ pub struct LogCompressionTask {
     compression: String,
     path: PathBuf,
     level: u8,
+    days_ago: u16,
+    time_point_hour: u8,
 }
 
 #[async_trait]
 impl ServiceTask for LogCompressionTask {
     async fn run(&self) -> Option<bool> {
-        let Some(access_before) =
-            SystemTime::now().checked_sub(Duration::from_secs(7 * 24 * 3600))
+        if self.time_point_hour != chrono::Local::now().hour() as u8 {
+            return Some(false);
+        }
+        let mut days_ago = self.days_ago;
+        if days_ago == 0 {
+            days_ago = 7;
+        }
+        let Some(access_before) = SystemTime::now()
+            .checked_sub(Duration::from_secs(24 * 3600 * days_ago as u64))
         else {
             return Some(false);
         };
@@ -170,6 +180,8 @@ pub fn logger_try_init(
         let mut rolling_type = "".to_string();
         let mut compression = "".to_string();
         let mut level = 0;
+        let mut days_ago = 0;
+        let mut time_point_hour = 0;
         if let Some((_, query)) = params.log.split_once('?') {
             file = file.replace(&format!("?{query}"), "");
             let m = convert_query_map(query);
@@ -181,6 +193,12 @@ pub fn logger_try_init(
             }
             if let Some(value) = m.get("level") {
                 level = value.parse::<u8>().unwrap_or_default();
+            }
+            if let Some(value) = m.get("days_ago") {
+                days_ago = value.parse::<u16>().unwrap_or_default();
+            }
+            if let Some(value) = m.get("time_point_hour") {
+                time_point_hour = value.parse::<u8>().unwrap_or_default();
             }
         }
 
@@ -198,11 +216,13 @@ pub fn logger_try_init(
         fs::create_dir_all(dir)?;
         if !compression.is_empty() {
             task = Some(CommonServiceTask::new(
-                Duration::from_secs(24 * 3600),
+                Duration::from_secs(3600),
                 LogCompressionTask {
                     compression,
                     path: dir.to_path_buf(),
+                    days_ago,
                     level,
+                    time_point_hour,
                 },
             ))
         }
