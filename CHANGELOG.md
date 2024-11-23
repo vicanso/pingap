@@ -1,5 +1,55 @@
 # Changelog
 
+## [0.9.1](https://github.com/vicanso/pingap/compare/v0.9.0..0.9.1) - 2024-11-23
+
+### ⛰️  Features
+
+- Split and save the config as single toml in separation mode - ([562085b](https://github.com/vicanso/pingap/commit/562085b0d2cda2724739b83cbc93cabe7363cbb5))
+- Supports days_ago and time_point_hour parameters for log compression - ([ee76bd7](https://github.com/vicanso/pingap/commit/ee76bd7313d2d6deee1b426f24c55e4398bd0759))
+- Admin argument supports path - ([d676aeb](https://github.com/vicanso/pingap/commit/d676aeb06438ef4e1d5433dce6a542f0a2eb481b))
+- Supports log compression ([#57](https://github.com/orhun/git-cliff/issues/57)) - ([b6be388](https://github.com/vicanso/pingap/commit/b6be388f7e1910d04a7a4002fdbb5fab678366dc))
+- Health check supports grpc protocol ([#56](https://github.com/orhun/git-cliff/issues/56)) - ([165fa8a](https://github.com/vicanso/pingap/commit/165fa8aca23011517c21929c13d01c7421232a57))
+- Support pingap accept encoding adjustment plugin - ([22ab2fc](https://github.com/vicanso/pingap/commit/22ab2fc68500530cfb06423ece504fe146dee62e))
+- Show validity date of certificate - ([9d40a98](https://github.com/vicanso/pingap/commit/9d40a98acba45dc5fc82675b1e6064ad5f0fc30f))
+- Path rewrite support variable substitution - ([4c62dc2](https://github.com/vicanso/pingap/commit/4c62dc25a2b160f1d4588b4389cab2c928450338))
+- Server and location support grpc web module - ([e353aa6](https://github.com/vicanso/pingap/commit/e353aa67090a231c9dac2aa91bc6934c8911c646))
+- Location host match supports regex - ([8498168](https://github.com/vicanso/pingap/commit/84981687261eddcd3e9006ffae6d1ef5163634ef))
+- Tinyufo cache supports remove function - ([23833bf](https://github.com/vicanso/pingap/commit/23833bf13e17d011bf55bf35c6adf470ff225000))
+
+### 🐛 Bug Fixes
+
+- Fix non-latin name of config, #55 - ([b7b5129](https://github.com/vicanso/pingap/commit/b7b5129f0ac36d5c6c2f14d7a8158169f7addf15))
+- Fix lint error - ([7cea336](https://github.com/vicanso/pingap/commit/7cea33643c7a4a208f8e45a1a80d773021751e2c))
+
+### 🚜 Refactor
+
+- Create toml config if if not exists - ([46b17e7](https://github.com/vicanso/pingap/commit/46b17e7b0aef054fb1a42ab5e7f34a0effa3b358))
+- Add debug for proxy http trait - ([025031e](https://github.com/vicanso/pingap/commit/025031e626e585d9b59e2b616c6c5b579b9dadab))
+- Add static serve example - ([2384ffe](https://github.com/vicanso/pingap/commit/2384ffe5c9b886733b4050a678cb3a3a049c8cf9))
+- Adjust certificate editor - ([20acd3e](https://github.com/vicanso/pingap/commit/20acd3edf96bdee0f4ab6259da8a5f3a69b18b1b))
+- Ctx supports add variable function - ([cd66f0d](https://github.com/vicanso/pingap/commit/cd66f0db80d9b75741a3f0776b494e1e0f0dfa21))
+- Adjust regex capture for variables - ([9ade424](https://github.com/vicanso/pingap/commit/9ade4247fd953715bf460a6a2a49a6d734a6f4e4))
+- Update logo of pingap - ([01ffb87](https://github.com/vicanso/pingap/commit/01ffb876b8fd71ccb4d2b38d3d42c5fb1ac8f478))
+- Update opentelemetry - ([9a04df1](https://github.com/vicanso/pingap/commit/9a04df1857059711a161eaf85b60e1097f505f94))
+
+### 📚 Documentation
+
+- Add grpc web example - ([10001c3](https://github.com/vicanso/pingap/commit/10001c3fdbf230f406d744dc5aae372c99b76d53))
+- Add proxy upstream example - ([e7fbacd](https://github.com/vicanso/pingap/commit/e7fbacd4ad721cac79f5f85810f02d7eb56e8493))
+
+### 🧪 Testing
+
+- Add purge test for cache plugin - ([1411704](https://github.com/vicanso/pingap/commit/1411704819802016e157946ec66443efc9b20962))
+- Add test for basic auth plugin - ([04d1ec0](https://github.com/vicanso/pingap/commit/04d1ec0aee48ba1324b6bf22d297f4355be897ab))
+- Add test for config - ([9c13cbb](https://github.com/vicanso/pingap/commit/9c13cbb8569c8aff47a746b6173eb72e4e696a6f))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update pingora version - ([5bc53d3](https://github.com/vicanso/pingap/commit/5bc53d35ae158689d72ee388ea63ab7ade56a9eb))
+- Using ubuntu 18.04 as the build system - ([8a592e4](https://github.com/vicanso/pingap/commit/8a592e4638cf34d33c3a6782e8cf68be1ab21db0))
+- Benchmark test - ([0e519eb](https://github.com/vicanso/pingap/commit/0e519eb0f4156919477770db478130390b44bd05))
+- Use latest commit pingora - ([7199e3c](https://github.com/vicanso/pingap/commit/7199e3ce72887001f584b02e87f435b4d6211053))
+
 ## [0.9.0](https://github.com/vicanso/pingap/compare/v0.8.12..0.9.0) - 2024-11-02
 
 ### ⛰️  Features
