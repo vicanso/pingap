@@ -14,6 +14,7 @@
 
 use super::{ConfigStorage, Error, LoadConfigOptions, Result};
 use super::{Observer, PingapConf};
+use crate::util;
 use async_trait::async_trait;
 use etcd_client::{Client, ConnectOptions, GetOptions, WatchOptions};
 use humantime::parse_duration;
@@ -53,28 +54,27 @@ impl EtcdStorage {
         let mut password = "".to_string();
         let mut options = ConnectOptions::default();
         let mut separation = false;
-        for item in query.split('&') {
-            if let Some((key, value)) = item.split_once('=') {
-                match key {
-                    "user" => user = value.to_string(),
-                    "password" => password = value.to_string(),
-                    "timeout" => {
-                        if let Ok(d) = parse_duration(value) {
-                            options = options.with_timeout(d);
-                        }
-                    },
-                    "connect_timeout" => {
-                        if let Ok(d) = parse_duration(value) {
-                            options = options.with_connect_timeout(d);
-                        }
-                    },
-                    "separation" => {
-                        separation = true;
-                    },
-                    _ => {},
-                }
+        for (key, value) in util::convert_query_map(&query) {
+            match key.as_str() {
+                "user" => user = value,
+                "password" => password = value,
+                "timeout" => {
+                    if let Ok(d) = parse_duration(&value) {
+                        options = options.with_timeout(d);
+                    }
+                },
+                "connect_timeout" => {
+                    if let Ok(d) = parse_duration(&value) {
+                        options = options.with_connect_timeout(d);
+                    }
+                },
+                "separation" => {
+                    separation = true;
+                },
+                _ => {},
             }
         }
+
         if !user.is_empty() && !password.is_empty() {
             options = options.with_user(user, password);
         };
