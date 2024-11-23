@@ -81,7 +81,7 @@ opentelemetry_sdk = { version = "0.26.0", features = [
     "rt-tokio",
 ], default-features = false, optional = true }
 path-absolutize = "3.1.1"
-pingora = { git = "https://github.com/cloudflare/pingora", rev = "bdb13a7e40b19280d703ad1f64abc29ee5baf480", default-features = false, features = [
+pingora = { git = "https://github.com/cloudflare/pingora", rev = "e309436319ed5cbc3aaf53221070a1fd070b8bcf", default-features = false, features = [
     # pingora = { version = "0.4.0", default-features = false, features = [
     "lb",
     "openssl",
