@@ -17,7 +17,7 @@ use crate::cache::new_file_storage_clear_service;
 use crate::config::ETCD_PROTOCOL;
 use crate::service::{new_auto_restart_service, new_observer_service};
 use clap::Parser;
-use config::PingapConf;
+use config::{LoadConfigOptions, PingapConf};
 use crossbeam_channel::Sender;
 #[cfg(feature = "full")]
 use otel::TracerService;
@@ -144,7 +144,11 @@ fn get_config(admin: bool, s: Sender<Result<PingapConf, config::Error>>) {
         match tokio::runtime::Runtime::new() {
             Ok(rt) => {
                 let send = async move {
-                    let result = config::load_config(true, admin).await;
+                    let result = config::load_config(LoadConfigOptions {
+                        replace_include: true,
+                        admin,
+                    })
+                    .await;
                     if let Err(e) = s.send(result) {
                         // use pringln because log is not init
                         println!("sender fail, {e}");

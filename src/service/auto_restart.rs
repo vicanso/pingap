@@ -14,8 +14,8 @@
 
 use crate::config::{
     get_config_storage, get_current_config, load_config, set_current_config,
-    PingapConf, CATEGORY_CERTIFICATE, CATEGORY_LOCATION, CATEGORY_PLUGIN,
-    CATEGORY_UPSTREAM,
+    LoadConfigOptions, PingapConf, CATEGORY_CERTIFICATE, CATEGORY_LOCATION,
+    CATEGORY_PLUGIN, CATEGORY_UPSTREAM,
 };
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::restart;
@@ -31,7 +31,11 @@ use tracing::{debug, error, info};
 async fn diff_and_update_config(
     hot_reload_only: bool,
 ) -> Result<(bool, Vec<String>, String), Box<dyn std::error::Error>> {
-    let new_config = load_config(true, false).await?;
+    let new_config = load_config(LoadConfigOptions {
+        replace_include: true,
+        ..Default::default()
+    })
+    .await?;
     new_config.validate()?;
     let current_config: PingapConf = get_current_config().as_ref().clone();
 

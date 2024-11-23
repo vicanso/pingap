@@ -82,17 +82,20 @@ impl Observer {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct LoadConfigOptions {
+    pub replace_include: bool,
+    pub admin: bool,
+}
+
 #[async_trait]
 pub trait ConfigStorage {
-    async fn load_config(
-        &self,
-        replace_include: bool,
-        admin: bool,
-    ) -> Result<PingapConf>;
+    async fn load_config(&self, opts: LoadConfigOptions) -> Result<PingapConf>;
     async fn save_config(
         &self,
         conf: &PingapConf,
         category: &str,
+        name: Option<&str>,
     ) -> Result<()>;
     fn support_observer(&self) -> bool {
         false
@@ -128,16 +131,13 @@ pub fn try_init_config_storage(
     Ok(conf.as_ref())
 }
 
-pub async fn load_config(
-    replace_include: bool,
-    admin: bool,
-) -> Result<PingapConf> {
+pub async fn load_config(opts: LoadConfigOptions) -> Result<PingapConf> {
     let Some(storage) = CONFIG_STORAGE.get() else {
         return Err(Error::Invalid {
             message: "storage is not inited".to_string(),
         });
     };
-    storage.load_config(replace_include, admin).await
+    storage.load_config(opts).await
 }
 
 pub fn support_observer() -> bool {
@@ -157,20 +157,43 @@ pub fn get_config_storage() -> Option<&'static (dyn ConfigStorage + Sync + Send)
     }
 }
 
-pub async fn save_config(conf: &PingapConf, category: &str) -> Result<()> {
+pub async fn save_config(
+    conf: &PingapConf,
+    category: &str,
+    name: Option<&str>,
+) -> Result<()> {
     let Some(storage) = CONFIG_STORAGE.get() else {
         return Err(Error::Invalid {
             message: "storage is not inited".to_string(),
         });
     };
-    storage.save_config(conf, category).await
+    storage.save_config(conf, category, name).await
 }
 
 pub async fn sync_config(path: &str) -> Result<()> {
     let conf = get_current_config();
     let storage = new_config_storage(path)?;
-    for category in common::list_category() {
-        storage.save_config(&conf, &category).await?;
+    let mut arr = vec![(common::CATEGORY_BASIC, None)];
+    for key in conf.servers.keys() {
+        arr.push((common::CATEGORY_SERVER, Some(key.as_str())));
+    }
+    for key in conf.locations.keys() {
+        arr.push((common::CATEGORY_LOCATION, Some(key.as_str())));
+    }
+    for key in conf.upstreams.keys() {
+        arr.push((common::CATEGORY_UPSTREAM, Some(key.as_str())));
+    }
+    for key in conf.plugins.keys() {
+        arr.push((common::CATEGORY_PLUGIN, Some(key.as_str())));
+    }
+    for key in conf.certificates.keys() {
+        arr.push((common::CATEGORY_CERTIFICATE, Some(key.as_str())));
+    }
+    for key in conf.storages.keys() {
+        arr.push((common::CATEGORY_STORAGE, Some(key.as_str())));
+    }
+    for (category, name) in arr {
+        storage.save_config(&conf, category, name).await?;
     }
     Ok(())
 }
@@ -183,7 +206,7 @@ pub use file::FileStorage;
 mod tests {
     use super::{
         get_config_storage, load_config, support_observer, sync_config,
-        try_init_config_storage,
+        try_init_config_storage, LoadConfigOptions,
     };
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
@@ -192,7 +215,12 @@ mod tests {
     async fn test_load_config() {
         assert_eq!(true, get_config_storage().is_none());
         try_init_config_storage("./conf/pingap.toml").unwrap();
-        let conf = load_config(true, false).await.unwrap();
+        let conf = load_config(LoadConfigOptions {
+            replace_include: true,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
         assert_eq!("CAAD3074", conf.hash().unwrap());
         assert_eq!(false, support_observer());
         assert_eq!(true, get_config_storage().is_some());

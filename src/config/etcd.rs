@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{ConfigStorage, Error, Result};
+use super::{ConfigStorage, Error, LoadConfigOptions, Result};
 use super::{Observer, PingapConf};
 use async_trait::async_trait;
 use etcd_client::{Client, ConnectOptions, GetOptions, WatchOptions};
@@ -23,6 +23,7 @@ pub struct EtcdStorage {
     path: String,
     addrs: Vec<String>,
     options: ConnectOptions,
+    separation: bool,
 }
 
 pub const ETCD_PROTOCOL: &str = "etcd://";
@@ -51,6 +52,7 @@ impl EtcdStorage {
         let mut user = "".to_string();
         let mut password = "".to_string();
         let mut options = ConnectOptions::default();
+        let mut separation = false;
         for item in query.split('&') {
             if let Some((key, value)) = item.split_once('=') {
                 match key {
@@ -66,6 +68,9 @@ impl EtcdStorage {
                             options = options.with_connect_timeout(d);
                         }
                     },
+                    "separation" => {
+                        separation = true;
+                    },
                     _ => {},
                 }
             }
@@ -77,6 +82,7 @@ impl EtcdStorage {
             addrs,
             options,
             path,
+            separation,
         })
     }
     /// Connect to etcd server.
@@ -90,12 +96,9 @@ impl EtcdStorage {
 #[async_trait]
 impl ConfigStorage for EtcdStorage {
     /// Load config from etcd.
-    async fn load_config(
-        &self,
-        replace_include: bool,
-        _admin: bool,
-    ) -> Result<PingapConf> {
+    async fn load_config(&self, opts: LoadConfigOptions) -> Result<PingapConf> {
         let mut c = self.connect().await?;
+        let replace_include = opts.replace_include;
         let mut opts = GetOptions::new();
         opts = opts.with_prefix();
         let arr = c
@@ -115,15 +118,26 @@ impl ConfigStorage for EtcdStorage {
         &self,
         conf: &PingapConf,
         category: &str,
+        name: Option<&str>,
     ) -> Result<()> {
         let filepath = self.path.clone();
         conf.validate()?;
-        let (path, toml_value) = conf.get_toml(category)?;
+        let (path, toml_value) = if self.separation && name.is_some() {
+            conf.get_toml(category, name)?
+        } else {
+            conf.get_toml(category, None)?
+        };
         let key = format!("{filepath}{path}");
         let mut c = self.connect().await?;
-        c.put(key, toml_value, None)
-            .await
-            .map_err(|e| Error::Etcd { source: e })?;
+        if toml_value.is_empty() {
+            c.delete(key, None)
+                .await
+                .map_err(|e| Error::Etcd { source: e })?;
+        } else {
+            c.put(key, toml_value, None)
+                .await
+                .map_err(|e| Error::Etcd { source: e })?;
+        }
         Ok(())
     }
     fn support_observer(&self) -> bool {
@@ -150,8 +164,9 @@ impl ConfigStorage for EtcdStorage {
 mod tests {
     use super::EtcdStorage;
     use crate::config::{
-        ConfigStorage, PingapConf, CATEGORY_BASIC, CATEGORY_LOCATION,
-        CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_STORAGE, CATEGORY_UPSTREAM,
+        ConfigStorage, LoadConfigOptions, PingapConf, CATEGORY_BASIC,
+        CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_STORAGE,
+        CATEGORY_UPSTREAM,
     };
     use nanoid::nanoid;
     use pretty_assertions::assert_eq;
@@ -167,14 +182,35 @@ mod tests {
         let conf =
             PingapConf::new(toml_data.to_vec().as_slice(), false).unwrap();
 
-        storage.save_config(&conf, CATEGORY_BASIC).await.unwrap();
-        storage.save_config(&conf, CATEGORY_UPSTREAM).await.unwrap();
-        storage.save_config(&conf, CATEGORY_LOCATION).await.unwrap();
-        storage.save_config(&conf, CATEGORY_PLUGIN).await.unwrap();
-        storage.save_config(&conf, CATEGORY_SERVER).await.unwrap();
-        storage.save_config(&conf, CATEGORY_STORAGE).await.unwrap();
+        storage
+            .save_config(&conf, CATEGORY_BASIC, None)
+            .await
+            .unwrap();
+        storage
+            .save_config(&conf, CATEGORY_UPSTREAM, None)
+            .await
+            .unwrap();
+        storage
+            .save_config(&conf, CATEGORY_LOCATION, None)
+            .await
+            .unwrap();
+        storage
+            .save_config(&conf, CATEGORY_PLUGIN, None)
+            .await
+            .unwrap();
+        storage
+            .save_config(&conf, CATEGORY_SERVER, None)
+            .await
+            .unwrap();
+        storage
+            .save_config(&conf, CATEGORY_STORAGE, None)
+            .await
+            .unwrap();
 
-        let current_conf = storage.load_config(false, false).await.unwrap();
+        let current_conf = storage
+            .load_config(LoadConfigOptions::default())
+            .await
+            .unwrap();
         assert_eq!(current_conf.hash().unwrap(), conf.hash().unwrap());
     }
 }

@@ -18,8 +18,9 @@ use super::{
 };
 use crate::config::{
     self, get_current_config, save_config, BasicConf, CertificateConf,
-    LocationConf, PluginCategory, PluginConf, PluginStep, ServerConf,
-    StorageConf, UpstreamConf, CATEGORY_CERTIFICATE, CATEGORY_STORAGE,
+    LoadConfigOptions, LocationConf, PluginCategory, PluginConf, PluginStep,
+    ServerConf, StorageConf, UpstreamConf, CATEGORY_CERTIFICATE,
+    CATEGORY_STORAGE,
 };
 use crate::config::{
     PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
@@ -240,15 +241,17 @@ impl AdminServe {
     }
     async fn load_config(
         &self,
-        replace_includes: bool,
+        replace_include: bool,
     ) -> pingora::Result<PingapConf> {
-        let conf =
-            config::load_config(replace_includes, true)
-                .await
-                .map_err(|e| {
-                    error!("failed to load config: {e}");
-                    util::new_internal_error(400, e.to_string())
-                })?;
+        let conf = config::load_config(LoadConfigOptions {
+            replace_include,
+            admin: true,
+        })
+        .await
+        .map_err(|e| {
+            error!("failed to load config: {e}");
+            util::new_internal_error(400, e.to_string())
+        })?;
         conf.validate().map_err(|e| {
             error!("failed to validate config: {e}");
             util::new_internal_error(400, e.to_string())
@@ -294,10 +297,12 @@ impl AdminServe {
             error!(error = e.to_string(), "validate config fail");
             util::new_internal_error(400, e.to_string())
         })?;
-        save_config(&conf, category).await.map_err(|e| {
-            error!(error = e.to_string(), "save config fail");
-            util::new_internal_error(400, e.to_string())
-        })?;
+        save_config(&conf, category, Some(name))
+            .await
+            .map_err(|e| {
+                error!(error = e.to_string(), "save config fail");
+                util::new_internal_error(400, e.to_string())
+            })?;
         Ok(HttpResponse::no_content())
     }
     async fn update_config(
@@ -391,10 +396,12 @@ impl AdminServe {
                 conf.basic = basic_conf;
             },
         };
-        save_config(&conf, category).await.map_err(|e| {
-            error!(error = e.to_string(), "save config fail");
-            util::new_internal_error(400, e.to_string())
-        })?;
+        save_config(&conf, category, Some(name))
+            .await
+            .map_err(|e| {
+                error!(error = e.to_string(), "save config fail");
+                util::new_internal_error(400, e.to_string())
+            })?;
         Ok(HttpResponse::no_content())
     }
 }

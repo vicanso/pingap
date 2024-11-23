@@ -150,6 +150,8 @@ pub fn convert_query_map(query: &str) -> HashMap<String, String> {
     for item in query.split('&') {
         if let Some((key, value)) = item.split_once('=') {
             m.insert(key.to_string(), value.to_string());
+        } else {
+            m.insert(item.to_string(), "".to_string());
         }
     }
     m

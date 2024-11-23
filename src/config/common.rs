@@ -35,25 +35,13 @@ use toml::Table;
 use toml::{map::Map, Value};
 use url::Url;
 
-pub const CATEGORY_CERTIFICATE: &str = "certificate";
-pub const CATEGORY_UPSTREAM: &str = "upstream";
-pub const CATEGORY_LOCATION: &str = "location";
-pub const CATEGORY_SERVER: &str = "server";
-pub const CATEGORY_PLUGIN: &str = "plugin";
-pub const CATEGORY_STORAGE: &str = "storage";
 pub const CATEGORY_BASIC: &str = "basic";
-
-pub fn list_category() -> Vec<String> {
-    vec![
-        CATEGORY_CERTIFICATE.to_string(),
-        CATEGORY_UPSTREAM.to_string(),
-        CATEGORY_LOCATION.to_string(),
-        CATEGORY_SERVER.to_string(),
-        CATEGORY_PLUGIN.to_string(),
-        CATEGORY_STORAGE.to_string(),
-        CATEGORY_BASIC.to_string(),
-    ]
-}
+pub const CATEGORY_SERVER: &str = "server";
+pub const CATEGORY_LOCATION: &str = "location";
+pub const CATEGORY_UPSTREAM: &str = "upstream";
+pub const CATEGORY_PLUGIN: &str = "plugin";
+pub const CATEGORY_CERTIFICATE: &str = "certificate";
+pub const CATEGORY_STORAGE: &str = "storage";
 
 #[derive(PartialEq, Debug, Default, Clone, EnumString, strum::Display)]
 #[strum(serialize_all = "snake_case")]
@@ -551,85 +539,79 @@ pub struct PingapConf {
 }
 
 impl PingapConf {
-    pub fn get_toml(&self, category: &str) -> Result<(String, String)> {
+    pub fn get_toml(
+        &self,
+        category: &str,
+        name: Option<&str>,
+    ) -> Result<(String, String)> {
         let ping_conf = toml::to_string_pretty(self)
             .map_err(|e| Error::Ser { source: e })?;
-        let mut data: TomlConfig =
+        let data: TomlConfig =
             toml::from_str(&ping_conf).map_err(|e| Error::De { source: e })?;
-        let result = match category {
+
+        let filter_values = |mut values: Map<String, Value>| {
+            let name = name.unwrap_or_default();
+            if name.is_empty() {
+                return values;
+            }
+            let remove_keys: Vec<_> = values
+                .keys()
+                .filter(|key| *key != name)
+                .map(|key| key.to_string())
+                .collect();
+            for key in remove_keys {
+                values.remove(&key);
+            }
+            values
+        };
+        let get_path = |key: &str| {
+            let name = name.unwrap_or_default();
+            if key == CATEGORY_BASIC || name.is_empty() {
+                return format!("/{key}.toml");
+            }
+            format!("/{key}/{name}.toml")
+        };
+
+        let (key, value) = match category {
             CATEGORY_SERVER => {
-                let mut m = Map::new();
-                let _ = m.insert(
-                    "servers".to_string(),
-                    toml::Value::Table(data.servers.unwrap_or_default()),
-                );
-                let value = toml::to_string_pretty(&m)
-                    .map_err(|e| Error::Ser { source: e })?;
-                ("/servers.toml".to_string(), value)
+                ("servers", filter_values(data.servers.unwrap_or_default()))
             },
-            CATEGORY_LOCATION => {
-                let mut m = Map::new();
-                let _ = m.insert(
-                    "locations".to_string(),
-                    toml::Value::Table(data.locations.unwrap_or_default()),
-                );
-                let value = toml::to_string_pretty(&m)
-                    .map_err(|e| Error::Ser { source: e })?;
-                ("/locations.toml".to_string(), value)
-            },
-            CATEGORY_UPSTREAM => {
-                let mut m = Map::new();
-                let _ = m.insert(
-                    "upstreams".to_string(),
-                    toml::Value::Table(data.upstreams.unwrap_or_default()),
-                );
-                let value = toml::to_string_pretty(&m)
-                    .map_err(|e| Error::Ser { source: e })?;
-                ("/upstreams.toml".to_string(), value)
-            },
+            CATEGORY_LOCATION => (
+                "locations",
+                filter_values(data.locations.unwrap_or_default()),
+            ),
+            CATEGORY_UPSTREAM => (
+                "upstreams",
+                filter_values(data.upstreams.unwrap_or_default()),
+            ),
             CATEGORY_PLUGIN => {
-                let mut m = Map::new();
-                let _ = m.insert(
-                    "plugins".to_string(),
-                    toml::Value::Table(data.plugins.unwrap_or_default()),
-                );
-                let value = toml::to_string_pretty(&m)
-                    .map_err(|e| Error::Ser { source: e })?;
-                ("/plugins.toml".to_string(), value)
+                ("plugins", filter_values(data.plugins.unwrap_or_default()))
             },
-            CATEGORY_CERTIFICATE => {
-                let mut m = Map::new();
-                let _ = m.insert(
-                    "certificates".to_string(),
-                    toml::Value::Table(data.certificates.unwrap_or_default()),
-                );
-                let value = toml::to_string_pretty(&m)
-                    .map_err(|e| Error::Ser { source: e })?;
-                ("/certificates.toml".to_string(), value)
-            },
+            CATEGORY_CERTIFICATE => (
+                "certificates",
+                filter_values(data.certificates.unwrap_or_default()),
+            ),
             CATEGORY_STORAGE => {
-                let mut m = Map::new();
-                let _ = m.insert(
-                    "storages".to_string(),
-                    toml::Value::Table(data.storages.unwrap_or_default()),
-                );
-                let value = toml::to_string_pretty(&m)
-                    .map_err(|e| Error::Ser { source: e })?;
-                ("/storages.toml".to_string(), value)
+                ("storages", filter_values(data.storages.unwrap_or_default()))
             },
             _ => {
-                data.servers = None;
-                data.locations = None;
-                data.upstreams = None;
-                data.plugins = None;
-                data.certificates = None;
-                data.storages = None;
-                let value = toml::to_string_pretty(&data)
+                let value = toml::to_string(&data.basic.unwrap_or_default())
                     .map_err(|e| Error::Ser { source: e })?;
-                ("/basic.toml".to_string(), value)
+                let m: Map<String, Value> = toml::from_str(&value)
+                    .map_err(|e| Error::De { source: e })?;
+                ("basic", m)
             },
         };
-        Ok(result)
+        let path = get_path(key);
+        if value.is_empty() {
+            return Ok((path, "".to_string()));
+        }
+
+        let mut m = Map::new();
+        let _ = m.insert(key.to_string(), toml::Value::Table(value));
+        let value =
+            toml::to_string_pretty(&m).map_err(|e| Error::Ser { source: e })?;
+        Ok((path, value))
     }
     pub fn get_storage_value(&self, name: &str) -> Result<String> {
         for (key, item) in self.storages.iter() {
@@ -1048,9 +1030,8 @@ pub fn get_config_hash() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        get_app_name, get_config_hash, list_category, set_app_name,
-        set_current_config, validate_cert, BasicConf, CertificateConf,
-        PluginStep,
+        get_app_name, get_config_hash, set_app_name, set_current_config,
+        validate_cert, BasicConf, CertificateConf, PluginStep,
     };
     use super::{
         LocationConf, PingapConf, PluginCategory, ServerConf, UpstreamConf,
@@ -1060,14 +1041,6 @@ mod tests {
     use pretty_assertions::assert_eq;
     use serde::{Deserialize, Serialize};
     use std::str::FromStr;
-
-    #[test]
-    fn test_list_category() {
-        assert_eq!(
-            "certificate,upstream,location,server,plugin,storage,basic",
-            list_category().join(",")
-        );
-    }
 
     #[test]
     fn test_plugin_step() {
@@ -1366,7 +1339,7 @@ ai02RHnemmqJaNepfmCdyec=
         let full_conf =
             PingapConf::new(toml_data.to_vec().as_slice(), true).unwrap();
 
-        let (key, data) = conf.get_toml(CATEGORY_SERVER).unwrap();
+        let (key, data) = conf.get_toml(CATEGORY_SERVER, None).unwrap();
         assert_eq!("/servers.toml", key);
         assert_eq!(
             r###"[servers.test]
@@ -1388,7 +1361,7 @@ tls_min_version = ""
             data
         );
 
-        let (key, data) = conf.get_toml(CATEGORY_LOCATION).unwrap();
+        let (key, data) = conf.get_toml(CATEGORY_LOCATION, None).unwrap();
         assert_eq!("/locations.toml", key);
         assert_eq!(
             r###"[locations.lo]
@@ -1408,7 +1381,7 @@ weight = 1024
             data
         );
 
-        let (_, data) = full_conf.get_toml(CATEGORY_LOCATION).unwrap();
+        let (_, data) = full_conf.get_toml(CATEGORY_LOCATION, None).unwrap();
         assert_eq!(
             r###"[locations.lo]
 client_max_body_size = "1000.0 KB"
@@ -1427,7 +1400,7 @@ weight = 1024
             data
         );
 
-        let (key, data) = conf.get_toml(CATEGORY_UPSTREAM).unwrap();
+        let (key, data) = conf.get_toml(CATEGORY_UPSTREAM, None).unwrap();
         assert_eq!("/upstreams.toml", key);
         assert_eq!(
             r###"[upstreams.charts]
@@ -1458,7 +1431,7 @@ addrs = ["127.0.0.1:5001"]
             data
         );
 
-        let (key, data) = conf.get_toml(CATEGORY_PLUGIN).unwrap();
+        let (key, data) = conf.get_toml(CATEGORY_PLUGIN, None).unwrap();
         assert_eq!("/plugins.toml", key);
         assert_eq!(
             r###"[plugins.stats]
@@ -1468,24 +1441,24 @@ value = "/stats"
             data
         );
 
-        let (key, data) = conf.get_toml("").unwrap();
+        let (key, data) = conf.get_toml("", None).unwrap();
         assert_eq!("/basic.toml", key);
         assert_eq!(
             r###"[basic]
-name = "pingap"
-error_template = ""
-pid_file = "/tmp/pingap.pid"
-upgrade_sock = "/tmp/pingap_upgrade.sock"
-threads = 1
-work_stealing = true
-grace_period = "3m"
-graceful_shutdown_timeout = "10s"
-log_level = "info"
-log_format_json = false
-sentry = ""
 auto_restart_check_interval = "1m"
 cache_directory = ""
 cache_max_size = "100.0 MB"
+error_template = ""
+grace_period = "3m"
+graceful_shutdown_timeout = "10s"
+log_format_json = false
+log_level = "info"
+name = "pingap"
+pid_file = "/tmp/pingap.pid"
+sentry = ""
+threads = 1
+upgrade_sock = "/tmp/pingap_upgrade.sock"
+work_stealing = true
 "###,
             data
         );
