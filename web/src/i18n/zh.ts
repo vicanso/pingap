@@ -279,7 +279,7 @@ export default {
     cacheEviction: "支持缓存逐出",
     cachePredictor: "支持缓存状态记录",
     checkCacheControl: "校验Cache-Control响应头",
-    cacheHeaders: "响应头",
+    cacheHeaders: "缓存请求头",
     cacheHeadersPlaceholder: "输入要添加至缓存key的请求头",
     cachePurgeIpList: "允许缓存清除ip",
     cachePurgeIpListPlaceholder: "输入允许执行缓存清除的ip",

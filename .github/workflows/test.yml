@@ -47,7 +47,7 @@ jobs:
         run: make test
       - name: Run cargo msrv
         run: |
-          cargo install cargo-msrv --version 0.16.2
+          cargo install cargo-msrv --version 0.17.0
           cargo msrv list
       - name: Run cargo cov
         run: |

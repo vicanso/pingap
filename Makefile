@@ -32,7 +32,7 @@ udeps:
 	cargo +nightly udeps
 
 msrv:
-	cargo msrv verify
+	cargo msrv list
 
 
 bloat:

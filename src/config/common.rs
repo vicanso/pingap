@@ -493,7 +493,7 @@ impl BasicConf {
         if let Some(pid_file) = &self.pid_file {
             pid_file.clone()
         } else {
-            format!("/tmp/{}.pid", util::get_pkg_name())
+            format!("/run/{}.pid", util::get_pkg_name())
         }
     }
 }
@@ -1454,7 +1454,7 @@ graceful_shutdown_timeout = "10s"
 log_format_json = false
 log_level = "info"
 name = "pingap"
-pid_file = "/tmp/pingap.pid"
+pid_file = "/run/pingap.pid"
 sentry = ""
 threads = 1
 upgrade_sock = "/tmp/pingap_upgrade.sock"

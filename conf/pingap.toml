@@ -5,8 +5,8 @@ name = "pingap"
 # the error response's template (default <html>...</html>)
 error_template = ""
 
-# process id file (default /tmp/pingap.pid)
-pid_file = "/tmp/pingap.pid"
+# process id file (default /run/pingap.pid)
+pid_file = "/run/pingap.pid"
 
 # upgrade sock (default /tmp/pingap_upgrade.sock)
 upgrade_sock = "/tmp/pingap_upgrade.sock"
