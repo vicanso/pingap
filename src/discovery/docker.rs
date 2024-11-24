@@ -48,7 +48,7 @@ pub fn is_docker_discovery(value: &str) -> bool {
 
 impl Docker {
     fn new(addrs: &[String], ipv4_only: bool) -> Result<Self> {
-        let docker = bollard::Docker::connect_with_socket_defaults()
+        let docker = bollard::Docker::connect_with_local_defaults()
             .map_err(|e| Error::Docker { source: e })?;
 
         let mut containers = vec![];
