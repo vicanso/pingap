@@ -29,9 +29,12 @@ use tracing::{error, info, Level};
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 use walkdir::WalkDir;
 
+static GZIP_EXT: &str = "gz";
+static ZSTD_EXT: &str = "zst";
+
 fn zstd_compress(file: &Path, level: u8) -> Result<(), Box<dyn Error>> {
     let level = if level == 0 { 9 } else { level as i32 };
-    let zst_file = file.with_extension("zst");
+    let zst_file = file.with_extension(ZSTD_EXT);
     let mut original_file = fs::File::open(file)?;
     let file = fs::OpenOptions::new()
         .read(true)
@@ -46,7 +49,7 @@ fn zstd_compress(file: &Path, level: u8) -> Result<(), Box<dyn Error>> {
 }
 
 fn gzip_compress(file: &Path, level: u8) -> Result<(), Box<dyn Error>> {
-    let gzip_file = file.with_extension("gz");
+    let gzip_file = file.with_extension(GZIP_EXT);
     let mut original_file = fs::File::open(file)?;
     let file = fs::OpenOptions::new()
         .read(true)
@@ -87,7 +90,7 @@ impl ServiceTask for LogCompressionTask {
         else {
             return Some(false);
         };
-        let compresssion_exts = ["gz".to_string(), "zst".to_string()];
+        let compresssion_exts = [GZIP_EXT.to_string(), ZSTD_EXT.to_string()];
         for entry in WalkDir::new(&self.path).into_iter().filter_map(|e| e.ok())
         {
             let ext = entry
