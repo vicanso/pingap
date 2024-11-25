@@ -16,7 +16,7 @@ use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use once_cell::sync::Lazy;
 use opentelemetry::global::{BoxedTracer, ObjectSafeTracerProvider};
-use opentelemetry::{trace, InstrumentationLibrary};
+use opentelemetry::{trace, InstrumentationScope};
 use std::sync::Arc;
 
 #[derive(Clone)]
@@ -41,12 +41,8 @@ impl InstanceTracerProvider {
 impl trace::TracerProvider for InstanceTracerProvider {
     type Tracer = BoxedTracer;
 
-    /// Create a tracer using the global provider.
-    fn library_tracer(
-        &self,
-        library: Arc<InstrumentationLibrary>,
-    ) -> Self::Tracer {
-        BoxedTracer::new(self.provider.boxed_tracer(library))
+    fn tracer_with_scope(&self, scope: InstrumentationScope) -> Self::Tracer {
+        BoxedTracer::new(self.provider.boxed_tracer(scope))
     }
 }
 

@@ -138,35 +138,45 @@ pub fn new_tracer(name: &str) -> Option<BoxedTracer> {
 impl BackgroundService for TracerService {
     /// Open telemetry background service, it will schedule export data to server.
     async fn start(&self, mut shutdown: ShutdownWatch) {
-        let result = opentelemetry_otlp::new_pipeline()
-            .tracing()
-            .with_exporter(
-                opentelemetry_otlp::new_exporter()
-                    .tonic()
-                    .with_endpoint(&self.endpoint)
-                    .with_timeout(self.timeout),
-            )
-            .with_trace_config(
-                trace::Config::default()
-                    // TODO smapler config
-                    .with_sampler(Sampler::AlwaysOn)
-                    .with_id_generator(RandomIdGenerator::default())
-                    .with_max_attributes_per_span(self.max_attributes)
-                    .with_max_events_per_span(self.max_events)
-                    .with_resource(Resource::new(vec![KeyValue::new(
-                        "service.name",
-                        get_service_name(&self.name),
-                    )])),
-            )
-            .with_batch_config(
-                BatchConfigBuilder::default()
-                    .with_max_queue_size(self.max_queue_size)
-                    .with_scheduled_delay(self.scheduled_delay)
-                    .with_max_export_batch_size(self.max_export_batch_size)
-                    .with_max_export_timeout(self.max_export_timeout)
-                    .build(),
-            )
-            .install_batch(opentelemetry_sdk::runtime::Tokio);
+        let result = opentelemetry_otlp::SpanExporter::builder()
+            .with_tonic()
+            .with_endpoint(&self.endpoint)
+            .with_timeout(Duration::from_secs(3))
+            .with_timeout(self.timeout)
+            .build()
+            .map(|exporter| {
+                let batch =
+                    opentelemetry_sdk::trace::BatchSpanProcessor::builder(
+                        exporter,
+                        opentelemetry_sdk::runtime::Tokio,
+                    )
+                    .with_batch_config(
+                        BatchConfigBuilder::default()
+                            .with_max_queue_size(self.max_queue_size)
+                            .with_scheduled_delay(self.scheduled_delay)
+                            .with_max_export_batch_size(
+                                self.max_export_batch_size,
+                            )
+                            .with_max_export_timeout(self.max_export_timeout)
+                            .build(),
+                    )
+                    .build();
+                opentelemetry_sdk::trace::TracerProvider::builder()
+                    .with_span_processor(batch)
+                    .with_config(
+                        trace::Config::default()
+                            // TODO smapler config
+                            .with_sampler(Sampler::AlwaysOn)
+                            .with_id_generator(RandomIdGenerator::default())
+                            .with_max_attributes_per_span(self.max_attributes)
+                            .with_max_events_per_span(self.max_events)
+                            .with_resource(Resource::new(vec![KeyValue::new(
+                                "service.name",
+                                get_service_name(&self.name),
+                            )])),
+                    )
+                    .build()
+            });
 
         match result {
             Ok(tracer_provider) => {

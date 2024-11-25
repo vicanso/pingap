@@ -157,6 +157,9 @@ impl HttpCacheStorage for FileCache {
             .into_iter()
             .filter_map(|e| e.ok())
         {
+            if entry.path().is_dir() {
+                continue;
+            }
             let Ok(metadata) = entry.metadata() else {
                 continue;
             };
