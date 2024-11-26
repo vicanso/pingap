@@ -40,6 +40,13 @@ export default {
     storage: "Storage",
     searchPlaceholder: "Input the keyword",
   },
+  login: {
+    title: "Login",
+    description: "Please enter the administrator account and password.",
+    account: "Account",
+    password: "Password",
+    submit: "Login",
+  },
   home: {
     dashboard: "Dashboard",
     basic: "Basic Information",

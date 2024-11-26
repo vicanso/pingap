@@ -26,7 +26,7 @@ use crate::config::{
     PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
     CATEGORY_UPSTREAM,
 };
-use crate::http_extra::{HttpResponse, HTTP_HEADER_WWW_AUTHENTICATE};
+use crate::http_extra::HttpResponse;
 use crate::limit::TtlLruLimit;
 use crate::proxy::get_certificate_info_list;
 use crate::state::{
@@ -40,13 +40,16 @@ use bytes::{BufMut, BytesMut};
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use hex::encode;
+use hex::ToHex;
 use http::Method;
 use http::{header, HeaderValue, StatusCode};
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
+use regex::Regex;
 use rust_embed::EmbeddedFile;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::Write;
 use std::time::Duration;
@@ -114,7 +117,7 @@ impl From<EmbeddedStaticFile> for HttpResponse {
 
 pub struct AdminServe {
     pub path: String,
-    pub authorizations: Vec<Vec<u8>>,
+    pub authorizations: Vec<(String, String)>,
     pub plugin_step: PluginStep,
     hash_value: String,
     ip_fail_limit: TtlLruLimit,
@@ -167,11 +170,16 @@ impl TryFrom<&PluginConf> for AdminServe {
             if item.is_empty() {
                 continue;
             }
-            let _ = base64_decode(item).map_err(|e| Error::Base64Decode {
-                category: PluginCategory::BasicAuth.to_string(),
-                source: e,
-            })?;
-            authorizations.push(format!("Basic {item}").as_bytes().to_vec());
+            let data =
+                base64_decode(item).map_err(|e| Error::Base64Decode {
+                    category: PluginCategory::BasicAuth.to_string(),
+                    source: e,
+                })?;
+            if let Some((user, pass)) =
+                std::string::String::from_utf8_lossy(&data).split_once(':')
+            {
+                authorizations.push((user.to_string(), pass.to_string()));
+            }
         }
         let mut ip_fail_limit = get_int_conf(value, "ip_fail_limit");
         if ip_fail_limit <= 0 {
@@ -232,12 +240,35 @@ impl AdminServe {
         if self.authorizations.is_empty() {
             return true;
         }
+        let path = req_header.uri.path();
+        if path.len() <= 1
+            || Regex::new(r#".(js|css)$"#).unwrap().is_match(path)
+        {
+            return true;
+        }
         let value = util::get_req_header_value(req_header, "Authorization")
             .unwrap_or_default();
         if value.is_empty() {
             return false;
         }
-        self.authorizations.contains(&value.as_bytes().to_vec())
+        let Some((token, ts)) = value.split_once(':') else {
+            return false;
+        };
+        let offset = util::now().as_secs() as i64
+            - ts.parse::<i64>().unwrap_or_default();
+        if offset.abs() > 48 * 3600 {
+            return false;
+        }
+
+        for (user, pass) in self.authorizations.iter() {
+            let mut hasher = Sha256::new();
+            hasher.update(format!("{user}:{pass}:{ts}").as_bytes());
+            let hash256 = hasher.finalize();
+            if hash256.encode_hex::<String>() == token {
+                return true;
+            }
+        }
+        false
     }
     async fn load_config(
         &self,
@@ -440,14 +471,6 @@ impl Plugin for AdminServe {
             return Ok(None);
         }
         let header = session.req_header_mut();
-        if !self.auth_validate(header) {
-            self.ip_fail_limit.inc(&ip).await;
-            return Ok(Some(HttpResponse {
-                status: StatusCode::UNAUTHORIZED,
-                headers: Some(vec![HTTP_HEADER_WWW_AUTHENTICATE.clone()]),
-                ..Default::default()
-            }));
-        }
         let path = header.uri.path();
         let mut new_path =
             path.substring(self.path.len(), path.len()).to_string();
@@ -457,6 +480,13 @@ impl Plugin for AdminServe {
         // ignore parse error
         if let Ok(uri) = new_path.parse::<http::Uri>() {
             header.set_uri(uri);
+        }
+        if !self.auth_validate(header) {
+            self.ip_fail_limit.inc(&ip).await;
+            return Ok(Some(HttpResponse {
+                status: StatusCode::UNAUTHORIZED,
+                ..Default::default()
+            }));
         }
 
         let (method, mut path) = get_method_path(session);
@@ -614,11 +644,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            "Basic YWRtaW46MTIzMTIz,Basic cGluZ2FwOjEyMzEyMw==",
+            "admin:123123,pingap:123123",
             params
                 .authorizations
                 .iter()
-                .map(|item| std::string::String::from_utf8_lossy(item))
+                .map(|item| format!("{}:{}", item.0, item.1))
                 .collect::<Vec<_>>()
                 .join(",")
         );

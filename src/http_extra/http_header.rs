@@ -176,13 +176,6 @@ pub static HTTP_HEADER_NO_STORE: Lazy<HttpHeader> = Lazy::new(|| {
     )
 });
 
-pub static HTTP_HEADER_WWW_AUTHENTICATE: Lazy<HttpHeader> = Lazy::new(|| {
-    (
-        header::WWW_AUTHENTICATE,
-        HeaderValue::from_str(r###"Basic realm="Pingap""###).unwrap(),
-    )
-});
-
 pub static HTTP_HEADER_NO_CACHE: Lazy<HttpHeader> = Lazy::new(|| {
     (
         header::CACHE_CONTROL,
@@ -228,7 +221,7 @@ mod tests {
         convert_header_value, convert_headers, HTTP_HEADER_CONTENT_HTML,
         HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_NAME_X_REQUEST_ID,
         HTTP_HEADER_NO_CACHE, HTTP_HEADER_NO_STORE,
-        HTTP_HEADER_TRANSFER_CHUNKED, HTTP_HEADER_WWW_AUTHENTICATE,
+        HTTP_HEADER_TRANSFER_CHUNKED,
     };
     use crate::state::State;
     use http::HeaderValue;
@@ -462,15 +455,6 @@ mod tests {
                 "{}: {}",
                 HTTP_HEADER_NO_STORE.0.to_string(),
                 HTTP_HEADER_NO_STORE.1.to_str().unwrap_or_default()
-            )
-        );
-
-        assert_eq!(
-            r#"www-authenticate: Basic realm="Pingap""#,
-            format!(
-                "{}: {}",
-                HTTP_HEADER_WWW_AUTHENTICATE.0.to_string(),
-                HTTP_HEADER_WWW_AUTHENTICATE.1.to_str().unwrap_or_default()
             )
         );
 

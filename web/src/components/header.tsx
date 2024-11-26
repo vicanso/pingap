@@ -12,7 +12,7 @@ import {
   AudioWaveform,
   ClipboardCopy,
 } from "lucide-react";
-import { goToConfig, goToHome } from "@/routers";
+import { goToConfig, goToHome, goToLogin } from "@/routers";
 import { useTheme } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
 import {
@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/popover";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import request from "@/helpers/request";
+import HTTPError from "@/helpers/http-error";
 
 export function MainHeader({
   className,
@@ -108,6 +109,11 @@ export function MainHeader({
         title: t("fetchFail"),
         description: formatError(err),
       });
+
+      const status = ((err as HTTPError)?.status || 0) as number;
+      if (status == 401 || status === 403) {
+        goToLogin();
+      }
     }
   }, []);
   const zhLang = "zh";

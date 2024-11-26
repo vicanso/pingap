@@ -1,6 +1,8 @@
 import axios, { AxiosRequestConfig, AxiosResponse } from "axios";
 import HTTPError from "./http-error";
 
+import { getLoginToken, removeLoginToken } from "@/states/token";
+
 const requestedAt = "X-Requested-At";
 const request = axios.create({
   // 默认超时为10秒
@@ -9,6 +11,10 @@ const request = axios.create({
 
 request.interceptors.request.use(
   (config) => {
+    const token = getLoginToken();
+    if (token) {
+      config.headers["Authorization"] = token;
+    }
     // 对请求的query部分清空值
     if (config.params) {
       Object.keys(config.params).forEach((element) => {
@@ -74,7 +80,12 @@ request.interceptors.response.use(
   },
   (err) => {
     const { response } = err;
+
     const he = new HTTPError("Unknown error");
+    he.status = response.status;
+    if (he.status == 401) {
+      removeLoginToken();
+    }
     if (timeoutErrorCodes.includes(err.code)) {
       he.category = "timeout";
       he.message = "Request timeout";

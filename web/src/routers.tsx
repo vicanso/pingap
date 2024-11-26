@@ -9,6 +9,7 @@ import Plugins from "@/pages/Plugins";
 import Certificates from "@/pages/Certificates";
 import Config from "@/pages/Config";
 import Storages from "@/pages/Storages";
+import Login from "@/pages/Login";
 
 export const HOME = "/";
 export const BASIC = "/basic";
@@ -19,6 +20,7 @@ export const PLUGINS = "/plugins";
 export const CERTIFICATES = "/certificates";
 export const STORAGES = "/storages";
 export const CONFIG = "/config";
+export const LOGIN = "/login";
 
 const router = createHashRouter([
   {
@@ -60,6 +62,10 @@ const router = createHashRouter([
         path: STORAGES,
         element: <Storages />,
       },
+      {
+        path: LOGIN,
+        element: <Login />,
+      },
     ],
   },
 ]);
@@ -72,4 +78,8 @@ export function goToHome() {
 
 export function goToConfig() {
   router.navigate(CONFIG);
+}
+
+export function goToLogin() {
+  router.navigate(LOGIN);
 }
