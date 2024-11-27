@@ -376,6 +376,9 @@ export default {
     responseHeadersSetHeader: "设置响应头",
     responseHeadersSetHeaderPlaceholder:
       "输入设置响应头的名称 : 输入设置响应头的值",
+    responseHeadersRenameHeader: "修改响应头",
+    responseHeadersRenamePlaceholder:
+      "输入原来的响应头名称 : 输入新的响应头名称",
     responseHeadersRemoveHeader: "删除响应头",
     responseHeadersRemoveHeaderPlaceholder: "输入响应头名称",
     combinedAuthAuthorizations: "认证配置列表",
