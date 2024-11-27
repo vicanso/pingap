@@ -46,6 +46,7 @@ export default {
     account: "Account",
     password: "Password",
     submit: "Login",
+    fail: "Login Fail",
   },
   home: {
     dashboard: "Dashboard",

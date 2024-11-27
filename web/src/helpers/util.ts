@@ -1,4 +1,6 @@
 import { z } from "zod";
+import sha256hash from "crypto-js/sha256";
+import hex from "crypto-js/enc-hex";
 
 import HTTPError from "./http-error";
 export function isError(err: Error | HTTPError | unknown, category: string) {
@@ -80,11 +82,6 @@ export function formatLabel(label: string) {
 }
 
 export async function sha256(message: string) {
-  const msgUint8 = new TextEncoder().encode(message); // encode as (utf-8) Uint8Array
-  const hashBuffer = await window.crypto.subtle.digest("SHA-256", msgUint8); // hash the message
-  const hashArray = Array.from(new Uint8Array(hashBuffer)); // convert buffer to byte array
-  const hashHex = hashArray
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join(""); // convert bytes to hex string
-  return hashHex;
+  const hashDigest = sha256hash(message);
+  return hex.stringify(hashDigest);
 }

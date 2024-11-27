@@ -15,9 +15,13 @@ import { saveLoginToken } from "@/states/token";
 import useBasicState from "@/states/basic";
 import { goToHome } from "@/routers";
 import useConfigState from "@/states/config";
+import { useToast } from "@/hooks/use-toast";
+import { formatError } from "@/helpers/util";
 
 export default function Login() {
   const loginI18n = useI18n("login");
+  const { toast } = useToast();
+
   const [account, setAccount] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [fetchBasicInfo] = useBasicState((state) => [state.fetch]);
@@ -29,13 +33,16 @@ export default function Login() {
       await fetchConfig();
       goToHome();
     } catch (err) {
-      console.error(err);
+      toast({
+        title: loginI18n("fail"),
+        description: formatError(err),
+      });
     }
   };
   return (
     <div className="grow lg:border-l overflow-auto p-4">
       <div className="flex justify-center mt-10">
-        <Card className="max-w-xl self-center">
+        <Card className="w-[500px] self-center">
           <CardHeader>
             <CardTitle>{loginI18n("title")}</CardTitle>
             <CardDescription>{loginI18n("description")}</CardDescription>
@@ -58,6 +65,11 @@ export default function Login() {
                 type="password"
                 onChange={(e) => {
                   setPassword(e.target.value.trim());
+                }}
+                onKeyDown={(e) => {
+                  if (e.code == "Enter") {
+                    handleLogin();
+                  }
                 }}
               />
             </div>

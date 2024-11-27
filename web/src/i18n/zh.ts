@@ -40,6 +40,14 @@ export default {
     storage: "存储配置",
     searchPlaceholder: "输入关键字",
   },
+  login: {
+    title: "登录",
+    description: "请输入管理员账号与密码",
+    account: "账号",
+    password: "密码",
+    submit: "登录",
+    fail: "登录失败",
+  },
   home: {
     dashboard: "面板",
     basic: "基础信息",
