@@ -29,6 +29,7 @@ pub struct ResponseHeaders {
     add_headers: Vec<HttpHeader>,
     remove_headers: Vec<HeaderName>,
     set_headers: Vec<HttpHeader>,
+    rename_headers: Vec<(HeaderName, HeaderName)>,
     hash_value: String,
 }
 
@@ -68,12 +69,31 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
                 })?;
             remove_headers.push(item);
         }
+        let mut rename_headers = vec![];
+        for item in get_str_slice_conf(value, "rename_headers").iter() {
+            if let Some((k, v)) =
+                item.split_once(':').map(|(k, v)| (k.trim(), v.trim()))
+            {
+                let original_name =
+                    HeaderName::from_str(k).map_err(|e| Error::Invalid {
+                        category: PluginCategory::ResponseHeaders.to_string(),
+                        message: e.to_string(),
+                    })?;
+                let new_name =
+                    HeaderName::from_str(v).map_err(|e| Error::Invalid {
+                        category: PluginCategory::ResponseHeaders.to_string(),
+                        message: e.to_string(),
+                    })?;
+                rename_headers.push((original_name, new_name));
+            }
+        }
         let params = Self {
             hash_value,
             plugin_step: step,
             add_headers,
             set_headers,
             remove_headers,
+            rename_headers,
         };
 
         if params.plugin_step != PluginStep::Response {
@@ -110,7 +130,7 @@ impl Plugin for ResponseHeaders {
         if step != self.plugin_step {
             return Ok(());
         }
-        // add --> remove --> set
+        // add --> remove --> set --> rename
         // ingore error
         for (name, value) in &self.add_headers {
             if let Some(value) = convert_header_value(value, session, ctx) {
@@ -127,6 +147,12 @@ impl Plugin for ResponseHeaders {
                 let _ = upstream_response.insert_header(name, value);
             } else {
                 let _ = upstream_response.insert_header(name, value);
+            }
+        }
+        for (original_name, new_name) in &self.rename_headers {
+            if let Some(value) = upstream_response.remove_header(original_name)
+            {
+                let _ = upstream_response.append_header(new_name, value);
             }
         }
         Ok(())

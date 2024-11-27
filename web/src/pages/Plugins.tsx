@@ -926,6 +926,14 @@ export default function Plugins() {
           span: 6,
           category: ExFormItemCategory.TEXTS,
         },
+        {
+          name: "rename_headers",
+          label: pluginI18n("responseHeadersRenameHeader"),
+          placeholder: pluginI18n("responseHeadersRenamePlaceholder"),
+          defaultValue: pluginConfig.rename_headers as string[],
+          span: 6,
+          category: ExFormItemCategory.KV_LIST,
+        },
       );
       break;
     }

@@ -404,6 +404,9 @@ export default {
     responseHeadersSetHeader: "Set Header",
     responseHeadersSetHeaderPlaceholder:
       "Input the header name : Input the header value",
+    responseHeadersRenameHeader: "Rename Header",
+    responseHeadersRenamePlaceholder:
+      "Input the original header name : Input the new header name",
     responseHeadersRemoveHeader: "Remove Header",
     responseHeadersRemoveHeaderPlaceholder: "Input the header name",
     combinedAuthAuthorizations: "Authorizations",
