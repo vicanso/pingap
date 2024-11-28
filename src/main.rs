@@ -198,7 +198,7 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
         ..Default::default()
     })?;
     let (server_conf, name, proxy_plugin_info) =
-        plugin::parse_admin_plugin(&args.admin.unwrap_or_default());
+        plugin::parse_admin_plugin(&args.admin.unwrap_or_default())?;
 
     if let Err(e) =
         plugin::try_init_plugins(&HashMap::from([(name, proxy_plugin_info)]))
@@ -433,8 +433,15 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut server_conf_list: Vec<ServerConf> = conf.into();
 
     if let Some(addr) = &get_admin_addr() {
-        let (server_conf, _, _) = plugin::parse_admin_plugin(addr);
-        server_conf_list.push(server_conf);
+        let (server_conf, _, _) = plugin::parse_admin_plugin(addr)?;
+        if let Some(server) = server_conf_list
+            .iter_mut()
+            .find(|item| item.addr == server_conf.addr)
+        {
+            server.admin = true;
+        } else {
+            server_conf_list.push(server_conf);
+        }
     }
 
     let mut enabled_lets_encrypt = false;

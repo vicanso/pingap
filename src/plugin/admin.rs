@@ -43,6 +43,7 @@ use hex::encode;
 use hex::ToHex;
 use http::Method;
 use http::{header, HeaderValue, StatusCode};
+use humantime::parse_duration;
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
 use regex::Regex;
@@ -119,6 +120,7 @@ pub struct AdminServe {
     pub path: String,
     pub authorizations: Vec<(String, String)>,
     pub plugin_step: PluginStep,
+    max_age: Duration,
     hash_value: String,
     ip_fail_limit: TtlLruLimit,
 }
@@ -185,8 +187,20 @@ impl TryFrom<&PluginConf> for AdminServe {
         if ip_fail_limit <= 0 {
             ip_fail_limit = 10;
         }
+        let max_age_value = &get_str_conf(value, "max_age");
+        let mut max_age = Duration::from_secs(2 * 24 * 3600);
+        if !max_age_value.is_empty() {
+            max_age = parse_duration(max_age_value).map_err(|e| {
+                Error::ParseDuration {
+                    category: "admin".to_string(),
+                    source: e,
+                }
+            })?;
+        }
+
         let params = AdminServe {
             hash_value,
+            max_age,
             plugin_step: get_step_conf(value),
             path: get_str_conf(value, "path"),
             ip_fail_limit: TtlLruLimit::new(
@@ -256,7 +270,7 @@ impl AdminServe {
         };
         let offset = util::now().as_secs() as i64
             - ts.parse::<i64>().unwrap_or_default();
-        if offset.abs() > 48 * 3600 {
+        if offset.abs() > self.max_age.as_secs() as i64 {
             return false;
         }
 
@@ -459,6 +473,9 @@ impl Plugin for AdminServe {
         if self.plugin_step != step {
             return Ok(None);
         }
+        if !session.req_header().uri.path().starts_with(&self.path) {
+            return Ok(None);
+        }
         let ip = util::get_client_ip(session);
         if !self.ip_fail_limit.validate(&ip).await {
             return Ok(Some(HttpResponse {
@@ -467,9 +484,7 @@ impl Plugin for AdminServe {
                 ..Default::default()
             }));
         }
-        if !session.req_header().uri.path().starts_with(&self.path) {
-            return Ok(None);
-        }
+
         let header = session.req_header_mut();
         let path = header.uri.path();
         let mut new_path =

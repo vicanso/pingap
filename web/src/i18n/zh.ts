@@ -243,6 +243,8 @@ export default {
     pingPathPlaceholder: "输入响应ping对应的路径",
     adminPath: "路径",
     adminPathPlaceholder: "输入管理配置对应路径",
+    adminMaxAge: "有效期",
+    adminMaxAgePalceholder: "输入登录态的有效期",
     adminIpFailLimit: "失败ip限制",
     adminIpFailLimitPlaceholder: "输入失败时的ip限制次数",
     adminAuthorization: "认证信息",

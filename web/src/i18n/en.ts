@@ -258,6 +258,8 @@ export default {
     pingPathPlaceholder: "Input the path for ping health check",
     adminPath: "Admin Path",
     adminPathPlaceholder: "Input the path for admin plugin",
+    adminMaxAge: "Max Age",
+    adminMaxAgePalceholder: "Input the max session age for login",
     adminIpFailLimit: "Ip Fail Limit",
     adminIpFailLimitPlaceholder: "Input the fail ip limit count",
     adminAuthorization: "Authorization",

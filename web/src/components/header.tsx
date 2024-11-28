@@ -105,15 +105,15 @@ export function MainHeader({
       await fetchBasicInfo();
       await fetchConfig();
     } catch (err) {
+      const status = ((err as HTTPError)?.status || 0) as number;
+      if (status == 401) {
+        goToLogin();
+        return;
+      }
       toast({
         title: t("fetchFail"),
         description: formatError(err),
       });
-
-      const status = ((err as HTTPError)?.status || 0) as number;
-      if (status == 401 || status === 403) {
-        goToLogin();
-      }
     }
   }, []);
   const zhLang = "zh";

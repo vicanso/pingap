@@ -16,6 +16,7 @@ use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::proxy::ServerConf;
 use crate::state::{get_admin_addr, State};
+use crate::util::{self, base64_encode};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -53,19 +54,38 @@ mod ua_restriction;
 pub static ADMIN_SERVER_PLUGIN: Lazy<String> =
     Lazy::new(|| uuid::Uuid::now_v7().to_string());
 
-pub fn parse_admin_plugin(addr: &str) -> (ServerConf, String, PluginConf) {
-    let arr: Vec<&str> = addr.split('@').collect();
-    let mut addr = arr[0].to_string();
+pub fn parse_admin_plugin(
+    addr: &str,
+) -> Result<(ServerConf, String, PluginConf)> {
+    let info = url::Url::from_str(&format!("http://{addr}")).map_err(|e| {
+        Error::Invalid {
+            category: "url".to_string(),
+            message: e.to_string(),
+        }
+    })?;
+    let mut addr = info.host_str().unwrap_or_default().to_string();
+    if let Some(port) = info.port() {
+        addr = format!("{addr}:{port}")
+    }
     let mut authorization = "".to_string();
-    if arr.len() >= 2 {
-        authorization = arr[0].trim().to_string();
-        addr = arr[1].trim().to_string();
+    if !info.username().is_empty() {
+        authorization = info.username().to_string();
+        // if not base64 string
+        if let Some(pass) = info.password() {
+            authorization = base64_encode(format!("{authorization}:{pass}"));
+        }
     }
-    let mut path = "/".to_string();
-    if let Some(arr) = addr.clone().split_once("/") {
-        addr = arr.0.to_string();
-        path = format!("/{}", arr.1);
+    let mut path = info.path().to_string();
+    if path.is_empty() {
+        path = "/".to_string();
     }
+    let query = util::convert_query_map(info.query().unwrap_or_default());
+    let max_age = if let Some(value) = query.get("max_age") {
+        value.to_string()
+    } else {
+        "2d".to_string()
+    };
+
     let data = format!(
         r#"
     category = "admin"
@@ -73,10 +93,11 @@ pub fn parse_admin_plugin(addr: &str) -> (ServerConf, String, PluginConf) {
     authorizations = [
         "{authorization}"
     ]
+    max_age = "{max_age}"
     remark = "Admin serve"
     "#,
     );
-    (
+    Ok((
         ServerConf {
             name: "pingap:admin".to_string(),
             admin: true,
@@ -85,7 +106,7 @@ pub fn parse_admin_plugin(addr: &str) -> (ServerConf, String, PluginConf) {
         },
         ADMIN_SERVER_PLUGIN.clone(),
         toml::from_str::<PluginConf>(&data).unwrap(),
-    )
+    ))
 }
 
 #[derive(Debug, Snafu)]
@@ -102,6 +123,11 @@ pub enum Error {
     Base64Decode {
         category: String,
         source: base64::DecodeError,
+    },
+    #[snafu(display("Plugin {category}, base64 decode error {source}"))]
+    ParseDuration {
+        category: String,
+        source: humantime::DurationError,
     },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -331,7 +357,7 @@ pub fn try_init_plugins(
 
     // add admin plugin
     if let Some(addr) = &get_admin_addr() {
-        let (_, name, proxy_plugin_info) = parse_admin_plugin(addr);
+        let (_, name, proxy_plugin_info) = parse_admin_plugin(addr)?;
         plugin_confs.push((name, proxy_plugin_info));
     }
 

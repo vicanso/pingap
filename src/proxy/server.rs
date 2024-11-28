@@ -349,7 +349,7 @@ impl Server {
         &self,
         session: &mut Session,
         ctx: &mut State,
-    ) -> pingora::Result<()> {
+    ) -> pingora::Result<bool> {
         if let Some(plugin) = get_plugin(ADMIN_SERVER_PLUGIN.as_str()) {
             let result = plugin
                 .handle_request(PluginStep::Request, session, ctx)
@@ -357,14 +357,10 @@ impl Server {
             if let Some(resp) = result {
                 ctx.status = Some(resp.status);
                 resp.send(session).await?;
-            } else {
-                return Err(util::new_internal_error(
-                    500,
-                    "Admin server is unavailable".to_string(),
-                ));
+                return Ok(true);
             }
         }
-        Ok(())
+        Ok(false)
     }
 }
 
@@ -577,8 +573,7 @@ impl ProxyHttp for Server {
     {
         debug!("--> request filter");
         defer!(debug!("<-- request filter"););
-        if self.admin {
-            self.serve_admin(session, ctx).await?;
+        if self.admin && self.serve_admin(session, ctx).await? {
             return Ok(true);
         }
         // only enable for http 80

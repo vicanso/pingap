@@ -96,7 +96,7 @@ request.interceptors.response.use(
       } else {
         he.exception = true;
         he.category = "exception";
-        he.message = "Unknown error";
+        he.message = response.data || "Unknown error";
       }
     }
     addRequestStats(response?.config, response, he);

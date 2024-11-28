@@ -175,7 +175,15 @@ export default function Plugins() {
           label: pluginI18n("adminPath"),
           placeholder: pluginI18n("adminPathPlaceholder"),
           defaultValue: (pluginConfig.path || "") as string,
-          span: 3,
+          span: 2,
+          category: ExFormItemCategory.TEXT,
+        },
+        {
+          name: "max_age",
+          label: pluginI18n("adminMaxAge"),
+          placeholder: pluginI18n("adminMaxAgePalceholder"),
+          defaultValue: (pluginConfig.max_age || "") as string,
+          span: 2,
           category: ExFormItemCategory.TEXT,
         },
         {
@@ -183,7 +191,7 @@ export default function Plugins() {
           label: pluginI18n("adminIpFailLimit"),
           placeholder: pluginI18n("adminIpFailLimitPlaceholder"),
           defaultValue: Number(pluginConfig.ip_fail_limit || 0),
-          span: 3,
+          span: 2,
           category: ExFormItemCategory.NUMBER,
         },
         {
