@@ -69,7 +69,9 @@ pub fn parse_admin_plugin(
     }
     let mut authorization = "".to_string();
     if !info.username().is_empty() {
-        authorization = info.username().to_string();
+        authorization = urlencoding::decode(info.username())
+            .unwrap_or_default()
+            .to_string();
         // if not base64 string
         if let Some(pass) = info.password() {
             authorization = base64_encode(format!("{authorization}:{pass}"));

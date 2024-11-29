@@ -22,7 +22,7 @@ dev:
 	RUST_LOG=INFO cargo watch -w src -x 'run -- -c=~/github/pingap/conf/pingap.toml'
 
 devtest:
-	RUST_LOG=INFO cargo watch -w src -x 'run -- -c=~/tmp/pingap?separation --admin=127.0.0.1:3018 --autoreload'
+	RUST_LOG=INFO cargo watch -w src -x 'run -- -c=~/tmp/pingap?separation --admin=cGluZ2FwOjEyMzEyMw==@127.0.0.1:3018 --autoreload'
 
 devetcd:
 	RUST_LOG=INFO cargo watch -w src -x 'run -- -c="etcd://127.0.0.1:2379/pingap?timeout=10s&connect_timeout=5s" --admin=127.0.0.1:3018 --autoreload'
