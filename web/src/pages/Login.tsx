@@ -17,6 +17,7 @@ import { goToHome } from "@/routers";
 import useConfigState from "@/states/config";
 import { useToast } from "@/hooks/use-toast";
 import { formatError } from "@/helpers/util";
+import { useShallow } from "zustand/react/shallow";
 
 export default function Login() {
   const loginI18n = useI18n("login");
@@ -24,8 +25,8 @@ export default function Login() {
 
   const [account, setAccount] = React.useState("");
   const [password, setPassword] = React.useState("");
-  const [fetchBasicInfo] = useBasicState((state) => [state.fetch]);
-  const [fetchConfig] = useConfigState((state) => [state.fetch]);
+  const [fetchBasicInfo] = useBasicState(useShallow((state) => [state.fetch]));
+  const [fetchConfig] = useConfigState(useShallow((state) => [state.fetch]));
   const handleLogin = async () => {
     try {
       await saveLoginToken(account, password);

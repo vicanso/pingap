@@ -13,6 +13,7 @@ import {
 } from "@/constants";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 function getPluginConfig(
   name: string,
@@ -28,12 +29,14 @@ export default function Plugins() {
   const pluginI18n = useI18n("plugin");
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [config, initialized, update, remove] = useConfigState((state) => [
-    state.data,
-    state.initialized,
-    state.update,
-    state.remove,
-  ]);
+  const [config, initialized, update, remove] = useConfigState(
+    useShallow((state) => [
+      state.data,
+      state.initialized,
+      state.update,
+      state.remove,
+    ]),
+  );
 
   const newPlugin = "*";
   const plugins = Object.keys(config.plugins || {});

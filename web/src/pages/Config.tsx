@@ -5,15 +5,18 @@ import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "react-i18next";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useShallow } from "zustand/react/shallow";
 
 export default function Config() {
   const { t } = useTranslation();
   const { toast } = useToast();
-  const [fetchToml, fullToml, originalToml] = useConfigState((state) => [
-    state.fetchToml,
-    state.fullToml,
-    state.originalToml,
-  ]);
+  const [fetchToml, fullToml, originalToml] = useConfigState(
+    useShallow((state) => [
+      state.fetchToml,
+      state.fullToml,
+      state.originalToml,
+    ]),
+  );
   useAsync(async () => {
     try {
       await fetchToml();

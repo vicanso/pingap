@@ -12,6 +12,7 @@ import {
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 import { formatLabel } from "@/helpers/util";
+import { useShallow } from "zustand/react/shallow";
 
 function getCertificateConfig(
   name: string,
@@ -27,12 +28,14 @@ export default function Certificates() {
   const certificateI18n = useI18n("certificate");
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [config, initialized, update, remove] = useConfigState((state) => [
-    state.data,
-    state.initialized,
-    state.update,
-    state.remove,
-  ]);
+  const [config, initialized, update, remove] = useConfigState(
+    useShallow((state) => [
+      state.data,
+      state.initialized,
+      state.update,
+      state.remove,
+    ]),
+  );
   const newCertificate = "*";
   const certificates = Object.keys(config.certificates || {});
   certificates.sort();

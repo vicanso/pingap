@@ -10,15 +10,14 @@ import {
 } from "@/constants";
 import { newZodBytes, newZodDuration, newZodNumber } from "@/helpers/util";
 import useBasicState from "@/states/basic";
+import { useShallow } from "zustand/react/shallow";
 
 export default function Basic() {
   const basicI18n = useI18n("basic");
-  const [basicInfo] = useBasicState((state) => [state.data]);
-  const [config, initialized, update] = useConfigState((state) => [
-    state.data,
-    state.initialized,
-    state.update,
-  ]);
+  const [basicInfo] = useBasicState(useShallow((state) => [state.data]));
+  const [config, initialized, update] = useConfigState(
+    useShallow((state) => [state.data, state.initialized, state.update]),
+  );
   if (!initialized) {
     return <LoadingPage />;
   }

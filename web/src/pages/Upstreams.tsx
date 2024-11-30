@@ -17,6 +17,7 @@ import {
 } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 function getUpstreamConfig(name: string, upstreams?: Record<string, Upstream>) {
   if (!upstreams) {
@@ -31,13 +32,15 @@ export default function Upstreams() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [config, initialized, update, remove, getIncludeOptions] =
-    useConfigState((state) => [
-      state.data,
-      state.initialized,
-      state.update,
-      state.remove,
-      state.getIncludeOptions,
-    ]);
+    useConfigState(
+      useShallow((state) => [
+        state.data,
+        state.initialized,
+        state.update,
+        state.remove,
+        state.getIncludeOptions,
+      ]),
+    );
   const newUpstream = "*";
   const upstreams = Object.keys(config.upstreams || {});
   upstreams.sort();

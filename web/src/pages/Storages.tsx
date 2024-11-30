@@ -8,6 +8,7 @@ import { ExFormItemCategory, newStringOptions } from "@/constants";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 import { formatLabel } from "@/helpers/util";
+import { useShallow } from "zustand/react/shallow";
 
 function getStorageConfig(name: string, storages?: Record<string, Storage>) {
   if (!storages) {
@@ -19,12 +20,14 @@ function getStorageConfig(name: string, storages?: Record<string, Storage>) {
 export default function Storages() {
   const storageI18n = useI18n("storage");
   const [searchParams, setSearchParams] = useSearchParams();
-  const [config, initialized, update, remove] = useConfigState((state) => [
-    state.data,
-    state.initialized,
-    state.update,
-    state.remove,
-  ]);
+  const [config, initialized, update, remove] = useConfigState(
+    useShallow((state) => [
+      state.data,
+      state.initialized,
+      state.update,
+      state.remove,
+    ]),
+  );
 
   const newStorage = "*";
   const storages = Object.keys(config.storages || {});

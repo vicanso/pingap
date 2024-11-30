@@ -135,7 +135,7 @@ impl HttpCacheStorage for FileCache {
     }
     /// Remove cache object from file, tinyufo doesn't support remove now.
     async fn remove(&self, key: &str) -> Result<Option<CacheObject>> {
-        // TODO remove from tinyufo
+        self.cache.remove(&key.to_string());
         let file = Path::new(&self.directory).join(key);
         fs::remove_file(file)
             .await

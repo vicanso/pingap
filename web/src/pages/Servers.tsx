@@ -13,6 +13,7 @@ import {
 import { formatLabel, newZodDuration, omitEmptyArray } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 function getServerConfig(name: string, servers?: Record<string, Server>) {
   if (!servers) {
@@ -26,14 +27,16 @@ export default function Servers() {
   const i18n = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
   const [config, initialized, update, remove, getIncludeOptions] =
-    useConfigState((state) => [
-      state.data,
-      state.initialized,
-      state.update,
-      state.remove,
-      state.getIncludeOptions,
-    ]);
-  const [basicInfo] = useBasicState((state) => [state.data]);
+    useConfigState(
+      useShallow((state) => [
+        state.data,
+        state.initialized,
+        state.update,
+        state.remove,
+        state.getIncludeOptions,
+      ]),
+    );
+  const [basicInfo] = useBasicState(useShallow((state) => [state.data]));
 
   const newServer = "*";
   const servers = Object.keys(config.servers || {});

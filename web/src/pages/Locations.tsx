@@ -13,6 +13,7 @@ import {
 import { formatLabel, newZodBytes, omitEmptyArray } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 function getLocationConfig(name: string, locations?: Record<string, Location>) {
   if (!locations) {
@@ -27,13 +28,15 @@ export default function Locations() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [config, initialized, update, remove, getIncludeOptions] =
-    useConfigState((state) => [
-      state.data,
-      state.initialized,
-      state.update,
-      state.remove,
-      state.getIncludeOptions,
-    ]);
+    useConfigState(
+      useShallow((state) => [
+        state.data,
+        state.initialized,
+        state.update,
+        state.remove,
+        state.getIncludeOptions,
+      ]),
+    );
 
   const newLocation = "*";
   const locations = Object.keys(config.locations || {});

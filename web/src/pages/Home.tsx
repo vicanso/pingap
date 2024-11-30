@@ -16,6 +16,7 @@ import { listify } from "radash";
 import { Button } from "@/components/ui/button";
 import { useAsync } from "react-async-hook";
 import React from "react";
+import { useShallow } from "zustand/react/shallow";
 
 interface Summary {
   name: string;
@@ -25,12 +26,14 @@ interface Summary {
 
 export default function Home() {
   const homeI18n = useI18n("home");
-  const [config, initialized, getCertificateInfos] = useConfigState((state) => [
-    state.data,
-    state.initialized,
-    state.getCertificateInfos,
-  ]);
-  const [basicInfo] = useBasicState((state) => [state.data]);
+  const [config, initialized, getCertificateInfos] = useConfigState(
+    useShallow((state) => [
+      state.data,
+      state.initialized,
+      state.getCertificateInfos,
+    ]),
+  );
+  const [basicInfo] = useBasicState(useShallow((state) => [state.data]));
   const [validity, setValidity] = React.useState({} as Record<string, string>);
   useAsync(async () => {
     try {

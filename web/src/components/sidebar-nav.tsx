@@ -24,6 +24,7 @@ import { useI18n } from "@/i18n";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import React, { useEffect } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useLocation } from "react-router-dom";
 
 export function MainSidebar({
@@ -34,10 +35,9 @@ export function MainSidebar({
   const [pathname, setPathname] = React.useState(
     router.state.location.pathname,
   );
-  const [config, initialized] = useConfigState((state) => [
-    state.data,
-    state.initialized,
-  ]);
+  const [config, initialized] = useConfigState(
+    useShallow((state) => [state.data, state.initialized]),
+  );
 
   const location = useLocation();
 

@@ -27,6 +27,8 @@ import { useTranslation } from "react-i18next";
 import Logo from "@/assets/pingap.png";
 import useBasicState from "@/states/basic";
 import useConfigState from "@/states/config";
+import { useShallow } from "zustand/react/shallow";
+
 import { useAsync } from "react-async-hook";
 import { useToast } from "@/hooks/use-toast";
 import { formatError } from "@/helpers/util";
@@ -58,14 +60,13 @@ export function MainHeader({
     data: "",
   });
   const [aesResult, setAesResult] = React.useState("");
-  const [fetchBasicInfo, basicInfo] = useBasicState((state) => [
-    state.fetch,
-    state.data,
-  ]);
-  const [fetchConfig, initialized] = useConfigState((state) => [
-    state.fetch,
-    state.initialized,
-  ]);
+
+  const [fetchBasicInfo, basicInfo] = useBasicState(
+    useShallow((state) => [state.fetch, state.data]),
+  );
+  const [fetchConfig, initialized] = useConfigState(
+    useShallow((state) => [state.fetch, state.initialized]),
+  );
 
   const handleAes = async () => {
     const secret = aesData.key;
