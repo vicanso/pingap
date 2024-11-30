@@ -134,7 +134,7 @@ pub enum Error {
     #[snafu(display("Plugin {category}, regex error {source}"))]
     Regex {
         category: String,
-        source: fancy_regex::Error,
+        source: Box<fancy_regex::Error>,
     },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;

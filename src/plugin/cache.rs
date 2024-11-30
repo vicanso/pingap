@@ -192,7 +192,7 @@ impl TryFrom<&PluginConf> for Cache {
         } else {
             Some(Regex::new(&skip_value).map_err(|e| Error::Regex {
                 category: "cache".to_string(),
-                source: e,
+                source: Box::new(e),
             })?)
         };
 
