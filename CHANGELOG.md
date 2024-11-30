@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.9.2](https://github.com/vicanso/pingap/compare/v0.9.1..0.9.2) - 2024-11-30
+
+### ⛰️  Features
+
+- Cache plugin support skip handle - ([111ccb6](https://github.com/vicanso/pingap/commit/111ccb623d82e4527195f1cee047f32db08b0c5e))
+- Support add admin plugin to server, #58 - ([d9cd254](https://github.com/vicanso/pingap/commit/d9cd254bf4a231605c94f02ec9d05cef44802133))
+- Response header plugin support rename header, #61 ([#62](https://github.com/orhun/git-cliff/issues/62)) - ([66b4824](https://github.com/vicanso/pingap/commit/66b48241fad52624c93ec9ae3e5a8ed3a671d40f))
+
+### 🐛 Bug Fixes
+
+- Fix base64 encode of admin auth, #63 - ([a435cbf](https://github.com/vicanso/pingap/commit/a435cbf0606648dae34d2c16bdb0dd1f5c71d264))
+
+### 🚜 Refactor
+
+- Adjust admin login page - ([6e458f2](https://github.com/vicanso/pingap/commit/6e458f22a2714758757b6d8e88af40663fc87481))
+- Adjust admin login page - ([9f3825c](https://github.com/vicanso/pingap/commit/9f3825cccb30f5d28061e76de0c76af95352afd1))
+- Update open telemetry module ([#59](https://github.com/orhun/git-cliff/issues/59)) - ([2feb080](https://github.com/vicanso/pingap/commit/2feb0805ebd201e3265d095307eecee68c5693b9))
+- Adjust get query from etcd connection uri - ([5103c26](https://github.com/vicanso/pingap/commit/5103c26d0cf01d3e5596c49bb10d5c0275ec6e76))
+
+### 🧪 Testing
+
+- Fix clippy result large err - ([fbe27fe](https://github.com/vicanso/pingap/commit/fbe27fe0d2ba95f73479ca5b6243f4502718311d))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update deppendencies - ([626b829](https://github.com/vicanso/pingap/commit/626b829b8d7b5dfe5910b6ede4d0b1ad0853fdde))
+- Update modules - ([b4bb67e](https://github.com/vicanso/pingap/commit/b4bb67eae34d243a966b0a484c8572a594243c38))
+- Add pingap service config - ([e008557](https://github.com/vicanso/pingap/commit/e00855760d22c465c7b4f510f6087b0c594813c6))
+
 ## [0.9.1](https://github.com/vicanso/pingap/compare/v0.9.0..0.9.1) - 2024-11-23
 
 ### ⛰️  Features
