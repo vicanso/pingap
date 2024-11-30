@@ -131,6 +131,11 @@ pub enum Error {
         category: String,
         source: humantime::DurationError,
     },
+    #[snafu(display("Plugin {category}, regex error {source}"))]
+    Regex {
+        category: String,
+        source: fancy_regex::Error,
+    },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 

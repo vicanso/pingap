@@ -26,6 +26,7 @@ use crate::util;
 use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
 use bytesize::ByteSize;
+use fancy_regex::Regex;
 use http::{Method, StatusCode};
 use humantime::parse_duration;
 use once_cell::sync::{Lazy, OnceCell};
@@ -58,6 +59,7 @@ pub struct Cache {
     headers: Option<Vec<String>>,
     check_cache_control: bool,
     purge_ip_rules: util::IpRules,
+    skip: Option<Regex>,
     hash_value: String,
 }
 
@@ -184,6 +186,16 @@ impl TryFrom<&PluginConf> for Cache {
         let purge_ip_rules =
             util::IpRules::new(&get_str_slice_conf(value, "purge_ip_list"));
 
+        let skip_value = get_str_conf(value, "skip");
+        let skip = if skip_value.is_empty() {
+            None
+        } else {
+            Some(Regex::new(&skip_value).map_err(|e| Error::Regex {
+                category: "cache".to_string(),
+                source: e,
+            })?)
+        };
+
         let params = Self {
             hash_value,
             http_cache: cache,
@@ -197,6 +209,7 @@ impl TryFrom<&PluginConf> for Cache {
             headers,
             purge_ip_rules,
             check_cache_control: get_bool_conf(value, "check_cache_control"),
+            skip,
         };
         if params.plugin_step != PluginStep::Request {
             return Err(Error::Invalid {
@@ -236,11 +249,19 @@ impl Plugin for Cache {
             return Ok(None);
         }
         // cache only support get or head
-        let method = &session.req_header().method;
+        let req_header = session.req_header();
+        let method = &req_header.method;
         if ![Method::GET, Method::HEAD, METHOD_PURGE.to_owned()]
             .contains(method)
         {
             return Ok(None);
+        }
+        if let Some(skip) = &self.skip {
+            if let Some(value) = req_header.uri.path_and_query() {
+                if skip.is_match(value.as_str()).unwrap_or_default() {
+                    return Ok(None);
+                }
+            }
         }
 
         let mut keys = BytesMut::with_capacity(64);

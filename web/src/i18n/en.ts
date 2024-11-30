@@ -308,6 +308,8 @@ export default {
     cacheEviction: "Support Eviction",
     cachePredictor: "Support Predictor",
     checkCacheControl: "Check Cache-Control response header",
+    cacheSkip: "Skip Cache",
+    cacheSkipPlaceholder: "Input the regex for skip",
     cacheHeaders: "Headers",
     cacheHeadersPlaceholder: "Input the header for cache key",
     cachePurgeIpList: "Ip Allow Purge",
