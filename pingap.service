@@ -1,15 +1,19 @@
 # Pingap server
+# /usr/lib/systemd/system/pingap.service
+# sudo systemctl enable pingap.service
+
 
 [Unit]
 Description=A high performance web server and a reverse proxy server
 After=network.target nss-lookup.target
 
 [Service]
-Type=forking
+Type=simple
+User=root
 PIDFile=/run/pingap.pid
-ExecStartPre=/usr/sbin/pingap --conf=/etc/pingap/conf?separation -t'
-ExecStart=/usr/sbin/pingap --conf=/etc/pingap/conf?separation -d --log=/var/pingap/logs --autorestart
-#ExecStop=-/sbin/start-stop-daemon --quiet --stop --retry QUIT/5 --pidfile /run/pingap.pid
+ExecStartPre=/usr/sbin/pingap --conf=/etc/pingap/conf?separation -t
+ExecStart=/usr/sbin/pingap --conf=/etc/pingap/conf?separation -d --log=/var/log/pingap --autorestart
+ExecStop=/sbin/start-stop-daemon --quiet --stop --retry QUIT/5 --pidfile /run/pingap.pid
 TimeoutStopSec=5
 KillMode=mixed
 
