@@ -99,10 +99,11 @@ fn parse_certificate(
                 "",
             )
         };
-    let info = get_certificate_info(&cert).map_err(|e| Error::Invalid {
+    let mut info = get_certificate_info(&cert).map_err(|e| Error::Invalid {
         category: "get_certificate_info".to_string(),
         message: e.to_string(),
     })?;
+    info.acme = certificate_config.acme.clone();
 
     let hash_key = certificate_config.hash_key();
 

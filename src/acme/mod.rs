@@ -53,6 +53,7 @@ pub struct CertificateInfo {
     pub not_after: i64,
     pub not_before: i64,
     pub issuer: String,
+    pub acme: Option<String>,
 }
 
 impl CertificateInfo {
@@ -84,6 +85,7 @@ pub fn get_certificate_info(data: &[u8]) -> Result<CertificateInfo> {
         not_before: validity.not_before.timestamp(),
         not_after: validity.not_after.timestamp(),
         issuer: x509.issuer().to_string(),
+        ..Default::default()
     })
 }
 

@@ -33,6 +33,10 @@ fn validity_check(
 ) -> Result<(), String> {
     let now = util::now().as_secs() as i64;
     for (name, cert) in validity_list.iter() {
+        // acme certificate will auto update
+        if cert.acme.is_some() {
+            continue;
+        }
         // will expire check
         if now > cert.not_after - time_offset {
             let message = format!(
@@ -120,6 +124,7 @@ mod tests {
                         .unwrap()
                         .timestamp(),
                     issuer: "pingap".to_string(),
+                    ..Default::default()
                 },
             )],
             7 * 24 * 3600,
@@ -141,6 +146,7 @@ mod tests {
                         .unwrap()
                         .timestamp(),
                     issuer: "pingap".to_string(),
+                    ..Default::default()
                 },
             )],
             7 * 24 * 3600,
