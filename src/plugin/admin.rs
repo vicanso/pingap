@@ -297,10 +297,6 @@ impl AdminServe {
             error!("failed to load config: {e}");
             util::new_internal_error(400, e.to_string())
         })?;
-        conf.validate().map_err(|e| {
-            error!("failed to validate config: {e}");
-            util::new_internal_error(400, e.to_string())
-        })?;
         Ok(conf)
     }
     async fn get_config(
