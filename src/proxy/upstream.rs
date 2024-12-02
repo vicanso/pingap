@@ -195,7 +195,7 @@ impl Upstream {
             });
         }
         let key = conf.hash_key();
-        let discovery = conf.discovery.clone().unwrap_or_default();
+        let discovery = conf.guess_discovery();
         let mut hash = "".to_string();
         let sni = conf.sni.clone().unwrap_or_default();
         let tls = !sni.is_empty();

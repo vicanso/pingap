@@ -248,6 +248,19 @@ impl UpstreamConf {
         self.hash(&mut hasher);
         format!("{:x}", hasher.finish())
     }
+    pub fn guess_discovery(&self) -> String {
+        if let Some(discovery) = &self.discovery {
+            return discovery.to_string();
+        }
+        let exists_name_addr = self
+            .addrs
+            .iter()
+            .any(|item| item.parse::<std::net::IpAddr>().is_err());
+        if exists_name_addr {
+            return "dns".to_string();
+        }
+        "".to_string()
+    }
     /// Validate the options of upstream config.
     /// 1. The address list can't be empty, and can be converted to socket addr.
     /// 2. The health check url can be parsed to Url if it exists.
@@ -258,7 +271,7 @@ impl UpstreamConf {
             });
         }
         // only validate upstream addr for static discovery
-        if is_static_discovery(&self.discovery.clone().unwrap_or_default()) {
+        if is_static_discovery(&self.guess_discovery()) {
             for addr in self.addrs.iter() {
                 let arr: Vec<_> = addr.split(' ').collect();
                 let mut addr = arr[0].to_string();
