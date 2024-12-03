@@ -92,8 +92,6 @@ pub fn get_certificate_info(data: &[u8]) -> Result<CertificateInfo> {
 #[derive(Debug, Deserialize, Serialize, Default)]
 pub struct Certificate {
     pub domains: Vec<String>,
-    pub not_after: i64,
-    pub not_before: i64,
     pub pem: String,
     pub key: String,
 }
@@ -101,10 +99,11 @@ impl Certificate {
     /// Validate the cert is within the expiration date.
     pub fn valid(&self) -> bool {
         let ts = util::now().as_secs() as i64;
-        if self.not_before > ts {
-            return false;
+        if let Ok(info) = get_certificate_info(&self.get_cert()) {
+            info.not_after - ts > 2 * 24 * 3600
+        } else {
+            false
         }
-        self.not_after - ts > 2 * 24 * 3600
     }
     /// Get the cert pem data.
     pub fn get_cert(&self) -> Vec<u8> {
@@ -128,25 +127,14 @@ pub use validity_checker::new_tls_validity_service;
 mod tests {
     use super::{get_certificate_info, Certificate};
     use pretty_assertions::assert_eq;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn test_cert() {
-        let ts = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64;
-        let mut cert = Certificate {
-            not_before: ts - 10,
-            not_after: ts + 3 * 24 * 3600,
+        let cert = Certificate {
             pem: "cGluZ2Fw".to_string(),
             key: "cGluZ2FwLWtleQ==".to_string(),
             ..Default::default()
         };
-        assert_eq!(true, cert.valid());
-
-        cert.not_after = ts;
-        assert_eq!(false, cert.valid());
 
         assert_eq!(b"pingap".to_vec(), cert.get_cert());
         assert_eq!(b"pingap-key".to_vec(), cert.get_key());

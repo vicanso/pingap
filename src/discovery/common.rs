@@ -21,7 +21,7 @@ use std::collections::BTreeSet;
 use std::net::ToSocketAddrs;
 
 pub fn is_static_discovery(value: &str) -> bool {
-    value.is_empty() || value == "static"
+    value.is_empty() || value == "common"
 }
 
 /// Create a static discovery, execute it only once.

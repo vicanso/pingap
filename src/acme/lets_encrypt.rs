@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_certificate_info, Certificate, Error, Result};
+use super::{Certificate, Error, Result};
 use crate::config::get_current_config;
 use crate::http_extra::HttpResponse;
 use crate::proxy::init_certificates;
@@ -50,7 +50,7 @@ struct LetsEncryptService {
     domains: Vec<String>,
 }
 
-static WELL_KNOWN_PAHT_PREFIX: &str = "/.well-known/acme-challenge/";
+static WELL_KNOWN_PATH_PREFIX: &str = "/.well-known/acme-challenge/";
 
 /// Create a Let's Encrypt service to generate the certificate,
 /// and regenerate if the certificate is invalid or will be expired.
@@ -63,7 +63,7 @@ pub fn new_lets_encrypt_service(
     domains.sort();
 
     CommonServiceTask::new(
-        Duration::from_secs(30 * 60),
+        Duration::from_secs(10 * 60),
         LetsEncryptService {
             certificate_file,
             domains,
@@ -101,7 +101,7 @@ impl ServiceTask for LetsEncryptService {
             Err(e) => error!(
                 error = e.to_string(),
                 domains = domains.join(","),
-                "renew certificate fail"
+                "renew certificate fail, renew it again later"
             ),
         };
         None
@@ -137,7 +137,7 @@ pub async fn handle_lets_encrypt(
 ) -> pingora::Result<bool> {
     let path = session.req_header().uri.path();
     // lets encrypt acme challenge path
-    if path.starts_with(WELL_KNOWN_PAHT_PREFIX) {
+    if path.starts_with(WELL_KNOWN_PATH_PREFIX) {
         let value = {
             // token auth
             let data = get_lets_encrypt_challenge().lock().await;
@@ -242,7 +242,7 @@ async fn new_lets_encrypt(
 
         // http://your-domain/.well-known/acme-challenge/<TOKEN>
         let well_known_path =
-            format!("{WELL_KNOWN_PAHT_PREFIX}{}", challenge.token);
+            format!("{WELL_KNOWN_PATH_PREFIX}{}", challenge.token);
         info!(well_known_path, "let's encrypt well known path",);
 
         // save token for verification later
@@ -343,16 +343,6 @@ async fn new_lets_encrypt(
         }
     };
 
-    // get certificate validity
-    let mut not_before = params.not_before.unix_timestamp();
-    let now = util::now().as_secs() as i64;
-    // default expired time set 90 days
-    let mut not_after = now + 90 * 24 * 3600;
-    if let Ok(info) = get_certificate_info(cert_chain_pem.as_bytes()) {
-        not_before = info.not_before;
-        not_after = info.not_after;
-    }
-
     // save certificate as json file
     let mut f = fs::OpenOptions::new()
         .create(true)
@@ -366,8 +356,6 @@ async fn new_lets_encrypt(
         })?;
     let info = Certificate {
         domains: domains.to_vec(),
-        not_after,
-        not_before,
         pem: util::base64_encode(&cert_chain_pem),
         key: util::base64_encode(private_key.serialize_pem()),
     };
