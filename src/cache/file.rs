@@ -45,23 +45,34 @@ pub struct FileCache {
 
 /// Create a file cache and use tinyufo for hotspot data caching
 pub fn new_file_cache(dir: &str) -> Result<FileCache> {
-    let dir = util::resolve_path(dir);
+    let mut reading_max = 10 * 1000;
+    let mut writing_max = 1000;
+    let dir = if let Some((dir, query)) = dir.split_once('?') {
+        let m = util::convert_query_map(query);
+        if let Some(max) = m.get("reading_max") {
+            reading_max = max.parse::<u32>().unwrap_or(reading_max);
+        }
+        if let Some(max) = m.get("writing_max") {
+            writing_max = max.parse::<u32>().unwrap_or(writing_max);
+        }
+        util::resolve_path(dir)
+    } else {
+        util::resolve_path(dir)
+    };
     let path = Path::new(&dir);
     if !path.exists() {
         std::fs::create_dir_all(path).map_err(|e| Error::Io { source: e })?;
     }
-    info!(dir, "new file cache");
+    info!(dir, reading_max, writing_max, "new file cache");
 
     Ok(FileCache {
         directory: dir,
         reading: AtomicU32::new(0),
-        // TODO get max value from query string
-        reading_max: 10 * 1000,
+        reading_max,
         #[cfg(feature = "full")]
         read_time: CACHE_READING_TIME.clone(),
         writing: AtomicU32::new(0),
-        // TODO get max value from query string
-        writing_max: 1000,
+        writing_max,
         #[cfg(feature = "full")]
         write_time: CACHE_WRITING_TIME.clone(),
         cache: TinyUfo::new(100, 100),
@@ -169,7 +180,7 @@ impl HttpCacheStorage for FileCache {
             if accessed > access_before {
                 continue;
             }
-            match std::fs::remove_file(entry.path()) {
+            match fs::remove_file(entry.path()).await {
                 Ok(()) => {
                     success += 1;
                 },
