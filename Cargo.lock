@@ -2737,6 +2737,7 @@ dependencies = [
  "crc32fast",
  "criterion",
  "crossbeam-channel",
+ "derivative",
  "dhat",
  "diff",
  "dirs",

@@ -614,9 +614,6 @@ impl ProxyHttp for Server {
         debug!(name = location.name, "location is matched");
         location.rewrite(header, ctx.variables.as_ref());
 
-        // body limit
-        location.client_body_size_limit(Some(header), ctx)?;
-
         let done = location
             .clone()
             .handle_request_plugin(PluginStep::Request, session, ctx)
@@ -765,7 +762,7 @@ impl ProxyHttp for Server {
         if let Some(buf) = body {
             ctx.payload_size += buf.len();
             if let Some(location) = &ctx.location {
-                location.client_body_size_limit(None, ctx)?;
+                location.client_body_size_limit(ctx)?;
             }
         }
         Ok(())

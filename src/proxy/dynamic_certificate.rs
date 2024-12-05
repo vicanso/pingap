@@ -46,6 +46,7 @@ type DynamicCertificates = AHashMap<String, Arc<DynamicCertificate>>;
 static DYNAMIC_CERTIFICATE_MAP: Lazy<ArcSwap<DynamicCertificates>> =
     Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
 
+// https://letsencrypt.org/certificates/
 const E5: &[u8] = include_bytes!("../assets/e5.pem");
 const E6: &[u8] = include_bytes!("../assets/e6.pem");
 const R10: &[u8] = include_bytes!("../assets/r10.pem");

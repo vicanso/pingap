@@ -94,6 +94,33 @@ fn bench_get_response_header(c: &mut Criterion) {
     });
 }
 
+fn bench_get_header_value(c: &mut Criterion) {
+    c.bench_function("get header value", |b| {
+        let mut req_header =
+            RequestHeader::build("GET", b"/users/v1/me", None).unwrap();
+        req_header.insert_header("User-Agent", "pingap").unwrap();
+        req_header
+            .insert_header("Content-Type", "application/json")
+            .unwrap();
+        req_header
+            .insert_header(http::header::CONTENT_LENGTH, "10240")
+            .unwrap();
+
+        b.iter(|| {
+            if req_header
+                .headers
+                .get(http::header::CONTENT_LENGTH)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .is_empty()
+            {
+                panic!("get header value fail")
+            }
+        });
+    });
+}
+
 fn bench_location_filter(c: &mut Criterion) {
     let mut group = c.benchmark_group("location filter");
     let upstream_name = "charts";
@@ -283,6 +310,7 @@ fn bench_logger_format(c: &mut Criterion) {
 
 criterion_group!(
     benches,
+    bench_get_header_value,
     bench_insert_bytes_header,
     bench_insert_header_name,
     bench_get_response_header,

@@ -25,6 +25,7 @@ use crate::util;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
+use derivative::Derivative;
 use futures_util::FutureExt;
 use once_cell::sync::Lazy;
 use pingora::lb::selection::{Consistent, RoundRobin};
@@ -35,7 +36,6 @@ use pingora::proxy::Session;
 use pingora::upstreams::peer::{HttpPeer, Tracer, Tracing};
 use snafu::Snafu;
 use std::collections::HashMap;
-use std::fmt;
 use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -78,6 +78,8 @@ impl Tracing for UpstreamPeerTracer {
     }
 }
 
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct Upstream {
     pub name: String,
     pub key: String,
@@ -85,6 +87,7 @@ pub struct Upstream {
     hash_key: String,
     tls: bool,
     sni: String,
+    #[derivative(Debug = "ignore")]
     lb: SelectionLb,
     connection_timeout: Option<Duration>,
     total_connection_timeout: Option<Duration>,
@@ -99,27 +102,6 @@ pub struct Upstream {
     peer_tracer: Option<UpstreamPeerTracer>,
     tracer: Option<Tracer>,
     processing: AtomicI32,
-}
-
-impl fmt::Display for Upstream {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "name:{} ", self.name)?;
-        write!(f, "hash:{} ", self.hash)?;
-        write!(f, "hash_key:{} ", self.hash_key)?;
-        write!(f, "tls:{} ", self.tls)?;
-        write!(f, "sni:{} ", self.sni)?;
-        write!(f, "connection_timeout:{:?} ", self.connection_timeout)?;
-        write!(
-            f,
-            "total_connection_timeout:{:?} ",
-            self.total_connection_timeout
-        )?;
-        write!(f, "read_timeout:{:?} ", self.read_timeout)?;
-        write!(f, "idle_timeout:{:?} ", self.idle_timeout)?;
-        write!(f, "write_timeout:{:?} ", self.write_timeout)?;
-        write!(f, "verify_cert:{:?} ", self.verify_cert)?;
-        write!(f, "alpn:{:?}", self.alpn)
-    }
 }
 
 fn new_backends(
@@ -309,7 +291,7 @@ impl Upstream {
             tracer,
             processing: AtomicI32::new(0),
         };
-        debug!(upstream = up.to_string(), "new upstream");
+        debug!("new upstream: {up:?}");
         Ok(up)
     }
 
@@ -651,7 +633,6 @@ mod tests {
             format!("{:?}", up.tcp_keepalive)
         );
         assert_eq!("Some(1024)", format!("{:?}", up.tcp_recv_buf));
-        assert_eq!("name:charts hash:cookie hash_key:user-id tls:false sni: connection_timeout:Some(5s) total_connection_timeout:Some(10s) read_timeout:Some(3s) idle_timeout:Some(30s) write_timeout:Some(5s) verify_cert:None alpn:H2", up.to_string());
     }
     #[tokio::test]
     async fn test_get_hash_key_value() {

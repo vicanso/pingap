@@ -252,10 +252,14 @@ impl UpstreamConf {
         if let Some(discovery) = &self.discovery {
             return discovery.to_string();
         }
-        let exists_name_addr = self
-            .addrs
-            .iter()
-            .any(|item| item.parse::<std::net::IpAddr>().is_err());
+        let exists_name_addr = self.addrs.iter().any(|item| {
+            let host = if let Some((item, _)) = item.split_once(':') {
+                item.to_string()
+            } else {
+                item.to_string()
+            };
+            host.parse::<std::net::IpAddr>().is_err()
+        });
         if exists_name_addr {
             return "dns".to_string();
         }
@@ -1149,6 +1153,7 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
         );
 
         conf.addrs = vec!["127.0.0.1".to_string(), "github".to_string()];
+        conf.discovery = Some("common".to_string());
         let result = conf.validate("test");
         assert_eq!(true, result.is_err());
         assert_eq!(

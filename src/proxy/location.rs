@@ -25,7 +25,6 @@ use pingora::proxy::Session;
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
 use std::collections::HashMap;
-use std::fmt;
 use std::sync::atomic::{AtomicI32, AtomicU64};
 use std::sync::Arc;
 use substring::Substring;
@@ -40,16 +39,22 @@ pub enum Error {
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
+#[derive(Debug)]
 struct RegexPath {
     value: Regex,
 }
+
+#[derive(Debug)]
 struct PrefixPath {
     value: String,
 }
+
+#[derive(Debug)]
 struct EqualPath {
     value: String,
 }
 
+#[derive(Debug)]
 enum PathSelector {
     RegexPath(RegexPath),
     PrefixPath(PrefixPath),
@@ -129,6 +134,7 @@ fn new_host_selector(host: &str) -> Result<HostSelector> {
     Ok(se)
 }
 
+#[derive(Debug)]
 pub struct Location {
     pub name: String,
     pub key: String,
@@ -144,19 +150,6 @@ pub struct Location {
     pub upstream: String,
     pub grpc_web: bool,
     client_max_body_size: usize,
-}
-
-impl fmt::Display for Location {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "name:{} ", self.name)?;
-        write!(f, "path:{} ", self.path)?;
-        write!(f, "hosts:{:?} ", self.hosts)?;
-        write!(f, "reg_rewrite:{:?} ", self.reg_rewrite)?;
-        write!(f, "proxy_set_headers:{:?} ", self.proxy_set_headers)?;
-        write!(f, "proxy_add_headers:{:?} ", self.proxy_add_headers)?;
-        write!(f, "plugins:{:?} ", self.plugins)?;
-        write!(f, "upstream:{}", self.upstream)
-    }
 }
 
 fn format_headers(
@@ -221,7 +214,7 @@ impl Location {
                 .unwrap_or_default()
                 .as_u64() as usize,
         };
-        debug!(location = location.to_string(), "create a new location");
+        debug!("create a new location, {location:?}");
 
         Ok(location)
     }
@@ -269,23 +262,9 @@ impl Location {
     /// If the size in a request exceeds the configured value, the 413 (Request Entity Too Large) error
     /// is returned to the client.
     #[inline]
-    pub fn client_body_size_limit(
-        &self,
-        header: Option<&RequestHeader>,
-        ctx: &State,
-    ) -> pingora::Result<()> {
+    pub fn client_body_size_limit(&self, ctx: &State) -> pingora::Result<()> {
         if self.client_max_body_size == 0 {
             return Ok(());
-        }
-        if let Some(header) = header {
-            if util::get_content_length(header).unwrap_or_default()
-                > self.client_max_body_size
-            {
-                return Err(util::new_internal_error(
-                    413,
-                    "Request Entity Too Large".to_string(),
-                ));
-            }
         }
         if ctx.payload_size > self.client_max_body_size {
             return Err(util::new_internal_error(
@@ -500,8 +479,6 @@ mod tests {
         assert_eq!(true, lo.matched("pingap", "/api").0);
         assert_eq!(true, lo.matched("", "").0);
 
-        assert_eq!("name:lo path: hosts:[] reg_rewrite:None proxy_set_headers:None proxy_add_headers:None plugins:None upstream:charts", lo.to_string());
-
         // host
         let lo = Location::new(
             "lo",
@@ -651,41 +628,16 @@ mod tests {
         )
         .unwrap();
 
-        let mut req_header =
-            RequestHeader::build("GET", b"/users/v1/me", None).unwrap();
-        req_header
-            .insert_header(http::header::CONTENT_LENGTH, "1")
-            .unwrap();
-        let result =
-            lo.client_body_size_limit(Some(&req_header), &State::default());
+        let result = lo.client_body_size_limit(&State {
+            payload_size: 2,
+            ..Default::default()
+        });
         assert_eq!(true, result.is_ok());
 
-        req_header
-            .insert_header(http::header::CONTENT_LENGTH, "1024")
-            .unwrap();
-        let result =
-            lo.client_body_size_limit(Some(&req_header), &State::default());
-        assert_eq!(
-            " HTTPStatus context: Request Entity Too Large cause:  InternalError",
-            result.err().unwrap().to_string()
-        );
-
-        let result = lo.client_body_size_limit(
-            None,
-            &State {
-                payload_size: 2,
-                ..Default::default()
-            },
-        );
-        assert_eq!(true, result.is_ok());
-
-        let result = lo.client_body_size_limit(
-            None,
-            &State {
-                payload_size: 20,
-                ..Default::default()
-            },
-        );
+        let result = lo.client_body_size_limit(&State {
+            payload_size: 20,
+            ..Default::default()
+        });
         assert_eq!(
             " HTTPStatus context: Request Entity Too Large cause:  InternalError",
             result.err().unwrap().to_string()
