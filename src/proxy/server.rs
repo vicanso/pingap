@@ -537,7 +537,11 @@ impl ProxyHttp for Server {
             }
         }
         if let Some(location) = &ctx.location {
-            if location.grpc_web {
+            location
+                .validate_content_length(header)
+                .map_err(|e| util::new_internal_error(413, e.to_string()))?;
+
+            if location.enable_grpc() {
                 // Initialize gRPC module for this request
                 let grpc = session
                     .downstream_modules_ctx
@@ -552,10 +556,15 @@ impl ProxyHttp for Server {
                 grpc.init();
             }
 
-            ctx.location_accepted =
-                location.accepted.fetch_add(1, Ordering::Relaxed) + 1;
-            ctx.location_processing =
-                location.processing.fetch_add(1, Ordering::Relaxed) + 1;
+            match location.add_processing() {
+                Ok((accepted, processing)) => {
+                    ctx.location_accepted = accepted;
+                    ctx.location_processing = processing;
+                },
+                Err(e) => {
+                    return Err(util::new_internal_error(429, e.to_string()));
+                },
+            };
             let _ = location
                 .clone()
                 .handle_request_plugin(PluginStep::EarlyRequest, session, ctx)
@@ -762,7 +771,9 @@ impl ProxyHttp for Server {
         if let Some(buf) = body {
             ctx.payload_size += buf.len();
             if let Some(location) = &ctx.location {
-                location.client_body_size_limit(ctx)?;
+                location.client_body_size_limit(ctx).map_err(|e| {
+                    util::new_internal_error(413, e.to_string())
+                })?;
             }
         }
         Ok(())
@@ -1088,7 +1099,7 @@ impl ProxyHttp for Server {
         end_request();
         self.processing.fetch_sub(1, Ordering::Relaxed);
         if let Some(location) = &ctx.location {
-            location.processing.fetch_sub(1, Ordering::Relaxed);
+            location.sub_processing();
             if let Some(up) = get_upstream(&location.upstream) {
                 ctx.upstream_processing = Some(up.completed());
             }

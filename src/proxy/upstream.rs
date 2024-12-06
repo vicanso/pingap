@@ -25,7 +25,7 @@ use crate::util;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use derivative::Derivative;
+use derive_more::Debug;
 use futures_util::FutureExt;
 use once_cell::sync::Lazy;
 use pingora::lb::selection::{Consistent, RoundRobin};
@@ -78,8 +78,7 @@ impl Tracing for UpstreamPeerTracer {
     }
 }
 
-#[derive(Derivative)]
-#[derivative(Debug)]
+#[derive(Debug)]
 pub struct Upstream {
     pub name: String,
     pub key: String,
@@ -87,7 +86,7 @@ pub struct Upstream {
     hash_key: String,
     tls: bool,
     sni: String,
-    #[derivative(Debug = "ignore")]
+    #[debug("lb")]
     lb: SelectionLb,
     connection_timeout: Option<Duration>,
     total_connection_timeout: Option<Duration>,
@@ -291,7 +290,7 @@ impl Upstream {
             tracer,
             processing: AtomicI32::new(0),
         };
-        debug!("new upstream: {up:?}");
+        debug!(name = up.name, "new upstream: {up:?}");
         Ok(up)
     }
 

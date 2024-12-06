@@ -280,6 +280,20 @@ pub fn get_cache_key(prefix: &str, method: &str, uri: &Uri) -> CacheKey {
     CacheKey::new(namespace, uri.to_string(), "")
 }
 
+/// Get the content length from http request header.
+pub fn get_content_length(header: &RequestHeader) -> Option<usize> {
+    if let Some(content_length) =
+        header.headers.get(http::header::CONTENT_LENGTH)
+    {
+        if let Ok(size) =
+            content_length.to_str().unwrap_or_default().parse::<usize>()
+        {
+            return Some(size);
+        }
+    }
+    None
+}
+
 #[inline]
 pub fn get_latency(value: &Option<u64>) -> Option<u64> {
     let current = now().as_millis() as u64;

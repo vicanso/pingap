@@ -171,6 +171,8 @@ export default {
     weightPlaceholder: "输入location的权重",
     clientMaxBodySize: "请求实体限制大小",
     clientMaxBodySizePlaceholder: "输入请求实体限制大小(如1mb)",
+    maxProcessing: "最大正在处理请求数",
+    maxProcessingPlaceholder: "输入限制的最大正在处理请求数",
     plugins: "插件列表",
     pluginsPlaceholder: "选择location使用的相关插件",
     grpcWeb: "Grpc Web",

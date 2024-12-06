@@ -320,6 +320,7 @@ pub struct LocationConf {
     pub weight: Option<u16>,
     pub plugins: Option<Vec<String>>,
     pub client_max_body_size: Option<ByteSize>,
+    pub max_processing: Option<i32>,
     pub includes: Option<Vec<String>>,
     pub grpc_web: Option<bool>,
     pub remark: Option<String>,

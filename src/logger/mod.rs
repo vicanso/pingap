@@ -34,7 +34,7 @@ use walkdir::WalkDir;
 static GZIP_EXT: &str = "gz";
 static ZSTD_EXT: &str = "zst";
 
-fn zstd_compress(file: &Path, level: u8) -> Result<u64, Box<dyn Error>> {
+fn zstd_compress(file: &Path, level: u8) -> Result<(u64, u64), Box<dyn Error>> {
     let level = if level == 0 { 9 } else { level as i32 };
     let zst_file = file.with_extension(ZSTD_EXT);
     let mut original_file = fs::File::open(file)?;
@@ -44,13 +44,14 @@ fn zstd_compress(file: &Path, level: u8) -> Result<u64, Box<dyn Error>> {
         .create_new(true)
         .open(&zst_file)?;
 
-    let mut encoder = zstd::stream::Encoder::new(file, level)?;
-    let size = io::copy(&mut original_file, &mut encoder)?;
+    let mut encoder = zstd::stream::Encoder::new(&file, level)?;
+    let original_size = io::copy(&mut original_file, &mut encoder)?;
     encoder.finish()?;
-    Ok(size)
+    let size = file.metadata().map(|item| item.size()).unwrap_or_default();
+    Ok((size, original_size))
 }
 
-fn gzip_compress(file: &Path, level: u8) -> Result<u64, Box<dyn Error>> {
+fn gzip_compress(file: &Path, level: u8) -> Result<(u64, u64), Box<dyn Error>> {
     let gzip_file = file.with_extension(GZIP_EXT);
     let mut original_file = fs::File::open(file)?;
     let file = fs::OpenOptions::new()
@@ -63,10 +64,11 @@ fn gzip_compress(file: &Path, level: u8) -> Result<u64, Box<dyn Error>> {
     } else {
         Compression::new(level as u32)
     };
-    let mut encoder = GzEncoder::new(file, level);
-    let size = io::copy(&mut original_file, &mut encoder)?;
+    let mut encoder = GzEncoder::new(&file, level);
+    let original_size = io::copy(&mut original_file, &mut encoder)?;
     encoder.finish()?;
-    Ok(size)
+    let size = file.metadata().map(|item| item.size()).unwrap_or_default();
+    Ok((size, original_size))
 }
 
 pub struct LogCompressionTask {
@@ -113,7 +115,6 @@ impl ServiceTask for LogCompressionTask {
             if accessed > access_before {
                 continue;
             }
-            let original_size = metadata.size();
             let start = SystemTime::now();
             let result = if self.compression == "gzip" {
                 gzip_compress(entry.path(), self.level)
@@ -125,7 +126,7 @@ impl ServiceTask for LogCompressionTask {
                 Err(e) => {
                     error!(err = e.to_string(), file, "compress log fail");
                 },
-                Ok(size) => {
+                Ok((size, original_size)) => {
                     let elapsed = format!("{}ms", util::elapsed_ms(start));
                     info!(
                         file,

@@ -41,7 +41,9 @@ clap = { version = "4.5.21", features = [
 cookie = "0.18.1"
 crc32fast = "1.4.2"
 crossbeam-channel = "0.5.13"
-derivative = "2.2.0"
+derive_more = { version = "1.0.0", default-features = false, features = [
+    "debug",
+] }
 dhat = { version = "0.3.3", optional = true }
 diff = "0.1.13"
 dirs = "5.0.1"

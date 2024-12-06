@@ -16,7 +16,7 @@ use crate::config::{LocationConf, PluginStep};
 use crate::http_extra::{convert_header_value, convert_headers, HttpHeader};
 use crate::plugin::get_plugin;
 use crate::state::State;
-use crate::util;
+use crate::util::{self, get_content_length};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use once_cell::sync::Lazy;
@@ -25,7 +25,7 @@ use pingora::proxy::Session;
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI32, AtomicU64};
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 use substring::Substring;
 use tracing::{debug, error};
@@ -36,6 +36,10 @@ pub enum Error {
     Invalid { message: String },
     #[snafu(display("Regex value: {value}, {source}"))]
     Regex { value: String, source: regex::Error },
+    #[snafu(display("Too Many Requests, max:{max}"))]
+    TooManyRequest { max: i32 },
+    #[snafu(display("Request Entity Too Large, max:{max}"))]
+    BodyTooLarge { max: usize },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -138,6 +142,7 @@ fn new_host_selector(host: &str) -> Result<HostSelector> {
 pub struct Location {
     pub name: String,
     pub key: String,
+    pub upstream: String,
     path: String,
     path_selector: PathSelector,
     hosts: Vec<HostSelector>,
@@ -145,10 +150,10 @@ pub struct Location {
     proxy_add_headers: Option<Vec<HttpHeader>>,
     proxy_set_headers: Option<Vec<HttpHeader>>,
     plugins: Option<Vec<String>>,
-    pub accepted: AtomicU64,
-    pub processing: AtomicI32,
-    pub upstream: String,
-    pub grpc_web: bool,
+    accepted: AtomicU64,
+    processing: AtomicI32,
+    max_processing: i32,
+    grpc_web: bool,
     client_max_body_size: usize,
 }
 
@@ -206,6 +211,7 @@ impl Location {
             plugins: conf.plugins.clone(),
             accepted: AtomicU64::new(0),
             processing: AtomicI32::new(0),
+            max_processing: conf.max_processing.unwrap_or_default(),
             grpc_web: conf.grpc_web.unwrap_or_default(),
             proxy_add_headers: format_headers(&conf.proxy_add_headers)?,
             proxy_set_headers: format_headers(&conf.proxy_set_headers)?,
@@ -217,6 +223,45 @@ impl Location {
         debug!("create a new location, {location:?}");
 
         Ok(location)
+    }
+    #[inline]
+    pub fn enable_grpc(&self) -> bool {
+        self.grpc_web
+    }
+    #[inline]
+    pub fn validate_content_length(
+        &self,
+        header: &RequestHeader,
+    ) -> Result<()> {
+        if self.client_max_body_size == 0 {
+            return Ok(());
+        }
+        if get_content_length(header).unwrap_or_default()
+            > self.client_max_body_size
+        {
+            return Err(Error::BodyTooLarge {
+                max: self.client_max_body_size,
+            });
+        }
+
+        Ok(())
+    }
+    /// Add processing and accepted count of location.
+    #[inline]
+    pub fn add_processing(&self) -> Result<(u64, i32)> {
+        let accepted = self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
+        let processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
+        if self.max_processing != 0 && processing > self.max_processing {
+            return Err(Error::TooManyRequest {
+                max: self.max_processing,
+            });
+        }
+        Ok((accepted, processing))
+    }
+    /// Sub processing count of location.
+    #[inline]
+    pub fn sub_processing(&self) {
+        self.processing.fetch_sub(1, Ordering::Relaxed);
     }
     /// Return `true` if the host and path match location.
     #[inline]
@@ -262,15 +307,14 @@ impl Location {
     /// If the size in a request exceeds the configured value, the 413 (Request Entity Too Large) error
     /// is returned to the client.
     #[inline]
-    pub fn client_body_size_limit(&self, ctx: &State) -> pingora::Result<()> {
+    pub fn client_body_size_limit(&self, ctx: &State) -> Result<()> {
         if self.client_max_body_size == 0 {
             return Ok(());
         }
         if ctx.payload_size > self.client_max_body_size {
-            return Err(util::new_internal_error(
-                413,
-                "Request Entity Too Large".to_string(),
-            ));
+            return Err(Error::BodyTooLarge {
+                max: self.client_max_body_size,
+            });
         }
         Ok(())
     }

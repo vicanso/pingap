@@ -41,6 +41,7 @@ export interface Location {
   proxy_add_headers?: string[];
   rewrite?: string;
   client_max_body_size?: string;
+  max_processing?: number;
   plugins?: string[];
   includes?: string[];
   grpc_web?: boolean;

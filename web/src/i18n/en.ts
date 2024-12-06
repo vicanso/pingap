@@ -179,6 +179,8 @@ export default {
     weightPlaceholder: "Input the weight of location",
     clientMaxBodySize: "Client Max Body Size",
     clientMaxBodySizePlaceholder: "Input the max body size(e.g. 1mb)",
+    maxProcessing: "Max Processing Requests",
+    maxProcessingPlaceholder: "Input the max processing request count",
     plugins: "Plugins",
     pluginsPlaceholder: "Select the plugins for location",
     grpcWeb: "Grpc Web",

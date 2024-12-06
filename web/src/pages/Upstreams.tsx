@@ -85,7 +85,7 @@ export default function Upstreams() {
       defaultValue: upstreamConfig.discovery,
       span: 3,
       category: ExFormItemCategory.SELECT,
-      options: newStringOptions(["common", "dns", "docker"], true),
+      options: newStringOptions(["common", "dns", "docker"], true, true),
     },
     {
       name: "update_frequency",

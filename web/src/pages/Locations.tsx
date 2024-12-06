@@ -175,6 +175,14 @@ export default function Locations() {
       category: ExFormItemCategory.TEXT,
     },
     {
+      name: "max_processing",
+      label: locationI18n("maxProcessing"),
+      placeholder: locationI18n("maxProcessingPlaceholder"),
+      defaultValue: locationConfig.max_processing,
+      span: 3,
+      category: ExFormItemCategory.NUMBER,
+    },
+    {
       name: "plugins",
       label: locationI18n("plugins"),
       placeholder: locationI18n("pluginsPlaceholder"),
