@@ -683,7 +683,7 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(
-            " HTTPStatus context: Request Entity Too Large cause:  InternalError",
+            "Request Entity Too Large, max:10",
             result.err().unwrap().to_string()
         );
     }
