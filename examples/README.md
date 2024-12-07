@@ -1,5 +1,4 @@
-# examples
-
+# Examples
 
 ## Static-Server
 
@@ -36,4 +35,18 @@ The key points of configuration are as follows:
 
 ```bash
 cargo run -- -c=~/github/pingap/examples/grpc-web.toml --admin=127.0.0.1:3018
+```
+
+## Transparent Proxy
+
+- Upstream discovery should be `transparent`
+- Upstream sni should be `$host` for https
+- Certificate should be set as default for all domains
+
+```bash
+sudo cargo run -- -c=~/github/pingap/examples/transparent-proxy.toml --admin=127.0.0.1:3018
+```
+
+```bash
+curl -kv --resolve '*:443:127.0.0.1' 'https://cn.bing.com/'
 ```
