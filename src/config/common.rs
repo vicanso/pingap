@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{Error, Result};
-use crate::discovery::is_static_discovery;
+use crate::discovery::{is_static_discovery, DNS_DISCOVERY};
 use crate::plugin::parse_plugins;
 use crate::proxy::Parser;
 use crate::util::{self, aes_decrypt, base64_decode};
@@ -261,7 +261,7 @@ impl UpstreamConf {
             host.parse::<std::net::IpAddr>().is_err()
         });
         if exists_name_addr {
-            return "dns".to_string();
+            return DNS_DISCOVERY.to_string();
         }
         "".to_string()
     }

@@ -16,7 +16,7 @@ use crate::config::UpstreamConf;
 use crate::discovery::{
     is_dns_discovery, is_docker_discovery, is_static_discovery,
     new_common_discover_backends, new_dns_discover_backends,
-    new_docker_discover_backends,
+    new_docker_discover_backends, TRANSPARENT_DISCOVERY,
 };
 use crate::health::new_health_check;
 use crate::service::{CommonServiceTask, ServiceTask};
@@ -51,6 +51,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 enum SelectionLb {
     RoundRobin(Arc<LoadBalancer<RoundRobin>>),
     Consistent(Arc<LoadBalancer<Consistent>>),
+    Transparent,
 }
 
 #[derive(Clone, Debug)]
@@ -166,76 +167,87 @@ fn get_hash_value(
     }
 }
 
+fn new_load_balancer(
+    name: &str,
+    conf: &UpstreamConf,
+) -> Result<(SelectionLb, String, String)> {
+    if conf.addrs.is_empty() {
+        return Err(Error::Common {
+            category: "new_upstream".to_string(),
+            message: "Upstream addrs is empty".to_string(),
+        });
+    }
+    let discovery = conf.guess_discovery();
+    if discovery == TRANSPARENT_DISCOVERY {
+        return Ok((SelectionLb::Transparent, "".to_string(), "".to_string()));
+    }
+    let mut hash = "".to_string();
+    let tls = conf
+        .sni
+        .as_ref()
+        .map(|item| !item.is_empty())
+        .unwrap_or_default();
+    let backends = new_backends(
+        &conf.addrs,
+        tls,
+        conf.ipv4_only.unwrap_or_default(),
+        discovery.as_str(),
+    )?;
+    let (hc, health_check_frequency) =
+        new_health_check(name, &conf.health_check.clone().unwrap_or_default())
+            .map_err(|e| Error::Common {
+                message: e.to_string(),
+                category: "health".to_string(),
+            })?;
+
+    let algo_method = conf.algo.clone().unwrap_or_default();
+    let algo_params: Vec<&str> = algo_method.split(':').collect();
+    let mut hash_key = "".to_string();
+
+    let lb = match algo_params[0] {
+        "hash" => {
+            let mut lb = LoadBalancer::<Consistent>::from_backends(backends);
+            if algo_params.len() > 1 {
+                hash = algo_params[1].to_string();
+                if algo_params.len() > 2 {
+                    hash_key = algo_params[2].to_string();
+                }
+            }
+            if is_static_discovery(&discovery) {
+                lb.update()
+                    .now_or_never()
+                    .expect("static should not block")
+                    .expect("static should not error");
+            }
+            lb.set_health_check(hc);
+            lb.update_frequency = conf.update_frequency;
+            lb.health_check_frequency = Some(health_check_frequency);
+            SelectionLb::Consistent(Arc::new(lb))
+        },
+        _ => {
+            let mut lb = LoadBalancer::<RoundRobin>::from_backends(backends);
+            if is_static_discovery(&discovery) {
+                lb.update()
+                    .now_or_never()
+                    .expect("static should not block")
+                    .expect("static should not error");
+            }
+            lb.set_health_check(hc);
+            lb.update_frequency = conf.update_frequency;
+            lb.health_check_frequency = Some(health_check_frequency);
+            SelectionLb::RoundRobin(Arc::new(lb))
+        },
+    };
+    Ok((lb, hash, hash_key))
+}
+
 impl Upstream {
     /// Creates a new upstream from config.
     pub fn new(name: &str, conf: &UpstreamConf) -> Result<Self> {
-        if conf.addrs.is_empty() {
-            return Err(Error::Common {
-                category: "new_upstream".to_string(),
-                message: "Upstream addrs is empty".to_string(),
-            });
-        }
+        let (lb, hash, hash_key) = new_load_balancer(name, conf)?;
         let key = conf.hash_key();
-        let discovery = conf.guess_discovery();
-        let mut hash = "".to_string();
         let sni = conf.sni.clone().unwrap_or_default();
         let tls = !sni.is_empty();
-        let backends = new_backends(
-            &conf.addrs,
-            tls,
-            conf.ipv4_only.unwrap_or_default(),
-            discovery.as_str(),
-        )?;
-
-        let (hc, health_check_frequency) = new_health_check(
-            name,
-            &conf.health_check.clone().unwrap_or_default(),
-        )
-        .map_err(|e| Error::Common {
-            message: e.to_string(),
-            category: "health".to_string(),
-        })?;
-
-        let algo_method = conf.algo.clone().unwrap_or_default();
-        let algo_params: Vec<&str> = algo_method.split(':').collect();
-        let mut hash_key = "".to_string();
-
-        let lb = match algo_params[0] {
-            "hash" => {
-                let mut lb =
-                    LoadBalancer::<Consistent>::from_backends(backends);
-                if algo_params.len() > 1 {
-                    hash = algo_params[1].to_string();
-                    if algo_params.len() > 2 {
-                        hash_key = algo_params[2].to_string();
-                    }
-                }
-                if is_static_discovery(&discovery) {
-                    lb.update()
-                        .now_or_never()
-                        .expect("static should not block")
-                        .expect("static should not error");
-                }
-                lb.set_health_check(hc);
-                lb.update_frequency = conf.update_frequency;
-                lb.health_check_frequency = Some(health_check_frequency);
-                SelectionLb::Consistent(Arc::new(lb))
-            },
-            _ => {
-                let mut lb =
-                    LoadBalancer::<RoundRobin>::from_backends(backends);
-                if is_static_discovery(&discovery) {
-                    lb.update()
-                        .now_or_never()
-                        .expect("static should not block")
-                        .expect("static should not error");
-                }
-                lb.set_health_check(hc);
-                lb.update_frequency = conf.update_frequency;
-                lb.health_check_frequency = Some(health_check_frequency);
-                SelectionLb::RoundRobin(Arc::new(lb))
-            },
-        };
 
         let alpn = if let Some(alpn) = &conf.alpn {
             match alpn.to_uppercase().as_str() {
@@ -272,7 +284,7 @@ impl Upstream {
             name: name.to_string(),
             key,
             tls,
-            sni: sni.clone(),
+            sni,
             hash,
             hash_key,
             lb,
@@ -308,10 +320,27 @@ impl Upstream {
                     get_hash_value(&self.hash, &self.hash_key, session, ctx);
                 lb.select(value.as_bytes(), 256)
             },
+            SelectionLb::Transparent => None,
         };
         self.processing.fetch_add(1, Ordering::Relaxed);
-        upstream.map(|upstream| {
-            let mut p = HttpPeer::new(upstream, self.tls, self.sni.clone());
+        let p = if matches!(self.lb, SelectionLb::Transparent) {
+            let host = util::get_host(session.req_header())?;
+            let sni = if self.sni == "$host" {
+                host.to_string()
+            } else {
+                self.sni.clone()
+            };
+            Some(HttpPeer::new(
+                format!("{host}:{}", ctx.server_port.unwrap_or(80)),
+                self.tls,
+                sni,
+            ))
+        } else {
+            upstream.map(|upstream| {
+                HttpPeer::new(upstream, self.tls, self.sni.clone())
+            })
+        };
+        p.map(|mut p| {
             p.options.connection_timeout = self.connection_timeout;
             p.options.total_connection_timeout = self.total_connection_timeout;
             p.options.read_timeout = self.read_timeout;
@@ -444,6 +473,10 @@ impl ServiceTask for HealthCheckTask {
         let upstreams = {
             let mut upstreams = vec![];
             for (name, up) in UPSTREAM_MAP.load().iter() {
+                // transparent ignore health check
+                if matches!(up.lb, SelectionLb::Transparent) {
+                    continue;
+                }
                 upstreams.push((name.to_string(), up.clone()));
             }
             upstreams

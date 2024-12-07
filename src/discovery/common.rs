@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::COMMON_DISCOVERY;
 use super::{format_addrs, Error, Result};
 use http::Extensions;
 use pingora::lb::discovery;
@@ -21,7 +22,7 @@ use std::collections::BTreeSet;
 use std::net::ToSocketAddrs;
 
 pub fn is_static_discovery(value: &str) -> bool {
-    value.is_empty() || value == "common"
+    value.is_empty() || value == COMMON_DISCOVERY
 }
 
 /// Create a static discovery, execute it only once.

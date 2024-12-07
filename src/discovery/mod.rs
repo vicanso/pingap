@@ -65,6 +65,11 @@ pub(crate) fn format_addrs(addrs: &[String], tls: bool) -> Vec<Addr> {
     new_addrs
 }
 
+pub const DNS_DISCOVERY: &str = "dns";
+pub const DOCKER_DISCOVERY: &str = "docker";
+pub const COMMON_DISCOVERY: &str = "common";
+pub const TRANSPARENT_DISCOVERY: &str = "transparent";
+
 mod common;
 mod dns;
 mod docker;

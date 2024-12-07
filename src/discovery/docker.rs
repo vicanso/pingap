@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::DOCKER_DISCOVERY;
 use super::{Error, Result};
 use crate::webhook;
 use async_trait::async_trait;
@@ -39,8 +40,6 @@ struct Docker {
     docker: bollard::Docker,
     containers: Vec<Container>,
 }
-
-const DOCKER_DISCOVERY: &str = "docker";
 
 pub fn is_docker_discovery(value: &str) -> bool {
     value == DOCKER_DISCOVERY

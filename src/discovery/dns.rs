@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::DNS_DISCOVERY;
 use super::{format_addrs, Addr, Error, Result};
 use crate::webhook;
 use async_trait::async_trait;
@@ -35,8 +36,6 @@ struct Dns {
     ipv4_only: bool,
     hosts: Vec<Addr>,
 }
-
-const DNS_DISCOVERY: &str = "dns";
 
 pub fn is_dns_discovery(value: &str) -> bool {
     value == DNS_DISCOVERY
