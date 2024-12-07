@@ -19,6 +19,7 @@ flowchart LR
 
 - 服务支持配置多个Location，通过host与path筛选对应的location，按权重逐一匹配选择
 - 支持正则形式配置重写Path，方便应用按前缀区分转发
+- 支持透明代理形式转发
 - HTTP 1/2 的全链路支持，包括h2c的支持
 - 支持静态配置、DNS以及docker label的三种服务发现形式
 - 支持grpc-web反向代理

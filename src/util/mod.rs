@@ -453,6 +453,30 @@ pub fn elapsed_second(time: SystemTime) -> f64 {
     elapsed_ms(time) as f64 / 1000.0
 }
 
+pub fn toml_omit_empty_value(value: &str) -> Result<String, Error> {
+    let mut data =
+        toml::from_str::<toml::Table>(value).map_err(|e| Error::Invalid {
+            message: e.to_string(),
+        })?;
+    let mut omit_keys = vec![];
+    for (key, value) in data.iter() {
+        let Some(table) = value.as_table() else {
+            omit_keys.push(key.to_string());
+            continue;
+        };
+        if table.keys().len() == 0 {
+            omit_keys.push(key.to_string());
+            continue;
+        }
+    }
+    for key in omit_keys {
+        data.remove(&key);
+    }
+    toml::to_string_pretty(&data).map_err(|e| Error::Invalid {
+        message: e.to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

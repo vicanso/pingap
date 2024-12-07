@@ -23,7 +23,8 @@ flowchart LR
 ## Feature
 
 - The service supports configuring multiple Locations, filtering locations by host and path, and matching and selecting them one by one according to the weight
-- Supports regular form configuration to rewrite Path
+- Support regular form configuration to rewrite Path
+- Support transparent proxy
 - Support HTTP 1/2, including h2c
 - Support static, dns and docker label service discovery
 - Support grpc-web reverse proxy

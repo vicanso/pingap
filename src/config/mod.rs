@@ -169,10 +169,16 @@ pub async fn save_config(
     };
     storage.save_config(conf, category, name).await
 }
-
-pub async fn sync_config(path: &str) -> Result<()> {
+pub async fn sync_to_path(path: &str) -> Result<()> {
     let conf = get_current_config();
     let storage = new_config_storage(path)?;
+    sync_config(&conf, storage.as_ref()).await
+}
+
+pub async fn sync_config(
+    conf: &PingapConf,
+    storage: &(dyn ConfigStorage + Send + Sync),
+) -> Result<()> {
     let mut arr = vec![(common::CATEGORY_BASIC, None)];
     for key in conf.servers.keys() {
         arr.push((common::CATEGORY_SERVER, Some(key.as_str())));
@@ -193,7 +199,7 @@ pub async fn sync_config(path: &str) -> Result<()> {
         arr.push((common::CATEGORY_STORAGE, Some(key.as_str())));
     }
     for (category, name) in arr {
-        storage.save_config(&conf, category, name).await?;
+        storage.save_config(conf, category, name).await?;
     }
     Ok(())
 }
@@ -205,7 +211,7 @@ pub use file::FileStorage;
 #[cfg(test)]
 mod tests {
     use super::{
-        get_config_storage, load_config, support_observer, sync_config,
+        get_config_storage, load_config, support_observer, sync_to_path,
         try_init_config_storage, LoadConfigOptions,
     };
     use pretty_assertions::assert_eq;
@@ -227,6 +233,6 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let file = dir.into_path().join("pingap.toml");
         tokio::fs::write(&file, b"").await.unwrap();
-        sync_config(file.to_string_lossy().as_ref()).await.unwrap();
+        sync_to_path(file.to_string_lossy().as_ref()).await.unwrap();
     }
 }

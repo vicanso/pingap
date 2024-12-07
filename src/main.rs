@@ -173,7 +173,7 @@ fn sync_config(path: String, s: Sender<Result<(), config::Error>>) {
         match tokio::runtime::Runtime::new() {
             Ok(rt) => {
                 let send = async move {
-                    let result = config::sync_config(&path).await;
+                    let result = config::sync_to_path(&path).await;
                     if let Err(e) = s.send(result) {
                         // use pringln because log is not init
                         println!("sender fail, {e}");

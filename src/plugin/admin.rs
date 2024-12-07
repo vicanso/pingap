@@ -306,10 +306,16 @@ impl AdminServe {
         let conf = self.load_config(false).await?;
         if category == "toml" {
             let full_conf = self.load_config(true).await?;
-            let full_toml = toml::to_string_pretty(&full_conf)
+            let mut full_toml = toml::to_string_pretty(&full_conf)
                 .map_err(|e| util::new_internal_error(400, e.to_string()))?;
-            let original_toml = toml::to_string_pretty(&conf)
+            if let Ok(value) = util::toml_omit_empty_value(&full_toml) {
+                full_toml = value;
+            };
+            let mut original_toml = toml::to_string_pretty(&conf)
                 .map_err(|e| util::new_internal_error(400, e.to_string()))?;
+            if let Ok(value) = util::toml_omit_empty_value(&original_toml) {
+                original_toml = value;
+            };
             return HttpResponse::try_from_json(&TomlJson {
                 full: full_toml,
                 original: original_toml,
@@ -445,6 +451,23 @@ impl AdminServe {
             })?;
         Ok(HttpResponse::no_content())
     }
+    async fn import_config(
+        &self,
+        session: &mut Session,
+    ) -> pingora::Result<HttpResponse> {
+        let buf = get_request_body(session).await?;
+        let conf = PingapConf::new(&buf, false).map_err(|e| {
+            error!(error = e.to_string(), "import config fail");
+            util::new_internal_error(400, e.to_string())
+        })?;
+        if let Some(storage) = config::get_config_storage() {
+            config::sync_config(&conf, storage).await.map_err(|e| {
+                error!(error = e.to_string(), "import config fail");
+                util::new_internal_error(400, e.to_string())
+            })?;
+        }
+        Ok(HttpResponse::no_content())
+    }
 }
 
 fn get_method_path(session: &Session) -> (Method, String) {
@@ -516,7 +539,9 @@ impl Plugin for AdminServe {
         let resp = if path.starts_with("/configs") {
             match method {
                 Method::POST => {
-                    if params.len() < 4 {
+                    if category == "import" {
+                        self.import_config(session).await
+                    } else if params.len() < 4 {
                         Err(pingora::Error::new_str("Url is invalid(no name)"))
                     } else {
                         self.update_config(session, category, &params[3]).await

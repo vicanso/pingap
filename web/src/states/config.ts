@@ -162,6 +162,7 @@ interface ConfigState {
     name: string,
     data: Record<string, unknown>,
   ) => Promise<void>;
+  importToml: (data: string) => Promise<void>;
   remove: (category: string, name: string) => Promise<void>;
   getIncludeOptions: () => string[];
   getCertificateInfos: () => Promise<Record<string, CertificateInfo>>;
@@ -211,6 +212,9 @@ const useConfigState = create<ConfigState>()((set, get) => ({
       version: random(),
     });
     await get().fetch();
+  },
+  importToml: async (data: string) => {
+    await request.post(`/configs/import`, data);
   },
   remove: async (category: string, name: string) => {
     await request.delete(`/configs/${category}/${name}`);
