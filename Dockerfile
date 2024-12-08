@@ -6,7 +6,7 @@ RUN apk update \
   && cd /pingap \
   && make build-web
 
-FROM rust:1.81.0 as builder
+FROM rust:1.82.0 as builder
 
 COPY --from=webbuilder /pingap /pingap
 
