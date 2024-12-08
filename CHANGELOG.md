@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.9.3](https://github.com/vicanso/pingap/compare/v0.9.2..0.9.3) - 2024-12-08
+
+### ⛰️  Features
+
+- Support importing config to storage, #58 - ([767df00](https://github.com/vicanso/pingap/commit/767df009fc2c895ac2c59d4640565e1a86b9e8e3))
+- Support transparent proxy gateway, #66 - ([14cc735](https://github.com/vicanso/pingap/commit/14cc735964e7a52e4b4aa1c2a53d0e5c55a4002b))
+
+### 🐛 Bug Fixes
+
+- Remove validate from admin get config function, #67 - ([762e1a1](https://github.com/vicanso/pingap/commit/762e1a1030bdac57a070f1ae2004012b0711c7ad))
+
+### 🚜 Refactor
+
+- Adjust location of server - ([43fb471](https://github.com/vicanso/pingap/commit/43fb4714f5e876146b330c11bb13bffd20f281d2))
+- Adjust derive debug for location and upstream - ([073c6c2](https://github.com/vicanso/pingap/commit/073c6c2a7086a4c745606998eb06bedc37a207db))
+- Add original and compress size - ([8b82709](https://github.com/vicanso/pingap/commit/8b82709d379a0489db7a4fdd534c494ee1fa2a0e))
+- Support reading and writing max count for file cache storage - ([aacfb31](https://github.com/vicanso/pingap/commit/aacfb31d8b244c453fed5d38ba87524f44691fc3))
+- Adjust let's encrypt renew - ([f596461](https://github.com/vicanso/pingap/commit/f5964611ed435bcd405b4b949fa54956dae06a0e))
+- Guess discovery for name addrs, #67 - ([227dd3a](https://github.com/vicanso/pingap/commit/227dd3a2c4d2f10b452eb6c68fdba090e178e7c4))
+- Validity checker ignore acme certificate - ([5cf182f](https://github.com/vicanso/pingap/commit/5cf182f56fbd777a213bc56975fefc255ecd0799))
+
+### 📚 Documentation
+
+- Add transparent proxy demo - ([27503f2](https://github.com/vicanso/pingap/commit/27503f2062fb32077f86eef069fdbdc05a408b3c))
+
+### 🧪 Testing
+
+- Fix request entity too large error - ([bb56bc0](https://github.com/vicanso/pingap/commit/bb56bc0bab9d5a7540a5fcb50144fb846366d222))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update pingap service - ([3809608](https://github.com/vicanso/pingap/commit/38096087c417849871a5a20e60a6e79dfcac71b2))
+
 ## [0.9.2](https://github.com/vicanso/pingap/compare/v0.9.1..0.9.2) - 2024-11-30
 
 ### ⛰️  Features

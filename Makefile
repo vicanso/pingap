@@ -80,4 +80,4 @@ hooks:
 	cp hooks/* .git/hooks/
 
 version:
-	git cliff --unreleased --tag 0.9.2 --prepend CHANGELOG.md
+	git cliff --unreleased --tag 0.9.3 --prepend CHANGELOG.md
