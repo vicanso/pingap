@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::CertificateInfo;
+use super::Certificate;
 use crate::proxy::get_certificate_info_list;
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::util;
@@ -28,7 +28,7 @@ struct ValidityChecker {
 // Verify the validity period of tls certificate,
 // include not after and not before.
 fn validity_check(
-    validity_list: &[(String, CertificateInfo)],
+    validity_list: &[(String, Certificate)],
     time_offset: i64,
 ) -> Result<(), String> {
     let now = util::now().as_secs() as i64;
@@ -107,7 +107,7 @@ pub fn new_tls_validity_service() -> CommonServiceTask {
 #[cfg(test)]
 mod tests {
     use super::validity_check;
-    use crate::acme::CertificateInfo;
+    use crate::acme::Certificate;
     use pretty_assertions::assert_eq;
     use x509_parser::time::ASN1Time;
 
@@ -116,7 +116,7 @@ mod tests {
         let result = validity_check(
             &[(
                 "Pingap".to_string(),
-                CertificateInfo {
+                Certificate {
                     not_after: ASN1Time::from_timestamp(2651852800)
                         .unwrap()
                         .timestamp(),
@@ -138,7 +138,7 @@ mod tests {
         let result = validity_check(
             &[(
                 "Pingap".to_string(),
-                CertificateInfo {
+                Certificate {
                     not_after: ASN1Time::from_timestamp(2651852800)
                         .unwrap()
                         .timestamp(),

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::acme::{
-    get_certificate_info, get_lets_encrypt_certificate, CertificateInfo,
+    get_certificate_info, get_lets_encrypt_certificate, Certificate,
 };
 use crate::config::CertificateConf;
 use crate::{util, webhook};
@@ -75,7 +75,7 @@ fn parse_certificate(
     certificate_config: &CertificateConf,
 ) -> Result<DynamicCertificate> {
     // parse certificate
-    let (cert, key, category) =
+    let (info, category) =
         if let Some(file) = &certificate_config.certificate_file {
             let cert = get_lets_encrypt_certificate(
                 &Path::new(&util::resolve_path(file)).to_path_buf(),
@@ -84,27 +84,39 @@ fn parse_certificate(
                 category: "get_lets_encrypt_certificate".to_string(),
                 message: e.to_string(),
             })?;
-            (cert.get_cert(), cert.get_key(), LETS_ENCRYPT)
+            (cert, LETS_ENCRYPT)
+            // (cert.get_cert(), cert.get_key(), LETS_ENCRYPT)
         } else {
-            (
-                util::convert_certificate_bytes(&certificate_config.tls_cert)
-                    .ok_or(Error::Invalid {
-                    category: "convert_certificate_bytes".to_string(),
-                    message: "convert certificate fail".to_string(),
-                })?,
-                util::convert_certificate_bytes(&certificate_config.tls_key)
-                    .ok_or(Error::Invalid {
-                        category: "convert_certificate_bytes".to_string(),
-                        message: "convert certificate key fail".to_string(),
-                    })?,
-                "",
+            let cert = Certificate::new(
+                certificate_config.tls_cert.clone().unwrap_or_default(),
+                certificate_config.tls_key.clone().unwrap_or_default(),
             )
+            .map_err(|e| Error::Invalid {
+                message: e.to_string(),
+                category: "certificate".to_string(),
+            })?;
+            (cert, "")
+
+            // (
+            //     util::convert_certificate_bytes(&certificate_config.tls_cert)
+            //         .ok_or(Error::Invalid {
+            //         category: "convert_certificate_bytes".to_string(),
+            //         message: "convert certificate fail".to_string(),
+            //     })?,
+            //     util::convert_certificate_bytes(&certificate_config.tls_key)
+            //         .ok_or(Error::Invalid {
+            //             category: "convert_certificate_bytes".to_string(),
+            //             message: "convert certificate key fail".to_string(),
+            //         })?,
+            //     "",
+            // );
         };
-    let mut info = get_certificate_info(&cert).map_err(|e| Error::Invalid {
-        category: "get_certificate_info".to_string(),
-        message: e.to_string(),
-    })?;
-    info.acme = certificate_config.acme.clone();
+
+    // let mut info = get_certificate_info(&cert).map_err(|e| Error::Invalid {
+    //     category: "get_certificate_info".to_string(),
+    //     message: e.to_string(),
+    // })?;
+    // info.acme = certificate_config.acme.clone();
 
     let hash_key = certificate_config.hash_key();
 
@@ -125,27 +137,30 @@ fn parse_certificate(
     } else {
         None
     };
-    let cert = X509::from_pem(&cert).map_err(|e| Error::Invalid {
-        category: "x509_from_pem".to_string(),
-        message: e.to_string(),
-    })?;
-    let names = cert.subject_alt_names().ok_or(Error::Invalid {
-        category: "subject_alt_names".to_string(),
-        message: "get subject alt names fail".to_string(),
-    })?;
-    let mut domains = vec![];
-    for item in names.iter() {
-        domains.push(format!("{:?}", item));
-    }
+    let cert =
+        X509::from_pem(&info.get_cert()).map_err(|e| Error::Invalid {
+            category: "x509_from_pem".to_string(),
+            message: e.to_string(),
+        })?;
+    // let names = cert.subject_alt_names().ok_or(Error::Invalid {
+    //     category: "subject_alt_names".to_string(),
+    //     message: "get subject alt names fail".to_string(),
+    // })?;
+    // let mut domains = vec![];
+    // for item in names.iter() {
+    //     domains.push(format!("{:?}", item));
+    // }
 
-    let key = PKey::private_key_from_pem(&key).map_err(|e| Error::Invalid {
-        category: "private_key_from_pem".to_string(),
-        message: e.to_string(),
+    let key = PKey::private_key_from_pem(&info.get_key()).map_err(|e| {
+        Error::Invalid {
+            category: "private_key_from_pem".to_string(),
+            message: e.to_string(),
+        }
     })?;
     Ok(DynamicCertificate {
         hash_key,
         chain_certificate,
-        domains,
+        domains: info.domains.clone(),
         certificate: Some((cert, key)),
         info: Some(info),
         ..Default::default()
@@ -218,7 +233,7 @@ pub fn init_certificates(
 }
 
 /// Get certificate info list
-pub fn get_certificate_info_list() -> Vec<(String, CertificateInfo)> {
+pub fn get_certificate_info_list() -> Vec<(String, Certificate)> {
     let mut infos = vec![];
     for (name, cert) in DYNAMIC_CERTIFICATE_MAP.load().iter() {
         if let Some(info) = &cert.info {
@@ -239,7 +254,7 @@ pub struct DynamicCertificate {
     chain_certificate: Option<X509>,
     certificate: Option<(X509, PKey<Private>)>,
     domains: Vec<String>,
-    info: Option<CertificateInfo>,
+    info: Option<Certificate>,
     hash_key: String,
 }
 

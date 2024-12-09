@@ -354,11 +354,10 @@ async fn new_lets_encrypt(
             category: "open_file".to_string(),
             source: e,
         })?;
-    let info = Certificate {
-        domains: domains.to_vec(),
-        pem: util::base64_encode(&cert_chain_pem),
-        key: util::base64_encode(private_key.serialize_pem()),
-    };
+    let info = Certificate::new(
+        util::base64_encode(&cert_chain_pem),
+        util::base64_encode(private_key.serialize_pem()),
+    )?;
     let buf = serde_json::to_vec(&info).map_err(|e| Error::SerdeJson {
         category: "serde_certificate".to_string(),
         source: e,

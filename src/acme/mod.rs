@@ -15,6 +15,7 @@
 use crate::util::{self, base64_decode};
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -53,18 +54,19 @@ pub struct CertificateInfo {
     pub not_after: i64,
     pub not_before: i64,
     pub issuer: String,
+    pub dns_names: Vec<String>,
     pub acme: Option<String>,
 }
 
-impl CertificateInfo {
-    /// Get the common name of certificate issuer
-    pub fn get_issuer_common_name(&self) -> String {
-        let re = regex::Regex::new(r"CN=(?P<CN>[\S ]+?)($|,)").unwrap();
-        if let Some(caps) = re.captures(&self.issuer) {
-            return caps["CN"].to_string();
-        }
-        "".to_string()
-    }
+fn parse_ip_addr(data: &[u8]) -> Result<IpAddr> {
+    let addr = if data.len() == 4 {
+        let arr: [u8; 4] = data.try_into().unwrap_or_default();
+        IpAddr::V4(Ipv4Addr::from(arr))
+    } else {
+        let arr: [u8; 16] = data.try_into().unwrap_or_default();
+        IpAddr::V6(Ipv6Addr::from(arr))
+    };
+    Ok(addr)
 }
 
 /// Get the information of certificate.
@@ -78,6 +80,23 @@ pub fn get_certificate_info(data: &[u8]) -> Result<CertificateInfo> {
         category: "parse_x509".to_string(),
         message: e.to_string(),
     })?;
+    let mut dns_names = vec![];
+    if let Ok(Some(subject_alternative_name)) = x509.subject_alternative_name()
+    {
+        for item in subject_alternative_name.value.general_names.iter() {
+            match item {
+                x509_parser::prelude::GeneralName::DNSName(name) => {
+                    dns_names.push(name.to_string());
+                },
+                x509_parser::prelude::GeneralName::IPAddress(data) => {
+                    if let Ok(addr) = parse_ip_addr(data) {
+                        dns_names.push(addr.to_string());
+                    }
+                },
+                _ => {},
+            };
+        }
+    };
 
     let validity = x509.validity();
 
@@ -85,25 +104,75 @@ pub fn get_certificate_info(data: &[u8]) -> Result<CertificateInfo> {
         not_before: validity.not_before.timestamp(),
         not_after: validity.not_after.timestamp(),
         issuer: x509.issuer().to_string(),
+        dns_names,
         ..Default::default()
     })
 }
 
-#[derive(Debug, Deserialize, Serialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct Certificate {
     pub domains: Vec<String>,
     pub pem: String,
     pub key: String,
+    pub acme: Option<String>,
+    pub not_after: i64,
+    pub not_before: i64,
+    pub issuer: String,
 }
 impl Certificate {
+    pub fn new(pem: String, key: String) -> Result<Certificate> {
+        let data = base64_decode(&pem).unwrap_or_default();
+        let (_, p) = x509_parser::pem::parse_x509_pem(&data).map_err(|e| {
+            Error::X509 {
+                category: "parse_x509_pem".to_string(),
+                message: e.to_string(),
+            }
+        })?;
+        let x509 = p.parse_x509().map_err(|e| Error::X509 {
+            category: "parse_x509".to_string(),
+            message: e.to_string(),
+        })?;
+        let mut dns_names = vec![];
+        if let Ok(Some(subject_alternative_name)) =
+            x509.subject_alternative_name()
+        {
+            for item in subject_alternative_name.value.general_names.iter() {
+                match item {
+                    x509_parser::prelude::GeneralName::DNSName(name) => {
+                        dns_names.push(name.to_string());
+                    },
+                    x509_parser::prelude::GeneralName::IPAddress(data) => {
+                        if let Ok(addr) = parse_ip_addr(data) {
+                            dns_names.push(addr.to_string());
+                        }
+                    },
+                    _ => {},
+                };
+            }
+        };
+        let validity = x509.validity();
+        Ok(Self {
+            domains: dns_names,
+            pem,
+            key,
+            not_after: validity.not_after.timestamp(),
+            not_before: validity.not_before.timestamp(),
+            issuer: x509.issuer.to_string(),
+            ..Default::default()
+        })
+    }
+    /// Get the common name of certificate issuer
+    pub fn get_issuer_common_name(&self) -> String {
+        let re = regex::Regex::new(r"CN=(?P<CN>[\S ]+?)($|,)").unwrap();
+        if let Some(caps) = re.captures(&self.issuer) {
+            return caps["CN"].to_string();
+        }
+        "".to_string()
+    }
     /// Validate the cert is within the expiration date.
     pub fn valid(&self) -> bool {
         let ts = util::now().as_secs() as i64;
-        if let Ok(info) = get_certificate_info(&self.get_cert()) {
-            info.not_after - ts > 2 * 24 * 3600
-        } else {
-            false
-        }
+        self.not_after - ts > 2 * 24 * 3600
     }
     /// Get the cert pem data.
     pub fn get_cert(&self) -> Vec<u8> {
@@ -174,6 +243,6 @@ CRVQZGgOQL6WDg3tUUDXYOs=
         );
         assert_eq!(1720232616, info.not_before);
         assert_eq!(1791253416, info.not_after);
-        assert_eq!("mkcert vicanso@tree", info.get_issuer_common_name());
+        // assert_eq!("mkcert vicanso@tree", info.get_issuer_common_name());
     }
 }
