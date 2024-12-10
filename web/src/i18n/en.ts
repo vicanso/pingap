@@ -76,7 +76,7 @@ export default {
     machineMemory: "Machine Memory",
     yes: "Yes",
     no: "No",
-    to: "To",
+    to: "to",
   },
   basic: {
     name: "Name",

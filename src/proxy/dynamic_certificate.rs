@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::acme::{
-    get_certificate_info, get_lets_encrypt_certificate, Certificate,
-};
+use crate::acme::Certificate;
 use crate::config::CertificateConf;
 use crate::{util, webhook};
 use ahash::AHashMap;
@@ -28,7 +26,6 @@ use pingora::tls::ssl::{NameType, SslRef};
 use pingora::tls::x509::X509;
 use snafu::Snafu;
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 use substring::Substring;
 use tracing::{debug, error, info};
@@ -53,7 +50,10 @@ const R10: &[u8] = include_bytes!("../assets/r10.pem");
 const R11: &[u8] = include_bytes!("../assets/r11.pem");
 
 fn parse_chain_certificate(data: &[u8]) -> Option<X509> {
-    if let Ok(info) = get_certificate_info(data) {
+    if let Ok(info) = Certificate::new(
+        std::string::String::from_utf8_lossy(data).to_string(),
+        "".to_string(),
+    ) {
         if info.not_after > util::now().as_secs() as i64 {
             return X509::from_pem(data).ok();
         }
@@ -75,48 +75,20 @@ fn parse_certificate(
     certificate_config: &CertificateConf,
 ) -> Result<DynamicCertificate> {
     // parse certificate
-    let (info, category) =
-        if let Some(file) = &certificate_config.certificate_file {
-            let cert = get_lets_encrypt_certificate(
-                &Path::new(&util::resolve_path(file)).to_path_buf(),
-            )
-            .map_err(|e| Error::Invalid {
-                category: "get_lets_encrypt_certificate".to_string(),
-                message: e.to_string(),
-            })?;
-            (cert, LETS_ENCRYPT)
-            // (cert.get_cert(), cert.get_key(), LETS_ENCRYPT)
-        } else {
-            let cert = Certificate::new(
-                certificate_config.tls_cert.clone().unwrap_or_default(),
-                certificate_config.tls_key.clone().unwrap_or_default(),
-            )
-            .map_err(|e| Error::Invalid {
-                message: e.to_string(),
-                category: "certificate".to_string(),
-            })?;
-            (cert, "")
+    let info = Certificate::new(
+        certificate_config.tls_cert.clone().unwrap_or_default(),
+        certificate_config.tls_key.clone().unwrap_or_default(),
+    )
+    .map_err(|e| Error::Invalid {
+        message: e.to_string(),
+        category: "certificate".to_string(),
+    })?;
+    let category = if certificate_config.acme.is_some() {
+        LETS_ENCRYPT
+    } else {
+        ""
+    };
 
-            // (
-            //     util::convert_certificate_bytes(&certificate_config.tls_cert)
-            //         .ok_or(Error::Invalid {
-            //         category: "convert_certificate_bytes".to_string(),
-            //         message: "convert certificate fail".to_string(),
-            //     })?,
-            //     util::convert_certificate_bytes(&certificate_config.tls_key)
-            //         .ok_or(Error::Invalid {
-            //             category: "convert_certificate_bytes".to_string(),
-            //             message: "convert certificate key fail".to_string(),
-            //         })?,
-            //     "",
-            // );
-        };
-
-    // let mut info = get_certificate_info(&cert).map_err(|e| Error::Invalid {
-    //     category: "get_certificate_info".to_string(),
-    //     message: e.to_string(),
-    // })?;
-    // info.acme = certificate_config.acme.clone();
 
     let hash_key = certificate_config.hash_key();
 
@@ -142,14 +114,6 @@ fn parse_certificate(
             category: "x509_from_pem".to_string(),
             message: e.to_string(),
         })?;
-    // let names = cert.subject_alt_names().ok_or(Error::Invalid {
-    //     category: "subject_alt_names".to_string(),
-    //     message: "get subject alt names fail".to_string(),
-    // })?;
-    // let mut domains = vec![];
-    // for item in names.iter() {
-    //     domains.push(format!("{:?}", item));
-    // }
 
     let key = PKey::private_key_from_pem(&info.get_key()).map_err(|e| {
         Error::Invalid {

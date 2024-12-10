@@ -13,7 +13,10 @@
 // limitations under the License.
 
 use super::{Certificate, Error, Result};
-use crate::config::get_current_config;
+use crate::config::{
+    get_current_config, load_config, save_config, LoadConfigOptions,
+    PingapConf, CATEGORY_CERTIFICATE,
+};
 use crate::http_extra::HttpResponse;
 use crate::proxy::init_certificates;
 use crate::service::{CommonServiceTask, ServiceTask};
@@ -29,10 +32,7 @@ use instant_acme::{
 use once_cell::sync::OnceCell;
 use pingora::proxy::Session;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::time::Duration;
-use tokio::fs;
-use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 use tracing::{error, info};
 
@@ -44,8 +44,8 @@ fn get_lets_encrypt_challenge() -> &'static Mutex<HashMap<String, String>> {
     LETS_ENCRYPT_CHALLENGE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 struct LetsEncryptService {
-    // the file for saving certificate
-    certificate_file: PathBuf,
+    // the certificate config's name
+    name: String,
     // the domains list, they should be the same primary domain name
     domains: Vec<String>,
 }
@@ -55,7 +55,7 @@ static WELL_KNOWN_PATH_PREFIX: &str = "/.well-known/acme-challenge/";
 /// Create a Let's Encrypt service to generate the certificate,
 /// and regenerate if the certificate is invalid or will be expired.
 pub fn new_lets_encrypt_service(
-    certificate_file: PathBuf,
+    name: String,
     domains: Vec<String>,
 ) -> CommonServiceTask {
     let mut domains = domains;
@@ -64,31 +64,55 @@ pub fn new_lets_encrypt_service(
 
     CommonServiceTask::new(
         Duration::from_secs(10 * 60),
-        LetsEncryptService {
-            certificate_file,
-            domains,
-        },
+        LetsEncryptService { name, domains },
     )
+}
+
+async fn update_lets_encrypt(
+    name: &str,
+    domains: &[String],
+) -> Result<PingapConf> {
+    let (pem, key) = new_lets_encrypt(domains, true).await?;
+    let mut conf = load_config(LoadConfigOptions {
+        ..Default::default()
+    })
+    .await
+    .map_err(|e| Error::Fail {
+        category: "load_config".to_string(),
+        message: e.to_string(),
+    })?;
+
+    if let Some(cert) = conf.certificates.get_mut(name) {
+        cert.tls_cert = Some(pem);
+        cert.tls_key = Some(key);
+    }
+    save_config(&conf, CATEGORY_CERTIFICATE, Some(name))
+        .await
+        .map_err(|e| Error::Fail {
+            category: "load_config".to_string(),
+            message: e.to_string(),
+        })?;
+
+    Ok(conf)
 }
 
 #[async_trait]
 impl ServiceTask for LetsEncryptService {
     async fn run(&self) -> Option<bool> {
         let domains = &self.domains;
-        let should_renew_now = if let Ok(certificate) =
-            get_lets_encrypt_certificate(&self.certificate_file)
-        {
-            // invalid or different domains
-            !certificate.valid()
-                || domains.join(",") != certificate.domains.join(",")
-        } else {
-            true
-        };
+        let should_renew_now =
+            if let Ok(certificate) = get_lets_encrypt_certificate(&self.name) {
+                // invalid or different domains
+                !certificate.valid()
+                    || domains.join(",") != certificate.domains.join(",")
+            } else {
+                true
+            };
         if !should_renew_now {
             return None;
         }
-        match new_lets_encrypt(&self.certificate_file, domains, true).await {
-            Ok(()) => {
+        match update_lets_encrypt(&self.name, domains).await {
+            Ok(conf) => {
                 info!(domains = domains.join(","), "renew certificate success");
                 webhook::send(webhook::SendNotificationParams {
                     category: webhook::NotificationCategory::LetsEncrypt,
@@ -96,7 +120,7 @@ impl ServiceTask for LetsEncryptService {
                     remark: Some(format!("Domains: {domains:?}")),
                     ..Default::default()
                 });
-                init_certificates(&get_current_config().certificates);
+                init_certificates(&conf.certificates);
             },
             Err(e) => error!(
                 error = e.to_string(),
@@ -112,22 +136,17 @@ impl ServiceTask for LetsEncryptService {
 }
 
 /// Get the cert from file and convert it to certificate struct.
-pub fn get_lets_encrypt_certificate(path: &PathBuf) -> Result<Certificate> {
-    if !path.exists() {
+pub fn get_lets_encrypt_certificate(name: &str) -> Result<Certificate> {
+    let binding = get_current_config();
+    let Some(cert) = binding.certificates.get(name) else {
         return Err(Error::NotFound {
-            message: "cert file not found".to_string(),
+            message: "cert not found".to_string(),
         });
-    }
-    let buf = std::fs::read(path).map_err(|e| Error::Io {
-        category: "read_cert".to_string(),
-        source: e,
-    })?;
-    let cert: Certificate =
-        serde_json::from_slice(&buf).map_err(|e| Error::SerdeJson {
-            category: "serde_cert_from_bytes".to_string(),
-            source: e,
-        })?;
-    Ok(cert)
+    };
+    Certificate::new(
+        cert.tls_cert.clone().unwrap_or_default(),
+        cert.tls_key.clone().unwrap_or_default(),
+    )
 }
 
 /// The proxy plugin for lets encrypt http-01.
@@ -161,10 +180,9 @@ pub async fn handle_lets_encrypt(
 /// Get the new cert from lets encrypt for all domains.
 /// The cert will be saved if success.
 async fn new_lets_encrypt(
-    certificate_file: &PathBuf,
     domains: &[String],
     production: bool,
-) -> Result<()> {
+) -> Result<(String, String)> {
     let mut domains: Vec<String> = domains.to_vec();
     // sort domain for comparing later
     domains.sort();
@@ -343,51 +361,47 @@ async fn new_lets_encrypt(
         }
     };
 
-    // save certificate as json file
-    let mut f = fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(certificate_file)
-        .await
-        .map_err(|e| Error::Io {
-            category: "open_file".to_string(),
-            source: e,
-        })?;
-    let info = Certificate::new(
-        util::base64_encode(&cert_chain_pem),
-        util::base64_encode(private_key.serialize_pem()),
-    )?;
-    let buf = serde_json::to_vec(&info).map_err(|e| Error::SerdeJson {
-        category: "serde_certificate".to_string(),
-        source: e,
-    })?;
-    f.write(&buf).await.map_err(|e| Error::Io {
-        category: "save_certificate".to_string(),
-        source: e,
-    })?;
-    info!(
-        certificate_file = format!("{certificate_file:?}"),
-        "write certificate success"
-    );
+    Ok((cert_chain_pem, private_key.serialize_pem()))
 
-    Ok(())
+    // save certificate as json file
+    // let mut f = fs::OpenOptions::new()
+    //     .create(true)
+    //     .write(true)
+    //     .truncate(true)
+    //     .open(certificate_file)
+    //     .await
+    //     .map_err(|e| Error::Io {
+    //         category: "open_file".to_string(),
+    //         source: e,
+    //     })?;
+    // let info = Certificate::new(
+    //     util::base64_encode(&cert_chain_pem),
+    //     util::base64_encode(private_key.serialize_pem()),
+    // )?;
+    // let buf = serde_json::to_vec(&info).map_err(|e| Error::SerdeJson {
+    //     category: "serde_certificate".to_string(),
+    //     source: e,
+    // })?;
+    // f.write(&buf).await.map_err(|e| Error::Io {
+    //     category: "save_certificate".to_string(),
+    //     source: e,
+    // })?;
+    // info!(
+    //     certificate_file = format!("{certificate_file:?}"),
+    //     "write certificate success"
+    // );
+
+    // Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::new_lets_encrypt;
     use pretty_assertions::assert_eq;
-    use std::path::Path;
 
     #[tokio::test]
     async fn test_new_lets_encrypt() {
-        let result = new_lets_encrypt(
-            &Path::new("~/pingap").to_path_buf(),
-            &["pingap.io".to_string()],
-            false,
-        )
-        .await;
+        let result = new_lets_encrypt(&["pingap.io".to_string()], false).await;
 
         assert_eq!(true, result.is_err());
         let error = result.unwrap_err().to_string();

@@ -28,7 +28,6 @@ use proxy::{new_upstream_health_check_task, Server, ServerConf};
 use state::{get_admin_addr, get_start_time, set_admin_addr};
 use std::collections::HashMap;
 use std::error::Error;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info};
@@ -462,20 +461,19 @@ fn run() -> Result<(), Box<dyn Error>> {
     for (name, certificate) in certificates.iter() {
         let acme = certificate.acme.clone().unwrap_or_default();
         let domains = certificate.domains.clone().unwrap_or_default();
-        let certificate_file =
-            certificate.certificate_file.clone().unwrap_or_default();
-        if acme.is_empty() || domains.is_empty() || certificate_file.is_empty()
-        {
+        // let certificate_file =
+        //     certificate.certificate_file.clone().unwrap_or_default();
+        if acme.is_empty() || domains.is_empty() {
             continue;
         }
-        let file =
-            Path::new(&util::resolve_path(&certificate_file)).to_path_buf();
+        // let file =
+        // Path::new(&util::resolve_path(&certificate_file)).to_path_buf();
         // now supports lets encrypt only
         enabled_lets_encrypt = true;
         my_server.add_service(background_service(
             &format!("LetsEncrypt: {name}"),
             new_lets_encrypt_service(
-                file,
+                name.to_string(),
                 domains.split(',').map(|item| item.to_string()).collect(),
             ),
         ));
