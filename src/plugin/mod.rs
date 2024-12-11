@@ -64,9 +64,8 @@ pub fn parse_admin_plugin(
         }
     })?;
     let mut addr = info.host_str().unwrap_or_default().to_string();
-    if let Some(port) = info.port() {
-        addr = format!("{addr}:{port}")
-    }
+    addr = format!("{addr}:{}", info.port().unwrap_or(80));
+
     let mut authorization = "".to_string();
     if !info.username().is_empty() {
         authorization = urlencoding::decode(info.username())
