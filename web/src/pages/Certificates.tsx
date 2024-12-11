@@ -105,14 +105,6 @@ export default function Certificates() {
       category: ExFormItemCategory.TEXT,
     },
     {
-      name: "certificate_file",
-      label: certificateI18n("certificateFile"),
-      placeholder: certificateI18n("certificateFilePlaceholder"),
-      defaultValue: certificateConfig.certificate_file,
-      span: 6,
-      category: ExFormItemCategory.TEXT,
-    },
-    {
       name: "acme",
       label: certificateI18n("acme"),
       placeholder: "",

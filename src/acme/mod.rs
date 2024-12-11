@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util;
+use crate::{config::get_current_config, util};
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -35,6 +36,8 @@ pub enum Error {
     Fail { category: String, message: String },
     #[snafu(display("X509 error, category: {category}, {message}"))]
     X509 { category: String, message: String },
+    #[snafu(display("Io error, {source}"))]
+    Io { source: std::io::Error },
 }
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -126,6 +129,17 @@ impl Certificate {
     pub fn get_key(&self) -> Vec<u8> {
         self.key.clone()
     }
+}
+
+pub fn get_token_path() -> PathBuf {
+    let token_path = util::resolve_path(
+        &get_current_config()
+            .basic
+            .acme_token_directory
+            .clone()
+            .unwrap_or("/tmp/pingap-acme".to_string()),
+    );
+    Path::new(&token_path).to_path_buf()
 }
 
 mod lets_encrypt;

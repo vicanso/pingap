@@ -112,6 +112,14 @@ export default function Basic() {
       category: ExFormItemCategory.TEXT,
     },
     {
+      name: "acme_token_directory",
+      label: basicI18n("acmeTokenDirectory"),
+      placeholder: basicI18n("acmeTokenDirectoryPlaceholder"),
+      defaultValue: basic.acme_token_directory,
+      span: 3,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
       name: "cache_directory",
       label: basicI18n("cacheDirectory"),
       placeholder: basicI18n("cacheDirectoryPlaceholder"),

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Certificate, Error, Result};
+use super::{get_token_path, Certificate, Error, Result};
 use crate::config::{
     get_current_config, load_config, save_config, LoadConfigOptions,
     PingapConf, CATEGORY_CERTIFICATE,
@@ -29,20 +29,12 @@ use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
     OrderStatus,
 };
-use once_cell::sync::OnceCell;
 use pingora::proxy::Session;
-use std::collections::HashMap;
 use std::time::Duration;
-use tokio::sync::Mutex;
+use substring::Substring;
+use tokio::fs;
 use tracing::{error, info};
 
-// let's encrypt http challenges
-static LETS_ENCRYPT_CHALLENGE: OnceCell<Mutex<HashMap<String, String>>> =
-    OnceCell::new();
-
-fn get_lets_encrypt_challenge() -> &'static Mutex<HashMap<String, String>> {
-    LETS_ENCRYPT_CHALLENGE.get_or_init(|| Mutex::new(HashMap::new()))
-}
 struct LetsEncryptService {
     // the certificate config's name
     name: String,
@@ -157,14 +149,22 @@ pub async fn handle_lets_encrypt(
     let path = session.req_header().uri.path();
     // lets encrypt acme challenge path
     if path.starts_with(WELL_KNOWN_PATH_PREFIX) {
-        let value = {
-            // token auth
-            let data = get_lets_encrypt_challenge().lock().await;
-            let v = data.get(path).ok_or_else(|| {
-                util::new_internal_error(400, "token not found".to_string())
-            })?;
-            v.clone()
-        };
+        // token auth
+        let token = path.substring(WELL_KNOWN_PATH_PREFIX.len(), path.len());
+
+        let value = match fs::read_to_string(get_token_path().join(token)).await
+        {
+            Ok(value) => Ok(value),
+            Err(e) => {
+                error!(
+                    token,
+                    err = e.to_string(),
+                    "let't encrypt http-01 fail"
+                );
+                Err(util::new_internal_error(500, e.to_string()))
+            },
+        }?;
+        info!(token, "let't encrypt http-01 success");
         HttpResponse {
             status: StatusCode::OK,
             body: value.into(),
@@ -235,6 +235,11 @@ async fn new_lets_encrypt(
         })?;
     let mut challenges = Vec::with_capacity(authorizations.len());
 
+    let token_path = get_token_path();
+    fs::create_dir_all(&token_path)
+        .await
+        .map_err(|e| Error::Io { source: e })?;
+
     for authz in &authorizations {
         info!(
             status = format!("{:?}", authz.status),
@@ -258,14 +263,13 @@ async fn new_lets_encrypt(
 
         let key_auth = order.key_authorization(challenge);
 
+        fs::write(token_path.join(&challenge.token), key_auth.as_str())
+            .await
+            .map_err(|e| Error::Io { source: e })?;
         // http://your-domain/.well-known/acme-challenge/<TOKEN>
         let well_known_path =
             format!("{WELL_KNOWN_PATH_PREFIX}{}", challenge.token);
         info!(well_known_path, "let's encrypt well known path",);
-
-        // save token for verification later
-        let mut map = get_lets_encrypt_challenge().lock().await;
-        map.insert(well_known_path, key_auth.as_str().to_string());
 
         challenges.push((identifier, &challenge.url));
     }
@@ -362,36 +366,6 @@ async fn new_lets_encrypt(
     };
 
     Ok((cert_chain_pem, private_key.serialize_pem()))
-
-    // save certificate as json file
-    // let mut f = fs::OpenOptions::new()
-    //     .create(true)
-    //     .write(true)
-    //     .truncate(true)
-    //     .open(certificate_file)
-    //     .await
-    //     .map_err(|e| Error::Io {
-    //         category: "open_file".to_string(),
-    //         source: e,
-    //     })?;
-    // let info = Certificate::new(
-    //     util::base64_encode(&cert_chain_pem),
-    //     util::base64_encode(private_key.serialize_pem()),
-    // )?;
-    // let buf = serde_json::to_vec(&info).map_err(|e| Error::SerdeJson {
-    //     category: "serde_certificate".to_string(),
-    //     source: e,
-    // })?;
-    // f.write(&buf).await.map_err(|e| Error::Io {
-    //     category: "save_certificate".to_string(),
-    //     source: e,
-    // })?;
-    // info!(
-    //     certificate_file = format!("{certificate_file:?}"),
-    //     "write certificate success"
-    // );
-
-    // Ok(())
 }
 
 #[cfg(test)]

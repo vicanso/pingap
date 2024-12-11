@@ -142,7 +142,6 @@ pub struct CertificateConf {
     pub tls_cert: Option<String>,
     pub tls_key: Option<String>,
     pub tls_chain: Option<String>,
-    pub certificate_file: Option<String>,
     pub is_default: Option<bool>,
     pub acme: Option<String>,
     pub remark: Option<String>,
@@ -504,6 +503,7 @@ pub struct BasicConf {
     pub auto_restart_check_interval: Option<Duration>,
     pub cache_directory: Option<String>,
     pub cache_max_size: Option<ByteSize>,
+    pub acme_token_directory: Option<String>,
 }
 
 impl BasicConf {
@@ -1347,7 +1347,7 @@ ai02RHnemmqJaNepfmCdyec=
         let result = conf.validate();
         assert_eq!(true, result.is_ok());
 
-        assert_eq!("df7255ff75e0f40c", conf.hash_key());
+        assert_eq!("488642d0e54f33b6", conf.hash_key());
     }
 
     #[test]

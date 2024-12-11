@@ -106,6 +106,8 @@ export default {
     cacheMaxSizePlaceholder: "Input max size of cache(e.g. 100mb)",
     upgradeSock: "Upgrade Sock For Daemon",
     upgradeSockPlaceholder: "Input upgrade unix sock for daemon",
+    acmeTokenDirectory: "ACME Token Directory",
+    acmeTokenDirectoryPlaceholder: "Input the directory for save acme token",
     user: "User For Daemon",
     userPlaceholder: "Input user for daemon",
     group: "Group For Daemon",
@@ -249,8 +251,6 @@ export default {
     domains: "Acme Domains",
     domainsPlaceholder:
       "Input the domains of acme, multiple domains separated by comma",
-    certificateFile: "Certificate File",
-    certificateFilePlaceholder: "Input the file for saving certificate",
     acme: "Acme",
     isDefault: "Default Certificate",
   },
