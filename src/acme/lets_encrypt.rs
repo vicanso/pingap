@@ -14,8 +14,8 @@
 
 use super::{get_token_path, Certificate, Error, Result};
 use crate::config::{
-    get_current_config, load_config, save_config, LoadConfigOptions,
-    PingapConf, CATEGORY_CERTIFICATE,
+    get_config_storage, get_current_config, load_config, save_config,
+    LoadConfigOptions, PingapConf, CATEGORY_CERTIFICATE,
 };
 use crate::http_extra::HttpResponse;
 use crate::proxy::init_certificates;
@@ -32,7 +32,6 @@ use instant_acme::{
 use pingora::proxy::Session;
 use std::time::Duration;
 use substring::Substring;
-use tokio::fs;
 use tracing::{error, info};
 
 struct LetsEncryptService {
@@ -151,19 +150,22 @@ pub async fn handle_lets_encrypt(
     if path.starts_with(WELL_KNOWN_PATH_PREFIX) {
         // token auth
         let token = path.substring(WELL_KNOWN_PATH_PREFIX.len(), path.len());
+        let Some(storage) = get_config_storage() else {
+            return Err(util::new_internal_error(
+                500,
+                "get config storage fail".to_string(),
+            ));
+        };
 
-        let value = match fs::read_to_string(get_token_path().join(token)).await
-        {
-            Ok(value) => Ok(value),
-            Err(e) => {
+        let value =
+            storage.load(&get_token_path(token)).await.map_err(|e| {
                 error!(
                     token,
                     err = e.to_string(),
                     "let't encrypt http-01 fail"
                 );
-                Err(util::new_internal_error(500, e.to_string()))
-            },
-        }?;
+                util::new_internal_error(500, e.to_string())
+            })?;
         info!(token, "let't encrypt http-01 success");
         HttpResponse {
             status: StatusCode::OK,
@@ -235,10 +237,11 @@ async fn new_lets_encrypt(
         })?;
     let mut challenges = Vec::with_capacity(authorizations.len());
 
-    let token_path = get_token_path();
-    fs::create_dir_all(&token_path)
-        .await
-        .map_err(|e| Error::Io { source: e })?;
+    let Some(storage) = get_config_storage() else {
+        return Err(Error::NotFound {
+            message: "storage not found".to_string(),
+        });
+    };
 
     for authz in &authorizations {
         info!(
@@ -262,11 +265,17 @@ async fn new_lets_encrypt(
         let instant_acme::Identifier::Dns(identifier) = &authz.identifier;
 
         let key_auth = order.key_authorization(challenge);
-
-        fs::write(token_path.join(&challenge.token), key_auth.as_str())
+        storage
+            .save(
+                &get_token_path(&challenge.token),
+                key_auth.as_str().as_bytes(),
+            )
             .await
-            .map_err(|e| Error::Io { source: e })?;
-        // http://your-domain/.well-known/acme-challenge/<TOKEN>
+            .map_err(|e| Error::Fail {
+                category: "save_token".to_string(),
+                message: e.to_string(),
+            })?;
+
         let well_known_path =
             format!("{WELL_KNOWN_PATH_PREFIX}{}", challenge.token);
         info!(well_known_path, "let's encrypt well known path",);

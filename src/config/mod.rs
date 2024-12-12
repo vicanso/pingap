@@ -105,6 +105,8 @@ pub trait ConfigStorage {
             etcd_watch_stream: None,
         })
     }
+    async fn save(&self, key: &str, data: &[u8]) -> Result<()>;
+    async fn load(&self, key: &str) -> Result<Vec<u8>>;
 }
 
 static CONFIG_STORAGE: OnceCell<Box<(dyn ConfigStorage + Sync + Send)>> =

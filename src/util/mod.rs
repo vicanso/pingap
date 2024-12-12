@@ -477,6 +477,14 @@ pub fn toml_omit_empty_value(value: &str) -> Result<String, Error> {
     })
 }
 
+pub fn path_join(value1: &str, value2: &str) -> String {
+    if value2.starts_with("/") {
+        format!("{value1}{value2}")
+    } else {
+        format!("{value1}/{value2}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

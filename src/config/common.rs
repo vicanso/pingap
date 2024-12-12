@@ -503,7 +503,6 @@ pub struct BasicConf {
     pub auto_restart_check_interval: Option<Duration>,
     pub cache_directory: Option<String>,
     pub cache_max_size: Option<ByteSize>,
-    pub acme_token_directory: Option<String>,
 }
 
 impl BasicConf {

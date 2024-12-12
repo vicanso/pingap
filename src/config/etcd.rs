@@ -120,14 +120,13 @@ impl ConfigStorage for EtcdStorage {
         category: &str,
         name: Option<&str>,
     ) -> Result<()> {
-        let filepath = self.path.clone();
         conf.validate()?;
         let (path, toml_value) = if self.separation && name.is_some() {
             conf.get_toml(category, name)?
         } else {
             conf.get_toml(category, None)?
         };
-        let key = format!("{filepath}{path}");
+        let key = util::path_join(&self.path, &path);
         let mut c = self.connect().await?;
         if toml_value.is_empty() {
             c.delete(key, None)
@@ -157,6 +156,25 @@ impl ConfigStorage for EtcdStorage {
         Ok(Observer {
             etcd_watch_stream: Some(stream),
         })
+    }
+    async fn save(&self, key: &str, data: &[u8]) -> Result<()> {
+        let key = util::path_join(&self.path, key);
+        let mut c = self.connect().await?;
+        c.put(key, data, None)
+            .await
+            .map_err(|e| Error::Etcd { source: e })?;
+        Ok(())
+    }
+    async fn load(&self, key: &str) -> Result<Vec<u8>> {
+        let key = util::path_join(&self.path, key);
+        let mut c = self.connect().await?;
+        let arr = c
+            .get(key, None)
+            .await
+            .map_err(|e| Error::Etcd { source: e })?
+            .take_kvs();
+        let buf = if arr.is_empty() { b"" } else { arr[0].value() };
+        Ok(buf.into())
     }
 }
 

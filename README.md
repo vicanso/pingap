@@ -12,6 +12,8 @@ Sentry and opentelemetry are optional, they are supported in the full-featured v
 
 [Examples](./examples/README.md)
 
+[Docs](./docs/README.md)
+
 ```mermaid
 flowchart LR
   internet("Internet") -- request --> pingap["Pingap"]

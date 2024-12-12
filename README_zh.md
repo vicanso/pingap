@@ -6,6 +6,8 @@ Sentry与opentelemetry为可选的特性，在全功能版本中支持。
 
 [例子](./examples/README.md)
 
+[文档](./docs/README.md)
+
 
 ```mermaid
 flowchart LR

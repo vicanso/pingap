@@ -141,7 +141,7 @@ impl ConfigStorage for FileStorage {
             conf.get_toml(category, None)?
         };
 
-        let filepath = format!("{filepath}{path}");
+        let filepath = util::path_join(&filepath, &path);
         let target_file = Path::new(&filepath);
         if let Some(p) = Path::new(&target_file).parent() {
             fs::create_dir_all(p).await.map_err(|e| Error::Io {
@@ -166,6 +166,30 @@ impl ConfigStorage for FileStorage {
         }
 
         Ok(())
+    }
+    async fn save(&self, key: &str, data: &[u8]) -> Result<()> {
+        let key = util::path_join(&self.path, key);
+        let path = Path::new(&key);
+        if let Some(p) = path.parent() {
+            fs::create_dir_all(p).await.map_err(|e| Error::Io {
+                source: e,
+                file: key.to_string(),
+            })?;
+        }
+        fs::write(path, data).await.map_err(|e| Error::Io {
+            source: e,
+            file: key.to_string(),
+        })?;
+        Ok(())
+    }
+    async fn load(&self, key: &str) -> Result<Vec<u8>> {
+        let key = util::path_join(&self.path, key);
+        let path = Path::new(&key);
+        let buf = fs::read(path).await.map_err(|e| Error::Io {
+            source: e,
+            file: key.to_string(),
+        })?;
+        Ok(buf)
     }
 }
 

@@ -104,8 +104,6 @@ export default {
     cacheMaxSizePlaceholder: "输入最大缓存空间限制(如100mb)",
     upgradeSock: "更新配置使用的sock",
     upgradeSockPlaceholder: "输入后台服务更新配置使用的sock",
-    acmeTokenDirectory: "ACME协议认证Token",
-    acmeTokenDirectoryPlaceholder: "输入保存ACME协议认证Token的目录路径",
     user: "启用后台服务的用户",
     userPlaceholder: "输入后台服务的用户",
     group: "启用后台服务的用户组",

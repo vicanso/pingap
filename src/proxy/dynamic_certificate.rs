@@ -89,7 +89,6 @@ fn parse_certificate(
         ""
     };
 
-
     let hash_key = certificate_config.hash_key();
 
     let tls_chain =
