@@ -461,22 +461,23 @@ fn run() -> Result<(), Box<dyn Error>> {
     for (name, certificate) in certificates.iter() {
         let acme = certificate.acme.clone().unwrap_or_default();
         let domains = certificate.domains.clone().unwrap_or_default();
-        // let certificate_file =
-        //     certificate.certificate_file.clone().unwrap_or_default();
         if acme.is_empty() || domains.is_empty() {
             continue;
         }
-        // let file =
-        // Path::new(&util::resolve_path(&certificate_file)).to_path_buf();
-        // now supports lets encrypt only
         enabled_lets_encrypt = true;
-        my_server.add_service(background_service(
-            &format!("LetsEncrypt: {name}"),
-            new_lets_encrypt_service(
-                name.to_string(),
-                domains.split(',').map(|item| item.to_string()).collect(),
-            ),
-        ));
+        // only a single instance of acme is running
+        if std::env::var("PINGAP_DISABLE_ACME")
+            .unwrap_or_default()
+            .is_empty()
+        {
+            my_server.add_service(background_service(
+                &format!("LetsEncrypt: {name}"),
+                new_lets_encrypt_service(
+                    name.to_string(),
+                    domains.split(',').map(|item| item.to_string()).collect(),
+                ),
+            ));
+        }
     }
     let updated_certificates = proxy::init_certificates(&certificates);
     if !updated_certificates.is_empty() {

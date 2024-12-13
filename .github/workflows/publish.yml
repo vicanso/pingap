@@ -126,6 +126,8 @@ jobs:
           sudo apt install -y cmake libclang-dev wget gnupg ca-certificates lsb-release --no-install-recommends protobuf-compiler
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.82.0
       - name: Run cargo release
         run: |
           make release-all

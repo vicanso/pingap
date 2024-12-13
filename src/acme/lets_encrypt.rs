@@ -59,7 +59,7 @@ pub fn new_lets_encrypt_service(
     )
 }
 
-async fn update_lets_encrypt(
+async fn update_certificate_lets_encrypt(
     name: &str,
     domains: &[String],
 ) -> Result<PingapConf> {
@@ -102,7 +102,7 @@ impl ServiceTask for LetsEncryptService {
         if !should_renew_now {
             return None;
         }
-        match update_lets_encrypt(&self.name, domains).await {
+        match update_certificate_lets_encrypt(&self.name, domains).await {
             Ok(conf) => {
                 info!(domains = domains.join(","), "renew certificate success");
                 webhook::send(webhook::SendNotificationParams {
@@ -276,9 +276,7 @@ async fn new_lets_encrypt(
                 message: e.to_string(),
             })?;
 
-        let well_known_path =
-            format!("{WELL_KNOWN_PATH_PREFIX}{}", challenge.token);
-        info!(well_known_path, "let's encrypt well known path",);
+        info!(token = challenge.token, "let's encrypt well known path",);
 
         challenges.push((identifier, &challenge.url));
     }

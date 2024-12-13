@@ -111,7 +111,7 @@ export default function Certificates() {
       defaultValue: certificateConfig.acme,
       span: 3,
       category: ExFormItemCategory.RADIOS,
-      options: newStringOptions(["lets_encrypt"], true),
+      options: newStringOptions(["lets_encrypt"], true, true),
     },
     {
       name: "is_default",
