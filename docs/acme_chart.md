@@ -9,7 +9,7 @@ graph TD;
 
   new_acme_order --> get_authorizations;
 
-  get_authorizations -- load all authorization and save to files --> set_challenges;
+  get_authorizations -- load all authorization and save tokens to files --> set_challenges;
 
   set_challenges -- wait for ready --> order_fresh;
 

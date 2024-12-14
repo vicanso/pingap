@@ -1,23 +1,25 @@
 # Benchmark
 
+CPU: M4 Pro
+
 ## Nginx
 
 ```bash
 wrk 'http://127.0.0.1:6200/ping' --latency
 
 Running 10s test @ http://127.0.0.1:6200/ping
- 2 threads and 10 connections
- Thread Stats   Avg      Stdev     Max   +/- Stdev
-   Latency   140.44us  705.01us  16.07ms   98.80%
-   Req/Sec    65.13k     2.92k   72.33k    85.15%
- Latency Distribution
-    50%   73.00us
-    75%   80.00us
-    90%   86.00us
-    99%    1.97ms
- 1309147 requests in 10.10s, 187.27MB read
-Requests/sec: 129597.70
-Transfer/sec:     18.54MB
+  2 threads and 10 connections
+  Thread Stats   Avg      Stdev     Max   +/- Stdev
+    Latency    54.01us   81.22us   3.82ms   99.65%
+    Req/Sec    94.87k     7.42k  103.28k    68.32%
+  Latency Distribution
+     50%   49.00us
+     75%   56.00us
+     90%   64.00us
+     99%   84.00us
+  1905832 requests in 10.10s, 272.62MB read
+Requests/sec: 188702.55
+Transfer/sec:     26.99MB
 ```
 
 ## Pingap
@@ -28,16 +30,16 @@ wrk 'http://127.0.0.1:6100/ping' --latency
 Running 10s test @ http://127.0.0.1:6100/ping
   2 threads and 10 connections
   Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency    83.14us   25.54us   1.18ms   82.07%
-    Req/Sec    59.22k     1.13k   62.14k    94.06%
+    Latency    59.87us   20.27us   1.00ms   81.00%
+    Req/Sec    82.12k     3.04k   85.77k    90.59%
   Latency Distribution
-     50%   89.00us
-     75%   96.00us
-     90%  103.00us
-     99%  122.00us
-  1190455 requests in 10.10s, 155.54MB read
-Requests/sec: 117876.05
-Transfer/sec:     15.40MB
+     50%   63.00us
+     75%   69.00us
+     90%   76.00us
+     99%   97.00us
+  1650275 requests in 10.10s, 215.61MB read
+Requests/sec: 163396.17
+Transfer/sec:     21.35MB
 ```
 
 
@@ -49,14 +51,14 @@ wrk 'http://127.0.0.1:6101/ping' --latency
 Running 10s test @ http://127.0.0.1:6101/ping
   2 threads and 10 connections
   Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency   221.18us  394.85us  13.41ms   99.53%
-    Req/Sec    24.98k     0.90k   26.78k    89.60%
+    Latency   158.72us   75.33us   4.02ms   97.93%
+    Req/Sec    31.85k     1.28k   33.36k    92.57%
   Latency Distribution
-     50%  212.00us
-     75%  226.00us
-     90%  240.00us
-     99%  305.00us
-  502003 requests in 10.10s, 71.81MB read
-Requests/sec:  49706.13
-Transfer/sec:      7.11MB
+     50%  163.00us
+     75%  178.00us
+     90%  193.00us
+     99%  233.00us
+  639993 requests in 10.10s, 91.55MB read
+Requests/sec:  63368.81
+Transfer/sec:      9.06MB
 ```

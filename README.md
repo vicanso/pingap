@@ -168,26 +168,26 @@ graph TD;
 
 ## Performance
 
-CPU: M2, Thread: 1
+CPU: M4 Pro, Thread: 1
 
 ### Ping no accces log:
 
 ```bash
-wrk 'http://127.0.0.1:6188/ping' --latency
+wrk 'http://127.0.0.1:6100/ping' --latency
 
-Running 10s test @ http://127.0.0.1:6188/ping
+Running 10s test @ http://127.0.0.1:6100/ping
   2 threads and 10 connections
   Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency    67.10us   67.52us   4.63ms   99.53%
-    Req/Sec    74.82k     2.57k   85.56k    92.57%
+    Latency    59.87us   20.27us   1.00ms   81.00%
+    Req/Sec    82.12k     3.04k   85.77k    90.59%
   Latency Distribution
-     50%   69.00us
-     75%   76.00us
-     90%   83.00us
-     99%  105.00us
-  1504165 requests in 10.10s, 196.52MB read
-Requests/sec: 148928.76
-Transfer/sec:     19.46MB
+     50%   63.00us
+     75%   69.00us
+     90%   76.00us
+     99%   97.00us
+  1650275 requests in 10.10s, 215.61MB read
+Requests/sec: 163396.17
+Transfer/sec:     21.35MB
 ```
 
 ## Rust version
