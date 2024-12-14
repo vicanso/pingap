@@ -1,10 +1,16 @@
-[upstreams.charts]
-addrs = ["127.0.0.1:5000"]
+[basic]
+log_level = "INFO"
+name = "pingap"
+pid_file = "/run/pingap.pid"
 
-[locations.lo]
-upstream = "charts"
+[locations.testLocation]
 path = "/"
+upstream = "testUpstream"
 
-[servers.test]
-addr = "0.0.0.0:6188"
-locations = ["lo"]
+[servers.testServer]
+access_log = "combined"
+addr = "127.0.0.1:6118"
+locations = ["testLocation"]
+
+[upstreams.testUpstream]
+addrs = ["127.0.0.1:5000"]

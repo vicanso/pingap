@@ -28,6 +28,8 @@ use proxy::{new_upstream_health_check_task, Server, ServerConf};
 use state::{get_admin_addr, get_start_time, set_admin_addr};
 use std::collections::HashMap;
 use std::error::Error;
+use std::ffi::OsString;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info};
@@ -58,6 +60,8 @@ mod webhook;
 static ALLOC: dhat::Alloc = dhat::Alloc;
 #[cfg(feature = "perf")]
 mod perf;
+
+static TEMPLATE_CONFIG: &str = include_str!("../conf/basic.toml");
 
 /// A reverse proxy like nginx.
 #[derive(Parser, Debug, Default)]
@@ -99,6 +103,9 @@ struct Args {
     /// Sync config to other storage
     #[arg(long)]
     sync: Option<String>,
+    /// Print the template configuration and exit
+    #[arg(long)]
+    template: bool,
 }
 
 fn new_server_conf(
@@ -247,6 +254,12 @@ fn parse_arguments() -> Args {
         }
     }
 
+    if arr.contains(&OsString::from_str("--template").unwrap_or_default()) {
+        return Args {
+            template: true,
+            ..Default::default()
+        };
+    }
     let mut args = Args::parse_from(arr);
 
     if !args.daemon && !get_from_env("daemon").is_empty() {
@@ -287,6 +300,11 @@ fn parse_arguments() -> Args {
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args = parse_arguments();
+    if args.template {
+        println!("{TEMPLATE_CONFIG}");
+        return Ok(());
+    }
+
     if let Some(admin) = &args.admin {
         set_admin_addr(admin);
     }
