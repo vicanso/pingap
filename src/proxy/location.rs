@@ -403,7 +403,7 @@ impl Location {
                 debug!(name, step = step.to_string(), "handle request plugin");
                 let result = plugin.handle_request(step, session, ctx).await?;
                 if let Some(resp) = result {
-                    // ingore http response status >= 900
+                    // ignore http response status >= 900
                     if resp.status.as_u16() < 900 {
                         ctx.status = Some(resp.status);
                         resp.send(session).await?;

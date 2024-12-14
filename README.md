@@ -170,7 +170,7 @@ graph TD;
 
 CPU: M4 Pro, Thread: 1
 
-### Ping no accces log:
+### Ping no access log:
 
 ```bash
 wrk 'http://127.0.0.1:6100/ping' --latency

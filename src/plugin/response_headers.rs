@@ -131,7 +131,7 @@ impl Plugin for ResponseHeaders {
             return Ok(());
         }
         // add --> remove --> set --> rename
-        // ingore error
+        // ignore error
         for (name, value) in &self.add_headers {
             if let Some(value) = convert_header_value(value, session, ctx) {
                 let _ = upstream_response.append_header(name, value);

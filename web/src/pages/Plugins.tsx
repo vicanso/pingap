@@ -184,7 +184,7 @@ export default function Plugins() {
         {
           name: "max_age",
           label: pluginI18n("adminMaxAge"),
-          placeholder: pluginI18n("adminMaxAgePalceholder"),
+          placeholder: pluginI18n("adminMaxAgePlaceholder"),
           defaultValue: (pluginConfig.max_age || "") as string,
           span: 2,
           category: ExFormItemCategory.TEXT,

@@ -225,7 +225,10 @@ async fn new_lets_encrypt(
     let state = order.state();
     if !matches!(state.status, OrderStatus::Pending) {
         return Err(Error::Fail {
-            message: format!("order is not pending, staus: {:?}", state.status),
+            message: format!(
+                "order is not pending, status: {:?}",
+                state.status
+            ),
             category: "order_status".to_string(),
         });
     }

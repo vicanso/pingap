@@ -89,7 +89,7 @@ pub struct State {
     // the connection time,
     // it may be a large value if it is a reused connection
     pub connection_time: u64,
-    // connection is resued
+    // connection is reused
     pub connection_reused: bool,
     // the location to handle request
     pub location: Option<Arc<Location>>,

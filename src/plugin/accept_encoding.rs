@@ -132,7 +132,7 @@ only_one_encoding = true
 
     #[tokio::test]
     async fn test_accept_conding() {
-        let accept_enconding = AcceptEncoding::try_from(
+        let accept_encoding = AcceptEncoding::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 encodings = "zstd, br, gzip"
@@ -153,7 +153,7 @@ only_one_encoding = true
             &HttpModules::new(),
         );
         session.read_request().await.unwrap();
-        let _ = accept_enconding
+        let _ = accept_encoding
             .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
@@ -174,7 +174,7 @@ only_one_encoding = true
         );
 
         // multi accept encoding
-        let accept_enconding = AcceptEncoding::try_from(
+        let accept_encoding = AcceptEncoding::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
 encodings = "zstd, br, gzip"
@@ -192,7 +192,7 @@ encodings = "zstd, br, gzip"
             &HttpModules::new(),
         );
         session.read_request().await.unwrap();
-        let _ = accept_enconding
+        let _ = accept_encoding
             .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
@@ -221,7 +221,7 @@ encodings = "zstd, br, gzip"
             &HttpModules::new(),
         );
         session.read_request().await.unwrap();
-        let _ = accept_enconding
+        let _ = accept_encoding
             .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,

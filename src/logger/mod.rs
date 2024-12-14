@@ -94,7 +94,7 @@ impl ServiceTask for LogCompressionTask {
         else {
             return Some(false);
         };
-        let compresssion_exts = [GZIP_EXT.to_string(), ZSTD_EXT.to_string()];
+        let compression_exts = [GZIP_EXT.to_string(), ZSTD_EXT.to_string()];
         for entry in WalkDir::new(&self.path).into_iter().filter_map(|e| e.ok())
         {
             let ext = entry
@@ -103,7 +103,7 @@ impl ServiceTask for LogCompressionTask {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
-            if compresssion_exts.contains(&ext) {
+            if compression_exts.contains(&ext) {
                 continue;
             }
             let Ok(metadata) = entry.metadata() else {

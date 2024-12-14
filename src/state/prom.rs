@@ -318,10 +318,10 @@ fn new_int_counter(server: &str, name: &str, help: &str) -> Result<IntCounter> {
 fn new_int_gauge(server: &str, name: &str, help: &str) -> Result<IntGauge> {
     let mut opts = Opts::new(name, help);
     opts = opts.const_label("server", server);
-    let guage = IntGauge::with_opts(opts).map_err(|e| Error::Prometheus {
+    let gauge = IntGauge::with_opts(opts).map_err(|e| Error::Prometheus {
         message: e.to_string(),
     })?;
-    Ok(guage)
+    Ok(gauge)
 }
 
 fn new_int_counter_vec(
@@ -340,7 +340,7 @@ fn new_int_counter_vec(
     Ok(counter)
 }
 
-fn new_intgauge_vec(
+fn new_intguage_vec(
     server: &str,
     name: &str,
     help: &str,
@@ -348,11 +348,11 @@ fn new_intgauge_vec(
 ) -> Result<IntGaugeVec> {
     let mut opts = Opts::new(name, help);
     opts = opts.const_label("server", server);
-    let guage =
+    let gauge =
         IntGaugeVec::new(opts, label_names).map_err(|e| Error::Prometheus {
             message: e.to_string(),
         })?;
-    Ok(guage)
+    Ok(gauge)
 }
 
 fn new_histogram(
@@ -411,7 +411,7 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
     let http_response_body_sent = Box::new(new_histogram(
         server,
         "pingap_http_response_body_sent",
-        "pingap http resonse body send(KB)",
+        "pingap http response body send(KB)",
         &[1.0, 5.0, 10.0, 50.0, 100.0, 1000.0, 10000.0],
     )?);
     let connection_reused = Box::new(new_int_counter(
@@ -426,13 +426,13 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         &[0.01, 0.05, 0.1, 0.5, 1.0],
     )?);
 
-    let upstream_connected = Box::new(new_intgauge_vec(
+    let upstream_connected = Box::new(new_intguage_vec(
         server,
         "pingap_upstream_connected",
-        "pingap upstream connnected count",
+        "pingap upstream connected count",
         &["upstream"],
     )?);
-    let upstream_processing = Box::new(new_intgauge_vec(
+    let upstream_processing = Box::new(new_intguage_vec(
         server,
         "pingap_upstream_processing",
         "pingap upstream processing count",

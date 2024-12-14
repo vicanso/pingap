@@ -194,7 +194,7 @@ export default {
   upstream: {
     name: "Name",
     namePlaceholder: "Input the name of upstream",
-    addrs: "Uptream Address",
+    addrs: "Upstream Address",
     addrsPlaceholder:
       "Input the address of upstream(e.g. 127.0.0.1:3000) : Input the weight of upstream",
     discovery: "Service Discovery",
@@ -264,7 +264,7 @@ export default {
     adminPath: "Admin Path",
     adminPathPlaceholder: "Input the path for admin plugin",
     adminMaxAge: "Max Age",
-    adminMaxAgePalceholder: "Input the max session age for login",
+    adminMaxAgePlaceholder: "Input the max session age for login",
     adminIpFailLimit: "Ip Fail Limit",
     adminIpFailLimitPlaceholder: "Input the fail ip limit count",
     adminAuthorization: "Authorization",

@@ -72,13 +72,13 @@ health_check = "http://charts/ping?connection_timeout=3s&pingap"
 # upstream address ipv4 only (default false)
 ipv4_only = false
 
-# enable tracer for upsteam (default false)
+# enable tracer for upstream (default false)
 enable_tracer = false
 
 # set alpn form upstream (default h1)
 alpn = "h1"
 
-# connection tiemout (default none)
+# connection timeout (default none)
 connection_timeout = "10s"
 
 # total connection timeout, include tls handshake (default none)
@@ -196,7 +196,7 @@ tcp_interval = "1m"
 # before giving up and killing the connection
 tcp_probe_count = 9
 
-# enable TCP fast open and set the backlog size of it (defualt none)
+# enable TCP fast open and set the backlog size of it (default none)
 tcp_fast_open = 10
 
 # enable prometheus metrics, it can be a push gateway url or pull metrics path (default none)

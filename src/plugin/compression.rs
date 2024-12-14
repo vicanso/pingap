@@ -65,7 +65,7 @@ impl TryFrom<&PluginConf> for Compression {
 
 impl Compression {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new compresson plugin");
+        debug!(params = params.to_string(), "new compression plugin");
         Self::try_from(params)
     }
 }

@@ -494,7 +494,7 @@ impl ServiceTask for HealthCheckTask {
                     check_count % count == 0
                 };
 
-                // get update frequecy(update service)
+                // get update frequency(update service)
                 // and health check frequency
                 let (update_frequency, health_check_frequency) =
                     if let Some(lb) = up.as_round_robin() {

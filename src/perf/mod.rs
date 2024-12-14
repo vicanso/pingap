@@ -19,7 +19,7 @@ pub struct DhatHeapService {}
 
 #[async_trait]
 impl BackgroundService for DhatHeapService {
-    /// The lets encrypt servier checks the cert, it will get news cert if current is invalid.
+    /// The lets encrypt service checks the cert, it will get news cert if current is invalid.
     async fn start(&self, mut shutdown: ShutdownWatch) {
         info!("dhat heap service is running");
         let _profiler = dhat::Profiler::new_heap();

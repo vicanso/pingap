@@ -248,7 +248,7 @@ impl Server {
                     &self.prometheus_metrics,
                     prometheus.clone(),
                 ) {
-                    Ok(serivce) => Some(serivce),
+                    Ok(service) => Some(service),
                     Err(e) => {
                         error!(
                             error = e.to_string(),
@@ -315,7 +315,7 @@ impl Server {
             }
         }
         lb.threads = threads;
-        // support listen multi adddress
+        // support listen multi address
         for addr in addr.split(',') {
             // tls
             if let Some(dynamic_cert) = &dynamic_cert {

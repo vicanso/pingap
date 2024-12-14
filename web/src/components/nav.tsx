@@ -24,7 +24,7 @@ interface NavProps {
 }
 
 export function Nav({ links, isCollapsed, size }: NavProps) {
-  const genereateChildren = (children: NavLink[]) => {
+  const generateChildren = (children: NavLink[]) => {
     return children.map((link) => {
       return (
         <Link
@@ -108,7 +108,7 @@ export function Nav({ links, isCollapsed, size }: NavProps) {
     } else {
       items.push(generateLink(link));
       if (link.children?.length) {
-        items.push(...genereateChildren(link.children));
+        items.push(...generateChildren(link.children));
       }
     }
   });

@@ -94,7 +94,7 @@ fn parse_certificate(
     let tls_chain =
         util::convert_certificate_bytes(&certificate_config.tls_chain);
     let chain_certificate = if let Some(value) = &tls_chain {
-        // ingore chain error
+        // ignore chain error
         X509::from_pem(value).ok()
     } else if category == LETS_ENCRYPT {
         // get chain of let's encrypt
@@ -452,7 +452,7 @@ aqcrKJfS+xaKWxXPiNlpBMG5
     #[test]
     fn test_new_tls_settings() {
         let dynamic = DynamicCertificate::new_global();
-        let mut tls_setings = dynamic
+        let mut tls_settings = dynamic
             .new_tls_settings(&TlsSettingParams {
                 server_name: "pingap".to_string(),
                 enabled_h2: true,
@@ -467,8 +467,8 @@ aqcrKJfS+xaKWxXPiNlpBMG5
                 tls_max_version: Some("tlsv1.3".to_string()),
             })
             .unwrap();
-        assert_eq!(true, tls_setings.min_proto_version().is_some());
-        assert_eq!(true, tls_setings.max_proto_version().is_some());
+        assert_eq!(true, tls_settings.min_proto_version().is_some());
+        assert_eq!(true, tls_settings.max_proto_version().is_some());
     }
 
     #[test]

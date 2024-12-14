@@ -87,7 +87,7 @@ struct Args {
     /// Control panel for config manager
     ///
     /// This flag is useful for config manager, it will only run as admin,
-    /// not run the sevices of config.
+    /// not run the services of config.
     #[arg(long)]
     cp: bool,
     /// Whether this server should try to auto restart

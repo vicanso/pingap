@@ -730,7 +730,7 @@ mod tests {
     }
 
     #[test]
-    fn test_embeded_static_file() {
+    fn test_embedded_static_file() {
         let file = AdminAsset::get("index.html").unwrap();
         let resp: HttpResponse =
             EmbeddedStaticFile(Some(file), Duration::from_secs(60)).into();
