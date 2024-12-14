@@ -40,13 +40,14 @@ pub struct FileCache {
     writing_max: u32,
     #[cfg(feature = "full")]
     write_time: Box<Histogram>,
-    cache: TinyUfo<String, CacheObject>,
+    cache: Option<TinyUfo<String, CacheObject>>,
 }
 
 /// Create a file cache and use tinyufo for hotspot data caching
 pub fn new_file_cache(dir: &str) -> Result<FileCache> {
     let mut reading_max = 10 * 1000;
     let mut writing_max = 1000;
+    let mut cache_size = 100;
     let dir = if let Some((dir, query)) = dir.split_once('?') {
         let m = util::convert_query_map(query);
         if let Some(max) = m.get("reading_max") {
@@ -54,6 +55,9 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
         }
         if let Some(max) = m.get("writing_max") {
             writing_max = max.parse::<u32>().unwrap_or(writing_max);
+        }
+        if let Some(value) = m.get("cache_size") {
+            cache_size = value.parse::<usize>().unwrap_or(cache_size);
         }
         util::resolve_path(dir)
     } else {
@@ -64,6 +68,10 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
         std::fs::create_dir_all(path).map_err(|e| Error::Io { source: e })?;
     }
     info!(dir, reading_max, writing_max, "new file cache");
+    let mut cache = None;
+    if cache_size > 0 {
+        cache = Some(TinyUfo::new(cache_size, cache_size));
+    }
 
     Ok(FileCache {
         directory: dir,
@@ -75,7 +83,7 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
         writing_max,
         #[cfg(feature = "full")]
         write_time: CACHE_WRITING_TIME.clone(),
-        cache: TinyUfo::new(100, 100),
+        cache,
     })
 }
 
@@ -84,7 +92,9 @@ impl HttpCacheStorage for FileCache {
     /// Get cache object from tinyufo,
     /// if not exists, then get from the file.
     async fn get(&self, key: &str) -> Result<Option<CacheObject>> {
-        if let Some(obj) = self.cache.get(&key.to_string()) {
+        if let Some(Some(obj)) =
+            self.cache.as_ref().map(|c| c.get(&key.to_string()))
+        {
             return Ok(Some(obj));
         }
         #[cfg(feature = "full")]
@@ -125,7 +135,10 @@ impl HttpCacheStorage for FileCache {
         data: CacheObject,
         weight: u16,
     ) -> Result<()> {
-        self.cache.put(key.clone(), data.clone(), weight);
+        if let Some(c) = &self.cache {
+            c.put(key.clone(), data.clone(), weight);
+        }
+
         #[cfg(feature = "full")]
         let start = SystemTime::now();
         let buf: Bytes = data.into();
@@ -146,7 +159,9 @@ impl HttpCacheStorage for FileCache {
     }
     /// Remove cache object from file, tinyufo doesn't support remove now.
     async fn remove(&self, key: &str) -> Result<Option<CacheObject>> {
-        self.cache.remove(&key.to_string());
+        if let Some(c) = &self.cache {
+            c.remove(&key.to_string());
+        }
         let file = Path::new(&self.directory).join(key);
         fs::remove_file(file)
             .await
