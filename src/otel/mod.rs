@@ -23,7 +23,7 @@ use opentelemetry::{
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
     propagation::{BaggagePropagator, TraceContextPropagator},
-    trace::{self, BatchConfigBuilder, RandomIdGenerator, Sampler},
+    trace::{BatchConfigBuilder, RandomIdGenerator, Sampler},
     Resource,
 };
 use pingora::{server::ShutdownWatch, services::background::BackgroundService};
@@ -163,18 +163,14 @@ impl BackgroundService for TracerService {
                     .build();
                 opentelemetry_sdk::trace::TracerProvider::builder()
                     .with_span_processor(batch)
-                    .with_config(
-                        trace::Config::default()
-                            // TODO smapler config
-                            .with_sampler(Sampler::AlwaysOn)
-                            .with_id_generator(RandomIdGenerator::default())
-                            .with_max_attributes_per_span(self.max_attributes)
-                            .with_max_events_per_span(self.max_events)
-                            .with_resource(Resource::new(vec![KeyValue::new(
-                                "service.name",
-                                get_service_name(&self.name),
-                            )])),
-                    )
+                    .with_sampler(Sampler::AlwaysOn)
+                    .with_id_generator(RandomIdGenerator::default())
+                    .with_max_attributes_per_span(self.max_attributes)
+                    .with_max_events_per_span(self.max_events)
+                    .with_resource(Resource::new(vec![KeyValue::new(
+                        "service.name",
+                        get_service_name(&self.name),
+                    )]))
                     .build()
             });
 
