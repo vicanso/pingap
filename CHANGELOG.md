@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.9.4](https://github.com/vicanso/pingap/compare/v0.9.3..0.9.4) - 2024-12-14
+
+### ⛰️  Features
+
+- File cache support limit tinyufo cache size - ([9aa1219](https://github.com/vicanso/pingap/commit/9aa12195562ec970cb0b0923bb34a93e67125435))
+
+### 🐛 Bug Fixes
+
+- Fix open telemetry init - ([a6784a0](https://github.com/vicanso/pingap/commit/a6784a0f7a6ea42d93db0bee4f8a94c595b4e7c5))
+- Fix 80 port for admin plugin, #58 - ([1d41c05](https://github.com/vicanso/pingap/commit/1d41c057f6df561b9549b9c08a4bb015fef6d7e1))
+
+### 🚜 Refactor
+
+- Update package - ([e744805](https://github.com/vicanso/pingap/commit/e74480551eb0eacd258bcc16890114accb385278))
+- Adjust acme token directory - ([55413ad](https://github.com/vicanso/pingap/commit/55413ad78b691465a7814ea3c6b05fb17fbd2ef3))
+- Save acme token as file - ([00cb15b](https://github.com/vicanso/pingap/commit/00cb15baa01548990925619b8f0ed0da860d996c))
+- Save let's encrypt cert and key to config storage - ([6e7b5b7](https://github.com/vicanso/pingap/commit/6e7b5b7991f4dc8afc618117de8cbc8d7e340823))
+- Adjust certificate of tls - ([757a75c](https://github.com/vicanso/pingap/commit/757a75cd272cd6cffd9fdb7ccc49a159ff55ba01))
+
+### 📚 Documentation
+
+- Update benchmark - ([3406310](https://github.com/vicanso/pingap/commit/3406310c9d2901b79d18a559c170559287e672e9))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update dependencies - ([571d199](https://github.com/vicanso/pingap/commit/571d19973c9016fc34048c549b6b24dc9fc95134))
+- Use rust 1.82.0 - ([f314e83](https://github.com/vicanso/pingap/commit/f314e83ae2bbbbdbb408614c156de542f6378a4e))
+
 ## [0.9.3](https://github.com/vicanso/pingap/compare/v0.9.2..0.9.3) - 2024-12-08
 
 ### ⛰️  Features
