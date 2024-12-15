@@ -482,16 +482,22 @@ impl pingora::listeners::TlsAccept for DynamicCertificate {
 
         // root ca
         if d.is_root {
-            if let Ok(result) =
-                d.get_self_signed_cert(server_name.unwrap_or_default())
-            {
-                ssl_certificate(
-                    ssl,
-                    &result.0,
-                    &result.1,
-                    &d.chain_certificate,
-                );
-            }
+            match d.get_self_signed_cert(server_name.unwrap_or_default()) {
+                Ok(result) => {
+                    ssl_certificate(
+                        ssl,
+                        &result.0,
+                        &result.1,
+                        &d.chain_certificate,
+                    );
+                },
+                Err(err) => {
+                    error!(
+                        error = err.to_string(),
+                        "get self signed cert fail"
+                    );
+                },
+            };
             return;
         }
 
