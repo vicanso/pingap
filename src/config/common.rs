@@ -143,6 +143,7 @@ pub struct CertificateConf {
     pub tls_key: Option<String>,
     pub tls_chain: Option<String>,
     pub is_default: Option<bool>,
+    pub is_root: Option<bool>,
     pub acme: Option<String>,
     pub remark: Option<String>,
 }

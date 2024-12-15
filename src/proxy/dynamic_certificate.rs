@@ -43,6 +43,10 @@ type DynamicCertificates = AHashMap<String, Arc<DynamicCertificate>>;
 static DYNAMIC_CERTIFICATE_MAP: Lazy<ArcSwap<DynamicCertificates>> =
     Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
 
+type SelfSignedCertKey = AHashMap<String, Arc<(X509, PKey<Private>)>>;
+static SELF_SIGNED_CERT_KEY_MAP: Lazy<ArcSwap<SelfSignedCertKey>> =
+    Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
+
 // https://letsencrypt.org/certificates/
 const E5: &[u8] = include_bytes!("../assets/e5.pem");
 const E6: &[u8] = include_bytes!("../assets/e6.pem");
@@ -126,6 +130,7 @@ fn parse_certificate(
         domains: info.domains.clone(),
         certificate: Some((cert, key)),
         info: Some(info),
+        is_root: certificate_config.is_root.unwrap_or_default(),
         ..Default::default()
     })
 }
@@ -219,6 +224,7 @@ pub struct DynamicCertificate {
     domains: Vec<String>,
     info: Option<Certificate>,
     hash_key: String,
+    is_root: bool,
 }
 
 pub struct TlsSettingParams {
@@ -228,6 +234,81 @@ pub struct TlsSettingParams {
     pub ciphersuites: Option<String>,
     pub tls_min_version: Option<String>,
     pub tls_max_version: Option<String>,
+}
+
+fn new_certificate_with_ca(
+    root_ca: &DynamicCertificate,
+    cn: &str,
+) -> Result<(X509, PKey<Private>)> {
+    let Some(info) = &root_ca.info else {
+        return Err(Error::Invalid {
+            message: "root ca is invalid".to_string(),
+            category: "ca".to_string(),
+        });
+    };
+    let binding = info.get_cert();
+    let ca_pem = std::string::String::from_utf8_lossy(&binding);
+
+    let ca_params = rcgen::CertificateParams::from_ca_cert_pem(&ca_pem)
+        .map_err(|e| Error::Invalid {
+            message: e.to_string(),
+            category: "parse_ca".to_string(),
+        })?;
+
+    let binding = info.get_key();
+    let ca_key = std::string::String::from_utf8_lossy(&binding);
+
+    let ca_kp =
+        rcgen::KeyPair::from_pem(&ca_key).map_err(|e| Error::Invalid {
+            message: e.to_string(),
+            category: "parse_ca_key".to_string(),
+        })?;
+    let ca_cert =
+        ca_params.self_signed(&ca_kp).map_err(|e| Error::Invalid {
+            message: e.to_string(),
+            category: "self_sigined_ca".to_string(),
+        })?;
+
+    let mut params = rcgen::CertificateParams::new(vec![cn.to_string()])
+        .map_err(|e| Error::Invalid {
+            message: e.to_string(),
+            category: "new_cert_params".to_string(),
+        })?;
+    let mut dn = rcgen::DistinguishedName::new();
+    dn.push(rcgen::DnType::CommonName, cn.to_string());
+    dn.push(rcgen::DnType::OrganizationName, "Pingap".to_string());
+    dn.push(rcgen::DnType::OrganizationalUnitName, "Pingap".to_string());
+
+    params.distinguished_name = dn;
+    params.not_before = time::OffsetDateTime::now_utc();
+    params.not_after =
+        time::OffsetDateTime::now_utc() + time::Duration::days(365 * 20);
+
+    let cert_key = rcgen::KeyPair::generate().map_err(|e| Error::Invalid {
+        message: e.to_string(),
+        category: "key_pair_generate".to_string(),
+    })?;
+
+    let cert = params.signed_by(&cert_key, &ca_cert, &ca_kp).map_err(|e| {
+        Error::Invalid {
+            message: e.to_string(),
+            category: "signed_by_ca".to_string(),
+        }
+    })?;
+
+    let cert =
+        X509::from_pem(cert.pem().as_bytes()).map_err(|e| Error::Invalid {
+            category: "x509_from_pem".to_string(),
+            message: e.to_string(),
+        })?;
+
+    let key = PKey::private_key_from_pem(cert_key.serialize_pem().as_bytes())
+        .map_err(|e| Error::Invalid {
+        category: "private_key_from_pem".to_string(),
+        message: e.to_string(),
+    })?;
+
+    Ok((cert, key))
 }
 
 impl DynamicCertificate {
@@ -298,6 +379,33 @@ impl DynamicCertificate {
         }
 
         Ok(tls_settings)
+    }
+    /// Get self signed certificate
+    fn get_self_signed_cert(
+        &self,
+        server_name: &str,
+    ) -> Result<Arc<(X509, PKey<Private>)>> {
+        let arr: Vec<&str> = server_name.split('.').collect();
+        let cn = if arr.len() > 2 {
+            format!("*.{}", arr[1..].join("."))
+        } else {
+            server_name.to_string()
+        };
+        let k = format!("{:?}:{}", self.name, cn);
+        if let Some(v) = SELF_SIGNED_CERT_KEY_MAP.load().get(&k) {
+            return Ok(v.clone());
+        }
+        let (cert, key) = new_certificate_with_ca(self, &cn)?;
+        info!(common_name = cn, "new self sigined cert",);
+        let mut m = AHashMap::new();
+        for (k, v) in SELF_SIGNED_CERT_KEY_MAP.load().iter() {
+            m.insert(k.to_string(), v.clone());
+        }
+        let v = Arc::new((cert, key));
+        m.insert(k, v.clone());
+        SELF_SIGNED_CERT_KEY_MAP.store(Arc::new(m));
+
+        Ok(v)
     }
 }
 
@@ -371,6 +479,22 @@ impl pingora::listeners::TlsAccept for DynamicCertificate {
             error!(sni, ssl = format!("{ssl:?}"), "no match certificate");
             return;
         };
+
+        // root ca
+        if d.is_root {
+            if let Ok(result) =
+                d.get_self_signed_cert(server_name.unwrap_or_default())
+            {
+                ssl_certificate(
+                    ssl,
+                    &result.0,
+                    &result.1,
+                    &d.chain_certificate,
+                );
+            }
+            return;
+        }
+
         if let Some((cert, key)) = &d.certificate {
             ssl_certificate(ssl, cert, key, &d.chain_certificate);
         }

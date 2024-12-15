@@ -236,6 +236,7 @@ export default {
     domainsPlaceholder: "输入使用acme的域名列表，多个域名以`,`分隔",
     acme: "acme",
     isDefault: "是否默认证书",
+    isRoot: "是否根证书",
   },
   plugin: {
     name: "名称",

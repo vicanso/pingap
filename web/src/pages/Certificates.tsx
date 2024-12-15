@@ -122,6 +122,15 @@ export default function Certificates() {
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
+    {
+      name: "is_root",
+      label: certificateI18n("isRoot"),
+      placeholder: "",
+      defaultValue: certificateConfig.is_root,
+      span: 3,
+      category: ExFormItemCategory.RADIOS,
+      options: newBooleanOptions(),
+    },
   ];
 
   let defaultShow = 2;
