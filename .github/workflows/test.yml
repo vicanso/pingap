@@ -41,6 +41,7 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Run cargo clippy
         run: |
+          cargo install typos-cli
           make lint
           make lint-full
       - name: Run cargo test

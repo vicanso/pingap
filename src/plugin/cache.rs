@@ -29,6 +29,7 @@ use bytesize::ByteSize;
 use fancy_regex::Regex;
 use http::{Method, StatusCode};
 use humantime::parse_duration;
+use memory_stats::memory_stats;
 use once_cell::sync::{Lazy, OnceCell};
 use pingora::cache::eviction::simple_lru::Manager;
 use pingora::cache::eviction::EvictionManager;
@@ -79,8 +80,14 @@ fn get_cache_backend() -> Result<&'static HttpCache> {
                 message: e.to_string(),
             })?
         } else {
+            // max memory
+            let max_memory = if let Some(value) = memory_stats() {
+                value.physical_mem / 2
+            } else {
+                ByteSize::gb(4).as_u64() as usize
+            };
             // tiny ufo cache
-            new_tiny_ufo_cache(size.min(ByteSize::gb(1).as_u64() as usize))
+            new_tiny_ufo_cache(size.min(max_memory))
         };
         Ok(cache)
     })

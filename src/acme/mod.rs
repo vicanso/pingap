@@ -145,6 +145,7 @@ mod tests {
 
     #[test]
     fn test_cert() {
+        // spellchecker:off
         let pem = r###"-----BEGIN CERTIFICATE-----
 MIID/TCCAmWgAwIBAgIQJUGCkB1VAYha6fGExkx0KTANBgkqhkiG9w0BAQsFADBV
 MR4wHAYDVQQKExVta2NlcnQgZGV2ZWxvcG1lbnQgQ0ExFTATBgNVBAsMDHZpY2Fu
@@ -169,6 +170,7 @@ CCB2C+8hgRNG9ZmW1KU8rxkzoddHmSB8d6+vFqOajxGdyOV+aX00k3w6FgtHOoKD
 Ztdj1N0eTfn02pibVcXXfwESPUzcjERaMAGg1hoH1F4Gxg0mqmbySAuVRqNLnXp5
 CRVQZGgOQL6WDg3tUUDXYOs=
 -----END CERTIFICATE-----"###;
+        // spellchecker:on
         let cert = Certificate::new(pem.to_string(), "".to_string()).unwrap();
 
         assert_eq!(

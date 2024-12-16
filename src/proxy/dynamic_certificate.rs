@@ -521,6 +521,7 @@ mod tests {
     use std::collections::HashMap;
 
     fn get_tls_pem() -> (String, String) {
+        // spellchecker:off
         (
             r###"-----BEGIN CERTIFICATE-----
 MIID/TCCAmWgAwIBAgIQJUGCkB1VAYha6fGExkx0KTANBgkqhkiG9w0BAQsFADBV
@@ -577,6 +578,7 @@ aqcrKJfS+xaKWxXPiNlpBMG5
 -----END PRIVATE KEY-----"###
                 .to_string(),
         )
+        // spellchecker:on
     }
 
     #[test]

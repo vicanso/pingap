@@ -20,6 +20,8 @@ mod file;
 mod http_cache;
 mod tiny;
 
+pub static PAGE_SIZE: usize = 4096;
+
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("Io error: {source}"))]
@@ -39,7 +41,7 @@ impl From<Error> for pingora::BError {
 
 pub fn new_tiny_ufo_cache(size: usize) -> HttpCache {
     HttpCache {
-        cached: Arc::new(tiny::new_tiny_ufo_cache(size / 1024, size / 1024)),
+        cached: Arc::new(tiny::new_tiny_ufo_cache(size / PAGE_SIZE, size)),
     }
 }
 pub fn new_file_cache(dir: &str) -> Result<HttpCache> {

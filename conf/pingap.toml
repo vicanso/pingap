@@ -42,6 +42,7 @@ sentry = ""
 auto_restart_check_interval = "1m"
 
 # the file cache directory, cache will use memory if cache directory none (default none)
+# cache_directory = "/opt/pingap-cache?reading_max=1000&writing_max=500&cache_max=100"
 cache_directory = ""
 
 # the max cache size (default 100mb)

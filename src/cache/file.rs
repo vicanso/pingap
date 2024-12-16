@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::http_cache::{CacheObject, HttpCacheStats, HttpCacheStorage};
-use super::{Error, Result};
+use super::{Error, Result, PAGE_SIZE};
 #[cfg(feature = "full")]
 use crate::state::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use crate::util;
@@ -43,11 +43,17 @@ pub struct FileCache {
     cache: Option<TinyUfo<String, CacheObject>>,
 }
 
-/// Create a file cache and use tinyufo for hotspot data caching
-pub fn new_file_cache(dir: &str) -> Result<FileCache> {
+struct FileCacheParams {
+    directory: String,
+    reading_max: u32,
+    writing_max: u32,
+    cache_max: usize,
+}
+
+fn parse_params(dir: &str) -> FileCacheParams {
     let mut reading_max = 10 * 1000;
     let mut writing_max = 1000;
-    let mut cache_size = 100;
+    let mut cache_max = 100;
     let dir = if let Some((dir, query)) = dir.split_once('?') {
         let m = util::convert_query_map(query);
         if let Some(max) = m.get("reading_max") {
@@ -56,31 +62,50 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
         if let Some(max) = m.get("writing_max") {
             writing_max = max.parse::<u32>().unwrap_or(writing_max);
         }
-        if let Some(value) = m.get("cache_size") {
-            cache_size = value.parse::<usize>().unwrap_or(cache_size);
+        if let Some(value) = m.get("cache_max") {
+            cache_max = value.parse::<usize>().unwrap_or(cache_max);
         }
         util::resolve_path(dir)
     } else {
         util::resolve_path(dir)
     };
-    let path = Path::new(&dir);
+    FileCacheParams {
+        directory: dir,
+        reading_max,
+        writing_max,
+        cache_max,
+    }
+}
+
+/// Create a file cache and use tinyufo for hotspot data caching
+pub fn new_file_cache(dir: &str) -> Result<FileCache> {
+    let params = parse_params(dir);
+
+    let path = Path::new(&params.directory);
     if !path.exists() {
         std::fs::create_dir_all(path).map_err(|e| Error::Io { source: e })?;
     }
-    info!(dir, reading_max, writing_max, "new file cache");
+    info!(
+        dir = params.directory,
+        reading_max = params.reading_max,
+        writing_max = params.writing_max,
+        cache_max = params.cache_max,
+        "new file cache"
+    );
     let mut cache = None;
-    if cache_size > 0 {
-        cache = Some(TinyUfo::new(cache_size, cache_size));
+    if params.cache_max > 0 {
+        cache =
+            Some(TinyUfo::new(params.cache_max, params.cache_max * PAGE_SIZE));
     }
 
     Ok(FileCache {
-        directory: dir,
+        directory: params.directory,
         reading: AtomicU32::new(0),
-        reading_max,
+        reading_max: params.reading_max,
         #[cfg(feature = "full")]
         read_time: CACHE_READING_TIME.clone(),
         writing: AtomicU32::new(0),
-        writing_max,
+        writing_max: params.writing_max,
         #[cfg(feature = "full")]
         write_time: CACHE_WRITING_TIME.clone(),
         cache,
@@ -138,7 +163,6 @@ impl HttpCacheStorage for FileCache {
         if let Some(c) = &self.cache {
             c.put(key.clone(), data.clone(), weight);
         }
-
         #[cfg(feature = "full")]
         let start = SystemTime::now();
         let buf: Bytes = data.into();
@@ -215,12 +239,22 @@ impl HttpCacheStorage for FileCache {
 
 #[cfg(test)]
 mod tests {
-    use super::new_file_cache;
+    use super::{new_file_cache, parse_params};
     use crate::cache::http_cache::{CacheObject, HttpCacheStorage};
     use bytes::Bytes;
     use pretty_assertions::assert_eq;
     use std::time::{Duration, SystemTime};
     use tempfile::TempDir;
+
+    #[test]
+    fn test_parse_params() {
+        let params = parse_params(
+            "~/pingap?reading_max=1000&writing_max=500&cache_max=100",
+        );
+        assert_eq!(1000, params.reading_max);
+        assert_eq!(500, params.writing_max);
+        assert_eq!(100, params.cache_max);
+    }
 
     #[tokio::test]
     async fn test_file_cache() {

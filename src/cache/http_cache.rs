@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::file;
-use super::{Error, Result};
+use super::{file, Error, Result, PAGE_SIZE};
 use crate::service::CommonServiceTask;
 use crate::service::ServiceTask;
 use async_trait::async_trait;
@@ -274,14 +273,17 @@ impl HandleMiss for ObjectMissHandler {
     }
 }
 
+// 40MB
+static MAX_ONE_CACHE_SIZE: usize = 10 * 1024 * PAGE_SIZE;
+
 fn get_wegiht(size: usize) -> u16 {
-    if size < 50 * 1024 {
-        return 4;
+    if size <= PAGE_SIZE {
+        return 1;
     }
-    if size < 500 * 1024 {
-        return 2;
+    if size >= MAX_ONE_CACHE_SIZE {
+        return u16::MAX;
     }
-    1
+    (size / PAGE_SIZE) as u16
 }
 
 #[async_trait]

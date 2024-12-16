@@ -1070,6 +1070,7 @@ mod tests {
 
     #[test]
     fn test_validate_cert() {
+        // spellchecker:off
         let pem = r#"-----BEGIN CERTIFICATE-----
 MIIEljCCAv6gAwIBAgIQeYUdeFj3gpzhQes3aGaMZTANBgkqhkiG9w0BAQsFADCB
 pTEeMBwGA1UEChMVbWtjZXJ0IGRldmVsb3BtZW50IENBMT0wOwYDVQQLDDR4aWVz
@@ -1097,6 +1098,7 @@ IZpXa00xvlnm1BOHOfRI4Ehlfa5jmfcdnrGkQLGjiyygQtKcc7rOXGK+mSeyxwhs
 sIARwslSQd4q0dbYTPKvvUHxTYiCv78vQBAsE15T2GGS80pAFDBW9vOf3upANvOf
 EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
 -----END CERTIFICATE-----"#;
+        // spellchecker:on
         let result = validate_cert(pem);
         assert_eq!(true, result.is_ok());
 
@@ -1284,6 +1286,7 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
 
     #[test]
     fn test_certificate_conf() {
+        // spellchecker:off
         let pem = r#"-----BEGIN CERTIFICATE-----
 MIIEljCCAv6gAwIBAgIQeYUdeFj3gpzhQes3aGaMZTANBgkqhkiG9w0BAQsFADCB
 pTEeMBwGA1UEChMVbWtjZXJ0IGRldmVsb3BtZW50IENBMT0wOwYDVQQLDDR4aWVz
@@ -1339,6 +1342,7 @@ K+hM90AVD1xmU7mxy3EDPwzjK1wZTj7u0fvcAtZJztIfL+lmVpkvK8KDLQ9wCWE7
 SGToOzVHYX7VazxioA9nhNne9kaixvnIUg3iowAz07J7o6EU8tfYsnHxsvjlIkBU
 ai02RHnemmqJaNepfmCdyec=
 -----END PRIVATE KEY-----"#;
+        // spellchecker:on
         let conf = CertificateConf {
             tls_cert: Some(pem.to_string()),
             tls_key: Some(key.to_string()),
