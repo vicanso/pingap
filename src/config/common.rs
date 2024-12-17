@@ -818,30 +818,27 @@ impl PingapConf {
     pub fn remove(&mut self, category: &str, name: &str) -> Result<()> {
         match category {
             CATEGORY_UPSTREAM => {
-                let upstreams: Vec<String> = self
-                    .locations
-                    .values()
-                    .map(|lo| lo.upstream.clone().unwrap_or_default())
-                    .collect();
-                if upstreams.contains(&name.to_string()) {
-                    return Err(Error::Invalid {
-                        message: format!("upstream({name}) is in used"),
-                    });
+                for (location_name, location) in self.locations.iter() {
+                    if let Some(upstream) = &location.upstream {
+                        if upstream == name {
+                            return Err(Error::Invalid {
+                                message: format!(
+                                    "upstream({name}) is in used by location({location_name})",
+                                ),
+                            });
+                        }
+                    }
                 }
-
                 self.upstreams.remove(name);
             },
             CATEGORY_LOCATION => {
-                for server in self.servers.values() {
-                    if server
-                        .locations
-                        .clone()
-                        .unwrap_or_default()
-                        .contains(&name.to_string())
-                    {
-                        return Err(Error::Invalid {
-                            message: format!("location({name}) is in used"),
-                        });
+                for (server_name, server) in self.servers.iter() {
+                    if let Some(locations) = &server.locations {
+                        if locations.contains(&name.to_string()) {
+                            return Err(Error::Invalid {
+                               message: format!("location({name}) is in used by server({server_name})"),
+                           });
+                        }
                     }
                 }
                 self.locations.remove(name);
@@ -850,16 +847,16 @@ impl PingapConf {
                 self.servers.remove(name);
             },
             CATEGORY_PLUGIN => {
-                let mut all_plugins = vec![];
-                for lo in self.locations.values() {
-                    if let Some(plguins) = &lo.plugins {
-                        all_plugins.extend(plguins.clone());
+                for (location_name, location) in self.locations.iter() {
+                    if let Some(plugins) = &location.plugins {
+                        if plugins.contains(&name.to_string()) {
+                            return Err(Error::Invalid {
+                                message: format!(
+                                    "proxy plugin({name}) is in used by location({location_name})"
+                                ),
+                            });
+                        }
                     }
-                }
-                if all_plugins.contains(&name.to_string()) {
-                    return Err(Error::Invalid {
-                        message: format!("proxy plugin({name}) is in used"),
-                    });
                 }
                 self.plugins.remove(name);
             },
