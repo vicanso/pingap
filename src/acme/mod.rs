@@ -16,6 +16,7 @@ use crate::util;
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+pub static LOG_CATEGORY: &str = "acme";
 
 #[derive(Debug, Snafu)]
 pub enum Error {

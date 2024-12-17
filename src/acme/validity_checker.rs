@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::Certificate;
+use super::{Certificate, LOG_CATEGORY};
 use crate::proxy::get_certificate_info_list;
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::util;
@@ -65,7 +65,7 @@ impl ServiceTask for ValidityChecker {
             validity_check(&certificate_info_list, self.time_offset)
         {
             // certificate will be expired
-            warn!(message);
+            warn!(category = LOG_CATEGORY, message);
             webhook::send(webhook::SendNotificationParams {
                 level: webhook::NotificationLevel::Warn,
                 category: webhook::NotificationCategory::TlsValidity,

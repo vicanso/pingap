@@ -12,14 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::COMMON_DISCOVERY;
 use super::{format_addrs, Error, Result};
+use super::{COMMON_DISCOVERY, LOG_CATEGORY};
 use http::Extensions;
 use pingora::lb::discovery;
 use pingora::lb::{Backend, Backends};
 use pingora::protocols::l4::socket::SocketAddr;
 use std::collections::BTreeSet;
 use std::net::ToSocketAddrs;
+use std::time::SystemTime;
+use tracing::info;
 
 pub fn is_static_discovery(value: &str) -> bool {
     value.is_empty() || value == COMMON_DISCOVERY
@@ -32,9 +34,12 @@ pub fn new_common_discover_backends(
     tls: bool,
     ipv4_only: bool,
 ) -> Result<Backends> {
+    let hosts = addrs.join(",");
+    let now = SystemTime::now();
     let mut upstreams = BTreeSet::new();
     let mut backends = vec![];
     let addrs = format_addrs(addrs, tls);
+    let mut new_addrs = vec![];
     for (ip, port, weight) in addrs.iter() {
         let addr = format!("{ip}:{port}");
         // resolve to socket addr
@@ -45,6 +50,7 @@ pub fn new_common_discover_backends(
             if ipv4_only && !item.is_ipv4() {
                 continue;
             }
+            new_addrs.push(item.to_string());
             let backend = Backend {
                 addr: SocketAddr::Inet(item),
                 weight: weight.to_owned(),
@@ -53,6 +59,14 @@ pub fn new_common_discover_backends(
             backends.push(backend)
         }
     }
+    info!(
+        category = LOG_CATEGORY,
+        hosts,
+        addrs = new_addrs.join(","),
+        elapsed =
+            format!("{}ms", now.elapsed().unwrap_or_default().as_millis()),
+        "common discover success"
+    );
     upstreams.extend(backends);
     let discovery = discovery::Static::new(upstreams);
     let backends = Backends::new(discovery);

@@ -89,6 +89,7 @@ fn new_http_health_check(
             // 忽略append header fail
             if let Err(e) = req.append_header("Host", &conf.host) {
                 error!(
+                    category = "health",
                     error = e.to_string(),
                     host = conf.host,
                     "http health check append host fail"
@@ -96,7 +97,11 @@ fn new_http_health_check(
             }
             check.req = req;
         },
-        Err(e) => error!(error = e.to_string(), "http health check fail"),
+        Err(e) => error!(
+            category = "health",
+            error = e.to_string(),
+            "http health check fail"
+        ),
     }
 
     check
@@ -115,6 +120,7 @@ pub fn new_health_check(
             check.peer_template.options.connection_timeout =
                 Some(Duration::from_secs(3));
             info!(
+                category = "health",
                 name,
                 options = format!("{:?}", check.peer_template.options),
                 "new health check"
@@ -124,6 +130,7 @@ pub fn new_health_check(
             let health_check_conf: HealthCheckConf = health_check.try_into()?;
             health_check_frequency = health_check_conf.check_frequency;
             info!(
+                category = "health",
                 name,
                 schema = health_check_conf.schema,
                 health_check_conf = format!("{health_check_conf:?}"),

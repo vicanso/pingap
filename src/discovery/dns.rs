@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::DNS_DISCOVERY;
 use super::{format_addrs, Addr, Error, Result};
+use super::{DNS_DISCOVERY, LOG_CATEGORY};
 use crate::webhook;
 use async_trait::async_trait;
 use hickory_resolver::config::{
@@ -131,6 +131,7 @@ impl ServiceDiscovery for Dns {
                     data.0.iter().map(|item| item.addr.to_string()).collect();
 
                 info!(
+                    category = LOG_CATEGORY,
                     hosts = hosts.join(","),
                     addrs = addrs.join(","),
                     elapsed = format!(
@@ -143,6 +144,7 @@ impl ServiceDiscovery for Dns {
             },
             Err(e) => {
                 error!(
+                    category = LOG_CATEGORY,
                     error = e.to_string(),
                     hosts = hosts.join(","),
                     elapsed = format!(

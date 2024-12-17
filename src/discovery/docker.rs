@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::DOCKER_DISCOVERY;
 use super::{Error, Result};
+use super::{DOCKER_DISCOVERY, LOG_CATEGORY};
 use crate::webhook;
 use async_trait::async_trait;
 use bollard::container::ListContainersOptions;
@@ -196,6 +196,7 @@ impl ServiceDiscovery for Docker {
                     data.0.iter().map(|item| item.addr.to_string()).collect();
 
                 info!(
+                    category = LOG_CATEGORY,
                     names = names.join(","),
                     addrs = addrs.join(","),
                     elapsed = format!(
@@ -208,6 +209,7 @@ impl ServiceDiscovery for Docker {
             },
             Err(e) => {
                 error!(
+                    category = LOG_CATEGORY,
                     error = e.to_string(),
                     names = names.join(","),
                     elapsed = format!(

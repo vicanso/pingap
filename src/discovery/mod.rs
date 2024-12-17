@@ -15,6 +15,8 @@
 use hickory_resolver::error::ResolveError;
 use snafu::Snafu;
 
+pub static LOG_CATEGORY: &str = "discovery";
+
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("Io error {source}, {content}"))]

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_token_path, Certificate, Error, Result};
+use super::{get_token_path, Certificate, Error, Result, LOG_CATEGORY};
 use crate::config::{
     get_config_storage, get_current_config, load_config, save_config,
     LoadConfigOptions, PingapConf, CATEGORY_CERTIFICATE,
@@ -104,7 +104,11 @@ impl ServiceTask for LetsEncryptService {
         }
         match update_certificate_lets_encrypt(&self.name, domains).await {
             Ok(conf) => {
-                info!(domains = domains.join(","), "renew certificate success");
+                info!(
+                    category = LOG_CATEGORY,
+                    domains = domains.join(","),
+                    "renew certificate success"
+                );
                 webhook::send(webhook::SendNotificationParams {
                     category: webhook::NotificationCategory::LetsEncrypt,
                     msg: "Generate new cert from lets encrypt".to_string(),
@@ -160,13 +164,17 @@ pub async fn handle_lets_encrypt(
         let value =
             storage.load(&get_token_path(token)).await.map_err(|e| {
                 error!(
+                    category = LOG_CATEGORY,
                     token,
                     err = e.to_string(),
                     "let't encrypt http-01 fail"
                 );
                 util::new_internal_error(500, e.to_string())
             })?;
-        info!(token, "let't encrypt http-01 success");
+        info!(
+            category = LOG_CATEGORY,
+            token, "let't encrypt http-01 success"
+        );
         HttpResponse {
             status: StatusCode::OK,
             body: value.into(),
@@ -188,7 +196,11 @@ async fn new_lets_encrypt(
     let mut domains: Vec<String> = domains.to_vec();
     // sort domain for comparing later
     domains.sort();
-    info!(domains = domains.join(","), "acme from let's encrypt");
+    info!(
+        category = LOG_CATEGORY,
+        domains = domains.join(","),
+        "acme from let's encrypt"
+    );
     let url = if production {
         LetsEncrypt::Production.url()
     } else {
@@ -248,6 +260,7 @@ async fn new_lets_encrypt(
 
     for authz in &authorizations {
         info!(
+            category = LOG_CATEGORY,
             status = format!("{:?}", authz.status),
             "acme from let's encrypt"
         );
