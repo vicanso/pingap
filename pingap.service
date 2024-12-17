@@ -16,6 +16,7 @@ ExecStart=/usr/sbin/pingap --conf=/etc/pingap/conf?separation -d --log=/var/log/
 ExecStop=/sbin/start-stop-daemon --quiet --stop --retry QUIT/5 --pidfile /run/pingap.pid
 TimeoutStopSec=5
 KillMode=mixed
+LimitNOFILE=1048576 # to increase limits under heavy load and prevent error is ‘many open files’.
 
 [Install]
 WantedBy=multi-user.target
