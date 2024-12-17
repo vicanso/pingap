@@ -123,10 +123,10 @@ export default function Certificates() {
       options: newBooleanOptions(),
     },
     {
-      name: "is_root",
-      label: certificateI18n("isRoot"),
+      name: "is_ca",
+      label: certificateI18n("isCa"),
       placeholder: "",
-      defaultValue: certificateConfig.is_root,
+      defaultValue: certificateConfig.is_ca,
       span: 3,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),

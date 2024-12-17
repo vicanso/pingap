@@ -251,7 +251,7 @@ export default {
       "Input the domains of acme, multiple domains separated by comma",
     acme: "Acme",
     isDefault: "Default Certificate",
-    isRoot: "Root Certificate Authority",
+    isCa: "Certificate Authority",
   },
   plugin: {
     name: "Name",

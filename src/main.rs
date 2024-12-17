@@ -24,7 +24,10 @@ use otel::TracerService;
 use pingora::server;
 use pingora::server::configuration::Opt;
 use pingora::services::background::background_service;
-use proxy::{new_upstream_health_check_task, Server, ServerConf};
+use proxy::{
+    new_self_signed_cert_validity_service, new_upstream_health_check_task,
+    Server, ServerConf,
+};
 use state::{get_admin_addr, get_start_time, set_admin_addr};
 use std::collections::HashMap;
 use std::error::Error;
@@ -554,6 +557,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     my_server.add_service(background_service(
         "TlsValidity",
         new_tls_validity_service(),
+    ));
+    my_server.add_service(background_service(
+        "SelfSignedStale",
+        new_self_signed_cert_validity_service(),
     ));
     my_server.add_service(background_service(
         "UpstreamHc",

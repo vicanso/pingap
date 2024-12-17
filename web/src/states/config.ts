@@ -104,7 +104,7 @@ export interface Certificate {
   certificate_file?: string;
   acme?: string;
   is_default?: boolean;
-  is_root?: boolean;
+  is_ca?: boolean;
   remark?: string;
 }
 
