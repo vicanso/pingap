@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::acme::{new_lets_encrypt_service, new_tls_validity_service};
+use crate::acme::{new_certificate_validity_service, new_lets_encrypt_service};
 use crate::cache::new_file_storage_clear_service;
 use crate::config::ETCD_PROTOCOL;
 use crate::service::{new_auto_restart_service, new_observer_service};
@@ -28,6 +28,7 @@ use proxy::{
     new_self_signed_cert_validity_service, new_upstream_health_check_task,
     Server, ServerConf,
 };
+use service::new_simple_service_task;
 use state::{get_admin_addr, get_start_time, set_admin_addr};
 use std::collections::HashMap;
 use std::error::Error;
@@ -440,12 +441,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         ));
     }
 
-    if let Some(dir) = &conf.basic.cache_directory {
-        if let Some(task) = new_file_storage_clear_service(dir) {
-            my_server.add_service(background_service("StorageClear", task));
-        }
-    }
-
     if let Err(e) = plugin::try_init_plugins(&conf.plugins) {
         error!(error = e.to_string(), "init plugins fail",);
     }
@@ -553,15 +548,23 @@ fn run() -> Result<(), Box<dyn Error>> {
             ));
         }
     }
+    let mut simple_tasks = vec![
+        new_certificate_validity_service(),
+        new_self_signed_cert_validity_service(),
+    ];
+    if let Some(task) = new_file_storage_clear_service() {
+        simple_tasks.push(task);
+    }
 
     my_server.add_service(background_service(
-        "TlsValidity",
-        new_tls_validity_service(),
+        "SimpleTask",
+        new_simple_service_task(
+            "simpleTask",
+            Duration::from_secs(60),
+            simple_tasks,
+        ),
     ));
-    my_server.add_service(background_service(
-        "SelfSignedStale",
-        new_self_signed_cert_validity_service(),
-    ));
+
     my_server.add_service(background_service(
         "UpstreamHc",
         new_upstream_health_check_task(Duration::from_secs(10)),

@@ -12,11 +12,87 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use async_trait::async_trait;
+use futures::future::BoxFuture;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
-use std::time::{Duration, SystemTime};
+use std::{
+    sync::atomic::{AtomicU32, Ordering},
+    time::{Duration, SystemTime},
+};
 use tokio::time::interval;
-use tracing::info;
+use tracing::{error, info};
+
+pub static LOG_CATEGORY: &str = "service";
+
+pub type SimpleServiceTaskFuture =
+    Box<dyn Fn(u32) -> BoxFuture<'static, Result<(), String>> + Sync + Send>;
+
+pub struct SimpleServiceTask {
+    name: String,
+    count: AtomicU32,
+    tasks: Vec<(String, SimpleServiceTaskFuture)>,
+    interval: Duration,
+}
+
+pub fn new_simple_service_task(
+    name: &str,
+    interval: Duration,
+    tasks: Vec<(String, SimpleServiceTaskFuture)>,
+) -> SimpleServiceTask {
+    SimpleServiceTask {
+        name: name.to_string(),
+        count: AtomicU32::new(0),
+        tasks,
+        interval,
+    }
+}
+
+#[async_trait]
+impl BackgroundService for SimpleServiceTask {
+    async fn start(&self, mut shutdown: ShutdownWatch) {
+        let period_human: humantime::Duration = self.interval.into();
+        info!(
+            category = LOG_CATEGORY,
+            name = self.name,
+            interval = period_human.to_string(),
+            "simple service is running",
+        );
+
+        let mut period = interval(self.interval);
+        loop {
+            tokio::select! {
+                _ = shutdown.changed() => {
+                    break;
+                }
+                _ = period.tick() => {
+                    let now = SystemTime::now();
+                    let count = self.count.fetch_add(1, Ordering::Relaxed);
+                    let mut fails = 0;
+                    for (name, task) in self.tasks.iter() {
+                        if let Err(e) = task(count).await {
+                            fails += 1;
+                            error!(
+                                category = LOG_CATEGORY,
+                                name,
+                                simple_service = self.name,
+                                e,
+                            );
+                        }
+                    }
+                    info!(
+                        category = LOG_CATEGORY,
+                        name = self.name,
+                        fails,
+                        elapsed = format!(
+                            "{}ms",
+                            now.elapsed().unwrap_or_default().as_millis()
+                        ),
+                    );
+                }
+            }
+        }
+    }
+}
 
 #[async_trait]
 pub trait ServiceTask: Sync + Send {

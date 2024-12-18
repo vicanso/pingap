@@ -137,7 +137,7 @@ mod lets_encrypt;
 mod validity_checker;
 
 pub use lets_encrypt::{handle_lets_encrypt, new_lets_encrypt_service};
-pub use validity_checker::new_tls_validity_service;
+pub use validity_checker::new_certificate_validity_service;
 
 #[cfg(test)]
 mod tests {

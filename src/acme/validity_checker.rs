@@ -14,16 +14,10 @@
 
 use super::{Certificate, LOG_CATEGORY};
 use crate::proxy::get_certificate_info_list;
-use crate::service::{CommonServiceTask, ServiceTask};
+use crate::service::SimpleServiceTaskFuture;
 use crate::util;
 use crate::webhook;
-use async_trait::async_trait;
-use std::time::Duration;
 use tracing::warn;
-
-struct ValidityChecker {
-    time_offset: i64,
-}
 
 // Verify the validity period of tls certificate,
 // include not after and not before.
@@ -57,51 +51,31 @@ fn validity_check(
     Ok(())
 }
 
-#[async_trait]
-impl ServiceTask for ValidityChecker {
-    async fn run(&self) -> Option<bool> {
-        let certificate_info_list = get_certificate_info_list();
-        if let Err(message) =
-            validity_check(&certificate_info_list, self.time_offset)
-        {
-            // certificate will be expired
-            warn!(category = LOG_CATEGORY, message);
-            webhook::send(webhook::SendNotificationParams {
-                level: webhook::NotificationLevel::Warn,
-                category: webhook::NotificationCategory::TlsValidity,
-                msg: message,
-                ..Default::default()
-            });
-        }
-        None
+async fn do_validity_check(count: u32) -> Result<(), String> {
+    // Add 1 every loop
+    let offset = 24 * 60;
+    if count % offset != 0 {
+        return Ok(());
     }
-    fn description(&self) -> String {
-        let mut names = vec![];
-        for (name, _) in get_certificate_info_list().iter() {
-            if !names.contains(name) {
-                names.push(name.clone());
-            }
-        }
-
-        let offset_human: humantime::Duration =
-            Duration::from_secs(self.time_offset as u64).into();
-        format!("ValidityChecker: {names:?}, {offset_human}")
+    let certificate_info_list = get_certificate_info_list();
+    let time_offset = 7 * 24 * 3600_i64;
+    if let Err(message) = validity_check(&certificate_info_list, time_offset) {
+        // certificate will be expired
+        warn!(category = LOG_CATEGORY, message);
+        webhook::send(webhook::SendNotificationParams {
+            level: webhook::NotificationLevel::Warn,
+            category: webhook::NotificationCategory::TlsValidity,
+            msg: message,
+            ..Default::default()
+        });
     }
+    Ok(())
 }
 
-/// Create a tls certificate validity checker service,
-/// if the certificate will be expired or not valid,
-/// it will send webhook notificateion message.
-pub fn new_tls_validity_service() -> CommonServiceTask {
-    let checker = ValidityChecker {
-        // cert will be expired 7 days later
-        time_offset: 7 * 24 * 3600_i64,
-    };
-    CommonServiceTask::new(
-        // check interval: one day
-        Duration::from_secs(24 * 60 * 60),
-        checker,
-    )
+pub fn new_certificate_validity_service() -> (String, SimpleServiceTaskFuture) {
+    let task: SimpleServiceTaskFuture =
+        Box::new(|count: u32| Box::pin(do_validity_check(count)));
+    ("validityChecker".to_string(), task)
 }
 
 #[cfg(test)]

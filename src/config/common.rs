@@ -1529,19 +1529,19 @@ basic
 
         let result = conf.remove("plugin", "stats");
         assert_eq!(
-            "Invalid error proxy plugin(stats) is in used",
+            "Invalid error proxy plugin(stats) is in used by location(lo)",
             result.err().unwrap().to_string()
         );
 
         let result = conf.remove("upstream", "charts");
         assert_eq!(
-            "Invalid error upstream(charts) is in used",
+            "Invalid error upstream(charts) is in used by location(lo)",
             result.err().unwrap().to_string()
         );
 
         let result = conf.remove("location", "lo");
         assert_eq!(
-            "Invalid error location(lo) is in used",
+            "Invalid error location(lo) is in used by server(test)",
             result.err().unwrap().to_string()
         );
 

@@ -14,7 +14,7 @@
 
 use crate::acme::Certificate;
 use crate::config::CertificateConf;
-use crate::service::{CommonServiceTask, ServiceTask};
+use crate::service::SimpleServiceTaskFuture;
 use crate::{util, webhook};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
@@ -29,7 +29,6 @@ use snafu::Snafu;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 use substring::Substring;
 use tracing::{debug, error, info};
 
@@ -56,40 +55,37 @@ type SelfSignedCertKey = AHashMap<String, Arc<SelfSignedCert>>;
 static SELF_SIGNED_CERT_KEY_MAP: Lazy<ArcSwap<SelfSignedCertKey>> =
     Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
 
-struct SelfSiginedStaleCertChecker {}
-
-#[async_trait]
-impl ServiceTask for SelfSiginedStaleCertChecker {
-    async fn run(&self) -> Option<bool> {
-        let mut m = AHashMap::new();
-        for (k, v) in SELF_SIGNED_CERT_KEY_MAP.load().iter() {
-            let count = v.count.load(Ordering::Relaxed);
-            let stale = v.stale.load(Ordering::Relaxed);
-            if stale && count == 0 {
-                continue;
-            }
-            if count == 0 {
-                v.stale.store(true, Ordering::Relaxed);
-            } else {
-                v.stale.store(false, Ordering::Relaxed);
-                v.count.store(0, Ordering::Relaxed);
-            }
-            m.insert(k.to_string(), v.clone());
+async fn do_self_signed_cert_validity(count: u32) -> Result<(), String> {
+    // Add 1 every loop
+    let offset = 24 * 60;
+    if count % offset != 0 {
+        return Ok(());
+    }
+    let mut m = AHashMap::new();
+    for (k, v) in SELF_SIGNED_CERT_KEY_MAP.load().iter() {
+        let count = v.count.load(Ordering::Relaxed);
+        let stale = v.stale.load(Ordering::Relaxed);
+        if stale && count == 0 {
+            continue;
         }
-        SELF_SIGNED_CERT_KEY_MAP.store(Arc::new(m));
-        Some(false)
+        if count == 0 {
+            v.stale.store(true, Ordering::Relaxed);
+        } else {
+            v.stale.store(false, Ordering::Relaxed);
+            v.count.store(0, Ordering::Relaxed);
+        }
+        m.insert(k.to_string(), v.clone());
     }
-    fn description(&self) -> String {
-        "Self signed certificate stale checker".to_string()
-    }
+    SELF_SIGNED_CERT_KEY_MAP.store(Arc::new(m));
+    Ok(())
 }
 
-pub fn new_self_signed_cert_validity_service() -> CommonServiceTask {
-    CommonServiceTask::new(
-        // check interval: one day
-        Duration::from_secs(24 * 60 * 60),
-        SelfSiginedStaleCertChecker {},
-    )
+pub fn new_self_signed_cert_validity_service(
+) -> (String, SimpleServiceTaskFuture) {
+    let task: SimpleServiceTaskFuture =
+        Box::new(|count: u32| Box::pin(do_self_signed_cert_validity(count)));
+
+    ("selfSignedCertificateStale".to_string(), task)
 }
 
 // https://letsencrypt.org/certificates/
