@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Certificate, LOG_CATEGORY};
+use super::Certificate;
 use crate::proxy::get_certificate_info_list;
 use crate::service::SimpleServiceTaskFuture;
 use crate::util;
@@ -61,7 +61,7 @@ async fn do_validity_check(count: u32) -> Result<(), String> {
     let time_offset = 7 * 24 * 3600_i64;
     if let Err(message) = validity_check(&certificate_info_list, time_offset) {
         // certificate will be expired
-        warn!(category = LOG_CATEGORY, message);
+        warn!(category = "validityChecker", message);
         webhook::send(webhook::SendNotificationParams {
             level: webhook::NotificationLevel::Warn,
             category: webhook::NotificationCategory::TlsValidity,
@@ -72,6 +72,7 @@ async fn do_validity_check(count: u32) -> Result<(), String> {
     Ok(())
 }
 
+/// Create certificate validate background service
 pub fn new_certificate_validity_service() -> (String, SimpleServiceTaskFuture) {
     let task: SimpleServiceTaskFuture =
         Box::new(|count: u32| Box::pin(do_validity_check(count)));
@@ -81,7 +82,7 @@ pub fn new_certificate_validity_service() -> (String, SimpleServiceTaskFuture) {
 #[cfg(test)]
 mod tests {
     use super::validity_check;
-    use crate::acme::Certificate;
+    use crate::certificate::Certificate;
     use pretty_assertions::assert_eq;
     use x509_parser::time::ASN1Time;
 

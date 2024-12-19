@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_token_path, Certificate, Error, Result, LOG_CATEGORY};
+use super::{get_token_path, Error, Result, LOG_CATEGORY};
+use crate::certificate::Certificate;
 use crate::config::{
     get_config_storage, get_current_config, load_config, save_config,
     LoadConfigOptions, PingapConf, CATEGORY_CERTIFICATE,
@@ -142,6 +143,10 @@ pub fn get_lets_encrypt_certificate(name: &str) -> Result<Certificate> {
         cert.tls_cert.clone().unwrap_or_default(),
         cert.tls_key.clone().unwrap_or_default(),
     )
+    .map_err(|e| Error::Fail {
+        category: "new_certificate".to_string(),
+        message: e.to_string(),
+    })
 }
 
 /// The proxy plugin for lets encrypt http-01.

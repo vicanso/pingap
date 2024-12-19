@@ -14,6 +14,7 @@
 
 pub mod acme;
 pub mod cache;
+pub mod certificate;
 pub mod config;
 pub mod discovery;
 pub mod health;

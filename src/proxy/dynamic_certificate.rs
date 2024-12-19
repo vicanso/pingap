@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::acme::Certificate;
+use crate::certificate::{
+    add_self_signed_certificate, get_lets_encrypt_chain_certificate,
+    get_self_signed_certificate, Certificate, SelfSignedCertificate,
+};
 use crate::config::CertificateConf;
-use crate::service::SimpleServiceTaskFuture;
 use crate::{util, webhook};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
@@ -27,7 +29,6 @@ use pingora::tls::ssl::{NameType, SslRef};
 use pingora::tls::x509::X509;
 use snafu::Snafu;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use substring::Substring;
 use tracing::{debug, error, info};
@@ -41,78 +42,8 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 type DynamicCertificates = AHashMap<String, Arc<DynamicCertificate>>;
 // global dynamic certificates
-// static DYNAMIC_CERTIFICATE_MAP: OnceCell<DynamicCertificates> = OnceCell::new();
 static DYNAMIC_CERTIFICATE_MAP: Lazy<ArcSwap<DynamicCertificates>> =
     Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
-
-struct SelfSignedCert {
-    x509: X509,
-    key: PKey<Private>,
-    stale: AtomicBool,
-    count: AtomicU32,
-}
-type SelfSignedCertKey = AHashMap<String, Arc<SelfSignedCert>>;
-static SELF_SIGNED_CERT_KEY_MAP: Lazy<ArcSwap<SelfSignedCertKey>> =
-    Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
-
-async fn do_self_signed_cert_validity(count: u32) -> Result<(), String> {
-    // Add 1 every loop
-    let offset = 24 * 60;
-    if count % offset != 0 {
-        return Ok(());
-    }
-    let mut m = AHashMap::new();
-    for (k, v) in SELF_SIGNED_CERT_KEY_MAP.load().iter() {
-        let count = v.count.load(Ordering::Relaxed);
-        let stale = v.stale.load(Ordering::Relaxed);
-        if stale && count == 0 {
-            continue;
-        }
-        if count == 0 {
-            v.stale.store(true, Ordering::Relaxed);
-        } else {
-            v.stale.store(false, Ordering::Relaxed);
-            v.count.store(0, Ordering::Relaxed);
-        }
-        m.insert(k.to_string(), v.clone());
-    }
-    SELF_SIGNED_CERT_KEY_MAP.store(Arc::new(m));
-    Ok(())
-}
-
-pub fn new_self_signed_cert_validity_service(
-) -> (String, SimpleServiceTaskFuture) {
-    let task: SimpleServiceTaskFuture =
-        Box::new(|count: u32| Box::pin(do_self_signed_cert_validity(count)));
-
-    ("selfSignedCertificateStale".to_string(), task)
-}
-
-// https://letsencrypt.org/certificates/
-const E5: &[u8] = include_bytes!("../assets/e5.pem");
-const E6: &[u8] = include_bytes!("../assets/e6.pem");
-const R10: &[u8] = include_bytes!("../assets/r10.pem");
-const R11: &[u8] = include_bytes!("../assets/r11.pem");
-
-fn parse_chain_certificate(data: &[u8]) -> Option<X509> {
-    if let Ok(info) = Certificate::new(
-        std::string::String::from_utf8_lossy(data).to_string(),
-        "".to_string(),
-    ) {
-        if info.not_after > util::now().as_secs() as i64 {
-            return X509::from_pem(data).ok();
-        }
-    }
-    None
-}
-static E5_CERTIFICATE: Lazy<Option<X509>> =
-    Lazy::new(|| parse_chain_certificate(E5));
-static E6_CERTIFICATE: Lazy<Option<X509>> =
-    Lazy::new(|| parse_chain_certificate(E6));
-static R10_CERTIFICATE: Lazy<Option<X509>> =
-    Lazy::new(|| parse_chain_certificate(R10));
-static R11_CERTIFICATE: Lazy<Option<X509>> =
-    Lazy::new(|| parse_chain_certificate(R11));
 
 static LETS_ENCRYPT: &str = "lets_encrypt";
 
@@ -142,14 +73,9 @@ fn parse_certificate(
         // ignore chain error
         X509::from_pem(value).ok()
     } else if category == LETS_ENCRYPT {
-        // get chain of let's encrypt
-        match info.get_issuer_common_name().as_str() {
-            "E5" => E5_CERTIFICATE.clone(),
-            "E6" => E6_CERTIFICATE.clone(),
-            "R10" => R10_CERTIFICATE.clone(),
-            "R11" => R11_CERTIFICATE.clone(),
-            _ => None,
-        }
+        get_lets_encrypt_chain_certificate(
+            info.get_issuer_common_name().as_str(),
+        )
     } else {
         None
     };
@@ -304,8 +230,10 @@ fn new_certificate_with_ca(
             message: e.to_string(),
             category: "parse_ca_key".to_string(),
         })?;
-    let not_before = ca_params.not_before;
-    let not_after = ca_params.not_after;
+    let not_before = time::OffsetDateTime::now_utc() - time::Duration::days(1);
+    let two_years_from_now =
+        time::OffsetDateTime::now_utc() + time::Duration::days(365 * 2);
+    let not_after = ca_params.not_after.min(two_years_from_now);
     let ca_cert =
         ca_params.self_signed(&ca_kp).map_err(|e| Error::Invalid {
             message: e.to_string(),
@@ -438,7 +366,7 @@ impl DynamicCertificate {
     fn get_self_signed_cert(
         &self,
         server_name: &str,
-    ) -> Result<Arc<SelfSignedCert>> {
+    ) -> Result<Arc<SelfSignedCertificate>> {
         let arr: Vec<&str> = server_name.split('.').collect();
         let cn = if arr.len() > 2 {
             format!("*.{}", arr[1..].join("."))
@@ -446,25 +374,12 @@ impl DynamicCertificate {
             server_name.to_string()
         };
         let k = format!("{:?}:{}", self.name, cn);
-        if let Some(v) = SELF_SIGNED_CERT_KEY_MAP.load().get(&k) {
-            return Ok(v.clone());
+        if let Some(v) = get_self_signed_certificate(&k) {
+            return Ok(v);
         }
         let (cert, key) = new_certificate_with_ca(self, &cn)?;
         info!(common_name = cn, "new self sigined cert",);
-        let mut m = AHashMap::new();
-        for (k, v) in SELF_SIGNED_CERT_KEY_MAP.load().iter() {
-            m.insert(k.to_string(), v.clone());
-        }
-        let v = Arc::new(SelfSignedCert {
-            x509: cert,
-            key,
-            stale: AtomicBool::new(false),
-            count: AtomicU32::new(0),
-        });
-        m.insert(k, v.clone());
-        SELF_SIGNED_CERT_KEY_MAP.store(Arc::new(m));
-
-        Ok(v)
+        Ok(add_self_signed_certificate(&k, cert, key))
     }
 }
 
@@ -549,7 +464,6 @@ impl pingora::listeners::TlsAccept for DynamicCertificate {
                         &result.key,
                         &d.chain_certificate,
                     );
-                    result.count.fetch_add(1, Ordering::Relaxed);
                 },
                 Err(err) => {
                     error!(
@@ -573,8 +487,7 @@ mod tests {
     use crate::{
         config::CertificateConf,
         proxy::{
-            dynamic_certificate::{DYNAMIC_CERTIFICATE_MAP, E5},
-            init_certificates,
+            dynamic_certificate::DYNAMIC_CERTIFICATE_MAP, init_certificates,
         },
     };
     use pretty_assertions::assert_eq;
@@ -669,7 +582,6 @@ aqcrKJfS+xaKWxXPiNlpBMG5
         let cert_info = CertificateConf {
             tls_cert: Some(tls_cert),
             tls_key: Some(tls_key),
-            tls_chain: Some(std::str::from_utf8(E5).unwrap().to_string()),
             ..Default::default()
         };
         let dynamic_certificate = parse_certificate(&cert_info).unwrap();
@@ -683,7 +595,6 @@ aqcrKJfS+xaKWxXPiNlpBMG5
         assert_eq!(1720232616, info.not_before);
         assert_eq!(1791253416, info.not_after);
         assert_eq!(true, dynamic_certificate.certificate.is_some());
-        assert_eq!(true, dynamic_certificate.chain_certificate.is_some());
 
         let mut map = HashMap::new();
         map.insert("pingap".to_string(), cert_info);

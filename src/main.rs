@@ -12,11 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::acme::{new_certificate_validity_service, new_lets_encrypt_service};
-use crate::cache::new_file_storage_clear_service;
-use crate::config::ETCD_PROTOCOL;
-use crate::service::{new_auto_restart_service, new_observer_service};
+use acme::new_lets_encrypt_service;
+use cache::new_file_storage_clear_service;
+use certificate::{
+    new_certificate_validity_service,
+    new_self_signed_certificate_validity_service,
+};
 use clap::Parser;
+use config::ETCD_PROTOCOL;
 use config::{LoadConfigOptions, PingapConf};
 use crossbeam_channel::Sender;
 #[cfg(feature = "full")]
@@ -24,11 +27,9 @@ use otel::TracerService;
 use pingora::server;
 use pingora::server::configuration::Opt;
 use pingora::services::background::background_service;
-use proxy::{
-    new_self_signed_cert_validity_service, new_upstream_health_check_task,
-    Server, ServerConf,
-};
+use proxy::{new_upstream_health_check_task, Server, ServerConf};
 use service::new_simple_service_task;
+use service::{new_auto_restart_service, new_observer_service};
 use state::{get_admin_addr, get_start_time, set_admin_addr};
 use std::collections::HashMap;
 use std::error::Error;
@@ -40,6 +41,7 @@ use tracing::{error, info};
 
 mod acme;
 mod cache;
+mod certificate;
 mod config;
 mod discovery;
 mod health;
@@ -550,7 +552,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
     let mut simple_tasks = vec![
         new_certificate_validity_service(),
-        new_self_signed_cert_validity_service(),
+        new_self_signed_certificate_validity_service(),
     ];
     if let Some(task) = new_file_storage_clear_service() {
         simple_tasks.push(task);
