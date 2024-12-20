@@ -24,11 +24,12 @@ const R10: &[u8] = include_bytes!("../assets/r10.pem");
 const R11: &[u8] = include_bytes!("../assets/r11.pem");
 
 fn parse_chain_certificate(data: &[u8]) -> Option<X509> {
+    let expired = util::now().as_secs() + 30 * 24 * 3600;
     if let Ok(info) = Certificate::new(
         std::string::String::from_utf8_lossy(data).to_string(),
         "".to_string(),
     ) {
-        if info.not_after > util::now().as_secs() as i64 {
+        if info.not_after > expired as i64 {
             return X509::from_pem(data).ok();
         }
     }

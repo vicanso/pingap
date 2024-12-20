@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::dynamic_certificate::DynamicCertificate;
+use super::dynamic_certificate::{GlobalCertificate, TlsSettingParams};
 use super::logger::Parser;
 use super::upstream::get_upstream;
 use super::ServerConf;
@@ -23,7 +23,6 @@ use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 #[cfg(feature = "full")]
 use crate::otel;
 use crate::plugin::{get_plugin, ADMIN_SERVER_PLUGIN};
-use crate::proxy::dynamic_certificate::TlsSettingParams;
 use crate::proxy::location::get_location;
 use crate::service::CommonServiceTask;
 #[cfg(feature = "full")]
@@ -275,7 +274,7 @@ impl Server {
         let mut dynamic_cert = None;
         // tls
         if self.global_certificates {
-            dynamic_cert = Some(DynamicCertificate::new_global());
+            dynamic_cert = Some(GlobalCertificate::default());
         }
 
         let is_tls = dynamic_cert.is_some();

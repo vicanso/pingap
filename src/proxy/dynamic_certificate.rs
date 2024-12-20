@@ -12,10 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::certificate::{
-    add_self_signed_certificate, get_lets_encrypt_chain_certificate,
-    get_self_signed_certificate, Certificate, SelfSignedCertificate,
-};
+use crate::certificate::{Certificate, TlsCertificate};
 use crate::config::CertificateConf;
 use crate::{util, webhook};
 use ahash::AHashMap;
@@ -29,8 +26,8 @@ use pingora::tls::ssl::{NameType, SslRef};
 use pingora::tls::x509::X509;
 use snafu::Snafu;
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::sync::Arc;
-use substring::Substring;
 use tracing::{debug, error, info};
 
 #[derive(Debug, Snafu)]
@@ -40,67 +37,10 @@ pub enum Error {
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-type DynamicCertificates = AHashMap<String, Arc<DynamicCertificate>>;
+type DynamicCertificates = AHashMap<String, Arc<TlsCertificate>>;
 // global dynamic certificates
 static DYNAMIC_CERTIFICATE_MAP: Lazy<ArcSwap<DynamicCertificates>> =
     Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
-
-static LETS_ENCRYPT: &str = "lets_encrypt";
-
-fn parse_certificate(
-    certificate_config: &CertificateConf,
-) -> Result<DynamicCertificate> {
-    // parse certificate
-    let info = Certificate::new(
-        certificate_config.tls_cert.clone().unwrap_or_default(),
-        certificate_config.tls_key.clone().unwrap_or_default(),
-    )
-    .map_err(|e| Error::Invalid {
-        message: e.to_string(),
-        category: "certificate".to_string(),
-    })?;
-    let category = if certificate_config.acme.is_some() {
-        LETS_ENCRYPT
-    } else {
-        ""
-    };
-
-    let hash_key = certificate_config.hash_key();
-
-    let tls_chain =
-        util::convert_certificate_bytes(&certificate_config.tls_chain);
-    let chain_certificate = if let Some(value) = &tls_chain {
-        // ignore chain error
-        X509::from_pem(value).ok()
-    } else if category == LETS_ENCRYPT {
-        get_lets_encrypt_chain_certificate(
-            info.get_issuer_common_name().as_str(),
-        )
-    } else {
-        None
-    };
-    let cert =
-        X509::from_pem(&info.get_cert()).map_err(|e| Error::Invalid {
-            category: "x509_from_pem".to_string(),
-            message: e.to_string(),
-        })?;
-
-    let key = PKey::private_key_from_pem(&info.get_key()).map_err(|e| {
-        Error::Invalid {
-            category: "private_key_from_pem".to_string(),
-            message: e.to_string(),
-        }
-    })?;
-    Ok(DynamicCertificate {
-        hash_key,
-        chain_certificate,
-        domains: info.domains.clone(),
-        certificate: Some((cert, key)),
-        info: Some(info),
-        is_ca: certificate_config.is_ca.unwrap_or_default(),
-        ..Default::default()
-    })
-}
 
 static DEFAULT_SERVER_NAME: &str = "*";
 
@@ -110,7 +50,9 @@ fn parse_certificates(
     let mut dynamic_certs = AHashMap::new();
     let mut errors = vec![];
     for (name, certificate) in certificate_configs.iter() {
-        match parse_certificate(certificate) {
+        let result: Result<TlsCertificate, crate::certificate::Error> =
+            certificate.try_into();
+        match result {
             Ok(mut dynamic_cert) => {
                 dynamic_cert.name = Some(name.clone());
                 let mut domains = dynamic_cert.domains.clone();
@@ -183,17 +125,6 @@ pub fn get_certificate_info_list() -> Vec<(String, Certificate)> {
     infos
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct DynamicCertificate {
-    name: Option<String>,
-    chain_certificate: Option<X509>,
-    certificate: Option<(X509, PKey<Private>)>,
-    domains: Vec<String>,
-    info: Option<Certificate>,
-    hash_key: String,
-    is_ca: bool,
-}
-
 pub struct TlsSettingParams {
     pub server_name: String,
     pub enabled_h2: bool,
@@ -203,105 +134,33 @@ pub struct TlsSettingParams {
     pub tls_max_version: Option<String>,
 }
 
-fn new_certificate_with_ca(
-    root_ca: &DynamicCertificate,
-    cn: &str,
-) -> Result<(X509, PKey<Private>)> {
-    let Some(info) = &root_ca.info else {
-        return Err(Error::Invalid {
-            message: "root ca is invalid".to_string(),
-            category: "ca".to_string(),
-        });
-    };
-    let binding = info.get_cert();
-    let ca_pem = std::string::String::from_utf8_lossy(&binding);
-
-    let ca_params = rcgen::CertificateParams::from_ca_cert_pem(&ca_pem)
-        .map_err(|e| Error::Invalid {
-            message: e.to_string(),
-            category: "parse_ca".to_string(),
-        })?;
-
-    let binding = info.get_key();
-    let ca_key = std::string::String::from_utf8_lossy(&binding);
-
-    let ca_kp =
-        rcgen::KeyPair::from_pem(&ca_key).map_err(|e| Error::Invalid {
-            message: e.to_string(),
-            category: "parse_ca_key".to_string(),
-        })?;
-    let not_before = time::OffsetDateTime::now_utc() - time::Duration::days(1);
-    let two_years_from_now =
-        time::OffsetDateTime::now_utc() + time::Duration::days(365 * 2);
-    let not_after = ca_params.not_after.min(two_years_from_now);
-    let ca_cert =
-        ca_params.self_signed(&ca_kp).map_err(|e| Error::Invalid {
-            message: e.to_string(),
-            category: "self_sigined_ca".to_string(),
-        })?;
-
-    let mut params = rcgen::CertificateParams::new(vec![cn.to_string()])
-        .map_err(|e| Error::Invalid {
-            message: e.to_string(),
-            category: "new_cert_params".to_string(),
-        })?;
-    let mut dn = rcgen::DistinguishedName::new();
-    dn.push(rcgen::DnType::CommonName, cn.to_string());
-    if let Some(organ) = ca_cert
-        .params()
-        .distinguished_name
-        .get(&rcgen::DnType::OrganizationName)
-    {
-        dn.push(rcgen::DnType::OrganizationName, organ.clone());
-    };
-    if let Some(unit) = ca_cert
-        .params()
-        .distinguished_name
-        .get(&rcgen::DnType::OrganizationalUnitName)
-    {
-        dn.push(rcgen::DnType::OrganizationalUnitName, unit.clone());
-    };
-
-    params.distinguished_name = dn;
-    params.not_before = not_before;
-    params.not_after = not_after;
-
-    let cert_key = rcgen::KeyPair::generate().map_err(|e| Error::Invalid {
-        message: e.to_string(),
-        category: "key_pair_generate".to_string(),
-    })?;
-
-    let cert = params.signed_by(&cert_key, &ca_cert, &ca_kp).map_err(|e| {
-        Error::Invalid {
-            message: e.to_string(),
-            category: "signed_by_ca".to_string(),
-        }
-    })?;
-
-    let cert =
-        X509::from_pem(cert.pem().as_bytes()).map_err(|e| Error::Invalid {
-            category: "x509_from_pem".to_string(),
-            message: e.to_string(),
-        })?;
-
-    let key = PKey::private_key_from_pem(cert_key.serialize_pem().as_bytes())
-        .map_err(|e| Error::Invalid {
-        category: "private_key_from_pem".to_string(),
-        message: e.to_string(),
-    })?;
-
-    Ok((cert, key))
-}
-
-impl DynamicCertificate {
-    /// New a global dynamic certificate for tls callback
-    pub fn new_global() -> Self {
-        Self {
-            chain_certificate: None,
-            certificate: None,
-            ..Default::default()
+#[inline]
+fn ssl_certificate(
+    ssl: &mut SslRef,
+    cert: &X509,
+    key: &PKey<Private>,
+    chain_certificate: &Option<X509>,
+) {
+    // set tls certificate
+    if let Err(e) = ext::ssl_use_certificate(ssl, cert) {
+        error!(error = e.to_string(), "ssl use certificate fail");
+    }
+    // set private key
+    if let Err(e) = ext::ssl_use_private_key(ssl, key) {
+        error!(error = e.to_string(), "ssl use private key fail");
+    }
+    // set chain certificate
+    if let Some(chain) = chain_certificate {
+        if let Err(e) = ext::ssl_add_chain_cert(ssl, chain) {
+            error!(error = e.to_string(), "ssl add chain cert fail");
         }
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct GlobalCertificate {}
+
+impl GlobalCertificate {
     /// New a dynamic certificate from tls setting parameters
     pub fn new_tls_settings(
         &self,
@@ -362,93 +221,29 @@ impl DynamicCertificate {
 
         Ok(tls_settings)
     }
-    /// Get self signed certificate
-    fn get_self_signed_cert(
-        &self,
-        server_name: &str,
-    ) -> Result<Arc<SelfSignedCertificate>> {
-        let arr: Vec<&str> = server_name.split('.').collect();
-        let cn = if arr.len() > 2 {
-            format!("*.{}", arr[1..].join("."))
-        } else {
-            server_name.to_string()
-        };
-        let k = format!("{:?}:{}", self.name, cn);
-        if let Some(v) = get_self_signed_certificate(&k) {
-            return Ok(v);
-        }
-        let (cert, key) = new_certificate_with_ca(self, &cn)?;
-        info!(common_name = cn, "new self sigined cert",);
-        Ok(add_self_signed_certificate(&k, cert, key))
-    }
-}
-
-#[inline]
-fn ssl_certificate(
-    ssl: &mut SslRef,
-    cert: &X509,
-    key: &PKey<Private>,
-    chain_certificate: &Option<X509>,
-) {
-    // set tls certificate
-    if let Err(e) = ext::ssl_use_certificate(ssl, cert) {
-        error!(error = e.to_string(), "ssl use certificate fail");
-    }
-    // set private key
-    if let Err(e) = ext::ssl_use_private_key(ssl, key) {
-        error!(error = e.to_string(), "ssl use private key fail");
-    }
-    // set chain certificate
-    if let Some(chain) = chain_certificate {
-        if let Err(e) = ext::ssl_add_chain_cert(ssl, chain) {
-            error!(error = e.to_string(), "ssl add chain cert fail");
-        }
-    }
 }
 
 #[async_trait]
-impl pingora::listeners::TlsAccept for DynamicCertificate {
+impl pingora::listeners::TlsAccept for GlobalCertificate {
     async fn certificate_callback(&self, ssl: &mut SslRef) {
         // TODO add more debug log
         debug!(ssl = format!("{ssl:?}"));
-        if let Some((cert, key)) = &self.certificate {
-            ssl_certificate(ssl, cert, key, &self.chain_certificate);
-            return;
-        }
-        let server_name = ssl.servername(NameType::HOST_NAME);
-        debug!(server_name = format!("{server_name:?}"));
-        let Some(sni) = server_name else {
-            if let Some(d) =
-                DYNAMIC_CERTIFICATE_MAP.load().get(DEFAULT_SERVER_NAME)
-            {
-                if let Some((cert, key)) = &d.certificate {
-                    ssl_certificate(ssl, cert, key, &d.chain_certificate);
-                    return;
-                }
-            }
-            error!(ssl = format!("{ssl:?}"), "get server name fail");
-            return;
-        };
+        let sni = ssl
+            .servername(NameType::HOST_NAME)
+            .unwrap_or(DEFAULT_SERVER_NAME);
+        debug!(server_name = sni);
+
         let mut dynamic_certificate = None;
         let certs = DYNAMIC_CERTIFICATE_MAP.load();
-        if let Some(d) = certs.get(sni) {
-            dynamic_certificate = Some(d);
-        } else {
-            for (name, d) in certs.iter() {
-                // not wildcard
-                if !name.starts_with("*.") {
-                    continue;
-                }
-                if sni.ends_with(name.substring(2, name.len())) {
-                    dynamic_certificate = Some(d);
-                    break;
-                }
-            }
-            // get default certificate
-            if dynamic_certificate.is_none() {
-                dynamic_certificate = certs.get(DEFAULT_SERVER_NAME);
+        let wildcard_sni =
+            &format!("*.{}", sni.split_once('.').unwrap_or_default().1);
+        for item in [sni, wildcard_sni, DEFAULT_SERVER_NAME] {
+            dynamic_certificate = certs.get(item);
+            if dynamic_certificate.is_some() {
+                break;
             }
         }
+
         let Some(d) = dynamic_certificate else {
             error!(sni, ssl = format!("{ssl:?}"), "no match certificate");
             return;
@@ -456,7 +251,7 @@ impl pingora::listeners::TlsAccept for DynamicCertificate {
 
         // ca
         if d.is_ca {
-            match d.get_self_signed_cert(server_name.unwrap_or_default()) {
+            match d.get_self_signed_certtificate(sni) {
                 Ok(result) => {
                     ssl_certificate(
                         ssl,
@@ -483,13 +278,9 @@ impl pingora::listeners::TlsAccept for DynamicCertificate {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_certificate, DynamicCertificate, TlsSettingParams};
-    use crate::{
-        config::CertificateConf,
-        proxy::{
-            dynamic_certificate::DYNAMIC_CERTIFICATE_MAP, init_certificates,
-        },
-    };
+    use super::{GlobalCertificate, TlsSettingParams, DYNAMIC_CERTIFICATE_MAP};
+    use crate::certificate::TlsCertificate;
+    use crate::{config::CertificateConf, proxy::init_certificates};
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
 
@@ -556,7 +347,7 @@ aqcrKJfS+xaKWxXPiNlpBMG5
 
     #[test]
     fn test_new_tls_settings() {
-        let dynamic = DynamicCertificate::new_global();
+        let dynamic = GlobalCertificate::default();
         let mut tls_settings = dynamic
             .new_tls_settings(&TlsSettingParams {
                 server_name: "pingap".to_string(),
@@ -584,7 +375,8 @@ aqcrKJfS+xaKWxXPiNlpBMG5
             tls_key: Some(tls_key),
             ..Default::default()
         };
-        let dynamic_certificate = parse_certificate(&cert_info).unwrap();
+        let dynamic_certificate: TlsCertificate =
+            (&cert_info).try_into().unwrap();
         let info = dynamic_certificate.info.unwrap_or_default();
 
         assert_eq!("pingap.io", dynamic_certificate.domains.join(","));

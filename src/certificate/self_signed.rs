@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::service::SimpleServiceTaskFuture;
+use crate::util;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use once_cell::sync::Lazy;
@@ -26,6 +27,7 @@ pub struct SelfSignedCertificate {
     pub key: PKey<Private>,
     stale: AtomicBool,
     count: AtomicU32,
+    not_after: i64,
 }
 
 type SelfSignedCertificateMap = AHashMap<String, Arc<SelfSignedCertificate>>;
@@ -39,15 +41,26 @@ async fn do_self_signed_certificate_validity(count: u32) -> Result<(), String> {
         return Ok(());
     }
     let mut m = AHashMap::new();
+
+    // two days
+    let expired = (util::now().as_secs() - 2 * 24 * 3600) as i64;
+
     for (k, v) in SELF_SIGNED_CERTIFICATE_MAP.load().iter() {
+        // certificate is expired
+        if v.not_after < expired {
+            continue;
+        }
         let count = v.count.load(Ordering::Relaxed);
         let stale = v.stale.load(Ordering::Relaxed);
+        // certificate is stale and use count is 0
         if stale && count == 0 {
             continue;
         }
         if count == 0 {
+            // set stale
             v.stale.store(true, Ordering::Relaxed);
         } else {
+            // reset
             v.stale.store(false, Ordering::Relaxed);
             v.count.store(0, Ordering::Relaxed);
         }
@@ -76,10 +89,12 @@ pub fn get_self_signed_certificate(
     None
 }
 
+// Add self signed certificate to global map
 pub fn add_self_signed_certificate(
     name: &str,
     x509: X509,
     key: PKey<Private>,
+    not_after: i64,
 ) -> Arc<SelfSignedCertificate> {
     let mut m = AHashMap::new();
     for (k, v) in SELF_SIGNED_CERTIFICATE_MAP.load().iter() {
@@ -88,6 +103,7 @@ pub fn add_self_signed_certificate(
     let v = Arc::new(SelfSignedCertificate {
         x509,
         key,
+        not_after,
         stale: AtomicBool::new(false),
         count: AtomicU32::new(0),
     });

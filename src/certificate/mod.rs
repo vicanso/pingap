@@ -19,12 +19,15 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 mod chain;
 mod self_signed;
+mod tls_certificate;
 mod validity_checker;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("X509 error, category: {category}, {message}"))]
     X509 { category: String, message: String },
+    #[snafu(display("Invalid error, category: {category}, {message}"))]
+    Invalid { message: String, category: String },
 }
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -118,9 +121,6 @@ impl Certificate {
     }
 }
 
-pub use chain::get_lets_encrypt_chain_certificate;
-pub use self_signed::{
-    add_self_signed_certificate, get_self_signed_certificate,
-    new_self_signed_certificate_validity_service, SelfSignedCertificate,
-};
+pub use self_signed::new_self_signed_certificate_validity_service;
+pub use tls_certificate::TlsCertificate;
 pub use validity_checker::new_certificate_validity_service;
