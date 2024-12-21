@@ -121,16 +121,13 @@ pub trait HttpCacheStorage: Sync + Send {
     }
 }
 
-async fn do_file_storage_clear(count: u32) -> Result<(), String> {
+async fn do_file_storage_clear(count: u32, dir: String) -> Result<(), String> {
     // Add 1 every loop
     let offset = 60;
     if count % offset != 0 {
         return Ok(());
     }
-    let Some(dir) = &get_current_config().basic.cache_directory else {
-        return Ok(());
-    };
-    let Ok(storage) = file::new_file_cache(dir) else {
+    let Ok(storage) = file::new_file_cache(&dir) else {
         return Ok(());
     };
 
@@ -146,15 +143,22 @@ async fn do_file_storage_clear(count: u32) -> Result<(), String> {
     if success < 0 {
         return Ok(());
     }
-    info!(success, fail, "cache storage clear");
+    info!(dir, success, fail, "cache storage clear");
     Ok(())
 }
 
 pub fn new_file_storage_clear_service(
 ) -> Option<(String, SimpleServiceTaskFuture)> {
-    let _ = get_current_config().basic.cache_directory.as_ref()?;
-    let task: SimpleServiceTaskFuture =
-        Box::new(|count: u32| Box::pin(do_file_storage_clear(count)));
+    let dir = get_current_config().basic.cache_directory.as_ref()?.clone();
+    let task: SimpleServiceTaskFuture = Box::new(move |count: u32| {
+        Box::pin({
+            let value = dir.clone();
+            async move {
+                let value = value.clone();
+                do_file_storage_clear(count, value).await
+            }
+        })
+    });
     Some(("cacheStorageClear".to_string(), task))
 }
 

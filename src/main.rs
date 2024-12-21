@@ -430,13 +430,6 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
     my_server.bootstrap();
 
-    if let Some(compression_task) = compression_task {
-        my_server.add_service(background_service(
-            "CompressionLog",
-            compression_task,
-        ));
-    }
-
     #[cfg(feature = "pyro")]
     if let Some(url) = &conf.basic.pyroscope {
         my_server.add_service(background_service(
@@ -478,6 +471,19 @@ fn run() -> Result<(), Box<dyn Error>> {
             ));
         }
     }
+
+    let mut simple_tasks = vec![
+        new_certificate_validity_service(),
+        new_self_signed_certificate_validity_service(),
+    ];
+    if let Some(task) = new_file_storage_clear_service() {
+        simple_tasks.push(task);
+    }
+    if let Some(compression_task) = compression_task {
+        simple_tasks.push(compression_task);
+    }
+
+    let mut lets_encrypt_params = vec![];
     for (name, certificate) in certificates.iter() {
         let acme = certificate.acme.clone().unwrap_or_default();
         let domains = certificate.domains.clone().unwrap_or_default();
@@ -490,15 +496,16 @@ fn run() -> Result<(), Box<dyn Error>> {
             .unwrap_or_default()
             .is_empty()
         {
-            my_server.add_service(background_service(
-                &format!("LetsEncrypt: {name}"),
-                new_lets_encrypt_service(
-                    name.to_string(),
-                    domains.split(',').map(|item| item.to_string()).collect(),
-                ),
+            lets_encrypt_params.push((
+                name.to_string(),
+                domains.split(',').map(|item| item.to_string()).collect(),
             ));
         }
     }
+    if !lets_encrypt_params.is_empty() {
+        simple_tasks.push(new_lets_encrypt_service(lets_encrypt_params));
+    }
+
     let updated_certificates = proxy::init_certificates(&certificates);
     if !updated_certificates.is_empty() {
         info!(
@@ -551,13 +558,6 @@ fn run() -> Result<(), Box<dyn Error>> {
                 ),
             ));
         }
-    }
-    let mut simple_tasks = vec![
-        new_certificate_validity_service(),
-        new_self_signed_certificate_validity_service(),
-    ];
-    if let Some(task) = new_file_storage_clear_service() {
-        simple_tasks.push(task);
     }
 
     my_server.add_service(background_service(

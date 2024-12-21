@@ -12,10 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::service::{CommonServiceTask, ServiceTask};
+use crate::service::SimpleServiceTaskFuture;
 use crate::util;
 use crate::util::convert_query_map;
-use async_trait::async_trait;
 use bytesize::ByteSize;
 use chrono::Timelike;
 use flate2::write::GzEncoder;
@@ -71,7 +70,8 @@ fn gzip_compress(file: &Path, level: u8) -> Result<(u64, u64), Box<dyn Error>> {
     Ok((size, original_size))
 }
 
-pub struct LogCompressionTask {
+#[derive(Debug, Clone)]
+struct LogCompressParams {
     compression: String,
     path: PathBuf,
     level: u8,
@@ -79,73 +79,90 @@ pub struct LogCompressionTask {
     time_point_hour: u8,
 }
 
-#[async_trait]
-impl ServiceTask for LogCompressionTask {
-    async fn run(&self) -> Option<bool> {
-        if self.time_point_hour != chrono::Local::now().hour() as u8 {
-            return Some(false);
+async fn do_compress(
+    count: u32,
+    params: LogCompressParams,
+) -> Result<(), String> {
+    let offset = 60;
+    if count % offset != 0 {
+        return Ok(());
+    }
+    if params.time_point_hour != chrono::Local::now().hour() as u8 {
+        return Ok(());
+    }
+    let mut days_ago = params.days_ago;
+    if days_ago == 0 {
+        days_ago = 7;
+    }
+    let Some(access_before) = SystemTime::now()
+        .checked_sub(Duration::from_secs(24 * 3600 * days_ago as u64))
+    else {
+        return Ok(());
+    };
+    let compression_exts = [GZIP_EXT.to_string(), ZSTD_EXT.to_string()];
+    for entry in WalkDir::new(&params.path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let ext = entry
+            .path()
+            .extension()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        if compression_exts.contains(&ext) {
+            continue;
         }
-        let mut days_ago = self.days_ago;
-        if days_ago == 0 {
-            days_ago = 7;
-        }
-        let Some(access_before) = SystemTime::now()
-            .checked_sub(Duration::from_secs(24 * 3600 * days_ago as u64))
-        else {
-            return Some(false);
+        let Ok(metadata) = entry.metadata() else {
+            continue;
         };
-        let compression_exts = [GZIP_EXT.to_string(), ZSTD_EXT.to_string()];
-        for entry in WalkDir::new(&self.path).into_iter().filter_map(|e| e.ok())
-        {
-            let ext = entry
-                .path()
-                .extension()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            if compression_exts.contains(&ext) {
-                continue;
-            }
-            let Ok(metadata) = entry.metadata() else {
-                continue;
-            };
-            let Ok(accessed) = metadata.accessed() else {
-                continue;
-            };
-            if accessed > access_before {
-                continue;
-            }
-            let start = SystemTime::now();
-            let result = if self.compression == "gzip" {
-                gzip_compress(entry.path(), self.level)
-            } else {
-                zstd_compress(entry.path(), self.level)
-            };
-            let file = entry.path().to_string_lossy().to_string();
-            match result {
-                Err(e) => {
-                    error!(err = e.to_string(), file, "compress log fail");
-                },
-                Ok((size, original_size)) => {
-                    let elapsed = format!("{}ms", util::elapsed_ms(start));
-                    info!(
-                        file,
-                        elapsed,
-                        original_size = ByteSize::b(original_size).to_string(),
-                        size = ByteSize::b(size).to_string(),
-                        "compress log success",
-                    );
-                    // ignore remove
-                    let _ = fs::remove_file(entry.path());
-                },
-            }
+        let Ok(accessed) = metadata.accessed() else {
+            continue;
+        };
+        if accessed > access_before {
+            continue;
         }
+        let start = SystemTime::now();
+        let result = if params.compression == "gzip" {
+            gzip_compress(entry.path(), params.level)
+        } else {
+            zstd_compress(entry.path(), params.level)
+        };
+        let file = entry.path().to_string_lossy().to_string();
+        match result {
+            Err(e) => {
+                error!(err = e.to_string(), file, "compress log fail");
+            },
+            Ok((size, original_size)) => {
+                let elapsed = format!("{}ms", util::elapsed_ms(start));
+                info!(
+                    file,
+                    elapsed,
+                    original_size = ByteSize::b(original_size).to_string(),
+                    size = ByteSize::b(size).to_string(),
+                    "compress log success",
+                );
+                // ignore remove
+                let _ = fs::remove_file(entry.path());
+            },
+        }
+    }
+    Ok(())
+}
 
-        Some(false)
-    }
-    fn description(&self) -> String {
-        "LogCompression".to_string()
-    }
+fn new_log_compress_service(
+    params: LogCompressParams,
+) -> Option<(String, SimpleServiceTaskFuture)> {
+    let task: SimpleServiceTaskFuture = Box::new(move |count: u32| {
+        Box::pin({
+            let value = params.clone();
+            async move {
+                let value = value.clone();
+                do_compress(count, value).await
+            }
+        })
+    });
+    Some(("logCompress".to_string(), task))
 }
 
 #[derive(Default, Debug)]
@@ -158,7 +175,7 @@ pub struct LoggerParams {
 
 pub fn logger_try_init(
     params: LoggerParams,
-) -> Result<Option<CommonServiceTask>, Box<dyn Error>> {
+) -> Result<Option<(String, SimpleServiceTaskFuture)>, Box<dyn Error>> {
     let level = if params.level.is_empty() {
         std::env::var("RUST_LOG").unwrap_or("INFO".to_string())
     } else {
@@ -228,16 +245,13 @@ pub fn logger_try_init(
         };
         fs::create_dir_all(dir)?;
         if !compression.is_empty() {
-            task = Some(CommonServiceTask::new(
-                Duration::from_secs(3600),
-                LogCompressionTask {
-                    compression,
-                    path: dir.to_path_buf(),
-                    days_ago,
-                    level,
-                    time_point_hour,
-                },
-            ))
+            task = new_log_compress_service(LogCompressParams {
+                compression,
+                path: dir.to_path_buf(),
+                days_ago,
+                level,
+                time_point_hour,
+            });
         }
 
         let filename = if filepath.is_dir() {

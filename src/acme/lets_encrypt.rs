@@ -20,11 +20,10 @@ use crate::config::{
 };
 use crate::http_extra::HttpResponse;
 use crate::proxy::init_certificates;
-use crate::service::{CommonServiceTask, ServiceTask};
+use crate::service::SimpleServiceTaskFuture;
 use crate::state::State;
 use crate::util;
 use crate::webhook;
-use async_trait::async_trait;
 use http::StatusCode;
 use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
@@ -35,30 +34,7 @@ use std::time::Duration;
 use substring::Substring;
 use tracing::{error, info};
 
-struct LetsEncryptService {
-    // the certificate config's name
-    name: String,
-    // the domains list, they should be the same primary domain name
-    domains: Vec<String>,
-}
-
 static WELL_KNOWN_PATH_PREFIX: &str = "/.well-known/acme-challenge/";
-
-/// Create a Let's Encrypt service to generate the certificate,
-/// and regenerate if the certificate is invalid or will be expired.
-pub fn new_lets_encrypt_service(
-    name: String,
-    domains: Vec<String>,
-) -> CommonServiceTask {
-    let mut domains = domains;
-    // sort domain order
-    domains.sort();
-
-    CommonServiceTask::new(
-        Duration::from_secs(10 * 60),
-        LetsEncryptService { name, domains },
-    )
-}
 
 async fn update_certificate_lets_encrypt(
     name: &str,
@@ -88,12 +64,18 @@ async fn update_certificate_lets_encrypt(
     Ok(conf)
 }
 
-#[async_trait]
-impl ServiceTask for LetsEncryptService {
-    async fn run(&self) -> Option<bool> {
-        let domains = &self.domains;
+async fn do_update_certificates(
+    count: u32,
+    params: Vec<(String, Vec<String>)>,
+) -> Result<(), String> {
+    // Add 1 every loop
+    let offset = 10;
+    if count % offset != 0 {
+        return Ok(());
+    }
+    for (name, domains) in params.iter() {
         let should_renew_now =
-            if let Ok(certificate) = get_lets_encrypt_certificate(&self.name) {
+            if let Ok(certificate) = get_lets_encrypt_certificate(name) {
                 // invalid or different domains
                 !certificate.valid()
                     || domains.join(",") != certificate.domains.join(",")
@@ -101,9 +83,14 @@ impl ServiceTask for LetsEncryptService {
                 true
             };
         if !should_renew_now {
-            return None;
+            info!(
+                category = LOG_CATEGORY,
+                domains = domains.join(","),
+                "certificate is still valid"
+            );
+            continue;
         }
-        match update_certificate_lets_encrypt(&self.name, domains).await {
+        match update_certificate_lets_encrypt(name, domains).await {
             Ok(conf) => {
                 info!(
                     category = LOG_CATEGORY,
@@ -124,11 +111,25 @@ impl ServiceTask for LetsEncryptService {
                 "renew certificate fail, renew it again later"
             ),
         };
-        None
     }
-    fn description(&self) -> String {
-        format!("LetsEncrypt: {:?}", self.domains)
-    }
+    Ok(())
+}
+
+/// Create a Let's Encrypt service to generate the certificate,
+/// and regenerate if the certificate is invalid or will be expired.
+pub fn new_lets_encrypt_service(
+    params: Vec<(String, Vec<String>)>,
+) -> (String, SimpleServiceTaskFuture) {
+    let task: SimpleServiceTaskFuture = Box::new(move |count: u32| {
+        Box::pin({
+            let value = params.clone();
+            async move {
+                let value = value.clone();
+                do_update_certificates(count, value).await
+            }
+        })
+    });
+    ("letsEncrypt".to_string(), task)
 }
 
 /// Get the cert from file and convert it to certificate struct.
