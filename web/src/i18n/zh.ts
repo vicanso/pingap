@@ -84,6 +84,8 @@ export default {
     threads: "线程数",
     threadsPlaceholder: "输入服务线程数",
     workStealing: "线程工作抢占模式",
+    upstreamKeepalivePoolSize: "上游保持连接池大小",
+    upstreamKeepalivePoolSizePlaceholder: "输入上游保持连接池大小(默认值: 128)",
     logLevel: "日志级别",
     logLevelPlaceholder: "选择应用日志级别",
     logBufferedSize: "日志缓存大小",

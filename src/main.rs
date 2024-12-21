@@ -411,7 +411,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         conf: None,
     };
     let mut my_server = server::Server::new(Some(opt))?;
-    my_server.configuration = Arc::new(new_server_conf(&args, &conf));
+    let server_conf = new_server_conf(&args, &conf);
+    info!(server_conf = format!("{server_conf:?}"),);
+    my_server.configuration = Arc::new(server_conf);
     #[cfg(feature = "full")]
     {
         let sentry_dsn = basic_conf.sentry.clone().unwrap_or_default();

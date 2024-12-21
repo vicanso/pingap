@@ -50,6 +50,14 @@ export default function Basic() {
       options: newBooleanOptions(),
     },
     {
+      name: "upstream_keepalive_pool_size",
+      label: basicI18n("upstreamKeepalivePoolSize"),
+      placeholder: basicI18n("upstreamKeepalivePoolSizePlaceholder"),
+      defaultValue: basic.upstream_keepalive_pool_size,
+      span: 3,
+      category: ExFormItemCategory.NUMBER,
+    },
+    {
       name: "log_level",
       label: basicI18n("logLevel"),
       placeholder: basicI18n("logLevelPlaceholder"),

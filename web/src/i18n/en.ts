@@ -84,6 +84,9 @@ export default {
     threads: "Threads",
     threadsPlaceholder: "Input the default thread count",
     workStealing: "Work Stealing",
+    upstreamKeepalivePoolSize: "Upstream Keepalive Pool",
+    upstreamKeepalivePoolSizePlaceholder:
+      "Input the pool size of upstream keepavlie(default: 128)",
     logLevel: "Log Level",
     logLevelPlaceholder: "Select the log level of pingap",
     logBufferedSize: "Log Buffered Size",
