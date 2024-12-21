@@ -21,7 +21,7 @@ use crate::config::{
     get_current_config, PluginCategory, PluginConf, PluginStep,
 };
 use crate::http_extra::HttpResponse;
-use crate::state::State;
+use crate::state::{get_cache_key, State};
 use crate::util;
 use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -39,7 +39,7 @@ use pingora::cache::predictor::{CacheablePredictor, Predictor};
 use pingora::proxy::Session;
 use std::str::FromStr;
 use std::time::Duration;
-use tracing::debug;
+use tracing::{debug, error};
 
 // meomory limit size
 const MAX_MEMORY_SIZE: usize = 100 * 1024 * 1024;
@@ -172,6 +172,18 @@ impl TryFrom<&PluginConf> for Cache {
             ByteSize::mb(1)
         };
         let namespace = get_str_conf(value, "namespace");
+        if !namespace.is_empty() && cache.directory.is_some() {
+            let path = format!(
+                "{}/{namespace}",
+                cache.directory.clone().unwrap_or_default()
+            );
+            if let Err(e) = std::fs::create_dir_all(&path) {
+                error!(
+                    error = e.to_string(),
+                    path, "create directory of cache fail"
+                );
+            }
+        }
         let namespace = if namespace.is_empty() {
             None
         } else {
@@ -272,10 +284,7 @@ impl Plugin for Cache {
         }
 
         let mut keys = BytesMut::with_capacity(64);
-        if let Some(namespace) = &self.namespace {
-            keys.put(namespace.as_bytes());
-            keys.put(&b":"[..]);
-        }
+        ctx.cache_namespace = self.namespace.clone();
         if let Some(headers) = &self.headers {
             for key in headers.iter() {
                 let buf = session.get_header_bytes(key);
@@ -311,12 +320,15 @@ impl Plugin for Cache {
                 }));
             }
 
-            let key = util::get_cache_key(
-                &ctx.cache_prefix.clone().unwrap_or_default(),
+            let key = get_cache_key(
+                ctx,
                 Method::GET.as_ref(),
                 &session.req_header().uri,
             );
-            self.http_cache.cached.remove(&key.combined()).await?;
+            self.http_cache
+                .cached
+                .remove(&key.combined(), key.namespace())
+                .await?;
             return Ok(Some(HttpResponse::no_content()));
         }
 
@@ -409,7 +421,8 @@ max_ttl = "1m"
             .handle_request(PluginStep::Request, &mut session, &mut ctx)
             .await
             .unwrap();
-        assert_eq!("pingap:gzip:", ctx.cache_prefix.unwrap());
+        assert_eq!("pingap", ctx.cache_namespace.unwrap());
+        assert_eq!("gzip:", ctx.cache_prefix.unwrap());
         assert_eq!(true, session.cache.enabled());
         assert_eq!(100 * 1000, cache.max_file_size);
 

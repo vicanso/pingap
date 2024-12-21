@@ -17,6 +17,9 @@ use crate::{proxy::Location, util};
 use ahash::AHashMap;
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
+use http::Uri;
+use pingora::cache::CacheKey;
+
 #[cfg(feature = "full")]
 use opentelemetry::{
     global::{BoxedSpan, BoxedTracer, ObjectSafeSpan},
@@ -102,6 +105,7 @@ pub struct State {
     pub server_addr: Option<String>,
     pub guard: Option<Guard>,
     pub request_id: Option<String>,
+    pub cache_namespace: Option<String>,
     pub cache_prefix: Option<String>,
     pub check_cache_control: bool,
     pub cache_lookup_time: Option<u64>,
@@ -299,6 +303,17 @@ impl State {
         }
         buf
     }
+}
+
+pub fn get_cache_key(ctx: &State, method: &str, uri: &Uri) -> CacheKey {
+    let namespace = ctx.cache_namespace.as_ref().map_or("", |v| v);
+    let key = if let Some(prefix) = &ctx.cache_prefix {
+        format!("{prefix}{method}:{uri}")
+    } else {
+        format!("{method}:{uri}")
+    };
+
+    CacheKey::new(namespace, key, "")
 }
 
 #[cfg(test)]

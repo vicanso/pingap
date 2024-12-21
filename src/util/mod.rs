@@ -14,10 +14,9 @@
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use bytes::BytesMut;
-use http::{HeaderName, Uri};
+use http::HeaderName;
 use once_cell::sync::Lazy;
 use path_absolutize::*;
-use pingora::cache::CacheKey;
 use pingora::tls::ssl::SslVersion;
 use pingora::{http::RequestHeader, proxy::Session};
 use regex::Regex;
@@ -269,15 +268,6 @@ pub fn get_host(header: &RequestHeader) -> Option<&str> {
         }
     }
     None
-}
-
-pub fn get_cache_key(prefix: &str, method: &str, uri: &Uri) -> CacheKey {
-    let namespace = if prefix.is_empty() {
-        method
-    } else {
-        &format!("{method}:{prefix}")
-    };
-    CacheKey::new(namespace, uri.to_string(), "")
 }
 
 /// Get the content length from http request header.

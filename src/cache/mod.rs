@@ -41,12 +41,15 @@ impl From<Error> for pingora::BError {
 
 pub fn new_tiny_ufo_cache(size: usize) -> HttpCache {
     HttpCache {
+        directory: None,
         cached: Arc::new(tiny::new_tiny_ufo_cache(size / PAGE_SIZE, size)),
     }
 }
 pub fn new_file_cache(dir: &str) -> Result<HttpCache> {
+    let cache = file::new_file_cache(dir)?;
     Ok(HttpCache {
-        cached: Arc::new(file::new_file_cache(dir)?),
+        directory: Some(cache.directory.clone()),
+        cached: Arc::new(cache),
     })
 }
 

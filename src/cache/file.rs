@@ -27,11 +27,11 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::SystemTime;
 use tinyufo::TinyUfo;
 use tokio::fs;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use walkdir::WalkDir;
 
 pub struct FileCache {
-    directory: String,
+    pub directory: String,
     reading: AtomicU32,
     reading_max: u32,
     #[cfg(feature = "full")]
@@ -116,7 +116,12 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
 impl HttpCacheStorage for FileCache {
     /// Get cache object from tinyufo,
     /// if not exists, then get from the file.
-    async fn get(&self, key: &str) -> Result<Option<CacheObject>> {
+    async fn get(
+        &self,
+        key: &str,
+        namespace: &str,
+    ) -> Result<Option<CacheObject>> {
+        debug!(key, namespace, "get cache from file");
         if let Some(Some(obj)) =
             self.cache.as_ref().map(|c| c.get(&key.to_string()))
         {
@@ -124,7 +129,11 @@ impl HttpCacheStorage for FileCache {
         }
         #[cfg(feature = "full")]
         let start = SystemTime::now();
-        let file = Path::new(&self.directory).join(key);
+        let file = if namespace.is_empty() {
+            Path::new(&self.directory).join(key)
+        } else {
+            Path::new(&self.directory).join(format!("{namespace}/{key}"))
+        };
         // add reading count
         let count = self.reading.fetch_add(1, Ordering::Relaxed);
         defer!(self.reading.fetch_sub(1, Ordering::Relaxed););
@@ -156,17 +165,23 @@ impl HttpCacheStorage for FileCache {
     /// Put cache object to tinyufo and file.
     async fn put(
         &self,
-        key: String,
+        key: &str,
+        namespace: &str,
         data: CacheObject,
         weight: u16,
     ) -> Result<()> {
+        debug!(key, namespace, "put cache to file");
         if let Some(c) = &self.cache {
-            c.put(key.clone(), data.clone(), weight);
+            c.put(key.to_string(), data.clone(), weight);
         }
         #[cfg(feature = "full")]
         let start = SystemTime::now();
         let buf: Bytes = data.into();
-        let file = Path::new(&self.directory).join(key);
+        let file = if namespace.is_empty() {
+            Path::new(&self.directory).join(key)
+        } else {
+            Path::new(&self.directory).join(format!("{namespace}/{key}"))
+        };
         // add writing count
         let count = self.writing.fetch_add(1, Ordering::Relaxed);
         defer!(self.writing.fetch_sub(1, Ordering::Relaxed););
@@ -182,11 +197,20 @@ impl HttpCacheStorage for FileCache {
         result.map_err(|e| Error::Io { source: e })
     }
     /// Remove cache object from file, tinyufo doesn't support remove now.
-    async fn remove(&self, key: &str) -> Result<Option<CacheObject>> {
+    async fn remove(
+        &self,
+        key: &str,
+        namespace: &str,
+    ) -> Result<Option<CacheObject>> {
+        debug!(key, namespace, "remove cache from file");
         if let Some(c) = &self.cache {
             c.remove(&key.to_string());
         }
-        let file = Path::new(&self.directory).join(key);
+        let file = if namespace.is_empty() {
+            Path::new(&self.directory).join(key)
+        } else {
+            Path::new(&self.directory).join(format!("{namespace}/{key}"))
+        };
         fs::remove_file(file)
             .await
             .map_err(|e| Error::Io { source: e })?;
@@ -261,27 +285,27 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let dir = dir.into_path().to_string_lossy().to_string();
         let cache = new_file_cache(&dir).unwrap();
-        let key = "key".to_string();
+        let key = "key";
         let obj = CacheObject {
             meta: (b"Hello".to_vec(), b"World".to_vec()),
             body: Bytes::from_static(b"Hello World!"),
         };
-        let result = cache.get(&key).await.unwrap();
+        let result = cache.get(key, "").await.unwrap();
         assert_eq!(true, result.is_none());
-        cache.put(key.clone(), obj.clone(), 1).await.unwrap();
-        let result = cache.get(&key).await.unwrap().unwrap();
+        cache.put(key, "", obj.clone(), 1).await.unwrap();
+        let result = cache.get(key, "").await.unwrap().unwrap();
         assert_eq!(obj, result);
 
         // empty tinyufo, get from file
         let cache = new_file_cache(&dir).unwrap();
-        let result = cache.get(&key).await.unwrap().unwrap();
+        let result = cache.get(key, "").await.unwrap().unwrap();
         assert_eq!(obj, result);
 
-        cache.remove(&key).await.unwrap();
-        let result = cache.get(&key).await.unwrap();
+        cache.remove(key, "").await.unwrap();
+        let result = cache.get(key, "").await.unwrap();
         assert_eq!(true, result.is_none());
 
-        cache.put(key.clone(), obj.clone(), 1).await.unwrap();
+        cache.put(key, "", obj.clone(), 1).await.unwrap();
         cache
             .clear(
                 SystemTime::now()

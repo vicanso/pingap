@@ -88,16 +88,25 @@ pub struct HttpCacheStats {
 #[async_trait]
 pub trait HttpCacheStorage: Sync + Send {
     // get cache object from storage
-    async fn get(&self, key: &str) -> Result<Option<CacheObject>>;
+    async fn get(
+        &self,
+        key: &str,
+        namespace: &str,
+    ) -> Result<Option<CacheObject>>;
     // put object to storage
     async fn put(
         &self,
-        key: String,
+        key: &str,
+        namespace: &str,
         data: CacheObject,
         weight: u16,
     ) -> Result<()>;
     // remove object from storage
-    async fn remove(&self, _key: &str) -> Result<Option<CacheObject>> {
+    async fn remove(
+        &self,
+        _key: &str,
+        _namespace: &str,
+    ) -> Result<Option<CacheObject>> {
         Ok(None)
     }
     async fn clear(
@@ -150,6 +159,7 @@ pub fn new_file_storage_clear_service(
 }
 
 pub struct HttpCache {
+    pub directory: Option<String>,
     pub(crate) cached: Arc<dyn HttpCacheStorage>,
 }
 
@@ -234,6 +244,7 @@ pub struct ObjectMissHandler {
     body: BytesMut,
     // these are used only in finish() to data from temp to cache
     key: String,
+    namespace: String,
     cache: Arc<dyn HttpCacheStorage>,
 }
 
@@ -253,7 +264,8 @@ impl HandleMiss for ObjectMissHandler {
         let _ = self
             .cache
             .put(
-                self.key,
+                &self.key,
+                &self.namespace,
                 CacheObject {
                     meta: self.meta,
                     body: self.body.into(),
@@ -286,8 +298,9 @@ impl Storage for HttpCache {
         key: &CacheKey,
         _trace: &SpanHandle,
     ) -> pingora::Result<Option<(CacheMeta, HitHandler)>> {
+        let namespace = key.namespace();
         let hash = key.combined();
-        if let Some(obj) = self.cached.get(&hash).await? {
+        if let Some(obj) = self.cached.get(&hash, namespace).await? {
             let meta = CacheMeta::deserialize(&obj.meta.0, &obj.meta.1)?;
             let size = obj.body.len();
             let hit_handler = CompleteHit {
@@ -326,6 +339,7 @@ impl Storage for HttpCache {
         let miss_handler = ObjectMissHandler {
             meta,
             key: hash,
+            namespace: key.namespace().to_string(),
             cache: self.cached.clone(),
             body: BytesMut::with_capacity(size),
         };
@@ -341,12 +355,13 @@ impl Storage for HttpCache {
         // This usually purges the primary key because, without a lookup,
         // the variance key is usually empty
         let hash = key.combined();
-        let cache_removed = if let Ok(result) = self.cached.remove(&hash).await
-        {
-            result.is_some()
-        } else {
-            false
-        };
+        // TODO get namespace of cache key
+        let cache_removed =
+            if let Ok(result) = self.cached.remove(&hash, "").await {
+                result.is_some()
+            } else {
+                false
+            };
         Ok(cache_removed)
     }
 
@@ -356,11 +371,15 @@ impl Storage for HttpCache {
         meta: &CacheMeta,
         _trace: &SpanHandle,
     ) -> pingora::Result<bool> {
+        let namespace = key.namespace();
         let hash = key.combined();
-        if let Some(mut obj) = self.cached.get(&hash).await? {
+        if let Some(mut obj) = self.cached.get(&hash, namespace).await? {
             obj.meta = meta.serialize()?;
             let size = obj.body.len();
-            let _ = self.cached.put(hash, obj, get_wegiht(size)).await?;
+            let _ = self
+                .cached
+                .put(&hash, namespace, obj, get_wegiht(size))
+                .await?;
             Ok(true)
         } else {
             Err(Error::Invalid {
@@ -418,6 +437,7 @@ mod tests {
             meta: (b"Hello".to_vec(), b"World".to_vec()),
             body: BytesMut::new(),
             key: key.to_string(),
+            namespace: "".to_string(),
             cache: cache.clone(),
         };
         let mut handle: MissHandler = Box::new(obj);
@@ -428,7 +448,7 @@ mod tests {
             .unwrap();
         handle.finish().await.unwrap();
 
-        let data = cache.get(key).await.unwrap().unwrap();
+        let data = cache.get(key, "").await.unwrap().unwrap();
         assert_eq!("Hello World!", std::str::from_utf8(&data.body).unwrap());
     }
 }

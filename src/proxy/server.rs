@@ -28,9 +28,9 @@ use crate::service::CommonServiceTask;
 #[cfg(feature = "full")]
 use crate::state::OtelTracer;
 use crate::state::{accept_request, end_request};
+use crate::state::{get_cache_key, CompressionStat, State};
 #[cfg(feature = "full")]
 use crate::state::{new_prometheus, new_prometheus_push_service, Prometheus};
-use crate::state::{CompressionStat, State};
 use crate::util;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
@@ -784,8 +784,8 @@ impl ProxyHttp for Server {
     ) -> pingora::Result<CacheKey> {
         debug!("--> cache key callback");
         defer!(debug!("<-- cache key callback"););
-        let key = util::get_cache_key(
-            &ctx.cache_prefix.clone().unwrap_or_default(),
+        let key = get_cache_key(
+            ctx,
             session.req_header().method.as_ref(),
             &session.req_header().uri,
         );
@@ -1280,12 +1280,13 @@ mod tests {
         let key = server.cache_key_callback(
             &session,
             &mut State {
+                cache_namespace: Some("pingap".to_string()),
                 cache_prefix: Some("ss:".to_string()),
                 ..Default::default()
             },
         );
         assert_eq!(
-            r#"Ok(CacheKey { namespace: "GET:ss:", primary: "/vicanso/pingap?size=1", primary_bin_override: None, variance: None, user_tag: "" })"#,
+            r#"Ok(CacheKey { namespace: "pingap", primary: "ss:GET:/vicanso/pingap?size=1", primary_bin_override: None, variance: None, user_tag: "" })"#,
             format!("{key:?}")
         );
     }
