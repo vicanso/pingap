@@ -70,3 +70,4 @@ SGToOzVHYX7VazxioA9nhNne9kaixvnIUg3iowAz07J7o6EU8tfYsnHxsvjlIkBU
 ai02RHnemmqJaNepfmCdyec=
 -----END PRIVATE KEY-----"""
 is_default = true
+is_ca = true
