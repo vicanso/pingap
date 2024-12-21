@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.9.5](https://github.com/vicanso/pingap/compare/v0.9.4..0.9.5) - 2024-12-21
+
+### ⛰️  Features
+
+- Admin panel support set upstream keepalive pool size - ([d6ed036](https://github.com/vicanso/pingap/commit/d6ed036c36c91a79fb5f01a32835618ca7ab1593))
+- Support generate certificate from self sigined ca, #66 - ([f1b2f6f](https://github.com/vicanso/pingap/commit/f1b2f6f8c5cd0626ab41ee6958f1bafcbcf1068e))
+- Support print default config template - ([c3ea1d6](https://github.com/vicanso/pingap/commit/c3ea1d6df91e5cf773c5f013c0ba5b9489f1e5c2))
+
+### 🐛 Bug Fixes
+
+- Fix spelling - ([a97f232](https://github.com/vicanso/pingap/commit/a97f232bd4ae8909b54537432db4f54d35ac2740))
+
+### 🚜 Refactor
+
+- Use namespace of cache plugin as sub directory - ([e2ef50c](https://github.com/vicanso/pingap/commit/e2ef50c7cd87f38e816b919c6b7a42393db82edd))
+- Adjust certificate of acme and self signed - ([69e7f37](https://github.com/vicanso/pingap/commit/69e7f379fa2ed5a61574e4d0aa31828f9bbd7b78))
+- Adjust chain and self signed certificate - ([32efe09](https://github.com/vicanso/pingap/commit/32efe09c50c96bcc57898711bd81048949aa87ee))
+- Make background service more simplified - ([be8652d](https://github.com/vicanso/pingap/commit/be8652dbe834858bf946480cd64695420ee55d34))
+- Remove stale self signed certificate interval - ([a75af2a](https://github.com/vicanso/pingap/commit/a75af2ae8069dbcbe106a1d196fc67e064468d78))
+- Adjust validate error of config - ([9ddccb1](https://github.com/vicanso/pingap/commit/9ddccb166c950dad9ec9b5f6053c49953824a700))
+- Adjust log for discovery - ([5ffd70a](https://github.com/vicanso/pingap/commit/5ffd70a3f56b7a20ebc050e8dff817caacdd8427))
+- Enhance file and tinyufo cache - ([c602154](https://github.com/vicanso/pingap/commit/c6021540201f033208d281c95546fecc3c5474a0))
+- Add error log for self signed certificate fail - ([eb97a4d](https://github.com/vicanso/pingap/commit/eb97a4d6491a38186bbfd4cdf5cbd5f2cd46e1ee))
+
+### ⚙️ Miscellaneous Tasks
+
+- Sync pingora latest commit - ([818ee7a](https://github.com/vicanso/pingap/commit/818ee7aafb140aecab4089519371b6ce231807be))
+
 ## [0.9.4](https://github.com/vicanso/pingap/compare/v0.9.3..0.9.4) - 2024-12-14
 
 ### ⛰️  Features
