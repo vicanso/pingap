@@ -24,7 +24,7 @@ use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use crate::otel;
 use crate::plugin::{get_plugin, ADMIN_SERVER_PLUGIN};
 use crate::proxy::location::get_location;
-use crate::service::CommonServiceTask;
+use crate::service::SimpleServiceTaskFuture;
 #[cfg(feature = "full")]
 use crate::state::OtelTracer;
 use crate::state::{accept_request, end_request};
@@ -233,7 +233,9 @@ impl Server {
         self.lets_encrypt_enabled = true;
     }
     /// Get the prometheus push service
-    pub fn get_prometheus_push_service(&self) -> Option<CommonServiceTask> {
+    pub fn get_prometheus_push_service(
+        &self,
+    ) -> Option<(String, SimpleServiceTaskFuture)> {
         if !self.prometheus_push_mode {
             return None;
         }

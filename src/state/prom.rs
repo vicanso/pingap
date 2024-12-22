@@ -13,9 +13,8 @@
 // limitations under the License.
 
 use super::{get_hostname, get_process_system_info, Error, Result, State};
-use crate::service::{CommonServiceTask, ServiceTask};
+use crate::service::SimpleServiceTaskFuture;
 use crate::util;
-use async_trait::async_trait;
 use humantime::parse_duration;
 use once_cell::sync::Lazy;
 use pingora::proxy::Session;
@@ -213,12 +212,69 @@ impl Prometheus {
     }
 }
 
+#[derive(Clone)]
+struct PrometheusPushParams {
+    name: String,
+    url: String,
+    p: Arc<Prometheus>,
+    username: String,
+    password: Option<String>,
+}
+
+async fn do_push(
+    count: u32,
+    offset: u32,
+    params: PrometheusPushParams,
+) -> Result<(), String> {
+    if count % offset != 0 {
+        return Ok(());
+    }
+    // http push metrics
+    let encoder = ProtobufEncoder::new();
+    let mut buf = Vec::new();
+
+    for mf in params.p.gather() {
+        let _ = encoder.encode(&[mf], &mut buf);
+    }
+    let client = reqwest::Client::new();
+    let mut builder = client
+        .post(&params.url)
+        .header(http::header::CONTENT_TYPE, encoder.format_type())
+        .body(buf);
+
+    if !params.username.is_empty() {
+        builder = builder.basic_auth(&params.username, params.password.clone());
+    }
+
+    match builder.timeout(Duration::from_secs(60)).send().await {
+        Ok(res) => {
+            if res.status().as_u16() >= 400 {
+                error!(
+                    name = params.name,
+                    status = res.status().to_string(),
+                    "push prometheus fail"
+                );
+            } else {
+                info!(name = params.name, "push prometheus success");
+            }
+        },
+        Err(e) => {
+            error!(
+                name = params.name,
+                error = e.to_string(),
+                "push prometheus fail"
+            );
+        },
+    };
+    Ok(())
+}
+
 /// Create a new prometheus push service
 pub fn new_prometheus_push_service(
     name: &str,
     url: &str,
     p: Arc<Prometheus>,
-) -> Result<CommonServiceTask> {
+) -> Result<(String, SimpleServiceTaskFuture)> {
     let mut info = Url::parse(url).map_err(|e| Error::Url { source: e })?;
 
     let username = info.username().to_string();
@@ -239,70 +295,25 @@ pub fn new_prometheus_push_service(
         url = url.replace(HOST_NAME_TAG, get_hostname());
     }
 
-    let push = PrometheusPush {
+    let params = PrometheusPushParams {
         name: name.to_string(),
         url,
         username,
         password,
         p,
     };
-    Ok(CommonServiceTask::new(interval, push))
-}
+    let offset = (interval.as_secs() / 60) as u32;
 
-struct PrometheusPush {
-    name: String,
-    url: String,
-    p: Arc<Prometheus>,
-    username: String,
-    password: Option<String>,
-}
-
-#[async_trait]
-impl ServiceTask for PrometheusPush {
-    async fn run(&self) -> Option<bool> {
-        // http push metrics
-        let encoder = ProtobufEncoder::new();
-        let mut buf = Vec::new();
-
-        for mf in self.p.gather() {
-            let _ = encoder.encode(&[mf], &mut buf);
-        }
-        let client = reqwest::Client::new();
-        let mut builder = client
-            .post(&self.url)
-            .header(http::header::CONTENT_TYPE, encoder.format_type())
-            .body(buf);
-
-        if !self.username.is_empty() {
-            builder = builder.basic_auth(&self.username, self.password.clone());
-        }
-
-        match builder.timeout(Duration::from_secs(60)).send().await {
-            Ok(res) => {
-                if res.status().as_u16() >= 400 {
-                    error!(
-                        name = self.name,
-                        status = res.status().to_string(),
-                        "push prometheus fail"
-                    );
-                } else {
-                    info!(name = self.name, "push prometheus success");
-                }
-            },
-            Err(e) => {
-                error!(
-                    name = self.name,
-                    error = e.to_string(),
-                    "push prometheus fail"
-                );
-            },
-        }
-
-        None
-    }
-    fn description(&self) -> String {
-        "PrometheusPush".to_string()
-    }
+    let task: SimpleServiceTaskFuture = Box::new(move |count: u32| {
+        Box::pin({
+            let value = params.clone();
+            async move {
+                let value = value.clone();
+                do_push(count, offset, value).await
+            }
+        })
+    });
+    Ok(("prometheusPush".to_string(), task))
 }
 
 fn new_int_counter(server: &str, name: &str, help: &str) -> Result<IntCounter> {

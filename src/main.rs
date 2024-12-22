@@ -530,10 +530,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             ps.enable_lets_encrypt();
         }
         if let Some(service) = ps.get_prometheus_push_service() {
-            my_server.add_service(background_service(
-                "prometheus push service",
-                service,
-            ));
+            simple_tasks.push(service);
         }
         let services = ps.run(&my_server.configuration)?;
         my_server.add_service(services.lb);
