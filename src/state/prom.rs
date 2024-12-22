@@ -663,16 +663,18 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::new_prometheus;
     use crate::{
+        config::LocationConf,
+        proxy::Location,
         state::{CompressionStat, State},
         util,
     };
     use http::StatusCode;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
+    use std::sync::Arc;
+    use std::time::Duration;
     use tokio_test::io::Builder;
 
     #[tokio::test]
@@ -696,6 +698,15 @@ mod tests {
         let p = new_prometheus("pingap").unwrap();
         p.before("");
 
+        let lo = Location::new(
+            "lo",
+            &LocationConf {
+                upstream: Some("upstream".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
         p.after(
             &session,
             &State {
@@ -716,10 +727,11 @@ mod tests {
                     out_bytes: 512,
                     duration: Duration::from_millis(20),
                 }),
+                location: Some(Arc::new(lo)),
                 ..Default::default()
             },
         );
         let buf = p.metrics().unwrap();
-        assert_eq!(186, std::str::from_utf8(&buf).unwrap().split('\n').count());
+        assert_eq!(221, std::str::from_utf8(&buf).unwrap().split('\n').count());
     }
 }
