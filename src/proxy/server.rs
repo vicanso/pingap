@@ -511,12 +511,6 @@ impl ProxyHttp for Server {
             }
         }
 
-        // set perometheus stats
-        #[cfg(feature = "full")]
-        if let Some(prom) = &self.prometheus {
-            prom.before();
-        }
-
         // locations not found
         let Some(locations) = get_server_locations(&self.name) else {
             return Ok(());
@@ -537,6 +531,14 @@ impl ProxyHttp for Server {
                 break;
             }
         }
+        // set perometheus stats
+        #[cfg(feature = "full")]
+        if let Some(prom) = &self.prometheus {
+            let location_name =
+                ctx.location.as_ref().map_or("", |item| &item.name);
+            prom.before(location_name);
+        }
+
         if let Some(location) = &ctx.location {
             location
                 .validate_content_length(header)
