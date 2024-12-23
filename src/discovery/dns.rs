@@ -153,13 +153,14 @@ impl ServiceDiscovery for Dns {
                     ),
                     "dns discover fail"
                 );
-                webhook::send(webhook::SendNotificationParams {
+                webhook::send_notification(webhook::SendNotificationParams {
                     category:
                         webhook::NotificationCategory::ServiceDiscoverFail,
                     level: webhook::NotificationLevel::Warn,
                     msg: format!("dns discovery {:?}, error: {e}", self.hosts),
                     remark: None,
-                });
+                })
+                .await;
                 return Err(e.into());
             },
         }

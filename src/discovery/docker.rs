@@ -218,7 +218,7 @@ impl ServiceDiscovery for Docker {
                     ),
                     "docker discover fail"
                 );
-                webhook::send(webhook::SendNotificationParams {
+                webhook::send_notification(webhook::SendNotificationParams {
                     category:
                         webhook::NotificationCategory::ServiceDiscoverFail,
                     level: webhook::NotificationLevel::Warn,
@@ -227,7 +227,8 @@ impl ServiceDiscovery for Docker {
                         self.labels(),
                     ),
                     remark: None,
-                });
+                })
+                .await;
                 return Err(e.into());
             },
         }

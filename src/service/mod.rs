@@ -51,11 +51,14 @@ pub fn new_simple_service_task(
 impl BackgroundService for SimpleServiceTask {
     async fn start(&self, mut shutdown: ShutdownWatch) {
         let period_human: humantime::Duration = self.interval.into();
+        let task_names: Vec<String> =
+            self.tasks.iter().map(|item| item.0.clone()).collect();
         info!(
             category = LOG_CATEGORY,
             name = self.name,
+            tasks = task_names.join(","),
             interval = period_human.to_string(),
-            "simple service is running",
+            "background service is running",
         );
 
         let mut period = interval(self.interval);

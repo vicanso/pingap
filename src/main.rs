@@ -506,12 +506,16 @@ fn run() -> Result<(), Box<dyn Error>> {
         simple_tasks.push(new_lets_encrypt_service(lets_encrypt_params));
     }
 
-    let updated_certificates = proxy::init_certificates(&certificates);
+    let (updated_certificates, errors) =
+        proxy::try_update_certificates(&certificates);
     if !updated_certificates.is_empty() {
         info!(
             updated_certificates = updated_certificates.join(","),
             "init certificates success"
         );
+    }
+    if !errors.is_empty() {
+        error!(error = errors, "parse certificate fail");
     }
 
     // no server listen 80 and lets encrypt domains is not empty

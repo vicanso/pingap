@@ -30,7 +30,7 @@ use tracing::{debug, error, info};
 
 async fn diff_and_update_config(
     hot_reload_only: bool,
-) -> Result<(bool, Vec<String>, String), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error>> {
     let new_config = load_config(LoadConfigOptions {
         replace_include: true,
         ..Default::default()
@@ -48,7 +48,7 @@ async fn diff_and_update_config(
     );
     // no update config
     if original_diff_result.is_empty() {
-        return Ok((false, vec![], "".to_string()));
+        return Ok(());
     }
 
     let mut reload_fail_messages = vec![];
@@ -128,12 +128,16 @@ async fn diff_and_update_config(
                 },
                 Ok(updated_upstreams) => {
                     info!("reload upstream success");
-                    webhook::send(webhook::SendNotificationParams {
-                        category: webhook::NotificationCategory::ReloadConfig,
-                        level: webhook::NotificationLevel::Info,
-                        msg: format_message("Upstream", updated_upstreams),
-                        ..Default::default()
-                    });
+                    webhook::send_notification(
+                        webhook::SendNotificationParams {
+                            category:
+                                webhook::NotificationCategory::ReloadConfig,
+                            level: webhook::NotificationLevel::Info,
+                            msg: format_message("Upstream", updated_upstreams),
+                            ..Default::default()
+                        },
+                    )
+                    .await;
                 },
             };
         }
@@ -147,12 +151,16 @@ async fn diff_and_update_config(
                 },
                 Ok(updated_locations) => {
                     info!("reload location success");
-                    webhook::send(webhook::SendNotificationParams {
-                        category: webhook::NotificationCategory::ReloadConfig,
-                        level: webhook::NotificationLevel::Info,
-                        msg: format_message("Location", updated_locations),
-                        ..Default::default()
-                    });
+                    webhook::send_notification(
+                        webhook::SendNotificationParams {
+                            category:
+                                webhook::NotificationCategory::ReloadConfig,
+                            level: webhook::NotificationLevel::Info,
+                            msg: format_message("Location", updated_locations),
+                            ..Default::default()
+                        },
+                    )
+                    .await;
                 },
             };
         }
@@ -166,25 +174,41 @@ async fn diff_and_update_config(
                 },
                 Ok(updated_plugins) => {
                     info!("reload plugin success");
-                    webhook::send(webhook::SendNotificationParams {
-                        category: webhook::NotificationCategory::ReloadConfig,
-                        level: webhook::NotificationLevel::Info,
-                        msg: format_message("Plugin", updated_plugins),
-                        ..Default::default()
-                    });
+                    webhook::send_notification(
+                        webhook::SendNotificationParams {
+                            category:
+                                webhook::NotificationCategory::ReloadConfig,
+                            level: webhook::NotificationLevel::Info,
+                            msg: format_message("Plugin", updated_plugins),
+                            ..Default::default()
+                        },
+                    )
+                    .await;
                 },
             };
         }
         if should_reload_certificate {
-            let updated_certificates =
-                proxy::init_certificates(&new_config.certificates);
+            let (updated_certificates, errors) =
+                proxy::try_update_certificates(&new_config.certificates);
             info!("reload certificate success");
-            webhook::send(webhook::SendNotificationParams {
+            webhook::send_notification(webhook::SendNotificationParams {
                 category: webhook::NotificationCategory::ReloadConfig,
                 level: webhook::NotificationLevel::Info,
                 msg: format_message("Certificate", updated_certificates),
                 ..Default::default()
-            });
+            })
+            .await;
+            if !errors.is_empty() {
+                error!(error = errors, "parse certificate fail");
+                webhook::send_notification(webhook::SendNotificationParams {
+                    category:
+                        webhook::NotificationCategory::ParseCertificateFail,
+                    level: webhook::NotificationLevel::Error,
+                    msg: errors,
+                    remark: None,
+                })
+                .await;
+            }
         }
         if should_reload_server_location {
             match proxy::try_init_server_locations(
@@ -199,12 +223,19 @@ async fn diff_and_update_config(
                 },
                 Ok(updated_servers) => {
                     info!("reload server location success");
-                    webhook::send(webhook::SendNotificationParams {
-                        category: webhook::NotificationCategory::ReloadConfig,
-                        level: webhook::NotificationLevel::Info,
-                        msg: format_message("Server Location", updated_servers),
-                        ..Default::default()
-                    });
+                    webhook::send_notification(
+                        webhook::SendNotificationParams {
+                            category:
+                                webhook::NotificationCategory::ReloadConfig,
+                            level: webhook::NotificationLevel::Info,
+                            msg: format_message(
+                                "Server Location",
+                                updated_servers,
+                            ),
+                            ..Default::default()
+                        },
+                    )
+                    .await;
                 },
             };
         }
@@ -222,11 +253,28 @@ async fn diff_and_update_config(
         );
         // no update config
         if original_diff_result.is_empty() {
-            return Ok((false, vec![], reload_fail_message));
+            return Ok(());
         }
         // update current config to be hot reload config
         set_current_config(&hot_realod_config);
-        return Ok((false, original_diff_result, reload_fail_message));
+        if !original_diff_result.is_empty() {
+            webhook::send_notification(webhook::SendNotificationParams {
+                category: webhook::NotificationCategory::DiffConfig,
+                msg: original_diff_result.join("\n").trim().to_string(),
+                ..Default::default()
+            })
+            .await;
+            if !reload_fail_message.is_empty() {
+                webhook::send_notification(webhook::SendNotificationParams {
+                    category: webhook::NotificationCategory::ReloadConfigFail,
+                    msg: reload_fail_message.clone(),
+                    remark: Some("reload config fail".to_string()),
+                    ..Default::default()
+                })
+                .await;
+            }
+        }
+        return Ok(());
     }
     // restart mode
     // update current config to be hot reload config
@@ -245,7 +293,27 @@ async fn diff_and_update_config(
         should_restart = false;
     }
 
-    Ok((should_restart, original_diff_result, reload_fail_message))
+    if !original_diff_result.is_empty() {
+        webhook::send_notification(webhook::SendNotificationParams {
+            category: webhook::NotificationCategory::DiffConfig,
+            msg: original_diff_result.join("\n").trim().to_string(),
+            ..Default::default()
+        })
+        .await;
+        if !reload_fail_message.is_empty() {
+            webhook::send_notification(webhook::SendNotificationParams {
+                category: webhook::NotificationCategory::ReloadConfigFail,
+                msg: reload_fail_message.clone(),
+                remark: Some("reload config fail".to_string()),
+                ..Default::default()
+            })
+            .await;
+        }
+    }
+    if should_restart {
+        restart().await;
+    }
+    Ok(())
 }
 
 struct AutoRestart {
@@ -345,40 +413,8 @@ impl BackgroundService for ConfigObserverService {
 }
 
 async fn run_diff_and_update_config(hot_reload_only: bool) {
-    match diff_and_update_config(hot_reload_only).await {
-        Ok((should_restart, diff_result, reload_fail_message)) => {
-            if !diff_result.is_empty() {
-                // add more message for auto reload
-                let remark = if !should_restart {
-                    "Configuration has been hot reloaded".to_string()
-                } else {
-                    "Pingap will restart due to configuration updates"
-                        .to_string()
-                };
-                webhook::send(webhook::SendNotificationParams {
-                    category: webhook::NotificationCategory::DiffConfig,
-                    msg: diff_result.join("\n").trim().to_string(),
-                    remark: Some(remark),
-                    ..Default::default()
-                });
-                if !reload_fail_message.is_empty() {
-                    webhook::send(webhook::SendNotificationParams {
-                        category:
-                            webhook::NotificationCategory::ReloadConfigFail,
-                        msg: reload_fail_message,
-                        remark: Some("reload config fail".to_string()),
-                        ..Default::default()
-                    });
-                }
-            }
-
-            if should_restart {
-                restart();
-            }
-        },
-        Err(e) => {
-            error!(error = e.to_string(), "auto restart validate fail");
-        },
+    if let Err(e) = diff_and_update_config(hot_reload_only).await {
+        error!(error = e.to_string(), "auto restart validate fail");
     }
 }
 

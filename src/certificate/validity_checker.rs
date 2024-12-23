@@ -62,12 +62,13 @@ async fn do_validity_check(count: u32) -> Result<(), String> {
     if let Err(message) = validity_check(&certificate_info_list, time_offset) {
         // certificate will be expired
         warn!(category = "validityChecker", message);
-        webhook::send(webhook::SendNotificationParams {
+        webhook::send_notification(webhook::SendNotificationParams {
             level: webhook::NotificationLevel::Warn,
             category: webhook::NotificationCategory::TlsValidity,
             msg: message,
             ..Default::default()
-        });
+        })
+        .await;
     }
     Ok(())
 }

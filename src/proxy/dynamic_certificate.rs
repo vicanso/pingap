@@ -14,7 +14,7 @@
 
 use crate::certificate::{Certificate, TlsCertificate};
 use crate::config::CertificateConf;
-use crate::{util, webhook};
+use crate::util;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -78,23 +78,11 @@ fn parse_certificates(
     (dynamic_certs, errors)
 }
 
-/// Init certificates, which use for global tls callback
-pub fn init_certificates(
+/// Try update certificates, which use for global tls callback
+pub fn try_update_certificates(
     certificate_configs: &HashMap<String, CertificateConf>,
-) -> Vec<String> {
+) -> (Vec<String>, String) {
     let (dynamic_certs, errors) = parse_certificates(certificate_configs);
-    if !errors.is_empty() {
-        let msg_list: Vec<String> = errors
-            .iter()
-            .map(|item| format!("name:{}, error:{}", item.0, item.1))
-            .collect();
-        webhook::send(webhook::SendNotificationParams {
-            category: webhook::NotificationCategory::ParseCertificateFail,
-            level: webhook::NotificationLevel::Error,
-            msg: msg_list.join(";"),
-            remark: None,
-        });
-    }
     let certs = DYNAMIC_CERTIFICATE_MAP.load();
     let mut updated_certificates = vec![];
     for (name, cert) in dynamic_certs.iter() {
@@ -105,8 +93,12 @@ pub fn init_certificates(
         }
         updated_certificates.push(name.clone());
     }
+    let msg_list: Vec<String> = errors
+        .iter()
+        .map(|item| format!("{}({})", item.1, item.0))
+        .collect();
     DYNAMIC_CERTIFICATE_MAP.store(Arc::new(dynamic_certs));
-    updated_certificates
+    (updated_certificates, msg_list.join(";"))
 }
 
 /// Get certificate info list
@@ -280,7 +272,7 @@ impl pingora::listeners::TlsAccept for GlobalCertificate {
 mod tests {
     use super::{GlobalCertificate, TlsSettingParams, DYNAMIC_CERTIFICATE_MAP};
     use crate::certificate::TlsCertificate;
-    use crate::{config::CertificateConf, proxy::init_certificates};
+    use crate::{config::CertificateConf, proxy::try_update_certificates};
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
 
@@ -390,7 +382,7 @@ aqcrKJfS+xaKWxXPiNlpBMG5
 
         let mut map = HashMap::new();
         map.insert("pingap".to_string(), cert_info);
-        init_certificates(&map);
+        try_update_certificates(&map);
 
         let cert = DYNAMIC_CERTIFICATE_MAP
             .load()

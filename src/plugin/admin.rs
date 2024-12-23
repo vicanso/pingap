@@ -614,7 +614,7 @@ impl Plugin for AdminServe {
             })
             .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
         } else if path == "/restart" && method == Method::POST {
-            if let Err(e) = restart_now() {
+            if let Err(e) = restart_now().await {
                 error!("Restart fail: {e}");
                 HttpResponse::bad_request(e.to_string().into())
             } else {

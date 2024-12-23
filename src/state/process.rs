@@ -194,7 +194,7 @@ static PROCESS_RESTARTING: Lazy<AtomicBool> =
     Lazy::new(|| AtomicBool::new(false));
 
 #[cfg(unix)]
-pub fn restart_now() -> io::Result<process::Output> {
+pub async fn restart_now() -> io::Result<process::Output> {
     let restarting = PROCESS_RESTARTING.swap(true, Ordering::Relaxed);
     if restarting {
         error!("pingap is restarting now");
@@ -204,11 +204,12 @@ pub fn restart_now() -> io::Result<process::Output> {
         ));
     }
     info!("pingap will restart");
-    webhook::send(webhook::SendNotificationParams {
+    webhook::send_notification(webhook::SendNotificationParams {
         category: webhook::NotificationCategory::Restart,
         msg: format!("Restart now, pid:{}", std::process::id()),
         ..Default::default()
-    });
+    })
+    .await;
     if let Some(cmd) = CMD.get() {
         nix::sys::signal::kill(
             nix::unistd::Pid::from_raw(std::process::id() as i32),
@@ -230,25 +231,24 @@ pub fn restart_now() -> io::Result<process::Output> {
     ));
 }
 
-pub fn restart() {
+pub async fn restart() {
     let count = PROCESS_RESTAR_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(60)).await;
-        if count == PROCESS_RESTAR_COUNT.load(Ordering::Relaxed) {
-            match restart_now() {
-                Err(e) => {
-                    error!(error = e.to_string(), "restart fail");
-                    webhook::send(webhook::SendNotificationParams {
-                        level: webhook::NotificationLevel::Error,
-                        category: webhook::NotificationCategory::RestartFail,
-                        msg: e.to_string(),
-                        remark: None,
-                    });
-                },
-                Ok(output) => {
-                    info!("{output:?}");
-                },
-            }
+    tokio::time::sleep(Duration::from_secs(60)).await;
+    if count == PROCESS_RESTAR_COUNT.load(Ordering::Relaxed) {
+        match restart_now().await {
+            Err(e) => {
+                error!(error = e.to_string(), "restart fail");
+                webhook::send_notification(webhook::SendNotificationParams {
+                    level: webhook::NotificationLevel::Error,
+                    category: webhook::NotificationCategory::RestartFail,
+                    msg: e.to_string(),
+                    remark: None,
+                })
+                .await;
+            },
+            Ok(output) => {
+                info!("{output:?}");
+            },
         }
-    });
+    }
 }

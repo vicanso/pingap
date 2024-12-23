@@ -78,12 +78,13 @@ impl HealthObserve for BackendObserveNotification {
         } else {
             (NotificationLevel::Error, template + "unhealthy")
         };
-        send(SendNotificationParams {
+        send_notification(SendNotificationParams {
             category: NotificationCategory::BackendStatus,
             level: info.0,
             msg: info.1,
             ..Default::default()
-        });
+        })
+        .await;
     }
 }
 
@@ -112,7 +113,7 @@ impl Default for SendNotificationParams {
     }
 }
 
-pub fn send(params: SendNotificationParams) {
+pub async fn send_notification(params: SendNotificationParams) {
     info!(
         category = params.category.to_string(),
         message = params.msg,
@@ -137,110 +138,81 @@ pub fn send(params: SendNotificationParams) {
     if !found.unwrap_or_default() {
         return;
     }
-    std::thread::spawn(move || {
-        if let Ok(rt) = tokio::runtime::Runtime::new() {
-            let category = params.category.to_string();
-            let level = params.level;
-            let ip = util::local_ip_list().join(";");
-            let remark = params.remark.unwrap_or_default();
+    let category = params.category.to_string();
+    let level = params.level;
+    let ip = util::local_ip_list().join(";");
+    let remark = params.remark.unwrap_or_default();
 
-            let send = async move {
-                let client = reqwest::Client::new();
-                let mut data = serde_json::Map::new();
-                let hostname = state::get_hostname();
-                let name = get_app_name();
-                let color_type = match level {
-                    NotificationLevel::Error => "warning",
-                    NotificationLevel::Warn => "warning",
-                    _ => "comment",
-                };
-                let content = format!(
-                    r###" <font color="{color_type}">{name}({level})</font>
-                    >hostname: {hostname}
-                    >ip: {ip}
-                    >category: {category}
-                    >message: {}
-                    >remark: {remark}"###,
-                    params.msg
-                );
-                match webhook_type.to_lowercase().as_str() {
-                    "wecom" => {
-                        let mut markdown_data = Map::new();
-                        markdown_data.insert(
-                            "content".to_string(),
-                            Value::String(content),
-                        );
-                        data.insert(
-                            "msgtype".to_string(),
-                            Value::String("markdown".to_string()),
-                        );
-                        data.insert(
-                            "markdown".to_string(),
-                            Value::Object(markdown_data),
-                        );
-                    },
-                    "dingtalk" => {
-                        let mut markdown_data = serde_json::Map::new();
-                        markdown_data.insert(
-                            "title".to_string(),
-                            Value::String(category.to_string()),
-                        );
-                        markdown_data
-                            .insert("text".to_string(), Value::String(content));
-                        data.insert(
-                            "msgtype".to_string(),
-                            Value::String("markdown".to_string()),
-                        );
-                        data.insert(
-                            "markdown".to_string(),
-                            Value::Object(markdown_data),
-                        );
-                    },
-                    _ => {
-                        data.insert("name".to_string(), Value::String(name));
-                        data.insert(
-                            "level".to_string(),
-                            Value::String(level.to_string()),
-                        );
-                        data.insert(
-                            "hostname".to_string(),
-                            Value::String(hostname.to_string()),
-                        );
-                        data.insert("ip".to_string(), Value::String(ip));
-                        data.insert(
-                            "category".to_string(),
-                            Value::String(category),
-                        );
-                        data.insert(
-                            "message".to_string(),
-                            Value::String(params.msg),
-                        );
-                    },
-                }
+    let client = reqwest::Client::new();
+    let mut data = serde_json::Map::new();
+    let hostname = state::get_hostname();
+    let name = get_app_name();
+    let color_type = match level {
+        NotificationLevel::Error => "warning",
+        NotificationLevel::Warn => "warning",
+        _ => "comment",
+    };
+    let content = format!(
+        r###" <font color="{color_type}">{name}({level})</font>
+            >hostname: {hostname}
+            >ip: {ip}
+            >category: {category}
+            >message: {}
+            >remark: {remark}"###,
+        params.msg
+    );
+    match webhook_type.to_lowercase().as_str() {
+        "wecom" => {
+            let mut markdown_data = Map::new();
+            markdown_data.insert("content".to_string(), Value::String(content));
+            data.insert(
+                "msgtype".to_string(),
+                Value::String("markdown".to_string()),
+            );
+            data.insert("markdown".to_string(), Value::Object(markdown_data));
+        },
+        "dingtalk" => {
+            let mut markdown_data = serde_json::Map::new();
+            markdown_data.insert(
+                "title".to_string(),
+                Value::String(category.to_string()),
+            );
+            markdown_data.insert("text".to_string(), Value::String(content));
+            data.insert(
+                "msgtype".to_string(),
+                Value::String("markdown".to_string()),
+            );
+            data.insert("markdown".to_string(), Value::Object(markdown_data));
+        },
+        _ => {
+            data.insert("name".to_string(), Value::String(name));
+            data.insert("level".to_string(), Value::String(level.to_string()));
+            data.insert(
+                "hostname".to_string(),
+                Value::String(hostname.to_string()),
+            );
+            data.insert("ip".to_string(), Value::String(ip));
+            data.insert("category".to_string(), Value::String(category));
+            data.insert("message".to_string(), Value::String(params.msg));
+        },
+    }
 
-                match client
-                    .post(url)
-                    .json(&data)
-                    .timeout(Duration::from_secs(30))
-                    .send()
-                    .await
-                {
-                    Ok(res) => {
-                        if res.status().as_u16() < 400 {
-                            info!("send webhook success");
-                        } else {
-                            error!(
-                                status = res.status().to_string(),
-                                "send webhook fail"
-                            );
-                        }
-                    },
-                    Err(e) => {
-                        error!(error = e.to_string(), "send webhook fail");
-                    },
-                };
-            };
-            rt.block_on(send);
-        }
-    });
+    match client
+        .post(url)
+        .json(&data)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+    {
+        Ok(res) => {
+            if res.status().as_u16() < 400 {
+                info!("send webhook success");
+            } else {
+                error!(status = res.status().to_string(), "send webhook fail");
+            }
+        },
+        Err(e) => {
+            error!(error = e.to_string(), "send webhook fail");
+        },
+    };
 }

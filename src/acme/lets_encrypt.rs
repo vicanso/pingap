@@ -19,7 +19,7 @@ use crate::config::{
     LoadConfigOptions, PingapConf, CATEGORY_CERTIFICATE,
 };
 use crate::http_extra::HttpResponse;
-use crate::proxy::init_certificates;
+use crate::proxy::try_update_certificates;
 use crate::service::SimpleServiceTaskFuture;
 use crate::state::State;
 use crate::util;
@@ -97,13 +97,24 @@ async fn do_update_certificates(
                     domains = domains.join(","),
                     "renew certificate success"
                 );
-                webhook::send(webhook::SendNotificationParams {
+                webhook::send_notification(webhook::SendNotificationParams {
                     category: webhook::NotificationCategory::LetsEncrypt,
                     msg: "Generate new cert from lets encrypt".to_string(),
                     remark: Some(format!("Domains: {domains:?}")),
                     ..Default::default()
-                });
-                init_certificates(&conf.certificates);
+                })
+                .await;
+                let (_, errors) = try_update_certificates(&conf.certificates);
+                if !errors.is_empty() {
+                    error!(error = errors, "parse certificate fail");
+                    webhook::send_notification(webhook::SendNotificationParams {
+                        category:
+                            webhook::NotificationCategory::ParseCertificateFail,
+                        level: webhook::NotificationLevel::Error,
+                        msg: errors,
+                        remark: None,
+                    }).await;
+                }
             },
             Err(e) => error!(
                 error = e.to_string(),
