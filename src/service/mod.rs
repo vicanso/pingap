@@ -15,10 +15,8 @@ use async_trait::async_trait;
 use futures::future::BoxFuture;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
-use std::{
-    sync::atomic::{AtomicU32, Ordering},
-    time::{Duration, SystemTime},
-};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, SystemTime};
 use tokio::time::interval;
 use tracing::{error, info};
 

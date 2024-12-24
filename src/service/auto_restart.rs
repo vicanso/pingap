@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::LOG_CATEGORY;
 use crate::config::{
     get_config_storage, get_current_config, load_config, set_current_config,
     LoadConfigOptions, PingapConf, CATEGORY_CERTIFICATE, CATEGORY_LOCATION,
@@ -359,6 +360,8 @@ pub fn new_observer_service(
     }
 }
 
+static OBSERVER_NAME: &str = "configObserver";
+
 #[async_trait]
 impl BackgroundService for ConfigObserverService {
     async fn start(&self, mut shutdown: ShutdownWatch) {
@@ -368,7 +371,8 @@ impl BackgroundService for ConfigObserverService {
         let period_human: humantime::Duration = self.interval.into();
 
         info!(
-            name = "Config observer",
+            category = LOG_CATEGORY,
+            name = OBSERVER_NAME,
             interval = period_human.to_string(),
             "background service is running",
         );
@@ -414,7 +418,12 @@ impl BackgroundService for ConfigObserverService {
 
 async fn run_diff_and_update_config(hot_reload_only: bool) {
     if let Err(e) = diff_and_update_config(hot_reload_only).await {
-        error!(error = e.to_string(), "auto restart validate fail");
+        error!(
+            category = LOG_CATEGORY,
+            error = e.to_string(),
+            name = OBSERVER_NAME,
+            "update config fail",
+        )
     }
 }
 

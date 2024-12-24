@@ -760,6 +760,6 @@ mod tests {
             },
         );
         let buf = p.metrics().unwrap();
-        assert_eq!(221, std::str::from_utf8(&buf).unwrap().split('\n').count());
+        assert_eq!(225, std::str::from_utf8(&buf).unwrap().split('\n').count());
     }
 }

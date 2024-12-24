@@ -119,7 +119,7 @@ async fn do_update_certificates(
             Err(e) => error!(
                 error = e.to_string(),
                 domains = domains.join(","),
-                "renew certificate fail, renew it again later"
+                "renew certificate fail, it will be run again later"
             ),
         };
     }

@@ -17,7 +17,7 @@ use crate::proxy::get_certificate_info_list;
 use crate::service::SimpleServiceTaskFuture;
 use crate::util;
 use crate::webhook;
-use tracing::warn;
+use tracing::error;
 
 // Verify the validity period of tls certificate,
 // include not after and not before.
@@ -61,7 +61,7 @@ async fn do_validity_check(count: u32) -> Result<bool, String> {
     let time_offset = 7 * 24 * 3600_i64;
     if let Err(message) = validity_check(&certificate_info_list, time_offset) {
         // certificate will be expired
-        warn!(category = "validityChecker", message);
+        error!(category = "validityChecker", message);
         webhook::send_notification(webhook::SendNotificationParams {
             level: webhook::NotificationLevel::Warn,
             category: webhook::NotificationCategory::TlsValidity,
