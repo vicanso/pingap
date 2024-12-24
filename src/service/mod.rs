@@ -25,7 +25,7 @@ use tracing::{error, info};
 pub static LOG_CATEGORY: &str = "service";
 
 pub type SimpleServiceTaskFuture =
-    Box<dyn Fn(u32) -> BoxFuture<'static, Result<(), String>> + Sync + Send>;
+    Box<dyn Fn(u32) -> BoxFuture<'static, Result<bool, String>> + Sync + Send>;
 
 pub struct SimpleServiceTask {
     name: String,
@@ -70,22 +70,42 @@ impl BackgroundService for SimpleServiceTask {
                 _ = period.tick() => {
                     let now = SystemTime::now();
                     let count = self.count.fetch_add(1, Ordering::Relaxed);
-                    let mut fails = 0;
-                    for (name, task) in self.tasks.iter() {
-                        if let Err(e) = task(count).await {
-                            fails += 1;
-                            error!(
-                                category = LOG_CATEGORY,
-                                name,
-                                simple_service = self.name,
-                                e,
-                            );
-                        }
+                    let mut success_tasks = vec![];
+                    let mut fail_tasks = vec![];
+                    for (task_name, task) in self.tasks.iter() {
+                        let task_start = SystemTime::now();
+                        match task(count).await {
+                           Err(e)  => {
+                               fail_tasks.push(task_name.to_string());
+                               error!(
+                                   category = LOG_CATEGORY,
+                                   name = self.name,
+                                   task = task_name,
+                                   e,
+                               );
+                           }
+                           Ok(executed) => {
+                               if executed {
+                                   success_tasks.push(task_name.to_string());
+                                   info!(
+                                       category = LOG_CATEGORY,
+                                       name = self.name,
+                                       task = task_name,
+                                       elapsed = format!(
+                                           "{}ms",
+                                           task_start.elapsed().unwrap_or_default().as_millis()
+                                       ),
+                                   );
+                               }
+                           }
+                        };
                     }
                     info!(
                         category = LOG_CATEGORY,
                         name = self.name,
-                        fails,
+                        success_tasks = success_tasks.join(","),
+                        fails = fail_tasks.len(),
+                        fail_tasks = fail_tasks.join(","),
                         elapsed = format!(
                             "{}ms",
                             now.elapsed().unwrap_or_default().as_millis()

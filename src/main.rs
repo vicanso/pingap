@@ -30,7 +30,10 @@ use pingora::services::background::background_service;
 use proxy::{new_upstream_health_check_task, Server, ServerConf};
 use service::new_simple_service_task;
 use service::{new_auto_restart_service, new_observer_service};
-use state::{get_admin_addr, get_start_time, set_admin_addr};
+use state::{
+    get_admin_addr, get_start_time, new_performance_metrics_log_service,
+    set_admin_addr,
+};
 use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::OsString;
@@ -475,6 +478,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut simple_tasks = vec![
         new_certificate_validity_service(),
         new_self_signed_certificate_validity_service(),
+        new_performance_metrics_log_service(),
     ];
     if let Some(task) = new_file_storage_clear_service() {
         simple_tasks.push(task);

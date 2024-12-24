@@ -121,30 +121,33 @@ pub trait HttpCacheStorage: Sync + Send {
     }
 }
 
-async fn do_file_storage_clear(count: u32, dir: String) -> Result<(), String> {
+async fn do_file_storage_clear(
+    count: u32,
+    dir: String,
+) -> Result<bool, String> {
     // Add 1 every loop
     let offset = 60;
     if count % offset != 0 {
-        return Ok(());
+        return Ok(false);
     }
     let Ok(storage) = file::new_file_cache(&dir) else {
-        return Ok(());
+        return Ok(false);
     };
 
     let Some(access_before) =
         SystemTime::now().checked_sub(Duration::from_secs(24 * 3600))
     else {
-        return Ok(());
+        return Ok(false);
     };
 
     let Ok((success, fail)) = storage.clear(access_before).await else {
-        return Ok(());
+        return Ok(true);
     };
     if success < 0 {
-        return Ok(());
+        return Ok(true);
     }
     info!(dir, success, fail, "cache storage clear");
-    Ok(())
+    Ok(true)
 }
 
 pub fn new_file_storage_clear_service(

@@ -82,13 +82,13 @@ struct LogCompressParams {
 async fn do_compress(
     count: u32,
     params: LogCompressParams,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let offset = 60;
     if count % offset != 0 {
-        return Ok(());
+        return Ok(false);
     }
     if params.time_point_hour != chrono::Local::now().hour() as u8 {
-        return Ok(());
+        return Ok(false);
     }
     let mut days_ago = params.days_ago;
     if days_ago == 0 {
@@ -97,7 +97,7 @@ async fn do_compress(
     let Some(access_before) = SystemTime::now()
         .checked_sub(Duration::from_secs(24 * 3600 * days_ago as u64))
     else {
-        return Ok(());
+        return Ok(false);
     };
     let compression_exts = [GZIP_EXT.to_string(), ZSTD_EXT.to_string()];
     for entry in WalkDir::new(&params.path)
@@ -147,7 +147,7 @@ async fn do_compress(
             },
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 fn new_log_compress_service(

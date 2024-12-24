@@ -60,9 +60,11 @@ pub struct Prometheus {
     http_requests_total: Box<IntCounterVec>,
     http_requests_current: Box<IntGaugeVec>,
     http_received: Box<HistogramVec>,
+    http_received_bytes: Box<IntCounterVec>,
     http_responses_codes: Box<IntCounterVec>,
     http_response_time: Box<HistogramVec>,
     http_sent: Box<HistogramVec>,
+    http_sent_bytes: Box<IntCounterVec>,
     connection_reuses: Box<IntCounter>,
     tls_handshake_time: Box<Histogram>,
     upstream_connections: Box<IntGaugeVec>,
@@ -113,7 +115,8 @@ impl Prometheus {
         if let Some(status) = &ctx.status {
             code = status.as_u16();
         }
-        let sent = session.body_bytes_sent() as f64 / 1024.0;
+        let sent_bytes = session.body_bytes_sent() as u64;
+        let sent = sent_bytes as f64 / 1024.0;
 
         // http response code
         let code_label = match code {
@@ -134,6 +137,10 @@ impl Prometheus {
             self.http_received
                 .with_label_values(labels)
                 .observe(payload_size);
+            self.http_received_bytes
+                .with_label_values(labels)
+                .inc_by(ctx.payload_size as u64);
+
             // response time x second
             self.http_response_time
                 .with_label_values(labels)
@@ -141,6 +148,11 @@ impl Prometheus {
 
             // response body size(kb)
             self.http_sent.with_label_values(labels).observe(sent);
+            if sent_bytes > 0 {
+                self.http_sent_bytes
+                    .with_label_values(labels)
+                    .inc_by(sent_bytes);
+            }
         }
 
         self.http_responses_codes
@@ -264,9 +276,9 @@ async fn do_push(
     count: u32,
     offset: u32,
     params: PrometheusPushParams,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     if count % offset != 0 {
-        return Ok(());
+        return Ok(false);
     }
     // http push metrics
     let encoder = ProtobufEncoder::new();
@@ -305,7 +317,7 @@ async fn do_push(
             );
         },
     };
-    Ok(())
+    Ok(true)
 }
 
 /// Create a new prometheus push service
@@ -341,7 +353,7 @@ pub fn new_prometheus_push_service(
         password,
         p,
     };
-    let offset = (interval.as_secs() / 60) as u32;
+    let offset = ((interval.as_secs() / 60) as u32).max(1);
 
     let task: SimpleServiceTaskFuture = Box::new(move |count: u32| {
         Box::pin({
@@ -468,6 +480,12 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         &["location"],
         &[1.0, 5.0, 10.0, 50.0, 100.0, 1000.0],
     )?);
+    let http_received_bytes = Box::new(new_int_counter_vec(
+        server,
+        "pingap_http_received_bytes",
+        "pingap http received from clients(bytes)",
+        &["location"],
+    )?);
     let http_responses_codes = Box::new(new_int_counter_vec(
         server,
         "pingap_http_responses_codes",
@@ -489,6 +507,12 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         "pingap http sent to clients(KB)",
         &["location"],
         &[1.0, 5.0, 10.0, 50.0, 100.0, 1000.0, 10000.0],
+    )?);
+    let http_sent_bytes = Box::new(new_int_counter_vec(
+        server,
+        "pingap_http_sent_bytes",
+        "pingap http sent to clients(bytes)",
+        &["location"],
     )?);
     let connection_reuses = Box::new(new_int_counter(
         server,
@@ -602,9 +626,11 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         http_requests_total.clone(),
         http_requests_current.clone(),
         http_received.clone(),
+        http_received_bytes.clone(),
         http_responses_codes.clone(),
         http_response_time.clone(),
         http_sent.clone(),
+        http_sent_bytes.clone(),
         connection_reuses.clone(),
         tls_handshake_time.clone(),
         upstream_connections.clone(),
@@ -637,9 +663,11 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         http_requests_total,
         http_requests_current,
         http_received,
+        http_received_bytes,
         http_responses_codes,
         http_response_time,
         http_sent,
+        http_sent_bytes,
         connection_reuses,
         tls_handshake_time,
         upstream_connections,

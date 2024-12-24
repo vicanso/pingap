@@ -67,11 +67,11 @@ async fn update_certificate_lets_encrypt(
 async fn do_update_certificates(
     count: u32,
     params: Vec<(String, Vec<String>)>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     // Add 1 every loop
     let offset = 10;
     if count % offset != 0 {
-        return Ok(());
+        return Ok(false);
     }
     for (name, domains) in params.iter() {
         let should_renew_now =
@@ -123,7 +123,7 @@ async fn do_update_certificates(
             ),
         };
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Create a Let's Encrypt service to generate the certificate,

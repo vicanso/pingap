@@ -51,11 +51,11 @@ fn validity_check(
     Ok(())
 }
 
-async fn do_validity_check(count: u32) -> Result<(), String> {
+async fn do_validity_check(count: u32) -> Result<bool, String> {
     // Add 1 every loop
     let offset = 24 * 60;
     if count % offset != 0 {
-        return Ok(());
+        return Ok(false);
     }
     let certificate_info_list = get_certificate_info_list();
     let time_offset = 7 * 24 * 3600_i64;
@@ -70,7 +70,7 @@ async fn do_validity_check(count: u32) -> Result<(), String> {
         })
         .await;
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Create certificate validate background service

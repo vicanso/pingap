@@ -34,11 +34,13 @@ type SelfSignedCertificateMap = AHashMap<String, Arc<SelfSignedCertificate>>;
 static SELF_SIGNED_CERTIFICATE_MAP: Lazy<ArcSwap<SelfSignedCertificateMap>> =
     Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
 
-async fn do_self_signed_certificate_validity(count: u32) -> Result<(), String> {
+async fn do_self_signed_certificate_validity(
+    count: u32,
+) -> Result<bool, String> {
     // Add 1 every loop
     let offset = 24 * 60;
     if count % offset != 0 {
-        return Ok(());
+        return Ok(false);
     }
     let mut m = AHashMap::new();
 
@@ -67,7 +69,7 @@ async fn do_self_signed_certificate_validity(count: u32) -> Result<(), String> {
         m.insert(k.to_string(), v.clone());
     }
     SELF_SIGNED_CERTIFICATE_MAP.store(Arc::new(m));
-    Ok(())
+    Ok(true)
 }
 
 pub fn new_self_signed_certificate_validity_service(
