@@ -561,7 +561,8 @@ impl ServiceTask for HealthCheckTask {
         None
     }
     fn description(&self) -> String {
-        "UpstreamHc".to_string()
+        let count = UPSTREAM_MAP.load().len();
+        format!("upstream health check, upstream count: {count}")
     }
 }
 

@@ -445,9 +445,9 @@ impl ServiceTask for AutoRestart {
     }
     fn description(&self) -> String {
         if self.running_hot_reload.load(Ordering::Relaxed) {
-            "HotReloadDetector".to_string()
+            "hot reload detector".to_string()
         } else {
-            "RestartDetector".to_string()
+            "restart detector".to_string()
         }
     }
 }

@@ -20,7 +20,7 @@ use std::time::{Duration, SystemTime};
 use tokio::time::interval;
 use tracing::{error, info};
 
-pub static LOG_CATEGORY: &str = "service";
+pub static LOG_CATEGORY: &str = "backgroundService";
 
 pub type SimpleServiceTaskFuture =
     Box<dyn Fn(u32) -> BoxFuture<'static, Result<bool, String>> + Sync + Send>;
@@ -126,16 +126,13 @@ pub trait ServiceTask: Sync + Send {
 pub struct CommonServiceTask {
     task: Box<dyn ServiceTask>,
     interval: Duration,
-    name: String,
 }
 
 impl CommonServiceTask {
     pub fn new(interval: Duration, task: impl ServiceTask + 'static) -> Self {
-        let name = task.description();
         Self {
             task: Box::new(task),
             interval,
-            name,
         }
     }
 }
@@ -149,7 +146,7 @@ impl BackgroundService for CommonServiceTask {
         let once = self.interval.as_millis() < 1000;
 
         info!(
-            name = self.name,
+            category = LOG_CATEGORY,
             description = self.task.description(),
             interval = period_human.to_string(),
             "background service is running",
@@ -164,15 +161,14 @@ impl BackgroundService for CommonServiceTask {
                 _ = period.tick() => {
                     let now = SystemTime::now();
                     let done = self.task.run().await.unwrap_or_default();
-                    let description = self.task.description();
                     info!(
-                        name = self.name,
+                        category = LOG_CATEGORY,
                         done,
                         elapsed = format!(
                             "{}ms",
                             now.elapsed().unwrap_or_default().as_millis()
                         ),
-                        description,
+                        description = self.task.description(),
                     );
                     if once || done {
                         break;

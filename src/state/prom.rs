@@ -27,7 +27,7 @@ use prometheus::{
 };
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{error, info};
+use tracing::error;
 use url::Url;
 
 static HOST_NAME_TAG: &str = "$HOSTNAME";
@@ -305,8 +305,6 @@ async fn do_push(
                     status = res.status().to_string(),
                     "push prometheus fail"
                 );
-            } else {
-                info!(name = params.name, "push prometheus success");
             }
         },
         Err(e) => {
