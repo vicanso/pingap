@@ -117,6 +117,7 @@ async fn do_update_certificates(
                 }
             },
             Err(e) => error!(
+                category = LOG_CATEGORY,
                 error = e.to_string(),
                 domains = domains.join(","),
                 "renew certificate fail, it will be run again later"
@@ -309,7 +310,11 @@ async fn new_lets_encrypt(
                 message: e.to_string(),
             })?;
 
-        info!(token = challenge.token, "let's encrypt well known path",);
+        info!(
+            category = LOG_CATEGORY,
+            token = challenge.token,
+            "let's encrypt well known path",
+        );
 
         challenges.push((identifier, &challenge.url));
     }
@@ -345,6 +350,7 @@ async fn new_lets_encrypt(
         tries += 1;
         match tries < 10 {
             true => info!(
+                category = LOG_CATEGORY,
                 delay = format!("{delay:?}"),
                 "Order is not ready, waiting"
             ),

@@ -47,13 +47,13 @@ pub fn aes_encrypt(key: &str, data: &str) -> Result<String> {
                 message: e.to_string(),
             }
         })?;
-    let ciphertext =
+    let cipher_text =
         cipher
             .encrypt(&PINGAP_NONCE, data.as_bytes())
             .map_err(|e| Error::Aes {
                 message: e.to_string(),
             })?;
-    Ok(base64_encode(&ciphertext))
+    Ok(base64_encode(&cipher_text))
 }
 
 pub fn aes_decrypt(key: &str, data: &str) -> Result<String> {
@@ -63,10 +63,10 @@ pub fn aes_decrypt(key: &str, data: &str) -> Result<String> {
                 message: e.to_string(),
             }
         })?;
-    let ciphertext =
+    let cipher_text =
         base64_decode(data).map_err(|e| Error::Base64Decode { source: e })?;
     let plaintext = cipher
-        .decrypt(&PINGAP_NONCE, ciphertext.as_ref())
+        .decrypt(&PINGAP_NONCE, cipher_text.as_ref())
         .map_err(|e| Error::Aes {
             message: e.to_string(),
         })?;

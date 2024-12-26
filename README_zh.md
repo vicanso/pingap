@@ -21,17 +21,16 @@ flowchart LR
 
 - 服务支持配置多个Location，通过host与path筛选对应的location，按权重逐一匹配选择
 - 支持正则形式配置重写Path，方便应用按前缀区分转发
-- 支持透明代理形式转发
 - HTTP 1/2 的全链路支持，包括h2c的支持
 - 支持静态配置、DNS以及docker label的三种服务发现形式
 - 支持grpc-web反向代理
 - 基于TOML格式的配置，配置方式非常简洁，可保存至文件或etcd
 - 支持10多个Prometheus指标，可以使用pull与push的形式收集相关指标
 - Opentelemetry支持w3c context trace与jaeger trace的形式
-- 频繁更新的Upstream与Location相关配置调整准实时生效(30秒)，其它应用配置更新后，无中断式的优雅重启程序
+- 频繁更新的Upstream、Location以及Plugin相关配置调整准实时生效(10秒)且无任何中断请求，其它应用配置更新后，无中断式的优雅重启程序
 - 访问日志的模板化配置，已支30多个相关属性的配置，可按需指定输出各种参数与指标
 - WEB形式的管理后台界面，无需学习，简单易用
-- 开箱即用的let's encrypttls证书，仅需配置对应域名即可
+- 开箱即用的let's encrypttls证书，仅需配置对应域名即可，可在单一配置中使用多个子域名
 - 不同域名的tls证书可使用在同一服务端口中，按servername自动选择匹配证书
 - 支持各种事件的推送：lets_encrypt, backend_status, diff_config, restart等等
 - 丰富的http插件，如高效的缓存服务组件、多种压缩算法的压缩组件、不同种类的认证组件、不同形式的限流组件等等
@@ -57,7 +56,7 @@ RUST_LOG=INFO pingap -c=/opt/pingap/conf -t \
 
 ## 自动重启
 
-应用启动后，监听相关配置变化，若有变化则无中断式重启程序或热更新加载配置。`autoreload`参数表示如果只是upstream与location的配置变化，则准实时(30秒内)刷新对应配置生效，无需重启。
+应用启动后，监听相关配置变化，若有变化则无中断式重启程序或热更新加载配置。`autoreload`参数表示如果只是upstream与location的配置变化，则准实时(10秒内)刷新对应配置生效，无需重启。
 
 ```bash
 RUST_LOG=INFO pingap -c=/opt/pingap/conf \

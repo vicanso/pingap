@@ -53,7 +53,7 @@ async fn diff_and_update_config(
     }
 
     let mut reload_fail_messages = vec![];
-    let mut hot_realod_config = current_config.clone();
+    let mut hot_reload_config = current_config.clone();
     {
         // hot reload first,
         // only validate server.locations, locations, upstreams and plugins
@@ -67,7 +67,7 @@ async fn diff_and_update_config(
         // set server locations
         for (name, server) in new_config.servers.iter() {
             if let Some(clone_server_conf) =
-                hot_realod_config.servers.get_mut(name)
+                hot_reload_config.servers.get_mut(name)
             {
                 if server.locations != clone_server_conf.locations {
                     clone_server_conf.locations.clone_from(&server.locations);
@@ -77,11 +77,11 @@ async fn diff_and_update_config(
         }
 
         // set upstream, location and plugin value
-        hot_realod_config.upstreams = new_config.upstreams.clone();
-        hot_realod_config.locations = new_config.locations.clone();
-        hot_realod_config.plugins = new_config.plugins.clone();
+        hot_reload_config.upstreams = new_config.upstreams.clone();
+        hot_reload_config.locations = new_config.locations.clone();
+        hot_reload_config.plugins = new_config.plugins.clone();
 
-        // acem will create a let's encrypt service
+        // acme will create a let's encrypt service
         // so it can't be reloaded.
         let mut exists_acme = false;
         for (_, cert) in new_config.certificates.iter() {
@@ -90,7 +90,7 @@ async fn diff_and_update_config(
             }
         }
         if !exists_acme {
-            hot_realod_config.certificates = new_config.certificates.clone();
+            hot_reload_config.certificates = new_config.certificates.clone();
         }
 
         // new_config.certificates
@@ -246,7 +246,7 @@ async fn diff_and_update_config(
 
     if hot_reload_only {
         let (updated_category_list, original_diff_result) =
-            current_config.diff(&hot_realod_config);
+            current_config.diff(&hot_reload_config);
         debug!(
             updated_category_list = updated_category_list.join(","),
             original_diff_result = original_diff_result.join("\n"),
@@ -257,7 +257,7 @@ async fn diff_and_update_config(
             return Ok(());
         }
         // update current config to be hot reload config
-        set_current_config(&hot_realod_config);
+        set_current_config(&hot_reload_config);
         if !original_diff_result.is_empty() {
             webhook::send_notification(webhook::SendNotificationParams {
                 category: webhook::NotificationCategory::DiffConfig,
@@ -279,10 +279,10 @@ async fn diff_and_update_config(
     }
     // restart mode
     // update current config to be hot reload config
-    set_current_config(&hot_realod_config);
+    set_current_config(&hot_reload_config);
 
     // diff hot reload config and new config
-    let (_, new_config_result) = hot_realod_config.diff(&new_config);
+    let (_, new_config_result) = hot_reload_config.diff(&new_config);
     debug!(
         new_config_result = new_config_result.join("\n"),
         "hot reload config diff from new config"
@@ -391,10 +391,9 @@ impl BackgroundService for ConfigObserverService {
                 _ = shutdown.changed() => {
                     break;
                 }
-                // 逻辑并不完善，有可能因为变更处理中途又发生其它变更导致缺失
-                // 因此还需配合fetch的形式比对
                 _ = period.tick() => {
                     // fetch and diff update
+                    // some change may be restart
                     run_diff_and_update_config(self.only_hot_reload).await;
                 }
                 result = observer.watch() => {

@@ -25,20 +25,20 @@ flowchart LR
 ## Feature
 
 - The service supports configuring multiple Locations, filtering locations by host and path, and matching and selecting them one by one according to the weight
-- Support regular form configuration to rewrite Path
+- Supports regular expression configuration to rewrite path
 - Support transparent proxy
 - Support HTTP 1/2, including h2c
 - Support static, dns and docker label service discovery
 - Support grpc-web reverse proxy
-- Configuration based on TOML format, the configuration method is very simple, and can be saved to files or etcd
+- Configuration based on TOML format, the configuration is very simple, and can be saved to files or etcd
 - Supports more than 10 Prometheus indicators, pull and push mode
 - Opentelemetry supports w3c context trace and jaeger trace
-- Frequently updated Upstream and Location related configuration adjustments take effect in 30 seconds, and after other application configurations are updated, the program is restarted gracefully without interruption
+- Frequently updated config: upstream, location and plugin, which adjustments take effect in 10 seconds, and other config is updated, program will be restarted gracefully without interruption
 - Templated configuration of access logs, which supports more than 30 related attribute configurations, and various parameters and indicators can be specified as needed
 - Web UI for config, simple and easy to use
 - Support let's encrypt, just set the domain of http server
 - TLS certificates of different domain names can be served in the same service port, and the matching certificate is automatically selected according to servername
-- Supports push of various events: lets_encrypt, backend_status, diff_config, restart, etc.
+- Supports push events: lets_encrypt, backend_status, diff_config, restart, etc.
 - Many http plugins, such as cache service components, compression components with multiple compression algorithms, authentication components, limiting components, etc.
 - Provides statistical data at different stages, such as upstream_connect_time, upstream_processing_time, compression_time, cache_lookup_time and cache_lock_time, etc.
 
@@ -71,15 +71,13 @@ RUST_LOG=INFO pingap -c=/opt/pingap/conf \
 
 ## Docker
 
-`cGluZ2FwOjEyMzEyMw==` is base64("pingap:123123")
-
 ```bash
 docker run -it -d --restart=always \
   -v $PWD/pingap:/opt/pingap \
   -p 3018:3018 \
   vicanso/pingap -c /opt/pingap/conf \
   --autoreload \
-  --admin=cGluZ2FwOjEyMzEyMw==@0.0.0.0:3018
+  --admin=pingap:123123@0.0.0.0:3018
 ```
 
 ## Dev
