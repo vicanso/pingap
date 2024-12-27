@@ -33,7 +33,7 @@ flowchart LR
 - Configuration based on TOML format, the configuration is very simple, and can be saved to files or etcd
 - Supports more than 10 Prometheus indicators, pull and push mode
 - Opentelemetry supports w3c context trace and jaeger trace
-- Frequently updated config: upstream, location and plugin, which adjustments take effect in 10 seconds, and other config is updated, program will be restarted gracefully without interruption
+- All configurations except server configuration support hot reload, which adjustments take effect in 10 seconds. The service configuration takes effect after the application is restarted
 - Templated configuration of access logs, which supports more than 30 related attribute configurations, and various parameters and indicators can be specified as needed
 - Web UI for config, simple and easy to use
 - Support let's encrypt, just set the domain of http server

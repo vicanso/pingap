@@ -27,7 +27,7 @@ flowchart LR
 - 基于TOML格式的配置，配置方式非常简洁，可保存至文件或etcd
 - 支持10多个Prometheus指标，可以使用pull与push的形式收集相关指标
 - Opentelemetry支持w3c context trace与jaeger trace的形式
-- 频繁更新的Upstream、Location以及Plugin相关配置调整准实时生效(10秒)且无任何中断请求，其它应用配置更新后，无中断式的优雅重启程序
+- 除server的配置外，所有的配置均支持热更新(10秒内)且无任何中断请求，服务配置在应用重启后生效
 - 访问日志的模板化配置，已支30多个相关属性的配置，可按需指定输出各种参数与指标
 - WEB形式的管理后台界面，无需学习，简单易用
 - 开箱即用的let's encrypttls证书，仅需配置对应域名即可，可在单一配置中使用多个子域名

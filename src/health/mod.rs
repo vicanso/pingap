@@ -50,6 +50,8 @@ fn update_peer_options(
 ) -> PeerOptions {
     let mut options = opt;
     let timeout = Some(conf.connection_timeout);
+    options.verify_hostname = false;
+    options.verify_cert = false;
     options.connection_timeout = timeout;
     options.total_connection_timeout = timeout;
     options.read_timeout = Some(conf.read_timeout);
@@ -261,6 +263,7 @@ pub struct GrpcHealthCheck {
     pub consecutive_failure: usize,
     /// A callback that is invoked when the `healthy` status changes for a [Backend].
     pub health_changed_callback: Option<HealthObserveCallback>,
+    pub connection_timeout: Duration,
 }
 
 impl GrpcHealthCheck {
@@ -279,6 +282,7 @@ impl GrpcHealthCheck {
             service: conf.service.clone(),
             consecutive_success: conf.consecutive_success,
             consecutive_failure: conf.consecutive_failure,
+            connection_timeout: conf.connection_timeout,
             health_changed_callback: Some(
                 webhook::new_backend_observe_notification(name),
             ),
@@ -294,6 +298,7 @@ impl HealthCheck for GrpcHealthCheck {
         let conn = tonic::transport::Endpoint::from_shared(uri)
             .map_err(|e| util::new_internal_error(500, e.to_string()))?
             .origin(self.origin.clone())
+            .connect_timeout(self.connection_timeout)
             .connect()
             .await
             .map_err(|e| util::new_internal_error(500, e.to_string()))?;
