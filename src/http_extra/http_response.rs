@@ -115,6 +115,21 @@ impl HttpResponse {
             ..Default::default()
         }
     }
+    /// Create a redirect response with `302` status.
+    pub fn redirect(location: &str) -> pingora::Result<Self> {
+        let value = http::HeaderValue::from_str(location).map_err(|e| {
+            error!(error = e.to_string(), "to header value fail");
+            util::new_internal_error(500, e.to_string())
+        })?;
+        Ok(Self {
+            status: StatusCode::TEMPORARY_REDIRECT,
+            headers: Some(vec![
+                (http::header::LOCATION.clone(), value),
+                HTTP_HEADER_NO_CACHE.clone(),
+            ]),
+            ..Default::default()
+        })
+    }
 
     #[cfg(feature = "full")]
     /// Create a text response with `no-cache` cache-control.

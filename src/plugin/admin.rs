@@ -197,12 +197,16 @@ impl TryFrom<&PluginConf> for AdminServe {
                 }
             })?;
         }
+        let mut path = get_str_conf(value, "path");
+        if path.len() > 1 && path.ends_with("/") {
+            path = path.substring(0, path.len() - 1).to_string();
+        }
 
         let params = AdminServe {
             hash_value,
             max_age,
             plugin_step: get_step_conf(value),
-            path: get_str_conf(value, "path"),
+            path,
             ip_fail_limit: TtlLruLimit::new(
                 512,
                 Duration::from_secs(5 * 60),
@@ -508,6 +512,14 @@ impl Plugin for AdminServe {
         let path = header.uri.path();
         let mut new_path =
             path.substring(self.path.len(), path.len()).to_string();
+        if new_path.is_empty() {
+            new_path = format!("{path}/");
+            if let Some(query) = header.uri.query() {
+                new_path = format!("{new_path}?{query}");
+            }
+            let resp = HttpResponse::redirect(&new_path)?;
+            return Ok(Some(resp));
+        }
         if let Some(query) = header.uri.query() {
             new_path = format!("{new_path}?{query}");
         }
