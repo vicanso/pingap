@@ -101,12 +101,12 @@ impl TryFrom<&PluginConf> for JwtAuth {
             });
         }
 
-        if ![PluginStep::Request, PluginStep::ProxyUpstream]
+        if ![PluginStep::Request]
             .contains(&params.plugin_step)
         {
             return Err(Error::Invalid {
                 category: PluginCategory::IpRestriction.to_string(),
-                message: "Jwt auth plugin should be executed at request or proxy upstream step".to_string(),
+                message: "Jwt auth plugin should be executed at request step".to_string(),
             });
         }
 
