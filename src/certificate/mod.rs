@@ -86,6 +86,7 @@ impl Certificate {
                 };
             }
         };
+        dns_names.sort();
         let validity = x509.validity();
         Ok(Self {
             domains: dns_names,

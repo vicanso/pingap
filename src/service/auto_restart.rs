@@ -250,7 +250,7 @@ async fn diff_and_update_config(
         debug!(
             updated_category_list = updated_category_list.join(","),
             original_diff_result = original_diff_result.join("\n"),
-            "current config diff from hot realod config"
+            "current config diff from hot reload config"
         );
         // no update config
         if original_diff_result.is_empty() {
