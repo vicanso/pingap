@@ -101,12 +101,11 @@ impl TryFrom<&PluginConf> for JwtAuth {
             });
         }
 
-        if ![PluginStep::Request]
-            .contains(&params.plugin_step)
-        {
+        if PluginStep::Request != params.plugin_step {
             return Err(Error::Invalid {
-                category: PluginCategory::IpRestriction.to_string(),
-                message: "Jwt auth plugin should be executed at request step".to_string(),
+                category: PluginCategory::Jwt.to_string(),
+                message: "Jwt auth plugin should be executed at request step"
+                    .to_string(),
             });
         }
 

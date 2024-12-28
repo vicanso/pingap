@@ -16,7 +16,7 @@ use super::{
     get_hash_key, get_int_conf, get_step_conf, get_str_conf,
     get_str_slice_conf, Error, Plugin, Result,
 };
-use crate::config::{PluginConf, PluginStep};
+use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NO_STORE};
 use crate::state::State;
 use crate::util;
@@ -83,6 +83,14 @@ impl TryFrom<&PluginConf> for CombinedAuth {
                     deviation: get_int_conf(value, "deviation"),
                 },
             );
+        }
+        if PluginStep::Request != step {
+            return Err(Error::Invalid {
+                category: PluginCategory::CombinedAuth.to_string(),
+                message:
+                    "Combined auth plugin should be executed at request step"
+                        .to_string(),
+            });
         }
 
         Ok(Self {
