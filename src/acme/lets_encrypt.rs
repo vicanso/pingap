@@ -76,9 +76,13 @@ async fn do_update_certificates(
     for (name, domains) in params.iter() {
         let should_renew_now =
             if let Ok(certificate) = get_lets_encrypt_certificate(name) {
+                let mut sorted_domains = domains.clone();
+                sorted_domains.sort();
+                let mut cert_domains = certificate.domains.clone();
+                cert_domains.sort();
                 // invalid or different domains
                 !certificate.valid()
-                    || domains.join(",") != certificate.domains.join(",")
+                    || sorted_domains != cert_domains
             } else {
                 true
             };
