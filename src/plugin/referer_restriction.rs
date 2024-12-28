@@ -67,9 +67,7 @@ impl TryFrom<&PluginConf> for RefererRestriction {
                 ..Default::default()
             },
         };
-        if ![PluginStep::Request, PluginStep::ProxyUpstream]
-            .contains(&params.plugin_step)
-        {
+        if PluginStep::Request != params.plugin_step {
             return Err(Error::Invalid {
                 category: PluginCategory::RefererRestriction.to_string(),
                 message: "Referer restriction plugin should be executed at request or proxy upstream step".to_string(),
