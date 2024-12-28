@@ -181,3 +181,6 @@ strip = "none"
 [[bench]]
 name = "bench"
 harness = false
+
+[package.metadata.cargo-machete]
+ignored = ["humantime-serde"]
