@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.9.6](https://github.com/vicanso/pingap/compare/v0.9.5..0.9.6) - 2024-12-28
+
+### ⛰️  Features
+
+- Add performance metrics log task - ([7dbe176](https://github.com/vicanso/pingap/commit/7dbe176d4a1c0e1580ddd093cdc8c6f768e0856e))
+
+### 🐛 Bug Fixes
+
+- Fix test of prometheus - ([4e39e26](https://github.com/vicanso/pingap/commit/4e39e2602c3cc7b56866ad8c4d6b175bfa36fd97))
+
+### 🚜 Refactor
+
+- Adjust ua restriction plugin exec step - ([34c47f9](https://github.com/vicanso/pingap/commit/34c47f9540bf69f911ce01f472c2895efe229f1a))
+- Adjust ip and referer restriction plugin exec step - ([733de57](https://github.com/vicanso/pingap/commit/733de57aeacb56ad0931a5660b26147f287017fa))
+- Adjust comibined auth plugin exec step - ([9db1bd3](https://github.com/vicanso/pingap/commit/9db1bd3865df6dedbde6995399c5ede88aa59d5d))
+- Adjust jwt auth plugin exec step - ([c53a1eb](https://github.com/vicanso/pingap/commit/c53a1eb4330664b938e8be5af08f7f38ed3f76d1))
+- Adjust grpc health check - ([1757aa7](https://github.com/vicanso/pingap/commit/1757aa7e337c7b4e0a725bb73c04d3678a82789e))
+- Adjust redirect for admin prefix path - ([761f043](https://github.com/vicanso/pingap/commit/761f043c63f121604d9e9786c397020788c8c2f8))
+- Adjust background service log - ([b908d07](https://github.com/vicanso/pingap/commit/b908d07a6f2324a78216881a4c28902a61634f85))
+- Adjust log of background service task - ([918afd3](https://github.com/vicanso/pingap/commit/918afd3f3d242fe337d01aac73fa0a0fe106f787))
+- Adjust async webhook notification - ([252c7c3](https://github.com/vicanso/pingap/commit/252c7c3173558ff0c518a5f2c45aea72ca3483b7))
+- Adjust prometheus metrics - ([fefb2f3](https://github.com/vicanso/pingap/commit/fefb2f3d446d1a7d71d921b3bd12e5f93c9dc125))
+- Merge prometheus push service to simple background service - ([3c27551](https://github.com/vicanso/pingap/commit/3c275510d67d9207ed4c554be8bb1e19cfc4306f))
+- Merge let's encrypt and log compress to simple background service - ([6100d36](https://github.com/vicanso/pingap/commit/6100d364252e8466ee98954d7d38fef0050dae0d))
+
+### 📚 Documentation
+
+- Update documents - ([34028d0](https://github.com/vicanso/pingap/commit/34028d065b5952b61ff5c849b6ad30f760b17d2b))
+
+### ⚙️ Miscellaneous Tasks
+
+- Add ignore for mechete - ([de22dd0](https://github.com/vicanso/pingap/commit/de22dd06b610ca182d125b3f1686747f708c65f2))
+- Add cargo machete - ([6a42f39](https://github.com/vicanso/pingap/commit/6a42f39f42ca4f8b5e37d9391584998e8f8215e8))
+
 ## [0.9.5](https://github.com/vicanso/pingap/compare/v0.9.4..0.9.5) - 2024-12-21
 
 ### ⛰️  Features
