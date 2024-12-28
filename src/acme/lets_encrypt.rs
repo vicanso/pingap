@@ -81,8 +81,7 @@ async fn do_update_certificates(
                 let mut cert_domains = certificate.domains.clone();
                 cert_domains.sort();
                 // invalid or different domains
-                !certificate.valid()
-                    || sorted_domains != cert_domains
+                !certificate.valid() || sorted_domains != cert_domains
             } else {
                 true
             };
