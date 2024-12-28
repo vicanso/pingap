@@ -64,7 +64,6 @@ humantime-serde = "1.1.1"
 instant-acme = "0.7.2"
 ipnet = "2.10.1"
 itoa = "1.0.13"
-libc = "0.2.168"
 local-ip-address = "0.6.3"
 memory-stats = { version = "1.2.0", features = ["always_use_statm"] }
 mime_guess = "2.0.5"

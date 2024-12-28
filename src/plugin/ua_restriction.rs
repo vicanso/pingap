@@ -63,9 +63,7 @@ impl TryFrom<&PluginConf> for UaRestriction {
                 ..Default::default()
             },
         };
-        if ![PluginStep::Request, PluginStep::ProxyUpstream]
-            .contains(&params.plugin_step)
-        {
+        if PluginStep::Request != params.plugin_step {
             return Err(Error::Invalid {
                 category: PluginCategory::UaRestriction.to_string(),
                 message: "User agent restriction plugin should be executed at request or proxy upstream step".to_string(),

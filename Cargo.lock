@@ -2763,7 +2763,6 @@ dependencies = [
  "instant-acme",
  "ipnet",
  "itoa",
- "libc",
  "local-ip-address",
  "memory-stats",
  "mime_guess",
