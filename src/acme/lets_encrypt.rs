@@ -68,66 +68,90 @@ async fn do_update_certificates(
     count: u32,
     params: Vec<(String, Vec<String>)>,
 ) -> Result<bool, String> {
-    // Add 1 every loop
-    let offset = 10;
-    if count % offset != 0 {
+    const UPDATE_INTERVAL: u32 = 10;
+    if count % UPDATE_INTERVAL != 0 {
         return Ok(false);
     }
+
     for (name, domains) in params.iter() {
-        let should_renew_now =
-            if let Ok(certificate) = get_lets_encrypt_certificate(name) {
-                let mut sorted_domains = domains.clone();
-                sorted_domains.sort();
-                let mut cert_domains = certificate.domains.clone();
-                cert_domains.sort();
-                // invalid or different domains
-                !certificate.valid() || sorted_domains != cert_domains
-            } else {
+        let should_renew = match get_lets_encrypt_certificate(name) {
+            Ok(certificate) => {
+                let needs_renewal = !certificate.valid();
+                let domains_changed = {
+                    let mut sorted_domains = domains.clone();
+                    let mut cert_domains = certificate.domains.clone();
+                    sorted_domains.sort();
+                    cert_domains.sort();
+                    sorted_domains != cert_domains
+                };
+                needs_renewal || domains_changed
+            },
+            Err(err) => {
+                error!(
+                    category = LOG_CATEGORY,
+                    error = %err,
+                    name = name,
+                    "failed to get certificate"
+                );
                 true
-            };
-        if !should_renew_now {
+            },
+        };
+
+        if !should_renew {
             info!(
                 category = LOG_CATEGORY,
-                domains = domains.join(","),
-                "certificate is still valid"
+                domains = %domains.join(","),
+                name = name,
+                "certificate still valid"
             );
             continue;
         }
-        match update_certificate_lets_encrypt(name, domains).await {
-            Ok(conf) => {
-                info!(
-                    category = LOG_CATEGORY,
-                    domains = domains.join(","),
-                    "renew certificate success"
-                );
-                webhook::send_notification(webhook::SendNotificationParams {
-                    category: webhook::NotificationCategory::LetsEncrypt,
-                    msg: "Generate new cert from lets encrypt".to_string(),
-                    remark: Some(format!("Domains: {domains:?}")),
-                    ..Default::default()
-                })
-                .await;
-                let (_, errors) = try_update_certificates(&conf.certificates);
-                if !errors.is_empty() {
-                    error!(error = errors, "parse certificate fail");
-                    webhook::send_notification(webhook::SendNotificationParams {
-                        category:
-                            webhook::NotificationCategory::ParseCertificateFail,
-                        level: webhook::NotificationLevel::Error,
-                        msg: errors,
-                        remark: None,
-                    }).await;
-                }
-            },
-            Err(e) => error!(
+
+        if let Err(e) = renew_certificate(name, domains).await {
+            error!(
                 category = LOG_CATEGORY,
-                error = e.to_string(),
-                domains = domains.join(","),
-                "renew certificate fail, it will be run again later"
-            ),
-        };
+                error = %e,
+                domains = %domains.join(","),
+                name = name,
+                "certificate renewal failed, will retry later"
+            );
+        }
     }
     Ok(true)
+}
+
+async fn renew_certificate(name: &str, domains: &[String]) -> Result<()> {
+    let conf = update_certificate_lets_encrypt(name, domains).await?;
+    handle_successful_renewal(domains, &conf).await;
+    Ok(())
+}
+
+async fn handle_successful_renewal(domains: &[String], conf: &PingapConf) {
+    info!(
+        category = LOG_CATEGORY,
+        domains = domains.join(","),
+        "renew certificate success"
+    );
+
+    webhook::send_notification(webhook::SendNotificationParams {
+        category: webhook::NotificationCategory::LetsEncrypt,
+        msg: "Generate new cert from lets encrypt".to_string(),
+        remark: Some(format!("Domains: {domains:?}")),
+        ..Default::default()
+    })
+    .await;
+
+    let (_, errors) = try_update_certificates(&conf.certificates);
+    if !errors.is_empty() {
+        error!(error = errors, "parse certificate fail");
+        webhook::send_notification(webhook::SendNotificationParams {
+            category: webhook::NotificationCategory::ParseCertificateFail,
+            level: webhook::NotificationLevel::Error,
+            msg: errors,
+            remark: None,
+        })
+        .await;
+    }
 }
 
 /// Create a Let's Encrypt service to generate the certificate,

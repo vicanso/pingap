@@ -13,30 +13,55 @@
 // limitations under the License.
 
 use snafu::Snafu;
+
+/// Category name for ACME-related logging
 pub static LOG_CATEGORY: &str = "acme";
 
+/// Errors that can occur during ACME operations
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Instant error, category: {category}, {source}"))]
+    /// Error from the instant-acme library
+    #[snafu(display("ACME instant error: {source}, category: {category}"))]
     Instant {
         category: String,
         source: instant_acme::Error,
     },
-    #[snafu(display("Rcgen error, category: {category}, {source}"))]
+
+    /// Error from certificate generation
+    #[snafu(display(
+        "Certificate generation error: {source}, category: {category}"
+    ))]
     Rcgen {
         category: String,
         source: rcgen::Error,
     },
-    #[snafu(display("Challenge not found error, {message}"))]
+
+    /// Challenge not found during verification
+    #[snafu(display("ACME challenge not found: {message}"))]
     NotFound { message: String },
-    #[snafu(display("Lets encrypt fail, category: {category}, {message}"))]
+
+    /// General Let's Encrypt operation failure
+    #[snafu(display(
+        "Let's Encrypt operation failed: {message}, category: {category}"
+    ))]
     Fail { category: String, message: String },
 }
 
-type Result<T, E = Error> = std::result::Result<T, E>;
+/// Convenience type alias for Results with our Error type
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// Generates the token path for ACME challenges
+///
+/// # Arguments
+///
+/// * `key` - The challenge token key
+///
+/// # Returns
+///
+/// The formatted path string for the token
+#[must_use]
 pub fn get_token_path(key: &str) -> String {
-    format!("pingap-acme-tokens/${key}")
+    format!("pingap-acme-tokens/{key}")
 }
 
 mod lets_encrypt;
