@@ -901,10 +901,16 @@ impl PingapConf {
         for (name, data) in value.certificates.iter() {
             let mut clone_data = data.clone();
             if let Some(cert) = &clone_data.tls_cert {
-                clone_data.tls_cert = Some(format!("crc32:{:X}", crc32fast::hash(cert.as_bytes())));
+                clone_data.tls_cert = Some(format!(
+                    "crc32:{:X}",
+                    crc32fast::hash(cert.as_bytes())
+                ));
             }
             if let Some(key) = &clone_data.tls_key {
-                clone_data.tls_key = Some(format!("crc32:{:X}", crc32fast::hash(key.as_bytes())));
+                clone_data.tls_key = Some(format!(
+                    "crc32:{:X}",
+                    crc32fast::hash(key.as_bytes())
+                ));
             }
             descriptions.push(Description {
                 category: CATEGORY_CERTIFICATE.to_string(),
@@ -915,7 +921,10 @@ impl PingapConf {
         for (name, data) in value.storages.iter() {
             let mut clone_data = data.clone();
             if let Some(secret) = &clone_data.secret {
-                clone_data.secret = Some(format!("crc32:{:X}", crc32fast::hash(secret.as_bytes())));
+                clone_data.secret = Some(format!(
+                    "crc32:{:X}",
+                    crc32fast::hash(secret.as_bytes())
+                ));
             }
             descriptions.push(Description {
                 category: CATEGORY_STORAGE.to_string(),
