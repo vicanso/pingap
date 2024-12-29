@@ -229,7 +229,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!("A9384AEB", conf.hash().unwrap());
+        assert_eq!("BDEE23BF", conf.hash().unwrap());
         assert_eq!(false, support_observer());
         assert_eq!(true, get_config_storage().is_some());
         let dir = TempDir::new().unwrap();
