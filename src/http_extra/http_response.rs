@@ -29,6 +29,10 @@ use std::pin::Pin;
 use tokio::io::AsyncReadExt;
 use tracing::error;
 
+/// Returns a cache control header based on max age and privacy settings.
+/// If max_age is 0, returns no-cache header.
+/// If max_age is set, returns "private/public, max-age=X" header.
+/// Otherwise returns no-cache header.
 fn get_cache_control(
     max_age: Option<u32>,
     cache_private: Option<bool>,
@@ -68,7 +72,7 @@ pub struct HttpResponse {
 }
 
 impl HttpResponse {
-    /// Create a no content `204` response.
+    /// Creates a new HTTP response with 204 No Content status and no-store cache control
     pub fn no_content() -> Self {
         Self {
             status: StatusCode::NO_CONTENT,
@@ -76,7 +80,7 @@ impl HttpResponse {
             ..Default::default()
         }
     }
-    /// Create a bad request `400` response.
+    /// Creates a new HTTP response with 400 Bad Request status and the given body
     pub fn bad_request(body: Bytes) -> Self {
         Self {
             status: StatusCode::BAD_REQUEST,
@@ -85,7 +89,7 @@ impl HttpResponse {
             ..Default::default()
         }
     }
-    /// Create a not found `404` response.
+    /// Creates a new HTTP response with 404 Not Found status and the given body
     pub fn not_found(body: Bytes) -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
@@ -94,7 +98,7 @@ impl HttpResponse {
             ..Default::default()
         }
     }
-    /// Create an unknown error `500` response.
+    /// Creates a new HTTP response with 500 Internal Server Error status and the given body
     pub fn unknown_error(body: Bytes) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
@@ -103,7 +107,7 @@ impl HttpResponse {
             ..Default::default()
         }
     }
-    /// Create a html response with `no-cache` cache-control.
+    /// Creates a new HTTP response with 200 OK status, HTML content type, and the given body
     pub fn html(body: Bytes) -> Self {
         Self {
             status: StatusCode::OK,
@@ -115,7 +119,7 @@ impl HttpResponse {
             ..Default::default()
         }
     }
-    /// Create a redirect response with `302` status.
+    /// Creates a new HTTP response with 302 Temporary Redirect status to the given location
     pub fn redirect(location: &str) -> pingora::Result<Self> {
         let value = http::HeaderValue::from_str(location).map_err(|e| {
             error!(error = e.to_string(), "to header value fail");
@@ -132,7 +136,7 @@ impl HttpResponse {
     }
 
     #[cfg(feature = "full")]
-    /// Create a text response with `no-cache` cache-control.
+    /// Creates a new HTTP response with 200 OK status, text/plain content type, and the given body
     pub fn text(body: Bytes) -> Self {
         Self {
             status: StatusCode::OK,
@@ -144,7 +148,7 @@ impl HttpResponse {
             ..Default::default()
         }
     }
-    /// Create a response from serde json, and set the status of response.
+    /// Creates a new HTTP response from a serializable value with the specified status code
     pub fn try_from_json_status<T>(
         value: &T,
         status: StatusCode,
@@ -157,7 +161,7 @@ impl HttpResponse {
         Ok(resp)
     }
 
-    /// Create a response from serde json, the status set to `200`.
+    /// Creates a new HTTP response from a serializable value with 200 OK status
     pub fn try_from_json<T>(value: &T) -> pingora::Result<Self>
     where
         T: ?Sized + Serialize,
@@ -173,7 +177,7 @@ impl HttpResponse {
             ..Default::default()
         })
     }
-    /// Get the response header for http response.
+    /// Builds and returns the HTTP response headers based on the response configuration
     pub fn get_response_header(&self) -> pingora::Result<ResponseHeader> {
         let fix_size = 3;
         let size = self
@@ -205,7 +209,7 @@ impl HttpResponse {
         }
         Ok(resp)
     }
-    /// Send http response to client, return how many bytes were sent.
+    /// Sends the HTTP response to the client and returns the number of bytes sent
     pub async fn send(self, session: &mut Session) -> pingora::Result<usize> {
         let header = self.get_response_header()?;
         let size = self.body.len();
@@ -236,7 +240,7 @@ impl<'r, R> HttpChunkResponse<'r, R>
 where
     R: tokio::io::AsyncRead + std::marker::Unpin,
 {
-    /// Create a new http chunk response.
+    /// Creates a new chunked HTTP response with the given reader
     pub fn new(r: &'r mut R) -> Self {
         Self {
             reader: Pin::new(r),
@@ -246,7 +250,7 @@ where
             cache_private: None,
         }
     }
-    /// Get the response header for http chunk response.
+    /// Builds and returns the HTTP response headers for chunked transfer
     pub fn get_response_header(&self) -> pingora::Result<ResponseHeader> {
         let mut resp = ResponseHeader::build(StatusCode::OK, Some(4))?;
         if let Some(headers) = &self.headers {
@@ -262,7 +266,7 @@ where
         resp.insert_header(cache_control.0, cache_control.1)?;
         Ok(resp)
     }
-    /// Send the chunk data to client until the end of reader, return how many bytes were sent.
+    /// Sends the chunked response data to the client and returns total bytes sent
     pub async fn send(
         &mut self,
         session: &mut Session,

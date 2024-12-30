@@ -30,7 +30,13 @@ pub struct TtlLruLimit {
 }
 
 impl TtlLruLimit {
-    /// Create a ttl lru limit.
+    /// Creates a new TTL-based LRU limit with the specified parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `size` - The maximum number of entries to store in the LRU cache
+    /// * `ttl` - The time-to-live duration after which entries are considered expired
+    /// * `max` - The maximum count allowed per key within the TTL window
     pub fn new(size: usize, ttl: Duration, max: usize) -> Self {
         Self {
             ttl,
@@ -38,7 +44,15 @@ impl TtlLruLimit {
             ufo: TinyUfo::new(size, size),
         }
     }
-    /// Validate the value of key, return true if valid.
+    /// Validates whether a key has not exceeded its rate limit.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to validate
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the key is within its limit or has expired, `false` otherwise.
     pub async fn validate(&self, key: &str) -> bool {
         let mut should_reset = false;
         let mut valid = false;
@@ -70,7 +84,13 @@ impl TtlLruLimit {
 
         valid
     }
-    /// Increase the value of key.
+    /// Increments the counter for the specified key.
+    /// If the key doesn't exist, creates a new entry with count 1.
+    /// If the key exists but was reset (count = 0), updates its creation timestamp.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to increment
     pub async fn inc(&self, key: &str) {
         let key = key.to_string();
         let data = if let Some(mut value) = self.ufo.get(&key) {

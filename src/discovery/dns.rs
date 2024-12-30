@@ -32,88 +32,116 @@ use std::net::ToSocketAddrs;
 use std::time::SystemTime;
 use tracing::{debug, error, info};
 
+/// DNS service discovery implementation
 struct Dns {
     ipv4_only: bool,
     hosts: Vec<Addr>,
 }
 
+/// Checks if the discovery type is DNS
 pub fn is_dns_discovery(value: &str) -> bool {
     value == DNS_DISCOVERY
 }
 
 impl Dns {
+    /// Creates a new DNS discovery instance
+    ///
+    /// # Arguments
+    /// * `addrs` - List of addresses to resolve
+    /// * `tls` - Whether to use TLS
+    /// * `ipv4_only` - Whether to only use IPv4 addresses
+    ///
+    /// # Returns
+    /// * `Result<Self>` - New DNS discovery instance
     fn new(addrs: &[String], tls: bool, ipv4_only: bool) -> Result<Self> {
         let hosts = format_addrs(addrs, tls);
         Ok(Self { hosts, ipv4_only })
     }
+
+    /// Reads system DNS resolver configuration
+    ///
+    /// # Returns
+    /// * `Result<(ResolverConfig, ResolverOpts)>` - Resolver configuration and options
     fn read_system_conf(&self) -> Result<(ResolverConfig, ResolverOpts)> {
         let (config, mut options) =
             read_system_conf().map_err(|e| Error::Resolve { source: e })?;
 
-        if self.ipv4_only {
-            options.ip_strategy = LookupIpStrategy::Ipv4Only;
+        options.ip_strategy = if self.ipv4_only {
+            LookupIpStrategy::Ipv4Only
         } else {
-            options.ip_strategy = LookupIpStrategy::Ipv4AndIpv6;
-        }
+            LookupIpStrategy::Ipv4AndIpv6
+        };
 
         Ok((config, options))
     }
+
+    /// Performs DNS lookups for configured hosts using tokio runtime
+    ///
+    /// # Returns
+    /// * `Result<Vec<LookupIp>>` - List of DNS lookup results
     async fn tokio_lookup_ip(&self) -> Result<Vec<LookupIp>> {
-        let mut ip_list = vec![];
         let provider = TokioConnectionProvider::default();
         let (config, options) = self.read_system_conf()?;
         let resolver = AsyncResolver::new(config, options, provider);
 
-        for (host, _, _) in self.hosts.iter() {
-            let ip = resolver
-                .lookup_ip(host)
-                .await
-                .map_err(|e| Error::Resolve { source: e })?;
-            ip_list.push(ip);
-        }
-        Ok(ip_list)
+        // Use futures::future::try_join_all for concurrent lookups
+        let lookups = futures::future::try_join_all(
+            self.hosts
+                .iter()
+                .map(|(host, _, _)| resolver.lookup_ip(host)),
+        )
+        .await
+        .map_err(|e| Error::Resolve { source: e })?;
+
+        Ok(lookups)
     }
+
+    /// Discovers backend services by resolving DNS
+    ///
+    /// # Returns
+    /// * `Result<(BTreeSet<Backend>, HashMap<u64, bool>)>` - Set of discovered backends and their states
     async fn run_discover(
         &self,
     ) -> Result<(BTreeSet<Backend>, HashMap<u64, bool>)> {
         let mut upstreams = BTreeSet::new();
-        let mut backends = vec![];
+
         debug!(
-            hosts = format!("{:?}", self.hosts),
+            hosts = ?self.hosts,
             "dns discover is running"
         );
+
         let lookup_ip_list = self.tokio_lookup_ip().await?;
-        for (index, (_, port, weight)) in self.hosts.iter().enumerate() {
-            let lookup_ip =
-                lookup_ip_list.get(index).ok_or(Error::Invalid {
-                    message: "lookup ip fail".to_string(),
-                })?;
-            for item in lookup_ip.iter() {
-                if self.ipv4_only && !item.is_ipv4() {
-                    continue;
-                }
-                let mut addr = item.to_string();
-                if !port.is_empty() {
-                    addr += &format!(":{port}");
-                }
-                for socket_addr in
+
+        for ((_, port, weight), lookup_ip) in
+            self.hosts.iter().zip(lookup_ip_list.iter())
+        {
+            for ip in lookup_ip
+                .iter()
+                .filter(|ip| !self.ipv4_only || ip.is_ipv4())
+            {
+                let addr = if port.is_empty() {
+                    ip.to_string()
+                } else {
+                    format!("{}:{port}", ip)
+                };
+
+                let socket_addrs =
                     addr.to_socket_addrs().map_err(|e| Error::Io {
                         source: e,
-                        content: format!("{addr} to socket addr fail"),
-                    })?
-                {
-                    backends.push(Backend {
-                        addr: SocketAddr::Inet(socket_addr),
-                        weight: weight.to_owned(),
-                        ext: Extensions::new(),
-                    });
-                }
+                        content: format!(
+                            "Failed to convert {addr} to socket address"
+                        ),
+                    })?;
+
+                upstreams.extend(socket_addrs.map(|socket_addr| Backend {
+                    addr: SocketAddr::Inet(socket_addr),
+                    weight: weight.to_owned(),
+                    ext: Extensions::new(),
+                }));
             }
         }
-        upstreams.extend(backends);
-        // no readiness
-        let health = HashMap::new();
-        Ok((upstreams, health))
+
+        Ok((upstreams, HashMap::new()))
     }
 }
 
@@ -145,7 +173,7 @@ impl ServiceDiscovery for Dns {
             Err(e) => {
                 error!(
                     category = LOG_CATEGORY,
-                    error = e.to_string(),
+                    error = %e,
                     hosts = hosts.join(","),
                     elapsed = format!(
                         "{}ms",
@@ -161,14 +189,21 @@ impl ServiceDiscovery for Dns {
                     remark: None,
                 })
                 .await;
-                return Err(e.into());
+                Err(e.into())
             },
         }
     }
 }
 
-/// Create a dns discovery, scheduled resolve the domain name to get ip list,
-/// and update the latest ip address list.
+/// Creates a new DNS-based service discovery backend
+///
+/// # Arguments
+/// * `addrs` - List of addresses to resolve
+/// * `tls` - Whether to use TLS
+/// * `ipv4_only` - Whether to only use IPv4 addresses
+///
+/// # Returns
+/// * `Result<Backends>` - Configured service discovery backend
 pub fn new_dns_discover_backends(
     addrs: &[String],
     tls: bool,

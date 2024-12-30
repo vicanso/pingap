@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::service::Error as ServiceError;
 use crate::service::SimpleServiceTaskFuture;
 use crate::util;
 use crate::util::convert_query_map;
@@ -82,7 +83,7 @@ struct LogCompressParams {
 async fn do_compress(
     count: u32,
     params: LogCompressParams,
-) -> Result<bool, String> {
+) -> Result<bool, ServiceError> {
     let offset = 60;
     if count % offset != 0 {
         return Ok(false);

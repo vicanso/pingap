@@ -41,6 +41,19 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub(crate) type Addr = (String, String, usize);
 
+/// Formats a list of address strings into a vector of structured address tuples.
+///
+/// # Arguments
+///
+/// * `addrs` - A slice of strings containing addresses in the format "host:port weight" or "host:port" or "host"
+/// * `tls` - A boolean indicating whether to use TLS default port (443) or HTTP default port (80)
+///
+/// # Returns
+///
+/// Returns a vector of tuples containing (host, port, weight), where:
+/// * host is the hostname or IP address
+/// * port is either specified in the address or defaults to 443/80 based on TLS setting
+/// * weight is either specified after the address or defaults to 1
 pub(crate) fn format_addrs(addrs: &[String], tls: bool) -> Vec<Addr> {
     let mut new_addrs = vec![];
     for addr in addrs.iter() {

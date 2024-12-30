@@ -25,6 +25,14 @@ use pingora::tls::x509::X509;
 use std::sync::Arc;
 use tracing::info;
 
+// Add constants for certificate categories
+const LETS_ENCRYPT: &str = "lets_encrypt";
+const ERROR_CERTIFICATE: &str = "certificate";
+const ERROR_X509: &str = "x509_from_pem";
+const ERROR_PRIVATE_KEY: &str = "private_key_from_pem";
+const ERROR_CA: &str = "ca";
+
+/// Represents a TLS certificate with its associated data
 #[derive(Debug, Clone, Default)]
 pub struct TlsCertificate {
     pub name: Option<String>,
@@ -46,7 +54,7 @@ impl TryFrom<&CertificateConf> for TlsCertificate {
         )
         .map_err(|e| Error::Invalid {
             message: e.to_string(),
-            category: "certificate".to_string(),
+            category: ERROR_CERTIFICATE.to_string(),
         })?;
         let category = if value.acme.is_some() {
             LETS_ENCRYPT
@@ -69,13 +77,13 @@ impl TryFrom<&CertificateConf> for TlsCertificate {
         };
         let cert =
             X509::from_pem(&info.get_cert()).map_err(|e| Error::Invalid {
-                category: "x509_from_pem".to_string(),
+                category: ERROR_X509.to_string(),
                 message: e.to_string(),
             })?;
 
         let key = PKey::private_key_from_pem(&info.get_key()).map_err(|e| {
             Error::Invalid {
-                category: "private_key_from_pem".to_string(),
+                category: ERROR_PRIVATE_KEY.to_string(),
                 message: e.to_string(),
             }
         })?;
@@ -91,8 +99,14 @@ impl TryFrom<&CertificateConf> for TlsCertificate {
     }
 }
 
-static LETS_ENCRYPT: &str = "lets_encrypt";
-
+/// Creates a new certificate signed by the given CA certificate
+///
+/// # Arguments
+/// * `root_ca` - The CA certificate to sign with
+/// * `cn` - The common name for the new certificate
+///
+/// # Returns
+/// A tuple containing the new certificate, private key, and expiration timestamp
 fn new_certificate_with_ca(
     root_ca: &TlsCertificate,
     cn: &str,
@@ -100,7 +114,7 @@ fn new_certificate_with_ca(
     let Some(info) = &root_ca.info else {
         return Err(Error::Invalid {
             message: "root ca is invalid".to_string(),
-            category: "ca".to_string(),
+            category: ERROR_CA.to_string(),
         });
     };
     let binding = info.get_cert();
@@ -109,7 +123,7 @@ fn new_certificate_with_ca(
     let ca_params = rcgen::CertificateParams::from_ca_cert_pem(&ca_pem)
         .map_err(|e| Error::Invalid {
             message: e.to_string(),
-            category: "parse_ca".to_string(),
+            category: ERROR_CA.to_string(),
         })?;
 
     let binding = info.get_key();
@@ -118,7 +132,7 @@ fn new_certificate_with_ca(
     let ca_kp =
         rcgen::KeyPair::from_pem(&ca_key).map_err(|e| Error::Invalid {
             message: e.to_string(),
-            category: "parse_ca_key".to_string(),
+            category: ERROR_CA.to_string(),
         })?;
     let not_before = time::OffsetDateTime::now_utc() - time::Duration::days(1);
     let two_years_from_now =
@@ -127,13 +141,13 @@ fn new_certificate_with_ca(
     let ca_cert =
         ca_params.self_signed(&ca_kp).map_err(|e| Error::Invalid {
             message: e.to_string(),
-            category: "self_sigined_ca".to_string(),
+            category: ERROR_CA.to_string(),
         })?;
 
     let mut params = rcgen::CertificateParams::new(vec![cn.to_string()])
         .map_err(|e| Error::Invalid {
             message: e.to_string(),
-            category: "new_cert_params".to_string(),
+            category: ERROR_CA.to_string(),
         })?;
     let mut dn = rcgen::DistinguishedName::new();
     dn.push(rcgen::DnType::CommonName, cn.to_string());
@@ -158,25 +172,25 @@ fn new_certificate_with_ca(
 
     let cert_key = rcgen::KeyPair::generate().map_err(|e| Error::Invalid {
         message: e.to_string(),
-        category: "key_pair_generate".to_string(),
+        category: ERROR_CA.to_string(),
     })?;
 
     let cert = params.signed_by(&cert_key, &ca_cert, &ca_kp).map_err(|e| {
         Error::Invalid {
             message: e.to_string(),
-            category: "signed_by_ca".to_string(),
+            category: ERROR_CA.to_string(),
         }
     })?;
 
     let cert =
         X509::from_pem(cert.pem().as_bytes()).map_err(|e| Error::Invalid {
-            category: "x509_from_pem".to_string(),
+            category: ERROR_X509.to_string(),
             message: e.to_string(),
         })?;
 
     let key = PKey::private_key_from_pem(cert_key.serialize_pem().as_bytes())
         .map_err(|e| Error::Invalid {
-        category: "private_key_from_pem".to_string(),
+        category: ERROR_PRIVATE_KEY.to_string(),
         message: e.to_string(),
     })?;
 
@@ -184,23 +198,47 @@ fn new_certificate_with_ca(
 }
 
 impl TlsCertificate {
-    /// Get self signed certificate
-    pub fn get_self_signed_certtificate(
+    /// Gets or creates a self-signed certificate for the given server name.
+    /// If a cached certificate exists for the server name, returns that.
+    /// Otherwise creates a new certificate signed by this CA.
+    ///
+    /// # Arguments
+    /// * `server_name` - The server name to create the certificate for
+    ///
+    /// # Returns
+    /// An Arc containing the self-signed certificate
+    pub fn get_self_signed_certificate(
         &self,
         server_name: &str,
     ) -> Result<Arc<SelfSignedCertificate>> {
-        let arr: Vec<&str> = server_name.split('.').collect();
-        let cn = if arr.len() > 2 {
-            format!("*.{}", arr[1..].join("."))
+        let cn = Self::format_common_name(server_name);
+        let cache_key = format!("{:?}:{}", self.name, cn);
+
+        if let Some(cert) = get_self_signed_certificate(&cache_key) {
+            return Ok(cert);
+        }
+
+        let (cert, key, not_after) = new_certificate_with_ca(self, &cn)?;
+        info!(common_name = cn, "Created new self-signed certificate");
+        Ok(add_self_signed_certificate(
+            &cache_key, cert, key, not_after,
+        ))
+    }
+
+    /// Formats a server name into a common name by converting subdomain patterns
+    /// For example, converts "subdomain.example.com" into "*.example.com"
+    ///
+    /// # Arguments
+    /// * `server_name` - The server name to format
+    ///
+    /// # Returns
+    /// The formatted common name as a String
+    fn format_common_name(server_name: &str) -> String {
+        let parts: Vec<&str> = server_name.split('.').collect();
+        if parts.len() > 2 {
+            format!("*.{}", parts[1..].join("."))
         } else {
             server_name.to_string()
-        };
-        let k = format!("{:?}:{}", self.name, cn);
-        if let Some(v) = get_self_signed_certificate(&k) {
-            return Ok(v);
         }
-        let (cert, key, not_after) = new_certificate_with_ca(self, &cn)?;
-        info!(common_name = cn, "new self sigined cert",);
-        Ok(add_self_signed_certificate(&k, cert, key, not_after))
     }
 }

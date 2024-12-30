@@ -27,6 +27,11 @@ use std::net::ToSocketAddrs;
 use std::time::SystemTime;
 use tracing::{debug, error, info};
 
+/// Container represents a Docker container with service discovery configuration
+/// - label: The container label used for filtering
+/// - weight: Load balancing weight for this container
+/// - port: The port number to use for the service
+/// - addrs: List of resolved addresses for this container
 #[derive(Debug, Clone)]
 struct Container {
     label: String,
@@ -35,45 +40,56 @@ struct Container {
     addrs: Vec<String>,
 }
 
+impl Container {
+    /// Creates a new Container instance from an address string
+    /// Format: "label:port weight" or "label weight" or "label"
+    fn new(addr: &str) -> Self {
+        let (weight, label, port) = Self::parse_addr(addr);
+        Self {
+            label,
+            weight,
+            port,
+            addrs: vec![],
+        }
+    }
+
+    /// Parses an address string into its components: weight, label, and port
+    /// Returns a tuple of (weight, label, port)
+    fn parse_addr(addr: &str) -> (usize, String, u16) {
+        let parts: Vec<_> = addr.split(' ').collect();
+        let weight = parts.get(1).and_then(|w| w.parse().ok()).unwrap_or(1);
+
+        let (label, port) = parts[0]
+            .split_once(':')
+            .map(|(l, p)| (l.to_string(), p.parse().unwrap_or(0)))
+            .unwrap_or((parts[0].to_string(), 0));
+
+        (weight, label, port)
+    }
+}
+
+/// Docker service discovery implementation
 struct Docker {
     ipv4_only: bool,
     docker: bollard::Docker,
     containers: Vec<Container>,
 }
 
+/// Checks if the discovery type is Docker
 pub fn is_docker_discovery(value: &str) -> bool {
     value == DOCKER_DISCOVERY
 }
 
 impl Docker {
+    /// Creates a new Docker service discovery instance
+    /// - addrs: List of container specifications in the format "label:port weight"
+    /// - ipv4_only: Whether to only use IPv4 addresses
     fn new(addrs: &[String], ipv4_only: bool) -> Result<Self> {
         let docker = bollard::Docker::connect_with_local_defaults()
             .map_err(|e| Error::Docker { source: e })?;
 
-        let mut containers = vec![];
-        for addr in addrs.iter() {
-            // get the weight of address
-            let arr: Vec<_> = addr.split(' ').collect();
-            let weight = if arr.len() == 2 {
-                arr[1].parse::<usize>().unwrap_or(1)
-            } else {
-                1
-            };
-            let mut label = arr[0].to_string();
-            let mut container_port = 0;
-            if let Some((value, port)) = label.clone().split_once(":") {
-                label = value.to_string();
-                if let Ok(value) = port.parse::<u16>() {
-                    container_port = value;
-                }
-            }
-            containers.push(Container {
-                label,
-                weight,
-                port: container_port,
-                addrs: vec![],
-            });
-        }
+        let containers =
+            addrs.iter().map(|addr| Container::new(addr)).collect();
 
         Ok(Self {
             docker,
@@ -81,6 +97,60 @@ impl Docker {
             ipv4_only,
         })
     }
+
+    /// Extracts port information from a container
+    /// Returns a tuple of (private_port, public_port)
+    fn get_container_ports(
+        container: &ContainerSummary,
+        default_port: u16,
+    ) -> Option<(u16, u16)> {
+        let ports = container.ports.as_ref()?;
+
+        if default_port > 0 {
+            return Some((default_port, 0));
+        }
+
+        let port_info = ports.iter().find(|p| p.private_port > 0)?;
+        Some((port_info.private_port, port_info.public_port.unwrap_or(0)))
+    }
+
+    /// Lists all containers matching the configured labels
+    async fn list_containers(&self) -> Result<Vec<Container>> {
+        let mut containers = self.containers.clone();
+
+        for container in containers.iter_mut() {
+            let result =
+                self.list_containers_by_label(&container.label).await?;
+
+            container.addrs = result
+                .iter()
+                .filter_map(|item| {
+                    let (private_port, public_port) =
+                        Self::get_container_ports(item, container.port)?;
+
+                    let networks =
+                        item.network_settings.as_ref()?.networks.as_ref()?;
+
+                    let mut addrs = Vec::new();
+                    for network in networks.values() {
+                        if public_port > 0 {
+                            if let Some(gateway) = &network.gateway {
+                                addrs.push(format!("{gateway}:{public_port}"));
+                            }
+                        } else if let Some(ip) = &network.ip_address {
+                            addrs.push(format!("{ip}:{private_port}"));
+                        }
+                    }
+                    Some(addrs)
+                })
+                .flatten()
+                .collect();
+        }
+
+        Ok(containers)
+    }
+
+    /// Lists containers that match a specific label
     async fn list_containers_by_label(
         &self,
         label: &String,
@@ -95,56 +165,17 @@ impl Docker {
             .await
             .map_err(|e| Error::Docker { source: e })
     }
-    async fn list_containers(&self) -> Result<Vec<Container>> {
-        let mut containers = self.containers.clone();
-        for container in containers.iter_mut() {
-            let result =
-                self.list_containers_by_label(&container.label).await?;
-            let mut addrs = vec![];
-            for item in result.iter() {
-                let Some(ports) = &item.ports else {
-                    continue;
-                };
-                let mut private_port = container.port;
-                let mut public_port = 0;
-                if private_port == 0 {
-                    for port in ports {
-                        if let Some(value) = port.public_port {
-                            public_port = value;
-                        }
-                        if port.private_port > 0 {
-                            private_port = port.private_port;
-                        }
-                    }
-                }
 
-                let Some(network_settings) = &item.network_settings else {
-                    continue;
-                };
-                let Some(networks) = &network_settings.networks else {
-                    continue;
-                };
-                for network in networks.values() {
-                    if public_port > 0 {
-                        if let Some(gateway) = &network.gateway {
-                            addrs.push(format!("{gateway}:{public_port}"));
-                        }
-                    } else if let Some(ip_address) = &network.ip_address {
-                        addrs.push(format!("{ip_address}:{private_port}"));
-                    }
-                }
-            }
-            container.addrs = addrs;
-        }
-
-        Ok(containers)
-    }
-    pub fn labels(&self) -> Vec<String> {
+    /// Returns the list of container labels being monitored
+    fn labels(&self) -> Vec<String> {
         self.containers
             .iter()
             .map(|item| item.label.clone())
             .collect()
     }
+
+    /// Performs the service discovery by querying Docker for containers
+    /// Returns a tuple of (upstreams, health_status)
     async fn run_discover(
         &self,
     ) -> Result<(BTreeSet<Backend>, HashMap<u64, bool>)> {
@@ -235,6 +266,10 @@ impl ServiceDiscovery for Docker {
     }
 }
 
+/// Creates a new Docker service discovery backend
+/// - addrs: List of container specifications
+/// - _tls: TLS configuration (currently unused)
+/// - ipv4_only: Whether to only use IPv4 addresses
 pub fn new_docker_discover_backends(
     addrs: &[String],
     _tls: bool,

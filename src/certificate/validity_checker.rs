@@ -14,58 +14,103 @@
 
 use super::Certificate;
 use crate::proxy::get_certificate_info_list;
+use crate::service::Error as ServiceError;
 use crate::service::SimpleServiceTaskFuture;
 use crate::util;
 use crate::webhook;
+use snafu::Snafu;
 use tracing::error;
 
-// Verify the validity period of tls certificate,
-// include not after and not before.
+/// Number of seconds in a day
+const SECONDS_PER_DAY: i64 = 24 * 3600;
+/// Default certificate expiration warning threshold (7 days)
+const DEFAULT_EXPIRATION_WARNING_DAYS: i64 = 7;
+/// Check interval in minutes
+const CHECK_INTERVAL_MINUTES: u32 = 24 * 60;
+
+/// Certificate validity error types
+#[derive(Debug, Snafu)]
+pub enum ValidityError {
+    #[snafu(display("{name} cert will expire on {date}, issuer: {issuer}"))]
+    WillExpire {
+        name: String,
+        issuer: String,
+        date: i64,
+    },
+    #[snafu(display("{name} cert not valid until {date}, issuer: {issuer}"))]
+    NotYetValid {
+        name: String,
+        issuer: String,
+        date: i64,
+    },
+}
+
+/// Checks the validity of certificates against current time and expiration threshold
+///
+/// # Arguments
+///
+/// * `validity_list` - List of tuples containing certificate name and certificate data
+/// * `time_offset` - Time offset in seconds to check for upcoming expiration
+///
+/// # Returns
+///
+/// * `Ok(())` if all certificates are valid
+/// * `Err(ValidityError)` if any certificate is invalid or about to expire
 fn validity_check(
     validity_list: &[(String, Certificate)],
     time_offset: i64,
-) -> Result<(), String> {
+) -> Result<(), ValidityError> {
     let now = util::now().as_secs() as i64;
     for (name, cert) in validity_list.iter() {
-        // acme certificate will auto update
+        // Skip ACME certificates as they auto-update
         if cert.acme.is_some() {
             continue;
         }
-        // will expire check
+
         if now > cert.not_after - time_offset {
-            let message = format!(
-                "{name} cert will be expired, issuer: {}, expired date: {:?}",
-                cert.issuer, cert.not_after
-            );
-            return Err(message);
+            return Err(ValidityError::WillExpire {
+                name: name.clone(),
+                issuer: cert.issuer.clone(),
+                date: cert.not_after,
+            });
         }
-        // not valid check
+
         if now < cert.not_before {
-            let message = format!(
-                "{name} cert is not valid, issuer: {}, valid date: {:?}",
-                cert.issuer, cert.not_before
-            );
-            return Err(message);
+            return Err(ValidityError::NotYetValid {
+                name: name.clone(),
+                issuer: cert.issuer.clone(),
+                date: cert.not_before,
+            });
         }
     }
     Ok(())
 }
 
-async fn do_validity_check(count: u32) -> Result<bool, String> {
-    // Add 1 every loop
-    let offset = 24 * 60;
-    if count % offset != 0 {
+/// Performs periodic certificate validity checks and sends notifications for issues
+///
+/// # Arguments
+///
+/// * `count` - Counter for determining check intervals
+///
+/// # Returns
+///
+/// * `Ok(true)` if check was performed
+/// * `Ok(false)` if check was skipped due to interval
+/// * `Err(ServiceError)` if an error occurred during the check
+async fn do_validity_check(count: u32) -> Result<bool, ServiceError> {
+    if count % CHECK_INTERVAL_MINUTES != 0 {
         return Ok(false);
     }
+
     let certificate_info_list = get_certificate_info_list();
-    let time_offset = 7 * 24 * 3600_i64;
-    if let Err(message) = validity_check(&certificate_info_list, time_offset) {
-        // certificate will be expired
-        error!(category = "validityChecker", message);
+    let time_offset = DEFAULT_EXPIRATION_WARNING_DAYS * SECONDS_PER_DAY;
+
+    if let Err(err) = validity_check(&certificate_info_list, time_offset) {
+        error!(category = "validityChecker", error = %err);
         webhook::send_notification(webhook::SendNotificationParams {
             level: webhook::NotificationLevel::Warn,
             category: webhook::NotificationCategory::TlsValidity,
-            msg: message,
+            msg: err.to_string(),
             ..Default::default()
         })
         .await;
@@ -73,7 +118,13 @@ async fn do_validity_check(count: u32) -> Result<bool, String> {
     Ok(true)
 }
 
-/// Create certificate validate background service
+/// Creates a new background service for certificate validity checking
+///
+/// # Returns
+///
+/// A tuple containing:
+/// * Service name as String
+/// * Service task future for executing validity checks
 pub fn new_certificate_validity_service() -> (String, SimpleServiceTaskFuture) {
     let task: SimpleServiceTaskFuture =
         Box::new(|count: u32| Box::pin(do_validity_check(count)));
@@ -107,8 +158,8 @@ mod tests {
         );
 
         assert_eq!(
-            "Pingap cert is not valid, issuer: pingap, valid date: 2651852800",
-            result.unwrap_err()
+            "Pingap cert not valid until 2651852800, issuer: pingap",
+            result.unwrap_err().to_string()
         );
 
         let result = validity_check(
@@ -128,8 +179,8 @@ mod tests {
             7 * 24 * 3600,
         );
         assert_eq!(
-            "Pingap cert is not valid, issuer: pingap, valid date: 2651852800",
-            result.unwrap_err()
+            "Pingap cert not valid until 2651852800, issuer: pingap",
+            result.unwrap_err().to_string()
         );
     }
 }

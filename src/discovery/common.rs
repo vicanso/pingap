@@ -23,52 +23,73 @@ use std::net::ToSocketAddrs;
 use std::time::SystemTime;
 use tracing::info;
 
+/// Checks if the discovery type is static
+///
+/// # Arguments
+/// * `value` - The discovery type string to check
+///
+/// # Returns
+/// * `bool` - True if the discovery type is static (empty or matches COMMON_DISCOVERY)
 pub fn is_static_discovery(value: &str) -> bool {
     value.is_empty() || value == COMMON_DISCOVERY
 }
 
 /// Create a static discovery, execute it only once.
 /// It will resolve the domain to socket address at the beginning stage.
+///
+/// # Arguments
+/// * `addrs` - List of address strings to resolve
+/// * `tls` - Whether to use TLS
+/// * `ipv4_only` - Whether to only use IPv4 addresses
+/// * `weight` - Weight for load balancing (higher values mean more traffic)
 pub fn new_common_discover_backends(
     addrs: &[String],
     tls: bool,
     ipv4_only: bool,
 ) -> Result<Backends> {
     let hosts = addrs.join(",");
-    let now = SystemTime::now();
-    let mut upstreams = BTreeSet::new();
-    let mut backends = vec![];
-    let addrs = format_addrs(addrs, tls);
-    let mut new_addrs = vec![];
-    for (ip, port, weight) in addrs.iter() {
-        let addr = format!("{ip}:{port}");
-        // resolve to socket addr
-        for item in addr.to_socket_addrs().map_err(|e| Error::Io {
-            source: e,
-            content: format!("{addr} to socket addr fail"),
-        })? {
-            if ipv4_only && !item.is_ipv4() {
-                continue;
-            }
-            new_addrs.push(item.to_string());
-            let backend = Backend {
-                addr: SocketAddr::Inet(item),
-                weight: weight.to_owned(),
-                ext: Extensions::new(),
-            };
-            backends.push(backend)
-        }
-    }
+    let start_time = SystemTime::now();
+    let formatted_addrs = format_addrs(addrs, tls);
+
+    let backends: Vec<Backend> = formatted_addrs
+        .iter()
+        .flat_map(|(ip, port, weight)| {
+            let addr = format!("{ip}:{port}");
+            addr.to_socket_addrs()
+                .map_err(|e| Error::Io {
+                    source: e,
+                    content: format!("{addr} to socket addr fail"),
+                })
+                .unwrap_or_default()
+                .filter(|addr| !ipv4_only || addr.is_ipv4())
+                .map(|socket_addr| Backend {
+                    addr: SocketAddr::Inet(socket_addr),
+                    weight: *weight,
+                    ext: Extensions::new(),
+                })
+        })
+        .collect();
+
+    let resolved_addrs: Vec<String> = backends
+        .iter()
+        .map(|b| match &b.addr {
+            SocketAddr::Inet(addr) => addr.to_string(),
+            _ => String::new(),
+        })
+        .collect();
+
     info!(
         category = LOG_CATEGORY,
         hosts,
-        addrs = new_addrs.join(","),
-        elapsed =
-            format!("{}ms", now.elapsed().unwrap_or_default().as_millis()),
+        addrs = resolved_addrs.join(","),
+        elapsed = format!(
+            "{}ms",
+            start_time.elapsed().unwrap_or_default().as_millis()
+        ),
         "common discover success"
     );
-    upstreams.extend(backends);
+
+    let upstreams: BTreeSet<_> = backends.into_iter().collect();
     let discovery = discovery::Static::new(upstreams);
-    let backends = Backends::new(discovery);
-    Ok(backends)
+    Ok(Backends::new(discovery))
 }

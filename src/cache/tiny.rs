@@ -18,19 +18,36 @@ use async_trait::async_trait;
 use tinyufo::TinyUfo;
 use tracing::debug;
 
+/// Type alias for cache key
+type CacheKey = String;
+/// Type alias for cache weight
+type Weight = u16;
+
+/// A cache implementation using TinyUfo algorithm for HTTP responses
+///
+/// TinyUfoCache provides an in-memory cache with a fixed memory limit and
+/// automatic eviction of less frequently used items.
 pub struct TinyUfoCache {
-    cache: TinyUfo<String, CacheObject>,
+    cache: TinyUfo<CacheKey, CacheObject>,
 }
 
 impl TinyUfoCache {
-    fn new(total_weight_limit: usize, estimated_size: usize) -> Self {
+    /// Creates a new TinyUfoCache instance
+    ///
+    /// # Arguments
+    ///
+    /// * `total_weight_limit` - The maximum total weight of items in the cache
+    /// * `estimated_size` - Estimated number of items for internal capacity planning
+    pub fn new(total_weight_limit: usize, estimated_size: usize) -> Self {
         Self {
             cache: TinyUfo::new(total_weight_limit, estimated_size),
         }
     }
 }
 
-/// Create a tiny ufo cache.
+/// Creates a new TinyUfoCache instance
+///
+/// This is a convenience function that wraps `TinyUfoCache::new`
 pub fn new_tiny_ufo_cache(
     total_weight_limit: usize,
     estimated_size: usize,
@@ -40,36 +57,71 @@ pub fn new_tiny_ufo_cache(
 
 #[async_trait]
 impl HttpCacheStorage for TinyUfoCache {
-    /// Get cache object from tiny ufo storage
+    /// Retrieves a cache entry by key and namespace
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The unique identifier for the cache entry
+    /// * `namespace` - The namespace for the cache entry (currently unused)
+    ///
+    /// # Returns
+    ///
+    /// * `Result<Option<CacheObject>>` - Returns Ok(Some(object)) if found, Ok(None) if not found
     async fn get(
         &self,
         key: &str,
-        _namespace: &str,
+        namespace: &str,
     ) -> Result<Option<CacheObject>> {
-        debug!(key, "get cache from tinyufo");
+        debug!(key, namespace, "getting cache entry from TinyUfo storage");
         Ok(self.cache.get(&key.to_string()))
     }
-    /// Put an object to tiny ufo storage
+
+    /// Stores a cache entry with the given key, namespace, and weight
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The unique identifier for the cache entry
+    /// * `namespace` - The namespace for the cache entry (currently unused)
+    /// * `data` - The cache object to store
+    /// * `weight` - The weight of the cache entry for eviction purposes
+    ///
+    /// # Returns
+    ///
+    /// * `Result<()>` - Returns Ok(()) on successful storage
     async fn put(
         &self,
         key: &str,
-        _namespace: &str,
+        namespace: &str,
         data: CacheObject,
-        weight: u16,
+        weight: Weight,
     ) -> Result<()> {
-        debug!(key, "put cache to tinyufo");
+        debug!(
+            key,
+            namespace,
+            weight = weight,
+            "storing cache entry in TinyUfo storage"
+        );
         self.cache.put(key.to_string(), data, weight);
         Ok(())
     }
-    // remove object from storage
+
+    /// Removes a cache entry by key and namespace
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The unique identifier for the cache entry to remove
+    /// * `namespace` - The namespace for the cache entry (currently unused)
+    ///
+    /// # Returns
+    ///
+    /// * `Result<Option<CacheObject>>` - Returns Ok(Some(object)) if found and removed, Ok(None) if not found
     async fn remove(
         &self,
         key: &str,
-        _namespace: &str,
+        namespace: &str,
     ) -> Result<Option<CacheObject>> {
-        debug!(key, "remove cache from tinyufo");
-        let result = self.cache.remove(&key.to_string());
-        Ok(result)
+        debug!(key, namespace, "removing cache entry from TinyUfo storage");
+        Ok(self.cache.remove(&key.to_string()))
     }
 }
 

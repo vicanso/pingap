@@ -20,6 +20,7 @@ use crate::config::{
 };
 use crate::http_extra::HttpResponse;
 use crate::proxy::try_update_certificates;
+use crate::service::Error as ServiceError;
 use crate::service::SimpleServiceTaskFuture;
 use crate::state::State;
 use crate::util;
@@ -67,7 +68,7 @@ async fn update_certificate_lets_encrypt(
 async fn do_update_certificates(
     count: u32,
     params: Vec<(String, Vec<String>)>,
-) -> Result<bool, String> {
+) -> Result<bool, ServiceError> {
     const UPDATE_INTERVAL: u32 = 10;
     if count % UPDATE_INTERVAL != 0 {
         return Ok(false);
@@ -86,10 +87,10 @@ async fn do_update_certificates(
                 };
                 needs_renewal || domains_changed
             },
-            Err(err) => {
+            Err(e) => {
                 error!(
                     category = LOG_CATEGORY,
-                    error = %err,
+                    error = %e,
                     name = name,
                     "failed to get certificate"
                 );

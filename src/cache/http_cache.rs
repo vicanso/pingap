@@ -14,6 +14,7 @@
 
 use super::{file, Error, Result, PAGE_SIZE};
 use crate::config::get_current_config;
+use crate::service::Error as ServiceError;
 use crate::service::SimpleServiceTaskFuture;
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
@@ -39,7 +40,12 @@ pub struct CacheObject {
 
 const META_SIZE_LENGTH: usize = 8;
 
-/// Create a cache object from bytes.
+/// Creates a CacheObject from bytes with the following format:
+/// - First 4 bytes: meta0 size (u32)
+/// - Next 4 bytes: meta1 size (u32)
+/// - Next meta0_size bytes: meta0 data
+/// - Next meta1_size bytes: meta1 data
+/// - Remaining bytes: body data
 impl From<Bytes> for CacheObject {
     fn from(value: Bytes) -> Self {
         let size_byte = META_SIZE_LENGTH;
@@ -61,7 +67,12 @@ impl From<Bytes> for CacheObject {
         }
     }
 }
-/// Convert cache object to bytes.
+/// Converts a CacheObject into bytes with the following format:
+/// - First 4 bytes: meta0 size (u32)
+/// - Next 4 bytes: meta1 size (u32)
+/// - Next meta0_size bytes: meta0 data
+/// - Next meta1_size bytes: meta1 data
+/// - Remaining bytes: body data
 impl From<CacheObject> for Bytes {
     fn from(value: CacheObject) -> Self {
         let meta_size =
@@ -85,15 +96,34 @@ pub struct HttpCacheStats {
     pub writing: u32,
 }
 
+/// Storage interface for HTTP caching operations.
+///
+/// This trait defines the core operations needed to implement a storage backend
+/// for HTTP caching. Implementations must be both `Send` and `Sync` to support
+/// concurrent access.
 #[async_trait]
 pub trait HttpCacheStorage: Sync + Send {
-    // get cache object from storage
+    /// Retrieves a cached object from storage by key and namespace.
+    ///
+    /// # Arguments
+    /// * `key` - The unique identifier for the cached object
+    /// * `namespace` - The namespace to scope the cache key
+    ///
+    /// # Returns
+    /// * `Result<Option<CacheObject>>` - The cached object if found, None if not present
     async fn get(
         &self,
         key: &str,
         namespace: &str,
     ) -> Result<Option<CacheObject>>;
-    // put object to storage
+
+    /// Stores a cache object in storage.
+    ///
+    /// # Arguments
+    /// * `key` - The unique identifier for the cached object
+    /// * `namespace` - The namespace to scope the cache key
+    /// * `data` - The cache object to store
+    /// * `weight` - The relative weight/cost of storing this object
     async fn put(
         &self,
         key: &str,
@@ -101,7 +131,15 @@ pub trait HttpCacheStorage: Sync + Send {
         data: CacheObject,
         weight: u16,
     ) -> Result<()>;
-    // remove object from storage
+
+    /// Removes a cached object from storage.
+    ///
+    /// # Arguments
+    /// * `key` - The unique identifier for the cached object
+    /// * `namespace` - The namespace to scope the cache key
+    ///
+    /// # Returns
+    /// * `Result<Option<CacheObject>>` - The removed object if it existed
     async fn remove(
         &self,
         _key: &str,
@@ -109,13 +147,25 @@ pub trait HttpCacheStorage: Sync + Send {
     ) -> Result<Option<CacheObject>> {
         Ok(None)
     }
+
+    /// Clears cached objects accessed before the specified time.
+    ///
+    /// # Arguments
+    /// * `access_before` - Remove items last accessed before this timestamp
+    ///
+    /// # Returns
+    /// * `Result<(i32, i32)>` - Count of (successful, failed) removals
     async fn clear(
         &self,
         _access_before: std::time::SystemTime,
     ) -> Result<(i32, i32)> {
         Ok((-1, -1))
     }
-    // get reading and writing stats of storage
+
+    /// Returns current storage statistics.
+    ///
+    /// # Returns
+    /// * `Option<HttpCacheStats>` - Current read/write statistics if available
     fn stats(&self) -> Option<HttpCacheStats> {
         None
     }
@@ -124,7 +174,7 @@ pub trait HttpCacheStorage: Sync + Send {
 async fn do_file_storage_clear(
     count: u32,
     dir: String,
-) -> Result<bool, String> {
+) -> Result<bool, ServiceError> {
     // Add 1 every loop
     let offset = 60;
     if count % offset != 0 {

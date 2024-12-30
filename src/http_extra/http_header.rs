@@ -37,12 +37,12 @@ static SCHEME_HTTP: HeaderValue = HeaderValue::from_static("http");
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Invalid header value {source}, {value}"))]
+    #[snafu(display("Invalid header value: {value} - {source}"))]
     InvalidHeaderValue {
         value: String,
         source: header::InvalidHeaderValue,
     },
-    #[snafu(display("Invalid header name {source}, {value}"))]
+    #[snafu(display("Invalid header name: {value} - {source}"))]
     InvalidHeaderName {
         value: String,
         source: header::InvalidHeaderName,
@@ -52,20 +52,37 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub type HttpHeader = (HeaderName, HeaderValue);
 
+/// Converts a string in "name: value" format into an HTTP header tuple.
+/// Returns None if the input string doesn't contain a colon separator.
+///
+/// # Arguments
+/// * `value` - A string in the format "header_name: header_value"
+///
+/// # Returns
+/// * `Result<Option<HttpHeader>>` - The parsed header tuple or None if invalid format
 pub fn convert_header(value: &str) -> Result<Option<HttpHeader>> {
-    if let Some((k, v)) =
-        value.split_once(':').map(|(k, v)| (k.trim(), v.trim()))
-    {
-        let name = HeaderName::from_str(k)
-            .context(InvalidHeaderNameSnafu { value: k })?;
-        let value = HeaderValue::from_str(v)
-            .context(InvalidHeaderValueSnafu { value: v })?;
-        Ok(Some((name, value)))
-    } else {
-        Ok(None)
-    }
+    value
+        .split_once(':')
+        .map(|(k, v)| {
+            let name = HeaderName::from_str(k.trim())
+                .context(InvalidHeaderNameSnafu { value: k })?;
+            let value = HeaderValue::from_str(v.trim())
+                .context(InvalidHeaderValueSnafu { value: v })?;
+            Ok(Some((name, value)))
+        })
+        .unwrap_or(Ok(None))
 }
 
+/// Processes special header values that contain dynamic variables.
+/// Supports variables like $host, $scheme, $remote_addr etc.
+///
+/// # Arguments
+/// * `value` - The header value to process
+/// * `session` - The HTTP session context
+/// * `ctx` - The application state
+///
+/// # Returns
+/// * `Option<HeaderValue>` - The processed header value or None if no special handling needed
 #[inline]
 pub fn convert_header_value(
     value: &HeaderValue,
@@ -73,92 +90,111 @@ pub fn convert_header_value(
     ctx: &State,
 ) -> Option<HeaderValue> {
     let buf = value.as_bytes();
+
+    // Early return if not a special header
+    if !buf.starts_with(b"$") && !buf.starts_with(b":") {
+        return None;
+    }
+
+    // Helper closure to convert string to HeaderValue
+    let to_header_value = |s: &str| HeaderValue::from_str(s).ok();
+
     match buf {
         HOST_TAG => {
-            if let Some(value) = util::get_host(session.req_header()) {
-                return HeaderValue::from_str(value).ok();
-            }
+            util::get_host(session.req_header()).and_then(to_header_value)
         },
-        SCHEME_TAG => {
-            if ctx.tls_version.is_some() {
-                return Some(SCHEME_HTTPS.clone());
-            }
-            return Some(SCHEME_HTTP.clone());
-        },
-        HOST_NAME_TAG => {
-            return HeaderValue::from_str(get_hostname()).ok();
-        },
-        REMOTE_ADDR_TAG => {
-            if let Some(remote_addr) = &ctx.remote_addr {
-                return HeaderValue::from_str(remote_addr).ok();
-            }
-        },
-        REMOTE_PORT_TAG => {
-            if let Some(remote_port) = ctx.remote_port {
-                return HeaderValue::from_str(&remote_port.to_string()).ok();
-            }
-        },
-        SERVER_ADDR_TAG => {
-            if let Some(server_addr) = &ctx.server_addr {
-                return HeaderValue::from_str(server_addr).ok();
-            }
-        },
-        SERVER_PORT_TAG => {
-            if let Some(server_port) = ctx.server_port {
-                return HeaderValue::from_str(&server_port.to_string()).ok();
-            }
-        },
+        SCHEME_TAG => Some(if ctx.tls_version.is_some() {
+            SCHEME_HTTPS.clone()
+        } else {
+            SCHEME_HTTP.clone()
+        }),
+        HOST_NAME_TAG => to_header_value(get_hostname()),
+        REMOTE_ADDR_TAG => ctx.remote_addr.as_deref().and_then(to_header_value),
+        REMOTE_PORT_TAG => ctx
+            .remote_port
+            .map(|p| p.to_string())
+            .and_then(|s| to_header_value(&s)),
+        SERVER_ADDR_TAG => ctx.server_addr.as_deref().and_then(to_header_value),
+        SERVER_PORT_TAG => ctx
+            .server_port
+            .map(|p| p.to_string())
+            .and_then(|s| to_header_value(&s)),
         UPSTREAM_ADDR_TAG => {
             if !ctx.upstream_address.is_empty() {
-                return HeaderValue::from_str(&ctx.upstream_address).ok();
+                to_header_value(&ctx.upstream_address)
+            } else {
+                None
             }
         },
         PROXY_ADD_FORWARDED_TAG => {
-            if let Some(remote_addr) = &ctx.remote_addr {
-                let value = if let Some(value) = session
+            ctx.remote_addr.as_deref().and_then(|remote_addr| {
+                let value = match session
                     .get_header(util::HTTP_HEADER_X_FORWARDED_FOR.clone())
                 {
-                    format!(
+                    Some(existing) => format!(
                         "{}, {}",
-                        value.to_str().unwrap_or_default(),
+                        existing.to_str().unwrap_or_default(),
                         remote_addr
-                    )
-                } else {
-                    remote_addr.to_string()
+                    ),
+                    None => remote_addr.to_string(),
                 };
-                return HeaderValue::from_str(&value).ok();
-            }
+                to_header_value(&value)
+            })
         },
-        _ => {
-            let http_prefix = b"$http_";
-            if buf.starts_with(http_prefix) {
-                let key =
-                    std::str::from_utf8(&buf[http_prefix.len()..buf.len()])
-                        .unwrap_or_default();
-                return session.get_header(key).cloned();
-            } else if buf.starts_with(b"$") {
-                if let Ok(value) = std::env::var(
-                    std::str::from_utf8(&buf[1..buf.len()]).unwrap_or_default(),
-                ) {
-                    return HeaderValue::from_str(&value).ok();
-                }
-            } else if buf.starts_with(b":") {
-                let mut value = BytesMut::with_capacity(20);
-                value = ctx.append_value(
-                    value,
-                    std::str::from_utf8(&buf[1..buf.len()]).unwrap_or_default(),
-                );
-                if !value.is_empty() {
-                    return HeaderValue::from_bytes(&value).ok();
-                }
-            }
-        },
-    };
-    // not match return none
+        _ => handle_special_headers(buf, session, ctx),
+    }
+}
+
+#[inline]
+fn handle_special_headers(
+    buf: &[u8],
+    session: &Session,
+    ctx: &State,
+) -> Option<HeaderValue> {
+    if buf.starts_with(b"$http_") {
+        return handle_http_header(buf, session);
+    } else if buf.starts_with(b"$") {
+        return handle_env_var(buf);
+    } else if buf.starts_with(b":") {
+        return handle_context_value(buf, ctx);
+    }
     None
 }
 
-/// Convert string slice to http headers.
+#[inline]
+fn handle_http_header(buf: &[u8], session: &Session) -> Option<HeaderValue> {
+    let key = std::str::from_utf8(&buf[6..]).ok()?;
+    session.get_header(key).cloned()
+}
+
+#[inline]
+fn handle_env_var(buf: &[u8]) -> Option<HeaderValue> {
+    let var_name = std::str::from_utf8(&buf[1..]).ok()?;
+    std::env::var(var_name)
+        .ok()
+        .and_then(|v| HeaderValue::from_str(&v).ok())
+}
+
+#[inline]
+fn handle_context_value(buf: &[u8], ctx: &State) -> Option<HeaderValue> {
+    let key = std::str::from_utf8(&buf[1..]).ok()?;
+    let mut value = BytesMut::with_capacity(20);
+    value = ctx.append_value(value, key);
+    if !value.is_empty() {
+        HeaderValue::from_bytes(&value).ok()
+    } else {
+        None
+    }
+}
+
+/// Converts a slice of strings into HTTP headers.
+/// Each string should be in "name: value" format.
+///
+/// # Arguments
+/// * `header_values` - Slice of strings representing headers
+///
+/// # Returns
+/// * `Result<Vec<HttpHeader>>` - Vector of parsed HTTP headers
 pub fn convert_headers(header_values: &[String]) -> Result<Vec<HttpHeader>> {
     let mut arr = vec![];
     for item in header_values {

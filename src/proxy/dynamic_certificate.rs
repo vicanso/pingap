@@ -243,7 +243,7 @@ impl pingora::listeners::TlsAccept for GlobalCertificate {
 
         // ca
         if d.is_ca {
-            match d.get_self_signed_certtificate(sni) {
+            match d.get_self_signed_certificate(sni) {
                 Ok(result) => {
                     ssl_certificate(
                         ssl,

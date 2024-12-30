@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::{get_hostname, get_process_system_info, Error, Result, State};
+use crate::service::Error as ServiceError;
 use crate::service::SimpleServiceTaskFuture;
 use crate::util;
 use humantime::parse_duration;
@@ -276,7 +277,7 @@ async fn do_push(
     count: u32,
     offset: u32,
     params: PrometheusPushParams,
-) -> Result<bool, String> {
+) -> Result<bool, ServiceError> {
     if count % offset != 0 {
         return Ok(false);
     }

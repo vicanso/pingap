@@ -15,6 +15,7 @@ use async_trait::async_trait;
 use futures::future::BoxFuture;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
+use snafu::Snafu;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime};
 use tokio::time::interval;
@@ -22,8 +23,11 @@ use tracing::{error, info};
 
 pub static LOG_CATEGORY: &str = "backgroundService";
 
+#[derive(Debug, Snafu)]
+pub enum Error {}
+
 pub type SimpleServiceTaskFuture =
-    Box<dyn Fn(u32) -> BoxFuture<'static, Result<bool, String>> + Sync + Send>;
+    Box<dyn Fn(u32) -> BoxFuture<'static, Result<bool, Error>> + Sync + Send>;
 
 pub struct SimpleServiceTask {
     name: String,
@@ -79,7 +83,7 @@ impl BackgroundService for SimpleServiceTask {
                                    category = LOG_CATEGORY,
                                    name = self.name,
                                    task = task_name,
-                                   e,
+                                   error = %e,
                                );
                            }
                            Ok(executed) => {
