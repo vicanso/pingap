@@ -56,33 +56,61 @@ pub static CACHE_WRITING_TIME: Lazy<Box<Histogram>> = Lazy::new(|| {
     )
 });
 
+/// Prometheus metrics collector for monitoring HTTP server performance and resource usage
 pub struct Prometheus {
+    /// Prometheus registry for collecting all metrics
     r: Registry,
+    /// Total number of HTTP requests received, labeled by location
     http_requests_total: Box<IntCounterVec>,
+    /// Current number of active HTTP requests, labeled by location
     http_requests_current: Box<IntGaugeVec>,
+    /// Histogram of request payload sizes received from clients in KB, labeled by location
     http_received: Box<HistogramVec>,
+    /// Total bytes received from clients, labeled by location
     http_received_bytes: Box<IntCounterVec>,
+    /// Count of HTTP response codes grouped by category (2xx, 3xx, etc.), labeled by location and code
     http_responses_codes: Box<IntCounterVec>,
+    /// Histogram of HTTP request processing times in seconds, labeled by location
     http_response_time: Box<HistogramVec>,
+    /// Histogram of response payload sizes sent to clients in KB, labeled by location
     http_sent: Box<HistogramVec>,
+    /// Total bytes sent to clients, labeled by location
     http_sent_bytes: Box<IntCounterVec>,
+    /// Count of TCP connection reuses
     connection_reuses: Box<IntCounter>,
+    /// Histogram of TLS handshake durations in seconds
     tls_handshake_time: Box<Histogram>,
+    /// Total number of connections to upstream servers, labeled by upstream
     upstream_connections: Box<IntGaugeVec>,
+    /// Current number of active upstream connections, labeled by upstream
     upstream_connections_current: Box<IntGaugeVec>,
+    /// Histogram of TCP connection times to upstream servers in seconds, labeled by upstream
     upstream_tcp_connect_time: Box<HistogramVec>,
+    /// Histogram of TLS handshake times with upstream servers in seconds, labeled by upstream
     upstream_tls_handshake_time: Box<HistogramVec>,
+    /// Count of upstream connection reuses, labeled by upstream
     upstream_reuses: Box<IntCounterVec>,
+    /// Histogram of upstream request processing times in seconds, labeled by upstream
     upstream_processing_time: Box<HistogramVec>,
+    /// Histogram of upstream response times in seconds, labeled by upstream
     upstream_response_time: Box<HistogramVec>,
+    /// Histogram of cache lookup times in seconds
     cache_lookup_time: Box<Histogram>,
+    /// Histogram of cache lock acquisition times in seconds
     cache_lock_time: Box<Histogram>,
+    /// Current number of cache read operations in progress
     cache_reading: Box<IntGauge>,
+    /// Current number of cache write operations in progress
     cache_writing: Box<IntGauge>,
+    /// Histogram of response compression ratios
     compression_ratio: Box<Histogram>,
+    /// Current memory usage in megabytes
     memory: Box<IntGauge>,
+    /// Current number of open file descriptors
     fd_count: Box<IntGauge>,
+    /// Current number of IPv4 TCP connections
     tcp_count: Box<IntGauge>,
+    /// Current number of IPv6 TCP connections
     tcp6_count: Box<IntGauge>,
 }
 

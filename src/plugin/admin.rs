@@ -512,7 +512,7 @@ impl Plugin for AdminServe {
         let path = header.uri.path();
         let mut new_path =
             path.substring(self.path.len(), path.len()).to_string();
-        if new_path.is_empty() {
+        if self.path.len() > 1 && new_path.is_empty() {
             new_path = format!("{path}/");
             if let Some(query) = header.uri.query() {
                 new_path = format!("{new_path}?{query}");

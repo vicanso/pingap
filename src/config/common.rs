@@ -163,7 +163,7 @@ fn validate_cert(value: &str) -> Result<()> {
     });
     if !success && err.is_some() {
         return Err(err.unwrap_or(Error::Invalid {
-            message: "Invalid certitificate".to_string(),
+            message: "Invalid certificate".to_string(),
         }));
     }
     Ok(())

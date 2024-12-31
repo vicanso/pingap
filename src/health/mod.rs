@@ -66,6 +66,7 @@ fn update_peer_options(
     options.total_connection_timeout = timeout;
     options.read_timeout = Some(conf.read_timeout);
     options.write_timeout = Some(conf.read_timeout);
+    // set zero to disable reuse connection
     options.idle_timeout = Some(Duration::from_secs(0));
     options
 }

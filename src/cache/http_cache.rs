@@ -32,9 +32,12 @@ use tracing::info;
 
 type BinaryMeta = (Vec<u8>, Vec<u8>);
 
+/// Represents a cached object containing metadata and body content
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CacheObject {
+    /// Tuple containing two metadata byte vectors (meta0, meta1)
     pub meta: BinaryMeta,
+    /// The actual cached content
     pub body: Bytes,
 }
 
@@ -96,34 +99,23 @@ pub struct HttpCacheStats {
     pub writing: u32,
 }
 
-/// Storage interface for HTTP caching operations.
+/// Storage interface for HTTP caching operations
 ///
 /// This trait defines the core operations needed to implement a storage backend
 /// for HTTP caching. Implementations must be both `Send` and `Sync` to support
 /// concurrent access.
 #[async_trait]
 pub trait HttpCacheStorage: Sync + Send {
-    /// Retrieves a cached object from storage by key and namespace.
-    ///
-    /// # Arguments
-    /// * `key` - The unique identifier for the cached object
-    /// * `namespace` - The namespace to scope the cache key
-    ///
-    /// # Returns
-    /// * `Result<Option<CacheObject>>` - The cached object if found, None if not present
+    /// Retrieves a cached object from storage
+    /// Returns None if not found or Some(CacheObject) if present
     async fn get(
         &self,
         key: &str,
         namespace: &str,
     ) -> Result<Option<CacheObject>>;
 
-    /// Stores a cache object in storage.
-    ///
-    /// # Arguments
-    /// * `key` - The unique identifier for the cached object
-    /// * `namespace` - The namespace to scope the cache key
-    /// * `data` - The cache object to store
-    /// * `weight` - The relative weight/cost of storing this object
+    /// Stores a cache object with the given key, namespace and weight
+    /// Weight determines the storage cost/priority of the cached item
     async fn put(
         &self,
         key: &str,
@@ -227,10 +219,15 @@ impl HttpCache {
     }
 }
 
+/// Handles cache hits by managing access to cached content
 pub struct CompleteHit {
+    /// The cached content
     body: Bytes,
+    /// Whether the content has been read
     done: bool,
+    /// Start position for range requests
     range_start: usize,
+    /// End position for range requests
     range_end: usize,
 }
 
@@ -296,12 +293,17 @@ impl HandleHit for CompleteHit {
     }
 }
 
+/// Handles cache misses by collecting and storing new content
 pub struct ObjectMissHandler {
+    /// Metadata to store with the cached content
     meta: BinaryMeta,
+    /// Buffer for collecting the body content
     body: BytesMut,
-    // these are used only in finish() to data from temp to cache
+    /// Cache key for storing the final object
     key: String,
+    /// Namespace for storing the final object
     namespace: String,
+    /// Reference to the storage backend
     cache: Arc<dyn HttpCacheStorage>,
 }
 
@@ -327,7 +329,7 @@ impl HandleMiss for ObjectMissHandler {
                     meta: self.meta,
                     body: self.body.into(),
                 },
-                get_wegiht(size),
+                get_weight(size),
             )
             .await?;
 
@@ -335,10 +337,12 @@ impl HandleMiss for ObjectMissHandler {
     }
 }
 
-// 40MB
+// Maximum size for a single cached object (40MB)
 static MAX_ONE_CACHE_SIZE: usize = 10 * 1024 * PAGE_SIZE;
 
-fn get_wegiht(size: usize) -> u16 {
+/// Calculates the storage weight based on content size
+/// Returns a weight between 1 and u16::MAX
+fn get_weight(size: usize) -> u16 {
     if size <= PAGE_SIZE {
         return 1;
     }
@@ -435,7 +439,7 @@ impl Storage for HttpCache {
             let size = obj.body.len();
             let _ = self
                 .cached
-                .put(&hash, namespace, obj, get_wegiht(size))
+                .put(&hash, namespace, obj, get_weight(size))
                 .await?;
             Ok(true)
         } else {

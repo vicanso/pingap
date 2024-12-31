@@ -48,7 +48,7 @@ pub fn new_performance_metrics_log_service() -> (String, SimpleServiceTaskFuture
                 let system_info = get_process_system_info();
                 let (processing, accepted) = get_processing_accepted();
                 info!(
-                    threadds = system_info.threads,
+                    threads = system_info.threads,
                     accepted,
                     processing,
                     used_memory = system_info.memory,

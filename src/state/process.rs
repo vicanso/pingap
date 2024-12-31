@@ -37,15 +37,18 @@ static ADMIN_ADDR: OnceCell<String> = OnceCell::new();
 static ACCEPTED: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
 static PROCESSING: Lazy<AtomicI32> = Lazy::new(|| AtomicI32::new(0));
 
+/// Increments the request acceptance and processing counters
 pub fn accept_request() {
     ACCEPTED.fetch_add(1, Ordering::Relaxed);
     PROCESSING.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Decrements the request processing counter when a request completes
 pub fn end_request() {
     PROCESSING.fetch_sub(1, Ordering::Relaxed);
 }
 
+/// Returns a tuple of (currently processing requests, total accepted requests)
 pub fn get_processing_accepted() -> (i32, u64) {
     let processing = PROCESSING.load(Ordering::Relaxed);
     let accepted = ACCEPTED.load(Ordering::Relaxed);
@@ -54,21 +57,36 @@ pub fn get_processing_accepted() -> (i32, u64) {
 
 #[derive(Serialize, Deserialize)]
 pub struct ProcessSystemInfo {
+    /// Current memory usage in megabytes
     pub memory_mb: usize,
+    /// Current memory usage as a human-readable string (e.g. "100 MB")
     pub memory: String,
+    /// CPU architecture (e.g. "x86_64", "aarch64")
     pub arch: String,
+    /// Number of logical CPU cores
     pub cpus: usize,
+    /// Number of physical CPU cores
     pub physical_cpus: usize,
+    /// Total system memory as a human-readable string
     pub total_memory: String,
+    /// Used system memory as a human-readable string
     pub used_memory: String,
+    /// Kernel version string
     pub kernel: String,
+    /// Process ID of the current process
     pub pid: u32,
+    /// Number of threads configured across all servers
     pub threads: usize,
+    /// Number of open file descriptors (Linux only)
     pub fd_count: usize,
+    /// Number of IPv4 TCP connections (Linux only)
     pub tcp_count: usize,
+    /// Number of IPv6 TCP connections (Linux only)
     pub tcp6_count: usize,
 }
 
+/// Gathers and returns system information including memory usage, CPU details,
+/// process statistics and network connection counts
 pub fn get_process_system_info() -> ProcessSystemInfo {
     let current_config = get_current_config();
     let data =
@@ -143,10 +161,12 @@ pub fn get_process_system_info() -> ProcessSystemInfo {
     }
 }
 
+/// Sets the admin address for the application
 pub fn set_admin_addr(addr: &str) {
     ADMIN_ADDR.get_or_init(|| addr.to_string());
 }
 
+/// Returns the currently configured admin address, if one is set
 pub fn get_admin_addr() -> Option<String> {
     ADMIN_ADDR.get().cloned()
 }
@@ -159,10 +179,12 @@ static HOST_NAME: Lazy<String> = Lazy::new(|| {
         .to_string()
 });
 
+/// Returns the process start time in seconds
 pub fn get_start_time() -> u64 {
     START_TIME.as_secs()
 }
 
+/// Returns the system hostname
 pub fn get_hostname() -> &'static str {
     HOST_NAME.as_str()
 }
@@ -185,6 +207,7 @@ impl RestartProcessCommand {
 
 static CMD: OnceCell<RestartProcessCommand> = OnceCell::new();
 
+/// Sets the command configuration used for process restarts
 pub fn set_restart_process_command(data: RestartProcessCommand) {
     CMD.get_or_init(|| data);
 }
@@ -193,6 +216,7 @@ static PROCESS_RESTAR_COUNT: Lazy<AtomicU8> = Lazy::new(|| AtomicU8::new(0));
 static PROCESS_RESTARTING: Lazy<AtomicBool> =
     Lazy::new(|| AtomicBool::new(false));
 
+/// Initiates an immediate process restart (Unix systems only)
 #[cfg(unix)]
 pub async fn restart_now() -> io::Result<process::Output> {
     let restarting = PROCESS_RESTARTING.swap(true, Ordering::Relaxed);
@@ -223,6 +247,8 @@ pub async fn restart_now() -> io::Result<process::Output> {
         ))
     }
 }
+
+/// Initiates an immediate process restart (Windows systems - not supported)
 #[cfg(windows)]
 pub fn restart_now() -> io::Result<process::Output> {
     return Err(io::Error::new(
@@ -231,6 +257,7 @@ pub fn restart_now() -> io::Result<process::Output> {
     ));
 }
 
+/// Schedules a process restart after a 60-second delay
 pub async fn restart() {
     let count = PROCESS_RESTAR_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     tokio::time::sleep(Duration::from_secs(60)).await;

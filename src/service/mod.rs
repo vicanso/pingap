@@ -24,7 +24,10 @@ use tracing::{error, info};
 pub static LOG_CATEGORY: &str = "backgroundService";
 
 #[derive(Debug, Snafu)]
-pub enum Error {}
+pub enum Error {
+    #[snafu(display("Invalid error: {message}"))]
+    Invalid { message: String },
+}
 
 pub type SimpleServiceTaskFuture =
     Box<dyn Fn(u32) -> BoxFuture<'static, Result<bool, Error>> + Sync + Send>;

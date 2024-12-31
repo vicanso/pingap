@@ -37,6 +37,11 @@ use tracing::{error, info};
 
 static WELL_KNOWN_PATH_PREFIX: &str = "/.well-known/acme-challenge/";
 
+/// Updates the certificate for the given name and domains using Let's Encrypt.
+/// This function will:
+/// 1. Generate a new certificate from Let's Encrypt
+/// 2. Update the configuration with the new certificate
+/// 3. Save the updated configuration
 async fn update_certificate_lets_encrypt(
     name: &str,
     domains: &[String],
@@ -65,6 +70,13 @@ async fn update_certificate_lets_encrypt(
     Ok(conf)
 }
 
+/// Periodically checks and updates certificates that need renewal.
+/// A certificate needs renewal if:
+/// - It is invalid or expired
+/// - The configured domains have changed
+/// - The certificate cannot be loaded
+///
+/// The check runs every UPDATE_INTERVAL iterations to avoid excessive checks.
 async fn do_update_certificates(
     count: u32,
     params: Vec<(String, Vec<String>)>,
@@ -190,7 +202,12 @@ pub fn get_lets_encrypt_certificate(name: &str) -> Result<Certificate> {
     })
 }
 
-/// The proxy plugin for lets encrypt http-01.
+/// Handles the HTTP-01 challenge verification for Let's Encrypt.
+/// This function:
+/// 1. Intercepts requests to /.well-known/acme-challenge/
+/// 2. Extracts the challenge token from the URL path
+/// 3. Loads the pre-stored token response from storage
+/// 4. Returns the token response to validate domain ownership
 pub async fn handle_lets_encrypt(
     session: &mut Session,
     _ctx: &mut State,
@@ -233,8 +250,19 @@ pub async fn handle_lets_encrypt(
     Ok(false)
 }
 
-/// Get the new cert from lets encrypt for all domains.
-/// The cert will be saved if success.
+/// Generates a new certificate from Let's Encrypt for the given domains.
+/// The ACME protocol flow:
+/// 1. Creates/retrieves an ACME account with Let's Encrypt
+/// 2. Creates a new order for the domains to be certified
+/// 3. For each domain:
+///    - Gets the HTTP-01 challenge details
+///    - Stores the challenge token response
+///    - Notifies Let's Encrypt that the challenge is ready
+/// 4. Waits for Let's Encrypt to verify domain ownership
+/// 5. Generates a CSR (Certificate Signing Request)
+/// 6. Submits the CSR and retrieves the signed certificate
+///
+/// Returns a tuple of (certificate_chain_pem, private_key_pem)
 async fn new_lets_encrypt(
     domains: &[String],
     production: bool,

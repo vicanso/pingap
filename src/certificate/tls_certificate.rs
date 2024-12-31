@@ -25,7 +25,7 @@ use pingora::tls::x509::X509;
 use std::sync::Arc;
 use tracing::info;
 
-// Add constants for certificate categories
+// Constants for categorizing different types of certificates and errors
 const LETS_ENCRYPT: &str = "lets_encrypt";
 const ERROR_CERTIFICATE: &str = "certificate";
 const ERROR_X509: &str = "x509_from_pem";
@@ -35,12 +35,19 @@ const ERROR_CA: &str = "ca";
 /// Represents a TLS certificate with its associated data
 #[derive(Debug, Clone, Default)]
 pub struct TlsCertificate {
+    // Optional name identifier for the certificate
     pub name: Option<String>,
+    // Optional chain certificate (intermediate CA)
     pub chain_certificate: Option<X509>,
+    // Optional tuple containing the certificate and its private key
     pub certificate: Option<(X509, PKey<Private>)>,
+    // List of domain names this certificate is valid for
     pub domains: Vec<String>,
+    // Additional certificate information
     pub info: Option<Certificate>,
+    // Unique hash key for identifying the certificate
     pub hash_key: String,
+    // Indicates if this certificate is a Certificate Authority
     pub is_ca: bool,
 }
 
@@ -211,13 +218,17 @@ impl TlsCertificate {
         &self,
         server_name: &str,
     ) -> Result<Arc<SelfSignedCertificate>> {
+        // Format the common name (converts subdomain.example.com to *.example.com)
         let cn = Self::format_common_name(server_name);
+        // Create a unique cache key using the certificate name and common name
         let cache_key = format!("{:?}:{}", self.name, cn);
 
+        // Try to get existing certificate from cache
         if let Some(cert) = get_self_signed_certificate(&cache_key) {
             return Ok(cert);
         }
 
+        // Generate new certificate if not found in cache
         let (cert, key, not_after) = new_certificate_with_ca(self, &cn)?;
         info!(common_name = cn, "Created new self-signed certificate");
         Ok(add_self_signed_certificate(
@@ -235,6 +246,8 @@ impl TlsCertificate {
     /// The formatted common name as a String
     fn format_common_name(server_name: &str) -> String {
         let parts: Vec<&str> = server_name.split('.').collect();
+        // If there are more than 2 parts (e.g., sub.example.com),
+        // convert to wildcard format (*.example.com)
         if parts.len() > 2 {
             format!("*.{}", parts[1..].join("."))
         } else {

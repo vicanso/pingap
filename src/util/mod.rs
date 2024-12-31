@@ -26,6 +26,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{path::Path, str::FromStr};
 use substring::Substring;
 
+/// Error enum for various error types in the utility module
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("Encrypt error {message}"))]
@@ -328,6 +329,16 @@ pub fn base64_decode<T: AsRef<[u8]>>(
     STANDARD.decode(data)
 }
 
+/// RegexCapture provides a way to extract named captures from regex matches
+///
+/// # Example
+/// ```
+/// use pingap::util::RegexCapture;
+/// let re = RegexCapture::new(r"(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})").unwrap();
+/// let (matched, captures) = re.captures("2024-03-14");
+/// assert_eq!(true, matched);
+/// assert_eq!(Some(vec![("year".to_string(), "2024".to_string()), ("month".to_string(), "03".to_string()), ("day".to_string(), "14".to_string())]), captures);
+/// ```
 #[derive(Debug, Clone)]
 pub struct RegexCapture {
     re: Regex,
@@ -380,6 +391,15 @@ const MB: usize = 1_000_000;
 const MB_100: usize = 100 * MB;
 const GB: usize = 1_000_000_000;
 
+/// Formats a byte size into a human readable string with appropriate units (B, KB, MB, GB)
+/// The function will add decimal points for values between units (e.g., 1.5KB)
+///
+/// # Arguments
+/// * `buf` - BytesMut buffer to write the formatted string into
+/// * `size` - Size in bytes to format
+///
+/// # Returns
+/// BytesMut buffer containing the formatted string
 #[inline]
 pub fn format_byte_size(mut buf: BytesMut, size: usize) -> BytesMut {
     if size < KB {
@@ -415,6 +435,16 @@ pub fn format_byte_size(mut buf: BytesMut, size: usize) -> BytesMut {
 
 const SEC: u64 = 1_000;
 
+/// Formats a duration in milliseconds into a human readable string
+/// For durations < 1000ms, formats as milliseconds
+/// For durations >= 1000ms, formats as seconds with up to one decimal place
+///
+/// # Arguments
+/// * `buf` - BytesMut buffer to write the formatted string into
+/// * `ms` - Duration in milliseconds to format
+///
+/// # Returns
+/// BytesMut buffer containing the formatted string
 #[inline]
 pub fn format_duration(mut buf: BytesMut, ms: u64) -> BytesMut {
     if ms < 1000 {

@@ -33,9 +33,13 @@ pub trait ModifyResponseBody: Sync + Send {
     fn handle(&self, data: Bytes) -> Bytes;
 }
 
+/// Statistics about response compression operations
 pub struct CompressionStat {
+    /// Size of the data before compression in bytes
     pub in_bytes: usize,
+    /// Size of the data after compression in bytes
     pub out_bytes: usize,
+    /// Time taken to perform the compression operation
     pub duration: Duration,
 }
 
@@ -67,84 +71,105 @@ impl OtelTracer {
     }
 }
 
+/// Represents the state of a request/response cycle, tracking various metrics and properties
+/// including connection details, caching information, and upstream server interactions.
 #[derive(Default)]
 pub struct State {
-    // connection id
+    /// Unique identifier for the connection
     pub connection_id: usize,
-    // current processing request
+    /// Number of requests currently being processed
     pub processing: i32,
-    // accepted request
+    /// Total number of requests accepted
     pub accepted: u64,
-    // current location processing request
+    /// Number of requests currently being processed for the current location
     pub location_processing: i32,
-    // current location accepted request
+    /// Total number of requests accepted for the current location
     pub location_accepted: u64,
-    // context created at
+    /// Timestamp when this context was created (in milliseconds)
     pub created_at: u64,
-    // client tls version
+    /// TLS version used by the client connection (e.g., "TLS 1.3")
     pub tls_version: Option<String>,
-    // client tls cipher
+    /// TLS cipher suite used by the client connection
     pub tls_cipher: Option<String>,
-    // client tls handshake time
+    /// Time taken for TLS handshake with client (in milliseconds)
     pub tls_handshake_time: Option<u64>,
-    // http status code
+    /// HTTP status code of the response
     pub status: Option<StatusCode>,
-    // the connection time,
-    // it may be a large value if it is a reused connection
+    /// Total time the connection has been alive (in milliseconds)
+    /// May be large for reused connections
     pub connection_time: u64,
-    // connection is reused
+    /// Indicates if this connection is being reused
     pub connection_reused: bool,
-    // the location to handle request
+    /// The location configuration handling this request
     pub location: Option<Arc<Location>>,
-    // the upstream address
+    /// Address of the upstream server
     pub upstream_address: String,
+    /// Client's IP address
     pub client_ip: Option<String>,
+    /// Client's port number
     pub remote_port: Option<u16>,
+    /// Client's complete address (IP:port)
     pub remote_addr: Option<String>,
+    /// Server's listening port
     pub server_port: Option<u16>,
+    /// Server's address
     pub server_addr: Option<String>,
+    /// Rate limiting guard
     pub guard: Option<Guard>,
+    /// Unique identifier for the request
     pub request_id: Option<String>,
+    /// Namespace for cache entries
     pub cache_namespace: Option<String>,
+    /// Prefix for cache keys
     pub cache_prefix: Option<String>,
+    /// Whether to check cache control headers
     pub check_cache_control: bool,
+    /// Time spent looking up cache entries (in milliseconds)
     pub cache_lookup_time: Option<u64>,
+    /// Time spent acquiring cache locks (in milliseconds)
     pub cache_lock_time: Option<u64>,
+    /// Maximum time-to-live for cache entries
     pub cache_max_ttl: Option<Duration>,
+    /// Indicates if the upstream connection is being reused
     pub upstream_reused: bool,
+    /// Number of requests being processed by upstream
     pub upstream_processing: Option<i32>,
-    // upstream connect time,
-    // get reused connection from pool or connect to upstream,
-    // it may be a small value if it is a reused connection
+    /// Time taken to establish/reuse upstream connection (in milliseconds)
     pub upstream_connect_time: Option<u64>,
-    // current upstream connected connection count
+    /// Current number of active upstream connections
     pub upstream_connected: Option<u32>,
-    // upstream tcp connect time
+    /// Time taken for TCP connection to upstream (in milliseconds)
     pub upstream_tcp_connect_time: Option<u64>,
-    // upstream tls handshake time
+    /// Time taken for TLS handshake with upstream (in milliseconds)
     pub upstream_tls_handshake_time: Option<u64>,
-    // upstream server processing time
+    /// Time taken by upstream server to process request (in milliseconds)
     pub upstream_processing_time: Option<u64>,
-    // upstream response time
+    /// Total time taken by upstream server (in milliseconds)
     pub upstream_response_time: Option<u64>,
-    // client payload size
+    /// Size of the request payload in bytes
     pub payload_size: usize,
-    // compression stat, in/out bytes and compression duration
+    /// Statistics about response compression
     pub compression_stat: Option<CompressionStat>,
+    /// Handler for modifying response body
     pub modify_response_body: Option<Box<dyn ModifyResponseBody>>,
+    /// Response body buffer
     pub response_body: Option<BytesMut>,
-    // cache reading count
+    /// Number of ongoing cache read operations
     pub cache_reading: Option<u32>,
-    // cache writing count
+    /// Number of ongoing cache write operations
     pub cache_writing: Option<u32>,
+    /// OpenTelemetry tracer (only with "full" feature)
     #[cfg(feature = "full")]
     pub otel_tracer: Option<OtelTracer>,
+    /// OpenTelemetry span for upstream requests (only with "full" feature)
     #[cfg(feature = "full")]
     pub upstream_span: Option<BoxedSpan>,
+    /// Custom variables map for request processing
     pub variables: Option<AHashMap<String, String>>,
 }
 
 impl State {
+    /// Creates a new State instance with the current timestamp and default values
     pub fn new() -> Self {
         Self {
             created_at: util::now().as_millis() as u64,
@@ -156,6 +181,8 @@ impl State {
 const ONE_HOUR_MS: u64 = 60 * 60 * 1000;
 
 impl State {
+    /// Adds a variable to the state's variables map with the given key and value
+    /// The key will be prefixed with '$'
     #[inline]
     pub fn add_variable(&mut self, key: &str, value: &str) {
         let key = format!("${key}");
@@ -167,6 +194,8 @@ impl State {
             self.variables = Some(variables);
         }
     }
+
+    /// Returns the upstream response time if it's less than one hour, otherwise None
     #[inline]
     pub fn get_upstream_response_time(&self) -> Option<u64> {
         if let Some(value) = self.upstream_response_time {
@@ -176,6 +205,8 @@ impl State {
         }
         None
     }
+
+    /// Returns the upstream connect time if it's less than one hour, otherwise None
     #[inline]
     pub fn get_upstream_connect_time(&self) -> Option<u64> {
         if let Some(value) = self.upstream_connect_time {
@@ -185,6 +216,8 @@ impl State {
         }
         None
     }
+
+    /// Returns the upstream processing time if it's less than one hour, otherwise None
     #[inline]
     pub fn get_upstream_processing_time(&self) -> Option<u64> {
         if let Some(value) = self.upstream_processing_time {
@@ -194,6 +227,9 @@ impl State {
         }
         None
     }
+
+    /// Appends a formatted value to the buffer based on the given key
+    /// Handles various metrics like connection info, timing data, and TLS details
     #[inline]
     pub fn append_value(&self, mut buf: BytesMut, key: &str) -> BytesMut {
         match key {
@@ -305,6 +341,8 @@ impl State {
     }
 }
 
+/// Generates a cache key from the request method, URI and state context
+/// The key includes an optional namespace and prefix if configured
 pub fn get_cache_key(ctx: &State, method: &str, uri: &Uri) -> CacheKey {
     let namespace = ctx.cache_namespace.as_ref().map_or("", |v| v);
     let key = if let Some(prefix) = &ctx.cache_prefix {

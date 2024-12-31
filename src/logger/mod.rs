@@ -20,7 +20,7 @@ use bytesize::ByteSize;
 use chrono::Timelike;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use std::error::Error;
+use snafu::{ResultExt, Snafu};
 use std::fs;
 use std::io;
 use std::os::unix::fs::MetadataExt;
@@ -31,46 +31,87 @@ use tracing::{error, info, Level};
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 use walkdir::WalkDir;
 
+const DEFAULT_COMPRESSION_LEVEL: u8 = 9;
+const DEFAULT_DAYS_AGO: u16 = 7;
+/// Minimum capacity in bytes for buffered log writing. When capacity is specified
+/// below this value, no buffering will be used.
+const MIN_BUFFER_CAPACITY: u64 = 4096;
+
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("IO error {source}"))]
+    Io { source: std::io::Error },
+    #[snafu(display("Invalid {message}"))]
+    Invalid { message: String },
+}
+type Result<T, E = Error> = std::result::Result<T, E>;
+
 static GZIP_EXT: &str = "gz";
 static ZSTD_EXT: &str = "zst";
 
-fn zstd_compress(file: &Path, level: u8) -> Result<(u64, u64), Box<dyn Error>> {
-    let level = if level == 0 { 9 } else { level as i32 };
+/// Compresses a file using zstd compression
+///
+/// # Arguments
+/// * `file` - Path to the file to compress
+/// * `level` - Compression level (0 uses default level)
+///
+/// # Returns
+/// A tuple of (compressed_size, original_size) in bytes
+fn zstd_compress(file: &Path, level: u8) -> Result<(u64, u64)> {
+    let level = if level == 0 {
+        DEFAULT_COMPRESSION_LEVEL
+    } else {
+        level
+    };
     let zst_file = file.with_extension(ZSTD_EXT);
-    let mut original_file = fs::File::open(file)?;
+    let mut original_file = fs::File::open(file).context(IoSnafu)?;
     let file = fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create_new(true)
-        .open(&zst_file)?;
+        .open(&zst_file)
+        .context(IoSnafu)?;
 
-    let mut encoder = zstd::stream::Encoder::new(&file, level)?;
-    let original_size = io::copy(&mut original_file, &mut encoder)?;
-    encoder.finish()?;
+    let mut encoder =
+        zstd::stream::Encoder::new(&file, level as i32).context(IoSnafu)?;
+    let original_size =
+        io::copy(&mut original_file, &mut encoder).context(IoSnafu)?;
+    encoder.finish().context(IoSnafu)?;
     let size = file.metadata().map(|item| item.size()).unwrap_or_default();
     Ok((size, original_size))
 }
 
-fn gzip_compress(file: &Path, level: u8) -> Result<(u64, u64), Box<dyn Error>> {
+/// Compresses a file using gzip compression
+///
+/// # Arguments
+/// * `file` - Path to the file to compress
+/// * `level` - Compression level (0 uses best compression)
+///
+/// # Returns
+/// A tuple of (compressed_size, original_size) in bytes
+fn gzip_compress(file: &Path, level: u8) -> Result<(u64, u64)> {
     let gzip_file = file.with_extension(GZIP_EXT);
-    let mut original_file = fs::File::open(file)?;
+    let mut original_file = fs::File::open(file).context(IoSnafu)?;
     let file = fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create_new(true)
-        .open(&gzip_file)?;
+        .open(&gzip_file)
+        .context(IoSnafu)?;
     let level = if level == 0 {
         Compression::best()
     } else {
         Compression::new(level as u32)
     };
     let mut encoder = GzEncoder::new(&file, level);
-    let original_size = io::copy(&mut original_file, &mut encoder)?;
-    encoder.finish()?;
+    let original_size =
+        io::copy(&mut original_file, &mut encoder).context(IoSnafu)?;
+    encoder.finish().context(IoSnafu)?;
     let size = file.metadata().map(|item| item.size()).unwrap_or_default();
     Ok((size, original_size))
 }
 
+/// Parameters for log compression configuration
 #[derive(Debug, Clone)]
 struct LogCompressParams {
     compression: String,
@@ -80,26 +121,47 @@ struct LogCompressParams {
     time_point_hour: u8,
 }
 
+impl Default for LogCompressParams {
+    fn default() -> Self {
+        Self {
+            compression: String::new(),
+            path: PathBuf::new(),
+            level: DEFAULT_COMPRESSION_LEVEL,
+            days_ago: DEFAULT_DAYS_AGO,
+            time_point_hour: 0,
+        }
+    }
+}
+
+/// Performs log file compression based on specified parameters
+///
+/// # Arguments
+/// * `count` - Counter used for timing compression runs
+/// * `params` - Configuration parameters for compression
+///
+/// # Returns
+/// Boolean indicating if compression was performed
 async fn do_compress(
     count: u32,
     params: LogCompressParams,
 ) -> Result<bool, ServiceError> {
-    let offset = 60;
-    if count % offset != 0 {
+    const OFFSET: u32 = 60;
+    if count % OFFSET != 0
+        || params.time_point_hour != chrono::Local::now().hour() as u8
+    {
         return Ok(false);
     }
-    if params.time_point_hour != chrono::Local::now().hour() as u8 {
-        return Ok(false);
-    }
-    let mut days_ago = params.days_ago;
-    if days_ago == 0 {
-        days_ago = 7;
-    }
-    let Some(access_before) = SystemTime::now()
-        .checked_sub(Duration::from_secs(24 * 3600 * days_ago as u64))
-    else {
-        return Ok(false);
+
+    let days_ago = if params.days_ago == 0 {
+        DEFAULT_DAYS_AGO
+    } else {
+        params.days_ago
     };
+    let access_before = SystemTime::now()
+        .checked_sub(Duration::from_secs(24 * 3600 * days_ago as u64))
+        .ok_or_else(|| ServiceError::Invalid {
+            message: "Failed to calculate access time".to_string(),
+        })?;
     let compression_exts = [GZIP_EXT.to_string(), ZSTD_EXT.to_string()];
     for entry in WalkDir::new(&params.path)
         .into_iter()
@@ -151,6 +213,13 @@ async fn do_compress(
     Ok(true)
 }
 
+/// Creates a new log compression service task
+///
+/// # Arguments
+/// * `params` - Configuration parameters for the compression service
+///
+/// # Returns
+/// Optional tuple containing service name and task future
 fn new_log_compress_service(
     params: LogCompressParams,
 ) -> Option<(String, SimpleServiceTaskFuture)> {
@@ -166,6 +235,7 @@ fn new_log_compress_service(
     Some(("logCompress".to_string(), task))
 }
 
+/// Parameters for logger configuration
 #[derive(Default, Debug)]
 pub struct LoggerParams {
     pub log: String,
@@ -174,9 +244,16 @@ pub struct LoggerParams {
     pub json: bool,
 }
 
+/// Initializes the logging system with the specified configuration
+///
+/// # Arguments
+/// * `params` - Logger configuration parameters
+///
+/// # Returns
+/// Optional tuple containing compression service name and task future if compression is enabled
 pub fn logger_try_init(
     params: LoggerParams,
-) -> Result<Option<(String, SimpleServiceTaskFuture)>, Box<dyn Error>> {
+) -> Result<Option<(String, SimpleServiceTaskFuture)>> {
     let level = if params.level.is_empty() {
         std::env::var("RUST_LOG").unwrap_or("INFO".to_string())
     } else {
@@ -237,14 +314,11 @@ pub fn logger_try_init(
         let dir = if filepath.is_dir() {
             filepath
         } else {
-            filepath.parent().ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    "parent of file log is invalid",
-                )
+            filepath.parent().ok_or_else(|| Error::Invalid {
+                message: "parent of file log is invalid".to_string(),
             })?
         };
-        fs::create_dir_all(dir)?;
+        fs::create_dir_all(dir).context(IoSnafu)?;
         if !compression.is_empty() {
             task = new_log_compress_service(LogCompressParams {
                 compression,
@@ -260,8 +334,8 @@ pub fn logger_try_init(
         } else {
             filepath
                 .file_name()
-                .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::Other, "file log is invalid")
+                .ok_or_else(|| Error::Invalid {
+                    message: "file log is invalid".to_string(),
                 })?
                 .to_string_lossy()
                 .to_string()
@@ -273,7 +347,7 @@ pub fn logger_try_init(
             _ => tracing_appender::rolling::daily(dir, filename),
         };
 
-        if params.capacity < 4096 {
+        if params.capacity < MIN_BUFFER_CAPACITY {
             BoxMakeWriter::new(file_appender)
         } else {
             // buffer writer for better performance
