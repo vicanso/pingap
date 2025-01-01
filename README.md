@@ -2,17 +2,11 @@
 
 ![Pingap Logo](./asset/pingap-logo.png)
 
-## What is Pingap
+## Overview
 
-A reverse proxy like nginx, built on [pingora](https://github.com/cloudflare/pingora), simple and efficient.
+Pingap is a high-performance reverse proxy built on [pingora](https://github.com/cloudflare/pingora), offering a simpler and more efficient alternative to nginx. It includes optional Sentry and OpenTelemetry support in its full-featured version.
 
-Sentry and opentelemetry are optional, they are supported in the full-featured version.
-
-[中文说明](./README_zh.md)
-
-[Examples](./examples/README.md)
-
-[Docs](./docs/README.md)
+[中文说明](./README_zh.md) | [Examples](./examples/README.md) | [Documentation](./docs/README.md)
 
 ```mermaid
 flowchart LR
@@ -22,25 +16,29 @@ flowchart LR
   pingap -- proxy:pingap.io --> upstream["10.1.3.1,10.1.3.2"]
 ```
 
-## Feature
+## Key Features
 
-- The service supports configuring multiple Locations, filtering locations by host and path, and matching and selecting them one by one according to the weight
-- Supports regular expression configuration to rewrite path
-- Support transparent proxy
-- Support HTTP 1/2, including h2c
-- Support static, dns and docker label service discovery
-- Support grpc-web reverse proxy
-- Configuration based on TOML format, the configuration is very simple, and can be saved to files or etcd
-- Supports more than 10 Prometheus indicators, pull and push mode
-- Opentelemetry supports w3c context trace and jaeger trace
-- All configurations except server configuration support hot reload, which adjustments take effect in 10 seconds. The service configuration takes effect after the application is restarted
-- Templated configuration of access logs, which supports more than 30 related attribute configurations, and various parameters and indicators can be specified as needed
-- Web UI for config, simple and easy to use
-- Support let's encrypt, just set the domain of http server
-- TLS certificates of different domain names can be served in the same service port, and the matching certificate is automatically selected according to servername
-- Supports push events: lets_encrypt, backend_status, diff_config, restart, etc.
-- Many http plugins, such as cache service components, compression components with multiple compression algorithms, authentication components, limiting components, etc.
-- Provides statistical data at different stages, such as upstream_connect_time, upstream_processing_time, compression_time, cache_lookup_time and cache_lock_time, etc.
+- **Multi-Location Support**: Configure multiple locations with host/path filtering and weighted routing
+- **Advanced Proxy Features**:
+  - Path rewriting with regex support
+  - Transparent proxy
+  - HTTP/1.1 and HTTP/2 support (including h2c)
+  - gRPC-web reverse proxy
+- **Service Discovery**: Static, DNS, and Docker label support
+- **Monitoring & Observability**:
+  - 10+ Prometheus metrics (pull/push)
+  - OpenTelemetry with W3C context and Jaeger trace support
+  - Detailed access logging with 30+ configurable attributes
+- **Configuration**:
+  - TOML-based configuration
+  - File and etcd storage support
+  - Hot reload support (10-second activation)
+  - Web UI for easy management
+- **Security & Performance**:
+  - Let's Encrypt integration
+  - Multi-domain TLS support with automatic certificate selection
+  - HTTP plugin system (caching, compression, auth, rate limiting)
+  - Detailed performance metrics
 
 ## Start
 

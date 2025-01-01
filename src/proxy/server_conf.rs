@@ -18,26 +18,27 @@ use std::fmt;
 
 static ERROR_TEMPLATE: &str = include_str!("../../error.html");
 
+// ServerConf struct represents the configuration for a server instance
 #[derive(Debug, Default)]
 pub struct ServerConf {
-    pub admin: bool,
-    pub name: String,
-    pub addr: String,
-    pub access_log: Option<String>,
-    pub locations: Vec<String>,
-    pub tls_cipher_list: Option<String>,
-    pub tls_ciphersuites: Option<String>,
-    pub tls_min_version: Option<String>,
-    pub tls_max_version: Option<String>,
-    pub threads: Option<usize>,
-    pub error_template: String,
-    pub tcp_keepalive: Option<TcpKeepalive>,
-    pub tcp_fastopen: Option<usize>,
-    pub global_certificates: bool,
-    pub enabled_h2: bool,
-    pub prometheus_metrics: Option<String>,
-    pub otlp_exporter: Option<String>,
-    pub modules: Option<Vec<String>>,
+    pub admin: bool,                // Whether this is an admin server
+    pub name: String,               // Server name identifier
+    pub addr: String,               // Listening address(es)
+    pub access_log: Option<String>, // Access log format/configuration
+    pub locations: Vec<String>,     // List of location routes
+    pub tls_cipher_list: Option<String>, // OpenSSL cipher list for TLS
+    pub tls_ciphersuites: Option<String>, // TLS 1.3 ciphersuites
+    pub tls_min_version: Option<String>, // Minimum TLS version allowed
+    pub tls_max_version: Option<String>, // Maximum TLS version allowed
+    pub threads: Option<usize>,     // Number of worker threads
+    pub error_template: String,     // HTML template for error pages
+    pub tcp_keepalive: Option<TcpKeepalive>, // TCP keepalive settings
+    pub tcp_fastopen: Option<usize>, // TCP Fast Open queue size
+    pub global_certificates: bool,  // Use global TLS certificates
+    pub enabled_h2: bool,           // HTTP/2 support enabled
+    pub prometheus_metrics: Option<String>, // Prometheus metrics endpoint
+    pub otlp_exporter: Option<String>, // OpenTelemetry exporter config
+    pub modules: Option<Vec<String>>, // Enabled server modules
 }
 
 impl fmt::Display for ServerConf {
@@ -53,6 +54,7 @@ impl fmt::Display for ServerConf {
     }
 }
 
+// Conversion implementation from PingapConf to Vec<ServerConf>
 impl From<PingapConf> for Vec<ServerConf> {
     fn from(conf: PingapConf) -> Self {
         let mut upstreams = vec![];
@@ -63,19 +65,18 @@ impl From<PingapConf> for Vec<ServerConf> {
         for (name, item) in conf.locations {
             locations.push((name, item));
         }
-        // sort location by weight
+        // Sort locations by weight in descending order for priority routing
         locations.sort_by_key(|b| std::cmp::Reverse(b.1.get_weight()));
         let mut servers = vec![];
         for (name, item) in conf.servers {
-            // load config validate base64
-            // so ignore error
-
+            // Set up error template, using default if none specified
             let mut error_template =
                 conf.basic.error_template.clone().unwrap_or_default();
             if error_template.is_empty() {
                 error_template = ERROR_TEMPLATE.to_string();
             }
 
+            // Configure TCP keepalive only if all required parameters are present
             let tcp_keepalive = if item.tcp_idle.is_some()
                 && item.tcp_probe_count.is_some()
                 && item.tcp_interval.is_some()
@@ -89,6 +90,7 @@ impl From<PingapConf> for Vec<ServerConf> {
                 None
             };
 
+            // Create server configuration with all settings
             servers.push(ServerConf {
                 name,
                 admin: false,

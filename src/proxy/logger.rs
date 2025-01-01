@@ -22,16 +22,17 @@ use pingora::proxy::Session;
 use regex::Regex;
 use substring::Substring;
 
+// Enum representing different types of log tags that can be used in the logging format
 #[derive(Debug, Clone, PartialEq)]
 pub enum TagCategory {
-    Fill,
-    Host,
-    Method,
-    Path,
-    Proto,
-    Query,
-    Remote,
-    ClientIp,
+    Fill,     // Static text
+    Host,     // Server hostname
+    Method,   // HTTP method (GET, POST, etc.)
+    Path,     // Request path
+    Proto,    // Protocol version
+    Query,    // Query parameters
+    Remote,   // Remote address
+    ClientIp, // Client IP address
     Scheme,
     Uri,
     Referer,
@@ -53,18 +54,21 @@ pub enum TagCategory {
     RequestId,
 }
 
+// Represents a single tag in the log format
 #[derive(Debug, Clone)]
 pub struct Tag {
     pub category: TagCategory,
-    pub data: Option<String>,
+    pub data: Option<String>, // Optional data associated with the tag
 }
-#[derive(Debug, Default, Clone)]
 
+#[derive(Debug, Default, Clone)]
 pub struct Parser {
     pub tags: Vec<Tag>,
 }
 
+// Parses special tags with prefixes like ~, >, <, :, $
 fn format_extra_tag(key: &str) -> Option<Tag> {
+    // Requires at least 2 chars (prefix + content)
     if key.len() < 2 {
         return None;
     }
@@ -73,14 +77,17 @@ fn format_extra_tag(key: &str) -> Option<Tag> {
     let value = key.substring(1, key.len());
     match ch {
         "~" => Some(Tag {
+            // Cookie values
             category: TagCategory::Cookie,
             data: Some(value.to_string()),
         }),
         ">" => Some(Tag {
+            // Request headers
             category: TagCategory::RequestHeader,
             data: Some(value.to_string()),
         }),
         "<" => Some(Tag {
+            // Response headers
             category: TagCategory::ResponseHeader,
             data: Some(value.to_string()),
         }),
@@ -105,6 +112,7 @@ fn format_extra_tag(key: &str) -> Option<Tag> {
     }
 }
 
+// Predefined log formats
 static COMBINED: &str = r###"{remote} "{method} {uri} {proto}" {status} {size_human} "{referer}" "{user_agent}""###;
 static COMMON: &str =
     r###"{remote} "{method} {uri} {proto}" {status} {size_human}""###;
@@ -256,17 +264,22 @@ fn get_resp_header_value<'a>(
 }
 
 impl Parser {
+    // Formats a log entry based on the session and context
     pub fn format(&self, session: &Session, ctx: &State) -> String {
         let mut buf = BytesMut::with_capacity(1024);
         let req_header = session.req_header();
+
+        // Process each tag in the format string
         for tag in self.tags.iter() {
             match tag.category {
                 TagCategory::Fill => {
+                    // Static text, just append it
                     if let Some(data) = &tag.data {
                         buf.extend(data.as_bytes());
                     }
                 },
                 TagCategory::Host => {
+                    // Add the host from request headers
                     if let Some(host) = util::get_host(req_header) {
                         buf.extend(host.as_bytes());
                     }

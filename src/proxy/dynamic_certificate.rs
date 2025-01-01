@@ -37,11 +37,14 @@ pub enum Error {
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
+// Type alias for storing certificates in a high-performance hash map
 type DynamicCertificates = AHashMap<String, Arc<TlsCertificate>>;
-// global dynamic certificates
+
+// Global storage for dynamic certificates using atomic reference counting for thread safety
 static DYNAMIC_CERTIFICATE_MAP: Lazy<ArcSwap<DynamicCertificates>> =
     Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
 
+// Default server name used when no SNI is provided
 static DEFAULT_SERVER_NAME: &str = "*";
 
 fn parse_certificates(
@@ -78,7 +81,10 @@ fn parse_certificates(
     (dynamic_certs, errors)
 }
 
-/// Try update certificates, which use for global tls callback
+/// Updates the global certificate store with new configurations
+/// Returns:
+/// - List of updated certificate names
+/// - String containing any error messages
 pub fn try_update_certificates(
     certificate_configs: &HashMap<String, CertificateConf>,
 ) -> (Vec<String>, String) {
@@ -117,15 +123,17 @@ pub fn get_certificate_info_list() -> Vec<(String, Certificate)> {
     infos
 }
 
+// Parameters for configuring TLS settings
 pub struct TlsSettingParams {
     pub server_name: String,
-    pub enabled_h2: bool,
-    pub cipher_list: Option<String>,
-    pub ciphersuites: Option<String>,
-    pub tls_min_version: Option<String>,
-    pub tls_max_version: Option<String>,
+    pub enabled_h2: bool,            // Enable HTTP/2 support
+    pub cipher_list: Option<String>, // Legacy cipher list
+    pub ciphersuites: Option<String>, // Modern cipher suites
+    pub tls_min_version: Option<String>, // Minimum TLS version
+    pub tls_max_version: Option<String>, // Maximum TLS version
 }
 
+// Helper function to apply certificate, private key and chain to SSL context
 #[inline]
 fn ssl_certificate(
     ssl: &mut SslRef,
@@ -149,6 +157,7 @@ fn ssl_certificate(
     }
 }
 
+/// GlobalCertificate implements dynamic certificate selection based on SNI
 #[derive(Debug, Clone, Default)]
 pub struct GlobalCertificate {}
 

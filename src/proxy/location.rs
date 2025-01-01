@@ -58,6 +58,11 @@ struct EqualPath {
     value: String,
 }
 
+// PathSelector enum represents different ways to match request paths:
+// - RegexPath: Uses regex pattern matching
+// - PrefixPath: Matches if path starts with prefix
+// - EqualPath: Matches exact path
+// - Empty: Matches all paths
 #[derive(Debug)]
 enum PathSelector {
     RegexPath(RegexPath),
@@ -104,6 +109,9 @@ struct EqualHost {
     value: String,
 }
 
+// HostSelector enum represents ways to match request hosts:
+// - RegexHost: Uses regex pattern matching with capture groups
+// - EqualHost: Matches exact hostname
 #[derive(Debug)]
 enum HostSelector {
     RegexHost(RegexHost),
@@ -138,6 +146,8 @@ fn new_host_selector(host: &str) -> Result<HostSelector> {
     Ok(se)
 }
 
+// Location struct represents a routing configuration that matches requests
+// based on path and host patterns and applies various proxy rules
 #[derive(Debug)]
 pub struct Location {
     pub name: String,
@@ -146,14 +156,20 @@ pub struct Location {
     path: String,
     path_selector: PathSelector,
     hosts: Vec<HostSelector>,
+    // Regex pattern and replacement for URL rewriting
     reg_rewrite: Option<(Regex, String)>,
+    // Headers to add/set when proxying requests
     proxy_add_headers: Option<Vec<HttpHeader>>,
     proxy_set_headers: Option<Vec<HttpHeader>>,
+    // Plugin names to execute
     plugins: Option<Vec<String>>,
+    // Request statistics
     accepted: AtomicU64,
     processing: AtomicI32,
     max_processing: i32,
+    // gRPC-Web protocol support flag
     grpc_web: bool,
+    // Maximum allowed request body size
     client_max_body_size: usize,
 }
 

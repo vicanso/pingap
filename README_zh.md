@@ -1,12 +1,12 @@
 # pingap
 
-Pingap是类似于nginx的反向代理，基于[pingora](https://github.com/cloudflare/pingora)构建，简单而高效。
+Pingap是一个基于[pingora](https://github.com/cloudflare/pingora)构建的高性能反向代理服务器。
 
-Sentry与opentelemetry为可选的特性，在全功能版本中支持。
+可选择性地集成Sentry和OpenTelemetry功能。
 
-[例子](./examples/README.md)
+[使用示例](./examples/README.md)
 
-[文档](./docs/README.md)
+[详细文档](./docs/README.md)
 
 
 ```mermaid
@@ -17,24 +17,29 @@ flowchart LR
   pingap -- 转发:pingap.io --> upstream["10.1.3.1,10.1.3.2"]
 ```
 
-## 特性
+## 核心功能
 
-- 服务支持配置多个Location，通过host与path筛选对应的location，按权重逐一匹配选择
-- 支持正则形式配置重写Path，方便应用按前缀区分转发
-- HTTP 1/2 的全链路支持，包括h2c的支持
-- 支持静态配置、DNS以及docker label的三种服务发现形式
-- 支持grpc-web反向代理
-- 基于TOML格式的配置，配置方式非常简洁，可保存至文件或etcd
-- 支持10多个Prometheus指标，可以使用pull与push的形式收集相关指标
-- Opentelemetry支持w3c context trace与jaeger trace的形式
-- 除server的配置外，所有的配置均支持热更新(10秒内)且无任何中断请求，服务配置在应用重启后生效
-- 访问日志的模板化配置，已支30多个相关属性的配置，可按需指定输出各种参数与指标
-- WEB形式的管理后台界面，无需学习，简单易用
-- 开箱即用的let's encrypttls证书，仅需配置对应域名即可，可在单一配置中使用多个子域名
-- 不同域名的tls证书可使用在同一服务端口中，按servername自动选择匹配证书
-- 支持各种事件的推送：lets_encrypt, backend_status, diff_config, restart等等
-- 丰富的http插件，如高效的缓存服务组件、多种压缩算法的压缩组件、不同种类的认证组件、不同形式的限流组件等等
-- 提供了不同阶段的统计数据，如upstream_connect_time, upstream_processing_time, compression_time, cache_lookup_time 与 cache_lock_time等
+- **支持多Location配置**: 配置多个Location，支持主机/路径过滤和权重路由
+- **高级代理功能**:
+  - 支持正则表达式的路径重写
+  - 透明代理
+  - HTTP/1.1 和 HTTP/2 支持（包括 h2c）
+  - gRPC-web 反向代理
+- **服务发现**: 支持静态、DNS 和 Docker 标签
+- **监控与可观测性**:
+  - 10+ Prometheus 指标（拉取/推送）
+  - OpenTelemetry 支持，包含 W3C 上下文和 Jaeger 追踪
+  - 详细的访问日志，含 30+ 可配置属性
+- **配置管理**:
+  - 基于 TOML 的配置
+  - 支持文件和 etcd 存储
+  - 热重载支持（10秒内生效）
+  - 便捷的 Web 管理界面
+- **安全性与性能**:
+  - Let's Encrypt 集成
+  - 多域名 TLS 支持，自动证书选择
+  - HTTP 插件系统（缓存、压缩、认证、限流）
+  - 详细的性能指标：包括upstream连接时间、处理时间、压缩时间、缓存查询时间等
 
 ## 启用程序
 

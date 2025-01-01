@@ -48,15 +48,20 @@ pub enum Error {
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
+// SelectionLb represents different load balancing strategies:
+// - RoundRobin: Distributes requests evenly across backends
+// - Consistent: Uses consistent hashing to map requests to backends
+// - Transparent: Passes requests through without load balancing
 enum SelectionLb {
     RoundRobin(Arc<LoadBalancer<RoundRobin>>),
     Consistent(Arc<LoadBalancer<Consistent>>),
     Transparent,
 }
 
+// UpstreamPeerTracer tracks active connections to upstream servers
 #[derive(Clone, Debug)]
 struct UpstreamPeerTracer {
-    connected: Arc<AtomicU32>,
+    connected: Arc<AtomicU32>, // Number of active connections
 }
 
 impl UpstreamPeerTracer {
@@ -79,31 +84,33 @@ impl Tracing for UpstreamPeerTracer {
     }
 }
 
+// Upstream represents a group of backend servers and their configuration
 #[derive(Debug)]
 pub struct Upstream {
-    pub name: String,
-    pub key: String,
-    hash: String,
-    hash_key: String,
-    tls: bool,
-    sni: String,
+    pub name: String, // Unique name for this upstream group
+    pub key: String,  // Hash key for configuration changes
+    hash: String,     // Hash strategy (url/ip/header/cookie/query)
+    hash_key: String, // Key to use for hash-based load balancing
+    tls: bool,        // Whether to use TLS for backend connections
+    sni: String,      // Server Name Indication for TLS
     #[debug("lb")]
-    lb: SelectionLb,
+    lb: SelectionLb, // Load balancing strategy
     connection_timeout: Option<Duration>,
     total_connection_timeout: Option<Duration>,
     read_timeout: Option<Duration>,
     idle_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
     verify_cert: Option<bool>,
-    alpn: ALPN,
+    alpn: ALPN, // Application Layer Protocol Negotiation settings
     tcp_keepalive: Option<TcpKeepalive>,
     tcp_recv_buf: Option<usize>,
     tcp_fast_open: Option<bool>,
     peer_tracer: Option<UpstreamPeerTracer>,
     tracer: Option<Tracer>,
-    processing: AtomicI32,
+    processing: AtomicI32, // Number of requests currently being processed
 }
 
+// Creates new backend servers based on discovery method (DNS/Docker/Static)
 fn new_backends(
     addrs: &[String],
     tls: bool,
@@ -134,11 +141,12 @@ fn new_backends(
     }
 }
 
+// Gets the value to use for consistent hashing based on the hash strategy
 fn get_hash_value(
-    hash: &str,
-    hash_key: &str,
-    session: &Session,
-    ctx: &State,
+    hash: &str,        // Hash strategy (url/ip/header/cookie/query)
+    hash_key: &str,    // Key to use for hash lookups
+    session: &Session, // Current request session
+    ctx: &State,       // Request context
 ) -> String {
     match hash {
         "url" => session.req_header().uri.to_string(),
