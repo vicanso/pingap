@@ -40,34 +40,65 @@ flowchart LR
   - HTTP plugin system (caching, compression, auth, rate limiting)
   - Detailed performance metrics
 
-## Start
+## Quick Start
 
-Loads all configurations from `/opt/pingap/conf` or file `/opt/pingap/pingap.toml` and run in the background. Log appends to `/opt/pingap/pingap.log`.
+Pingap can be started with either a configuration directory or a single TOML file:
 
 ```bash
+# Using a config directory
 RUST_LOG=INFO pingap -c=/opt/pingap/conf -d --log=/opt/pingap/pingap.log
+
+# Using a single TOML file
+RUST_LOG=INFO pingap -c=/opt/pingap/pingap.toml -d --log=/opt/pingap/pingap.log
 ```
 
-## Graceful restart
+Key flags:
+- `-c`: Path to config directory or TOML file
+- `-d`: Run in daemon/background mode
+- `--log`: Path to log file (logs are appended)
+- `RUST_LOG=INFO`: Set logging level (DEBUG, INFO, WARN, ERROR)
 
-Validate the configurations, send quit signal to pingap, then start a new process to handle all requests.
+## Graceful Restart
+
+Performs a zero-downtime restart of Pingap by following these steps:
+1. Validates the new configuration
+2. Gracefully shuts down the existing process
+3. Starts a new process to handle incoming requests
 
 ```bash
+# Graceful restart command
 RUST_LOG=INFO pingap -c=/opt/pingap/conf -t \
   && pkill -SIGQUIT pingap \
   && RUST_LOG=INFO pingap -c=/opt/pingap/conf -d -u --log=/opt/pingap/pingap.log
 ```
 
-## Auto restart
+Key flags:
+- `-t`: Test/validate configuration before restart
+- `-u`: Upgrade mode (ensures smooth handover from old process)
+- `-d`: Run in daemon mode
+- `SIGQUIT`: Signal for graceful shutdown
 
-Watch the configurations, if one of them changes, graceful restart pingap. `autoreload` means if only the upstream and location configurations are updated, they will take effect about 10s without restarting.
+## Auto Restart
+
+Automatically monitors configuration files and handles changes in two ways:
+- **Full Restart**: When core configurations change, performs a graceful restart
+- **Hot Reload**: When only upstream or location configurations change, updates take effect within ~10 seconds without restart
 
 ```bash
+# Enable auto-restart and hot reload
 RUST_LOG=INFO pingap -c=/opt/pingap/conf \
   -a -d --autoreload --log=/opt/pingap/pingap.log
 ```
 
+Key flags:
+- `-a`: Enable auto-restart on configuration changes
+- `--autoreload`: Enable hot reload for upstream/location changes
+- `-d`: Run in daemon mode
+- `-c`: Path to configuration directory
+
 ## Docker
+
+Run Pingap in a Docker container with auto-restart and admin interface enabled:
 
 ```bash
 docker run -it -d --restart=always \
@@ -77,6 +108,17 @@ docker run -it -d --restart=always \
   --autoreload \
   --admin=pingap:123123@0.0.0.0:3018
 ```
+
+Key options:
+- `-it`: Interactive terminal (allows input/output)
+- `-d`: Run container in detached/background mode
+- `--restart=always`: Automatically restart container if it stops
+- `-v $PWD/pingap:/opt/pingap`: Mount local config directory into container
+- `-p 3018:3018`: Expose admin interface port
+- `--autoreload`: Enable hot reload for configuration changes
+- `--admin=user:pass@host:port`: Enable admin interface with credentials
+
+Note: Remember to change the default admin credentials (`pingap:123123`) in production environments.
 
 ## Dev
 

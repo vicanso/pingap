@@ -39,17 +39,22 @@ flowchart LR
   - HTTP 插件系统（缓存、压缩、认证、限流）
   - 详细的性能指标：包括upstream连接时间、处理时间、压缩时间、缓存查询时间等
 
-## 启用程序
+## 启动服务
 
-从 `/opt/pingap/conf`目录中加载所有配置，并以后台程序的形式运行，日志写入至`/opt/pingap/pingap.log`。
+使用以下命令从指定配置目录启动 Pingap 服务：
 
 ```bash
 RUST_LOG=INFO pingap -c=/opt/pingap/conf -d --log=/opt/pingap/pingap.log
 ```
 
+参数说明：
+- `-c`: 指定配置文件目录
+- `-d`: 以守护进程（后台）模式运行
+- `--log`: 指定日志文件路径
+
 ## 优雅重启
 
-校验配置是否正确后，发送信号给pingap并启动新的程序接收原有的请求。
+执行以下命令可实现零停机重启：
 
 ```bash
 RUST_LOG=INFO pingap -c=/opt/pingap/conf -t \
@@ -57,14 +62,24 @@ RUST_LOG=INFO pingap -c=/opt/pingap/conf -t \
   && RUST_LOG=INFO pingap -c=/opt/pingap/conf -d -u --log=/opt/pingap/pingap.log
 ```
 
-## 自动重启
+执行步骤：
+1. 验证配置文件正确性 (`-t`)
+2. 向现有进程发送退出信号
+3. 启动新进程接管现有连接 (`-u`)
 
-应用启动后，监听相关配置变化，若有变化则无中断式重启程序或热更新加载配置。`autoreload`参数表示如果只是upstream与location的配置变化，则准实时(10秒内)刷新对应配置生效，无需重启。
+## 配置热重载
+
+启用配置自动重载功能：
 
 ```bash
 RUST_LOG=INFO pingap -c=/opt/pingap/conf \
   -a -d --autoreload --log=/opt/pingap/pingap.log
 ```
+
+特性：
+- `-a`: 启用配置变更监听
+- `--autoreload`: 支持 upstream 和 location 配置的热重载（10秒内生效）
+- 配置变更时自动应用，无需手动重启
 
 ## 应用配置
 
