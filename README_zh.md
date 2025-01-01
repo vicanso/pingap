@@ -4,9 +4,7 @@ Pingap是一个基于[pingora](https://github.com/cloudflare/pingora)构建的�
 
 可选择性地集成Sentry和OpenTelemetry功能。
 
-[使用示例](./examples/README.md)
-
-[详细文档](./docs/README.md)
+[使用示例](./examples/README.md) | [详细文档](http://pingap.io/pingap-zh/)
 
 
 ```mermaid

@@ -6,7 +6,7 @@
 
 Pingap is a high-performance reverse proxy built on [pingora](https://github.com/cloudflare/pingora), offering a simpler and more efficient alternative to nginx. It includes optional Sentry and OpenTelemetry support in its full-featured version.
 
-[中文说明](./README_zh.md) | [Examples](./examples/README.md) | [Documentation](./docs/README.md)
+[中文说明](./README_zh.md) | [Examples](./examples/README.md) | [Documentation](http://pingap.io/pingap-en/)
 
 ```mermaid
 flowchart LR

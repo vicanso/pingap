@@ -10,7 +10,8 @@ import {
   newStringOptions,
   newBooleanOptions,
 } from "@/constants";
-import { formatLabel, newZodDuration, omitEmptyArray } from "@/helpers/util";
+import { newZodDuration, omitEmptyArray } from "@/helpers/util";
+import { formatLabel } from "@/helpers/html";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -269,9 +270,7 @@ export default function Servers() {
   return (
     <div className="grow lg:border-l overflow-auto p-4">
       <h2 className="h-8 mb-1">
-        <span className="border-b-2 border-solid py-1 border-[rgb(var(--foreground-rgb))]">
-          {formatLabel(currentServer)}
-        </span>
+        {formatLabel(currentServer)}
       </h2>
       <ExForm
         category="server"

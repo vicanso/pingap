@@ -74,12 +74,6 @@ export function random(length = 8) {
   return str;
 }
 
-export function formatLabel(label: string) {
-  if (label === "*") {
-    return "New";
-  }
-  return label;
-}
 
 export async function sha256(message: string) {
   const hashDigest = sha256hash(message);

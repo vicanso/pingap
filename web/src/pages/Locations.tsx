@@ -10,7 +10,8 @@ import {
   newBooleanOptions,
   newStringOptions,
 } from "@/constants";
-import { formatLabel, newZodBytes, omitEmptyArray } from "@/helpers/util";
+import { newZodBytes, omitEmptyArray } from "@/helpers/util";
+import { formatLabel } from "@/helpers/html";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -225,9 +226,7 @@ export default function Locations() {
   return (
     <div className="grow lg:border-l overflow-auto p-4">
       <h2 className="h-8 mb-1">
-        <span className="border-b-2 border-solid py-1 border-[rgb(var(--foreground-rgb))]">
-          {formatLabel(currentLocation)}
-        </span>
+        {formatLabel(currentLocation)}
       </h2>
       <ExForm
         category="location"

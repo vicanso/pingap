@@ -11,7 +11,7 @@ import {
 } from "@/constants";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
-import { formatLabel } from "@/helpers/util";
+import { formatLabel } from "@/helpers/html";
 import { useShallow } from "zustand/react/shallow";
 
 function getCertificateConfig(
@@ -155,9 +155,7 @@ export default function Certificates() {
   return (
     <div className="grow lg:border-l overflow-auto p-4">
       <h2 className="h-8 mb-1">
-        <span className="border-b-2 border-solid py-1 border-[rgb(var(--foreground-rgb))]">
-          {formatLabel(currentCertificate)}
-        </span>
+        {formatLabel(currentCertificate)}
       </h2>
       <ExForm
         category="certificate"

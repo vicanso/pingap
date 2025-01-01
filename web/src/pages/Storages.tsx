@@ -7,7 +7,7 @@ import React from "react";
 import { ExFormItemCategory, newStringOptions } from "@/constants";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
-import { formatLabel } from "@/helpers/util";
+import { formatLabel } from "@/helpers/html";
 import { useShallow } from "zustand/react/shallow";
 
 function getStorageConfig(name: string, storages?: Record<string, Storage>) {
@@ -119,9 +119,7 @@ export default function Storages() {
   return (
     <div className="grow lg:border-l overflow-auto p-4">
       <h2 className="h-8 mb-1">
-        <span className="border-b-2 border-solid py-1 border-[rgb(var(--foreground-rgb))]">
-          {formatLabel(currentStorage)}
-        </span>
+        {formatLabel(currentStorage)}
       </h2>
       <ExForm
         category="storage"
