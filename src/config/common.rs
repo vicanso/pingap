@@ -46,30 +46,50 @@ pub const CATEGORY_STORAGE: &str = "storage";
 #[derive(PartialEq, Debug, Default, Clone, EnumString, strum::Display)]
 #[strum(serialize_all = "snake_case")]
 pub enum PluginCategory {
+    /// Statistics and metrics collection
     #[default]
     Stats,
+    /// Rate limiting and throttling
     Limit,
+    /// Response compression (gzip, deflate, etc)
     Compression,
+    /// Administrative interface and controls
     Admin,
+    /// Static file serving and directory listing
     Directory,
+    /// Mock/stub responses for testing
     Mock,
+    /// Request ID generation and tracking
     RequestId,
+    /// IP-based access control
     IpRestriction,
+    /// API key authentication
     KeyAuth,
+    /// HTTP Basic authentication
     BasicAuth,
+    /// Combined authentication methods
     CombinedAuth,
+    /// JSON Web Token (JWT) authentication
     Jwt,
+    /// Response caching
     Cache,
+    /// URL redirection rules
     Redirect,
+    /// Health check endpoint
     Ping,
+    /// Custom response header manipulation
     ResponseHeaders,
+    /// Referer-based access control
     RefererRestriction,
+    /// User-Agent based access control
     UaRestriction,
+    /// Cross-Site Request Forgery protection
     Csrf,
+    /// Cross-Origin Resource Sharing
     Cors,
+    /// Accept-Encoding header processing
     AcceptEncoding,
 }
-
 impl Serialize for PluginCategory {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -85,10 +105,12 @@ impl<'de> Deserialize<'de> for PluginCategory {
         D: serde::Deserializer<'de>,
     {
         let value: String = serde::Deserialize::deserialize(deserializer)?;
-        let category = PluginCategory::from_str(&value)
-            .unwrap_or(PluginCategory::default());
-
-        Ok(category)
+        PluginCategory::from_str(&value).map_err(|_| {
+            serde::de::Error::custom(format!(
+                "invalid plugin category: {}",
+                value
+            ))
+        })
     }
 }
 
@@ -136,49 +158,65 @@ fn convert_pem(value: &str) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
+/// Configuration struct for TLS/SSL certificates
 #[derive(Debug, Default, Deserialize, Clone, Serialize, Hash)]
 pub struct CertificateConf {
+    /// Domain names this certificate is valid for (comma separated)
     pub domains: Option<String>,
+    /// TLS certificate in PEM format or base64 encoded
     pub tls_cert: Option<String>,
+    /// Private key in PEM format or base64 encoded
     pub tls_key: Option<String>,
+    /// Certificate chain in PEM format or base64 encoded
     pub tls_chain: Option<String>,
+    /// Whether this is the default certificate for the server
     pub is_default: Option<bool>,
+    /// Whether this certificate is a Certificate Authority (CA)
     pub is_ca: Option<bool>,
+    /// ACME configuration for automated certificate management
     pub acme: Option<String>,
+    /// Optional description/notes about this certificate
     pub remark: Option<String>,
 }
 
+/// Validates a certificate in PEM format or base64 encoded
 fn validate_cert(value: &str) -> Result<()> {
+    // Convert from PEM/base64 to binary
     let buf = convert_pem(value)?;
-    let mut key = Cursor::new(&buf);
-    let mut err = None;
-    let success = rustls_pemfile::certs(&mut key).all(|item| {
-        if let Err(e) = &item {
-            err = Some(Error::Invalid {
-                message: e.to_string(),
-            });
-            return false;
-        }
-        true
-    });
-    if !success && err.is_some() {
-        return Err(err.unwrap_or(Error::Invalid {
-            message: "Invalid certificate".to_string(),
-        }));
+    let mut cursor = Cursor::new(&buf);
+
+    // Parse all certificates in the buffer
+    let certs = rustls_pemfile::certs(&mut cursor)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| Error::Invalid {
+            message: format!("Failed to parse certificate: {}", e),
+        })?;
+
+    // Ensure at least one valid certificate was found
+    if certs.is_empty() {
+        return Err(Error::Invalid {
+            message: "No valid certificates found in input".to_string(),
+        });
     }
+
     Ok(())
 }
 
 impl CertificateConf {
-    /// Get hash key of certificate config
+    /// Generates a unique hash key for this certificate configuration
+    /// Used for caching and comparison purposes
     pub fn hash_key(&self) -> String {
         let mut hasher = DefaultHasher::new();
         self.hash(&mut hasher);
         format!("{:x}", hasher.finish())
     }
-    /// Validate the options of certificate config.
+
+    /// Validates the certificate configuration:
+    /// - Validates private key can be parsed if present
+    /// - Validates certificate can be parsed if present  
+    /// - Validates certificate chain can be parsed if present
     pub fn validate(&self) -> Result<()> {
-        // convert private key
+        // Validate private key
         if let Some(value) = &self.tls_key {
             let buf = convert_pem(value)?;
             let mut key = Cursor::new(buf);
@@ -188,11 +226,13 @@ impl CertificateConf {
                 }
             })?;
         }
-        // convert certificate
+
+        // Validate main certificate
         if let Some(value) = &self.tls_cert {
             validate_cert(value)?;
         }
-        // convert certificate chain
+
+        // Validate certificate chain
         if let Some(value) = &self.tls_chain {
             validate_cert(value)?;
         }
@@ -200,147 +240,278 @@ impl CertificateConf {
     }
 }
 
+/// Configuration for an upstream service that handles proxied requests
 #[derive(Debug, Default, Deserialize, Clone, Serialize, Hash)]
 pub struct UpstreamConf {
+    /// List of upstream server addresses in format "host:port" or "host:port weight"
     pub addrs: Vec<String>,
+
+    /// Service discovery mechanism to use (e.g. "dns", "static")
     pub discovery: Option<String>,
+
+    /// How frequently to update the upstream server list
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub update_frequency: Option<Duration>,
+
+    /// Load balancing algorithm (e.g. "round_robin", "hash:cookie")
     pub algo: Option<String>,
+
+    /// Server Name Indication for TLS connections
     pub sni: Option<String>,
+
+    /// Whether to verify upstream TLS certificates
     pub verify_cert: Option<bool>,
+
+    /// Health check URL to verify upstream server status
     pub health_check: Option<String>,
+
+    /// Whether to only use IPv4 addresses
     pub ipv4_only: Option<bool>,
+
+    /// Enable request tracing
     pub enable_tracer: Option<bool>,
+
+    /// Application Layer Protocol Negotiation for TLS
     pub alpn: Option<String>,
+
+    /// Timeout for establishing new connections
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub connection_timeout: Option<Duration>,
+
+    /// Total timeout for the entire request/response cycle
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub total_connection_timeout: Option<Duration>,
+
+    /// Timeout for reading response data
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub read_timeout: Option<Duration>,
+
+    /// Timeout for idle connections in the pool
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub idle_timeout: Option<Duration>,
+
+    /// Timeout for writing request data
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub write_timeout: Option<Duration>,
+
+    /// TCP keepalive idle time
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub tcp_idle: Option<Duration>,
+
+    /// TCP keepalive probe interval
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub tcp_interval: Option<Duration>,
+
+    /// Number of TCP keepalive probes before connection is dropped
     pub tcp_probe_count: Option<usize>,
+
+    /// TCP receive buffer size
     pub tcp_recv_buf: Option<ByteSize>,
+
+    /// Enable TCP Fast Open
     pub tcp_fast_open: Option<bool>,
+
+    /// List of included configuration files
     pub includes: Option<Vec<String>>,
+
+    /// Optional description/notes about this upstream
     pub remark: Option<String>,
 }
+
 impl UpstreamConf {
-    /// Get hash key of upstream config
+    /// Generates a unique hash key for this upstream configuration
+    /// Used for caching and comparison purposes
     pub fn hash_key(&self) -> String {
         let mut hasher = DefaultHasher::new();
         self.hash(&mut hasher);
         format!("{:x}", hasher.finish())
     }
+
+    /// Determines the appropriate service discovery mechanism:
+    /// - Returns configured discovery if set
+    /// - Returns DNS discovery if any address contains a hostname
+    /// - Returns empty string (static discovery) otherwise
     pub fn guess_discovery(&self) -> String {
+        // Return explicitly configured discovery if set
         if let Some(discovery) = &self.discovery {
-            return discovery.to_string();
+            return discovery.clone();
         }
-        let exists_name_addr = self.addrs.iter().any(|item| {
-            let host = if let Some((item, _)) = item.split_once(':') {
-                item.to_string()
-            } else {
-                item.to_string()
-            };
+
+        // Check if any address contains a hostname (non-IP)
+        let has_hostname = self.addrs.iter().any(|addr| {
+            // Extract host portion before port
+            let host =
+                addr.split_once(':').map_or(addr.as_str(), |(host, _)| host);
+
+            // If host can't be parsed as IP, it's a hostname
             host.parse::<std::net::IpAddr>().is_err()
         });
-        if exists_name_addr {
-            return DNS_DISCOVERY.to_string();
+
+        if has_hostname {
+            DNS_DISCOVERY.to_string()
+        } else {
+            String::new()
         }
-        "".to_string()
     }
-    /// Validate the options of upstream config.
-    /// 1. The address list can't be empty, and can be converted to socket addr.
-    /// 2. The health check url can be parsed to Url if it exists.
+
+    /// Validates the upstream configuration:
+    /// 1. The address list can't be empty
+    /// 2. For static discovery, addresses must be valid socket addresses
+    /// 3. Health check URL must be valid if specified
+    /// 4. TCP probe count must not exceed maximum (16)
     pub fn validate(&self, name: &str) -> Result<()> {
+        // Validate address list
+        self.validate_addresses(name)?;
+
+        // Validate health check URL if specified
+        self.validate_health_check()?;
+
+        // Validate TCP probe count
+        self.validate_tcp_probe_count()?;
+
+        Ok(())
+    }
+
+    fn validate_addresses(&self, name: &str) -> Result<()> {
         if self.addrs.is_empty() {
             return Err(Error::Invalid {
                 message: "upstream addrs is empty".to_string(),
             });
         }
-        // only validate upstream addr for static discovery
-        if is_static_discovery(&self.guess_discovery()) {
-            for addr in self.addrs.iter() {
-                let arr: Vec<_> = addr.split(' ').collect();
-                let mut addr = arr[0].to_string();
-                if !addr.contains(':') {
-                    addr = format!("{addr}:80");
-                }
-                let _ = addr.to_socket_addrs().map_err(|e| Error::Io {
-                    source: e,
-                    file: format!("{}(upstream:{name})", arr[0]),
-                })?;
-            }
+
+        // Only validate addresses for static discovery
+        if !is_static_discovery(&self.guess_discovery()) {
+            return Ok(());
         }
-        // validate health check
-        let health_check = self.health_check.clone().unwrap_or_default();
-        if !health_check.is_empty() {
-            let _ = Url::parse(&health_check).map_err(|e| Error::UrlParse {
+
+        for addr in &self.addrs {
+            let parts: Vec<_> = addr.split_whitespace().collect();
+            let host_port = parts[0].to_string();
+
+            // Add default port 80 if not specified
+            let addr_to_check = if !host_port.contains(':') {
+                format!("{host_port}:80")
+            } else {
+                host_port
+            };
+
+            // Validate socket address
+            addr_to_check.to_socket_addrs().map_err(|e| Error::Io {
                 source: e,
-                url: health_check,
+                file: format!("{}(upstream:{name})", parts[0]),
             })?;
         }
-        let max_tcp_probe_count = 16;
-        if self.tcp_probe_count.unwrap_or_default() > max_tcp_probe_count {
-            return Err(Error::Invalid {
-                message: format!(
-                    "tcp probe count should be <= {max_tcp_probe_count}"
-                ),
-            });
+
+        Ok(())
+    }
+
+    fn validate_health_check(&self) -> Result<()> {
+        let health_check = match &self.health_check {
+            Some(url) if !url.is_empty() => url,
+            _ => return Ok(()),
+        };
+
+        Url::parse(health_check).map_err(|e| Error::UrlParse {
+            source: e,
+            url: health_check.to_string(),
+        })?;
+
+        Ok(())
+    }
+
+    fn validate_tcp_probe_count(&self) -> Result<()> {
+        const MAX_TCP_PROBE_COUNT: usize = 16;
+
+        if let Some(count) = self.tcp_probe_count {
+            if count > MAX_TCP_PROBE_COUNT {
+                return Err(Error::Invalid {
+                    message: format!(
+                        "tcp probe count should be <= {MAX_TCP_PROBE_COUNT}"
+                    ),
+                });
+            }
         }
 
         Ok(())
     }
 }
 
+/// Configuration for a location/route that handles incoming requests
 #[derive(Debug, Default, Deserialize, Clone, Serialize, Hash)]
 pub struct LocationConf {
+    /// Name of the upstream service to proxy requests to
     pub upstream: Option<String>,
+
+    /// URL path pattern to match requests against
+    /// Can start with:
+    /// - "=" for exact match
+    /// - "~" for regex match
+    /// - No prefix for prefix match
     pub path: Option<String>,
+
+    /// Host/domain name to match requests against
     pub host: Option<String>,
+
+    /// Headers to set on proxied requests (overwrites existing)
     pub proxy_set_headers: Option<Vec<String>>,
+
+    /// Headers to add to proxied requests (appends to existing)
     pub proxy_add_headers: Option<Vec<String>>,
+
+    /// URL rewrite rule in format "pattern replacement"
     pub rewrite: Option<String>,
+
+    /// Manual weight for location matching priority
+    /// Higher weight = higher priority
     pub weight: Option<u16>,
+
+    /// List of plugins to apply to requests matching this location
     pub plugins: Option<Vec<String>>,
+
+    /// Maximum allowed size of request body
     pub client_max_body_size: Option<ByteSize>,
+
+    /// Maximum number of concurrent requests being processed
     pub max_processing: Option<i32>,
+
+    /// List of included configuration files
     pub includes: Option<Vec<String>>,
+
+    /// Whether to enable gRPC-Web protocol support
     pub grpc_web: Option<bool>,
+
+    /// Optional description/notes about this location
     pub remark: Option<String>,
 }
 
 impl LocationConf {
-    /// Get hash key of location config
+    /// Generates a unique hash key for this location configuration
+    /// Used for caching and comparison purposes
     pub fn hash_key(&self) -> String {
         let mut hasher = DefaultHasher::new();
         self.hash(&mut hasher);
         format!("{:x}", hasher.finish())
     }
-    /// Validate the options of location config.
-    /// 1. Convert add and set headers to (HeaderName, HeaderValue).
-    /// 2. Parse rewrite path to regexp if it exists.
+
+    /// Validates the location configuration:
+    /// 1. Validates that headers are properly formatted as "name: value"
+    /// 2. Validates header names and values are valid HTTP headers
+    /// 3. Validates upstream exists if specified
+    /// 4. Validates rewrite pattern is valid regex if specified
     fn validate(&self, name: &str, upstream_names: &[String]) -> Result<()> {
-        // validate header for http
+        // Helper function to validate HTTP headers
         let validate = |headers: &Option<Vec<String>>| -> Result<()> {
             if let Some(headers) = headers {
                 for header in headers.iter() {
+                    // Split header into name and value parts
                     let arr = header
                         .split_once(':')
                         .map(|(k, v)| (k.trim(), v.trim()));
@@ -352,9 +523,13 @@ impl LocationConf {
                         });
                     }
                     let (header_name, header_value) = arr.unwrap();
+
+                    // Validate header name is valid
                     HeaderName::from_bytes(header_name.as_bytes()).map_err(|err| Error::Invalid {
                         message: format!("header name({header_name}) is invalid, error: {err}(location:{name})"),
                     })?;
+
+                    // Validate header value is valid
                     HeaderValue::from_str(header_value).map_err(|err| Error::Invalid {
                         message: format!("header value({header_value}) is invalid, error: {err}(location:{name})"),
                     })?;
@@ -363,6 +538,7 @@ impl LocationConf {
             Ok(())
         };
 
+        // Validate upstream exists if specified
         let upstream = self.upstream.clone().unwrap_or_default();
         if !upstream.is_empty() && !upstream_names.contains(&upstream) {
             return Err(Error::Invalid {
@@ -371,9 +547,12 @@ impl LocationConf {
                 ),
             });
         }
+
+        // Validate headers
         validate(&self.proxy_add_headers)?;
         validate(&self.proxy_set_headers)?;
 
+        // Validate rewrite pattern is valid regex
         if let Some(value) = &self.rewrite {
             let arr: Vec<&str> = value.split(' ').collect();
             let _ =
@@ -382,59 +561,107 @@ impl LocationConf {
 
         Ok(())
     }
-    /// Get weight of location, which is calculated from the domain name, path and path length
+
+    /// Calculates the matching priority weight for this location
+    /// Higher weight = higher priority
+    /// Weight is based on:
+    /// - Path match type (exact=1024, prefix=512, regex=256)
+    /// - Path length (up to 64)
+    /// - Host presence (+128)
+    ///
+    /// Returns either the manual weight if set, or calculated weight
     pub fn get_weight(&self) -> u16 {
+        // Return manual weight if set
         if let Some(weight) = self.weight {
             return weight;
         }
-        // path starts with
-        // = 1024
-        // prefix(default) 512
-        // ~ 256
-        // host exist 128
+
         let mut weight: u16 = 0;
         let path = self.path.clone().unwrap_or("".to_string());
+
+        // Add weight based on path match type and length
         if path.len() > 1 {
             if path.starts_with('=') {
-                weight += 1024;
+                weight += 1024; // Exact match
             } else if path.starts_with('~') {
-                weight += 256;
+                weight += 256; // Regex match
             } else {
-                weight += 512;
+                weight += 512; // Prefix match
             }
             weight += path.len().min(64) as u16;
         };
+
+        // Add weight if host is specified
         if !self.host.clone().unwrap_or_default().is_empty() {
             weight += 128;
         }
+
         weight
     }
 }
 
+/// Configuration for a server instance that handles incoming HTTP/HTTPS requests
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
 pub struct ServerConf {
+    /// Address to listen on in format "host:port" or multiple addresses separated by commas
     pub addr: String,
+
+    /// Access log format string for request logging
     pub access_log: Option<String>,
+
+    /// List of location names that this server handles
     pub locations: Option<Vec<String>>,
+
+    /// Number of worker threads for this server instance
     pub threads: Option<usize>,
+
+    /// OpenSSL cipher list string for TLS connections
     pub tls_cipher_list: Option<String>,
+
+    /// TLS 1.3 ciphersuites string
     pub tls_ciphersuites: Option<String>,
+
+    /// Minimum TLS version to accept (e.g. "TLSv1.2")
     pub tls_min_version: Option<String>,
+
+    /// Maximum TLS version to use (e.g. "TLSv1.3")
     pub tls_max_version: Option<String>,
+
+    /// Whether to use global certificates instead of per-server certs
     pub global_certificates: Option<bool>,
+
+    /// Whether to enable HTTP/2 protocol support
     pub enabled_h2: Option<bool>,
+
+    /// TCP keepalive idle timeout
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub tcp_idle: Option<Duration>,
+
+    /// TCP keepalive probe interval
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub tcp_interval: Option<Duration>,
+
+    /// Number of TCP keepalive probes before connection is dropped
     pub tcp_probe_count: Option<usize>,
+
+    /// TCP Fast Open queue length (0 to disable)
     pub tcp_fastopen: Option<usize>,
+
+    /// Path to expose Prometheus metrics on
     pub prometheus_metrics: Option<String>,
+
+    /// OpenTelemetry exporter configuration
     pub otlp_exporter: Option<String>,
+
+    /// List of configuration files to include
     pub includes: Option<Vec<String>>,
+
+    /// List of modules to enable for this server
     pub modules: Option<Vec<String>>,
+
+    /// Optional description/notes about this server
     pub remark: Option<String>,
 }
 
@@ -474,39 +701,66 @@ impl ServerConf {
         Ok(())
     }
 }
+
+/// Basic configuration options for the application
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
 pub struct BasicConf {
+    /// Application name
     pub name: Option<String>,
+    /// Path to error page template file
     pub error_template: Option<String>,
+    /// Path to PID file (defaults to /run/{pkg_name}.pid)
     pub pid_file: Option<String>,
+    /// Unix domain socket path for graceful upgrades
     pub upgrade_sock: Option<String>,
+    /// User to run the process as
     pub user: Option<String>,
+    /// Group to run the process as
     pub group: Option<String>,
+    /// Number of worker threads
     pub threads: Option<usize>,
+    /// Enable work stealing between worker threads
     pub work_stealing: Option<bool>,
+    /// Grace period before forcefully terminating during shutdown
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub grace_period: Option<Duration>,
+    /// Maximum time to wait for graceful shutdown
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub graceful_shutdown_timeout: Option<Duration>,
+    /// Maximum number of idle connections to keep in upstream connection pool
     pub upstream_keepalive_pool_size: Option<usize>,
+    /// Webhook URL for notifications
     pub webhook: Option<String>,
+    /// Type of webhook (e.g. "slack", "discord")
     pub webhook_type: Option<String>,
+    /// List of events to send webhook notifications for
     pub webhook_notifications: Option<Vec<String>>,
+    /// Log level (debug, info, warn, error)
     pub log_level: Option<String>,
+    /// Size of log buffer before flushing
     pub log_buffered_size: Option<ByteSize>,
+    /// Whether to format logs as JSON
     pub log_format_json: Option<bool>,
+    /// Sentry DSN for error reporting
     pub sentry: Option<String>,
+    /// Pyroscope server URL for continuous profiling
     pub pyroscope: Option<String>,
+    /// How often to check for configuration changes that require restart
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub auto_restart_check_interval: Option<Duration>,
+    /// Directory to store cache files
     pub cache_directory: Option<String>,
+    /// Maximum size of cache storage
     pub cache_max_size: Option<ByteSize>,
 }
 
 impl BasicConf {
+    /// Returns the path to the PID file
+    /// If pid_file is configured, returns that value
+    /// Otherwise returns /run/{pkg_name}.pid
     pub fn get_pid_file(&self) -> String {
         if let Some(pid_file) = &self.pid_file {
             pid_file.clone()

@@ -21,9 +21,13 @@ use humantime::parse_duration;
 use substring::Substring;
 
 pub struct EtcdStorage {
+    // Base path for all config entries in etcd
     path: String,
+    // List of etcd server addresses
     addrs: Vec<String>,
+    // Connection options (timeout, auth, etc)
     options: ConnectOptions,
+    // Whether to separate config entries by category/name
     separation: bool,
 }
 
@@ -31,7 +35,7 @@ pub const ETCD_PROTOCOL: &str = "etcd://";
 
 impl EtcdStorage {
     /// Create a new etcd storage for config.
-    /// Connection url: etcd://host1:port1,host2:port2/pingap?timeout=10s&connect_timeout=5s&user=**&password=**
+    /// Connection url format: etcd://host1:port1,host2:port2/pingap?timeout=10s&connect_timeout=5s&user=**&password=**
     pub fn new(value: &str) -> Result<Self> {
         let mut hosts = "".to_string();
         let mut path = "".to_string();
@@ -95,7 +99,7 @@ impl EtcdStorage {
 
 #[async_trait]
 impl ConfigStorage for EtcdStorage {
-    /// Load config from etcd.
+    /// Load config from etcd by fetching all keys under the base path
     async fn load_config(&self, opts: LoadConfigOptions) -> Result<PingapConf> {
         let mut c = self.connect().await?;
         let replace_include = opts.replace_include;
@@ -113,7 +117,9 @@ impl ConfigStorage for EtcdStorage {
         }
         PingapConf::new(buffer.as_slice(), replace_include)
     }
-    /// Save config to etcd by category.
+    /// Save config to etcd, optionally separating by category/name
+    /// If separation is enabled and name is provided, saves individual sections
+    /// Otherwise saves the entire category as one entry
     async fn save_config(
         &self,
         conf: &PingapConf,
@@ -139,9 +145,13 @@ impl ConfigStorage for EtcdStorage {
         }
         Ok(())
     }
+    /// Indicates that this storage supports watching for changes
     fn support_observer(&self) -> bool {
         true
     }
+    /// Sets up a watch on the config path to observe changes
+    /// Note: May miss changes if processing takes too long between updates
+    /// Should be used with periodic full fetches to ensure consistency
     async fn observe(&self) -> Result<Observer> {
         // 逻辑并不完善，有可能因为变更处理中途又发生其它变更导致缺失
         // 因此还需配合fetch的形式比对
@@ -157,6 +167,7 @@ impl ConfigStorage for EtcdStorage {
             etcd_watch_stream: Some(stream),
         })
     }
+    /// Save key-value data under the base path
     async fn save(&self, key: &str, data: &[u8]) -> Result<()> {
         let key = util::path_join(&self.path, key);
         let mut c = self.connect().await?;
@@ -165,6 +176,7 @@ impl ConfigStorage for EtcdStorage {
             .map_err(|e| Error::Etcd { source: e })?;
         Ok(())
     }
+    /// Load key-value data from under the base path
     async fn load(&self, key: &str) -> Result<Vec<u8>> {
         let key = util::path_join(&self.path, key);
         let mut c = self.connect().await?;

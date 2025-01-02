@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// External crate imports for async operations, etcd client, and error handling
 use async_trait::async_trait;
 use etcd_client::WatchStream;
 use once_cell::sync::OnceCell;
@@ -22,6 +23,7 @@ mod common;
 mod etcd;
 mod file;
 
+// Error enum for all possible configuration-related errors
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("Invalid error {message}"))]
@@ -61,11 +63,14 @@ pub enum Error {
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
+// Observer struct for watching configuration changes
 pub struct Observer {
+    // Optional watch stream for etcd-based configuration
     etcd_watch_stream: Option<WatchStream>,
 }
 
 impl Observer {
+    // Watches for configuration changes, returns true if changes detected
     pub async fn watch(&mut self) -> Result<bool> {
         let sleep_time = Duration::from_secs(30);
         // no watch stream, just sleep a moment
@@ -82,36 +87,50 @@ impl Observer {
     }
 }
 
+// Options for loading configuration
 #[derive(Debug, Default, Clone)]
 pub struct LoadConfigOptions {
-    pub replace_include: bool,
-    pub admin: bool,
+    pub replace_include: bool, // Whether to replace include directives
+    pub admin: bool,           // Whether this is an admin configuration
 }
 
+// Trait defining storage backend operations for configuration
 #[async_trait]
 pub trait ConfigStorage {
+    // Load configuration with specified options
     async fn load_config(&self, opts: LoadConfigOptions) -> Result<PingapConf>;
+
+    // Save configuration for a specific category and optional name
     async fn save_config(
         &self,
         conf: &PingapConf,
         category: &str,
         name: Option<&str>,
     ) -> Result<()>;
+
+    // Whether this storage supports change observation
     fn support_observer(&self) -> bool {
         false
     }
+
+    // Create an observer for this storage
     async fn observe(&self) -> Result<Observer> {
         Ok(Observer {
             etcd_watch_stream: None,
         })
     }
+
+    // Low-level storage operations
     async fn save(&self, key: &str, data: &[u8]) -> Result<()>;
     async fn load(&self, key: &str) -> Result<Vec<u8>>;
 }
 
+// Global static storage for the configuration backend
 static CONFIG_STORAGE: OnceCell<Box<(dyn ConfigStorage + Sync + Send)>> =
     OnceCell::new();
 
+// Creates a new configuration storage based on the path
+// Supports both etcd:// and file:// protocols
 fn new_config_storage(
     path: &str,
 ) -> Result<Box<(dyn ConfigStorage + Sync + Send)>> {
@@ -126,10 +145,21 @@ fn new_config_storage(
     Ok(s)
 }
 
+/// Initializes the configuration storage system if it hasn't been initialized yet
+///
+/// # Arguments
+/// * `path` - A string path that can be either a file path (file://) or etcd path (etcd://)
+///
+/// # Returns
+/// * `Result<&'static (dyn ConfigStorage + Sync + Send)>` - A reference to the initialized storage
+///   The reference has a static lifetime since it's stored in a global OnceCell
 pub fn try_init_config_storage(
     path: &str,
 ) -> Result<&'static (dyn ConfigStorage + Sync + Send)> {
+    // Attempts to get existing storage or initialize a new one if not present
+    // get_or_try_init ensures this initialization happens only once
     let conf = CONFIG_STORAGE.get_or_try_init(|| new_config_storage(path))?;
+    // Returns a reference to the storage implementation
     Ok(conf.as_ref())
 }
 

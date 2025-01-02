@@ -22,7 +22,9 @@ use tokio::fs;
 use tracing::debug;
 
 pub struct FileStorage {
+    // Path to the configuration file or directory
     path: String,
+    // Whether to separate config files by category/name
     separation: bool,
 }
 impl FileStorage {
@@ -30,11 +32,13 @@ impl FileStorage {
     pub fn new(path: &str) -> Result<Self> {
         let mut separation = false;
         let mut filepath = util::resolve_path(path);
+        // Parse query parameters if present (e.g., "path/to/config?separation=true")
         if let Some((path, query)) = path.split_once('?') {
             let m = util::convert_query_map(query);
             separation = m.contains_key("separation");
             filepath = util::resolve_path(path);
         }
+        // Validate path is not empty
         if filepath.is_empty() {
             return Err(Error::Invalid {
                 message: "Config path is empty".to_string(),
@@ -54,10 +58,11 @@ impl ConfigStorage for FileStorage {
     async fn load_config(&self, opts: LoadConfigOptions) -> Result<PingapConf> {
         let filepath = self.path.clone();
         let dir = Path::new(&filepath);
+        // Return default config if admin mode and path doesn't exist
         if opts.admin && !dir.exists() {
             return Ok(PingapConf::default());
         }
-        // create dir
+        // Create directory if needed for non-TOML paths
         if !filepath.ends_with(".toml") && !dir.exists() {
             fs::create_dir_all(&filepath)
                 .map_err(|e| Error::Io {
@@ -68,7 +73,9 @@ impl ConfigStorage for FileStorage {
         }
 
         let mut data = vec![];
+        // Handle directory of TOML files
         if dir.is_dir() {
+            // Recursively find all .toml files in directory
             for entry in
                 glob(&format!("{filepath}/**/*.toml")).map_err(|e| {
                     Error::Pattern {
@@ -83,10 +90,12 @@ impl ConfigStorage for FileStorage {
                     file: f.to_string_lossy().to_string(),
                 })?;
                 debug!(filename = format!("{f:?}"), "load config");
+                // Append file contents and newline
                 data.append(&mut buf);
                 data.push(0x0a);
             }
         } else {
+            // Handle single TOML file
             let mut buf = fs::read(&filepath).await.map_err(|e| Error::Io {
                 source: e,
                 file: filepath,
@@ -113,10 +122,15 @@ impl ConfigStorage for FileStorage {
         }
 
         if path.is_file() {
+            // For single file storage:
+            // 1. Convert config to TOML
+            // 2. Remove empty sections
+            // 3. Write back to file
             let ping_conf = toml::to_string_pretty(&conf)
                 .map_err(|e| Error::Ser { source: e })?;
             let mut values: toml::Table = toml::from_str(&ping_conf)
                 .map_err(|e| Error::De { source: e })?;
+            // Remove empty sections
             let mut omit_keys = vec![];
             for key in values.keys() {
                 if let Some(value) = values.get(key) {
@@ -135,6 +149,9 @@ impl ConfigStorage for FileStorage {
                 file: filepath,
             });
         }
+
+        // For directory storage:
+        // Get TOML content based on category and optional name
         let (path, toml_value) = if self.separation && name.is_some() {
             conf.get_toml(category, name)?
         } else {

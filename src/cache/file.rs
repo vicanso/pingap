@@ -331,29 +331,46 @@ mod tests {
     #[tokio::test]
     async fn test_file_cache() {
         let dir = TempDir::new().unwrap();
-        let dir = dir.into_path().to_string_lossy().to_string();
+        let namespace = "pingap";
+        std::fs::create_dir(dir.path().join(namespace)).unwrap();
+        let dir = dir.path().to_string_lossy().to_string();
         let cache = new_file_cache(&dir).unwrap();
+        assert_eq!(
+            true,
+            cache
+                .get_file_path("key", "")
+                .to_string_lossy()
+                .ends_with("/key")
+        );
+        assert_eq!(
+            true,
+            cache
+                .get_file_path("key", "namespace")
+                .to_string_lossy()
+                .ends_with("/namespace/key")
+        );
+
         let key = "key";
         let obj = CacheObject {
             meta: (b"Hello".to_vec(), b"World".to_vec()),
             body: Bytes::from_static(b"Hello World!"),
         };
-        let result = cache.get(key, "").await.unwrap();
+        let result = cache.get(key, namespace).await.unwrap();
         assert_eq!(true, result.is_none());
-        cache.put(key, "", obj.clone(), 1).await.unwrap();
-        let result = cache.get(key, "").await.unwrap().unwrap();
+        cache.put(key, namespace, obj.clone(), 1).await.unwrap();
+        let result = cache.get(key, namespace).await.unwrap().unwrap();
         assert_eq!(obj, result);
 
         // empty tinyufo, get from file
         let cache = new_file_cache(&dir).unwrap();
-        let result = cache.get(key, "").await.unwrap().unwrap();
+        let result = cache.get(key, namespace).await.unwrap().unwrap();
         assert_eq!(obj, result);
 
-        cache.remove(key, "").await.unwrap();
-        let result = cache.get(key, "").await.unwrap();
+        cache.remove(key, namespace).await.unwrap();
+        let result = cache.get(key, namespace).await.unwrap();
         assert_eq!(true, result.is_none());
 
-        cache.put(key, "", obj.clone(), 1).await.unwrap();
+        cache.put(key, namespace, obj.clone(), 1).await.unwrap();
         cache
             .clear(
                 SystemTime::now()
