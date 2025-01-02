@@ -19,6 +19,7 @@ use crate::state::State;
 use crate::util::{self, get_content_length};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
+use http::{HeaderName, HeaderValue};
 use once_cell::sync::Lazy;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
@@ -146,6 +147,23 @@ fn new_host_selector(host: &str) -> Result<HostSelector> {
     Ok(se)
 }
 
+// proxy_set_header X-Real-IP $remote_addr;
+// proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+// proxy_set_header X-Forwarded-Proto $scheme;
+// proxy_set_header X-Forwarded-Host $host;
+// proxy_set_header X-Forwarded-Port $server_port;
+
+static DEFAULT_PROXY_SET_HEADERS: Lazy<Vec<HttpHeader>> = Lazy::new(|| {
+    convert_headers(&[
+        "X-Real-IP:$remote_addr".to_string(),
+        "X-Forwarded-For:$proxy_add_x_forwarded_for".to_string(),
+        "X-Forwarded-Proto:$scheme".to_string(),
+        "X-Forwarded-Host:$host".to_string(),
+        "X-Forwarded-Port:$server_port".to_string(),
+    ])
+    .unwrap()
+});
+
 // Location struct represents a routing configuration that matches requests
 // based on path and host patterns and applies various proxy rules
 #[derive(Debug)]
@@ -171,6 +189,8 @@ pub struct Location {
     grpc_web: bool,
     // Maximum allowed request body size
     client_max_body_size: usize,
+    // Enable reverse proxy headers
+    enable_reverse_proxy_headers: bool,
 }
 
 fn format_headers(
@@ -235,6 +255,9 @@ impl Location {
                 .client_max_body_size
                 .unwrap_or_default()
                 .as_u64() as usize,
+            enable_reverse_proxy_headers: conf
+                .enable_reverse_proxy_headers
+                .unwrap_or_default(),
         };
         debug!("create a new location, {location:?}");
 
@@ -379,27 +402,33 @@ impl Location {
         ctx: &State,
         header: &mut RequestHeader,
     ) {
-        if let Some(arr) = &self.proxy_set_headers {
-            for (k, v) in arr {
-                if let Some(v) = convert_header_value(v, session, ctx) {
-                    // v validate for HeaderValue, so always no error
-                    let _ = header.insert_header(k, v);
+        // Helper closure to avoid code duplication
+        let mut set_header = |k: &HeaderName, v: &HeaderValue, append: bool| {
+            if let Some(v) = convert_header_value(v, session, ctx) {
+                // v validate for HeaderValue, so always no error
+                if append {
+                    let _ = header.append_header(k, v);
                 } else {
-                    // v validate for HeaderValue, so always no error
                     let _ = header.insert_header(k, v);
-                }
+                };
             }
+        };
+
+        // Set default reverse proxy headers if enabled
+        if self.enable_reverse_proxy_headers {
+            DEFAULT_PROXY_SET_HEADERS
+                .iter()
+                .for_each(|(k, v)| set_header(k, v, false));
         }
+
+        // Set custom proxy headers
+        if let Some(arr) = &self.proxy_set_headers {
+            arr.iter().for_each(|(k, v)| set_header(k, v, false));
+        }
+
+        // Append custom proxy headers
         if let Some(arr) = &self.proxy_add_headers {
-            for (k, v) in arr {
-                if let Some(v) = convert_header_value(v, session, ctx) {
-                    // v validate for HeaderValue, so always no error
-                    let _ = header.append_header(k, v);
-                } else {
-                    // v validate for HeaderValue, so always no error
-                    let _ = header.append_header(k, v);
-                }
-            }
+            arr.iter().for_each(|(k, v)| set_header(k, v, true));
         }
     }
     /// Run request plugins, if return Ok(true), the request will be done.

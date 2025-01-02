@@ -488,6 +488,9 @@ pub struct LocationConf {
     /// Whether to enable gRPC-Web protocol support
     pub grpc_web: Option<bool>,
 
+    /// Whether to enable reverse proxy headers
+    pub enable_reverse_proxy_headers: Option<bool>,
+
     /// Optional description/notes about this location
     pub remark: Option<String>,
 }

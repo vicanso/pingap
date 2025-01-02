@@ -183,6 +183,7 @@ export default {
     proxyAddHeaders: "Proxy Add Headers",
     proxyAddHeadersPlaceholder:
       "Input the http header name : Input the http header value",
+    enableReverseProxyHeaders: "Enable Reverse Proxy Headers",
     weight: "Weight",
     weightPlaceholder: "Input the weight of location",
     clientMaxBodySize: "Client Max Body Size",

@@ -174,6 +174,7 @@ export default {
     proxySetHeadersPlaceholder: "输入请求头名称 : 输入请求头值",
     proxyAddHeaders: "转发添加请求头",
     proxyAddHeadersPlaceholder: "输入请求头名称 : 输入请求头值",
+    enableReverseProxyHeaders: "启用反向代理请求头",
     weight: "权重",
     weightPlaceholder: "输入location的权重",
     clientMaxBodySize: "请求实体限制大小",

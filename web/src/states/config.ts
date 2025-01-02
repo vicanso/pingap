@@ -39,6 +39,7 @@ export interface Location {
   weight?: number;
   proxy_set_headers?: string[];
   proxy_add_headers?: string[];
+  enable_reverse_proxy_headers?: boolean;
   rewrite?: string;
   client_max_body_size?: string;
   max_processing?: number;

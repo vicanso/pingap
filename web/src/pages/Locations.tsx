@@ -142,6 +142,15 @@ export default function Locations() {
       category: ExFormItemCategory.KV_LIST,
     },
     {
+      name: "enable_reverse_proxy_headers",
+      label: locationI18n("enableReverseProxyHeaders"),
+      placeholder: "",
+      defaultValue: locationConfig.enable_reverse_proxy_headers,
+      span: 3,
+      category: ExFormItemCategory.RADIOS,
+      options: newBooleanOptions(),
+    },
+    {
       name: "includes",
       label: i18n("includes"),
       placeholder: i18n("includesPlaceholder"),
