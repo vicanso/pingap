@@ -21,24 +21,74 @@ static ERROR_TEMPLATE: &str = include_str!("../../error.html");
 // ServerConf struct represents the configuration for a server instance
 #[derive(Debug, Default)]
 pub struct ServerConf {
-    pub admin: bool,                // Whether this is an admin server
-    pub name: String,               // Server name identifier
-    pub addr: String,               // Listening address(es)
-    pub access_log: Option<String>, // Access log format/configuration
-    pub locations: Vec<String>,     // List of location routes
-    pub tls_cipher_list: Option<String>, // OpenSSL cipher list for TLS
-    pub tls_ciphersuites: Option<String>, // TLS 1.3 ciphersuites
-    pub tls_min_version: Option<String>, // Minimum TLS version allowed
-    pub tls_max_version: Option<String>, // Maximum TLS version allowed
-    pub threads: Option<usize>,     // Number of worker threads
-    pub error_template: String,     // HTML template for error pages
-    pub tcp_keepalive: Option<TcpKeepalive>, // TCP keepalive settings
-    pub tcp_fastopen: Option<usize>, // TCP Fast Open queue size
-    pub global_certificates: bool,  // Use global TLS certificates
-    pub enabled_h2: bool,           // HTTP/2 support enabled
-    pub prometheus_metrics: Option<String>, // Prometheus metrics endpoint
-    pub otlp_exporter: Option<String>, // OpenTelemetry exporter config
-    pub modules: Option<Vec<String>>, // Enabled server modules
+    // Whether this server instance handles admin-related functionality
+    pub admin: bool,
+
+    // Unique identifier for this server instance
+    pub name: String,
+
+    // Comma-separated list of IP:port combinations where the server will listen
+    // Example: "127.0.0.1:3000,127.0.0.1:3001"
+    pub addr: String,
+
+    // Access log configuration string. Supports formats like "combined", "tiny", etc.
+    // None means access logging is disabled
+    pub access_log: Option<String>,
+
+    // List of location route identifiers that this server will handle
+    // These correspond to the location configurations defined elsewhere
+    pub locations: Vec<String>,
+
+    // OpenSSL cipher list string for TLS versions below 1.3
+    // Example: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
+    pub tls_cipher_list: Option<String>,
+
+    // TLS 1.3 specific cipher suite configuration
+    // Example: "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384"
+    pub tls_ciphersuites: Option<String>,
+
+    // Minimum TLS version the server will accept
+    // Common values: "TLSv1.2", "TLSv1.3"
+    pub tls_min_version: Option<String>,
+
+    // Maximum TLS version the server will support
+    // Common values: "TLSv1.2", "TLSv1.3"
+    pub tls_max_version: Option<String>,
+
+    // Number of worker threads for handling connections
+    // None means use system default
+    pub threads: Option<usize>,
+
+    // HTML template used for displaying error pages to clients
+    // Will use default template if not specified
+    pub error_template: String,
+
+    // TCP keepalive configuration for maintaining persistent connections
+    // Includes idle time, probe count, and interval settings
+    pub tcp_keepalive: Option<TcpKeepalive>,
+
+    // TCP Fast Open queue size for improved connection establishment
+    // None means TCP Fast Open is disabled
+    pub tcp_fastopen: Option<usize>,
+
+    // Whether to use globally configured TLS certificates
+    // False means server-specific certificates will be used
+    pub global_certificates: bool,
+
+    // Whether HTTP/2 protocol support is enabled for this server
+    pub enabled_h2: bool,
+
+    // Endpoint path for exposing Prometheus metrics
+    // None means metrics collection is disabled
+    pub prometheus_metrics: Option<String>,
+
+    // OpenTelemetry exporter configuration string
+    // Used for distributed tracing support
+    pub otlp_exporter: Option<String>,
+
+    // List of enabled module names for this server instance
+    // Allows for dynamic functionality extension
+    pub modules: Option<Vec<String>>,
 }
 
 impl fmt::Display for ServerConf {

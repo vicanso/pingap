@@ -297,7 +297,7 @@ pub fn get_latency(value: &Option<u64>) -> Option<u64> {
 
 pub fn convert_tls_version(version: &Option<String>) -> Option<SslVersion> {
     if let Some(version) = &version {
-        let version = match version.as_str() {
+        let version = match version.to_lowercase().as_str() {
             "tlsv1.1" => SslVersion::TLS1_1,
             "tlsv1.3" => SslVersion::TLS1_3,
             _ => SslVersion::TLS1_2,

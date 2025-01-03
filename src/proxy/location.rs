@@ -404,14 +404,14 @@ impl Location {
     ) {
         // Helper closure to avoid code duplication
         let mut set_header = |k: &HeaderName, v: &HeaderValue, append: bool| {
-            if let Some(v) = convert_header_value(v, session, ctx) {
-                // v validate for HeaderValue, so always no error
-                if append {
-                    let _ = header.append_header(k, v);
-                } else {
-                    let _ = header.insert_header(k, v);
-                };
-            }
+            let value = convert_header_value(v, session, ctx)
+                .unwrap_or_else(|| v.clone());
+            // v validate for HeaderValue, so always no error
+            if append {
+                let _ = header.append_header(k, value);
+            } else {
+                let _ = header.insert_header(k, value);
+            };
         };
 
         // Set default reverse proxy headers if enabled
@@ -516,8 +516,12 @@ pub fn try_init_locations(
 
 #[cfg(test)]
 mod tests {
-    use super::{format_headers, new_path_selector, Location, PathSelector};
+    use super::{
+        format_headers, new_path_selector, Location, PathSelector,
+        DEFAULT_PROXY_SET_HEADERS,
+    };
     use crate::config::{LocationConf, PluginStep};
+    use crate::http_extra::convert_header_value;
     use crate::plugin::initialize_test_plugins;
     use crate::state::State;
     use bytesize::ByteSize;
@@ -526,6 +530,36 @@ mod tests {
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
+
+    #[tokio::test]
+    async fn test_set_reverse_proxy_headers() {
+        let headers = [
+            "X-Forwarded-For:192.168.1.1".to_string(),
+            "Host: pingap.io".to_string(),
+        ]
+        .join("\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let ctx = State {
+            remote_addr: Some("1.1.1.1".to_string()),
+            server_port: Some(443),
+            tls_version: Some("TLSv1.3".to_string()),
+            ..Default::default()
+        };
+        let mut values = vec![];
+        DEFAULT_PROXY_SET_HEADERS.iter().for_each(|(k, v)| {
+            if let Some(value) = convert_header_value(v, &session, &ctx) {
+                values.push(format!("{k}:{}", value.to_str().unwrap()));
+            }
+        });
+        assert_eq!(
+            r###"["x-real-ip:1.1.1.1", "x-forwarded-for:192.168.1.1, 1.1.1.1", "x-forwarded-proto:https", "x-forwarded-host:pingap.io", "x-forwarded-port:443"]"###,
+            format!("{values:?}")
+        );
+    }
 
     #[test]
     fn test_format_headers() {

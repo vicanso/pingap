@@ -38,8 +38,9 @@ use snafu::Snafu;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
-use tracing::{debug, error};
+use std::time::{Duration, SystemTime};
+use tracing::{debug, error, info};
+static LOG_CATEGORY: &str = "upstream";
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -84,30 +85,81 @@ impl Tracing for UpstreamPeerTracer {
     }
 }
 
-// Upstream represents a group of backend servers and their configuration
 #[derive(Debug)]
+/// Represents a group of backend servers and their configuration for load balancing and connection management
 pub struct Upstream {
-    pub name: String, // Unique name for this upstream group
-    pub key: String,  // Hash key for configuration changes
-    hash: String,     // Hash strategy (url/ip/header/cookie/query)
-    hash_key: String, // Key to use for hash-based load balancing
-    tls: bool,        // Whether to use TLS for backend connections
-    sni: String,      // Server Name Indication for TLS
+    /// Unique identifier for this upstream group
+    pub name: String,
+
+    /// Hash key used to detect configuration changes
+    pub key: String,
+
+    /// Load balancing hash strategy:
+    /// - "url": Hash based on request URL
+    /// - "ip": Hash based on client IP
+    /// - "header": Hash based on specific header value
+    /// - "cookie": Hash based on specific cookie value
+    /// - "query": Hash based on specific query parameter
+    hash: String,
+
+    /// Key to use with the hash strategy:
+    /// - For "header": Header name to use
+    /// - For "cookie": Cookie name to use
+    /// - For "query": Query parameter name to use
+    hash_key: String,
+
+    /// Whether to use TLS for connections to backend servers
+    tls: bool,
+
+    /// Server Name Indication value for TLS connections
+    /// Special value "$host" means use the request's Host header
+    sni: String,
+
+    /// Load balancing strategy implementation:
+    /// - RoundRobin: Distributes requests evenly
+    /// - Consistent: Uses consistent hashing
+    /// - Transparent: Direct passthrough
     #[debug("lb")]
-    lb: SelectionLb, // Load balancing strategy
+    lb: SelectionLb,
+
+    /// Maximum time to wait for establishing a connection
     connection_timeout: Option<Duration>,
+
+    /// Maximum time for the entire connection lifecycle
     total_connection_timeout: Option<Duration>,
+
+    /// Maximum time to wait for reading data
     read_timeout: Option<Duration>,
+
+    /// Maximum time a connection can be idle before being closed
     idle_timeout: Option<Duration>,
+
+    /// Maximum time to wait for writing data
     write_timeout: Option<Duration>,
+
+    /// Whether to verify TLS certificates from backend servers
     verify_cert: Option<bool>,
-    alpn: ALPN, // Application Layer Protocol Negotiation settings
+
+    /// Application Layer Protocol Negotiation settings (H1, H2, H2H1)
+    alpn: ALPN,
+
+    /// TCP keepalive configuration for maintaining persistent connections
     tcp_keepalive: Option<TcpKeepalive>,
+
+    /// Size of TCP receive buffer in bytes
     tcp_recv_buf: Option<usize>,
+
+    /// Whether to enable TCP Fast Open for reduced connection latency
     tcp_fast_open: Option<bool>,
+
+    /// Tracer for monitoring active connections to this upstream
     peer_tracer: Option<UpstreamPeerTracer>,
+
+    /// Generic tracer interface for connection monitoring
     tracer: Option<Tracer>,
-    processing: AtomicI32, // Number of requests currently being processed
+
+    /// Counter for number of requests currently being processed by this upstream
+    processing: AtomicI32,
 }
 
 // Creates new backend servers based on discovery method (DNS/Docker/Static)
@@ -117,28 +169,24 @@ fn new_backends(
     ipv4_only: bool,
     discovery: &str,
 ) -> Result<Backends> {
-    if is_dns_discovery(discovery) {
-        new_dns_discover_backends(addrs, tls, ipv4_only).map_err(|e| {
-            Error::Common {
-                category: "dns_discovery".to_string(),
-                message: e.to_string(),
-            }
-        })
-    } else if is_docker_discovery(discovery) {
-        new_docker_discover_backends(addrs, tls, ipv4_only).map_err(|e| {
-            Error::Common {
-                category: "docker_discovery".to_string(),
-                message: e.to_string(),
-            }
-        })
-    } else {
-        new_common_discover_backends(addrs, tls, ipv4_only).map_err(|e| {
-            Error::Common {
-                category: "static_discovery".to_string(),
-                message: e.to_string(),
-            }
-        })
-    }
+    let (result, category) = match discovery {
+        d if is_dns_discovery(d) => (
+            new_dns_discover_backends(addrs, tls, ipv4_only),
+            "dns_discovery",
+        ),
+        d if is_docker_discovery(d) => (
+            new_docker_discover_backends(addrs, tls, ipv4_only),
+            "docker_discovery",
+        ),
+        _ => (
+            new_common_discover_backends(addrs, tls, ipv4_only),
+            "static_discovery",
+        ),
+    };
+    result.map_err(|e| Error::Common {
+        category: category.to_string(),
+        message: e.to_string(),
+    })
 }
 
 // Gets the value to use for consistent hashing based on the hash strategy
@@ -175,32 +223,50 @@ fn get_hash_value(
     }
 }
 
+/// Creates a new load balancer instance based on the provided configuration
+///
+/// # Arguments
+/// * `name` - Name identifier for the upstream service
+/// * `conf` - Configuration for the upstream service
+///
+/// # Returns
+/// * `Result<(SelectionLb, String, String)>` - Returns the load balancer, hash strategy, and hash key
 fn new_load_balancer(
     name: &str,
     conf: &UpstreamConf,
 ) -> Result<(SelectionLb, String, String)> {
+    // Validate that addresses are provided
     if conf.addrs.is_empty() {
         return Err(Error::Common {
             category: "new_upstream".to_string(),
             message: "Upstream addrs is empty".to_string(),
         });
     }
+
+    // Determine the service discovery method
     let discovery = conf.guess_discovery();
+    // For transparent discovery, return early with no load balancing
     if discovery == TRANSPARENT_DISCOVERY {
         return Ok((SelectionLb::Transparent, "".to_string(), "".to_string()));
     }
+
     let mut hash = "".to_string();
+    // Determine if TLS should be enabled based on SNI configuration
     let tls = conf
         .sni
         .as_ref()
         .map(|item| !item.is_empty())
         .unwrap_or_default();
+
+    // Create backend servers using the configured addresses and discovery method
     let backends = new_backends(
         &conf.addrs,
         tls,
         conf.ipv4_only.unwrap_or_default(),
         discovery.as_str(),
     )?;
+
+    // Set up health checking for the backends
     let (hc, health_check_frequency) =
         new_health_check(name, &conf.health_check.clone().unwrap_or_default())
             .map_err(|e| Error::Common {
@@ -208,38 +274,50 @@ fn new_load_balancer(
                 category: "health".to_string(),
             })?;
 
+    // Parse the load balancing algorithm configuration
+    // Format: "algo:hash_type:hash_key" (e.g. "hash:cookie:session_id")
     let algo_method = conf.algo.clone().unwrap_or_default();
     let algo_params: Vec<&str> = algo_method.split(':').collect();
     let mut hash_key = "".to_string();
 
+    // Create the appropriate load balancer based on the algorithm
     let lb = match algo_params[0] {
+        // Consistent hashing load balancer
         "hash" => {
             let mut lb = LoadBalancer::<Consistent>::from_backends(backends);
+            // Parse hash type and key if provided
             if algo_params.len() > 1 {
                 hash = algo_params[1].to_string();
                 if algo_params.len() > 2 {
                     hash_key = algo_params[2].to_string();
                 }
             }
+            // For static discovery, perform immediate backend update
             if is_static_discovery(&discovery) {
                 lb.update()
                     .now_or_never()
                     .expect("static should not block")
                     .expect("static should not error");
             }
+            // Configure health checking
+            lb.parallel_health_check = true;
             lb.set_health_check(hc);
             lb.update_frequency = conf.update_frequency;
             lb.health_check_frequency = Some(health_check_frequency);
             SelectionLb::Consistent(Arc::new(lb))
         },
+        // Round robin load balancer (default)
         _ => {
             let mut lb = LoadBalancer::<RoundRobin>::from_backends(backends);
+            // For static discovery, perform immediate backend update
             if is_static_discovery(&discovery) {
                 lb.update()
                     .now_or_never()
                     .expect("static should not block")
                     .expect("static should not error");
             }
+            // Configure health checking
+            lb.parallel_health_check = true;
             lb.set_health_check(hc);
             lb.update_frequency = conf.update_frequency;
             lb.health_check_frequency = Some(health_check_frequency);
@@ -552,7 +630,7 @@ impl ServiceTask for HealthCheckTask {
                 if !check_frequency_matched(health_check_frequency) {
                     return;
                 }
-
+                let health_check_start_time = SystemTime::now();
                 if let Some(lb) = up.as_round_robin() {
                     lb.backends()
                         .run_health_check(lb.parallel_health_check)
@@ -562,7 +640,18 @@ impl ServiceTask for HealthCheckTask {
                         .run_health_check(lb.parallel_health_check)
                         .await;
                 }
-                debug!(name, "health check is done",);
+                info!(
+                    category = LOG_CATEGORY,
+                    name,
+                    elapsed = format!(
+                        "{}ms",
+                        health_check_start_time
+                            .elapsed()
+                            .unwrap_or_default()
+                            .as_millis()
+                    ),
+                    "health check is done"
+                );
             })
         });
         futures::future::join_all(jobs).await;
