@@ -139,15 +139,15 @@ pub fn get_process_system_info() -> ProcessSystemInfo {
     }
     let cpus = num_cpus::get();
     let physical_cpus = num_cpus::get_physical();
-    let kind = MemoryRefreshKind::new().with_ram();
+    let kind = MemoryRefreshKind::nothing().with_ram();
     let mut sys =
-        System::new_with_specifics(RefreshKind::new().with_memory(kind));
+        System::new_with_specifics(RefreshKind::nothing().with_memory(kind));
     sys.refresh_memory();
 
     ProcessSystemInfo {
         memory,
         memory_mb,
-        arch: System::cpu_arch().unwrap_or_default(),
+        arch: System::cpu_arch(),
         cpus,
         physical_cpus,
         kernel: System::kernel_version().unwrap_or_default(),

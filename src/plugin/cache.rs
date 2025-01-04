@@ -41,7 +41,7 @@ use std::str::FromStr;
 use std::time::Duration;
 use tracing::{debug, error};
 
-// meomory limit size
+// memory limit size
 const MAX_MEMORY_SIZE: usize = 100 * 1024 * 1024;
 static CACHE_BACKEND: OnceCell<HttpCache> = OnceCell::new();
 static PREDICTOR: OnceCell<Predictor<32>> = OnceCell::new();
