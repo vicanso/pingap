@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.9.8](https://github.com/vicanso/pingap/compare/v0.9.7..0.9.8) - 2025-01-04
+
+### ⛰️  Features
+
+- Support set default reverse proxy header, #77 - ([2a4d198](https://github.com/vicanso/pingap/commit/2a4d1984c08aedd764845d27083505cd15f4795d))
+
+### 🐛 Bug Fixes
+
+- Fix test - ([0489480](https://github.com/vicanso/pingap/commit/0489480027f8c4dfc04080cb757a3c58299fb508))
+- Fix format - ([cf9ddb8](https://github.com/vicanso/pingap/commit/cf9ddb8cd5f06c3260f2de89c25beb7a431341c8))
+
+### 🚜 Refactor
+
+- Update dependencies - ([248c32f](https://github.com/vicanso/pingap/commit/248c32fda5ae8fa0073a0e6ccaaf3d5789178930))
+- Update upstream health check - ([7fa172c](https://github.com/vicanso/pingap/commit/7fa172c28ab97365c0a193a4be20aa5760410daa))
+- Adjust upstream discovery - ([fc3414e](https://github.com/vicanso/pingap/commit/fc3414ea2286e5c1ebfcdc84029230faa5cdf9d0))
+- Add comments - ([b6454cb](https://github.com/vicanso/pingap/commit/b6454cb15d42717278d83ac99d0af4445046e582))
+- Adjust label name of config - ([c724a87](https://github.com/vicanso/pingap/commit/c724a8705c107908705f4ec176bcc920cf4c6448))
+- Add more comments - ([7fe8e20](https://github.com/vicanso/pingap/commit/7fe8e20049a0c588e3be9957caef66e909e5ad9a))
+- Adjust the code of service - ([788e86e](https://github.com/vicanso/pingap/commit/788e86e7fcd0373eb87b552a66a90e8baaeaa813))
+- Adjust acme handle function - ([fba764b](https://github.com/vicanso/pingap/commit/fba764ba540fccabc789b1e7985cb613f1b1e431))
+- Use crc32 hash for secret description - ([a5ef9c1](https://github.com/vicanso/pingap/commit/a5ef9c1c0e0293d98b430887eaa56241d7f990f2))
+
+### 📚 Documentation
+
+- Update documents - ([776c293](https://github.com/vicanso/pingap/commit/776c29321d52288b7dfe3caf32000d155e3e66d1))
+- Update reademd - ([492405b](https://github.com/vicanso/pingap/commit/492405b9ce5adeb5302a766f83db9da56746e782))
+
 ## [0.9.7](https://github.com/vicanso/pingap/compare/v0.9.5..0.9.7) - 2024-12-28
 
 ### ⛰️  Features
