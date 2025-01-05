@@ -3,12 +3,9 @@ cache_directory = "~/tmp/cache"
 log_level = "INFO"
 
 [locations.charts]
+enable_reverse_proxy_headers = true
 path = "/"
 plugins = ["pingap:acceptEncodingAdjustment", "chartsCache"]
-proxy_set_headers = [
-    "X-Forwarded-For:$proxy_add_x_forwarded_for",
-    "X-Real-IP:$remote_addr",
-]
 upstream = "charts"
 
 [plugins.chartsCache]
