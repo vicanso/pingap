@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::http_cache::{CacheObject, HttpCacheStats, HttpCacheStorage};
+use super::http_cache::{
+    get_weight, CacheObject, HttpCacheStats, HttpCacheStorage,
+};
 use super::{Error, Result, PAGE_SIZE};
 #[cfg(feature = "full")]
 use crate::state::{CACHE_READING_TIME, CACHE_WRITING_TIME};
@@ -30,16 +32,27 @@ use tokio::fs;
 use tracing::{debug, error, info};
 use walkdir::WalkDir;
 
+/// A file-based cache implementation that combines disk storage with in-memory caching
+/// using TinyUfo for hot data.
 pub struct FileCache {
+    /// Base directory path where cache files are stored
     pub directory: String,
+    /// Counter for current number of concurrent read operations
     reading: AtomicU32,
+    /// Maximum allowed concurrent read operations before returning OverQuota error
     reading_max: u32,
     #[cfg(feature = "full")]
+    /// Histogram metric for tracking cache read operation times
     read_time: Box<Histogram>,
+    /// Counter for current number of concurrent write operations
     writing: AtomicU32,
+    /// Maximum allowed concurrent write operations before returning OverQuota error
     writing_max: u32,
     #[cfg(feature = "full")]
+    /// Histogram metric for tracking cache write operation times
     write_time: Box<Histogram>,
+    /// Optional in-memory TinyUfo cache for frequently accessed items
+    /// When enabled, reduces disk I/O by serving hot data from memory
     cache: Option<TinyUfo<String, CacheObject>>,
 }
 
@@ -95,6 +108,7 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
     let params = parse_params(dir);
 
     let path = Path::new(&params.directory);
+    // directory not exist, create it
     if !path.exists() {
         std::fs::create_dir_all(path).map_err(|e| Error::Io { source: e })?;
     }
@@ -182,14 +196,21 @@ impl HttpCacheStorage for FileCache {
         #[cfg(feature = "full")]
         self.read_time.observe(util::elapsed_second(start));
 
-        match result {
+        let obj = match result {
             Ok(buf) if buf.len() >= 8 => {
                 Ok(Some(CacheObject::from(Bytes::from(buf))))
             },
             Ok(_) => Ok(None),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(Error::Io { source: e }),
+        }?;
+        if let Some(obj) = &obj {
+            if let Some(cache) = &self.cache {
+                let weight = get_weight(obj.body.len());
+                cache.put(key.to_string(), obj.clone(), weight);
+            }
         }
+        Ok(obj)
     }
     /// Stores a cache object both in TinyUfo cache and on disk.
     ///
@@ -358,6 +379,17 @@ mod tests {
         let result = cache.get(key, namespace).await.unwrap();
         assert_eq!(true, result.is_none());
         cache.put(key, namespace, obj.clone(), 1).await.unwrap();
+        // tinyufo cache will be exist after put
+        assert_eq!(
+            true,
+            cache
+                .cache
+                .as_ref()
+                .unwrap()
+                .get(&key.to_string())
+                .is_some()
+        );
+
         let result = cache.get(key, namespace).await.unwrap().unwrap();
         assert_eq!(obj, result);
 
@@ -366,7 +398,29 @@ mod tests {
         let result = cache.get(key, namespace).await.unwrap().unwrap();
         assert_eq!(obj, result);
 
+        // check tinyufo cache
+        // it will be exist after get from file
+        assert_eq!(
+            true,
+            cache
+                .cache
+                .as_ref()
+                .unwrap()
+                .get(&key.to_string())
+                .is_some()
+        );
+
         cache.remove(key, namespace).await.unwrap();
+        // tinyufo cache will be removed after remove
+        assert_eq!(
+            false,
+            cache
+                .cache
+                .as_ref()
+                .unwrap()
+                .get(&key.to_string())
+                .is_some()
+        );
         let result = cache.get(key, namespace).await.unwrap();
         assert_eq!(true, result.is_none());
 

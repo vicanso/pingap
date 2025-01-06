@@ -51,9 +51,8 @@ const META_SIZE_LENGTH: usize = 8;
 /// - Remaining bytes: body data
 impl From<Bytes> for CacheObject {
     fn from(value: Bytes) -> Self {
-        let size_byte = META_SIZE_LENGTH;
         // 8 bytes
-        if value.len() < size_byte {
+        if value.len() < META_SIZE_LENGTH {
             return Self::default();
         }
         let mut data = value;
@@ -342,7 +341,7 @@ static MAX_ONE_CACHE_SIZE: usize = 10 * 1024 * PAGE_SIZE;
 
 /// Calculates the storage weight based on content size
 /// Returns a weight between 1 and u16::MAX
-fn get_weight(size: usize) -> u16 {
+pub fn get_weight(size: usize) -> u16 {
     if size <= PAGE_SIZE {
         return 1;
     }
