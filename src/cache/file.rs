@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::http_cache::{
-    get_weight, CacheObject, HttpCacheStats, HttpCacheStorage,
-};
+use super::http_cache::{CacheObject, HttpCacheStats, HttpCacheStorage};
 use super::{Error, Result, PAGE_SIZE};
 #[cfg(feature = "full")]
 use crate::state::{CACHE_READING_TIME, CACHE_WRITING_TIME};
@@ -39,14 +37,14 @@ pub struct FileCache {
     pub directory: String,
     /// Counter for current number of concurrent read operations
     reading: AtomicU32,
-    /// Maximum allowed concurrent read operations before returning OverQuota error
+    /// Maximum allowed concurrent read operations
     reading_max: u32,
     #[cfg(feature = "full")]
     /// Histogram metric for tracking cache read operation times
     read_time: Box<Histogram>,
     /// Counter for current number of concurrent write operations
     writing: AtomicU32,
-    /// Maximum allowed concurrent write operations before returning OverQuota error
+    /// Maximum allowed concurrent write operations
     writing_max: u32,
     #[cfg(feature = "full")]
     /// Histogram metric for tracking cache write operation times
@@ -82,7 +80,10 @@ impl Default for FileCacheParams {
 
 fn parse_params(dir: &str) -> FileCacheParams {
     let (dir, query) = dir.split_once('?').unwrap_or((dir, ""));
-    let mut params = FileCacheParams::default();
+    let mut params = FileCacheParams {
+        directory: util::resolve_path(dir),
+        ..Default::default()
+    };
 
     if !query.is_empty() {
         let m = util::convert_query_map(query);
@@ -99,7 +100,6 @@ fn parse_params(dir: &str) -> FileCacheParams {
             .and_then(|v| v.parse().ok())
             .unwrap_or(params.cache_max);
     }
-    params.directory = util::resolve_path(dir);
     params
 }
 
@@ -206,7 +206,7 @@ impl HttpCacheStorage for FileCache {
         }?;
         if let Some(obj) = &obj {
             if let Some(cache) = &self.cache {
-                let weight = get_weight(obj.body.len());
+                let weight = obj.get_weight();
                 cache.put(key.to_string(), obj.clone(), weight);
             }
         }
@@ -218,7 +218,6 @@ impl HttpCacheStorage for FileCache {
     /// * `key` - The cache key
     /// * `namespace` - Optional namespace to organize cache entries  
     /// * `data` - The cache object to store
-    /// * `weight` - Weight hint for the TinyUfo cache
     ///
     /// # Returns
     /// * `Ok(())` - On successful storage
@@ -229,11 +228,10 @@ impl HttpCacheStorage for FileCache {
         key: &str,
         namespace: &str,
         data: CacheObject,
-        weight: u16,
     ) -> Result<()> {
         debug!(key, namespace, "put cache to file");
         if let Some(c) = &self.cache {
-            c.put(key.to_string(), data.clone(), weight);
+            c.put(key.to_string(), data.clone(), data.get_weight());
         }
         #[cfg(feature = "full")]
         let start = SystemTime::now();
@@ -356,20 +354,6 @@ mod tests {
         std::fs::create_dir(dir.path().join(namespace)).unwrap();
         let dir = dir.path().to_string_lossy().to_string();
         let cache = new_file_cache(&dir).unwrap();
-        assert_eq!(
-            true,
-            cache
-                .get_file_path("key", "")
-                .to_string_lossy()
-                .ends_with("/key")
-        );
-        assert_eq!(
-            true,
-            cache
-                .get_file_path("key", "namespace")
-                .to_string_lossy()
-                .ends_with("/namespace/key")
-        );
 
         let key = "key";
         let obj = CacheObject {
@@ -378,7 +362,7 @@ mod tests {
         };
         let result = cache.get(key, namespace).await.unwrap();
         assert_eq!(true, result.is_none());
-        cache.put(key, namespace, obj.clone(), 1).await.unwrap();
+        cache.put(key, namespace, obj.clone()).await.unwrap();
         // tinyufo cache will be exist after put
         assert_eq!(
             true,
@@ -424,7 +408,7 @@ mod tests {
         let result = cache.get(key, namespace).await.unwrap();
         assert_eq!(true, result.is_none());
 
-        cache.put(key, namespace, obj.clone(), 1).await.unwrap();
+        cache.put(key, namespace, obj.clone()).await.unwrap();
         cache
             .clear(
                 SystemTime::now()
@@ -433,6 +417,28 @@ mod tests {
             )
             .await
             .unwrap();
+    }
+
+    #[test]
+    fn test_get_file_path() {
+        let dir = TempDir::new().unwrap();
+        let cache =
+            new_file_cache(dir.path().to_string_lossy().as_ref()).unwrap();
+        assert_eq!(
+            true,
+            cache
+                .get_file_path("key", "namespace")
+                .to_string_lossy()
+                .ends_with("/namespace/key")
+        );
+
+        assert_eq!(
+            true,
+            cache
+                .get_file_path("key", "")
+                .to_string_lossy()
+                .ends_with("/key")
+        );
     }
 
     #[test]

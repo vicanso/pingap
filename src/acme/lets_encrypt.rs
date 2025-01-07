@@ -408,12 +408,14 @@ async fn new_lets_encrypt(
             true => info!(
                 category = LOG_CATEGORY,
                 delay = format!("{delay:?}"),
-                "Order is not ready, waiting"
+                "order is not ready, waiting"
             ),
             false => {
                 return Err(Error::Fail {
                     category: "retry_too_many".to_string(),
-                    message: format!("Giving up: order is not ready. For details, see the url: {detail_url:?}"),
+                    message: format!(
+                        "order is not ready, detail url: {detail_url:?}"
+                    ),
                 });
             },
         }
@@ -422,7 +424,7 @@ async fn new_lets_encrypt(
     if state.status == OrderStatus::Invalid {
         return Err(Error::Fail {
             category: "order_invalid".to_string(),
-            message: format!("order is invalid, check {detail_url:?}"),
+            message: format!("order is invalid, detail url: {detail_url:?}"),
         });
     }
 

@@ -41,6 +41,22 @@ pub struct CacheObject {
     pub body: Bytes,
 }
 
+// Maximum size for a single cached object (40MB)
+static MAX_ONE_CACHE_SIZE: usize = 10 * 1024 * PAGE_SIZE;
+
+impl CacheObject {
+    pub fn get_weight(&self) -> u16 {
+        let size = self.body.len() + self.meta.0.len() + self.meta.1.len();
+        if size <= PAGE_SIZE {
+            return 1;
+        }
+        if size >= MAX_ONE_CACHE_SIZE {
+            return u16::MAX;
+        }
+        (size / PAGE_SIZE) as u16
+    }
+}
+
 const META_SIZE_LENGTH: usize = 8;
 
 /// Creates a CacheObject from bytes with the following format:
@@ -113,14 +129,12 @@ pub trait HttpCacheStorage: Sync + Send {
         namespace: &str,
     ) -> Result<Option<CacheObject>>;
 
-    /// Stores a cache object with the given key, namespace and weight
-    /// Weight determines the storage cost/priority of the cached item
+    /// Stores a cache object with the given key and namespace
     async fn put(
         &self,
         key: &str,
         namespace: &str,
         data: CacheObject,
-        weight: u16,
     ) -> Result<()>;
 
     /// Removes a cached object from storage.
@@ -328,27 +342,11 @@ impl HandleMiss for ObjectMissHandler {
                     meta: self.meta,
                     body: self.body.into(),
                 },
-                get_weight(size),
             )
             .await?;
 
         Ok(size)
     }
-}
-
-// Maximum size for a single cached object (40MB)
-static MAX_ONE_CACHE_SIZE: usize = 10 * 1024 * PAGE_SIZE;
-
-/// Calculates the storage weight based on content size
-/// Returns a weight between 1 and u16::MAX
-pub fn get_weight(size: usize) -> u16 {
-    if size <= PAGE_SIZE {
-        return 1;
-    }
-    if size >= MAX_ONE_CACHE_SIZE {
-        return u16::MAX;
-    }
-    (size / PAGE_SIZE) as u16
 }
 
 #[async_trait]
@@ -435,11 +433,7 @@ impl Storage for HttpCache {
         let hash = key.combined();
         if let Some(mut obj) = self.cached.get(&hash, namespace).await? {
             obj.meta = meta.serialize()?;
-            let size = obj.body.len();
-            let _ = self
-                .cached
-                .put(&hash, namespace, obj, get_weight(size))
-                .await?;
+            let _ = self.cached.put(&hash, namespace, obj).await?;
             Ok(true)
         } else {
             Err(Error::Invalid {
@@ -460,8 +454,12 @@ impl Storage for HttpCache {
 
 #[cfg(test)]
 mod tests {
-    use super::{CompleteHit, HttpCacheStorage, ObjectMissHandler};
+    use super::{
+        CacheObject, CompleteHit, HttpCacheStorage, ObjectMissHandler,
+        MAX_ONE_CACHE_SIZE,
+    };
     use crate::cache::tiny::new_tiny_ufo_cache;
+    use crate::cache::PAGE_SIZE;
     use bytes::{Bytes, BytesMut};
     use pingora::cache::storage::{HitHandler, MissHandler};
     use pretty_assertions::assert_eq;
@@ -510,5 +508,28 @@ mod tests {
 
         let data = cache.get(key, "").await.unwrap().unwrap();
         assert_eq!("Hello World!", std::str::from_utf8(&data.body).unwrap());
+    }
+
+    #[test]
+    fn test_cache_object_get_weight() {
+        // data less than one page
+        let obj = CacheObject {
+            meta: (b"Hello".to_vec(), b"World".to_vec()),
+            body: Bytes::from_static(b"Hello World!"),
+        };
+        assert_eq!(1, obj.get_weight());
+
+        let obj = CacheObject {
+            meta: (b"Hello".to_vec(), b"World".to_vec()),
+            body: vec![0; PAGE_SIZE * 2].into(),
+        };
+        assert_eq!(2, obj.get_weight());
+
+        // data larger than max size
+        let obj = CacheObject {
+            meta: (b"Hello".to_vec(), b"World".to_vec()),
+            body: vec![0; MAX_ONE_CACHE_SIZE + 1].into(),
+        };
+        assert_eq!(u16::MAX, obj.get_weight());
     }
 }

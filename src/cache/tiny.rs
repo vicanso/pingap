@@ -20,8 +20,6 @@ use tracing::debug;
 
 /// Type alias for cache key
 type CacheKey = String;
-/// Type alias for cache weight
-type Weight = u16;
 
 /// A cache implementation using TinyUfo algorithm for HTTP responses
 ///
@@ -83,7 +81,6 @@ impl HttpCacheStorage for TinyUfoCache {
     /// * `key` - The unique identifier for the cache entry
     /// * `namespace` - The namespace for the cache entry (currently unused)
     /// * `data` - The cache object to store
-    /// * `weight` - The weight of the cache entry for eviction purposes
     ///
     /// # Returns
     ///
@@ -93,8 +90,8 @@ impl HttpCacheStorage for TinyUfoCache {
         key: &str,
         namespace: &str,
         data: CacheObject,
-        weight: Weight,
     ) -> Result<()> {
+        let weight = data.get_weight();
         debug!(
             key,
             namespace,
@@ -141,7 +138,7 @@ mod tests {
         };
         let result = cache.get(key, "").await.unwrap();
         assert_eq!(true, result.is_none());
-        cache.put(key, "", obj.clone(), 1).await.unwrap();
+        cache.put(key, "", obj.clone()).await.unwrap();
         let result = cache.get(key, "").await.unwrap().unwrap();
         assert_eq!(obj, result);
 
