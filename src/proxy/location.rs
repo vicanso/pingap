@@ -494,6 +494,14 @@ pub fn get_location(name: &str) -> Option<Arc<Location>> {
     LOCATION_MAP.load().get(name).cloned()
 }
 
+pub fn get_locations_processing() -> HashMap<String, i32> {
+    let mut processing = HashMap::new();
+    LOCATION_MAP.load().iter().for_each(|(k, v)| {
+        processing.insert(k.to_string(), v.processing.load(Ordering::Relaxed));
+    });
+    processing
+}
+
 pub fn try_init_locations(
     confs: &HashMap<String, LocationConf>,
 ) -> Result<Vec<String>> {

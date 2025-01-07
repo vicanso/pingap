@@ -494,6 +494,14 @@ pub fn get_upstream(name: &str) -> Option<Arc<Upstream>> {
     UPSTREAM_MAP.load().get(name).cloned()
 }
 
+pub fn get_upstreams_processing() -> HashMap<String, i32> {
+    let mut processing = HashMap::new();
+    UPSTREAM_MAP.load().iter().for_each(|(k, v)| {
+        processing.insert(k.to_string(), v.processing.load(Ordering::Relaxed));
+    });
+    processing
+}
+
 fn new_ahash_upstreams(
     confs: &HashMap<String, UpstreamConf>,
 ) -> Result<(Upstreams, Vec<String>)> {

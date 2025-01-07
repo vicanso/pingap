@@ -29,11 +29,11 @@ use pingora::server::configuration::Opt;
 use pingora::services::background::background_service;
 use proxy::{new_upstream_health_check_task, Server, ServerConf};
 use service::new_simple_service_task;
-use service::{new_auto_restart_service, new_observer_service};
-use state::{
-    get_admin_addr, get_start_time, new_performance_metrics_log_service,
-    set_admin_addr,
+use service::{
+    new_auto_restart_service, new_observer_service,
+    new_performance_metrics_log_service,
 };
+use state::{get_admin_addr, get_start_time, set_admin_addr};
 use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::OsString;
@@ -51,6 +51,7 @@ mod health;
 mod http_extra;
 mod limit;
 mod logger;
+
 #[cfg(feature = "full")]
 mod otel;
 mod plugin;
