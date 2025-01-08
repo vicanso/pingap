@@ -366,7 +366,7 @@ impl Server {
 }
 
 #[derive(Debug, Default)]
-struct DigestDeailt {
+struct DigestDetail {
     connection_reused: bool,
     connection_time: u64,
     tcp_established: u64,
@@ -376,7 +376,7 @@ struct DigestDeailt {
 }
 
 #[inline]
-fn get_digest_detail(digest: &Digest) -> DigestDeailt {
+fn get_digest_detail(digest: &Digest) -> DigestDetail {
     let get_established = |value: Option<&Option<TimingDigest>>| -> u64 {
         value
             .map(|item| {
@@ -400,7 +400,7 @@ fn get_digest_detail(digest: &Digest) -> DigestDeailt {
     let connection_reused = connection_time > 100;
 
     let Some(ssl_digest) = &digest.ssl_digest else {
-        return DigestDeailt {
+        return DigestDetail {
             connection_reused,
             tcp_established,
             connection_time,
@@ -408,7 +408,7 @@ fn get_digest_detail(digest: &Digest) -> DigestDeailt {
         };
     };
 
-    DigestDeailt {
+    DigestDetail {
         connection_reused,
         tcp_established,
         connection_time,
@@ -682,7 +682,12 @@ impl ProxyHttp for Server {
                     ));
                     ctx.upstream_span = Some(span);
                 }
-                up.new_http_peer(session, ctx)
+                let peer = up.new_http_peer(session, ctx).map(|peer| {
+                    ctx.upstream_address = peer.address().to_string();
+                    peer
+                });
+                ctx.upstream = Some(up);
+                peer
             } else {
                 None
             }
@@ -705,7 +710,7 @@ impl ProxyHttp for Server {
         &self,
         _session: &mut Session,
         reused: bool,
-        peer: &HttpPeer,
+        _peer: &HttpPeer,
         #[cfg(unix)] _fd: std::os::unix::io::RawFd,
         #[cfg(windows)] _sock: std::os::windows::io::RawSocket,
         digest: Option<&Digest>,
@@ -735,7 +740,6 @@ impl ProxyHttp for Server {
         }
 
         ctx.upstream_reused = reused;
-        ctx.upstream_address = peer.address().to_string();
         ctx.upstream_connect_time =
             util::get_latency(&ctx.upstream_connect_time);
         ctx.upstream_processing_time =
@@ -1103,9 +1107,10 @@ impl ProxyHttp for Server {
         self.processing.fetch_sub(1, Ordering::Relaxed);
         if let Some(location) = &ctx.location {
             location.sub_processing();
-            if let Some(up) = get_upstream(&location.upstream) {
-                ctx.upstream_processing = Some(up.completed());
-            }
+        }
+        // get from cache does not connect to upstream
+        if let Some(up) = &ctx.upstream {
+            ctx.upstream_processing = Some(up.completed());
         }
         if ctx.status.is_none() {
             if let Some(header) = session.response_written() {

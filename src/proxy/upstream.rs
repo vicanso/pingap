@@ -64,22 +64,26 @@ enum SelectionLb {
 // UpstreamPeerTracer tracks active connections to upstream servers
 #[derive(Clone, Debug)]
 struct UpstreamPeerTracer {
-    connected: Arc<AtomicU32>, // Number of active connections
+    name: String,
+    connected: Arc<AtomicI32>, // Number of active connections
 }
 
 impl UpstreamPeerTracer {
-    fn new() -> Self {
+    fn new(name: &str) -> Self {
         Self {
-            connected: Arc::new(AtomicU32::new(0)),
+            name: name.to_string(),
+            connected: Arc::new(AtomicI32::new(0)),
         }
     }
 }
 
 impl Tracing for UpstreamPeerTracer {
     fn on_connected(&self) {
+        debug!(name = self.name, "upstream peer connected");
         self.connected.fetch_add(1, Ordering::Relaxed);
     }
     fn on_disconnected(&self) {
+        debug!(name = self.name, "upstream peer disconnected");
         self.connected.fetch_sub(1, Ordering::Relaxed);
     }
     fn boxed_clone(&self) -> Box<dyn Tracing> {
@@ -371,7 +375,7 @@ impl Upstream {
         };
 
         let peer_tracer = if conf.enable_tracer.unwrap_or_default() {
-            Some(UpstreamPeerTracer::new())
+            Some(UpstreamPeerTracer::new(name))
         } else {
             None
         };
@@ -460,7 +464,7 @@ impl Upstream {
 
     /// Get the connected count of upstream
     #[inline]
-    pub fn connected(&self) -> Option<u32> {
+    pub fn connected(&self) -> Option<i32> {
         self.peer_tracer
             .as_ref()
             .map(|tracer| tracer.connected.load(Ordering::Relaxed))
@@ -494,12 +498,15 @@ pub fn get_upstream(name: &str) -> Option<Arc<Upstream>> {
     UPSTREAM_MAP.load().get(name).cloned()
 }
 
-pub fn get_upstreams_processing() -> HashMap<String, i32> {
-    let mut processing = HashMap::new();
+pub fn get_upstreams_processing_connected(
+) -> HashMap<String, (i32, Option<i32>)> {
+    let mut processing_connected = HashMap::new();
     UPSTREAM_MAP.load().iter().for_each(|(k, v)| {
-        processing.insert(k.to_string(), v.processing.load(Ordering::Relaxed));
+        let count = v.processing.load(Ordering::Relaxed);
+        let connected = v.connected();
+        processing_connected.insert(k.to_string(), (count, connected));
     });
-    processing
+    processing_connected
 }
 
 fn new_ahash_upstreams(
@@ -860,7 +867,7 @@ mod tests {
     }
     #[test]
     fn test_upstream_peer_tracer() {
-        let tracer = UpstreamPeerTracer::new();
+        let tracer = UpstreamPeerTracer::new("upstreamname");
         tracer.on_connected();
         assert_eq!(1, tracer.connected.load(Ordering::Relaxed));
         tracer.on_disconnected();

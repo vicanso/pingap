@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::proxy::{get_locations_processing, get_upstreams_processing};
+use crate::cache::get_cache_backend;
+use crate::proxy::{
+    get_locations_processing, get_upstreams_processing_connected,
+};
 use crate::service::SimpleServiceTaskFuture;
 use crate::state::{get_process_system_info, get_processing_accepted};
 use tracing::info;
@@ -24,29 +27,46 @@ pub fn new_performance_metrics_log_service() -> (String, SimpleServiceTaskFuture
     let task: SimpleServiceTaskFuture = Box::new(move |_count: u32| {
         Box::pin({
             async move {
+                let mut cache_reading: i64 = -1;
+                let mut cache_writing: i64 = -1;
+                if let Ok(cache) = get_cache_backend() {
+                    if let Some(stats) = cache.stats() {
+                        cache_reading = stats.reading as i64;
+                        cache_writing = stats.writing as i64;
+                    }
+                }
                 let locations_processing = get_locations_processing()
                     .iter()
                     .map(|(name, count)| format!("{name}:{count}"))
                     .collect::<Vec<String>>()
-                    .join(",");
-                let upstreams_processing = get_upstreams_processing()
-                    .iter()
-                    .map(|(name, count)| format!("{name}:{count}"))
-                    .collect::<Vec<String>>()
-                    .join(",");
+                    .join(", ");
+                let mut upstreams_processing = vec![];
+                let mut upstreams_connected = vec![];
+                for (name, (processing, connected)) in
+                    get_upstreams_processing_connected()
+                {
+                    upstreams_processing.push(format!("{name}:{processing}"));
+                    if let Some(connected) = connected {
+                        upstreams_connected.push(format!("{name}:{connected}"));
+                    }
+                }
+
                 let system_info = get_process_system_info();
                 let (processing, accepted) = get_processing_accepted();
                 info!(
                     category = PERFORMANCE_METRICS_LOG_SERVICE,
                     threads = system_info.threads,
                     locations_processing,
-                    upstreams_processing,
+                    upstreams_processing = upstreams_processing.join(", "),
+                    upstreams_connected = upstreams_connected.join(", "),
                     accepted,
                     processing,
                     used_memory = system_info.memory,
                     fd_count = system_info.fd_count,
                     tcp_count = system_info.tcp_count,
                     tcp6_count = system_info.tcp6_count,
+                    cache_reading,
+                    cache_writing,
                     "performance metrics"
                 );
                 Ok(true)

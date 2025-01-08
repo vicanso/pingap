@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::proxy::{Location, Upstream};
+use crate::util;
 use crate::util::format_duration;
-use crate::{proxy::Location, util};
 use ahash::AHashMap;
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
@@ -130,6 +131,7 @@ pub struct State {
     pub cache_lock_time: Option<u64>,
     /// Maximum time-to-live for cache entries
     pub cache_max_ttl: Option<Duration>,
+    pub upstream: Option<Arc<Upstream>>,
     /// Indicates if the upstream connection is being reused
     pub upstream_reused: bool,
     /// Number of requests being processed by upstream
@@ -137,7 +139,7 @@ pub struct State {
     /// Time taken to establish/reuse upstream connection (in milliseconds)
     pub upstream_connect_time: Option<u64>,
     /// Current number of active upstream connections
-    pub upstream_connected: Option<u32>,
+    pub upstream_connected: Option<i32>,
     /// Time taken for TCP connection to upstream (in milliseconds)
     pub upstream_tcp_connect_time: Option<u64>,
     /// Time taken for TLS handshake with upstream (in milliseconds)

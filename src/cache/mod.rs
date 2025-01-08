@@ -12,10 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util;
+use crate::{config::get_current_config, util};
+use bytesize::ByteSize;
+use memory_stats::memory_stats;
+use once_cell::sync::OnceCell;
 use snafu::Snafu;
 use std::sync::Arc;
-
+use tracing::info;
 mod file;
 mod http_cache;
 mod tiny;
@@ -39,21 +42,60 @@ impl From<Error> for pingora::BError {
     }
 }
 
-pub fn new_tiny_ufo_cache(size: usize) -> HttpCache {
+fn new_tiny_ufo_cache(size: usize) -> HttpCache {
     HttpCache {
         directory: None,
-        cached: Arc::new(tiny::new_tiny_ufo_cache(size / PAGE_SIZE, size)),
+        cache: Arc::new(tiny::new_tiny_ufo_cache(size / PAGE_SIZE, size)),
     }
 }
-pub fn new_file_cache(dir: &str) -> Result<HttpCache> {
+fn new_file_cache(dir: &str) -> Result<HttpCache> {
     let cache = file::new_file_cache(dir)?;
     Ok(HttpCache {
         directory: Some(cache.directory.clone()),
-        cached: Arc::new(cache),
+        cache: Arc::new(cache),
     })
 }
 
-pub use http_cache::{new_file_storage_clear_service, HttpCache};
+static CACHE_BACKEND: OnceCell<HttpCache> = OnceCell::new();
+const MAX_MEMORY_SIZE: usize = 100 * 1024 * 1024;
+pub fn get_cache_backend() -> Result<&'static HttpCache> {
+    // get global cache backend
+    CACHE_BACKEND.get_or_try_init(|| {
+        let basic_conf = &get_current_config().basic;
+        let mut size = if let Some(cache_max_size) = basic_conf.cache_max_size {
+            cache_max_size.as_u64() as usize
+        } else {
+            MAX_MEMORY_SIZE
+        };
+        let mut cache_type = "memory";
+        // file cache
+        let cache = if let Some(dir) = &basic_conf.cache_directory {
+            cache_type = "file";
+            new_file_cache(dir.as_str()).map_err(|e| Error::Invalid {
+                message: e.to_string(),
+            })?
+        } else {
+            // max memory
+            let max_memory = if let Some(value) = memory_stats() {
+                value.physical_mem / 2
+            } else {
+                ByteSize::gb(4).as_u64() as usize
+            };
+            size = size.min(max_memory);
+            // tiny ufo cache
+            new_tiny_ufo_cache(size)
+        };
+        info!(
+            category = "cache",
+            size = ByteSize::b(size as u64).to_string(),
+            cache_type,
+            "init cache backend success"
+        );
+        Ok(cache)
+    })
+}
+
+pub use http_cache::{new_storage_clear_service, HttpCache};
 
 #[cfg(test)]
 mod tests {

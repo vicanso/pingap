@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use acme::new_lets_encrypt_service;
-use cache::new_file_storage_clear_service;
+use cache::new_storage_clear_service;
 use certificate::{
     new_certificate_validity_service,
     new_self_signed_certificate_validity_service,
@@ -481,7 +481,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         new_self_signed_certificate_validity_service(),
         new_performance_metrics_log_service(),
     ];
-    if let Some(task) = new_file_storage_clear_service() {
+    if let Some(task) = new_storage_clear_service() {
         simple_tasks.push(task);
     }
     if let Some(compression_task) = compression_task {
