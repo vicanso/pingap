@@ -16,7 +16,7 @@ use super::{
     get_bool_conf, get_hash_key, get_step_conf, get_str_conf,
     get_str_slice_conf, Error, Plugin, Result,
 };
-use crate::cache::{new_file_cache, new_tiny_ufo_cache, HttpCache};
+use crate::cache::{get_cache_backend, HttpCache};
 use crate::config::{
     get_current_config, PluginCategory, PluginConf, PluginStep,
 };
@@ -29,7 +29,6 @@ use bytesize::ByteSize;
 use fancy_regex::Regex;
 use http::{Method, StatusCode};
 use humantime::parse_duration;
-use memory_stats::memory_stats;
 use once_cell::sync::{Lazy, OnceCell};
 use pingora::cache::eviction::simple_lru::Manager;
 use pingora::cache::eviction::EvictionManager;
@@ -43,7 +42,6 @@ use tracing::{debug, error};
 
 // memory limit size
 const MAX_MEMORY_SIZE: usize = 100 * 1024 * 1024;
-static CACHE_BACKEND: OnceCell<HttpCache> = OnceCell::new();
 static PREDICTOR: OnceCell<Predictor<32>> = OnceCell::new();
 static EVICTION_MANAGER: OnceCell<Manager> = OnceCell::new();
 static CACHE_LOCK_ONE_SECOND: OnceCell<CacheLock> = OnceCell::new();
@@ -62,35 +60,6 @@ pub struct Cache {
     purge_ip_rules: util::IpRules,
     skip: Option<Regex>,
     hash_value: String,
-}
-
-fn get_cache_backend() -> Result<&'static HttpCache> {
-    // get global cache backend
-    CACHE_BACKEND.get_or_try_init(|| {
-        let basic_conf = &get_current_config().basic;
-        let size = if let Some(cache_max_size) = basic_conf.cache_max_size {
-            cache_max_size.as_u64() as usize
-        } else {
-            MAX_MEMORY_SIZE
-        };
-        // file cache
-        let cache = if let Some(dir) = &basic_conf.cache_directory {
-            new_file_cache(dir.as_str()).map_err(|e| Error::Invalid {
-                category: "cache_backend".to_string(),
-                message: e.to_string(),
-            })?
-        } else {
-            // max memory
-            let max_memory = if let Some(value) = memory_stats() {
-                value.physical_mem / 2
-            } else {
-                ByteSize::gb(4).as_u64() as usize
-            };
-            // tiny ufo cache
-            new_tiny_ufo_cache(size.min(max_memory))
-        };
-        Ok(cache)
-    })
 }
 
 fn get_eviction_manager() -> &'static Manager {
@@ -132,7 +101,10 @@ impl TryFrom<&PluginConf> for Cache {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let cache = get_cache_backend()?;
+        let cache = get_cache_backend().map_err(|e| Error::Invalid {
+            category: "cache_backend".to_string(),
+            message: e.to_string(),
+        })?;
         let eviction = if value.contains_key("eviction") {
             let eviction = get_eviction_manager();
             Some(eviction as &'static (dyn EvictionManager + Sync))
@@ -326,7 +298,7 @@ impl Plugin for Cache {
                 &session.req_header().uri,
             );
             self.http_cache
-                .cached
+                .cache
                 .remove(&key.combined(), key.namespace())
                 .await?;
             return Ok(Some(HttpResponse::no_content()));

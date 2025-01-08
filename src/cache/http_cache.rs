@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{file, Error, Result, PAGE_SIZE};
-use crate::config::get_current_config;
+use super::get_cache_backend;
+use super::{Error, Result, PAGE_SIZE};
 use crate::service::Error as ServiceError;
 use crate::service::SimpleServiceTaskFuture;
 use async_trait::async_trait;
@@ -174,20 +174,27 @@ pub trait HttpCacheStorage: Sync + Send {
     fn stats(&self) -> Option<HttpCacheStats> {
         None
     }
+
+    /// Returns whether this storage implementation supports the clear operation
+    ///
+    /// # Returns
+    /// * `bool` - Default implementation returns false, indicating no clear support
+    /// Implementations should override this to return true if they
+    /// support the clear operation
+    fn support_clear(&self) -> bool {
+        false
+    }
 }
 
 async fn do_file_storage_clear(
     count: u32,
-    dir: String,
+    cache: Arc<dyn HttpCacheStorage>,
 ) -> Result<bool, ServiceError> {
     // Add 1 every loop
     let offset = 60;
     if count % offset != 0 {
         return Ok(false);
     }
-    let Ok(storage) = file::new_file_cache(&dir) else {
-        return Ok(false);
-    };
 
     let Some(access_before) =
         SystemTime::now().checked_sub(Duration::from_secs(24 * 3600))
@@ -195,22 +202,27 @@ async fn do_file_storage_clear(
         return Ok(false);
     };
 
-    let Ok((success, fail)) = storage.clear(access_before).await else {
+    let Ok((success, fail)) = cache.clear(access_before).await else {
         return Ok(true);
     };
     if success < 0 {
         return Ok(true);
     }
-    info!(dir, success, fail, "cache storage clear");
+    info!(success, fail, "cache storage clear");
     Ok(true)
 }
 
-pub fn new_file_storage_clear_service(
-) -> Option<(String, SimpleServiceTaskFuture)> {
-    let dir = get_current_config().basic.cache_directory.as_ref()?.clone();
+pub fn new_storage_clear_service() -> Option<(String, SimpleServiceTaskFuture)>
+{
+    let Ok(backend) = get_cache_backend() else {
+        return None;
+    };
+    if !backend.cache.support_clear() {
+        return None;
+    }
     let task: SimpleServiceTaskFuture = Box::new(move |count: u32| {
         Box::pin({
-            let value = dir.clone();
+            let value = backend.cache.clone();
             async move {
                 let value = value.clone();
                 do_file_storage_clear(count, value).await
@@ -222,13 +234,13 @@ pub fn new_file_storage_clear_service(
 
 pub struct HttpCache {
     pub directory: Option<String>,
-    pub(crate) cached: Arc<dyn HttpCacheStorage>,
+    pub(crate) cache: Arc<dyn HttpCacheStorage>,
 }
 
 impl HttpCache {
     #[inline]
     pub fn stats(&self) -> Option<HttpCacheStats> {
-        self.cached.stats()
+        self.cache.stats()
     }
 }
 
@@ -358,7 +370,7 @@ impl Storage for HttpCache {
     ) -> pingora::Result<Option<(CacheMeta, HitHandler)>> {
         let namespace = key.namespace();
         let hash = key.combined();
-        if let Some(obj) = self.cached.get(&hash, namespace).await? {
+        if let Some(obj) = self.cache.get(&hash, namespace).await? {
             let meta = CacheMeta::deserialize(&obj.meta.0, &obj.meta.1)?;
             let size = obj.body.len();
             let hit_handler = CompleteHit {
@@ -398,7 +410,7 @@ impl Storage for HttpCache {
             meta,
             key: hash,
             namespace: key.namespace().to_string(),
-            cache: self.cached.clone(),
+            cache: self.cache.clone(),
             body: BytesMut::with_capacity(size),
         };
         Ok(Box::new(miss_handler))
@@ -415,7 +427,7 @@ impl Storage for HttpCache {
         let hash = key.combined();
         // TODO get namespace of cache key
         let cache_removed =
-            if let Ok(result) = self.cached.remove(&hash, "").await {
+            if let Ok(result) = self.cache.remove(&hash, "").await {
                 result.is_some()
             } else {
                 false
@@ -431,9 +443,9 @@ impl Storage for HttpCache {
     ) -> pingora::Result<bool> {
         let namespace = key.namespace();
         let hash = key.combined();
-        if let Some(mut obj) = self.cached.get(&hash, namespace).await? {
+        if let Some(mut obj) = self.cache.get(&hash, namespace).await? {
             obj.meta = meta.serialize()?;
-            let _ = self.cached.put(&hash, namespace, obj).await?;
+            let _ = self.cache.put(&hash, namespace, obj).await?;
             Ok(true)
         } else {
             Err(Error::Invalid {
