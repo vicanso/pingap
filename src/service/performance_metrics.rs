@@ -36,7 +36,8 @@ pub fn new_performance_metrics_log_service() -> (String, SimpleServiceTaskFuture
                     }
                 }
                 let locations_processing = get_locations_processing()
-                    .iter()
+                    .into_iter()
+                    .filter(|(_, count)| *count != 0)
                     .map(|(name, count)| format!("{name}:{count}"))
                     .collect::<Vec<String>>()
                     .join(", ");
@@ -45,9 +46,15 @@ pub fn new_performance_metrics_log_service() -> (String, SimpleServiceTaskFuture
                 for (name, (processing, connected)) in
                     get_upstreams_processing_connected()
                 {
-                    upstreams_processing.push(format!("{name}:{processing}"));
+                    if processing != 0 {
+                        upstreams_processing
+                            .push(format!("{name}:{processing}"));
+                    }
                     if let Some(connected) = connected {
-                        upstreams_connected.push(format!("{name}:{connected}"));
+                        if connected != 0 {
+                            upstreams_connected
+                                .push(format!("{name}:{connected}"));
+                        }
                     }
                 }
 

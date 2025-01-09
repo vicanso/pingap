@@ -1,3 +1,5 @@
+use ahash::AHashMap;
+use arc_swap::ArcSwap;
 use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion};
 use http::{HeaderName, HeaderValue, StatusCode};
@@ -10,6 +12,7 @@ use pingap::util::{self, get_super_ts};
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio_test::io::Builder;
 
@@ -308,6 +311,27 @@ fn bench_logger_format(c: &mut Criterion) {
     });
 }
 
+fn bench_get_location(c: &mut Criterion) {
+    let mut map: AHashMap<String, Arc<Location>> = AHashMap::new();
+    for _ in 0..10 {
+        let id = nanoid!(6);
+        map.insert(
+            id.clone(),
+            Arc::new(
+                Location::new(id.as_str(), &LocationConf::default()).unwrap(),
+            ),
+        );
+    }
+
+    let locations: ArcSwap<AHashMap<String, Arc<Location>>> =
+        ArcSwap::from_pointee(map);
+    c.bench_function("get location", |b| {
+        b.iter(|| {
+            let _ = locations.load().get("1").cloned();
+        })
+    });
+}
+
 criterion_group!(
     benches,
     bench_get_header_value,
@@ -319,5 +343,6 @@ criterion_group!(
     bench_get_super_ts,
     bench_logger_format,
     bench_map,
+    bench_get_location,
 );
 criterion_main!(benches);

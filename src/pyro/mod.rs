@@ -20,7 +20,7 @@ use pyroscope::{
 };
 use pyroscope_pprofrs::{pprof_backend, PprofConfig};
 use snafu::{ResultExt, Snafu};
-use tracing::info;
+use tracing::{error, info};
 use url::Url;
 
 #[derive(Debug, Snafu)]
@@ -48,10 +48,16 @@ pub fn new_agent_service(value: &str) -> AgentService {
 #[async_trait]
 impl BackgroundService for AgentService {
     async fn start(&self, mut shutdown: ShutdownWatch) {
-        let agent_running = start_pyroscope(&self.url).unwrap();
-        let _ = shutdown.changed().await;
-        let agent_ready = agent_running.stop().unwrap();
-        agent_ready.shutdown();
+        match start_pyroscope(&self.url) {
+            Ok(agent_running) => {
+                let _ = shutdown.changed().await;
+                let agent_ready = agent_running.stop().unwrap();
+                agent_ready.shutdown();
+            },
+            Err(e) => {
+                error!("start pyroscope error: {}", e);
+            },
+        }
     }
 }
 

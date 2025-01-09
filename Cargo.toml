@@ -44,7 +44,6 @@ crossbeam-channel = "0.5.14"
 derive_more = { version = "1.0.0", default-features = false, features = [
     "debug",
 ] }
-dhat = { version = "0.3.3", optional = true }
 diff = "0.1.13"
 dirs = "5.0.1"
 etcd-client = "0.14.0"
@@ -158,7 +157,7 @@ full = [
     "opentelemetry-jaeger-propagator",
     "pingora/sentry",
 ]
-perf = ["pyro", "dhat", "full"]
+perf = ["pyro", "full"]
 default = []
 
 

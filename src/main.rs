@@ -65,12 +65,6 @@ mod state;
 mod util;
 mod webhook;
 
-#[cfg(feature = "perf")]
-#[global_allocator]
-static ALLOC: dhat::Alloc = dhat::Alloc;
-#[cfg(feature = "perf")]
-mod perf;
-
 static TEMPLATE_CONFIG: &str = include_str!("../conf/basic.toml");
 
 /// A reverse proxy like nginx.
@@ -579,14 +573,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         "UpstreamHc",
         new_upstream_health_check_task(Duration::from_secs(10)),
     ));
-
-    #[cfg(feature = "perf")]
-    {
-        my_server.add_service(background_service(
-            "DhatHeap",
-            perf::DhatHeapService {},
-        ));
-    }
 
     info!("Server is running");
     let _ = get_start_time();
