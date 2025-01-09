@@ -176,7 +176,8 @@ impl Server {
     pub fn new(conf: &ServerConf) -> Result<Self> {
         debug!(config = conf.to_string(), "new server",);
         let mut p = None;
-        if let Some(access_log) = &conf.access_log {
+        let access_log = conf.access_log.clone().unwrap_or_default();
+        if !access_log.is_empty() {
             p = Some(Parser::from(access_log.as_str()));
         }
         let tcp_socket_options =

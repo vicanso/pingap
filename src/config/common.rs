@@ -691,8 +691,8 @@ impl ServerConf {
                 }
             }
         }
-
-        if let Some(access_log) = &self.access_log {
+        let access_log = self.access_log.clone().unwrap_or_default();
+        if !access_log.is_empty() {
             let logger = Parser::from(access_log.as_str());
             if logger.tags.is_empty() {
                 return Err(Error::Invalid {

@@ -86,7 +86,7 @@ fn start_pyroscope(
         };
     }
     if let Some(query) = url_info.query() {
-        connect_url = connect_url.replace(query, "");
+        connect_url = connect_url.replace(&format!("?{query}"), "");
     }
 
     let mut agent = PyroscopeAgent::builder(&connect_url, &application_name);
@@ -103,6 +103,11 @@ fn start_pyroscope(
         // .tags([("app", "Rust"), ("TagB", "ValueB")].to_vec())
         .build()
         .context(PyroscopeSnafu)?;
-    info!("connect to pyroscope, app:{application_name}, url:{connect_url}");
+    info!(
+        application_name = application_name,
+        samplerate = samplerate,
+        url = connect_url,
+        "connect to pyroscope",
+    );
     client.start().context(PyroscopeSnafu)
 }
