@@ -20,6 +20,7 @@ use pyroscope::{
 };
 use pyroscope_pprofrs::{pprof_backend, PprofConfig};
 use snafu::{ResultExt, Snafu};
+use substring::Substring;
 use tracing::{error, info};
 use url::Url;
 
@@ -71,16 +72,32 @@ fn start_pyroscope(
     let mut application_name = "pingap".to_string();
     let mut user = "".to_string();
     let mut password = "".to_string();
-    let mut samplerate = 100;
+    let mut sample_rate = 100;
+    let mut tags = vec![];
+    let format_tag_value = |value: &str| {
+        if value.starts_with("$") {
+            std::env::var(value.substring(1, value.len()).to_string())
+                .unwrap_or(value.to_string())
+        } else {
+            value.to_string()
+        }
+    };
+    let tag_key_prefix = "tag:";
     for (key, value) in url_info.query_pairs().into_iter() {
         match key.as_ref() {
             "app" => application_name = value.to_string(),
             "user" => user = value.to_string(),
             "password" => password = value.to_string(),
-            "samplerate" => {
+            "sample_rate" => {
                 if let Ok(v) = value.parse::<u32>() {
-                    samplerate = v;
+                    sample_rate = v;
                 }
+            },
+            _ if key.starts_with(tag_key_prefix) => {
+                let tag_value = format_tag_value(&value);
+                let key =
+                    key.substring(tag_key_prefix.len(), key.len()).to_string();
+                tags.push((key.to_string(), tag_value));
             },
             _ => {},
         };
@@ -96,17 +113,22 @@ fn start_pyroscope(
     let client = agent
         .backend(pprof_backend(
             PprofConfig::new()
-                .sample_rate(samplerate)
+                .sample_rate(sample_rate)
                 .report_thread_id()
                 .report_thread_name(),
         ))
-        // .tags([("app", "Rust"), ("TagB", "ValueB")].to_vec())
+        .tags(tags.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect())
         .build()
         .context(PyroscopeSnafu)?;
     info!(
         application_name = application_name,
-        samplerate = samplerate,
+        sample_rate = sample_rate,
         url = connect_url,
+        tags = tags
+            .iter()
+            .map(|(k, v)| format!("{k}:{v}"))
+            .collect::<Vec<String>>()
+            .join(","),
         "connect to pyroscope",
     );
     client.start().context(PyroscopeSnafu)

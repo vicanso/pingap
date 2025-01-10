@@ -16,7 +16,7 @@ use crate::util;
 use crate::webhook;
 use async_trait::async_trait;
 use http::Uri;
-use humantime::parse_duration;
+use humantime::{format_duration, parse_duration};
 use pingora::http::RequestHeader;
 use pingora::lb::health_check::{
     HealthCheck, HealthObserveCallback, HttpHealthCheck, TcpHealthCheck,
@@ -129,41 +129,52 @@ pub fn new_health_check(
     health_check: &str,
 ) -> Result<(Box<dyn HealthCheck + Send + Sync + 'static>, Duration)> {
     let mut health_check_frequency = Duration::from_secs(10);
-    let hc: Box<dyn HealthCheck + Send + Sync + 'static> =
-        if health_check.is_empty() {
-            let mut check = TcpHealthCheck::new();
-            check.health_changed_callback =
-                Some(webhook::new_backend_observe_notification(name));
-            check.peer_template.options.connection_timeout =
-                Some(Duration::from_secs(3));
-            info!(
-                category = LOG_CATEGORY,
-                name,
-                options = format!("{:?}", check.peer_template.options),
-                "new health check"
-            );
-            check
-        } else {
-            let health_check_conf: HealthCheckConf = health_check.try_into()?;
-            health_check_frequency = health_check_conf.check_frequency;
-            info!(
-                category = LOG_CATEGORY,
-                name,
-                schema = health_check_conf.schema.to_string(),
-                health_check_conf = format!("{health_check_conf:?}"),
-                "new http/grpc health check"
-            );
-            match health_check_conf.schema {
-                HealthCheckSchema::Http | HealthCheckSchema::Https => {
-                    Box::new(new_http_health_check(name, &health_check_conf))
-                },
-                HealthCheckSchema::Grpc => {
-                    let check = GrpcHealthCheck::new(name, &health_check_conf)?;
-                    Box::new(check)
-                },
-                _ => Box::new(new_tcp_health_check(name, &health_check_conf)),
-            }
-        };
+    let hc: Box<dyn HealthCheck + Send + Sync + 'static> = if health_check
+        .is_empty()
+    {
+        let mut check = TcpHealthCheck::new();
+        check.health_changed_callback =
+            Some(webhook::new_backend_observe_notification(name));
+        check.peer_template.options.connection_timeout =
+            Some(Duration::from_secs(3));
+        info!(
+            category = LOG_CATEGORY,
+            name,
+            options = %check.peer_template.options,
+            "new health check"
+        );
+        check
+    } else {
+        let health_check_conf: HealthCheckConf = health_check.try_into()?;
+        health_check_frequency = health_check_conf.check_frequency;
+        info!(
+            category = LOG_CATEGORY,
+            name,
+            schema = health_check_conf.schema.to_string(),
+            path = health_check_conf.path,
+            connection_timeout =
+                format_duration(health_check_conf.connection_timeout)
+                    .to_string(),
+            read_timeout =
+                format_duration(health_check_conf.read_timeout).to_string(),
+            check_frequency =
+                format_duration(health_check_conf.check_frequency).to_string(),
+            reuse_connection = health_check_conf.reuse_connection,
+            consecutive_success = health_check_conf.consecutive_success,
+            consecutive_failure = health_check_conf.consecutive_failure,
+            "new http/grpc health check"
+        );
+        match health_check_conf.schema {
+            HealthCheckSchema::Http | HealthCheckSchema::Https => {
+                Box::new(new_http_health_check(name, &health_check_conf))
+            },
+            HealthCheckSchema::Grpc => {
+                let check = GrpcHealthCheck::new(name, &health_check_conf)?;
+                Box::new(check)
+            },
+            _ => Box::new(new_tcp_health_check(name, &health_check_conf)),
+        }
+    };
     Ok((hc, health_check_frequency))
 }
 

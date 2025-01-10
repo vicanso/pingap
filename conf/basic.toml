@@ -3,14 +3,14 @@ log_level = "INFO"
 name = "pingap"
 pid_file = "/run/pingap.pid"
 
-[locations.testLocation]
+[locations.httpLocation]
 path = "/"
-upstream = "testUpstream"
+upstream = "httpUpstream"
 
-[servers.testServer]
+[servers.httpServer]
 access_log = "combined"
-addr = "127.0.0.1:6118"
-locations = ["testLocation"]
+addr = "0.0.0.0:80"
+locations = ["httpLocation"]
 
-[upstreams.testUpstream]
+[upstreams.httpUpstream]
 addrs = ["127.0.0.1:5000"]

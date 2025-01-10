@@ -41,6 +41,11 @@ pub fn new_performance_metrics_log_service() -> (String, SimpleServiceTaskFuture
                     .map(|(name, count)| format!("{name}:{count}"))
                     .collect::<Vec<String>>()
                     .join(", ");
+                let locations_processing = if locations_processing.is_empty() {
+                    None
+                } else {
+                    Some(locations_processing)
+                };
                 let mut upstreams_processing = vec![];
                 let mut upstreams_connected = vec![];
                 for (name, (processing, connected)) in
@@ -57,6 +62,16 @@ pub fn new_performance_metrics_log_service() -> (String, SimpleServiceTaskFuture
                         }
                     }
                 }
+                let upstreams_processing = if upstreams_processing.is_empty() {
+                    None
+                } else {
+                    Some(upstreams_processing.join(", "))
+                };
+                let upstreams_connected = if upstreams_connected.is_empty() {
+                    None
+                } else {
+                    Some(upstreams_connected.join(", "))
+                };
 
                 let system_info = get_process_system_info();
                 let (processing, accepted) = get_processing_accepted();
@@ -64,8 +79,8 @@ pub fn new_performance_metrics_log_service() -> (String, SimpleServiceTaskFuture
                     category = PERFORMANCE_METRICS_LOG_SERVICE,
                     threads = system_info.threads,
                     locations_processing,
-                    upstreams_processing = upstreams_processing.join(", "),
-                    upstreams_connected = upstreams_connected.join(", "),
+                    upstreams_processing,
+                    upstreams_connected,
                     accepted,
                     processing,
                     used_memory = system_info.memory,

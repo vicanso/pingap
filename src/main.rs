@@ -160,7 +160,7 @@ fn get_config(admin: bool, s: Sender<Result<PingapConf, config::Error>>) {
                     })
                     .await;
                     if let Err(e) = s.send(result) {
-                        // use pringln because log is not init
+                        // use println because log is not init
                         println!("sender fail, {e}");
                     }
                 };
@@ -170,7 +170,7 @@ fn get_config(admin: bool, s: Sender<Result<PingapConf, config::Error>>) {
                 if let Err(e) = s.send(Err(config::Error::Invalid {
                     message: e.to_string(),
                 })) {
-                    // use pringln because log is not init
+                    // use println because log is not init
                     println!("sender fail, {e}");
                 }
             },
@@ -185,7 +185,7 @@ fn sync_config(path: String, s: Sender<Result<(), config::Error>>) {
                 let send = async move {
                     let result = config::sync_to_path(&path).await;
                     if let Err(e) = s.send(result) {
-                        // use pringln because log is not init
+                        // use println because log is not init
                         println!("sender fail, {e}");
                     }
                 };
@@ -195,7 +195,7 @@ fn sync_config(path: String, s: Sender<Result<(), config::Error>>) {
                 if let Err(e) = s.send(Err(config::Error::Invalid {
                     message: e.to_string(),
                 })) {
-                    // use pringln because log is not init
+                    // use println because log is not init
                     println!("sender fail, {e}");
                 }
             },
@@ -410,7 +410,19 @@ fn run() -> Result<(), Box<dyn Error>> {
     };
     let mut my_server = server::Server::new(Some(opt))?;
     let server_conf = new_server_conf(&args, &conf);
-    info!(server_conf = format!("{server_conf:?}"),);
+    info!(
+        pid_file = server_conf.pid_file,
+        upgrade_sock = server_conf.upgrade_sock,
+        user = server_conf.user,
+        group = server_conf.group,
+        threads = server_conf.threads,
+        work_stealing = server_conf.work_stealing,
+        grace_period_seconds = server_conf.grace_period_seconds,
+        graceful_shutdown_timeout_seconds =
+            server_conf.graceful_shutdown_timeout_seconds,
+        upstream_keepalive_pool_size = server_conf.upstream_keepalive_pool_size,
+        "server conf"
+    );
     my_server.configuration = Arc::new(server_conf);
     #[cfg(feature = "full")]
     {

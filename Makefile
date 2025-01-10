@@ -67,10 +67,10 @@ release-all:
 	cargo build --release
 	ls -lh target/release
 
-perf:
+release-perf:
 	cargo build --profile=release-perf --features=perf
 	ls -lh target/release-perf
-pyro:
+release-pyro:
 	cargo build --profile=release-perf --features=pyro
 	ls -lh target/release-perf
 
