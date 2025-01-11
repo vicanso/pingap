@@ -52,6 +52,8 @@ pub struct FileCache {
     /// Optional in-memory TinyUfo cache for frequently accessed items
     /// When enabled, reduces disk I/O by serving hot data from memory
     cache: Option<TinyUfo<String, CacheObject>>,
+    /// Max tinyufo cache weight
+    cache_file_max_weight: u16,
 }
 
 /// File cache parameters
@@ -65,6 +67,8 @@ struct FileCacheParams {
     writing_max: u32,
     /// Max tinyufo cache size
     cache_max: usize,
+    /// Max tinyufo cache weight
+    cache_file_max_weight: usize,
 }
 
 impl Default for FileCacheParams {
@@ -74,6 +78,7 @@ impl Default for FileCacheParams {
             reading_max: 10_000,
             writing_max: 1_000,
             cache_max: 100,
+            cache_file_max_weight: 1024 * 1024 / PAGE_SIZE,
         }
     }
 }
@@ -99,6 +104,10 @@ fn parse_params(dir: &str) -> FileCacheParams {
             .get("cache_max")
             .and_then(|v| v.parse().ok())
             .unwrap_or(params.cache_max);
+        params.cache_file_max_weight = m
+            .get("cache_file_max_weight")
+            .and_then(|v| v.parse::<usize>().map(|v| v / PAGE_SIZE).ok())
+            .unwrap_or(params.cache_file_max_weight);
     }
     params
 }
@@ -127,6 +136,7 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
 
     Ok(FileCache {
         directory: params.directory,
+        cache_file_max_weight: params.cache_file_max_weight as u16,
         reading: AtomicU32::new(0),
         reading_max: params.reading_max,
         #[cfg(feature = "full")]
@@ -231,7 +241,10 @@ impl HttpCacheStorage for FileCache {
     ) -> Result<()> {
         debug!(key, namespace, "put cache to file");
         if let Some(c) = &self.cache {
-            c.put(key.to_string(), data.clone(), data.get_weight());
+            let weight = data.get_weight();
+            if weight < self.cache_file_max_weight {
+                c.put(key.to_string(), data.clone(), weight);
+            }
         }
         #[cfg(feature = "full")]
         let start = SystemTime::now();
