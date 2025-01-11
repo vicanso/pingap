@@ -29,6 +29,20 @@ use std::time::Duration;
 use tokio::time::interval;
 use tracing::{debug, error, info};
 
+/// Compares configurations and handles updates through hot reload or full restart
+///
+/// This function:
+/// 1. Loads and validates the new configuration
+/// 2. Compares it with current config to find differences
+/// 3. Attempts hot reload for supported changes:
+///    - Server locations
+///    - Upstream configurations
+///    - Location definitions
+///    - Plugin configurations
+///    - Certificates (except ACME/Let's Encrypt)
+/// 4. Sends notifications for successful updates
+/// 5. If hot_reload_only=false and there are non-hot-reloadable changes,
+///    triggers a full server restart
 async fn diff_and_update_config(
     hot_reload_only: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -317,13 +331,24 @@ async fn diff_and_update_config(
     Ok(())
 }
 
+/// AutoRestart service manages configuration updates on a schedule
+///
+/// The service alternates between hot reloads and full restarts based on:
+/// - restart_unit: Determines frequency of full restarts vs hot reloads
+/// - only_hot_reload: Forces hot reload only mode
+/// - count: Tracks intervals to coordinate restart timing
 struct AutoRestart {
+    /// How many intervals to wait before allowing a full restart (vs hot reload)
     restart_unit: u32,
+    /// If true, only perform hot reloads and never restart
     only_hot_reload: bool,
+    /// Tracks if currently performing a hot reload
     running_hot_reload: AtomicBool,
+    /// Counter for tracking intervals
     count: AtomicU32,
 }
 
+/// Creates a new auto-restart service that checks for config changes periodically
 pub fn new_auto_restart_service(
     interval: Duration,
     only_hot_reload: bool,
@@ -345,8 +370,22 @@ pub fn new_auto_restart_service(
     )
 }
 
+/// ConfigObserverService provides real-time config file monitoring
+///
+/// This service:
+/// 1. Watches the config file/storage for changes
+/// 2. Triggers immediate hot reload when changes detected
+/// 3. Can optionally perform full restarts if needed
+/// 4. Runs continuously until server shutdown
+///
+/// The service uses tokio::select! to handle:
+/// - Periodic checks (interval-based)
+/// - File system events (real-time)
+/// - Graceful shutdown signals
 pub struct ConfigObserverService {
+    /// How often to check for changes
     interval: Duration,
+    /// If true, only perform hot reloads when changes detected
     only_hot_reload: bool,
 }
 
@@ -415,6 +454,8 @@ impl BackgroundService for ConfigObserverService {
     }
 }
 
+/// Helper function to run the config diff and update process
+/// Logs any errors that occur during the update
 async fn run_diff_and_update_config(hot_reload_only: bool) {
     if let Err(e) = diff_and_update_config(hot_reload_only).await {
         error!(
@@ -429,11 +470,15 @@ async fn run_diff_and_update_config(hot_reload_only: bool) {
 #[async_trait]
 impl ServiceTask for AutoRestart {
     async fn run(&self) -> Option<bool> {
+        // Calculate if this iteration should be hot reload only
+        // Uses modulo arithmetic with restart_unit to create a pattern like:
+        // [hot reload, hot reload, full restart, hot reload, hot reload, full restart]
+        // This helps spread out potentially disruptive full restarts
         let count = self.count.fetch_add(1, Ordering::Relaxed);
         let hot_reload_only = if self.only_hot_reload {
             true
         } else if count > 0 && self.restart_unit > 1 {
-            count % self.restart_unit != 0
+            count % self.restart_unit != 0 // Only do full restart when count divides evenly
         } else {
             true
         };

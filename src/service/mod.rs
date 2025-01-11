@@ -29,16 +29,44 @@ pub enum Error {
     Invalid { message: String },
 }
 
+// Type alias for a boxed future that represents a background task
+// Takes a u32 counter and returns Result<bool, Error>
 pub type SimpleServiceTaskFuture =
     Box<dyn Fn(u32) -> BoxFuture<'static, Result<bool, Error>> + Sync + Send>;
 
+// Represents a collection of background tasks that run periodically
 pub struct SimpleServiceTask {
-    name: String,
-    count: AtomicU32,
-    tasks: Vec<(String, SimpleServiceTaskFuture)>,
-    interval: Duration,
+    name: String,     // Name identifier for the service
+    count: AtomicU32, // Counter for tracking task executions
+    tasks: Vec<(String, SimpleServiceTaskFuture)>, // List of named tasks to execute
+    interval: Duration, // Time between task executions
 }
 
+/// Creates a new SimpleServiceTask with the specified name, interval, and collection of tasks.
+/// This service manages multiple background tasks that run concurrently at fixed intervals.
+///
+/// # Arguments
+/// * `name` - Identifier for this service instance, used in logging
+/// * `interval` - Duration between task executions (e.g., Duration::from_secs(60) for minute intervals)
+/// * `tasks` - Vector of named tasks to execute periodically, where each task is a tuple of (name, task_function)
+///
+/// # Examples
+/// ```
+/// use std::time::Duration;
+///
+/// let tasks = vec![
+///     ("cleanup".to_string(), Box::new(|count| Box::pin(async move {
+///         // Perform cleanup operation
+///         Ok(true)
+///     })))
+/// ];
+///
+/// let service = new_simple_service_task(
+///     "maintenance",
+///     Duration::from_secs(300), // Run every 5 minutes
+///     tasks
+/// );
+/// ```
 pub fn new_simple_service_task(
     name: &str,
     interval: Duration,
@@ -54,6 +82,22 @@ pub fn new_simple_service_task(
 
 #[async_trait]
 impl BackgroundService for SimpleServiceTask {
+    /// Starts the background service, executing all tasks at the specified interval
+    /// until shutdown is signaled or tasks complete. Each task execution is logged
+    /// with timing information and success/failure status.
+    ///
+    /// # Arguments
+    /// * `shutdown` - Watch channel for shutdown coordination
+    ///
+    /// # Task Execution
+    /// - Tasks are executed sequentially in the order they were added
+    /// - Each task receives a counter value that increments with each interval
+    /// - Failed tasks are logged with error details but don't stop the service
+    /// - Task execution times are logged for monitoring purposes
+    ///
+    /// # Shutdown Behavior
+    /// - Service stops gracefully when shutdown signal is received
+    /// - Current task iteration completes before shutdown
     async fn start(&self, mut shutdown: ShutdownWatch) {
         let period_human: humantime::Duration = self.interval.into();
         let task_names: Vec<String> =
@@ -69,14 +113,17 @@ impl BackgroundService for SimpleServiceTask {
         let mut period = interval(self.interval);
         loop {
             tokio::select! {
+                // Handle shutdown signal
                 _ = shutdown.changed() => {
                     break;
                 }
+                // Execute tasks on each interval tick
                 _ = period.tick() => {
                     let now = SystemTime::now();
                     let count = self.count.fetch_add(1, Ordering::Relaxed);
                     let mut success_tasks = vec![];
                     let mut fail_tasks = vec![];
+                    // Execute each task and track results
                     for (task_name, task) in self.tasks.iter() {
                         let task_start = SystemTime::now();
                         match task(count).await {
@@ -122,20 +169,84 @@ impl BackgroundService for SimpleServiceTask {
     }
 }
 
+// Trait defining interface for individual service tasks
 #[async_trait]
 pub trait ServiceTask: Sync + Send {
+    /// Executes a single iteration of the task. This method is called repeatedly
+    /// at the specified interval until shutdown or task completion.
+    ///
+    /// # Returns
+    /// * `None` or `Some(false)` - Task completed normally, continue running the service
+    /// * `Some(true)` - Task completed and requests service shutdown
+    ///
+    /// # Examples
+    /// ```
+    /// #[async_trait]
+    /// impl ServiceTask for MyTask {
+    ///     async fn run(&self) -> Option<bool> {
+    ///         // Perform task work
+    ///         if self.work_complete() {
+    ///             Some(true)  // Stop service
+    ///         } else {
+    ///             Some(false) // Continue running
+    ///         }
+    ///     }
+    /// }
+    /// ```
     async fn run(&self) -> Option<bool>;
+
+    /// Returns a human-readable description of the task for logging and monitoring.
+    /// Implementations should provide meaningful descriptions of their purpose.
+    ///
+    /// # Returns
+    /// * String describing the task's purpose, default is "unknown"
+    ///
+    /// # Examples
+    /// ```
+    /// fn description(&self) -> String {
+    ///     "Database cleanup task - removes expired records".to_string()
+    /// }
+    /// ```
     fn description(&self) -> String {
         "unknown".to_string()
     }
 }
 
+// Wrapper for individual ServiceTask implementations
 pub struct CommonServiceTask {
-    task: Box<dyn ServiceTask>,
-    interval: Duration,
+    task: Box<dyn ServiceTask>, // The actual task to execute
+    interval: Duration,         // Time between executions
 }
 
 impl CommonServiceTask {
+    /// Creates a new CommonServiceTask that wraps a single task implementation.
+    /// This is useful for simpler cases where only one recurring task is needed.
+    ///
+    /// # Arguments
+    /// * `interval` - Duration between task executions
+    /// * `task` - Implementation of ServiceTask to execute
+    ///
+    /// # Special Cases
+    /// - If interval is less than 1 second, task runs only once
+    /// - Task can signal completion via return value to stop service
+    ///
+    /// # Examples
+    /// ```
+    /// struct HealthCheck;
+    ///
+    /// #[async_trait]
+    /// impl ServiceTask for HealthCheck {
+    ///     async fn run(&self) -> Option<bool> {
+    ///         // Perform health check
+    ///         Some(false)
+    ///     }
+    /// }
+    ///
+    /// let service = CommonServiceTask::new(
+    ///     Duration::from_secs(60),
+    ///     HealthCheck
+    /// );
+    /// ```
     pub fn new(interval: Duration, task: impl ServiceTask + 'static) -> Self {
         Self {
             task: Box::new(task),
@@ -146,6 +257,23 @@ impl CommonServiceTask {
 
 #[async_trait]
 impl BackgroundService for CommonServiceTask {
+    /// Starts the background service, executing the wrapped task at the specified interval.
+    /// The service runs until one of the following conditions is met:
+    /// - Shutdown signal is received
+    /// - Task returns Some(true) indicating completion
+    /// - Interval is less than 1 second (runs once and stops)
+    ///
+    /// # Arguments
+    /// * `shutdown` - Watch channel for shutdown coordination
+    ///
+    /// # Logging
+    /// - Service start is logged with task description and interval
+    /// - Each task execution is logged with elapsed time
+    /// - Task completion status is logged
+    ///
+    /// # Performance Considerations
+    /// - Task execution time is measured and logged
+    /// - Long-running tasks may delay the next interval
     async fn start(&self, mut shutdown: ShutdownWatch) {
         let period_human: humantime::Duration = self.interval.into();
         // if interval is less than 1s
