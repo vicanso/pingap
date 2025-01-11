@@ -170,21 +170,26 @@ pub struct State {
     pub variables: Option<AHashMap<String, String>>,
 }
 
+const ONE_HOUR_MS: u64 = 60 * 60 * 1000;
+
 impl State {
-    /// Creates a new State instance with the current timestamp and default values
+    /// Creates a new State instance with the current timestamp and default values.
+    ///
+    /// Returns a new State struct initialized with the current timestamp and all other fields
+    /// set to their default values.
     pub fn new() -> Self {
         Self {
             created_at: util::now().as_millis() as u64,
             ..Default::default()
         }
     }
-}
 
-const ONE_HOUR_MS: u64 = 60 * 60 * 1000;
-
-impl State {
-    /// Adds a variable to the state's variables map with the given key and value
-    /// The key will be prefixed with '$'
+    /// Adds a variable to the state's variables map with the given key and value.
+    /// The key will be automatically prefixed with '$' before being stored.
+    ///
+    /// # Arguments
+    /// * `key` - The variable name (will be prefixed with '$')
+    /// * `value` - The value to store for this variable
     #[inline]
     pub fn add_variable(&mut self, key: &str, value: &str) {
         let key = format!("${key}");
@@ -197,7 +202,10 @@ impl State {
         }
     }
 
-    /// Returns the upstream response time if it's less than one hour, otherwise None
+    /// Returns the upstream response time if it's less than one hour, otherwise None.
+    /// This helps filter out potentially invalid or stale timing data.
+    ///
+    /// Returns: Option<u64> representing milliseconds, or None if time exceeds 1 hour
     #[inline]
     pub fn get_upstream_response_time(&self) -> Option<u64> {
         if let Some(value) = self.upstream_response_time {
@@ -208,7 +216,10 @@ impl State {
         None
     }
 
-    /// Returns the upstream connect time if it's less than one hour, otherwise None
+    /// Returns the upstream connect time if it's less than one hour, otherwise None.
+    /// This helps filter out potentially invalid or stale timing data.
+    ///
+    /// Returns: Option<u64> representing milliseconds, or None if time exceeds 1 hour
     #[inline]
     pub fn get_upstream_connect_time(&self) -> Option<u64> {
         if let Some(value) = self.upstream_connect_time {
@@ -219,7 +230,10 @@ impl State {
         None
     }
 
-    /// Returns the upstream processing time if it's less than one hour, otherwise None
+    /// Returns the upstream processing time if it's less than one hour, otherwise None.
+    /// This helps filter out potentially invalid or stale timing data.
+    ///
+    /// Returns: Option<u64> representing milliseconds, or None if time exceeds 1 hour
     #[inline]
     pub fn get_upstream_processing_time(&self) -> Option<u64> {
         if let Some(value) = self.upstream_processing_time {
@@ -230,8 +244,14 @@ impl State {
         None
     }
 
-    /// Appends a formatted value to the buffer based on the given key
-    /// Handles various metrics like connection info, timing data, and TLS details
+    /// Appends a formatted value to the provided buffer based on the given key.
+    /// Handles various metrics including connection info, timing data, and TLS details.
+    ///
+    /// # Arguments
+    /// * `buf` - The BytesMut buffer to append the value to
+    /// * `key` - The key identifying which state value to format and append
+    ///
+    /// Returns: The modified BytesMut buffer
     #[inline]
     pub fn append_value(&self, mut buf: BytesMut, key: &str) -> BytesMut {
         match key {
@@ -343,8 +363,15 @@ impl State {
     }
 }
 
-/// Generates a cache key from the request method, URI and state context
-/// The key includes an optional namespace and prefix if configured
+/// Generates a cache key from the request method, URI and state context.
+/// The key includes an optional namespace and prefix if configured in the state.
+///
+/// # Arguments
+/// * `ctx` - The State context containing cache configuration
+/// * `method` - The HTTP method as a string
+/// * `uri` - The request URI
+///
+/// Returns: A CacheKey combining the namespace, prefix (if any), method and URI
 pub fn get_cache_key(ctx: &State, method: &str, uri: &Uri) -> CacheKey {
     let namespace = ctx.cache_namespace.as_ref().map_or("", |v| v);
     let key = if let Some(prefix) = &ctx.cache_prefix {

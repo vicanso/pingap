@@ -31,8 +31,15 @@ use std::time::Duration;
 use tracing::error;
 use url::Url;
 
+/// Tag used to dynamically replace with actual hostname in prometheus push URLs.
+/// This allows for dynamic host identification in distributed deployments.
 static HOST_NAME_TAG: &str = "$HOSTNAME";
 
+/// Histogram metric tracking cache read operation latencies.
+/// Buckets are optimized for typical cache read operations:
+/// - 1ms-5ms: Very fast cache hits
+/// - 5ms-50ms: Normal cache operations
+/// - 50ms-1s: Slow operations that may indicate issues
 pub static CACHE_READING_TIME: Lazy<Box<Histogram>> = Lazy::new(|| {
     Box::new(
         new_histogram(
@@ -44,6 +51,12 @@ pub static CACHE_READING_TIME: Lazy<Box<Histogram>> = Lazy::new(|| {
         .unwrap(),
     )
 });
+
+/// Histogram metric tracking cache write operation latencies.
+/// Buckets are configured for slightly longer durations than reads:
+/// - 5ms-25ms: Fast writes
+/// - 25ms-250ms: Normal write operations
+/// - 250ms-1s: Slow writes that may need investigation
 pub static CACHE_WRITING_TIME: Lazy<Box<Histogram>> = Lazy::new(|| {
     Box::new(
         new_histogram(
@@ -56,67 +69,116 @@ pub static CACHE_WRITING_TIME: Lazy<Box<Histogram>> = Lazy::new(|| {
     )
 });
 
-/// Prometheus metrics collector for monitoring HTTP server performance and resource usage
+/// Comprehensive metrics collector for HTTP server monitoring.
+///
+/// This struct maintains various Prometheus metrics types to track:
+/// - HTTP traffic patterns (requests, responses, payload sizes)
+/// - Connection handling (reuse, TLS handshakes)
+/// - Upstream server performance
+/// - Cache efficiency
+/// - System resource utilization
+///
+/// Each metric is labeled with appropriate dimensions (e.g., location, status code)
+/// to enable detailed analysis and alerting.
 pub struct Prometheus {
-    /// Prometheus registry for collecting all metrics
+    /// Central registry for all metrics
     r: Registry,
-    /// Total number of HTTP requests received, labeled by location
+
+    /// Counter tracking total HTTP requests by location.
+    /// Helps understand traffic patterns and load distribution.
     http_requests_total: Box<IntCounterVec>,
-    /// Current number of active HTTP requests, labeled by location
+
+    /// Gauge showing current active requests by location.
+    /// Useful for monitoring concurrent load and detecting potential bottlenecks.
     http_requests_current: Box<IntGaugeVec>,
-    /// Histogram of request payload sizes received from clients in KB, labeled by location
+
+    /// Histogram of request payload sizes in KB.
+    /// Helps identify unusual request patterns and potential DoS attempts.
     http_received: Box<HistogramVec>,
+
     /// Total bytes received from clients, labeled by location
     http_received_bytes: Box<IntCounterVec>,
+
     /// Count of HTTP response codes grouped by category (2xx, 3xx, etc.), labeled by location and code
     http_responses_codes: Box<IntCounterVec>,
+
     /// Histogram of HTTP request processing times in seconds, labeled by location
     http_response_time: Box<HistogramVec>,
+
     /// Histogram of response payload sizes sent to clients in KB, labeled by location
     http_sent: Box<HistogramVec>,
+
     /// Total bytes sent to clients, labeled by location
     http_sent_bytes: Box<IntCounterVec>,
+
     /// Count of TCP connection reuses
     connection_reuses: Box<IntCounter>,
+
     /// Histogram of TLS handshake durations in seconds
     tls_handshake_time: Box<Histogram>,
+
     /// Total number of connections to upstream servers, labeled by upstream
     upstream_connections: Box<IntGaugeVec>,
+
     /// Current number of active upstream connections, labeled by upstream
     upstream_connections_current: Box<IntGaugeVec>,
+
     /// Histogram of TCP connection times to upstream servers in seconds, labeled by upstream
     upstream_tcp_connect_time: Box<HistogramVec>,
+
     /// Histogram of TLS handshake times with upstream servers in seconds, labeled by upstream
     upstream_tls_handshake_time: Box<HistogramVec>,
+
     /// Count of upstream connection reuses, labeled by upstream
     upstream_reuses: Box<IntCounterVec>,
+
     /// Histogram of upstream request processing times in seconds, labeled by upstream
     upstream_processing_time: Box<HistogramVec>,
+
     /// Histogram of upstream response times in seconds, labeled by upstream
     upstream_response_time: Box<HistogramVec>,
+
     /// Histogram of cache lookup times in seconds
     cache_lookup_time: Box<Histogram>,
+
     /// Histogram of cache lock acquisition times in seconds
     cache_lock_time: Box<Histogram>,
+
     /// Current number of cache read operations in progress
     cache_reading: Box<IntGauge>,
+
     /// Current number of cache write operations in progress
     cache_writing: Box<IntGauge>,
+
     /// Histogram of response compression ratios
     compression_ratio: Box<Histogram>,
+
     /// Current memory usage in megabytes
     memory: Box<IntGauge>,
+
     /// Current number of open file descriptors
     fd_count: Box<IntGauge>,
+
     /// Current number of IPv4 TCP connections
     tcp_count: Box<IntGauge>,
+
     /// Current number of IPv6 TCP connections
     tcp6_count: Box<IntGauge>,
 }
 
+/// Milliseconds to seconds conversion factor
 const SECOND: f64 = 1000.0;
 
 impl Prometheus {
+    /// Records metrics at the start of request processing.
+    ///
+    /// # Arguments
+    /// * `location` - The routing location identifier for the request
+    ///
+    /// # Metrics Updated
+    /// - Increments total request counter
+    /// - Increments current request gauge
+    /// - Updates location-specific counters if location is provided
     pub fn before(&self, location: &str) {
         self.http_requests_total.with_label_values(&[""]).inc();
         self.http_requests_current.with_label_values(&[""]).inc();
@@ -129,6 +191,25 @@ impl Prometheus {
                 .inc();
         }
     }
+
+    /// Records comprehensive metrics at request completion.
+    ///
+    /// # Arguments
+    /// * `session` - The HTTP session containing request/response details
+    /// * `ctx` - Request context with timing and state information
+    ///
+    /// # Metrics Updated
+    /// - Response timing and size metrics
+    /// - HTTP status code distribution
+    /// - Connection reuse statistics
+    /// - TLS handshake timing
+    /// - Upstream server performance metrics
+    /// - Cache operation statistics
+    /// - Compression effectiveness
+    ///
+    /// # Performance Impact
+    /// This method performs multiple metric updates but uses efficient
+    /// atomic operations to minimize overhead.
     pub fn after(&self, session: &Session, ctx: &State) {
         let mut location = "";
         let mut upstream = "";
@@ -271,6 +352,13 @@ impl Prometheus {
             self.compression_ratio.observe(compression_stat.ratio());
         }
     }
+
+    /// Collects all registered metrics and updates system resource gauges.
+    ///
+    /// Updates the following system metrics before collection:
+    /// - Memory usage in MB
+    /// - Open file descriptor count
+    /// - IPv4 and IPv6 TCP connection counts
     fn gather(&self) -> Vec<prometheus::proto::MetricFamily> {
         let info = get_process_system_info();
         self.memory.set(info.memory_mb as i64);
@@ -279,6 +367,12 @@ impl Prometheus {
         self.tcp6_count.set(info.tcp6_count as i64);
         self.r.gather()
     }
+
+    /// Formats all metrics in Prometheus text format for scraping.
+    ///
+    /// # Returns
+    /// - `Ok(Vec<u8>)` containing UTF-8 encoded metrics in Prometheus format
+    /// - `Err(Error)` if metric encoding fails
     pub fn metrics(&self) -> Result<Vec<u8>> {
         let mut buffer = vec![];
         let encoder = TextEncoder::new();
@@ -292,15 +386,32 @@ impl Prometheus {
     }
 }
 
+/// Configuration for Prometheus push gateway integration
 #[derive(Clone)]
 struct PrometheusPushParams {
+    /// Service identifier
     name: String,
+    /// Push gateway URL
     url: String,
+    /// Reference to metrics collector
     p: Arc<Prometheus>,
+    /// Basic auth username
     username: String,
+    /// Optional basic auth password
     password: Option<String>,
 }
 
+/// Pushes metrics to Prometheus pushgateway
+///
+/// # Arguments
+/// * `count` - Current iteration count
+/// * `offset` - Push frequency control
+/// * `params` - Push configuration parameters
+///
+/// # Returns
+/// * `Ok(true)` if push was attempted
+/// * `Ok(false)` if skipped due to offset
+/// * `Err` if push failed
 async fn do_push(
     count: u32,
     offset: u32,
