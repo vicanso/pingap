@@ -49,24 +49,6 @@ pub struct SimpleServiceTask {
 /// * `name` - Identifier for this service instance, used in logging
 /// * `interval` - Duration between task executions (e.g., Duration::from_secs(60) for minute intervals)
 /// * `tasks` - Vector of named tasks to execute periodically, where each task is a tuple of (name, task_function)
-///
-/// # Examples
-/// ```
-/// use std::time::Duration;
-///
-/// let tasks = vec![
-///     ("cleanup".to_string(), Box::new(|count| Box::pin(async move {
-///         // Perform cleanup operation
-///         Ok(true)
-///     })))
-/// ];
-///
-/// let service = new_simple_service_task(
-///     "maintenance",
-///     Duration::from_secs(300), // Run every 5 minutes
-///     tasks
-/// );
-/// ```
 pub fn new_simple_service_task(
     name: &str,
     interval: Duration,
@@ -178,21 +160,6 @@ pub trait ServiceTask: Sync + Send {
     /// # Returns
     /// * `None` or `Some(false)` - Task completed normally, continue running the service
     /// * `Some(true)` - Task completed and requests service shutdown
-    ///
-    /// # Examples
-    /// ```
-    /// #[async_trait]
-    /// impl ServiceTask for MyTask {
-    ///     async fn run(&self) -> Option<bool> {
-    ///         // Perform task work
-    ///         if self.work_complete() {
-    ///             Some(true)  // Stop service
-    ///         } else {
-    ///             Some(false) // Continue running
-    ///         }
-    ///     }
-    /// }
-    /// ```
     async fn run(&self) -> Option<bool>;
 
     /// Returns a human-readable description of the task for logging and monitoring.
@@ -222,24 +189,6 @@ impl CommonServiceTask {
     /// # Special Cases
     /// - If interval is less than 1 second, task runs only once
     /// - Task can signal completion via return value to stop service
-    ///
-    /// # Examples
-    /// ```
-    /// struct HealthCheck;
-    ///
-    /// #[async_trait]
-    /// impl ServiceTask for HealthCheck {
-    ///     async fn run(&self) -> Option<bool> {
-    ///         // Perform health check
-    ///         Some(false)
-    ///     }
-    /// }
-    ///
-    /// let service = CommonServiceTask::new(
-    ///     Duration::from_secs(60),
-    ///     HealthCheck
-    /// );
-    /// ```
     pub fn new(interval: Duration, task: impl ServiceTask + 'static) -> Self {
         Self {
             task: Box::new(task),
