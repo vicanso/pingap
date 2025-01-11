@@ -29,20 +29,47 @@ use regex::Regex;
 use std::time::Duration;
 use tracing::debug;
 
+/// CORS (Cross-Origin Resource Sharing) plugin for handling cross-origin requests
+/// Supports both preflight requests and actual CORS requests with configurable rules
 pub struct Cors {
+    // Determines when plugin executes (Request phase for preflight, Response for actual requests)
     plugin_step: PluginStep,
+    // Optional regex for path-based CORS rules (e.g., "^/api" for API endpoints only)
     path: Option<Regex>,
+    // Configurable origin - can be "*", specific domain, or dynamic "$http_origin"
     allow_origin: HeaderValue,
+    // Pre-computed CORS headers to avoid rebuilding on every request
+    // Includes: Allow-Methods, Allow-Headers, Max-Age, Allow-Credentials, Expose-Headers
     headers: Vec<HttpHeader>,
+    // Unique identifier for plugin instance, used for caching and identification
     hash_value: String,
 }
 
 impl TryFrom<&PluginConf> for Cors {
     type Error = Error;
+    /// Converts a plugin configuration into a CORS plugin instance
+    ///
+    /// # Arguments
+    /// * `value` - Plugin configuration containing CORS settings
+    ///
+    /// # Returns
+    /// * `Result<Self>` - Configured CORS plugin or error if configuration is invalid
+    ///
+    /// # Configuration Options
+    /// * `path` - Regex pattern for matching request paths
+    /// * `max_age` - Duration for caching preflight results (e.g., "60m")
+    /// * `allow_origin` - Allowed origins ("*", domain, or "$http_origin")
+    /// * `allow_methods` - Comma-separated list of allowed HTTP methods
+    /// * `allow_headers` - Allowed request headers
+    /// * `allow_credentials` - Whether to allow credentials (cookies, auth)
+    /// * `expose_headers` - Headers accessible to the browser
     fn try_from(value: &PluginConf) -> Result<Self> {
+        // Generate unique hash for this configuration
         let hash_value = get_hash_key(value);
         let step = get_step_conf(value);
 
+        // Parse max-age duration with human-friendly format (e.g., "60m", "24h")
+        // Controls browser caching of preflight results
         let max_age = get_str_conf(value, "max_age");
         let max_age = if !max_age.is_empty() {
             parse_duration(&max_age).map_err(|e| Error::Invalid {
@@ -50,8 +77,11 @@ impl TryFrom<&PluginConf> for Cors {
                 message: e.to_string(),
             })?
         } else {
+            // Default to 1 hour if not specified
             Duration::from_secs(3600)
         };
+
+        // Compile path regex if specified, used for selective CORS application
         let path = get_str_conf(value, "path");
         let path = if path.is_empty() {
             None
@@ -62,18 +92,25 @@ impl TryFrom<&PluginConf> for Cors {
             })?;
             Some(reg)
         };
+
+        // Configure allowed origins
+        // "*" - Allow all origins
+        // "example.com" - Allow specific domain
+        // "$http_origin" - Mirror the requesting origin (dynamic)
         let mut allow_origin = get_str_conf(value, "allow_origin");
         if allow_origin.is_empty() {
             allow_origin = "*".to_string();
         }
 
+        // Configure allowed HTTP methods
+        // Important for preflight requests to know which methods are supported
         let mut allow_methods = get_str_conf(value, "allow_methods");
-
         if allow_methods.is_empty() {
             allow_methods =
                 ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"].join(", ");
         };
 
+        // Helper to convert string values to HTTP header values
         let format_header_value = |value: &str| -> Result<HeaderValue> {
             HeaderValue::from_str(value).map_err(|e| Error::Invalid {
                 category: PluginCategory::Cors.to_string(),
@@ -81,11 +118,13 @@ impl TryFrom<&PluginConf> for Cors {
             })
         };
 
+        // Build the set of CORS headers based on configuration
         let mut headers = vec![(
             header::ACCESS_CONTROL_ALLOW_METHODS,
             format_header_value(&allow_methods)?,
         )];
 
+        // Optional: Allow-Headers for custom headers client may send
         let allow_headers = get_str_conf(value, "allow_headers");
         if !allow_headers.is_empty() {
             headers.push((
@@ -94,6 +133,7 @@ impl TryFrom<&PluginConf> for Cors {
             ));
         }
 
+        // Add max-age if non-zero (controls preflight caching)
         if !max_age.is_zero() {
             headers.push((
                 header::ACCESS_CONTROL_MAX_AGE,
@@ -101,6 +141,8 @@ impl TryFrom<&PluginConf> for Cors {
             ));
         }
 
+        // Optional: Allow credentials (cookies, auth headers)
+        // Important: Cannot be used with Allow-Origin: *
         let allow_credentials = get_bool_conf(value, "allow_credentials");
         if allow_credentials {
             headers.push((
@@ -109,6 +151,7 @@ impl TryFrom<&PluginConf> for Cors {
             ));
         }
 
+        // Optional: Expose-Headers lets client access custom response headers
         let expose_headers = get_str_conf(value, "expose_headers");
         if !expose_headers.is_empty() {
             headers.push((
@@ -137,20 +180,39 @@ impl TryFrom<&PluginConf> for Cors {
 }
 
 impl Cors {
+    /// Creates a new CORS plugin instance from the given configuration
+    ///
+    /// # Arguments
+    /// * `params` - Plugin configuration parameters
+    ///
+    /// # Returns
+    /// * `Result<Self>` - Configured CORS plugin or error
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new cors plugin");
         Self::try_from(params)
     }
+
+    /// Generates the set of CORS headers for a request/response
+    /// Handles dynamic values like $http_origin
+    ///
+    /// # Arguments
+    /// * `session` - Current HTTP session
+    /// * `ctx` - Plugin state context
+    ///
+    /// # Returns
+    /// * `Result<Vec<HttpHeader>>` - Collection of CORS headers or error
     fn get_headers(
         &self,
         session: &mut Session,
         ctx: &mut State,
     ) -> Result<Vec<HttpHeader>> {
+        // Convert dynamic values (e.g., $http_origin) to actual values
         let origin = convert_header_value(&self.allow_origin, session, ctx)
             .ok_or(Error::Invalid {
                 category: PluginCategory::Cors.to_string(),
                 message: "Allow origin is invalid".to_string(),
             })?;
+        // Clone pre-computed headers and add dynamic origin
         let mut headers = self.headers.clone();
         headers.push((header::ACCESS_CONTROL_ALLOW_ORIGIN, origin));
         Ok(headers)
@@ -159,10 +221,21 @@ impl Cors {
 
 #[async_trait]
 impl Plugin for Cors {
+    /// Returns the unique identifier for this plugin instance
     #[inline]
     fn hash_key(&self) -> String {
         self.hash_value.clone()
     }
+
+    /// Handles incoming requests, particularly CORS preflight (OPTIONS) requests
+    ///
+    /// # Arguments
+    /// * `step` - Current plugin execution step
+    /// * `session` - Current HTTP session
+    /// * `ctx` - Plugin state context
+    ///
+    /// # Returns
+    /// * `pingora::Result<Option<HttpResponse>>` - Response for preflight requests or None
     #[inline]
     async fn handle_request(
         &self,
@@ -170,25 +243,42 @@ impl Plugin for Cors {
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        // Early return if not in request phase
         if step != self.plugin_step {
             return Ok(None);
         }
+
+        // Check if request path matches CORS rules
         if let Some(reg) = &self.path {
-            // not match path
             if !reg.is_match(session.req_header().uri.path()) {
                 return Ok(None);
             }
         }
+
+        // Handle CORS preflight (OPTIONS) requests
+        // Preflight happens before actual request to check if it's allowed
         if http::Method::OPTIONS == session.req_header().method {
             let headers = self
                 .get_headers(session, ctx)
                 .map_err(|e| util::new_internal_error(400, e.to_string()))?;
+            // Return 204 No Content with CORS headers for preflight
             let mut resp = HttpResponse::no_content();
             resp.headers = Some(headers);
             return Ok(Some(resp));
         }
         Ok(None)
     }
+
+    /// Modifies responses to add appropriate CORS headers for actual (non-preflight) requests
+    ///
+    /// # Arguments
+    /// * `step` - Current plugin execution step
+    /// * `session` - Current HTTP session
+    /// * `ctx` - Plugin state context
+    /// * `upstream_response` - Response headers to modify
+    ///
+    /// # Returns
+    /// * `pingora::Result<()>` - Success or error
     async fn handle_response(
         &self,
         step: PluginStep,
@@ -196,19 +286,25 @@ impl Plugin for Cors {
         ctx: &mut State,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<()> {
+        // Only process during response phase
         if step != PluginStep::Response {
             return Ok(());
         }
+
+        // Skip if path doesn't match CORS rules
         if let Some(reg) = &self.path {
-            // not match path
             if !reg.is_match(session.req_header().uri.path()) {
                 return Ok(());
             }
         }
+
+        // Only add CORS headers if request has Origin header
+        // (indicates it's a CORS request)
         if session.get_header(header::ORIGIN).is_none() {
             return Ok(());
         }
 
+        // Add all configured CORS headers to the response
         let headers = self
             .get_headers(session, ctx)
             .map_err(|e| util::new_internal_error(400, e.to_string()))?;
@@ -221,6 +317,7 @@ impl Plugin for Cors {
 
 #[cfg(test)]
 mod tests {
+    /// Tests CORS plugin configuration parsing
     use super::Cors;
     use crate::{
         config::{PluginConf, PluginStep},
@@ -256,6 +353,7 @@ max_age = "60m"
             format!("{:?}", params.headers)
         );
     }
+    /// Tests CORS request handling including preflight and actual requests
     #[tokio::test]
     async fn test_cors() {
         let headers = ["X-User: 123", "Origin: https://pingap.io"].join("\r\n");

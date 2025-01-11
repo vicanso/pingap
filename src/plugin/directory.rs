@@ -43,6 +43,8 @@ use tokio::io::AsyncReadExt;
 use tracing::{debug, error};
 use urlencoding::decode;
 
+// Static HTML template for directory listing view
+// Includes basic styling and JavaScript for date formatting
 static WEB_HTML: &str = r###"<!doctype html>
 <html lang="en">
     <head>
@@ -107,29 +109,67 @@ static WEB_HTML: &str = r###"<!doctype html>
 
 #[derive(Default)]
 pub struct Directory {
+    // Root directory path from which files will be served
+    // Can be absolute or relative path
     path: PathBuf,
+
+    // Default index file to serve when requesting directory root
+    // Usually "index.html", must start with "/"
     index: String,
+
+    // When true, generates HTML directory listings for folders
+    // When false, returns 404 for directory requests (unless index file exists)
     autoindex: bool,
+
+    // Size of chunks when streaming large files
+    // If None or 0, defaults to 4096 bytes
+    // Files smaller than chunk_size are sent in single response
     chunk_size: Option<usize>,
-    // max age of http response
+
+    // Cache-Control max-age directive in seconds
+    // Controls how long browsers should cache the response
     max_age: Option<u32>,
-    // private for cache control
+
+    // When true, adds "private" to Cache-Control header
+    // Prevents caching by shared caches (e.g., CDNs)
     cache_private: Option<bool>,
-    // charset for text file
+
+    // Character set for text/* content types
+    // e.g., "utf-8", appended to Content-Type header
     charset: Option<String>,
+
+    // Plugin execution phase (request or proxy_upstream)
     plugin_step: PluginStep,
-    // headers for http response
+
+    // Additional HTTP headers to include in responses
     headers: Option<Vec<HttpHeader>>,
-    // support download
+
+    // When true, adds Content-Disposition: attachment
+    // Forces browser to download rather than display inline
     download: bool,
+
+    // Unique identifier for this plugin instance
     hash_value: String,
 }
 
+/// Reads file metadata and opens file for reading asynchronously
+///
+/// # Arguments
+/// * `file` - PathBuf pointing to the file to be read
+///
+/// # Returns
+/// * `Ok((Metadata, File))` - Tuple containing file metadata and opened file handle
+/// * `Err` - IO error if file cannot be opened or is a directory
+///
+/// # Notes
+/// - Returns NotFound error if path points to a directory
+/// - File is opened in read-only mode
 async fn get_data(
     file: &PathBuf,
 ) -> std::io::Result<(std::fs::Metadata, fs::File)> {
     let meta = fs::metadata(file).await?;
 
+    // Don't serve directories directly
     if meta.is_dir() {
         return Err(std::io::Error::from(std::io::ErrorKind::NotFound));
     }
@@ -138,27 +178,49 @@ async fn get_data(
     Ok((meta, f))
 }
 
+/// Generates response headers and determines caching behavior based on file metadata
+///
+/// # Arguments
+/// * `file` - PathBuf of the file being served
+/// * `meta` - File metadata for size and modification time
+/// * `charset` - Optional character set to append to text/* content types
+///
+/// # Returns
+/// * `(bool, usize, Vec<HttpHeader>)` where:
+///   - bool: whether file is cacheable (false for HTML files)
+///   - usize: file size in bytes
+///   - Vec<HttpHeader>: generated headers including Content-Type and ETag
 fn get_cacheable_and_headers_from_meta(
     file: &PathBuf,
     meta: &Metadata,
     charset: &Option<String>,
 ) -> (bool, usize, Vec<HttpHeader>) {
+    // Guess MIME type from file extension
     let result = mime_guess::from_path(file);
     let binding = result.first_or_octet_stream();
     let mut value = binding.to_string();
+
+    // Add charset for text/* content types
     if let Some(charset) = charset {
         if value.starts_with("text/") {
             value = format!("{value}; charset={charset}");
         }
     }
+
+    // HTML files are not cacheable to ensure fresh content
     let cacheable = !value.contains("text/html");
+
+    // Build basic headers (Content-Type)
     let content_type = HeaderValue::from_str(&value).unwrap();
     let mut headers = vec![(header::CONTENT_TYPE, content_type)];
 
+    // Get file size (platform-specific implementation)
     #[cfg(unix)]
     let size = meta.size() as usize;
     #[cfg(windows)]
     let size = meta.file_size() as usize;
+
+    // Generate ETag based on file size and modification time
     if let Ok(mod_time) = meta.modified() {
         let value = mod_time
             .duration_since(UNIX_EPOCH)
@@ -174,6 +236,19 @@ fn get_cacheable_and_headers_from_meta(
 
 impl TryFrom<&PluginConf> for Directory {
     type Error = Error;
+
+    /// Attempts to create Directory instance from plugin configuration
+    ///
+    /// # Arguments
+    /// * `value` - Raw plugin configuration
+    ///
+    /// # Returns
+    /// * `Result<Directory>` - Configured instance or validation error
+    ///
+    /// # Notes
+    /// - Validates execution step (must be request or proxy_upstream)
+    /// - Converts and validates all configuration parameters
+    /// - Sets appropriate defaults
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
         let step = get_step_conf(value);
@@ -244,7 +319,18 @@ impl TryFrom<&PluginConf> for Directory {
 }
 
 impl Directory {
-    /// Creates a new directory upstream, which will serve static file of directory.
+    /// Creates a new Directory plugin instance from configuration
+    ///
+    /// # Arguments
+    /// * `params` - Plugin configuration parameters
+    ///
+    /// # Returns
+    /// * `Result<Directory>` - Configured plugin instance or error
+    ///
+    /// # Notes
+    /// - Validates configuration parameters
+    /// - Sets default values for optional parameters
+    /// - Resolves relative paths to absolute
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new serve static file plugin");
         Self::try_from(params)
@@ -256,6 +342,19 @@ static IGNORE_RESPONSE: Lazy<HttpResponse> = Lazy::new(|| HttpResponse {
     ..Default::default()
 });
 
+/// Generates HTML directory listing page for a given directory
+///
+/// # Arguments
+/// * `path` - Path to directory to generate listing for
+///
+/// # Returns
+/// * `Ok(String)` - HTML content for directory listing
+/// * `Err(String)` - Error message if listing cannot be generated
+///
+/// # Notes
+/// - Skips hidden files (starting with '.')
+/// - Includes file sizes and modification times
+/// - Uses WEB_HTML template for consistent styling
 fn get_autoindex_html(path: &Path) -> Result<String, String> {
     let path = path.to_string_lossy();
     let mut file_list_html = vec![];
@@ -301,10 +400,28 @@ fn get_autoindex_html(path: &Path) -> Result<String, String> {
 
 #[async_trait]
 impl Plugin for Directory {
+    /// Returns unique identifier for this plugin instance
     #[inline]
     fn hash_key(&self) -> String {
         self.hash_value.clone()
     }
+
+    /// Handles incoming HTTP requests by serving static files
+    ///
+    /// # Arguments
+    /// * `step` - Current execution step
+    /// * `session` - HTTP session containing request details
+    /// * `ctx` - Plugin context for storing state
+    ///
+    /// # Returns
+    /// * `Result<Option<HttpResponse>>` where Some contains the response
+    ///    or None if request should be handled by next plugin
+    ///
+    /// # Notes
+    /// - Handles directory listings if autoindex enabled
+    /// - Streams large files in chunks
+    /// - Adds appropriate caching headers
+    /// - Forces downloads if configured
     async fn handle_request(
         &self,
         step: PluginStep,

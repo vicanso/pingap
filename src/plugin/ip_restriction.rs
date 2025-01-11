@@ -26,26 +26,49 @@ use http::StatusCode;
 use pingora::proxy::Session;
 use tracing::debug;
 
+/// IpRestriction plugin provides IP-based access control for HTTP requests.
+/// It can be configured to either allow or deny requests based on client IP addresses.
 pub struct IpRestriction {
-    plugin_step: PluginStep,
-    ip_rules: util::IpRules,
-    restriction_category: String,
-    forbidden_resp: HttpResponse,
-    hash_value: String,
+    plugin_step: PluginStep, // Defines when plugin runs in request lifecycle (must be Request)
+    ip_rules: util::IpRules, // Contains parsed IP addresses and CIDR ranges for matching
+    restriction_category: String, // "allow": whitelist mode, "deny": blacklist mode
+    forbidden_resp: HttpResponse, // Customizable 403 response returned when access is denied
+    hash_value: String, // Unique identifier used for plugin caching/tracking
 }
 
 impl TryFrom<&PluginConf> for IpRestriction {
     type Error = Error;
+    /// Attempts to create a new IpRestriction instance from a plugin configuration.
+    ///
+    /// # Arguments
+    /// * `value` - Plugin configuration containing IP rules, restriction type, and optional message
+    ///
+    /// # Returns
+    /// * `Ok(IpRestriction)` - Successfully created instance
+    /// * `Err(Error)` - If configuration is invalid (e.g., wrong plugin step)
+    ///
+    /// # Configuration Example
+    /// ```toml
+    /// type = "deny"
+    /// ip_list = ["192.168.1.1", "10.0.0.0/24"]
+    /// message = "Access denied"
+    /// ```
     fn try_from(value: &PluginConf) -> Result<Self> {
+        // Generate unique hash for this plugin instance
         let hash_value = get_hash_key(value);
         let step = get_step_conf(value);
 
+        // Parse IP rules from configuration
+        // Supports both individual IPs ("192.168.1.1") and CIDR ranges ("10.0.0.0/24")
         let ip_rules =
             util::IpRules::new(&get_str_slice_conf(value, "ip_list"));
+
+        // Get custom error message or use default
         let mut message = get_str_conf(value, "message");
         if message.is_empty() {
             message = "Request is forbidden".to_string();
         }
+
         let params = Self {
             hash_value,
             plugin_step: step,
@@ -57,6 +80,8 @@ impl TryFrom<&PluginConf> for IpRestriction {
                 ..Default::default()
             },
         };
+
+        // Plugin must run during request phase to effectively control access
         if PluginStep::Request != params.plugin_step {
             return Err(Error::Invalid {
                 category: PluginCategory::IpRestriction.to_string(),
@@ -68,6 +93,13 @@ impl TryFrom<&PluginConf> for IpRestriction {
 }
 
 impl IpRestriction {
+    /// Creates a new IpRestriction plugin instance from the provided configuration.
+    ///
+    /// # Arguments
+    /// * `params` - Plugin configuration parameters
+    ///
+    /// # Returns
+    /// * `Result<Self>` - New plugin instance or error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new ip restriction plugin");
         Self::try_from(params)
@@ -76,10 +108,30 @@ impl IpRestriction {
 
 #[async_trait]
 impl Plugin for IpRestriction {
+    /// Returns the unique hash key for this plugin instance.
+    /// Used for caching and identifying plugin instances.
     #[inline]
     fn hash_key(&self) -> String {
         self.hash_value.clone()
     }
+
+    /// Handles incoming HTTP requests by checking client IP against configured rules.
+    ///
+    /// # Arguments
+    /// * `step` - Current plugin execution step
+    /// * `session` - HTTP session containing request details
+    /// * `ctx` - Request context for storing/retrieving state
+    ///
+    /// # Returns
+    /// * `Ok(None)` - Request is allowed to proceed
+    /// * `Ok(Some(HttpResponse))` - Request is denied (403) or invalid (400)
+    /// * `Err(_)` - Internal error occurred during processing
+    ///
+    /// # Processing Flow
+    /// 1. Verifies correct plugin step
+    /// 2. Extracts and caches client IP
+    /// 3. Checks IP against configured rules
+    /// 4. Allows or denies request based on restriction type
     #[inline]
     async fn handle_request(
         &self,
@@ -87,17 +139,23 @@ impl Plugin for IpRestriction {
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        // Skip processing if not in correct plugin step
         if step != self.plugin_step {
             return Ok(None);
         }
+
+        // Get client IP address, using cached value if available
+        // Otherwise extract from X-Forwarded-For or remote address
         let ip = if let Some(ip) = &ctx.client_ip {
             ip.to_string()
         } else {
             let ip = util::get_client_ip(session);
-            ctx.client_ip = Some(ip.clone());
+            ctx.client_ip = Some(ip.clone()); // Cache for future use
             ip
         };
 
+        // Check if IP matches any configured rules
+        // Returns error if IP is malformed
         let found = match self.ip_rules.matched(&ip) {
             Ok(matched) => matched,
             Err(e) => {
@@ -107,15 +165,20 @@ impl Plugin for IpRestriction {
             },
         };
 
-        // deny ip
+        // Determine if request should be allowed based on:
+        // - deny mode: block if IP is found in rules (!found)
+        // - allow mode: block if IP is NOT found in rules (found)
         let allow = if self.restriction_category == "deny" {
             !found
         } else {
             found
         };
+
         if !allow {
+            // Return forbidden response with custom message if configured
             return Ok(Some(self.forbidden_resp.clone()));
         }
+        // Allow request to proceed
         return Ok(None);
     }
 }
@@ -130,6 +193,11 @@ mod tests {
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
 
+    /// Tests IP restriction parameter parsing and validation.
+    /// Verifies that:
+    /// - Plugin step must be "request"
+    /// - IP rules are correctly parsed
+    /// - Both individual IPs and CIDR ranges are supported
     #[test]
     fn test_ip_limit_params() {
         let params = IpRestriction::try_from(
@@ -171,6 +239,13 @@ type = "deny"
         assert_eq!("Plugin ip_restriction invalid, message: Ip restriction plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
     }
 
+    /// Tests IP restriction functionality.
+    /// Verifies:
+    /// - Deny list blocks matching IPs
+    /// - Allow list permits matching IPs
+    /// - CIDR range matching works correctly
+    /// - IP caching in context functions properly
+    /// - Correct response codes are returned
     #[tokio::test]
     async fn test_ip_limit() {
         let deny = IpRestriction::new(

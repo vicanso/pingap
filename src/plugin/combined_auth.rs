@@ -29,18 +29,45 @@ use pingora::proxy::Session;
 use sha2::{Digest, Sha256};
 use tracing::debug;
 
+// AuthParam defines the authentication configuration for a single application
 struct AuthParam {
+    // Optional IP rules for restricting access to specific IP addresses or CIDR ranges
+    // Example: ["127.0.0.1", "192.168.1.0/24"]
     ip_rules: Option<util::IpRules>,
+
+    // Secret key used for HMAC authentication
+    // Special value "*" bypasses all authentication (super user mode)
     secret: String,
+
+    // Maximum allowed time difference between request timestamp and server time
+    // Helps prevent replay attacks by rejecting old requests
+    // Value is in seconds, typical values: 30-300
     deviation: i64,
 }
 
 pub struct CombinedAuth {
+    // Unique identifier for this plugin instance
     hash_value: String,
+    // Plugin execution phase (must be PluginStep::Request)
     plugin_step: PluginStep,
+    // Map of app_id to their authentication parameters
     auths: AHashMap<String, AuthParam>,
 }
 
+/// Converts a plugin configuration into a CombinedAuth instance
+///
+/// # Arguments
+/// * `value` - The plugin configuration containing authorization settings
+///
+/// # Returns
+/// * `Result<Self>` - A new CombinedAuth instance or an error if configuration is invalid
+///
+/// # Configuration Format
+/// ```toml
+/// authorizations = [
+///   { app_id = "myapp", secret = "mysecret", deviation = 60, ip_list = ["127.0.0.1"] }
+/// ]
+/// ```
 impl TryFrom<&PluginConf> for CombinedAuth {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
@@ -102,31 +129,67 @@ impl TryFrom<&PluginConf> for CombinedAuth {
 }
 
 impl CombinedAuth {
+    /// Creates a new CombinedAuth plugin instance from the provided configuration
+    ///
+    /// # Arguments
+    /// * `params` - Plugin configuration parameters
+    ///
+    /// # Returns
+    /// * `Result<Self>` - A new plugin instance or an error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new combined auth plugin");
         Self::try_from(params)
     }
+
+    /// Validates an incoming request against the configured authentication rules
+    ///
+    /// # Arguments
+    /// * `session` - The HTTP session containing the request details
+    ///
+    /// # Returns
+    /// * `Result<()>` - Ok if validation passes, Error if any check fails
+    ///
+    /// # Authentication Steps
+    /// 1. Validates app_id from query parameters
+    /// 2. Checks IP restrictions (if configured)
+    /// 3. Validates timestamp to prevent replay attacks
+    /// 4. Verifies HMAC digest for request authenticity
+    ///
+    /// # Query Parameters Required
+    /// * `app_id` - Application identifier
+    /// * `ts` - Unix timestamp
+    /// * `digest` - SHA-256 HMAC of `secret:timestamp`
     fn validate(&self, session: &Session) -> Result<()> {
         let category = "combined_auth";
-        // validate timestamp
         let req_header = session.req_header();
+
+        // Step 1: Extract and validate app_id
+        // The app_id must be provided as a query parameter: ?app_id=your_app_id
         let Some(app_id) = util::get_query_value(req_header, "app_id") else {
             return Err(Error::Invalid {
                 category: category.to_string(),
                 message: "app id is empty".to_string(),
             });
         };
+
+        // Step 2: Lookup authentication configuration for this app_id
         let Some(auth_param) = self.auths.get(app_id) else {
             return Err(Error::Invalid {
                 category: category.to_string(),
                 message: "app id is invalid".to_string(),
             });
         };
-        // not validate for super secret
+
+        // Step 3: Super user check
+        // If secret is "*", this app has unlimited access
+        // USE WITH CAUTION: This bypasses all security checks
         if auth_param.secret == "*" {
             return Ok(());
         }
-        // validate ip
+
+        // Step 4: IP validation (if configured)
+        // Checks if the client IP is in the allowed list
+        // Uses X-Forwarded-For header for IP detection behind proxies
         if let Some(ip_rules) = &auth_param.ip_rules {
             let ip = util::get_client_ip(session);
             if !ip_rules.matched(&ip).unwrap_or_default() {
@@ -137,6 +200,8 @@ impl CombinedAuth {
             }
         }
 
+        // Step 5: Timestamp validation
+        // Requires a Unix timestamp as query parameter: ?ts=1234567890
         let ts = util::get_query_value(req_header, "ts").unwrap_or_default();
         if ts.is_empty() {
             return Err(Error::Invalid {
@@ -144,6 +209,8 @@ impl CombinedAuth {
                 message: "timestamp is empty".to_string(),
             });
         }
+
+        // Convert timestamp to i64 and validate it's within acceptable range
         let value = ts.parse::<i64>().map_err(|e| Error::Invalid {
             category: category.to_string(),
             message: e.to_string(),
@@ -155,6 +222,10 @@ impl CombinedAuth {
                 message: "timestamp deviation is invalid".to_string(),
             });
         }
+
+        // Step 6: HMAC Authentication
+        // Requires a hex-encoded SHA-256 HMAC digest as query parameter: ?digest=abc123...
+        // digest = hex(SHA256(secret:timestamp))
         let digest =
             util::get_query_value(req_header, "digest").unwrap_or_default();
         if digest.is_empty() {
@@ -164,24 +235,41 @@ impl CombinedAuth {
             });
         }
 
+        // Calculate expected digest
         let mut hasher = Sha256::new();
         hasher.update(format!("{}:{ts}", auth_param.secret).as_bytes());
         let hash256 = hasher.finalize();
+
+        // Compare digests in constant time to prevent timing attacks
         if digest.to_lowercase() != hash256.encode_hex::<String>() {
             return Err(Error::Invalid {
                 category: category.to_string(),
                 message: "digest is invalid".to_string(),
             });
         }
+
         Ok(())
     }
 }
+
 #[async_trait]
 impl Plugin for CombinedAuth {
+    /// Returns the unique hash key for this plugin instance
     #[inline]
     fn hash_key(&self) -> String {
         self.hash_value.clone()
     }
+
+    /// Handles incoming HTTP requests by performing authentication checks
+    ///
+    /// # Arguments
+    /// * `step` - The current plugin execution step
+    /// * `session` - The HTTP session containing request details
+    /// * `_ctx` - Plugin state context
+    ///
+    /// # Returns
+    /// * `pingora::Result<Option<HttpResponse>>` - None if authentication passes,
+    ///   or an HTTP 401 response if authentication fails
     #[inline]
     async fn handle_request(
         &self,

@@ -22,31 +22,61 @@ use pingora::protocols::http::compression::Algorithm;
 use pingora::proxy::Session;
 use tracing::debug;
 
-const ZSTD: &str = "zstd";
-const BR: &str = "br";
-const GZIP: &str = "gzip";
+// Constants defining supported compression algorithm identifiers
+const ZSTD: &str = "zstd"; // Zstandard compression
+const BR: &str = "br"; // Brotli compression
+const GZIP: &str = "gzip"; // Gzip compression
 
+/// Plugin for handling HTTP response compression
+/// Supports multiple compression algorithms with configurable compression levels
 pub struct Compression {
+    // Compression levels for each algorithm (0-9 for gzip, 0-11 for brotli, 0-22 for zstd)
     gzip_level: u32,
     br_level: u32,
     zstd_level: u32,
+    // Flag indicating if any compression algorithm is enabled (any level > 0)
     support_compression: bool,
+    // Optional setting to control decompression of incoming requests
     decompression: Option<bool>,
+    // Defines when this plugin runs in the request processing pipeline
     plugin_step: PluginStep,
+    // Unique identifier for caching and tracking plugin instances
     hash_value: String,
 }
 
+// Implementation to create Compression from configuration
 impl TryFrom<&PluginConf> for Compression {
     type Error = Error;
+
+    /// Attempts to create a Compression instance from plugin configuration
+    ///
+    /// # Arguments
+    /// * `value` - Plugin configuration containing compression settings
+    ///
+    /// # Returns
+    /// * `Result<Self>` - Configured compression plugin or error
+    ///
+    /// # Configuration Options
+    /// * `gzip_level` - Compression level for gzip (0-9)
+    /// * `br_level` - Compression level for brotli (0-11)
+    /// * `zstd_level` - Compression level for zstd (0-22)
+    /// * `decompression` - Optional boolean to control request decompression
     fn try_from(value: &PluginConf) -> Result<Self> {
+        // Generate unique hash for this configuration
         let hash_value = get_hash_key(value);
+
+        // Parse optional decompression setting
         let mut decompression = None;
         if value.contains_key("decompression") {
             decompression = Some(get_bool_conf(value, "decompression"));
         }
+
+        // Get compression levels from configuration
         let gzip_level = get_int_conf(value, "gzip_level") as u32;
         let br_level = get_int_conf(value, "br_level") as u32;
         let zstd_level = get_int_conf(value, "zstd_level") as u32;
+
+        // Enable compression if any algorithm has a non-zero level
         let support_compression = gzip_level + br_level + zstd_level > 0;
 
         let params = Self {
@@ -56,6 +86,7 @@ impl TryFrom<&PluginConf> for Compression {
             zstd_level,
             decompression,
             support_compression,
+            // Plugin runs during early request phase
             plugin_step: PluginStep::EarlyRequest,
         };
 
@@ -64,6 +95,13 @@ impl TryFrom<&PluginConf> for Compression {
 }
 
 impl Compression {
+    /// Creates a new Compression plugin instance from the provided configuration
+    ///
+    /// # Arguments
+    /// * `params` - Plugin configuration containing compression settings
+    ///
+    /// # Returns
+    /// * `Result<Self>` - New compression plugin instance or error
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new compression plugin");
         Self::try_from(params)
@@ -72,10 +110,29 @@ impl Compression {
 
 #[async_trait]
 impl Plugin for Compression {
+    /// Returns the unique hash key for this plugin instance
+    /// Used for caching and identifying plugin configurations
     #[inline]
     fn hash_key(&self) -> String {
         self.hash_value.clone()
     }
+
+    /// Processes incoming HTTP requests to configure response compression
+    ///
+    /// # Arguments
+    /// * `step` - Current plugin processing step
+    /// * `session` - HTTP session containing request/response data
+    /// * `_ctx` - State context (unused)
+    ///
+    /// # Returns
+    /// * `pingora::Result<Option<HttpResponse>>` - None if successful, or HTTP response on error
+    ///
+    /// # Processing Steps
+    /// 1. Validates plugin should run at current step
+    /// 2. Checks if compression is enabled
+    /// 3. Examines client's Accept-Encoding header
+    /// 4. Selects best compression algorithm
+    /// 5. Configures compression settings in session context
     #[inline]
     async fn handle_request(
         &self,
@@ -83,12 +140,15 @@ impl Plugin for Compression {
         session: &mut Session,
         _ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        // Early return conditions
         if step != self.plugin_step {
             return Ok(None);
         }
         if !self.support_compression {
             return Ok(None);
         }
+
+        // Extract and validate Accept-Encoding header
         let header = session.req_header_mut();
         let Some(accept_encoding) =
             header.headers.get(http::header::ACCEPT_ENCODING)
@@ -99,8 +159,9 @@ impl Plugin for Compression {
         if accept_encoding.is_empty() {
             return Ok(None);
         }
-        // compression order should be set from accept encoding plugin,
-        // zstd > br > gzip, Wait for pingora support to specify the order
+
+        // Select compression algorithm based on priority and client support
+        // Priority: zstd > br > gzip
         let level = if self.zstd_level > 0 && accept_encoding.contains(ZSTD) {
             self.zstd_level
         } else if self.br_level > 0 && accept_encoding.contains(BR) {
@@ -114,15 +175,21 @@ impl Plugin for Compression {
         if level == 0 {
             return Ok(None);
         }
+
+        // Get compression context from session
         let Some(c) = session
             .downstream_modules_ctx
             .get_mut::<ResponseCompression>()
         else {
             return Ok(None);
         };
+
+        // Configure decompression if specified
         if let Some(decompression) = self.decompression {
             c.adjust_decompression(decompression);
         }
+
+        // Configure compression levels for each supported algorithm
         if self.zstd_level > 0 {
             c.adjust_algorithm_level(Algorithm::Zstd, self.zstd_level);
         }
@@ -132,6 +199,7 @@ impl Plugin for Compression {
         if self.gzip_level > 0 {
             c.adjust_algorithm_level(Algorithm::Gzip, self.gzip_level);
         }
+
         Ok(None)
     }
 }

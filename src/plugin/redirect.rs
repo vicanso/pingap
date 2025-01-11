@@ -26,17 +26,51 @@ use http::StatusCode;
 use pingora::proxy::Session;
 use tracing::debug;
 
+/// A plugin that handles HTTP/HTTPS redirects and path prefix modifications.
+///
+/// # Use Cases
+/// - Force HTTPS usage for security requirements
+/// - Add API version prefixes (e.g., /v1, /api/v2)
+/// - Implement path-based routing
+///
+/// # Configuration
+/// - `http_to_https`: Boolean flag to control redirect direction
+/// - `prefix`: Optional path prefix to add to redirected URLs
+/// - `step`: Must be set to "request" as redirects are pre-processing only
 pub struct Redirect {
+    // Path prefix to add to redirected URLs (e.g., "/api")
+    // Will be normalized to start with "/" if not empty
     prefix: String,
+    // Whether to redirect HTTP requests to HTTPS
+    // true = force HTTPS, false = force HTTP
     http_to_https: bool,
+    // Plugin execution step (must be Request)
+    // Response step is invalid as redirects must be handled before request processing
     plugin_step: PluginStep,
+    // Unique hash value for plugin instance
+    // Used for plugin identification and caching
     hash_value: String,
 }
 
 impl Redirect {
+    /// Creates a new Redirect plugin instance from the provided configuration.
+    ///
+    /// # Arguments
+    /// * `params` - Plugin configuration containing redirect settings
+    ///
+    /// # Returns
+    /// * `Result<Self>` - New plugin instance or error if configuration is invalid
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - Plugin step is not set to "request"
+    /// - Required configuration parameters are missing
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new redirect plugin");
         let hash_value = get_hash_key(params);
+
+        // Validate plugin step - must be Request
+        // Redirects cannot be handled in response phase as the request would already be processed
         let step = get_step_conf(params);
         if step != PluginStep::Request {
             return Err(Error::Invalid {
@@ -46,6 +80,11 @@ impl Redirect {
                         .to_string(),
             });
         }
+
+        // Normalize prefix handling:
+        // - Empty or single char prefixes become empty string
+        // - Prefixes without leading "/" get one added
+        // This ensures consistent path handling
         let mut prefix = get_str_conf(params, "prefix");
         if prefix.len() <= 1 {
             prefix = "".to_string();
@@ -63,10 +102,33 @@ impl Redirect {
 
 #[async_trait]
 impl Plugin for Redirect {
+    /// Returns a unique identifier for this plugin instance.
+    ///
+    /// The hash key is used for plugin identification and caching purposes.
+    /// It's generated from the plugin's configuration parameters.
     #[inline]
     fn hash_key(&self) -> String {
+        // Return unique identifier for this plugin instance
         self.hash_value.clone()
     }
+
+    /// Handles incoming HTTP requests and performs redirects as needed.
+    ///
+    /// # Arguments
+    /// * `step` - Current processing step (must match plugin_step)
+    /// * `session` - HTTP session containing request details
+    /// * `ctx` - Request context containing TLS information
+    ///
+    /// # Returns
+    /// * `Ok(None)` - No redirect needed
+    /// * `Ok(Some(HttpResponse))` - 307 redirect response with new location
+    ///
+    /// # Processing Logic
+    /// 1. Validates processing step
+    /// 2. Checks if current schema (HTTP/HTTPS) matches desired state
+    /// 3. Verifies if URL already has correct prefix
+    /// 4. Constructs redirect URL with appropriate schema and prefix
+    /// 5. Returns 307 redirect response to preserve HTTP method
     #[inline]
     async fn handle_request(
         &self,
@@ -74,23 +136,47 @@ impl Plugin for Redirect {
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        // Early return if not in request phase
         if step != self.plugin_step {
             return Ok(None);
         }
+
+        // Check current request state:
+        // - ctx.tls_version.is_some() indicates HTTPS
+        // - Compare against desired http_to_https setting
         let schema_match = ctx.tls_version.is_some() == self.http_to_https;
+
+        // Skip redirect if:
+        // 1. Schema already matches desired state (HTTP/HTTPS)
+        // 2. URL path already has the correct prefix
         if schema_match
             && session.req_header().uri.path().starts_with(&self.prefix)
         {
             return Ok(None);
         }
+
+        // Extract host from request headers
+        // Fallback to empty string if not found
         let host = util::get_host(session.req_header()).unwrap_or_default();
+
+        // Determine target schema based on configuration
         let schema = if self.http_to_https { "https" } else { "http" };
+
+        // Build Location header with:
+        // - Desired schema (http/https)
+        // - Original host
+        // - Configured prefix
+        // - Original URI (path + query parameters)
         let location = format!(
             "Location: {}://{host}{}{}",
             schema,
             self.prefix,
             session.req_header().uri
         );
+
+        // Return 307 Temporary Redirect
+        // Using 307 instead of 301/302 to preserve HTTP method
+        // This is important for POST/PUT/DELETE requests
         Ok(Some(HttpResponse {
             status: StatusCode::TEMPORARY_REDIRECT,
             headers: Some(convert_headers(&[location]).unwrap_or_default()),
@@ -108,6 +194,13 @@ mod tests {
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
 
+    /// Tests the redirect plugin functionality.
+    ///
+    /// Verifies:
+    /// - HTTP to HTTPS redirection
+    /// - Path prefix addition
+    /// - Error handling for invalid configuration
+    /// - Correct status code and header generation
     #[tokio::test]
     async fn test_redirect() {
         let redirect = Redirect::new(

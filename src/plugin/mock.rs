@@ -25,19 +25,66 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::debug;
 
+/// MockResponse provides a configurable way to return mock HTTP responses for testing and development.
+/// It can match specific paths and introduce artificial delays to simulate various scenarios.
 pub struct MockResponse {
+    /// The URL path to match against incoming requests.
+    /// - If empty string: matches all paths
+    /// - If set: must exactly match the request path
+    ///     Example: "/api/users" will only mock requests to that exact path
     pub path: String,
+
+    /// Determines at which point in the request lifecycle this mock should execute.
+    /// Only supports two phases:
+    /// - Request: Early in the cycle, before any upstream processing
+    /// - ProxyUpstream: Just before the request would be sent to the upstream server
+    ///     This allows testing different failure scenarios and response behaviors
     pub plugin_step: PluginStep,
+
+    /// The pre-configured HTTP response that will be returned when this mock is triggered.
+    /// Contains:
+    /// - status: HTTP status code (defaults to 200 OK)
+    /// - headers: Optional response headers
+    /// - body: Response body content
+    ///     This response is constructed once during initialization for better performance
     pub resp: HttpResponse,
+
+    /// Optional artificial delay before sending the mock response.
+    /// Useful for:
+    /// - Testing timeout handling
+    /// - Simulating slow network conditions
+    /// - Load testing with controlled response times
+    ///     Format: Standard Duration (e.g., 500ms, 1s, 1m)
     pub delay: Option<Duration>,
+
+    /// Unique identifier for this plugin instance.
+    /// - Generated from the plugin configuration
+    /// - Used internally for plugin management
+    /// - Not exposed publicly as it's an implementation detail
     hash_value: String,
 }
 
 impl MockResponse {
-    /// Creates a new mock response upstream, which will return a mock data.
+    /// Creates a new mock response handler from a plugin configuration.
+    ///
+    /// # Parameters
+    /// - params: PluginConf containing the following optional fields:
+    ///   - path: String - URL path to match
+    ///   - status: int - HTTP status code (defaults to 200 OK if not specified)
+    ///   - headers: []string - Response headers in "Key: Value" format
+    ///   - data: string - Response body content
+    ///   - delay: string - Human-readable duration (e.g., "500ms", "1s") to delay response
+    ///   - step: string - When to execute ("request" or "proxy_upstream")
+    ///
+    /// # Returns
+    /// Result<MockResponse> - Configured mock handler or error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new mock plugin");
+
+        // Generate unique hash for this configuration
         let hash_value = get_hash_key(params);
+
+        // Validate execution step - mock only supports request/proxy_upstream phases
         let step = get_step_conf(params);
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&step) {
             return Err(Error::Invalid {
@@ -46,10 +93,14 @@ impl MockResponse {
             });
         }
 
-        let path = get_str_conf(params, "path");
-        let status = get_int_conf(params, "status") as u16;
-        let headers = get_str_slice_conf(params, "headers");
-        let data = get_str_conf(params, "data");
+        // Extract all configuration parameters
+        let path = get_str_conf(params, "path"); // Path to match (empty = match all)
+        let status = get_int_conf(params, "status") as u16; // HTTP status code
+        let headers = get_str_slice_conf(params, "headers"); // Response headers
+        let data = get_str_conf(params, "data"); // Response body
+
+        // Parse delay duration if specified
+        // Supports human-readable formats like "500ms", "1s", "1m"
         let delay = get_str_conf(params, "delay");
         let delay = if !delay.is_empty() {
             let d = parse_duration(&delay).map_err(|e| Error::Invalid {
@@ -61,15 +112,20 @@ impl MockResponse {
             None
         };
 
+        // Construct the HTTP response with defaults
         let mut resp = HttpResponse {
-            status: StatusCode::OK,
+            status: StatusCode::OK, // Default to 200 OK
             body: data.into(),
             ..Default::default()
         };
+
+        // Override status code if specified
         if status > 0 {
             resp.status =
                 StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
         }
+
+        // Add headers if specified
         if !headers.is_empty() {
             if let Ok(headers) = convert_headers(&headers) {
                 resp.headers = Some(headers);
@@ -88,28 +144,46 @@ impl MockResponse {
 
 #[async_trait]
 impl Plugin for MockResponse {
+    /// Returns the unique identifier for this plugin instance
     #[inline]
     fn hash_key(&self) -> String {
         self.hash_value.clone()
     }
-    #[inline]
-    /// Sends the mock data to client.
+
+    /// Handles incoming requests and returns mock responses when appropriate.
+    ///
+    /// # Parameters
+    /// - step: Current execution phase
+    /// - session: Contains request details including URL path
+    /// - _ctx: State context (unused in mock plugin)
+    ///
+    /// # Returns
+    /// - Ok(None) if request should proceed normally
+    /// - Ok(Some(HttpResponse)) to return mock response
+    /// - Err(...) if processing fails
     async fn handle_request(
         &self,
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        // Only process if we're in the correct execution phase
         if step != self.plugin_step {
             return Ok(None);
         }
+
+        // Check if request path matches our configured path (if any)
         if !self.path.is_empty() && session.req_header().uri.path() != self.path
         {
             return Ok(None);
         }
+
+        // Implement artificial delay if configured
         if let Some(d) = self.delay {
             sleep(d).await;
         }
+
+        // Return our pre-configured mock response
         Ok(Some(self.resp.clone()))
     }
 }

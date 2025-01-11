@@ -51,9 +51,23 @@ mod response_headers;
 mod stats;
 mod ua_restriction;
 
+/// UUID for the admin server plugin, generated at runtime
 pub static ADMIN_SERVER_PLUGIN: Lazy<String> =
     Lazy::new(|| uuid::Uuid::now_v7().to_string());
 
+/// Parses admin plugin configuration from an address string.
+///
+/// # Arguments
+/// * `addr` - The address string to parse in URL format
+///
+/// # Returns
+/// A tuple containing:
+/// - ServerConf: The server configuration
+/// - String: The plugin name
+/// - PluginConf: The plugin configuration
+///
+/// # Errors
+/// Returns Error::Invalid if URL parsing fails
 pub fn parse_admin_plugin(
     addr: &str,
 ) -> Result<(ServerConf, String, PluginConf)> {
@@ -110,6 +124,7 @@ pub fn parse_admin_plugin(
     ))
 }
 
+/// Error types for plugin operations
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("Plugin {category} invalid, message: {message}"))]
@@ -138,6 +153,13 @@ pub enum Error {
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// Generates a unique hash key for a plugin configuration to detect changes.
+///
+/// # Arguments
+/// * `conf` - The plugin configuration to hash
+///
+/// # Returns
+/// A string containing the CRC32 hash of the sorted configuration key-value pairs
 pub(crate) fn get_hash_key(conf: &PluginConf) -> String {
     let mut keys: Vec<String> =
         conf.keys().map(|item| item.to_string()).collect();
@@ -155,6 +177,10 @@ pub(crate) fn get_hash_key(conf: &PluginConf) -> String {
     format!("{:X}", hash)
 }
 
+/// Core trait that defines the interface all plugins must implement.
+///
+/// Plugins can handle both requests and responses at different processing steps.
+/// The default implementations do nothing and return Ok.
 #[async_trait]
 pub trait Plugin: Sync + Send {
     fn hash_key(&self) -> String {
@@ -179,6 +205,14 @@ pub trait Plugin: Sync + Send {
     }
 }
 
+/// Returns a list of built-in plugins with their default configurations.
+///
+/// Includes plugins for:
+/// - Compression (gzip, br, zstd)
+/// - Ping health check
+/// - Stats reporting
+/// - Request ID generation
+/// - Accept-Encoding adjustment
 pub fn get_builtin_proxy_plugins() -> Vec<(String, PluginConf)> {
     vec![
         // default level, gzip:6 br:6 zstd:3
@@ -243,9 +277,21 @@ remark = "Adjust the accept encoding order and choose one econding"
     ]
 }
 
+/// Global storage for all active plugins
 type Plugins = AHashMap<String, Arc<dyn Plugin>>;
 static PLUGINS: Lazy<ArcSwap<Plugins>> =
     Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
+
+/// Parses plugin configurations and instantiates plugin instances.
+///
+/// # Arguments
+/// * `confs` - Vector of (name, config) tuples for plugins to initialize
+///
+/// # Returns
+/// HashMap mapping plugin names to initialized plugin instances
+///
+/// # Errors
+/// Returns Error if plugin initialization fails
 pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
     let mut plguins: Plugins = AHashMap::new();
     for (name, conf) in confs.iter() {
@@ -353,6 +399,16 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
     Ok(plguins)
 }
 
+/// Initializes or updates plugins based on configuration.
+///
+/// # Arguments
+/// * `plugins` - HashMap of plugin names to configurations
+///
+/// # Returns
+/// Vector of plugin names that were created or updated
+///
+/// # Errors
+/// Returns Error if plugin initialization fails
 pub fn try_init_plugins(
     plugins: &HashMap<String, PluginConf>,
 ) -> Result<Vec<String>> {
@@ -409,6 +465,7 @@ pub fn get_plugin(name: &str) -> Option<Arc<dyn Plugin>> {
     PLUGINS.load().get(name).cloned()
 }
 
+/// Helper functions for accessing plugin configuration values
 pub(crate) fn get_str_conf(value: &PluginConf, key: &str) -> String {
     if let Some(value) = value.get(key) {
         value.as_str().unwrap_or_default().to_string()

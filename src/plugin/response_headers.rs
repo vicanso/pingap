@@ -24,21 +24,73 @@ use pingora::proxy::Session;
 use std::str::FromStr;
 use tracing::debug;
 
+/// ResponseHeaders plugin handles HTTP response header modifications.
+/// It provides functionality to add, remove, set, and rename response headers
+/// based on configuration provided in TOML format.
 pub struct ResponseHeaders {
+    /// The plugin execution step (must be "response")
+    /// Used to ensure header modifications only occur during response processing
     plugin_step: PluginStep,
+
+    /// Headers to be appended to the response
+    /// - Allows multiple values for the same header name
+    /// - Preserves any existing header values
+    /// - Format: Vec of (header_name, header_value) pairs
+    ///     Example: [("x-service", "1"), ("x-service", "2")]
     add_headers: Vec<HttpHeader>,
+
+    /// Headers to be completely removed from the response
+    /// - Removes all values for specified header names
+    /// - Headers are removed regardless of their values
+    ///     Example: ["content-type", "x-powered-by"]
     remove_headers: Vec<HeaderName>,
+
+    /// Headers to be set with specific values
+    /// - Overwrites any existing values for the header
+    /// - If header doesn't exist, it will be created
+    /// - Format: Vec of (header_name, header_value) pairs
+    ///     Example: [("x-response-id", "123")]
     set_headers: Vec<HttpHeader>,
+
+    /// Headers to be renamed while preserving their values
+    /// - Format: Vec of (original_name, new_name) tuples
+    /// - Values are moved from original name to new name
+    /// - If new name already exists, values are appended
+    ///     Example: [("x-old-header", "x-new-header")]
     rename_headers: Vec<(HeaderName, HeaderName)>,
+
+    /// Unique identifier for this plugin instance
+    /// Generated from the plugin configuration to track changes
     hash_value: String,
 }
 
 impl TryFrom<&PluginConf> for ResponseHeaders {
     type Error = Error;
+
+    /// Attempts to create a ResponseHeaders plugin from a plugin configuration.
+    ///
+    /// # Arguments
+    /// * `value` - The plugin configuration containing header modification rules
+    ///
+    /// # Returns
+    /// * `Ok(ResponseHeaders)` - Successfully created plugin instance
+    /// * `Err(Error)` - If configuration is invalid or step is not "response"
+    ///
+    /// # Configuration Format
+    /// ```toml
+    /// step = "response"
+    /// add_headers = ["Header-Name:Value"]
+    /// remove_headers = ["Header-Name"]
+    /// set_headers = ["Header-Name:Value"]
+    /// rename_headers = ["Old-Name:New-Name"]
+    /// ```
     fn try_from(value: &PluginConf) -> Result<Self> {
+        // Generate unique hash for this plugin configuration
         let hash_value = get_hash_key(value);
         let step = get_step_conf(value);
 
+        // Parse add_headers from config
+        // Format: "Header-Name:header value"
         let mut add_headers = vec![];
         for item in get_str_slice_conf(value, "add_headers").iter() {
             let header = convert_header(item).map_err(|e| Error::Invalid {
@@ -107,6 +159,14 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
 }
 
 impl ResponseHeaders {
+    /// Creates a new ResponseHeaders plugin instance from the given configuration.
+    ///
+    /// # Arguments
+    /// * `params` - Plugin configuration containing header modification rules
+    ///
+    /// # Returns
+    /// * `Ok(ResponseHeaders)` - Successfully created plugin instance
+    /// * `Err(Error)` - If configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new stats plugin");
         Self::try_from(params)
@@ -115,10 +175,32 @@ impl ResponseHeaders {
 
 #[async_trait]
 impl Plugin for ResponseHeaders {
+    /// Returns the unique hash key for this plugin instance.
     #[inline]
     fn hash_key(&self) -> String {
         self.hash_value.clone()
     }
+
+    /// Handles response header modifications during the response phase.
+    ///
+    /// # Arguments
+    /// * `step` - Current plugin execution step
+    /// * `session` - Current HTTP session
+    /// * `ctx` - Plugin state context
+    /// * `upstream_response` - Response headers to modify
+    ///
+    /// # Processing Order
+    /// 1. Add new headers (preserving existing values)
+    /// 2. Remove specified headers
+    /// 3. Set headers (overwriting existing values)
+    /// 4. Rename headers (moving values to new names)
+    ///
+    /// # Returns
+    /// * `Ok(())` - Headers processed successfully
+    /// * `Err(...)` - If a critical error occurs
+    ///
+    /// Note: Individual header operation failures are ignored to ensure
+    /// the response can still be processed.
     #[inline]
     async fn handle_response(
         &self,
@@ -127,21 +209,41 @@ impl Plugin for ResponseHeaders {
         ctx: &mut State,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<()> {
+        // Skip if not in response phase
         if step != self.plugin_step {
             return Ok(());
         }
-        // add --> remove --> set --> rename
-        // ignore error
+
+        // Headers are processed in a specific order to ensure predictable behavior:
+        // 1. Add new headers (allows multiple values)
+        //    - Uses append_header which preserves existing values
+        //    - Supports dynamic value substitution via convert_header_value
+        // 2. Remove specified headers
+        //    - Completely removes headers regardless of value
+        // 3. Set headers (overwrites existing values)
+        //    - Uses insert_header which replaces any existing values
+        //    - Supports dynamic value substitution via convert_header_value
+        // 4. Rename headers (moves values to new header name)
+        //    - Removes original header and moves its value to new name
+        //    - If new name already exists, value is appended
+
+        // Add new headers (append mode)
         for (name, value) in &self.add_headers {
+            // Try to convert any dynamic values in header
             if let Some(value) = convert_header_value(value, session, ctx) {
                 let _ = upstream_response.append_header(name, value);
             } else {
+                // Use original value if conversion fails
                 let _ = upstream_response.append_header(name, value);
             }
         }
+
+        // Remove specified headers
         for name in &self.remove_headers {
             let _ = upstream_response.remove_header(name);
         }
+
+        // Set headers (overwrite mode)
         for (name, value) in &self.set_headers {
             if let Some(value) = convert_header_value(value, session, ctx) {
                 let _ = upstream_response.insert_header(name, value);
@@ -149,6 +251,8 @@ impl Plugin for ResponseHeaders {
                 let _ = upstream_response.insert_header(name, value);
             }
         }
+
+        // Rename headers (move values to new name)
         for (original_name, new_name) in &self.rename_headers {
             if let Some(value) = upstream_response.remove_header(original_name)
             {
@@ -169,6 +273,12 @@ mod tests {
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
 
+    /// Tests parsing of plugin configuration parameters.
+    ///
+    /// Verifies:
+    /// - Valid configuration is parsed correctly
+    /// - Headers are properly formatted
+    /// - Invalid step returns appropriate error
     #[test]
     fn test_response_headers_params() {
         let params = ResponseHeaders::try_from(
@@ -227,6 +337,13 @@ remove_headers = [
         );
     }
 
+    /// Tests header modification functionality.
+    ///
+    /// Verifies:
+    /// - Headers are added correctly
+    /// - Headers are removed as specified
+    /// - Headers are set with new values
+    /// - Response contains expected final headers
     #[tokio::test]
     async fn test_response_headers() {
         let response_headers = ResponseHeaders::new(

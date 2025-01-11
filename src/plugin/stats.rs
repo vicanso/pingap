@@ -27,37 +27,69 @@ use serde::Serialize;
 use std::time::Duration;
 use tracing::debug;
 
+/// ServerStats collects and represents comprehensive server metrics including:
+/// - Request processing statistics
+/// - System resource utilization
+/// - Server identification information
+/// - Network connection details
 #[derive(Serialize)]
 struct ServerStats {
-    processing: i32,
-    accepted: u64,
-    location_processing: i32,
-    location_accepted: u64,
-    hostname: String,
-    version: String,
-    rustc_version: String,
-    start_time: u64,
-    uptime: String,
-    memory_mb: usize,
-    memory: String,
-    arch: String,
-    cpus: usize,
-    physical_cpus: usize,
-    total_memory: String,
-    used_memory: String,
-    threads: usize,
-    fd_count: usize,
-    tcp_count: usize,
-    tcp6_count: usize,
-}
-pub struct Stats {
-    path: String,
-    plugin_step: PluginStep,
-    hash_value: String,
+    // Request Processing Metrics
+    processing: i32, // Number of requests currently being processed across all locations
+    accepted: u64,   // Total number of requests accepted since server start
+    location_processing: i32, // Number of requests currently being processed in this specific location
+    location_accepted: u64, // Total number of requests accepted in this specific location
+
+    // Server Identification
+    hostname: String,      // Server's network hostname
+    version: String,       // Current version of the application
+    rustc_version: String, // Version of the Rust compiler used to build the application
+
+    // Uptime Information
+    start_time: u64, // Unix timestamp when the server was started
+    uptime: String, // Human-readable duration since server start (e.g., "2 days 3 hours")
+
+    // Memory Statistics
+    memory_mb: usize, // Current process memory usage in megabytes
+    memory: String,   // Human-readable process memory usage (e.g., "1.2 GB")
+    total_memory: String, // Total system memory available (e.g., "16 GB")
+    used_memory: String, // Total system memory in use (e.g., "8.5 GB")
+
+    // System Information
+    arch: String, // System architecture (e.g., "x86_64", "aarch64")
+    cpus: usize,  // Number of logical CPU cores (including hyperthreading)
+    physical_cpus: usize, // Number of physical CPU cores
+
+    // Resource Usage
+    threads: usize,  // Number of threads in the current process
+    fd_count: usize, // Number of open file descriptors in the process
+
+    // Network Connections
+    tcp_count: usize,  // Number of active IPv4 TCP connections
+    tcp6_count: usize, // Number of active IPv6 TCP connections
 }
 
+/// Stats plugin that exposes server metrics and statistics via an HTTP endpoint
+pub struct Stats {
+    path: String,            // HTTP path to expose stats on
+    plugin_step: PluginStep, // Step at which this plugin executes
+    hash_value: String,      // Unique hash identifying this plugin instance
+}
+
+/// Implementation for creating a Stats instance from plugin configuration
 impl TryFrom<&PluginConf> for Stats {
     type Error = Error;
+
+    /// Attempts to create a Stats instance from the provided configuration
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - Plugin configuration containing path and step settings
+    ///
+    /// # Returns
+    ///
+    /// Returns a Result containing the Stats instance if configuration is valid,
+    /// or an Error if the configuration is invalid
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
         let step = get_step_conf(value);
@@ -80,6 +112,15 @@ impl TryFrom<&PluginConf> for Stats {
 }
 
 impl Stats {
+    /// Creates a new Stats plugin instance from the given plugin configuration
+    ///
+    /// # Arguments
+    ///
+    /// * `params` - The plugin configuration parameters
+    ///
+    /// # Returns
+    ///
+    /// Returns a Result containing the Stats plugin instance or an error
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new stats plugin");
         Self::try_from(params)
@@ -92,6 +133,18 @@ impl Plugin for Stats {
     fn hash_key(&self) -> String {
         self.hash_value.clone()
     }
+    /// Handles incoming HTTP requests for the Stats plugin
+    ///
+    /// # Arguments
+    ///
+    /// * `step` - The current plugin execution step
+    /// * `session` - The HTTP session containing request details
+    /// * `ctx` - The current state context
+    ///
+    /// # Returns
+    ///
+    /// Returns a Result containing an optional HTTP response. Returns Some(response)
+    /// when the request matches the stats path, None otherwise.
     #[inline]
     async fn handle_request(
         &self,

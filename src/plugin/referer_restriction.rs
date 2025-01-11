@@ -26,17 +26,56 @@ use pingora::proxy::Session;
 use substring::Substring;
 use tracing::debug;
 
+/// A plugin that controls access to resources based on the HTTP Referer header
+///
+/// This plugin allows implementing referer-based access control by either allowing or denying
+/// requests based on their Referer header. It supports both exact domain matches and wildcard
+/// prefix matching (e.g., "*.example.com").
+///
+/// # Configuration
+/// The plugin accepts the following configuration parameters:
+/// - `referer_list`: List of referer domains to match against
+/// - `type`: Either "allow" or "deny" to specify the restriction type
+/// - `message`: Custom message for forbidden responses (optional)
+///
+/// # Examples
+/// ```toml
+/// referer_list = [
+///     "github.com",      # Exact match
+///     "*.example.com",   # Wildcard prefix match
+/// ]
+/// type = "deny"          # Deny requests from these referrers
+/// message = "Access denied by referrer policy"
+/// ```
 pub struct RefererRestriction {
+    /// The step at which this plugin should execute (should be "request")
     plugin_step: PluginStep,
+    /// List of exact domain matches (e.g., "github.com")
     referer_list: Vec<String>,
+    /// List of wildcard domain suffixes (e.g., ".example.com" from "*.example.com")
     prefix_referer_list: Vec<String>,
+    /// The type of restriction: "allow" or "deny"
     restriction_category: String,
+    /// The HTTP response to return when access is forbidden
     forbidden_resp: HttpResponse,
+    /// Unique identifier for this plugin instance
     hash_value: String,
 }
 
 impl TryFrom<&PluginConf> for RefererRestriction {
     type Error = Error;
+    /// Attempts to create a RefererRestriction instance from plugin configuration
+    ///
+    /// # Arguments
+    /// * `value` - The plugin configuration containing referer rules
+    ///
+    /// # Returns
+    /// * `Result<Self>` - A configured RefererRestriction instance
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The plugin step is not set to "request"
+    /// - Required configuration fields are missing
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
         let step = get_step_conf(value);
@@ -79,6 +118,23 @@ impl TryFrom<&PluginConf> for RefererRestriction {
 }
 
 impl RefererRestriction {
+    /// Creates a new RefererRestriction plugin instance from the provided configuration
+    ///
+    /// # Arguments
+    /// * `params` - Plugin configuration containing:
+    ///   - `referer_list`: List of domains to match against
+    ///   - `type`: "allow" or "deny" to specify restriction behavior
+    ///   - `message`: Optional custom forbidden message
+    ///
+    /// # Returns
+    /// * `Result<Self>` - New RefererRestriction instance or error if configuration is invalid
+    ///
+    /// # Example Configuration
+    /// ```toml
+    /// referer_list = ["github.com", "*.example.com"]
+    /// type = "deny"
+    /// message = "Access denied"
+    /// ```
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(
             params = params.to_string(),
@@ -91,9 +147,31 @@ impl RefererRestriction {
 #[async_trait]
 impl Plugin for RefererRestriction {
     #[inline]
+    /// Returns a unique hash key for this plugin instance
+    ///
+    /// This is used for plugin caching and identification purposes
     fn hash_key(&self) -> String {
         self.hash_value.clone()
     }
+
+    /// Handles incoming HTTP requests by checking the Referer header against allowed/denied lists
+    ///
+    /// This function implements the core referer restriction logic:
+    /// 1. Extracts the Referer header from the request
+    /// 2. Parses the referer URL to get the host
+    /// 3. Checks the host against both exact matches and wildcard prefix matches
+    /// 4. Allows or denies the request based on the restriction type ("allow" or "deny")
+    ///
+    /// # Arguments
+    /// * `step` - Current plugin execution step (must match plugin_step)
+    /// * `session` - HTTP session containing request details and headers
+    /// * `_ctx` - State context (unused in this plugin)
+    ///
+    /// # Returns
+    /// * `pingora::Result<Option<HttpResponse>>` - Returns:
+    ///   - `Some(HttpResponse)` with 403 Forbidden if request is blocked
+    ///   - `None` if request is allowed to proceed
+    ///   - Error if request processing fails
     #[inline]
     async fn handle_request(
         &self,

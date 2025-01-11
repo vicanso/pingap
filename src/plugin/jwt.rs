@@ -30,21 +30,91 @@ use substring::Substring;
 use tokio::time::sleep;
 use tracing::debug;
 
+/// JwtAuth struct holds configuration for JWT authentication and validation.
+///
+/// This plugin provides JWT-based authentication with the following features:
+/// - Token generation endpoint at a configurable path
+/// - Support for multiple token locations (header, query param, or cookie)
+/// - HMAC-based signatures using HS256 or HS512
+/// - Token expiration validation
+/// - Protection against timing attacks
+///
+/// # Token Locations
+/// Tokens can be extracted from one of:
+/// - HTTP header (typically "Authorization: Bearer <token>")
+/// - Query parameter (e.g., "?token=<token>")
+/// - Cookie value
+///
+/// # Security Features
+/// - Configurable HMAC algorithms (HS256/HS512)
+/// - Optional delay on authentication failures to prevent timing attacks
+/// - Automatic expiration checking via "exp" claim
+///
+/// # Example Configuration
+/// ```toml
+/// secret = "your-secret-key"
+/// header = "Authorization"
+/// auth_path = "/login"
+/// algorithm = "HS256"
+/// delay = "100ms"
+/// ```
 pub struct JwtAuth {
+    /// Plugin execution step (must be Request)
     plugin_step: PluginStep,
+
+    /// Endpoint path for generating new JWT tokens (e.g., "/login")
+    /// When this path is accessed, the plugin will sign the response data as a JWT
     auth_path: String,
+
+    /// Secret key used for HMAC signing/verification
+    /// This should be kept secure and consistent across all instances
     secret: String,
+
+    /// HTTP header name to extract JWT from (typically "Authorization")
+    /// Supports both "Bearer <token>" and raw token formats
     header: Option<String>,
+
+    /// Query parameter name to extract JWT from
+    /// Token will be read from ?{query}=<token>
     query: Option<String>,
+
+    /// Cookie name to extract JWT from
+    /// Token will be read from the specified cookie value
     cookie: Option<String>,
+
+    /// HMAC algorithm selection: "HS256" (default) or "HS512"
+    /// HS512 provides stronger hashing but may be slower
     algorithm: String,
+
+    /// Optional delay on authentication failure
+    /// Helps prevent timing attacks by making success/failure responses take similar time
     delay: Option<Duration>,
+
+    /// Template for 401 Unauthorized responses
+    /// Used when token is missing, invalid, or expired
     unauthorized_resp: HttpResponse,
+
+    /// Unique identifier for this plugin instance
+    /// Used for internal plugin management
     hash_value: String,
 }
 
 impl TryFrom<&PluginConf> for JwtAuth {
     type Error = Error;
+
+    /// Attempts to create a JwtAuth instance from plugin configuration
+    ///
+    /// # Arguments
+    /// * `value` - Plugin configuration
+    ///
+    /// # Returns
+    /// * `Result<Self>` - Valid JwtAuth instance or configuration error
+    ///
+    /// # Errors
+    /// * When no token location (header/query/cookie) is specified
+    /// * When secret is empty
+    /// * When plugin step is not Request
+    /// * When delay duration is invalid
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
         let header = get_str_conf(value, "header");
@@ -114,12 +184,20 @@ impl TryFrom<&PluginConf> for JwtAuth {
 }
 
 impl JwtAuth {
+    /// Creates a new JwtAuth plugin instance from the provided configuration
+    ///
+    /// # Arguments
+    /// * `params` - Plugin configuration containing JWT settings
+    ///
+    /// # Returns
+    /// * `Result<Self>` - New JwtAuth instance or error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new jwt auth plugin");
         Self::try_from(params)
     }
 }
 
+/// Header structure for JWT tokens containing algorithm and type information
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
 struct JwtHeader {
     alg: String,
@@ -128,10 +206,21 @@ struct JwtHeader {
 
 #[async_trait]
 impl Plugin for JwtAuth {
+    /// Returns unique identifier for this plugin instance
     #[inline]
     fn hash_key(&self) -> String {
         self.hash_value.clone()
     }
+
+    /// Handles incoming requests by validating JWT tokens
+    ///
+    /// # Arguments
+    /// * `step` - Current plugin execution step
+    /// * `session` - Current HTTP session
+    /// * `_ctx` - Plugin state context
+    ///
+    /// # Returns
+    /// * `pingora::Result<Option<HttpResponse>>` - None if authentication succeeds, or error response if it fails
     #[inline]
     async fn handle_request(
         &self,
@@ -212,6 +301,17 @@ impl Plugin for JwtAuth {
 
         Ok(None)
     }
+
+    /// Handles responses for the token generation endpoint
+    ///
+    /// # Arguments
+    /// * `step` - Current plugin execution step
+    /// * `session` - Current HTTP session
+    /// * `ctx` - Plugin state context
+    /// * `upstream_response` - Response headers from upstream
+    ///
+    /// # Returns
+    /// * `pingora::Result<()>` - Success or error
     #[inline]
     async fn handle_response(
         &self,
@@ -241,12 +341,20 @@ impl Plugin for JwtAuth {
     }
 }
 
+/// Handles JWT token signing for the token generation endpoint
 struct Sign {
     secret: String,
     algorithm: String,
 }
 
 impl ModifyResponseBody for Sign {
+    /// Signs and formats response data into a JWT token
+    ///
+    /// # Arguments
+    /// * `data` - Response payload to be encoded in the JWT
+    ///
+    /// # Returns
+    /// * `Bytes` - JSON response containing the signed JWT token
     fn handle(&self, data: Bytes) -> Bytes {
         let is_hs512 = self.algorithm == "HS512";
         let alg = if is_hs512 { "HS512" } else { "HS256" };
@@ -279,6 +387,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
 
+    /// Tests JWT authentication parameter validation
     #[test]
     fn test_jwt_auth_params() {
         let params = JwtAuth::try_from(
@@ -323,6 +432,7 @@ secret = "123123"
         );
     }
 
+    /// Tests creation of new JWT auth instances
     #[test]
     fn test_new_jwt() {
         let auth = JwtAuth::new(
@@ -353,6 +463,7 @@ auth_path = "/login"
         assert_eq!("/login", auth.auth_path);
     }
 
+    /// Tests JWT token validation functionality
     #[tokio::test]
     async fn test_jwt_auth() {
         let auth = JwtAuth::new(
@@ -484,6 +595,7 @@ header = "Authorization"
         );
     }
 
+    /// Tests JWT token signing functionality
     #[tokio::test]
     async fn test_jwt_sign() {
         let auth = JwtAuth::new(

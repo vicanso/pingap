@@ -27,17 +27,39 @@ use pingora::proxy::Session;
 use sha2::{Digest, Sha256};
 use tracing::debug;
 
+/// CSRF protection plugin that implements double-submit cookie pattern
+///
+/// # Configuration
+/// - `token_path`: Endpoint for generating new CSRF tokens
+/// - `key`: Secret key for cryptographic operations
+/// - `name`: Name of the CSRF token header/cookie (default: "x-csrf-token")
+/// - `ttl`: Token expiration time in seconds (0 means no expiration)
 pub struct Csrf {
     plugin_step: PluginStep,
+    // Endpoint that clients call to get a new CSRF token (e.g., "/csrf-token")
     token_path: String,
+    // Secret key used for cryptographic operations - must be kept secure and consistent across instances
     key: String,
+    // The name used for both the HTTP header and cookie (default: "x-csrf-token")
+    // Client must send token in both header and cookie for double-submit validation
     name: String,
-    // ttl seconds
+    // Token expiration time in seconds
+    // - 0 means tokens never expire
+    // - Common values: 3600 (1h), 86400 (24h)
     ttl: u64,
+    // 401 Unauthorized response sent when CSRF validation fails
     unauthorized_resp: HttpResponse,
+    // Unique identifier for this plugin instance
     hash_value: String,
 }
 
+/// Attempts to create a new CSRF plugin instance from the provided configuration
+///
+/// # Errors
+/// Returns `Error::Invalid` if:
+/// - `token_path` is empty
+/// - `key` is empty
+/// - Plugin step is not set to request phase
 impl TryFrom<&PluginConf> for Csrf {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
@@ -69,12 +91,15 @@ impl TryFrom<&PluginConf> for Csrf {
             csrf.ttl = ttl.as_secs();
         }
 
+        // Validation rules:
+        // 1. token_path must be specified (where clients get new tokens)
         if csrf.token_path.is_empty() {
             return Err(Error::Invalid {
                 category: PluginCategory::Csrf.to_string(),
                 message: "Token path is not allowed empty".to_string(),
             });
         }
+        // 2. key must be specified (used for cryptographic operations)
         if csrf.key.is_empty() {
             return Err(Error::Invalid {
                 category: PluginCategory::Csrf.to_string(),
@@ -82,6 +107,7 @@ impl TryFrom<&PluginConf> for Csrf {
             });
         }
 
+        // 3. CSRF protection must run during request phase (before forwarding to upstream)
         if ![PluginStep::Request].contains(&csrf.plugin_step) {
             return Err(Error::Invalid {
                 category: PluginCategory::Csrf.to_string(),
@@ -94,69 +120,147 @@ impl TryFrom<&PluginConf> for Csrf {
 }
 
 impl Csrf {
+    /// Creates a new CSRF plugin instance with the given configuration
+    ///
+    /// # Arguments
+    /// * `params` - Plugin configuration parameters
+    ///
+    /// # Returns
+    /// Result containing the configured CSRF plugin or an error
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new csrf plugin");
         Csrf::try_from(params)
     }
 }
 
+/// Generates a new CSRF token with cryptographic protection
+///
+/// # Format
+/// The token consists of three parts joined by dots:
+/// 1. Random ID (12 chars using nanoid)
+/// 2. Current timestamp in hex
+/// 3. SHA-256 signature of the above parts using the secret key
+///
+/// # Arguments
+/// * `key` - Secret key used for signing the token
+///
+/// # Returns
+/// A string containing the generated token
 fn generate_token(key: &str) -> String {
+    // Generate random ID using nanoid (URL-safe, 12 chars)
     let id = nanoid!(12);
+    // Add current timestamp in hex format
     let prefix = format!("{id}.{:x}", util::now().as_secs());
+
+    // Create cryptographic signature:
+    // - Uses SHA-256 for hashing
+    // - Signs the combination of random ID, timestamp, and secret key
+    // - This prevents token forgery as attackers don't know the secret key
     let mut hasher = Sha256::new();
     hasher.update(prefix.as_bytes());
     hasher.update(key.as_bytes());
     let hash256 = hasher.finalize();
+
+    // Combine all parts with dots
     format!("{prefix}.{}", base64_encode(hash256))
 }
 
+/// Validates a CSRF token for authenticity and expiration
+///
+/// # Arguments
+/// * `key` - Secret key used for validating the token signature
+/// * `ttl` - Time-to-live in seconds (0 means no expiration check)
+/// * `value` - The token string to validate
+///
+/// # Returns
+/// `true` if the token is valid and not expired, `false` otherwise
+///
+/// # Security
+/// - Uses constant-time comparison for signature verification
+/// - Checks token format, expiration, and cryptographic signature
 fn validate_token(key: &str, ttl: u64, value: &str) -> bool {
+    // Split token into its components
     let arr: Vec<&str> = value.split('.').collect();
     if arr.len() != 3 {
         return false;
     }
 
+    // Check expiration if TTL is configured
     if ttl > 0 {
         let now = util::now().as_secs();
+        // Parse timestamp from hex and compare with current time
         if now - u64::from_str_radix(arr[1], 16).unwrap_or_default() > ttl {
             return false;
         }
     }
 
+    // Verify signature by:
+    // 1. Reconstructing the original message (id + timestamp)
+    // 2. Creating a new signature with the secret key
+    // 3. Comparing with the provided signature
     let mut hasher = Sha256::new();
     hasher.update(format!("{}.{}", arr[0], arr[1]).as_bytes());
     hasher.update(key.as_bytes());
     let hash256 = hasher.finalize();
-    if arr[2] != base64_encode(hash256) {
-        return false;
-    }
-    true
+
+    // Constant-time comparison to prevent timing attacks
+    arr[2] == base64_encode(hash256)
 }
 
 #[async_trait]
 impl Plugin for Csrf {
+    /// Returns the unique hash key for this plugin instance
     #[inline]
     fn hash_key(&self) -> String {
         self.hash_value.clone()
     }
-    #[inline]
+
+    /// Handles incoming HTTP requests for CSRF protection
+    ///
+    /// # Flow
+    /// 1. For token generation requests (`token_path`):
+    ///    - Generates new token
+    ///    - Sets token in cookie and response
+    /// 2. For other requests:
+    ///    - Skips safe HTTP methods (GET, HEAD, OPTIONS)
+    ///    - Validates token in header matches cookie
+    ///    - Checks token signature and expiration
+    ///
+    /// # Arguments
+    /// * `step` - Current plugin execution step
+    /// * `session` - HTTP session information
+    /// * `_ctx` - Plugin state context
+    ///
+    /// # Returns
+    /// - `None` if request is allowed
+    /// - `Some(HttpResponse)` with 401 status if validation fails
     async fn handle_request(
         &self,
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        // Only run during request phase
         if step != self.plugin_step {
             return Ok(None);
         }
+
+        // Handle token generation requests
         if session.req_header().uri.path() == self.token_path {
             let token = generate_token(&self.key);
+
+            // Set token in cookie with security options:
+            // - Path: "/" (valid for all paths)
+            // - Max-Age: TTL if configured
             let mut builder = Cookie::build((&self.name, &token)).path("/");
             if self.ttl > 0 {
                 builder = builder
                     .max_age(cookie::time::Duration::seconds(self.ttl as i64));
             };
 
+            // Return token with security headers:
+            // - no-store: Prevents caching of the token
+            // - Set-Cookie: Sets the token cookie
             let set_cookie = (
                 header::SET_COOKIE,
                 HeaderValue::from_str(&builder.build().to_string()).map_err(
@@ -173,12 +277,16 @@ impl Plugin for Csrf {
             return Ok(Some(resp));
         }
 
+        // Skip CSRF checks for safe HTTP methods
+        // These methods should not modify state according to HTTP spec
         if [Method::GET, Method::HEAD, Method::OPTIONS]
             .contains(&session.req_header().method)
         {
             return Ok(None);
         }
 
+        // For unsafe methods:
+        // 1. Check token exists in header
         let value = session.get_header_bytes(&self.name);
         if value.is_empty() {
             return Ok(Some(self.unauthorized_resp.clone()));
@@ -186,6 +294,10 @@ impl Plugin for Csrf {
 
         let value = std::string::String::from_utf8_lossy(value);
 
+        // 2. Verify double-submit:
+        //    - Token in header must match token in cookie
+        //    - Prevents CSRF as attacker cannot set custom headers
+        // 3. Validate token format, expiration, and signature
         if value
             != util::get_cookie_value(session.req_header(), &self.name)
                 .unwrap_or_default()
@@ -194,6 +306,7 @@ impl Plugin for Csrf {
             return Ok(Some(self.unauthorized_resp.clone()));
         }
 
+        // Token is valid - allow request to proceed
         Ok(None)
     }
 }

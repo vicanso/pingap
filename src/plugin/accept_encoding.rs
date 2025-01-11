@@ -18,12 +18,29 @@ use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
 use pingora::proxy::Session;
+use smallvec::SmallVec;
 use tracing::debug;
 
+/// A plugin that filters and modifies the Accept-Encoding header of incoming HTTP requests.
+/// It ensures that only supported compression algorithms are passed to upstream servers.
 pub struct AcceptEncoding {
+    /// List of supported compression encodings (e.g., "gzip", "br", "zstd").
+    /// These encodings are matched against the client's Accept-Encoding header.
+    /// Only encodings present in this list will be preserved in the request.
     encodings: Vec<String>,
+
+    /// Controls whether multiple encodings can be forwarded to the upstream server.
+    /// - When `Some(true)`: Only the first matching encoding will be used
+    /// - When `Some(false)`: All matching encodings will be included
+    /// - When `None`: Behaves the same as `Some(false)`
     only_one_encoding: Option<bool>,
+
+    /// A unique identifier for this plugin instance.
+    /// Used for internal tracking and debugging purposes.
     hash_value: String,
+
+    /// Specifies the phase in the request processing pipeline when this plugin should execute.
+    /// This plugin typically runs in the EarlyRequest phase to modify headers before forwarding.
     plugin_step: PluginStep,
 }
 
@@ -50,6 +67,13 @@ impl TryFrom<&PluginConf> for AcceptEncoding {
 }
 
 impl AcceptEncoding {
+    /// Creates a new AcceptEncoding plugin instance from the provided configuration.
+    ///
+    /// # Arguments
+    /// * `params` - Plugin configuration containing encoding settings
+    ///
+    /// # Returns
+    /// * `Result<Self>` - A new AcceptEncoding instance or an error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new accept encoding plugin");
         Self::try_from(params)
@@ -58,10 +82,22 @@ impl AcceptEncoding {
 
 #[async_trait]
 impl Plugin for AcceptEncoding {
+    /// Returns the unique hash key for this plugin instance
     #[inline]
     fn hash_key(&self) -> String {
         self.hash_value.clone()
     }
+
+    /// Processes the HTTP request by filtering the Accept-Encoding header.
+    ///
+    /// # Arguments
+    /// * `step` - Current plugin processing step
+    /// * `session` - HTTP session containing request/response data
+    /// * `_ctx` - State context (unused in this implementation)
+    ///
+    /// # Returns
+    /// * `pingora::Result<Option<HttpResponse>>` - None if processing should continue,
+    ///   or a response if the request should be terminated
     #[inline]
     async fn handle_request(
         &self,
@@ -69,11 +105,13 @@ impl Plugin for AcceptEncoding {
         session: &mut Session,
         _ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        // Skip if not in the correct plugin step
         if step != self.plugin_step {
             return Ok(None);
         }
         let header = session.req_header_mut();
 
+        // Get the Accept-Encoding header from the request
         let Some(accept_encoding) =
             header.headers.get(http::header::ACCEPT_ENCODING)
         else {
@@ -81,17 +119,24 @@ impl Plugin for AcceptEncoding {
         };
         let accept_encoding = accept_encoding.to_str().unwrap_or_default();
 
-        let mut new_accept_encodings = vec![];
         let only_one_encoding = self.only_one_encoding.unwrap_or_default();
+        let mut new_accept_encodings: SmallVec<[String; 3]> =
+            SmallVec::with_capacity(self.encodings.len());
 
+        // Filter the accepted encodings based on our supported list
         for encoding in self.encodings.iter() {
+            // If only_one_encoding is true, stop after finding the first match
             if only_one_encoding && !new_accept_encodings.is_empty() {
                 break;
             }
+            // Add encoding if it's in the Accept-Encoding header
             if accept_encoding.contains(encoding) {
                 new_accept_encodings.push(encoding.to_string());
             }
         }
+
+        // Remove the header if no supported encodings found
+        // Otherwise, set the header to our filtered list
         if new_accept_encodings.is_empty() {
             header.remove_header(&http::header::ACCEPT_ENCODING);
         } else {

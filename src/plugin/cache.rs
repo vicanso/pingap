@@ -40,30 +40,65 @@ use std::str::FromStr;
 use std::time::Duration;
 use tracing::{debug, error};
 
-// memory limit size
+// Maximum memory size for cache (100MB) - default if not configured otherwise
 const MAX_MEMORY_SIZE: usize = 100 * 1024 * 1024;
+
+// Singleton instances using OnceCell for thread-safe lazy initialization
+// Predictor: Determines if a response should be cached based on patterns/rules
 static PREDICTOR: OnceCell<Predictor<32>> = OnceCell::new();
+// EvictionManager: Handles removing entries when cache is full using LRU strategy
 static EVICTION_MANAGER: OnceCell<Manager> = OnceCell::new();
+// CacheLock: Prevents multiple requests from generating the same cache entry simultaneously
 static CACHE_LOCK_ONE_SECOND: OnceCell<CacheLock> = OnceCell::new();
 
 pub struct Cache {
+    // Determines when this plugin runs in the request/response lifecycle
     plugin_step: PluginStep,
+    // Optional LRU-based memory management for cache entries
+    // Static lifetime ensures the eviction manager lives for the program duration
     eviction: Option<&'static (dyn EvictionManager + Sync)>,
+    // Optional predictor to determine if responses should be cached
+    // Uses patterns and rules to make intelligent caching decisions
     predictor: Option<&'static (dyn CacheablePredictor + Sync)>,
+    // Optional lock mechanism to prevent cache stampede
+    // (multiple identical requests generating the same cache entry)
     lock: Option<&'static CacheLock>,
+    // Backend storage implementation for the HTTP cache
     http_cache: &'static HttpCache,
+    // Maximum size in bytes for individual cached files
     max_file_size: usize,
+    // Optional maximum time a cache entry can live
+    // Overrides Cache-Control headers if set
     max_ttl: Option<Duration>,
+    // Optional namespace for cache isolation
+    // Useful for multi-tenant systems or separating different types of cached content
     namespace: Option<String>,
+    // Optional list of headers to include when generating cache keys
+    // Allows for variant caching (e.g., different versions based on Accept-Encoding)
     headers: Option<Vec<String>>,
+    // Whether to respect Cache-Control headers from the origin
     check_cache_control: bool,
+    // IP-based access control for cache purge operations
     purge_ip_rules: util::IpRules,
+    // Optional regex pattern to skip caching for certain requests
     skip: Option<Regex>,
+    // Unique identifier for this cache configuration
     hash_value: String,
 }
 
+/// Helper function to initialize or retrieve the eviction manager singleton.
+/// This manager handles the LRU (Least Recently Used) cache eviction strategy.
+///
+/// # Returns
+/// Returns a static reference to the Manager instance that handles cache eviction.
+///
+/// # Implementation Details
+/// - Uses the configured cache size from current config if available
+/// - Falls back to MAX_MEMORY_SIZE (100MB) if not configured
+/// - Ensures only one instance is created using OnceCell
 fn get_eviction_manager() -> &'static Manager {
     EVICTION_MANAGER.get_or_init(|| {
+        // Use configured cache size or fall back to default MAX_MEMORY_SIZE
         let size = if let Some(cache_max_size) =
             get_current_config().basic.cache_max_size
         {
@@ -75,6 +110,18 @@ fn get_eviction_manager() -> &'static Manager {
     })
 }
 
+/// Helper function to get an appropriate cache lock based on the specified duration.
+/// Cache locks prevent cache stampede by ensuring only one request generates a cache entry.
+///
+/// # Arguments
+/// * `lock` - The desired lock duration
+///
+/// # Returns
+/// * `Some(&CacheLock)` - If duration is 1, 2, or 3 seconds
+/// * `None` - For any other duration
+///
+/// # Limitations
+/// Only supports lock durations of exactly 1, 2, or 3 seconds
 fn get_cache_lock(lock: Duration) -> Option<&'static CacheLock> {
     match lock.as_secs() {
         1 => Some(
@@ -93,12 +140,47 @@ fn get_cache_lock(lock: Duration) -> Option<&'static CacheLock> {
     }
 }
 
+/// Helper function to initialize or retrieve the predictor singleton.
+/// The predictor determines whether responses should be cached based on configured rules.
+///
+/// # Returns
+/// Returns a static reference to a CacheablePredictor implementation.
+///
+/// # Implementation Details
+/// - Creates a new Predictor with capacity of 128 entries
+/// - No additional predictor configuration (None parameter)
+/// - Ensures only one instance is created using OnceCell
 fn get_predictor() -> &'static (dyn CacheablePredictor + Sync) {
     PREDICTOR.get_or_init(|| Predictor::new(128, None))
 }
 
 impl TryFrom<&PluginConf> for Cache {
     type Error = Error;
+
+    /// Attempts to create a Cache instance from plugin configuration.
+    ///
+    /// # Arguments
+    /// * `value` - Plugin configuration to convert
+    ///
+    /// # Returns
+    /// * `Result<Self>` - Configured Cache instance or conversion error
+    ///
+    /// # Configuration Options
+    /// - eviction: Enables LRU cache eviction
+    /// - lock: Cache lock duration (1-3s)
+    /// - max_ttl: Maximum cache entry lifetime
+    /// - max_file_size: Maximum cached file size
+    /// - namespace: Cache isolation namespace
+    /// - headers: Headers to include in cache key
+    /// - predictor: Enables cache prediction
+    /// - purge_ip_list: IPs allowed to purge cache
+    /// - skip: Regex pattern for requests to skip
+    ///
+    /// # Validation
+    /// - Ensures plugin step is Request
+    /// - Validates duration formats
+    /// - Creates cache directories if needed
+    /// - Compiles skip regex if provided
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
         let cache = get_cache_backend().map_err(|e| Error::Invalid {
@@ -214,6 +296,16 @@ impl TryFrom<&PluginConf> for Cache {
 }
 
 impl Cache {
+    /// Creates a new Cache instance from the provided plugin configuration.
+    ///
+    /// # Arguments
+    /// * `params` - Plugin configuration parameters
+    ///
+    /// # Returns
+    /// * `Result<Self>` - New Cache instance or error if configuration is invalid
+    ///
+    /// # Logging
+    /// Logs debug information about the cache plugin creation
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new http cache plugin");
         Self::try_from(params)
@@ -225,10 +317,32 @@ static METHOD_PURGE: Lazy<Method> =
 
 #[async_trait]
 impl Plugin for Cache {
+    /// Returns the unique hash key for this cache configuration.
+    /// Used to identify different cache configurations in the system.
     #[inline]
     fn hash_key(&self) -> String {
         self.hash_value.clone()
     }
+
+    /// Handles incoming HTTP requests for caching operations.
+    ///
+    /// # Arguments
+    /// * `step` - Current plugin execution step
+    /// * `session` - HTTP session containing request/response data
+    /// * `ctx` - State context for sharing data between plugins
+    ///
+    /// # Returns
+    /// * `Ok(Some(HttpResponse))` - For immediate responses (e.g., PURGE operations)
+    /// * `Ok(None)` - To continue normal request processing
+    ///
+    /// # Processing Steps
+    /// 1. Validates plugin step and HTTP method
+    /// 2. Checks skip patterns
+    /// 3. Builds cache key from URI and headers
+    /// 4. Handles PURGE requests with access control
+    /// 5. Configures cache settings for the session
+    /// 6. Enables caching with configured components
+    /// 7. Sets up size limits and tracking
     #[inline]
     async fn handle_request(
         &self,
@@ -236,10 +350,12 @@ impl Plugin for Cache {
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        // Only process if we're in the correct plugin step
         if step != self.plugin_step {
             return Ok(None);
         }
-        // cache only support get or head
+
+        // Cache operations only support GET/HEAD for retrieval and PURGE for invalidation
         let req_header = session.req_header();
         let method = &req_header.method;
         if ![Method::GET, Method::HEAD, METHOD_PURGE.to_owned()]
@@ -247,6 +363,8 @@ impl Plugin for Cache {
         {
             return Ok(None);
         }
+
+        // Check if request matches skip pattern (if configured)
         if let Some(skip) = &self.skip {
             if let Some(value) = req_header.uri.path_and_query() {
                 if skip.is_match(value.as_str()).unwrap_or_default() {
@@ -255,6 +373,7 @@ impl Plugin for Cache {
             }
         }
 
+        // Build cache key components including configured headers
         let mut keys = BytesMut::with_capacity(64);
         ctx.cache_namespace = self.namespace.clone();
         if let Some(headers) = &self.headers {
@@ -266,12 +385,8 @@ impl Plugin for Cache {
                 }
             }
         }
-        if !keys.is_empty() {
-            let prefix =
-                std::str::from_utf8(&keys).unwrap_or_default().to_string();
-            debug!("Cache prefix: {prefix}");
-            ctx.cache_prefix = Some(prefix);
-        }
+
+        // Handle PURGE requests with IP-based access control
         if method == METHOD_PURGE.to_owned() {
             let found = match self
                 .purge_ip_rules
@@ -304,20 +419,24 @@ impl Plugin for Cache {
             return Ok(Some(HttpResponse::no_content()));
         }
 
-        // max age of cache control
+        // Configure cache settings for this request
         ctx.cache_max_ttl = self.max_ttl;
         ctx.check_cache_control = self.check_cache_control;
 
+        // Enable caching for this session with configured components
         session.cache.enable(
             self.http_cache,
             self.eviction,
             self.predictor,
             self.lock,
         );
-        // set max size of cache response body
+
+        // Set maximum cached file size if configured
         if self.max_file_size > 0 {
             session.cache.set_max_file_size_bytes(self.max_file_size);
         }
+
+        // Track cache statistics if available
         if let Some(stats) = self.http_cache.stats() {
             ctx.cache_reading = Some(stats.reading);
             ctx.cache_writing = Some(stats.writing);

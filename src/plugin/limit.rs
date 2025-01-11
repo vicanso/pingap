@@ -29,36 +29,89 @@ use pingora_limits::rate::Rate;
 use std::time::Duration;
 use tracing::debug;
 
+// LimitTag determines what value will be used as the rate limiting key
 #[derive(PartialEq, Debug)]
 pub enum LimitTag {
-    Ip,
-    RequestHeader,
-    Cookie,
-    Query,
+    Ip,            // Use client IP (from X-Forwarded-For or direct connection)
+    RequestHeader, // Use value from a specified HTTP request header
+    Cookie,        // Use value from a specified cookie
+    Query,         // Use value from a specified URL query parameter
 }
 
+// Limiter implements rate limiting and concurrent request limiting
+// It can be configured via TOML with settings like:
+// ```toml
+// type = "rate"          # or "inflight"
+// tag = "cookie"         # or "header", "query", "ip"
+// key = "session_id"     # name of header/cookie/query param to use
+// max = 100             # maximum requests allowed
+// interval = "60s"      # time window for rate limiting
+// ```
+/// A rate limiter or concurrent request limiter that can be configured to limit based on
+/// different request attributes (IP, headers, cookies, query params)
 pub struct Limiter {
+    /// Determines what value will be used as the rate limiting key (IP, header, cookie, or query param)
     tag: LimitTag,
+
+    /// Maximum number of requests/connections allowed within the interval (for rate limiting)
+    /// or at the same time (for inflight limiting)
     max: isize,
+
+    /// The name of the header/cookie/query parameter to use as the limiting key
+    /// Only used when tag is not LimitTag::Ip
     key: String,
+
+    /// Tracks concurrent requests using atomic counters.
+    /// When a request completes, the counter automatically decrements via RAII guard.
+    /// Only used when configured as an inflight limiter (type = "inflight")
     inflight: Option<Inflight>,
+
+    /// Tracks request counts over a sliding time window.
+    /// Automatically expires old requests based on configured interval.
+    /// Only used when configured as a rate limiter (type = "rate")
     rate: Option<Rate>,
+
+    /// When to apply the limiting logic:
+    /// - PluginStep::Request: During initial request processing
+    /// - PluginStep::ProxyUpstream: Before forwarding to upstream server
     plugin_step: PluginStep,
+
+    /// Unique identifier for this limiter instance, used to distinguish between
+    /// different limiters in the same application
     hash_value: String,
 }
 
+/// Converts a plugin configuration into a Limiter instance
+///
+/// # Arguments
+/// * `value` - Plugin configuration containing limiter settings
+///
+/// # Returns
+/// * `Result<Self>` - New Limiter instance or error if configuration is invalid
+///
+/// # Configuration Options
+/// * `type` - "rate" or "inflight"
+/// * `tag` - "ip", "cookie", "header", or "query"
+/// * `key` - Name of header/cookie/query parameter to use
+/// * `max` - Maximum allowed requests/connections
+/// * `interval` - Time window for rate limiting (e.g. "60s")
 impl TryFrom<&PluginConf> for Limiter {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
         let step = get_step_conf(value);
 
+        // Parse the tag type from config, defaulting to IP-based limiting
         let tag = match get_str_conf(value, "tag").as_str() {
             "cookie" => LimitTag::Cookie,
             "header" => LimitTag::RequestHeader,
             "query" => LimitTag::Query,
             _ => LimitTag::Ip,
         };
+
+        // Parse time interval for rate limiting
+        // Format examples: "10s", "1m", "2h"
+        // Default: 10 seconds if not specified
         let interval = get_str_conf(value, "interval");
         let interval = if !interval.is_empty() {
             parse_duration(&interval).map_err(|e| Error::Invalid {
@@ -68,11 +121,15 @@ impl TryFrom<&PluginConf> for Limiter {
         } else {
             Duration::from_secs(10)
         };
+
+        // Create either inflight or rate limiter based on config
         let mut inflight = None;
         let mut rate = None;
         if get_str_conf(value, "type") == "inflight" {
+            // Inflight limiter uses atomic counters to track concurrent requests
             inflight = Some(Inflight::new());
         } else {
+            // Rate limiter uses time-bucketed counters
             rate = Some(Rate::new(interval));
         }
 
@@ -85,6 +142,8 @@ impl TryFrom<&PluginConf> for Limiter {
             rate,
             plugin_step: step,
         };
+
+        // Validate plugin step - limiting only makes sense during request or upstream phases
         if ![PluginStep::Request, PluginStep::ProxyUpstream]
             .contains(&params.plugin_step)
         {
@@ -98,49 +157,91 @@ impl TryFrom<&PluginConf> for Limiter {
 }
 
 impl Limiter {
+    /// Creates a new Limiter instance from plugin configuration
+    ///
+    /// # Arguments
+    /// * `params` - Plugin configuration containing limiter settings like type, tag, key, max, etc.
+    ///
+    /// # Returns
+    /// * `Result<Self>` - New Limiter instance or error if configuration is invalid
+    ///
+    /// # Example Configuration
+    /// ```toml
+    /// type = "rate"          # or "inflight"
+    /// tag = "cookie"         # or "header", "query", "ip"
+    /// key = "session_id"     # name of header/cookie/query param to use
+    /// max = 100             # maximum requests allowed
+    /// interval = "60s"      # time window for rate limiting
+    /// ```
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new limit plugin");
         Self::try_from(params)
     }
-    /// Increment `key` by 1. If value gt max, an error will be return.
-    /// Otherwise returns a Guard. It may set the client ip to context.
+    /// Increments and checks the limit counter for the current request
+    ///
+    /// # Arguments
+    /// * `session` - The HTTP session containing request details
+    /// * `ctx` - Mutable state context for storing request data
+    ///
+    /// # Returns
+    /// * `Result<()>` - Ok if within limits, Error if limit exceeded
+    ///
+    /// # Effects
+    /// * For rate limiting: Records request in time window
+    /// * For inflight limiting: Increments counter and stores RAII guard in context
+    /// * For IP-based limiting: Stores client IP in context
     pub fn incr(&self, session: &Session, ctx: &mut State) -> Result<()> {
+        // Extract the key value based on configured tag type
         let key = match self.tag {
             LimitTag::Query => {
+                // Get value from URL query parameter
                 util::get_query_value(session.req_header(), &self.key)
                     .unwrap_or_default()
                     .to_string()
             },
             LimitTag::RequestHeader => {
+                // Get value from HTTP request header
                 util::get_req_header_value(session.req_header(), &self.key)
                     .unwrap_or_default()
                     .to_string()
             },
             LimitTag::Cookie => {
+                // Get value from cookie
                 util::get_cookie_value(session.req_header(), &self.key)
                     .unwrap_or_default()
                     .to_string()
             },
             _ => {
+                // Get client IP from X-Forwarded-For or connection
                 let client_ip = util::get_client_ip(session);
+                // Store client IP in context for potential later use
                 ctx.client_ip = Some(client_ip.clone());
                 client_ip
             },
         };
+
+        // Skip limiting if no key found (e.g., missing header/cookie)
         if key.is_empty() {
             return Ok(());
         }
+
+        // Track request based on limiter type
         let value = if let Some(rate) = &self.rate {
-            rate.observe(&key, 1);
-            let value = rate.rate(&key);
+            // For rate limiting:
+            rate.observe(&key, 1); // Record this request
+            let value = rate.rate(&key); // Get current rate for time window
             value as isize
         } else if let Some(inflight) = &self.inflight {
-            let (guard, value) = inflight.incr(&key, 1);
+            // For inflight limiting:
+            let (guard, value) = inflight.incr(&key, 1); // Increment counter
+                                                         // Store guard in context - when guard is dropped, counter auto-decrements
             ctx.guard = Some(guard);
             value
         } else {
             0
         };
+
+        // Check if limit exceeded
         if value > self.max {
             return Err(Error::Exceed {
                 category: PluginCategory::Limit.to_string(),
@@ -151,12 +252,29 @@ impl Limiter {
         Ok(())
     }
 }
+
 #[async_trait]
 impl Plugin for Limiter {
+    /// Returns unique identifier for this limiter instance
     #[inline]
     fn hash_key(&self) -> String {
         self.hash_value.clone()
     }
+
+    /// Handles incoming HTTP requests by applying configured limits
+    ///
+    /// # Arguments
+    /// * `step` - Current plugin execution step
+    /// * `session` - Mutable HTTP session
+    /// * `ctx` - Mutable state context
+    ///
+    /// # Returns
+    /// * `pingora::Result<Option<HttpResponse>>` - None to continue processing,
+    ///   Some(response) with 429 status if limit exceeded
+    ///
+    /// # Effects
+    /// * Increments and checks appropriate limit counter
+    /// * Returns 429 Too Many Requests if limit exceeded
     #[inline]
     async fn handle_request(
         &self,
@@ -164,16 +282,22 @@ impl Plugin for Limiter {
         session: &mut Session,
         ctx: &mut State,
     ) -> pingora::Result<Option<HttpResponse>> {
+        // Only run at configured plugin step
         if step != self.plugin_step {
             return Ok(None);
         }
+
+        // Try to increment counter
         if let Err(e) = self.incr(session, ctx) {
+            // If limit exceeded, return 429 Too Many Requests
             return Ok(Some(HttpResponse {
                 status: StatusCode::TOO_MANY_REQUESTS,
                 body: e.to_string().into(),
                 ..Default::default()
             }));
         }
+
+        // Continue normal request processing if within limits
         Ok(None)
     }
 }

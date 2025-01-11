@@ -24,11 +24,20 @@ use once_cell::sync::Lazy;
 use pingora::proxy::Session;
 use tracing::debug;
 
+/// A plugin that responds with "pong" when a specific path is requested
+///
+/// The Ping plugin provides a simple health check endpoint that returns a "pong"
+/// response when the configured path is accessed.
 pub struct Ping {
+    /// The URL path that triggers the ping response (e.g. "/ping")
     path: String,
+    /// The execution step for this plugin (must be PluginStep::Request)
     plugin_step: PluginStep,
+    /// A unique hash value identifying this plugin instance
     hash_value: String,
 }
+
+/// Response for ping requests containing "pong"
 static PONG_RESPONSE: Lazy<HttpResponse> = Lazy::new(|| HttpResponse {
     status: StatusCode::OK,
     body: Bytes::from_static(b"pong"),
@@ -36,6 +45,13 @@ static PONG_RESPONSE: Lazy<HttpResponse> = Lazy::new(|| HttpResponse {
 });
 
 impl Ping {
+    /// Creates a new Ping plugin instance
+    ///
+    /// # Arguments
+    /// * `params` - Plugin configuration parameters
+    ///
+    /// # Returns
+    /// * `Result<Self>` - New Ping instance or error if configuration is invalid
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new ping plugin");
         let hash_value = get_hash_key(params);
@@ -57,10 +73,21 @@ impl Ping {
 
 #[async_trait]
 impl Plugin for Ping {
+    /// Returns the unique hash key for this plugin instance
     #[inline]
     fn hash_key(&self) -> String {
         self.hash_value.clone()
     }
+
+    /// Handles incoming HTTP requests by responding with "pong" if the path matches
+    ///
+    /// # Arguments
+    /// * `step` - Current plugin execution step
+    /// * `session` - HTTP session containing request details
+    /// * `_ctx` - State context (unused)
+    ///
+    /// # Returns
+    /// * `pingora::Result<Option<HttpResponse>>` - Pong response if path matches, None otherwise
     #[inline]
     async fn handle_request(
         &self,
