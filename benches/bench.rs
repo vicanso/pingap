@@ -73,8 +73,8 @@ fn bench_insert_header_name(c: &mut Criterion) {
     });
 }
 
-fn bench_get_response_header(c: &mut Criterion) {
-    c.bench_function("get response header for http response", |b| {
+fn bench_new_response_header(c: &mut Criterion) {
+    c.bench_function("new response header for http response", |b| {
         let resp = HttpResponse {
             status: StatusCode::OK,
             body: Bytes::from("Hello world!"),
@@ -92,7 +92,7 @@ fn bench_get_response_header(c: &mut Criterion) {
 
         b.iter(|| {
             let value = resp.clone();
-            value.get_response_header().unwrap();
+            value.new_response_header().unwrap();
         });
     });
 }
@@ -337,7 +337,7 @@ criterion_group!(
     bench_get_header_value,
     bench_insert_bytes_header,
     bench_insert_header_name,
-    bench_get_response_header,
+    bench_new_response_header,
     bench_location_filter,
     bench_location_rewrite_path,
     bench_get_super_ts,

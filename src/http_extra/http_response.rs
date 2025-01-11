@@ -29,11 +29,12 @@ use std::pin::Pin;
 use tokio::io::AsyncReadExt;
 use tracing::error;
 
+/// Helper function to generate cache control headers
 /// Returns a cache control header based on max age and privacy settings.
-/// If max_age is 0, returns no-cache header.
-/// If max_age is set, returns "private/public, max-age=X" header.
-/// Otherwise returns no-cache header.
-fn get_cache_control(
+/// - If max_age is 0: returns "private, no-cache"
+/// - If max_age is set: returns "private/public, max-age=X"
+/// - Otherwise: returns "private, no-cache"
+fn new_cache_control_header(
     max_age: Option<u32>,
     cache_private: Option<bool>,
 ) -> HttpHeader {
@@ -55,19 +56,20 @@ fn get_cache_control(
     HTTP_HEADER_NO_CACHE.clone()
 }
 
+/// Main HTTP response struct for handling complete responses
 #[derive(Default, Clone, Debug)]
 pub struct HttpResponse {
-    // http response status
+    /// HTTP status code (200 OK, 404 Not Found, etc)
     pub status: StatusCode,
-    // http response body
+    /// Response body as bytes
     pub body: Bytes,
-    // max age of http response
+    /// Cache control max-age value in seconds
     pub max_age: Option<u32>,
-    // created time of http response
+    /// Timestamp when response was created
     pub created_at: Option<u32>,
-    // private for cache control
+    /// Whether cache should be private (true) or public (false)
     pub cache_private: Option<bool>,
-    // headers for http response
+    /// Additional HTTP headers
     pub headers: Option<Vec<HttpHeader>>,
 }
 
@@ -178,7 +180,7 @@ impl HttpResponse {
         })
     }
     /// Builds and returns the HTTP response headers based on the response configuration
-    pub fn get_response_header(&self) -> pingora::Result<ResponseHeader> {
+    pub fn new_response_header(&self) -> pingora::Result<ResponseHeader> {
         let fix_size = 3;
         let size = self
             .headers
@@ -191,7 +193,8 @@ impl HttpResponse {
         )?;
 
         // set cache control
-        let cache_control = get_cache_control(self.max_age, self.cache_private);
+        let cache_control =
+            new_cache_control_header(self.max_age, self.cache_private);
         resp.insert_header(cache_control.0, cache_control.1)?;
 
         if let Some(created_at) = self.created_at {
@@ -211,7 +214,7 @@ impl HttpResponse {
     }
     /// Sends the HTTP response to the client and returns the number of bytes sent
     pub async fn send(self, session: &mut Session) -> pingora::Result<usize> {
-        let header = self.get_response_header()?;
+        let header = self.new_response_header()?;
         let size = self.body.len();
         session
             .write_response_header(Box::new(header), false)
@@ -222,18 +225,19 @@ impl HttpResponse {
     }
 }
 
+/// Chunked response handler for streaming large responses
 pub struct HttpChunkResponse<'r, R> {
+    /// Pinned reader for streaming data
     pub reader: Pin<&'r mut R>,
+    /// Size of each chunk in bytes
     pub chunk_size: usize,
-    // max age of http response
+    /// Cache control settings
     pub max_age: Option<u32>,
-    // private for cache control
     pub cache_private: Option<bool>,
-    // headers for http response
     pub headers: Option<Vec<HttpHeader>>,
 }
 
-// https://github.com/rust-lang/rust/blob/master/library/std/src/sys_common/io.rs#L1
+// Default chunk size of 8KB for streaming responses
 const DEFAULT_BUF_SIZE: usize = 8 * 1024;
 
 impl<'r, R> HttpChunkResponse<'r, R>
@@ -262,7 +266,8 @@ where
         let chunked = HTTP_HEADER_TRANSFER_CHUNKED.clone();
         resp.insert_header(chunked.0, chunked.1)?;
 
-        let cache_control = get_cache_control(self.max_age, self.cache_private);
+        let cache_control =
+            new_cache_control_header(self.max_age, self.cache_private);
         resp.insert_header(cache_control.0, cache_control.1)?;
         Ok(resp)
     }
@@ -304,7 +309,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{get_cache_control, HttpChunkResponse, HttpResponse};
+    use super::{new_cache_control_header, HttpChunkResponse, HttpResponse};
     use crate::http_extra::convert_headers;
     use crate::util::{get_super_ts, resolve_path};
     use bytes::Bytes;
@@ -314,18 +319,18 @@ mod tests {
     use tokio::fs;
 
     #[test]
-    fn test_get_cache_control() {
+    fn test_new_cache_control_header() {
         assert_eq!(
             r###"("cache-control", "private, max-age=3600")"###,
-            format!("{:?}", get_cache_control(Some(3600), Some(true)))
+            format!("{:?}", new_cache_control_header(Some(3600), Some(true)))
         );
         assert_eq!(
             r###"("cache-control", "public, max-age=3600")"###,
-            format!("{:?}", get_cache_control(Some(3600), None))
+            format!("{:?}", new_cache_control_header(Some(3600), None))
         );
         assert_eq!(
             r###"("cache-control", "private, no-cache")"###,
-            format!("{:?}", get_cache_control(None, None))
+            format!("{:?}", new_cache_control_header(None, None))
         );
     }
 
@@ -396,7 +401,7 @@ mod tests {
             ),
         };
 
-        let mut header = resp.get_response_header().unwrap();
+        let mut header = resp.new_response_header().unwrap();
         assert_eq!(true, !header.headers.get("Age").unwrap().is_empty());
         header.remove_header("Age").unwrap();
 

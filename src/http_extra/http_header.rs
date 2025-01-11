@@ -91,8 +91,8 @@ pub fn convert_header_value(
 ) -> Option<HeaderValue> {
     let buf = value.as_bytes();
 
-    // Early return if not a special header
-    if !buf.starts_with(b"$") && !buf.starts_with(b":") {
+    // Early return if not a special header (moved this check earlier)
+    if buf.is_empty() || !(buf[0] == b'$' || buf[0] == b':') {
         return None;
     }
 
@@ -145,17 +145,25 @@ pub fn convert_header_value(
     }
 }
 
+const HTTP_HEADER_PREFIX: &[u8] = b"$http_";
+const HTTP_HEADER_PREFIX_LEN: usize = HTTP_HEADER_PREFIX.len();
+
 #[inline]
 fn handle_special_headers(
     buf: &[u8],
     session: &Session,
     ctx: &State,
 ) -> Option<HeaderValue> {
-    if buf.starts_with(b"$http_") {
+    // Handle headers that reference other HTTP headers (e.g., $http_origin)
+    if buf.starts_with(HTTP_HEADER_PREFIX) {
         return handle_http_header(buf, session);
-    } else if buf.starts_with(b"$") {
+    }
+    // Handle environment variable references (e.g., $HOME)
+    if buf.starts_with(b"$") {
         return handle_env_var(buf);
-    } else if buf.starts_with(b":") {
+    }
+    // Handle context value references (e.g., :connection_id)
+    if buf.starts_with(b":") {
         return handle_context_value(buf, ctx);
     }
     None
@@ -163,13 +171,17 @@ fn handle_special_headers(
 
 #[inline]
 fn handle_http_header(buf: &[u8], session: &Session) -> Option<HeaderValue> {
-    let key = std::str::from_utf8(&buf[6..]).ok()?;
+    // Skip the "$http_" prefix (6 bytes) and convert remaining bytes to header key
+    let key = std::str::from_utf8(&buf[HTTP_HEADER_PREFIX_LEN..]).ok()?;
+    // Look up and clone the header value from the session
     session.get_header(key).cloned()
 }
 
 #[inline]
 fn handle_env_var(buf: &[u8]) -> Option<HeaderValue> {
+    // Skip the "$" prefix and convert to environment variable name
     let var_name = std::str::from_utf8(&buf[1..]).ok()?;
+    // Look up environment variable and convert to HeaderValue if found
     std::env::var(var_name)
         .ok()
         .and_then(|v| HeaderValue::from_str(&v).ok())
@@ -177,9 +189,13 @@ fn handle_env_var(buf: &[u8]) -> Option<HeaderValue> {
 
 #[inline]
 fn handle_context_value(buf: &[u8], ctx: &State) -> Option<HeaderValue> {
+    // Skip the ":" prefix and convert to context key
     let key = std::str::from_utf8(&buf[1..]).ok()?;
+    // Pre-allocate buffer for value
     let mut value = BytesMut::with_capacity(20);
+    // Append context value to buffer
     value = ctx.append_value(value, key);
+    // Convert to HeaderValue if buffer is not empty
     if !value.is_empty() {
         HeaderValue::from_bytes(&value).ok()
     } else {
