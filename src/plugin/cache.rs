@@ -385,6 +385,12 @@ impl Plugin for Cache {
                 }
             }
         }
+        if !keys.is_empty() {
+            let prefix =
+                std::str::from_utf8(&keys).unwrap_or_default().to_string();
+            debug!("Cache prefix: {prefix}");
+            ctx.cache_prefix = Some(prefix);
+        }
 
         // Handle PURGE requests with IP-based access control
         if method == METHOD_PURGE.to_owned() {

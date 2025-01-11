@@ -25,6 +25,15 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 static PINGAP_NONCE: Lazy<&Nonce> =
     Lazy::new(|| Nonce::from_slice(b"pingap nonce"));
 
+/// Generates a 32-byte key from the input string.
+/// If the input is longer than 32 bytes, it's truncated.
+/// If shorter, it's padded with zeros.
+///
+/// # Arguments
+/// * `key` - The input string to generate the key from
+///
+/// # Returns
+/// A Vec<u8> containing the 32-byte key
 fn generate_key(key: &str) -> Vec<u8> {
     let key_size = 32;
     let buf = key.as_bytes();
@@ -40,6 +49,15 @@ fn generate_key(key: &str) -> Vec<u8> {
     block
 }
 
+/// Encrypts data using AES-256-GCM-SIV with a static nonce.
+///
+/// # Arguments
+/// * `key` - The encryption key
+/// * `data` - The plaintext data to encrypt
+///
+/// # Returns
+/// * `Ok(String)` - Base64 encoded ciphertext
+/// * `Err(Error)` - If encryption fails
 pub fn aes_encrypt(key: &str, data: &str) -> Result<String> {
     let cipher =
         Aes256GcmSiv::new_from_slice(&generate_key(key)).map_err(|e| {
@@ -56,6 +74,15 @@ pub fn aes_encrypt(key: &str, data: &str) -> Result<String> {
     Ok(base64_encode(&cipher_text))
 }
 
+/// Decrypts AES-256-GCM-SIV encrypted data using a static nonce.
+///
+/// # Arguments
+/// * `key` - The decryption key
+/// * `data` - Base64 encoded ciphertext to decrypt
+///
+/// # Returns
+/// * `Ok(String)` - Decrypted plaintext
+/// * `Err(Error)` - If decryption or base64 decoding fails
 pub fn aes_decrypt(key: &str, data: &str) -> Result<String> {
     let cipher =
         Aes256GcmSiv::new_from_slice(&generate_key(key)).map_err(|e| {

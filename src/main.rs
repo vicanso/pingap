@@ -67,47 +67,42 @@ mod webhook;
 
 static TEMPLATE_CONFIG: &str = include_str!("../conf/basic.toml");
 
+/// Command line arguments structure for the pingap.
 /// A reverse proxy like nginx.
 #[derive(Parser, Debug, Default)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// The config file or directory
+    /// The config file or directory path
     #[arg(short, long)]
     conf: String,
-    /// Whether should run this server in the background
+    /// Run server in background mode
     #[arg(short, long)]
     daemon: bool,
-    /// Whether this server should try to upgrade from an running old server
+    /// Enable hot upgrade from a running old server instance
     #[arg(short, long)]
     upgrade: bool,
-    /// Test the configuration and exit
-    ///
-    /// This flag is useful for upgrading service where the user wants to make sure the new
-    /// service can start before shutting down the old server process.
+    /// Validate configuration without starting the server
     #[arg(short, long)]
     test: bool,
-    /// Log file path
+    /// Custom log file location
     #[arg(long)]
     log: Option<String>,
-    /// Admin server adddr
+    /// Admin server address for management interface
     #[arg(long)]
     admin: Option<String>,
-    /// Control panel for config manager
-    ///
-    /// This flag is useful for config manager, it will only run as admin,
-    /// not run the services of config.
+    /// Enable control panel mode (admin-only, no service running)
     #[arg(long)]
     cp: bool,
-    /// Whether this server should try to auto restart
+    /// Enable automatic server restart capability
     #[arg(short, long)]
     autorestart: bool,
-    /// Whether this server should try to auto reload configuration
+    /// Enable automatic config reload capability
     #[arg(long)]
     autoreload: bool,
-    /// Sync config to other storage
+    /// Sync configuration to specified storage location
     #[arg(long)]
     sync: Option<String>,
-    /// Print the template configuration and exit
+    /// Output template configuration
     #[arg(long)]
     template: bool,
 }
@@ -304,11 +299,14 @@ fn parse_arguments() -> Args {
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args = parse_arguments();
+
+    // Handle template output request
     if args.template {
         println!("{TEMPLATE_CONFIG}");
         return Ok(());
     }
 
+    // Set up admin node if specified
     if let Some(admin) = &args.admin {
         set_admin_addr(admin);
     }
@@ -316,16 +314,20 @@ fn run() -> Result<(), Box<dyn Error>> {
         return run_admin_node(args);
     }
 
+    // Initialize configuration
     config::try_init_config_storage(&args.conf)?;
     let (s, r) = crossbeam_channel::bounded(0);
     get_config(args.admin.is_some(), s);
     let conf = r.recv()??;
+
+    // Initialize logging system
     let compression_task = logger::logger_try_init(logger::LoggerParams {
         capacity: conf.basic.log_buffered_size.unwrap_or_default().as_u64(),
         log: args.log.clone().unwrap_or_default(),
         level: conf.basic.log_level.clone().unwrap_or_default(),
         json: conf.basic.log_format_json.unwrap_or_default(),
     })?;
+
     // TODO a better way
     // since the cache will be initialized in validate function
     // so set the current conf first

@@ -200,13 +200,6 @@ pub trait ServiceTask: Sync + Send {
     ///
     /// # Returns
     /// * String describing the task's purpose, default is "unknown"
-    ///
-    /// # Examples
-    /// ```
-    /// fn description(&self) -> String {
-    ///     "Database cleanup task - removes expired records".to_string()
-    /// }
-    /// ```
     fn description(&self) -> String {
         "unknown".to_string()
     }

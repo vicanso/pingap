@@ -26,21 +26,31 @@ use tracing::{error, info};
 static WEBHOOK_URL: OnceCell<String> = OnceCell::new();
 static WEBHOOK_CATEGORY: OnceCell<String> = OnceCell::new();
 static WEBHOOK_NOTIFICATIONS: OnceCell<Vec<String>> = OnceCell::new();
+
+/// Sets the webhook configuration parameters
+///
+/// # Arguments
+/// * `url` - The webhook endpoint URL
+/// * `category` - The webhook category/type (e.g. "wecom", "dingtalk")
+/// * `notifications` - List of notification categories to enable
 pub fn set_web_hook(url: &str, category: &str, notifications: &[String]) {
     WEBHOOK_URL.get_or_init(|| url.to_string());
     WEBHOOK_CATEGORY.get_or_init(|| category.to_string());
     WEBHOOK_NOTIFICATIONS.get_or_init(|| notifications.to_owned());
 }
 
+#[derive(Default)]
 pub enum NotificationLevel {
+    #[default]
     Info,
     Warn,
     Error,
 }
 
-#[derive(PartialEq, Debug, Clone, EnumString, strum::Display)]
+#[derive(PartialEq, Debug, Clone, EnumString, strum::Display, Default)]
 #[strum(serialize_all = "snake_case")]
 pub enum NotificationCategory {
+    #[default]
     BackendStatus,
     LetsEncrypt,
     DiffConfig,
@@ -88,6 +98,10 @@ impl HealthObserve for BackendObserveNotification {
     }
 }
 
+/// Creates a new backend health observation notification handler
+///
+/// # Arguments
+/// * `name` - Name of the backend service to monitor
 pub fn new_backend_observe_notification(
     name: &str,
 ) -> Box<BackendObserveNotification> {
@@ -96,23 +110,22 @@ pub fn new_backend_observe_notification(
     })
 }
 
+/// Parameters for sending a notification
+#[derive(Default)]
 pub struct SendNotificationParams {
     pub category: NotificationCategory,
     pub level: NotificationLevel,
     pub msg: String,
     pub remark: Option<String>,
 }
-impl Default for SendNotificationParams {
-    fn default() -> Self {
-        Self {
-            category: NotificationCategory::BackendStatus,
-            level: NotificationLevel::Info,
-            msg: "".to_string(),
-            remark: None,
-        }
-    }
-}
 
+/// Sends a notification via configured webhook
+///
+/// Formats and sends the notification based on the webhook type (wecom, dingtalk, etc).
+/// Will log success/failure and handle timeouts.
+///
+/// # Arguments
+/// * `params` - The notification parameters including category, level, message and optional remark
 pub async fn send_notification(params: SendNotificationParams) {
     info!(
         category = params.category.to_string(),

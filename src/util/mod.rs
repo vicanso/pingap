@@ -115,6 +115,13 @@ pub fn get_client_ip(session: &Session) -> String {
 }
 
 /// Gets string value from req header.
+///
+/// # Arguments
+/// * `req_header` - The HTTP request header
+/// * `key` - The header key to look up
+///
+/// # Returns
+/// The header value as a string slice if found and valid UTF-8, None otherwise
 pub fn get_req_header_value<'a>(
     req_header: &'a RequestHeader,
     key: &str,
@@ -128,6 +135,13 @@ pub fn get_req_header_value<'a>(
 }
 
 /// Gets cookie value from req header.
+///
+/// # Arguments
+/// * `req_header` - The HTTP request header
+/// * `cookie_name` - Name of the cookie to find
+///
+/// # Returns
+/// The cookie value as a string slice if found, None otherwise
 pub fn get_cookie_value<'a>(
     req_header: &'a RequestHeader,
     cookie_name: &str,
@@ -144,7 +158,13 @@ pub fn get_cookie_value<'a>(
     None
 }
 
-/// Converts query string to map.
+/// Converts query string to key-value map.
+///
+/// # Arguments
+/// * `query` - Query string to parse (without leading '?')
+///
+/// # Returns
+/// HashMap containing the parsed query parameters
 pub fn convert_query_map(query: &str) -> HashMap<String, String> {
     let mut m = HashMap::new();
     for item in query.split('&') {
@@ -157,7 +177,14 @@ pub fn convert_query_map(query: &str) -> HashMap<String, String> {
     m
 }
 
-/// Gets query value from req header.
+/// Gets query parameter value from request header.
+///
+/// # Arguments
+/// * `req_header` - The HTTP request header
+/// * `name` - Name of the query parameter to find
+///
+/// # Returns
+/// The parameter value as a string slice if found, None otherwise
 pub fn get_query_value<'a>(
     req_header: &'a RequestHeader,
     name: &str,
@@ -174,7 +201,14 @@ pub fn get_query_value<'a>(
     None
 }
 
-/// Remove query from req header
+/// Remove query parameter from request header URI
+///
+/// # Arguments
+/// * `req_header` - The HTTP request header to modify
+/// * `name` - Name of the query parameter to remove
+///
+/// # Returns
+/// Result indicating success or failure of the URI modification
 pub fn remove_query_from_header(
     req_header: &mut RequestHeader,
     name: &str,
