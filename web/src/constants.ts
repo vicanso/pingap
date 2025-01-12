@@ -29,6 +29,7 @@ export function getPluginSteps(category: string) {
   pluginSupportSteps[PluginCategory.REDIRECT] = [0];
   pluginSupportSteps[PluginCategory.PING] = [0];
   pluginSupportSteps[PluginCategory.RESPONSE_HEADERS] = [2];
+  pluginSupportSteps[PluginCategory.SUB_FILTER] = [2];
   pluginSupportSteps[PluginCategory.REFERER_RESTRICTION] = [0, 1];
   pluginSupportSteps[PluginCategory.CSRF] = [0];
   pluginSupportSteps[PluginCategory.CORS] = [0, 1];
@@ -130,6 +131,7 @@ export enum PluginCategory {
   REDIRECT = "redirect",
   PING = "ping",
   RESPONSE_HEADERS = "response_headers",
+  SUB_FILTER = "sub_filter",
   REFERER_RESTRICTION = "referer_restriction",
   CSRF = "csrf",
   CORS = "cors",

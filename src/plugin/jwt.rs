@@ -14,7 +14,9 @@
 
 use super::{get_hash_key, get_step_conf, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
-use crate::http_extra::{HttpResponse, HTTP_HEADER_CONTENT_JSON};
+use crate::http_extra::{
+    HttpResponse, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_TRANSFER_CHUNKED,
+};
 use crate::state::{ModifyResponseBody, State};
 use crate::util;
 use async_trait::async_trait;
@@ -329,9 +331,12 @@ impl Plugin for JwtAuth {
         upstream_response.remove_header(&http::header::CONTENT_LENGTH);
         let json = HTTP_HEADER_CONTENT_JSON.clone();
         let _ = upstream_response.insert_header(json.0, json.1);
+
         // no error
-        let _ = upstream_response
-            .insert_header(http::header::TRANSFER_ENCODING, "Chunked");
+        let _ = upstream_response.insert_header(
+            http::header::TRANSFER_ENCODING,
+            HTTP_HEADER_TRANSFER_CHUNKED.1.clone(),
+        );
         ctx.modify_response_body = Some(Box::new(Sign {
             algorithm: self.algorithm.clone(),
             secret: self.secret.clone(),

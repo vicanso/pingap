@@ -110,6 +110,7 @@ export default function Plugins() {
 
             // response
             PluginCategory.RESPONSE_HEADERS,
+            PluginCategory.SUB_FILTER,
           ],
           true,
         ),
@@ -952,6 +953,27 @@ export default function Plugins() {
           defaultValue: pluginConfig.rename_headers as string[],
           span: 6,
           category: ExFormItemCategory.KV_LIST,
+        },
+      );
+      break;
+    }
+    case PluginCategory.SUB_FILTER: {
+      items.push(
+        {
+          name: "path",
+          label: pluginI18n("subFilterPath"),
+          placeholder: pluginI18n("subFilterPathPlaceholder"),
+          defaultValue: pluginConfig.path as string,
+          span: 6,
+          category: ExFormItemCategory.TEXT,
+        },
+        {
+          name: "filters",
+          label: pluginI18n("subFilterFilters"),
+          placeholder: pluginI18n("subFilterFiltersPlaceholder"),
+          defaultValue: pluginConfig.filters as string[],
+          span: 6,
+          category: ExFormItemCategory.TEXTS,
         },
       );
       break;

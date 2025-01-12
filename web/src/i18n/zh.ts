@@ -410,6 +410,10 @@ export default {
     combinedAuthAuthDeviationPlaceholder: "输入允许时间偏移量(e.g. 10)",
     combinedAuthAuthAdd: "添加",
     combinedAuthAuthRemove: "删除",
+    subFilterPath: "路径",
+    subFilterPathPlaceholder: "输入子过滤器的路径(如 ^/api/)",
+    subFilterFilters: "过滤规则",
+    subFilterFiltersPlaceholder: "输入子过滤器的规则(如 subs_filter 'http://pingap.io' 'https://pingap.io/api' ig)",
     remark: "备注",
   },
   storage: {

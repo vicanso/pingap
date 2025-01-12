@@ -49,6 +49,7 @@ mod referer_restriction;
 mod request_id;
 mod response_headers;
 mod stats;
+mod sub_filter;
 mod ua_restriction;
 
 /// UUID for the admin server plugin, generated at runtime
@@ -392,6 +393,10 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
                 let accept_encoding =
                     accept_encoding::AcceptEncoding::new(conf)?;
                 plguins.insert(name.clone(), Arc::new(accept_encoding));
+            },
+            PluginCategory::SubFilter => {
+                let s = sub_filter::SubFilter::new(conf)?;
+                plguins.insert(name.clone(), Arc::new(s));
             },
         };
     }

@@ -432,6 +432,10 @@ export default {
     combinedAuthAuthDeviationPlaceholder: "Input the deviation(e.g. 10)",
     combinedAuthAuthAdd: "Add",
     combinedAuthAuthRemove: "Remove",
+    subFilterPath: "Path",
+    subFilterPathPlaceholder: "Input the path for sub filter(e.g. ^/api/)",
+    subFilterFilters: "Filters",
+    subFilterFiltersPlaceholder: "Input the filters for sub filter(e.g. subs_filter 'http://pingap.io' 'https://pingap.io/api' ig)",
     remark: "Remark",
   },
   storage: {

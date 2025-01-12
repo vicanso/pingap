@@ -79,6 +79,8 @@ pub enum PluginCategory {
     Ping,
     /// Custom response header manipulation
     ResponseHeaders,
+    /// Substring filter
+    SubFilter,
     /// Referer-based access control
     RefererRestriction,
     /// User-Agent based access control
