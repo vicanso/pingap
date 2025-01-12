@@ -31,6 +31,7 @@ use std::sync::Arc;
 use substring::Substring;
 use tracing::{debug, error};
 
+// Error enum for various location-related errors
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("Invalid error {message}"))]
@@ -71,7 +72,19 @@ enum PathSelector {
     EqualPath(EqualPath),
     Empty,
 }
-/// New a path selector, regex, prefix or equal selector
+/// Creates a new path selector based on the input path string.
+///
+/// # Arguments
+/// * `path` - The path pattern string to parse
+///
+/// # Returns
+/// * `Result<PathSelector>` - The parsed path selector or error
+///
+/// # Path Format
+/// - Empty string: Matches all paths
+/// - Starting with "~": Regex pattern matching
+/// - Starting with "=": Exact path matching  
+/// - Otherwise: Prefix path matching
 fn new_path_selector(path: &str) -> Result<PathSelector> {
     let path = path.trim();
     if path.is_empty() {
@@ -119,7 +132,18 @@ enum HostSelector {
     EqualHost(EqualHost),
 }
 
-/// New a host selector, regex or  equal selector
+/// Creates a new host selector based on the input host string.
+///
+/// # Arguments
+/// * `host` - The host pattern string to parse
+///
+/// # Returns
+/// * `Result<HostSelector>` - The parsed host selector or error
+///
+/// # Host Format
+/// - Empty string: Matches empty host
+/// - Starting with "~": Regex pattern matching with capture groups
+/// - Otherwise: Exact hostname matching
 fn new_host_selector(host: &str) -> Result<HostSelector> {
     let host = host.trim();
     if host.is_empty() {
@@ -164,35 +188,78 @@ static DEFAULT_PROXY_SET_HEADERS: Lazy<Vec<HttpHeader>> = Lazy::new(|| {
     .unwrap()
 });
 
-// Location struct represents a routing configuration that matches requests
-// based on path and host patterns and applies various proxy rules
+/// Location represents a routing configuration for handling HTTP requests.
+/// It defines rules for matching requests based on paths and hosts, and specifies
+/// how these requests should be processed and proxied.
 #[derive(Debug)]
 pub struct Location {
+    /// Unique identifier for this location configuration
     pub name: String,
+
+    /// Hash key used for configuration versioning and change detection
     pub key: String,
+
+    /// Target upstream server where requests will be proxied to
     pub upstream: String,
+
+    /// Original path pattern string used for matching requests
     path: String,
+
+    /// Compiled path matching rules (regex, prefix, or exact match)
     path_selector: PathSelector,
+
+    /// List of host patterns to match against request Host header
+    /// Empty list means match all hosts
     hosts: Vec<HostSelector>,
-    // Regex pattern and replacement for URL rewriting
+
+    /// Optional URL rewriting rule consisting of:
+    /// - regex pattern to match against request path
+    /// - replacement string with optional capture group references
     reg_rewrite: Option<(Regex, String)>,
-    // Headers to add/set when proxying requests
+
+    /// Additional headers to append to proxied requests
+    /// These are added without removing existing headers
     proxy_add_headers: Option<Vec<HttpHeader>>,
+
+    /// Headers to set on proxied requests
+    /// These override any existing headers with the same name
     proxy_set_headers: Option<Vec<HttpHeader>>,
-    // Plugin names to execute
+
+    /// Ordered list of plugin names to execute during request/response processing
     plugins: Option<Vec<String>>,
-    // Request statistics
+
+    /// Total number of requests accepted by this location
+    /// Used for metrics and monitoring
     accepted: AtomicU64,
+
+    /// Number of requests currently being processed
+    /// Used for concurrency control
     processing: AtomicI32,
+
+    /// Maximum number of concurrent requests allowed
+    /// Zero means unlimited
     max_processing: i32,
-    // gRPC-Web protocol support flag
+
+    /// Whether to enable gRPC-Web protocol support
+    /// When true, handles gRPC-Web requests and converts them to regular gRPC
     grpc_web: bool,
-    // Maximum allowed request body size
+
+    /// Maximum allowed size of client request body in bytes
+    /// Zero means unlimited. Requests exceeding this limit receive 413 error
     client_max_body_size: usize,
-    // Enable reverse proxy headers
+
+    /// Whether to automatically add standard reverse proxy headers like:
+    /// X-Forwarded-For, X-Real-IP, X-Forwarded-Proto, etc.
     enable_reverse_proxy_headers: bool,
 }
 
+/// Formats a vector of header strings into internal HttpHeader representation.
+///
+/// # Arguments
+/// * `values` - Optional vector of header strings in "Name: Value" format
+///
+/// # Returns
+/// * `Result<Option<Vec<HttpHeader>>>` - Parsed headers or None if input was None
 fn format_headers(
     values: &Option<Vec<String>>,
 ) -> Result<Option<Vec<HttpHeader>>> {
@@ -208,7 +275,8 @@ fn format_headers(
 }
 
 impl Location {
-    /// Create a location from config.
+    /// Creates a new Location from configuration
+    /// Validates and compiles path/host patterns and other settings
     pub fn new(name: &str, conf: &LocationConf) -> Result<Location> {
         if name.is_empty() {
             return Err(Error::Invalid {
@@ -302,7 +370,8 @@ impl Location {
     pub fn sub_processing(&self) {
         self.processing.fetch_sub(1, Ordering::Relaxed);
     }
-    /// Return `true` if the host and path match location.
+    /// Checks if a request matches this location's path and host rules
+    /// Returns (matched, variables) where variables contains any regex captures
     #[inline]
     pub fn matched(
         &self,
@@ -357,8 +426,8 @@ impl Location {
         }
         Ok(())
     }
-    /// Rewrite the path by the rule and returns true.
-    /// If the rule is not exists, returns false.
+    /// Applies URL rewriting rules if configured
+    /// Returns true if rewriting was performed
     #[inline]
     pub fn rewrite(
         &self,
@@ -394,7 +463,8 @@ impl Location {
         }
         false
     }
-    /// Set or append the headers before proxy the request to upstream.
+    /// Sets or appends proxy-related headers before forwarding request
+    /// Handles both default reverse proxy headers and custom configured headers
     #[inline]
     pub fn set_append_proxy_headers(
         &self,
@@ -431,7 +501,8 @@ impl Location {
             arr.iter().for_each(|(k, v)| set_header(k, v, true));
         }
     }
-    /// Run request plugins, if return Ok(true), the request will be done.
+    /// Executes request plugins in the configured chain
+    /// Returns true if a plugin handled the request completely
     #[inline]
     pub async fn handle_request_plugin(
         &self,
@@ -487,6 +558,13 @@ type Locations = AHashMap<String, Arc<Location>>;
 static LOCATION_MAP: Lazy<ArcSwap<Locations>> =
     Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
 
+/// Gets a location configuration by name from the global location map.
+///
+/// # Arguments
+/// * `name` - Name of the location to retrieve
+///
+/// # Returns
+/// * `Option<Arc<Location>>` - The location if found, None otherwise
 pub fn get_location(name: &str) -> Option<Arc<Location>> {
     if name.is_empty() {
         return None;
@@ -494,6 +572,10 @@ pub fn get_location(name: &str) -> Option<Arc<Location>> {
     LOCATION_MAP.load().get(name).cloned()
 }
 
+/// Gets a map of current request processing counts for all locations.
+///
+/// # Returns
+/// * `HashMap<String, i32>` - Map of location names to their current processing counts
 pub fn get_locations_processing() -> HashMap<String, i32> {
     let mut processing = HashMap::new();
     LOCATION_MAP.load().iter().for_each(|(k, v)| {
@@ -502,6 +584,8 @@ pub fn get_locations_processing() -> HashMap<String, i32> {
     processing
 }
 
+/// Initializes or updates the global location configurations
+/// Returns list of location names that were updated
 pub fn try_init_locations(
     confs: &HashMap<String, LocationConf>,
 ) -> Result<Vec<String>> {

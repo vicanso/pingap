@@ -344,7 +344,14 @@ fn new_load_balancer(
 }
 
 impl Upstream {
-    /// Creates a new upstream from config.
+    /// Creates a new Upstream instance from the provided configuration
+    ///
+    /// # Arguments
+    /// * `name` - Name identifier for the upstream service
+    /// * `conf` - Configuration parameters for the upstream service
+    ///
+    /// # Returns
+    /// * `Result<Self>` - New Upstream instance or error if creation fails
     pub fn new(name: &str, conf: &UpstreamConf) -> Result<Self> {
         let (lb, hash, hash_key) = new_load_balancer(name, conf)?;
         let key = conf.hash_key();
@@ -408,61 +415,94 @@ impl Upstream {
         Ok(up)
     }
 
-    /// Returns a new http peer, if there is no healthy backend, it will return `None`.
+    /// Creates and configures a new HTTP peer for handling requests
+    ///
+    /// # Arguments
+    /// * `session` - Current HTTP session containing request details
+    /// * `ctx` - Request context state
+    ///
+    /// # Returns
+    /// * `Option<HttpPeer>` - Configured HTTP peer if a healthy backend is available, None otherwise
+    ///
+    /// This method:
+    /// 1. Selects an appropriate backend using the configured load balancing strategy
+    /// 2. Increments the processing counter
+    /// 3. Creates and configures an HttpPeer with the connection settings
     #[inline]
     pub fn new_http_peer(
         &self,
         session: &Session,
         ctx: &State,
     ) -> Option<HttpPeer> {
+        // Select a backend based on the load balancing strategy
         let upstream = match &self.lb {
+            // For round-robin, use empty key since selection is sequential
             SelectionLb::RoundRobin(lb) => lb.select(b"", 256),
+            // For consistent hashing, generate hash value from request details
             SelectionLb::Consistent(lb) => {
                 let value =
                     get_hash_value(&self.hash, &self.hash_key, session, ctx);
                 lb.select(value.as_bytes(), 256)
             },
+            // For transparent mode, no backend selection needed
             SelectionLb::Transparent => None,
         };
+        // Increment counter for requests being processed
         self.processing.fetch_add(1, Ordering::Relaxed);
+
+        // Create HTTP peer based on load balancing mode
         let p = if matches!(self.lb, SelectionLb::Transparent) {
+            // In transparent mode, use the request's host header
             let host = util::get_host(session.req_header())?;
+            // Set SNI: either use host header ($host) or configured value
             let sni = if self.sni == "$host" {
                 host.to_string()
             } else {
                 self.sni.clone()
             };
+            // Create peer with host:port, TLS settings, and SNI
             Some(HttpPeer::new(
                 format!("{host}:{}", ctx.server_port.unwrap_or(80)),
                 self.tls,
                 sni,
             ))
         } else {
+            // For load balanced modes, create peer from selected backend
             upstream.map(|upstream| {
                 HttpPeer::new(upstream, self.tls, self.sni.clone())
             })
         };
+
+        // Configure connection options for the peer
         p.map(|mut p| {
+            // Set various timeout values
             p.options.connection_timeout = self.connection_timeout;
             p.options.total_connection_timeout = self.total_connection_timeout;
             p.options.read_timeout = self.read_timeout;
             p.options.idle_timeout = self.idle_timeout;
             p.options.write_timeout = self.write_timeout;
+            // Configure TLS certificate verification if specified
             if let Some(verify_cert) = self.verify_cert {
                 p.options.verify_cert = verify_cert;
             }
+            // Set protocol negotiation settings
             p.options.alpn = self.alpn.clone();
+            // Configure TCP-specific options
             p.options.tcp_keepalive.clone_from(&self.tcp_keepalive);
             p.options.tcp_recv_buf = self.tcp_recv_buf;
             if let Some(tcp_fast_open) = self.tcp_fast_open {
                 p.options.tcp_fast_open = tcp_fast_open;
             }
+            // Set connection tracing if enabled
             p.options.tracer.clone_from(&self.tracer);
             p
         })
     }
 
-    /// Get the connected count of upstream
+    /// Returns the current number of active connections to this upstream
+    ///
+    /// # Returns
+    /// * `Option<i32>` - Number of active connections if tracking is enabled, None otherwise
     #[inline]
     pub fn connected(&self) -> Option<i32> {
         self.peer_tracer
@@ -470,6 +510,10 @@ impl Upstream {
             .map(|tracer| tracer.connected.load(Ordering::Relaxed))
     }
 
+    /// Returns the round-robin load balancer if configured
+    ///
+    /// # Returns
+    /// * `Option<Arc<LoadBalancer<RoundRobin>>>` - Round-robin load balancer if used, None otherwise
     #[inline]
     pub fn as_round_robin(&self) -> Option<Arc<LoadBalancer<RoundRobin>>> {
         match &self.lb {
@@ -477,6 +521,11 @@ impl Upstream {
             _ => None,
         }
     }
+
+    /// Returns the consistent hash load balancer if configured
+    ///
+    /// # Returns
+    /// * `Option<Arc<LoadBalancer<Consistent>>>` - Consistent hash load balancer if used, None otherwise
     #[inline]
     pub fn as_consistent(&self) -> Option<Arc<LoadBalancer<Consistent>>> {
         match &self.lb {
@@ -484,6 +533,11 @@ impl Upstream {
             _ => None,
         }
     }
+
+    /// Decrements and returns the number of requests being processed
+    ///
+    /// # Returns
+    /// * `i32` - Previous count of requests being processed
     #[inline]
     pub fn completed(&self) -> i32 {
         self.processing.fetch_add(-1, Ordering::Relaxed)

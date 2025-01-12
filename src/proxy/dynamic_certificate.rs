@@ -38,15 +38,31 @@ pub enum Error {
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 // Type alias for storing certificates in a high-performance hash map
+// AHashMap provides better performance than std::collections::HashMap by:
+// - Using aHash algorithm optimized for short keys
+// - Reducing collision probability
+// - Having better cache utilization
 type DynamicCertificates = AHashMap<String, Arc<TlsCertificate>>;
 
-// Global storage for dynamic certificates using atomic reference counting for thread safety
+// Global certificate storage using thread-safe atomic references
+// - ArcSwap enables atomic pointer swapping for zero-downtime updates
+// - Lazy initialization ensures the map is only created when first accessed
+// - Arc provides thread-safe reference counting for shared access
 static DYNAMIC_CERTIFICATE_MAP: Lazy<ArcSwap<DynamicCertificates>> =
     Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
 
-// Default server name used when no SNI is provided
+// Fallback server name used when:
+// - No SNI (Server Name Indication) is provided in TLS handshake
+// - No matching certificate is found for the requested domain
+// - Certificate is marked as default with is_default = true
 static DEFAULT_SERVER_NAME: &str = "*";
 
+// Parses certificate configurations and builds the certificate store
+// Parameters:
+// - certificate_configs: Map of certificate names to their configurations
+// Returns:
+// - DynamicCertificates: Map of domain names to parsed certificates
+// - Vec<(String, String)>: List of (certificate_name, error_message) for failed parsing
 fn parse_certificates(
     certificate_configs: &HashMap<String, CertificateConf>,
 ) -> (DynamicCertificates, Vec<(String, String)>) {
@@ -82,9 +98,16 @@ fn parse_certificates(
 }
 
 /// Updates the global certificate store with new configurations
-/// Returns:
-/// - List of updated certificate names
-/// - String containing any error messages
+///
+/// # Arguments
+/// * `certificate_configs` - HashMap of certificate names to their configurations
+///
+/// # Returns
+/// * `Vec<String>` - List of domain names whose certificates were updated
+/// * `String` - Semicolon-separated list of parsing errors
+///
+/// Updates certificates atomically using ArcSwap, detecting changes by comparing hash_keys.
+/// Supports multiple domains per certificate and wildcard certificates.
 pub fn try_update_certificates(
     certificate_configs: &HashMap<String, CertificateConf>,
 ) -> (Vec<String>, String) {
@@ -107,7 +130,13 @@ pub fn try_update_certificates(
     (updated_certificates, msg_list.join(";"))
 }
 
-/// Get certificate info list
+/// Retrieves a list of all certificates and their associated information
+///
+/// # Returns
+/// * `Vec<(String, Certificate)>` - List of tuples containing certificate names and their info
+///
+/// The name will be either the configured certificate name or the domain name if no
+/// specific name was set.
 pub fn get_certificate_info_list() -> Vec<(String, Certificate)> {
     let mut infos = vec![];
     for (name, cert) in DYNAMIC_CERTIFICATE_MAP.load().iter() {
@@ -123,7 +152,11 @@ pub fn get_certificate_info_list() -> Vec<(String, Certificate)> {
     infos
 }
 
-// Parameters for configuring TLS settings
+/// Parameters for configuring TLS settings
+///
+/// Contains all the necessary configuration options for setting up TLS,
+/// including protocol versions, cipher suites, and HTTP/2 support.
+#[derive(Debug)]
 pub struct TlsSettingParams {
     pub server_name: String,
     pub enabled_h2: bool,            // Enable HTTP/2 support
@@ -133,7 +166,16 @@ pub struct TlsSettingParams {
     pub tls_max_version: Option<String>, // Maximum TLS version
 }
 
-// Helper function to apply certificate, private key and chain to SSL context
+/// Applies certificate, private key and chain certificate to an SSL context
+///
+/// # Arguments
+/// * `ssl` - Reference to the SSL context to modify
+/// * `cert` - X509 certificate to apply
+/// * `key` - Private key for the certificate
+/// * `chain_certificate` - Optional chain certificate
+///
+/// # Side Effects
+/// Logs errors if any operation fails but continues execution
 #[inline]
 fn ssl_certificate(
     ssl: &mut SslRef,
@@ -157,7 +199,14 @@ fn ssl_certificate(
     }
 }
 
-/// GlobalCertificate implements dynamic certificate selection based on SNI
+/// GlobalCertificate implements SNI-based dynamic certificate selection
+///
+/// Provides runtime certificate selection during TLS handshake based on the
+/// Server Name Indication (SNI). Supports:
+/// - Dynamic certificate updates
+/// - Wildcard certificates
+/// - Default fallback certificates
+/// - Self-signed CA certificates
 #[derive(Debug, Clone, Default)]
 pub struct GlobalCertificate {}
 
@@ -227,6 +276,14 @@ impl GlobalCertificate {
 #[async_trait]
 impl pingora::listeners::TlsAccept for GlobalCertificate {
     async fn certificate_callback(&self, ssl: &mut SslRef) {
+        // Certificate selection process:
+        // 1. Extract SNI from TLS handshake
+        // 2. Try exact domain match (example.com)
+        // 3. Try wildcard domain match (*.example.com)
+        // 4. Fall back to default certificate (DEFAULT_SERVER_NAME)
+        // 5. Handle special case for CA certificates (self-signed)
+        // 6. Apply certificate, private key, and chain to SSL context
+
         // TODO add more debug log
         debug!(ssl = format!("{ssl:?}"));
         let sni = ssl

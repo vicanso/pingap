@@ -84,12 +84,19 @@ pub enum Error {
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// Represents a mapping of server names to their location configurations.
+/// This allows efficient lookup of location settings for each virtual host/server.
 type ServerLocations = AHashMap<String, Arc<Vec<String>>>;
+
+/// Global static map storing server location configurations.
+/// Uses ArcSwap for thread-safe atomic updates without locking.
 static LOCATION_MAP: Lazy<ArcSwap<ServerLocations>> =
     Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
 
-/// Try to init the locations of server,
-/// the locations are order by weight
+/// Initializes server locations with their associated configurations.
+/// - Orders locations by weight to determine processing priority
+/// - Updates only modified server configurations
+/// - Returns list of updated server names
 pub fn try_init_server_locations(
     servers: &HashMap<String, config::ServerConf>,
     locations: &HashMap<String, config::LocationConf>,
@@ -134,12 +141,20 @@ fn get_server_locations(name: &str) -> Option<Arc<Vec<String>>> {
     LOCATION_MAP.load().get(name).cloned()
 }
 
+/// Core server implementation that handles HTTP proxy functionality.
+/// Manages connection lifecycle, request/response processing, and caching.
 pub struct Server {
+    /// Server name identifier
     name: String,
+    /// Whether this is an admin server instance
     admin: bool,
+    /// Listening address(es), comma-separated for multiple
     addr: String,
+    /// Counter for total accepted connections since server start
     accepted: AtomicU64,
+    /// Counter for currently active request processing
     processing: AtomicI32,
+    /// Optional access log parser for customized logging
     log_parser: Option<Parser>,
     error_template: String,
     threads: Option<usize>,
@@ -172,7 +187,12 @@ static HTTP_500_RESPONSE: Lazy<ResponseHeader> =
     Lazy::new(|| error_resp::gen_error_response(500));
 
 impl Server {
-    /// Create a new server for http proxy.
+    /// Creates a new HTTP proxy server instance with the given configuration.
+    /// Initializes all server components including:
+    /// - TCP socket options
+    /// - TLS settings
+    /// - Prometheus metrics (if enabled)
+    /// - Threading configuration
     pub fn new(conf: &ServerConf) -> Result<Self> {
         debug!(config = conf.to_string(), "new server",);
         let mut p = None;
@@ -229,11 +249,13 @@ impl Server {
         };
         Ok(s)
     }
-    /// Enable lets encrypt proxy plugin for `/.well-known/acme-challenge` handle.
+    /// Enable lets encrypt proxy plugin for handling ACME challenges at
+    /// `/.well-known/acme-challenge` path
     pub fn enable_lets_encrypt(&mut self) {
         self.lets_encrypt_enabled = true;
     }
-    /// Get the prometheus push service
+    /// Get the prometheus push service configuration if enabled.
+    /// Returns a tuple of (metrics endpoint, service future) if push mode is configured.
     pub fn get_prometheus_push_service(
         &self,
     ) -> Option<(String, SimpleServiceTaskFuture)> {
@@ -265,7 +287,11 @@ impl Server {
         }
     }
 
-    /// Add TCP/TLS listening endpoint.
+    /// Starts the server and sets up TCP/TLS listening endpoints.
+    /// - Configures listeners for each address
+    /// - Sets up TLS if enabled
+    /// - Initializes HTTP/2 support
+    /// - Configures thread pool
     pub fn run(
         self,
         conf: &Arc<configuration::ServerConf>,
@@ -347,6 +373,8 @@ impl Server {
         }
         Ok(ServerServices { lb })
     }
+    /// Handles requests to the admin interface.
+    /// Processes admin-specific plugins and returns response if handled.
     async fn serve_admin(
         &self,
         session: &mut Session,
@@ -366,16 +394,25 @@ impl Server {
     }
 }
 
+/// Helper struct to store connection timing and TLS details
 #[derive(Debug, Default)]
 struct DigestDetail {
+    /// Whether the connection was reused from pool
     connection_reused: bool,
+    /// Total connection time in milliseconds
     connection_time: u64,
+    /// Timestamp when TCP connection was established
     tcp_established: u64,
+    /// Timestamp when TLS handshake completed
     tls_established: u64,
+    /// TLS protocol version if using HTTPS
     tls_version: Option<String>,
+    /// TLS cipher suite in use if using HTTPS
     tls_cipher: Option<String>,
 }
 
+/// Extracts timing and TLS information from connection digest.
+/// Used for metrics and logging connection details.
 #[inline]
 fn get_digest_detail(digest: &Digest) -> DigestDetail {
     let get_established = |value: Option<&Option<TimingDigest>>| -> u64 {
@@ -440,6 +477,14 @@ impl ProxyHttp for Server {
             }
         }
     }
+    /// Handles early request processing before main request handling.
+    /// Key responsibilities:
+    /// - Sets up connection tracking and metrics
+    /// - Records timing information
+    /// - Initializes OpenTelemetry tracing
+    /// - Matches request to location configuration
+    /// - Validates request parameters
+    /// - Initializes compression and gRPC modules if needed
     async fn early_request_filter(
         &self,
         session: &mut Session,
@@ -576,6 +621,13 @@ impl ProxyHttp for Server {
         }
         Ok(())
     }
+    /// Main request processing filter.
+    /// Handles:
+    /// - Admin interface requests
+    /// - Let's Encrypt certificate challenges
+    /// - Location-specific processing
+    /// - URL rewriting
+    /// - Plugin execution
     async fn request_filter(
         &self,
         session: &mut Session,
@@ -639,6 +691,8 @@ impl ProxyHttp for Server {
         Ok(false)
     }
 
+    /// Filters requests before sending to upstream.
+    /// Allows modifying request before proxying.
     async fn proxy_upstream_filter(
         &self,
         session: &mut Session,
@@ -661,6 +715,8 @@ impl ProxyHttp for Server {
         Ok(true)
     }
 
+    /// Selects and configures the upstream peer to proxy to.
+    /// Handles upstream connection pooling and health checking.
     async fn upstream_peer(
         &self,
         session: &mut Session,
@@ -707,6 +763,8 @@ impl ProxyHttp for Server {
 
         Ok(Box::new(peer))
     }
+    /// Called when connection is established to upstream.
+    /// Records timing metrics and TLS details.
     async fn connected_to_upstream(
         &self,
         _session: &mut Session,
@@ -748,6 +806,8 @@ impl ProxyHttp for Server {
 
         Ok(())
     }
+    /// Filters upstream request before sending.
+    /// Adds proxy headers and performs any request modifications.
     async fn upstream_request_filter(
         &self,
         session: &mut Session,
@@ -764,6 +824,8 @@ impl ProxyHttp for Server {
         }
         Ok(())
     }
+    /// Filters request body chunks before sending upstream.
+    /// Tracks payload size and enforces size limits.
     async fn request_body_filter(
         &self,
         _session: &mut Session,
@@ -786,6 +848,12 @@ impl ProxyHttp for Server {
         }
         Ok(())
     }
+    /// Generates cache keys for request caching.
+    /// Combines:
+    /// - Cache namespace
+    /// - Request method
+    /// - URL path and query
+    /// - Optional custom prefix
     fn cache_key_callback(
         &self,
         session: &Session,
@@ -802,6 +870,12 @@ impl ProxyHttp for Server {
         Ok(key)
     }
 
+    /// Determines if and how responses should be cached.
+    /// Checks:
+    /// - Cache-Control headers
+    /// - TTL settings
+    /// - Cache privacy settings
+    /// - Custom cache control directives
     fn response_cache_filter(
         &self,
         _session: &Session,
@@ -924,6 +998,8 @@ impl ProxyHttp for Server {
             util::get_latency(&ctx.upstream_processing_time);
     }
 
+    /// Filters upstream response body chunks.
+    /// Records timing metrics and finalizes spans.
     fn upstream_response_body_filter(
         &self,
         _session: &mut Session,
@@ -973,6 +1049,8 @@ impl ProxyHttp for Server {
         Ok(())
     }
 
+    /// Final filter for response body before sending to client.
+    /// Handles response body modifications and compression.
     fn response_body_filter(
         &self,
         _session: &mut Session,
@@ -1011,6 +1089,13 @@ impl ProxyHttp for Server {
         Ok(None)
     }
 
+    /// Handles proxy failures and generates appropriate error responses.
+    /// Error handling for:
+    /// - Upstream connection failures (502)
+    /// - Client timeouts (408)
+    /// - Client disconnections (499)
+    /// - Internal server errors (500)
+    /// Generates error pages using configured template
     async fn fail_to_proxy(
         &self,
         session: &mut Session,
@@ -1094,6 +1179,13 @@ impl ProxyHttp for Server {
         let _ = server_session.write_response_body(buf, true).await;
         code
     }
+    /// Performs request logging and cleanup after request completion.
+    /// Handles:
+    /// - Request counting cleanup
+    /// - Compression statistics
+    /// - Prometheus metrics
+    /// - OpenTelemetry span completion
+    /// - Access logging
     async fn logging(
         &self,
         session: &mut Session,
@@ -1215,6 +1307,7 @@ mod tests {
         assert_eq!("1.3", result.tls_version.unwrap_or_default());
     }
 
+    /// Creates a new test server instance with default configuration
     fn new_server() -> Server {
         let toml_data = include_bytes!("../../conf/pingap.toml");
         let pingap_conf = PingapConf::new(toml_data.as_ref(), false).unwrap();
