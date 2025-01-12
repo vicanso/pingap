@@ -634,7 +634,7 @@ auth_path = "/login"
         .unwrap();
 
         assert_eq!(
-            r#"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"content-type": "application/json; charset=utf-8", "transfer-encoding": "Chunked"} }, header_name_map: None, reason_phrase: None }"#,
+            r#"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"content-type": "application/json; charset=utf-8", "transfer-encoding": "chunked"} }, header_name_map: None, reason_phrase: None }"#,
             format!("{upstream_response:?}")
         );
         assert_eq!(true, ctx.modify_response_body.is_some());

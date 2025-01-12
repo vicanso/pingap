@@ -90,12 +90,6 @@ struct SubFilterParams {
 ///
 /// # Returns
 /// * `Option<SubFilterParams>` - Parsed parameters or None if parsing fails
-///
-/// # Examples
-/// ```
-/// let rule = "subs_filter 'http://' 'https://' ig";
-/// let params = parse_subs_filter(rule);
-/// ```
 fn parse_subs_filter(rule: &str) -> Option<SubFilterParams> {
     let captures = SUBS_FILTER_REGEX.captures(rule)?;
 
