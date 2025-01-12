@@ -194,7 +194,7 @@ impl TryFrom<&PluginConf> for Cache {
             None
         };
 
-        let step = get_step_conf(value);
+        let step = get_step_conf(value, PluginStep::Request);
 
         let lock = get_str_conf(value, "lock");
         let lock = if !lock.is_empty() {

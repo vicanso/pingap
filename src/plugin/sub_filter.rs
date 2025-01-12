@@ -176,7 +176,7 @@ impl TryFrom<&PluginConf> for SubFilter {
     /// # Returns
     /// * `Result<Self>` - Configured SubFilter instance or error if configuration is invalid
     fn try_from(value: &PluginConf) -> Result<Self> {
-        let step = get_step_conf(value);
+        let step = get_step_conf(value, PluginStep::Response);
         let path =
             Regex::new(get_str_conf(value, "path").as_str()).map_err(|e| {
                 Error::Invalid {
@@ -194,6 +194,15 @@ impl TryFrom<&PluginConf> for SubFilter {
             })
             .collect::<Result<Vec<_>>>()?;
         let hash_value = get_hash_key(value);
+
+        if PluginStep::Response != step {
+            return Err(Error::Invalid {
+                category: PluginCategory::SubFilter.to_string(),
+                message:
+                    "Sub filter plugin should be executed at response step"
+                        .to_string(),
+            });
+        }
 
         Ok(Self {
             path,

@@ -20,19 +20,20 @@ export function getPluginSteps(category: string) {
   pluginSupportSteps[PluginCategory.DIRECTORY] = [0, 1];
   pluginSupportSteps[PluginCategory.MOCK] = [0, 1];
   pluginSupportSteps[PluginCategory.REQUEST_ID] = [0, 1];
-  pluginSupportSteps[PluginCategory.IP_RESTRICTION] = [0, 1];
+  pluginSupportSteps[PluginCategory.IP_RESTRICTION] = [0];
+  pluginSupportSteps[PluginCategory.UA_RESTRICTION] = [0];
+  pluginSupportSteps[PluginCategory.REFERER_RESTRICTION] = [0];
   pluginSupportSteps[PluginCategory.KEY_AUTH] = [0, 1];
   pluginSupportSteps[PluginCategory.BASIC_AUTH] = [0];
   pluginSupportSteps[PluginCategory.COMBINED_AUTH] = [0];
-  pluginSupportSteps[PluginCategory.JWT] = [0, 1];
+  pluginSupportSteps[PluginCategory.JWT] = [0];
   pluginSupportSteps[PluginCategory.CACHE] = [0];
   pluginSupportSteps[PluginCategory.REDIRECT] = [0];
   pluginSupportSteps[PluginCategory.PING] = [0];
   pluginSupportSteps[PluginCategory.RESPONSE_HEADERS] = [2];
   pluginSupportSteps[PluginCategory.SUB_FILTER] = [2];
-  pluginSupportSteps[PluginCategory.REFERER_RESTRICTION] = [0, 1];
   pluginSupportSteps[PluginCategory.CSRF] = [0];
-  pluginSupportSteps[PluginCategory.CORS] = [0, 1];
+  pluginSupportSteps[PluginCategory.CORS] = [0];
 
   const steps = pluginSupportSteps[category];
   if (steps) {

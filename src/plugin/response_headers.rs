@@ -87,7 +87,7 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
     fn try_from(value: &PluginConf) -> Result<Self> {
         // Generate unique hash for this plugin configuration
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value);
+        let step = get_step_conf(value, PluginStep::Response);
 
         // Parse add_headers from config
         // Format: "Header-Name:header value"
@@ -312,28 +312,6 @@ remove_headers = [
         assert_eq!(
             r#"["content-type"]"#,
             format!("{:?}", params.remove_headers)
-        );
-
-        let result = ResponseHeaders::try_from(
-            &toml::from_str::<PluginConf>(
-                r###"
-add_headers = [
-"X-Service:1",
-"X-Service:2",
-]
-set_headers = [
-"X-Response-Id:123"
-]
-remove_headers = [
-"Content-Type"
-]
-"###,
-            )
-            .unwrap(),
-        );
-        assert_eq!(
-            "Plugin response_headers invalid, message: Response headers plugin should be executed at response step",
-            result.err().unwrap().to_string()
         );
     }
 

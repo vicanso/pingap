@@ -84,7 +84,7 @@ impl TryFrom<&PluginConf> for UaRestriction {
     fn try_from(value: &PluginConf) -> Result<Self> {
         // Generate unique hash for this plugin configuration
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value);
+        let step = get_step_conf(value, PluginStep::Request);
         let mut ua_list = vec![];
 
         // Parse and compile each regex pattern from the ua_list config

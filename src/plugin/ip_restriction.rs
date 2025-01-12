@@ -56,7 +56,7 @@ impl TryFrom<&PluginConf> for IpRestriction {
     fn try_from(value: &PluginConf) -> Result<Self> {
         // Generate unique hash for this plugin instance
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value);
+        let step = get_step_conf(value, PluginStep::Request);
 
         // Parse IP rules from configuration
         // Supports both individual IPs ("192.168.1.1") and CIDR ranges ("10.0.0.0/24")

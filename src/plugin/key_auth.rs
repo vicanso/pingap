@@ -103,7 +103,7 @@ impl TryFrom<&PluginConf> for KeyAuth {
     /// * When plugin step is not request or proxy_upstream
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value);
+        let step = get_step_conf(value, PluginStep::Request);
 
         let delay = get_str_conf(value, "delay");
         let delay = if !delay.is_empty() {

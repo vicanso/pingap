@@ -92,7 +92,7 @@ impl TryFrom<&PluginConf> for Stats {
     /// or an Error if the configuration is invalid
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value);
+        let step = get_step_conf(value, PluginStep::Request);
 
         let params = Self {
             hash_value,

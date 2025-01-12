@@ -55,7 +55,7 @@ impl Ping {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new ping plugin");
         let hash_value = get_hash_key(params);
-        let step = get_step_conf(params);
+        let step = get_step_conf(params, PluginStep::Request);
         if step != PluginStep::Request {
             return Err(Error::Invalid {
                 category: PluginCategory::Ping.to_string(),

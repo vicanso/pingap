@@ -78,7 +78,7 @@ impl TryFrom<&PluginConf> for RefererRestriction {
     /// - Required configuration fields are missing
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value);
+        let step = get_step_conf(value, PluginStep::Request);
         let mut referer_list = vec![];
         let mut prefix_referer_list = vec![];
         for item in get_str_slice_conf(value, "referer_list").iter() {

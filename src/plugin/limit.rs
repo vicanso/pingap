@@ -99,7 +99,7 @@ impl TryFrom<&PluginConf> for Limiter {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value);
+        let step = get_step_conf(value, PluginStep::Request);
 
         // Parse the tag type from config, defaulting to IP-based limiting
         let tag = match get_str_conf(value, "tag").as_str() {

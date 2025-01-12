@@ -85,7 +85,7 @@ impl MockResponse {
         let hash_value = get_hash_key(params);
 
         // Validate execution step - mock only supports request/proxy_upstream phases
-        let step = get_step_conf(params);
+        let step = get_step_conf(params, PluginStep::Request);
         if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&step) {
             return Err(Error::Invalid {
                 category: PluginCategory::Mock.to_string(),

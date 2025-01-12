@@ -445,7 +445,7 @@ pub fn try_init_plugins(
                     return false;
                 }
             }
-            let step = get_step_conf(conf).to_string();
+            let step = get_step_conf(conf, PluginStep::Request).to_string();
             let category = if let Some(value) = conf.get("category") {
                 value.as_str().unwrap_or_default().to_string()
             } else {
@@ -507,9 +507,16 @@ pub(crate) fn get_str_slice_conf(value: &PluginConf, key: &str) -> Vec<String> {
     vec![]
 }
 
-pub(crate) fn get_step_conf(value: &PluginConf) -> PluginStep {
-    PluginStep::from_str(get_str_conf(value, "step").as_str())
-        .unwrap_or_default()
+pub(crate) fn get_step_conf(
+    value: &PluginConf,
+    default_value: PluginStep,
+) -> PluginStep {
+    let step = get_str_conf(value, "step");
+    if step.is_empty() {
+        return default_value;
+    }
+
+    PluginStep::from_str(step.as_str()).unwrap_or(default_value)
 }
 
 #[test]

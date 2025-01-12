@@ -89,7 +89,7 @@ impl TryFrom<&PluginConf> for BasicAuth {
         // Generate a unique hash for this plugin instance based on configuration
         // This ensures consistent plugin behavior across restarts
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value);
+        let step = get_step_conf(value, PluginStep::Request);
 
         // Parse optional delay duration for rate limiting
         // Supports human-readable duration strings like "10s", "1m", etc.

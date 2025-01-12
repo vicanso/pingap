@@ -72,7 +72,7 @@ impl TryFrom<&PluginConf> for CombinedAuth {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value);
+        let step = get_step_conf(value, PluginStep::Request);
 
         let category = "combined_auth".to_string();
 

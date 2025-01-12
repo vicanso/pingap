@@ -151,7 +151,7 @@ impl TryFrom<&PluginConf> for JwtAuth {
         };
         let params = Self {
             hash_value,
-            plugin_step: get_step_conf(value),
+            plugin_step: get_step_conf(value, PluginStep::Request),
             secret: get_str_conf(value, "secret"),
             auth_path: get_str_conf(value, "auth_path"),
             algorithm: get_str_conf(value, "algorithm"),

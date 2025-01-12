@@ -205,7 +205,7 @@ impl TryFrom<&PluginConf> for AdminServe {
         let params = AdminServe {
             hash_value,
             max_age,
-            plugin_step: get_step_conf(value),
+            plugin_step: get_step_conf(value, PluginStep::Request),
             path,
             ip_fail_limit: TtlLruLimit::new(
                 512,

@@ -137,7 +137,7 @@ export default function Plugins() {
   const category = currentCategory || (pluginConfig.category as string);
   if (category) {
     const options = getPluginSteps(category);
-    if (options.length !== 0) {
+    if (options.length > 1) {
       items.push({
         name: "step",
         label: pluginI18n("step"),
@@ -994,7 +994,7 @@ export default function Plugins() {
   }
 
   const schema = z.object({
-    step: z.string(),
+    step: z.string().optional(),
   });
   let key = currentPlugin;
   if (currentPlugin == newPlugin) {

@@ -251,7 +251,7 @@ impl TryFrom<&PluginConf> for Directory {
     /// - Sets appropriate defaults
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value);
+        let step = get_step_conf(value, PluginStep::Request);
 
         let chunk_size = if let Ok(chunk_size) =
             ByteSize::from_str(&get_str_conf(value, "chunk_size"))

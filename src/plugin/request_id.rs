@@ -77,7 +77,7 @@ impl TryFrom<&PluginConf> for RequestId {
         // Generate a unique hash key for this plugin instance based on its configuration
         let hash_value = get_hash_key(value);
         // Extract the execution step from configuration
-        let step = get_step_conf(value);
+        let step = get_step_conf(value, PluginStep::Request);
 
         // Parse and validate the custom header name if provided
         // An empty string means use the default X-Request-ID header

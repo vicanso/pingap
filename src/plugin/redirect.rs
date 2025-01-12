@@ -71,7 +71,7 @@ impl Redirect {
 
         // Validate plugin step - must be Request
         // Redirects cannot be handled in response phase as the request would already be processed
-        let step = get_step_conf(params);
+        let step = get_step_conf(params, PluginStep::Request);
         if step != PluginStep::Request {
             return Err(Error::Invalid {
                 category: PluginCategory::Redirect.to_string(),

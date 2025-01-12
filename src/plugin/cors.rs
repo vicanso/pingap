@@ -66,7 +66,7 @@ impl TryFrom<&PluginConf> for Cors {
     fn try_from(value: &PluginConf) -> Result<Self> {
         // Generate unique hash for this configuration
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value);
+        let step = get_step_conf(value, PluginStep::Request);
 
         // Parse max-age duration with human-friendly format (e.g., "60m", "24h")
         // Controls browser caching of preflight results
