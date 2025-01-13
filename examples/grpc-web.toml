@@ -70,16 +70,12 @@ plugins = ["grpc-web-static"]
 [plugins.grpc-web-static]
 category = "directory"
 path = "~/tmp/grpc/commonjs-example"
-step = "request"
 
 [servers.grpc-web]
 addr = "127.0.0.1:3000"
 enabled_h2 = true
 global_certificates = true
-locations = [
-    "grpc-web",
-    "grpc-server",
-]
+locations = ["grpc-web", "grpc-server"]
 modules = ["grpc-web"]
 
 [upstreams.grpc-server]

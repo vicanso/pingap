@@ -954,6 +954,14 @@ export default function Plugins() {
           span: 6,
           category: ExFormItemCategory.KV_LIST,
         },
+        {
+          name: "set_headers_not_exists",
+          label: pluginI18n("responseHeadersSetHeaderNotExists"),
+          placeholder: pluginI18n("responseHeadersSetHeaderNotExistsPlaceholder"),
+          defaultValue: pluginConfig.set_headers_not_exists as string[],
+          span: 6,
+          category: ExFormItemCategory.KV_LIST,
+        },
       );
       break;
     }

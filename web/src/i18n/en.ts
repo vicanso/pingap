@@ -422,6 +422,9 @@ export default {
     responseHeadersRenameHeader: "Rename Header",
     responseHeadersRenamePlaceholder:
       "Input the original header name : Input the new header name",
+    responseHeadersSetHeaderNotExists: "Set Header If Not Exists",
+    responseHeadersSetHeaderNotExistsPlaceholder:
+      "Input the header name : Input the header value",
     responseHeadersRemoveHeader: "Remove Header",
     responseHeadersRemoveHeaderPlaceholder: "Input the header name",
     combinedAuthAuthorizations: "Authorizations",

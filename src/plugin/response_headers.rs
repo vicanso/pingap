@@ -59,6 +59,13 @@ pub struct ResponseHeaders {
     ///     Example: [("x-old-header", "x-new-header")]
     rename_headers: Vec<(HeaderName, HeaderName)>,
 
+    /// Headers to be set only if they don't already exist in the response
+    /// - Only sets the header if it's not present
+    /// - Does not modify existing header values
+    /// - Format: Vec of (header_name, header_value) pairs
+    ///     Example: [("x-default-header", "default-value")]
+    set_headers_not_exists: Vec<HttpHeader>,
+
     /// Unique identifier for this plugin instance
     /// Generated from the plugin configuration to track changes
     hash_value: String,
@@ -139,6 +146,17 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
                 rename_headers.push((original_name, new_name));
             }
         }
+        let mut set_headers_not_exists = vec![];
+        for item in get_str_slice_conf(value, "set_headers_not_exists").iter() {
+            let header = convert_header(item).map_err(|e| Error::Invalid {
+                category: PluginCategory::ResponseHeaders.to_string(),
+                message: e.to_string(),
+            })?;
+            if let Some(item) = header {
+                set_headers_not_exists.push(item);
+            }
+        }
+
         let params = Self {
             hash_value,
             plugin_step: step,
@@ -146,6 +164,7 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
             set_headers,
             remove_headers,
             rename_headers,
+            set_headers_not_exists,
         };
 
         if params.plugin_step != PluginStep::Response {
@@ -252,6 +271,17 @@ impl Plugin for ResponseHeaders {
             }
         }
 
+        // Set headers that don't exist (conditional set)
+        for (name, value) in &self.set_headers_not_exists {
+            if !upstream_response.headers.contains_key(name) {
+                if let Some(value) = convert_header_value(value, session, ctx) {
+                    let _ = upstream_response.insert_header(name, value);
+                } else {
+                    let _ = upstream_response.insert_header(name, value);
+                }
+            }
+        }
+
         // Rename headers (move values to new name)
         for (original_name, new_name) in &self.rename_headers {
             if let Some(value) = upstream_response.remove_header(original_name)
@@ -338,6 +368,10 @@ set_headers = [
 remove_headers = [
     "Content-Type"
 ]
+set_headers_not_exists = [
+    "X-Response-Id:abc",
+    "X-Tag:userTag",
+]
     "###,
             )
             .unwrap(),
@@ -369,7 +403,7 @@ remove_headers = [
             .unwrap();
 
         assert_eq!(
-            r###"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"x-service": "1", "x-service": "2", "x-response-id": "123"} }, header_name_map: None, reason_phrase: None }"###,
+            r###"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"x-service": "1", "x-service": "2", "x-response-id": "123", "x-tag": "userTag"} }, header_name_map: None, reason_phrase: None }"###,
             format!("{upstream_response:?}")
         )
     }

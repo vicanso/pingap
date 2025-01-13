@@ -8,7 +8,6 @@ plugins = [
 [plugins.staticServe]
 category = "directory"
 path = "~/github/pingap/dist"
-step = "request"
 
 [servers.staticServe]
 addr = "127.0.0.1:3000"

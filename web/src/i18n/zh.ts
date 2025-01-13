@@ -400,6 +400,9 @@ export default {
     responseHeadersRenameHeader: "修改响应头",
     responseHeadersRenamePlaceholder:
       "输入原来的响应头名称 : 输入新的响应头名称",
+    responseHeadersSetHeaderNotExists: "设置响应头(不存在时)",
+    responseHeadersSetHeaderNotExistsPlaceholder:
+      "输入设置响应头的名称 : 输入设置响应头的值",
     responseHeadersRemoveHeader: "删除响应头",
     responseHeadersRemoveHeaderPlaceholder: "输入响应头名称",
     combinedAuthAuthorizations: "认证配置列表",

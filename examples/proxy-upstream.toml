@@ -13,7 +13,6 @@ category = "cache"
 headers = ["Accept-Encoding"]
 max_ttl = "1h"
 namespace = "charts"
-step = "request"
 
 [servers.charts]
 addr = "127.0.0.1:3000"
