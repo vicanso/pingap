@@ -35,7 +35,14 @@ pub enum Error {
     Base64Decode { source: base64::DecodeError },
     #[snafu(display("Invalid {message}"))]
     Invalid { message: String },
+    #[snafu(display("Io error {source}, {file}"))]
+    Io {
+        source: std::io::Error,
+        file: String,
+    },
 }
+
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 mod crypto;
 mod ip;
@@ -341,14 +348,24 @@ pub fn convert_tls_version(version: &Option<String>) -> Option<SslVersion> {
     None
 }
 
+/// Convert pem to [u8]
+pub fn convert_pem(value: &str) -> Result<Vec<u8>> {
+    let buf = if is_pem(value) {
+        value.as_bytes().to_vec()
+    } else if Path::new(&resolve_path(value)).is_file() {
+        std::fs::read(resolve_path(value)).map_err(|e| Error::Io {
+            source: e,
+            file: value.to_string(),
+        })?
+    } else {
+        base64_decode(value).map_err(|e| Error::Base64Decode { source: e })?
+    };
+    Ok(buf)
+}
+
 pub fn convert_certificate_bytes(value: &Option<String>) -> Option<Vec<u8>> {
     if let Some(value) = value {
-        if is_pem(value) {
-            return Some(value.as_bytes().to_vec());
-        } else {
-            let buf = base64_decode(value).unwrap_or_default();
-            return Some(buf);
-        }
+        return convert_pem(value).ok();
     }
     None
 }
@@ -541,14 +558,19 @@ pub fn path_join(value1: &str, value2: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::util::base64_encode;
+
     use super::{
-        convert_tls_version, format_byte_size, format_duration, get_latency,
-        get_pkg_name, get_pkg_version, local_ip_list, remove_query_from_header,
-        resolve_path,
+        convert_certificate_bytes, convert_tls_version, format_byte_size,
+        format_duration, get_latency, get_pkg_name, get_pkg_version,
+        local_ip_list, remove_query_from_header, resolve_path,
     };
     use bytes::BytesMut;
     use pingora::{http::RequestHeader, tls::ssl::SslVersion};
     use pretty_assertions::assert_eq;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
     #[test]
     fn test_remove_query_from_header() {
         let mut req =
@@ -670,5 +692,51 @@ mod tests {
             "12.4s",
             std::string::String::from_utf8_lossy(&buf).to_string()
         );
+    }
+
+    #[test]
+    fn test_convert_certificate_bytes() {
+        // spellchecker:off
+        let pem = r###"-----BEGIN CERTIFICATE-----
+MIID/TCCAmWgAwIBAgIQJUGCkB1VAYha6fGExkx0KTANBgkqhkiG9w0BAQsFADBV
+MR4wHAYDVQQKExVta2NlcnQgZGV2ZWxvcG1lbnQgQ0ExFTATBgNVBAsMDHZpY2Fu
+c29AdHJlZTEcMBoGA1UEAwwTbWtjZXJ0IHZpY2Fuc29AdHJlZTAeFw0yNDA3MDYw
+MjIzMzZaFw0yNjEwMDYwMjIzMzZaMEAxJzAlBgNVBAoTHm1rY2VydCBkZXZlbG9w
+bWVudCBjZXJ0aWZpY2F0ZTEVMBMGA1UECwwMdmljYW5zb0B0cmVlMIIBIjANBgkq
+hkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAv5dbylSPQNARrpT/Rn7qZf6JmH3cueMp
+YdOpctuPYeefT0Jdgp67bg17fU5pfyR2BWYdwyvHCNmKqLdYPx/J69hwTiVFMOcw
+lVQJjbzSy8r5r2cSBMMsRaAZopRDnPy7Ls7Ji+AIT4vshUgL55eR7ACuIJpdtUYm
+TzMx9PTA0BUDkit6z7bTMaEbjDmciIBDfepV4goHmvyBJoYMIjnAwnTFRGRs/QJN
+d2ikFq999fRINzTDbRDP1K0Kk6+zYoFAiCMs9lEDymu3RmiWXBXpINR/Sv8CXtz2
+9RTVwTkjyiMOPY99qBfaZTiy+VCjcwTGKPyus1axRMff4xjgOBewOwIDAQABo14w
+XDAOBgNVHQ8BAf8EBAMCBaAwEwYDVR0lBAwwCgYIKwYBBQUHAwEwHwYDVR0jBBgw
+FoAUhU5Igu3uLUabIqUhUpVXjk1JVtkwFAYDVR0RBA0wC4IJcGluZ2FwLmlvMA0G
+CSqGSIb3DQEBCwUAA4IBgQDBimRKrqnEG65imKriM2QRCEfdB6F/eP9HYvPswuAP
+tvQ6m19/74qbtkd6vjnf6RhMbj9XbCcAJIhRdnXmS0vsBrLDsm2q98zpg6D04F2E
+L++xTiKU6F5KtejXcTHHe23ZpmD2XilwcVDeGFu5BEiFoRH9dmqefGZn3NIwnIeD
+Yi31/cL7BoBjdWku5Qm2nCSWqy12ywbZtQCbgbzb8Me5XZajeGWKb8r6D0Nb+9I9
+OG7dha1L3kxerI5VzVKSiAdGU0C+WcuxfsKAP8ajb1TLOlBaVyilfqmiF457yo/2
+PmTYzMc80+cQWf7loJPskyWvQyfmAnSUX0DI56avXH8LlQ57QebllOtKgMiCo7cr
+CCB2C+8hgRNG9ZmW1KU8rxkzoddHmSB8d6+vFqOajxGdyOV+aX00k3w6FgtHOoKD
+Ztdj1N0eTfn02pibVcXXfwESPUzcjERaMAGg1hoH1F4Gxg0mqmbySAuVRqNLnXp5
+CRVQZGgOQL6WDg3tUUDXYOs=
+-----END CERTIFICATE-----"###;
+        // spellchecker:on
+        let result = convert_certificate_bytes(&Some(pem.to_string()));
+        assert_eq!(true, result.is_some());
+
+        let mut tmp = NamedTempFile::new().unwrap();
+
+        tmp.write_all(pem.as_bytes()).unwrap();
+
+        let result = convert_certificate_bytes(&Some(
+            tmp.path().to_string_lossy().to_string(),
+        ));
+        assert_eq!(true, result.is_some());
+
+        let data = base64_encode(pem.as_bytes());
+        assert_eq!(1924, data.len());
+        let result = convert_certificate_bytes(&Some(data));
+        assert_eq!(true, result.is_some());
     }
 }

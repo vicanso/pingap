@@ -16,7 +16,7 @@ use super::{Error, Result};
 use crate::discovery::{is_static_discovery, DNS_DISCOVERY};
 use crate::plugin::parse_plugins;
 use crate::proxy::Parser;
-use crate::util::{self, aes_decrypt, base64_decode};
+use crate::util;
 use arc_swap::ArcSwap;
 use bytesize::ByteSize;
 use http::{HeaderName, HeaderValue};
@@ -150,16 +150,6 @@ impl<'de> Deserialize<'de> for PluginStep {
     }
 }
 
-/// Convert pem to [u8]
-fn convert_pem(value: &str) -> Result<Vec<u8>> {
-    let buf = if util::is_pem(value) {
-        value.as_bytes().to_vec()
-    } else {
-        base64_decode(value).map_err(|e| Error::Base64Decode { source: e })?
-    };
-    Ok(buf)
-}
-
 /// Configuration struct for TLS/SSL certificates
 #[derive(Debug, Default, Deserialize, Clone, Serialize, Hash)]
 pub struct CertificateConf {
@@ -184,7 +174,9 @@ pub struct CertificateConf {
 /// Validates a certificate in PEM format or base64 encoded
 fn validate_cert(value: &str) -> Result<()> {
     // Convert from PEM/base64 to binary
-    let buf = convert_pem(value)?;
+    let buf = util::convert_pem(value).map_err(|e| Error::Invalid {
+        message: e.to_string(),
+    })?;
     let mut cursor = Cursor::new(&buf);
 
     // Parse all certificates in the buffer
@@ -220,7 +212,9 @@ impl CertificateConf {
     pub fn validate(&self) -> Result<()> {
         // Validate private key
         if let Some(value) = &self.tls_key {
-            let buf = convert_pem(value)?;
+            let buf = util::convert_pem(value).map_err(|e| Error::Invalid {
+                message: e.to_string(),
+            })?;
             let mut key = Cursor::new(buf);
             let _ = rustls_pemfile::private_key(&mut key).map_err(|e| {
                 Error::Invalid {
@@ -897,7 +891,7 @@ impl PingapConf {
             }
 
             if let Some(key) = &item.secret {
-                return aes_decrypt(key, &item.value).map_err(|e| {
+                return util::aes_decrypt(key, &item.value).map_err(|e| {
                     Error::Invalid {
                         message: e.to_string(),
                     }
