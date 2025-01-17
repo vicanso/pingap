@@ -35,7 +35,7 @@ export function Nav({ links, isCollapsed, size }: NavProps) {
             buttonVariants({ variant: link.variant, size }),
             "px-8 truncate",
             link.variant === "default" &&
-              "dark:bg-muted dark:text-white dark:hover:bg-muted dark:hover:text-white",
+            "dark:bg-muted dark:text-white dark:hover:bg-muted dark:hover:text-white",
             "justify-start",
           )}
         >
@@ -55,7 +55,7 @@ export function Nav({ links, isCollapsed, size }: NavProps) {
               buttonVariants({ variant: link.variant, size: "icon" }),
               "h-9 w-9",
               link.variant === "default" &&
-                "dark:bg-muted dark:text-muted-foreground dark:hover:bg-muted dark:hover:text-white",
+              "dark:bg-muted dark:text-muted-foreground dark:hover:bg-muted dark:hover:text-white",
             )}
           >
             {link.icon && <link.icon className="h-4 w-4" />}
@@ -81,7 +81,7 @@ export function Nav({ links, isCollapsed, size }: NavProps) {
           buttonVariants({ variant: link.variant, size }),
           "px-4",
           link.variant === "default" &&
-            "dark:bg-muted dark:text-white dark:hover:bg-muted dark:hover:text-white",
+          "dark:bg-muted dark:text-white dark:hover:bg-muted dark:hover:text-white",
           "justify-start",
         )}
       >
@@ -101,7 +101,7 @@ export function Nav({ links, isCollapsed, size }: NavProps) {
     );
   };
 
-  const items: JSX.Element[] = [];
+  const items: React.JSX.Element[] = [];
   links.forEach((link) => {
     if (isCollapsed) {
       items.push(generateTooltip(link));

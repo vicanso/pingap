@@ -219,7 +219,7 @@ export function ExForm({
     }
   }
 
-  const fields: JSX.Element[] = [];
+  const fields: React.JSX.Element[] = [];
 
   items.map((item, index) => {
     if (defaultShow > 0) {
@@ -502,7 +502,7 @@ export function ExForm({
     fields.push(field);
   });
 
-  let showButton: JSX.Element = <> </>;
+  let showButton: React.JSX.Element = <> </>;
   if (defaultShow > 0 && defaultShow < maxCount) {
     let tips = t("moreSettings");
     let icon = (
