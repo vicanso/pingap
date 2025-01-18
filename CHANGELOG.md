@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.9.9](https://github.com/vicanso/pingap/compare/v0.9.8..0.9.9) - 2025-01-18
+
+### ⛰️  Features
+
+- Support getting certificate from file - ([aed1d48](https://github.com/vicanso/pingap/commit/aed1d48be8170373f2f94ee3617478e1d7d7f63a))
+- Support set response header if not exists - ([2ca1366](https://github.com/vicanso/pingap/commit/2ca1366f8ef416823e04aae9385f1be4319da905))
+- Add sub filter plugin, #80 - ([5ae2a9c](https://github.com/vicanso/pingap/commit/5ae2a9c54bd2e3e38fe2ae7c4eb689c30ce6321d))
+- Support cache file max weight for tinyufo of file cache - ([2da5b77](https://github.com/vicanso/pingap/commit/2da5b7766601e7e3d637a05391ccfe264af51b32))
+
+### 🐛 Bug Fixes
+
+- Fix test - ([b137266](https://github.com/vicanso/pingap/commit/b1372664578823bb9ec2548a6d657a39f21acaf6))
+- Fix empty access log format - ([ed77687](https://github.com/vicanso/pingap/commit/ed77687f891507ac2d66dbadc0b236d906fd6fe6))
+
+### 🚜 Refactor
+
+- Log chain certificate parse error - ([500dd41](https://github.com/vicanso/pingap/commit/500dd410d7b3b807370500df87e3b3f50404aed6))
+- Update shadcn ui - ([30ffc48](https://github.com/vicanso/pingap/commit/30ffc485936735752d020ec44f39f582d4a291ff))
+- Set default step for each plugin - ([47326bf](https://github.com/vicanso/pingap/commit/47326bfd0fafd04d4834554ed2018fcc61c0a82c))
+- Adjust http header - ([c54db8f](https://github.com/vicanso/pingap/commit/c54db8f1ffded64feb86ccfd690133dda9c3e8ed))
+- Adjust performance metrics - ([5be5359](https://github.com/vicanso/pingap/commit/5be5359914aaa61f624867ac4f791112ecb26b7e))
+- Remove dhat feature - ([8bcfe7d](https://github.com/vicanso/pingap/commit/8bcfe7d572c2d70c289726e9ea63e89cc6f8e7ff))
+- Adjust performance metrics - ([6c8a7e5](https://github.com/vicanso/pingap/commit/6c8a7e5ba8a52a1a4d568dbb712b3607094c6df0))
+- Adjust cache storage trait - ([b08a5c0](https://github.com/vicanso/pingap/commit/b08a5c00c713d800d1aadaa9f012f1fe5824a6f3))
+- Adjust performance metrics - ([bbd1faf](https://github.com/vicanso/pingap/commit/bbd1faf645e0ced36486e147f06f08b14efff2b4))
+- Adjust trait of http cache storage - ([83632a5](https://github.com/vicanso/pingap/commit/83632a5ab6e410309b297e936e1af088f3d77255))
+- Adjust tinyufo cache for file cache - ([5b98684](https://github.com/vicanso/pingap/commit/5b98684aa41ed978afda363f2aca976893e3821e))
+
+### 📚 Documentation
+
+- Update comments - ([f31b591](https://github.com/vicanso/pingap/commit/f31b59113d0d438351bf4edb84240cf2cd41e1f3))
+- Update documents - ([759159e](https://github.com/vicanso/pingap/commit/759159e2b351af2d0ab8e1427fe488cabaf36a79))
+- Add comments - ([b6e4219](https://github.com/vicanso/pingap/commit/b6e42191160480fcf3fb73880fd61c5a70e94b7c))
+- Add comments - ([616e75f](https://github.com/vicanso/pingap/commit/616e75f4c2605ecb6419654c597a79e8acb221df))
+- Add comments to service - ([2c2440d](https://github.com/vicanso/pingap/commit/2c2440de49138a48cbd4961139e3708bbf3aa5d6))
+- Add comments to plugin - ([15bb6be](https://github.com/vicanso/pingap/commit/15bb6be5429093dcf56f26ae14e146703ff86229))
+- Update proxy upstream example - ([ab07a99](https://github.com/vicanso/pingap/commit/ab07a99bacf378cc7ff40003cf2f8f78ff351b43))
+
 ## [0.9.8](https://github.com/vicanso/pingap/compare/v0.9.7..0.9.8) - 2025-01-04
 
 ### ⛰️  Features
