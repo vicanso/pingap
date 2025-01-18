@@ -23,7 +23,7 @@ use crate::util;
 use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::x509::X509;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{error, info};
 
 // Constants for categorizing different types of certificates and errors
 const LETS_ENCRYPT: &str = "lets_encrypt";
@@ -68,13 +68,21 @@ impl TryFrom<&CertificateConf> for TlsCertificate {
         } else {
             ""
         };
-
         let hash_key = value.hash_key();
 
         let tls_chain = util::convert_certificate_bytes(&value.tls_chain);
         let chain_certificate = if let Some(value) = &tls_chain {
             // ignore chain error
-            X509::from_pem(value).ok()
+            X509::from_pem(value)
+                .map_err(|e| {
+                    error!(
+                        err = e.to_string(),
+                        issuer = info.get_issuer_common_name(),
+                        "parse chain certificate error"
+                    );
+                    e
+                })
+                .ok()
         } else if category == LETS_ENCRYPT {
             get_lets_encrypt_chain_certificate(
                 info.get_issuer_common_name().as_str(),
