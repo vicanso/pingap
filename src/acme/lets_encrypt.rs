@@ -79,7 +79,7 @@ async fn update_certificate_lets_encrypt(
 /// The check runs every UPDATE_INTERVAL iterations to avoid excessive checks.
 async fn do_update_certificates(
     count: u32,
-    params: Vec<(String, Vec<String>)>,
+    params: &[(String, Vec<String>)],
 ) -> Result<bool, ServiceError> {
     const UPDATE_INTERVAL: u32 = 10;
     if count % UPDATE_INTERVAL != 0 {
@@ -177,7 +177,7 @@ pub fn new_lets_encrypt_service(
             let value = params.clone();
             async move {
                 let value = value.clone();
-                do_update_certificates(count, value).await
+                do_update_certificates(count, &value).await
             }
         })
     });
@@ -193,8 +193,8 @@ pub fn get_lets_encrypt_certificate(name: &str) -> Result<Certificate> {
         });
     };
     Certificate::new(
-        cert.tls_cert.clone().unwrap_or_default(),
-        cert.tls_key.clone().unwrap_or_default(),
+        cert.tls_cert.clone().unwrap_or_default().as_str(),
+        cert.tls_key.clone().unwrap_or_default().as_str(),
     )
     .map_err(|e| Error::Fail {
         category: "new_certificate".to_string(),

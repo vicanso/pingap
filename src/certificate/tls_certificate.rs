@@ -56,8 +56,8 @@ impl TryFrom<&CertificateConf> for TlsCertificate {
     fn try_from(value: &CertificateConf) -> Result<Self, Self::Error> {
         // parse certificate
         let info = Certificate::new(
-            value.tls_cert.clone().unwrap_or_default(),
-            value.tls_key.clone().unwrap_or_default(),
+            value.tls_cert.clone().unwrap_or_default().as_str(),
+            value.tls_key.clone().unwrap_or_default().as_str(),
         )
         .map_err(|e| Error::Invalid {
             message: e.to_string(),
@@ -70,7 +70,8 @@ impl TryFrom<&CertificateConf> for TlsCertificate {
         };
         let hash_key = value.hash_key();
 
-        let tls_chain = util::convert_certificate_bytes(&value.tls_chain);
+        let tls_chain =
+            util::convert_certificate_bytes(value.tls_chain.as_deref());
         let chain_certificate = if let Some(value) = &tls_chain {
             // ignore chain error
             X509::from_pem(value)
@@ -239,9 +240,7 @@ impl TlsCertificate {
         // Generate new certificate if not found in cache
         let (cert, key, not_after) = new_certificate_with_ca(self, &cn)?;
         info!(common_name = cn, "Created new self-signed certificate");
-        Ok(add_self_signed_certificate(
-            &cache_key, cert, key, not_after,
-        ))
+        Ok(add_self_signed_certificate(cache_key, cert, key, not_after))
     }
 
     /// Formats a server name into a common name by converting subdomain patterns

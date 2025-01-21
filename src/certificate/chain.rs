@@ -40,7 +40,7 @@ fn parse_chain_certificate(data: &[u8]) -> Option<X509> {
 
     String::from_utf8(data.to_vec())
         .ok()
-        .and_then(|pem_str| Certificate::new(pem_str, String::new()).ok())
+        .and_then(|pem_str| Certificate::new(&pem_str, "").ok())
         .filter(|cert| cert.not_after > expiration_threshold as i64)
         .and_then(|_| X509::from_pem(data).ok())
 }

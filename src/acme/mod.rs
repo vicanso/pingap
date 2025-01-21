@@ -101,7 +101,7 @@ Ztdj1N0eTfn02pibVcXXfwESPUzcjERaMAGg1hoH1F4Gxg0mqmbySAuVRqNLnXp5
 CRVQZGgOQL6WDg3tUUDXYOs=
 -----END CERTIFICATE-----"###;
         // spellchecker:on
-        let cert = Certificate::new(pem.to_string(), "".to_string()).unwrap();
+        let cert = Certificate::new(pem, "").unwrap();
 
         assert_eq!(
             "O=mkcert development CA, OU=vicanso@tree, CN=mkcert vicanso@tree",

@@ -82,9 +82,9 @@ impl Certificate {
     ///
     /// # Returns
     /// * `Result<Certificate>` - The parsed certificate or an error if invalid
-    pub fn new(pem: String, key: String) -> Result<Certificate> {
+    pub fn new(pem: &str, key: &str) -> Result<Certificate> {
         let pem_data =
-            util::convert_certificate_bytes(&Some(pem)).ok_or_else(|| {
+            util::convert_certificate_bytes(Some(pem)).ok_or_else(|| {
                 Error::Invalid {
                     category: "certificate".to_string(),
                     message: "invalid pem data".to_string(),
@@ -126,8 +126,7 @@ impl Certificate {
         Ok(Self {
             domains: dns_names,
             pem: pem_data,
-            key: util::convert_certificate_bytes(&Some(key))
-                .unwrap_or_default(),
+            key: util::convert_certificate_bytes(Some(key)).unwrap_or_default(),
             not_after: validity.not_after.timestamp(),
             not_before: validity.not_before.timestamp(),
             issuer: x509.issuer.to_string(),

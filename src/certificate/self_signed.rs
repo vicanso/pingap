@@ -78,6 +78,7 @@ async fn do_self_signed_certificate_validity(
                 let stale = v.stale.load(Ordering::Relaxed);
 
                 if count == 0 {
+                    // certificate is not used and stale, remove it
                     if stale {
                         return None;
                     }
@@ -151,7 +152,7 @@ pub fn get_self_signed_certificate(
 /// This function creates a new certificate entry with initial usage counters
 /// and adds it to the global certificate map.
 pub fn add_self_signed_certificate(
-    name: &str,
+    name: String,
     x509: X509,
     key: PKey<Private>,
     not_after: i64,
@@ -164,7 +165,7 @@ pub fn add_self_signed_certificate(
         stale: AtomicBool::new(false),
         count: AtomicU32::new(0),
     });
-    m.insert(name.to_string(), v.clone());
+    m.insert(name, v.clone());
     SELF_SIGNED_CERTIFICATE_MAP.store(Arc::new(m));
     v
 }

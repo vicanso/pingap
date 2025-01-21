@@ -363,7 +363,7 @@ pub fn convert_pem(value: &str) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-pub fn convert_certificate_bytes(value: &Option<String>) -> Option<Vec<u8>> {
+pub fn convert_certificate_bytes(value: Option<&str>) -> Option<Vec<u8>> {
     if let Some(value) = value {
         return convert_pem(value).ok();
     }
@@ -722,21 +722,21 @@ Ztdj1N0eTfn02pibVcXXfwESPUzcjERaMAGg1hoH1F4Gxg0mqmbySAuVRqNLnXp5
 CRVQZGgOQL6WDg3tUUDXYOs=
 -----END CERTIFICATE-----"###;
         // spellchecker:on
-        let result = convert_certificate_bytes(&Some(pem.to_string()));
+        let result = convert_certificate_bytes(Some(pem));
         assert_eq!(true, result.is_some());
 
         let mut tmp = NamedTempFile::new().unwrap();
 
         tmp.write_all(pem.as_bytes()).unwrap();
 
-        let result = convert_certificate_bytes(&Some(
-            tmp.path().to_string_lossy().to_string(),
-        ));
+        let result = convert_certificate_bytes(
+            Some(tmp.path().to_string_lossy()).as_deref(),
+        );
         assert_eq!(true, result.is_some());
 
         let data = base64_encode(pem.as_bytes());
         assert_eq!(1924, data.len());
-        let result = convert_certificate_bytes(&Some(data));
+        let result = convert_certificate_bytes(Some(data).as_deref());
         assert_eq!(true, result.is_some());
     }
 }
