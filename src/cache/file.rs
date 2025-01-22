@@ -105,7 +105,7 @@ fn parse_params(dir: &str) -> FileCacheParams {
             .and_then(|v| v.parse().ok())
             .unwrap_or(params.cache_max);
         params.cache_file_max_weight = m
-            .get("cache_file_max_weight")
+            .get("cache_file_max_size")
             .and_then(|v| v.parse::<usize>().map(|v| v / PAGE_SIZE).ok())
             .unwrap_or(params.cache_file_max_weight);
     }

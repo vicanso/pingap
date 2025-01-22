@@ -706,21 +706,21 @@ impl ServerConf {
 pub struct BasicConf {
     /// Application name
     pub name: Option<String>,
-    /// Path to error page template file
+    /// Error page template
     pub error_template: Option<String>,
-    /// Path to PID file (defaults to /run/{pkg_name}.pid)
+    /// Path to PID file (default: /run/pingap.pid)
     pub pid_file: Option<String>,
-    /// Unix domain socket path for graceful upgrades
+    /// Unix domain socket path for graceful upgrades(default: /tmp/pingap_upgrade.sock)
     pub upgrade_sock: Option<String>,
-    /// User to run the process as
+    /// User for daemon
     pub user: Option<String>,
-    /// Group to run the process as
+    /// Group for daemon
     pub group: Option<String>,
-    /// Number of worker threads
+    /// Number of worker threads(default: 1)
     pub threads: Option<usize>,
-    /// Enable work stealing between worker threads
+    /// Enable work stealing between worker threads(default: true)
     pub work_stealing: Option<bool>,
-    /// Grace period before forcefully terminating during shutdown
+    /// Grace period before forcefully terminating during shutdown(default: 5m)
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub grace_period: Option<Duration>,
@@ -732,7 +732,7 @@ pub struct BasicConf {
     pub upstream_keepalive_pool_size: Option<usize>,
     /// Webhook URL for notifications
     pub webhook: Option<String>,
-    /// Type of webhook (e.g. "slack", "discord")
+    /// Type of webhook (e.g. "wecom", "dingtalk")
     pub webhook_type: Option<String>,
     /// List of events to send webhook notifications for
     pub webhook_notifications: Option<Vec<String>>,
@@ -1738,20 +1738,9 @@ value = "/stats"
         assert_eq!("/basic.toml", key);
         assert_eq!(
             r###"[basic]
-auto_restart_check_interval = "1m"
+auto_restart_check_interval = "1m 30s"
 cache_directory = ""
 cache_max_size = "100.0 MB"
-error_template = ""
-grace_period = "3m"
-graceful_shutdown_timeout = "10s"
-log_format_json = false
-log_level = "info"
-name = "pingap"
-pid_file = "/run/pingap.pid"
-sentry = ""
-threads = 1
-upgrade_sock = "/tmp/pingap_upgrade.sock"
-work_stealing = true
 "###,
             data
         );
