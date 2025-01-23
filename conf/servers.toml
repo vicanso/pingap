@@ -1,0 +1,103 @@
+###
+# Server Config
+###
+[servers.test]
+# Server listen address in format "ip:port". Multiple addresses can be specified using commas.
+# Examples:
+#   "0.0.0.0:80" - listen on all interfaces on port 80
+#   "127.0.0.1:8080" - listen only on localhost on port 8080
+#   "0.0.0.0:80,0.0.0.0:443" - listen on multiple ports
+addr = "0.0.0.0:6188"
+
+# access log format (default none)
+# Supported short formats:
+# - "tiny": `{method} {uri} {status} {size_human} - {latency}ms`
+# - "short": `{remote} {method} {uri} {proto} {status} {size_human} - {latency}ms`
+# - "common": `{remote} "{method} {uri} {proto}" {status} {size_human}"`
+# - "combined": `{remote} "{method} {uri} {proto}" {status} {size_human} "{referer}" "{user_agent}"`
+# - custom format: `{remote} "{method} {uri} {proto}" {status} {size_human} "{referer}" "{user_agent}"`
+# Default `none`
+# access_log = "tiny"
+
+# List of location names that this server will handle. Each name must match
+# a [locations.X] section defined in the configuration. 
+# Locations will be filtered in order of their weights, from highest to lowest.
+locations = ["lo"]
+
+# Number of worker threads for this server instance.
+# If not set, it will use the threads count of basic config.
+# Setting to 0 will automatically use the number of CPU cores.
+# Default `None`
+# threads = 1
+
+
+# Specify a colon-separated list of TLS ciphers for TLS versions below 1.3
+# Example: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256"
+# See https://www.openssl.org/docs/man1.1.1/man1/ciphers.html for available ciphers
+# Default `None`
+# tls_cipher_list = ""
+
+# Specify a colon-separated list of TLS 1.3 ciphersuites
+# Example: "TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256"
+# See https://www.openssl.org/docs/man3.0/man3/SSL_CTX_set_ciphersuites.html for available ciphersuites
+# Default `none`
+# tls_ciphersuites = ""
+
+# TLS minimum version supported for connections
+# Supported values: "tls1.1", "tls1.2", "tls1.3"
+# Default `none`
+# tls_min_version = ""
+
+# TLS maximum version allowed for connections
+# Supported values: "tls1.1", "tls1.2", "tls1.3"
+# Default `none`
+# tls_max_version = ""
+
+# When enabled, uses globally configured TLS certificates.
+# This allows sharing the same certificates across multiple server instances.
+# Default `false`
+# global_certificates = false
+
+# Enable HTTP/2 protocol support for this server
+# When enabled, allows clients to use HTTP/2 features like multiplexing and header compression
+# Default `false`
+# enabled_h2 = false
+
+# TCP Keep-alive idle time:
+# Controls how long a connection must be idle before TCP starts sending keep-alive probes
+# Default `none`
+# tcp_idle = "2m"
+
+# TCP Keep-alive probe interval:
+# Specifies how frequently TCP will send keep-alive probes once the idle time is reached
+# Default `none`
+# tcp_interval = "1m"
+
+# TCP Keep-alive probe count:
+# Maximum number of unacknowledged probes before declaring the connection dead
+# Default `none`
+# tcp_probe_count = 9
+
+# TCP Fast Open backlog size:
+# Enables TCP Fast Open (TFO) with specified pending connection queue size
+# TFO allows data exchange during the initial handshake, reducing latency
+# Higher values allow more pending TFO connections but consume more memory
+# Default `none`
+# tcp_fast_open = 10
+
+# Enable prometheus metrics, it can be a push gateway url or pull metrics path (default none), it's supported only on full feature release.
+# Examples:
+# - Push gateway: "http://pushgateway:9091/metrics/job/pingap"
+# - Pull metrics: "/metrics" (will expose metrics endpoint at this path)
+# Default `none`
+# prometheus_metrics = ""
+
+# OpenTelemetry (OTLP) exporter endpoint for distributed tracing and metrics, it's supported only on full feature release.
+# Examples :
+# - http://localhost:4317/?timeout=10s&max_queue_size=1000&scheduled_delay=10s&max_export_batch_size=100&max_export_timeout=10s&max_attributes=100&max_events=100&jaeger
+# Default `none`
+# otlp_exporter = ""
+
+# List of modules to enable for this server, only `grpc-web` is supported now.
+# Default `none`
+# modules = []

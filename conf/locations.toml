@@ -1,0 +1,77 @@
+###
+# Location Config
+###
+[locations.lo]
+# Specifies which upstream to use for this location. Must match an [upstreams.X] section name.
+# Default `none`
+upstream = "charts"
+
+# Matches requests against this path pattern. Examples:
+# "/" - matches all requests
+# "/api" - matches requests starting with /api
+# "~ \.php$" - regex match for paths ending in .php
+# "= /exact" - exact match for /exact path only
+# Default `none`
+# path = "/"
+
+# Host patterns to match requests against. Multiple domains can be specified using commas.
+# Examples:
+#   "example.com" - matches exact domain
+#   "*.example.com" - matches subdomains
+#   "~^(?<user>.+)\.example\.com$" - regex match for subdomains
+#   "example.com,api.example.com" - matches multiple domains
+# Default: none (matches any host)
+# host = ""
+
+# Headers to set on proxied requests. Each entry should be in "header_name:header_value" format.
+# Example: ["X-Real-IP:$remote_addr", "X-Forwarded-For:$proxy_add_x_forwarded_for"]
+# proxy_set_headers = ["name:value"]
+
+# Headers to add to the proxied request before sending to upstream.
+# Each entry should be in "header_name:header_value" format.
+# Example: ["X-Request-ID:$request_id", "X-Custom-Header:value"]
+# proxy_add_headers = ["name:value"]
+
+# rewrite the request path using regex pattern and replacement
+# Format: "pattern replacement"
+# Examples:
+#  "^/api/(.*) /$1" - removes /api/ prefix from path
+#  "^/old/(.*) /new/$1" - changes /old/ prefix to /new/
+#  "^/service-a/(.*) /internal/service-a/$1" - prepends internal prefix
+# Note: pattern supports regular expressions, replacement can reference capture groups
+# rewrite = ""
+
+# Weight determines the priority of this location when multiple locations match a request.
+# Higher weights have higher priority. The value will be calculated based on path match type and length, host.
+# It is recommended not to set the weight, and the application will automatically calculate it.
+# weight = 1024
+
+# List of plugins to enable for this location, they will be executed in the order they are listed.
+# Default `none`
+# plugins = ["pingap:requestId", "stats"]
+
+# Maximum allowed size of the client request body.
+# Requests exceeding this limit will receive a 413 (Request Entity Too Large) error.
+# Supports units: kb, mb, gb. Example: "10mb"
+# Default `none`
+# client_max_body_size = "1mb"
+
+# Maximum number of concurrent requests that can be processed by this location.
+# Requests exceeding this limit will be rejected and too many request error will be returned.
+# Default: none (unlimited)
+# max_processing = 1000
+
+# Enable gRPC-Web protocol support for this location.
+# When enabled, allows gRPC-Web clients (like browsers) to communicate with gRPC services
+# by automatically handling protocol translation between gRPC-Web and gRPC.
+# Default `false`
+# grpc_web = true
+
+# Enable set default reverse proxy headers.
+# - X-Real-IP: $remote_addr
+# - X-Forwarded-For: $proxy_add_x_forwarded_for
+# - X-Forwarded-Proto: $scheme
+# - X-Forwarded-Host: $host
+# - X-Forwarded-Port: $server_port
+# Default `false`
+# enable_reverse_proxy_headers = true

@@ -1,0 +1,24 @@
+###
+# Certificate Config
+###
+
+[certificates.acmeNpmtrend]
+# Domain names this certificate is valid for (comma separated)
+domains = "npmtrend.com,charts.npmtrend.com"
+
+# ACME configuration for automated certificate management
+acme = "lets_encrypt"
+
+
+# [certificates.pingap]
+# tls certificate content, it can be a file path or pem base64 encoded, or pem raw content
+# tls_cert = "~/certs/pingap.io.pem"
+
+# tls certificate private key, it can be a file path or pem base64 encoded, or pem raw content
+# tls_key = "~/certs/pingap.io.key"
+
+# tls certificate chain, it can be a file path or pem base64 encoded, or pem raw content
+# tls_chain = "~/certs/pingap.io.chain"
+
+# Whether this is the default certificate for SNI. Default `false`
+# is_default = true

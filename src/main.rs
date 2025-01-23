@@ -65,7 +65,24 @@ mod state;
 mod util;
 mod webhook;
 
-static TEMPLATE_CONFIG: &str = include_str!("../conf/basic.toml");
+static TEMPLATE_CONFIG: &str = r###"
+[basic]
+log_level = "INFO"
+name = "pingap"
+pid_file = "/run/pingap.pid"
+
+[locations.httpLocation]
+path = "/"
+upstream = "httpUpstream"
+
+[servers.httpServer]
+access_log = "combined"
+addr = "0.0.0.0:80"
+locations = ["httpLocation"]
+
+[upstreams.httpUpstream]
+addrs = ["127.0.0.1:5000"]
+"###;
 
 /// Command line arguments structure for the pingap.
 /// A reverse proxy like nginx.

@@ -1,0 +1,129 @@
+###
+# Upstream Config
+###
+[upstreams.charts]
+# Upstream address list
+# Format: "address:port [weight]"
+# weight is optional, default is 1
+# Example: "127.0.0.1:5000" has weight 1
+#          "127.0.0.1:5001 10" has weight 10
+addrs = ["127.0.0.1:5000", "127.0.0.1:5001 10"]
+
+# Service discovery, support "dns", "docker", "common", "transparent".
+# Default `none`
+# discovery = ""
+
+# How often to refresh the list of upstream servers when using service discovery.
+# Format: duration string (e.g. "1m", "30s", "1h").
+# It should be set when discovery is `dns` or `docker`. Default `none`
+# update_frequency = "1m"
+
+
+# Loadbalancer selection algorithm
+# Supported algorithms:
+# - "hash:url" - Consistent hashing based on request URL
+# - "hash:ip" - Consistent hashing based on request IP
+# - "hash:header:header_name" - Consistent hashing based on specified header
+# - "hash:cookie:cookie_name" - Consistent hashing based on specified cookie
+# - "hash:query:query_name" - Consistent hashing based on specified query
+# - "hash" - Consistent hashing based on request path
+# - "round_robin" - Simple round robin distribution
+# Default `round_robin`
+# algo = "hash:cookie:sid"
+
+# Server Name Indication (SNI) for HTTPS upstream connections. 
+# Specify the hostname to be used in the TLS handshake when connecting to upstream HTTPS servers.
+# Example: "example.com"
+# It should be set if the upstream server is https. Default `none`
+# sni = ""
+
+# Whether to check if upstream' server cert is valid and validated
+# Default `true`
+# verify_cert = true
+
+# Upstream http health check, if not set, tcp health check will be used.
+# - http: `http://upstreamname/path?connection_timeout=3s&read_timeout=3s&check_frequency=10s&success=1&failure=2&reuse=true`
+# - tcp: `tcp://upstreamname?connection_timeout=3s&read_timeout=3s&check_frequency=10s&success=1&failure=2&reuse=true`
+# - grpc: `grpc://upstreamname/path?connection_timeout=3s&read_timeout=3s&check_frequency=10s&success=1&failure=2&reuse=true&tls=true&service=pingap`
+# The default parameters are:
+# - connection_timeout: 3s
+# - read_timeout: 3s
+# - check_frequency: 10s
+# - success: 1
+# - failure: 2
+# - reuse: false
+# - tls: false
+# health_check = "http://charts/ping?connection_timeout=3s&read_timeout=3s"
+
+# When set to true, forces upstream connections to only use IPv4 addresses,
+# ignoring any IPv6 addresses even if available. Useful for environments
+# where IPv6 connectivity is problematic or not supported. 
+# Default `false`
+# ipv4_only = false
+
+# Enable distributed tracing for upstream connections. When enabled, the connected connection will be traced.
+# Default `false`
+# enable_tracer = false
+
+# Application-Layer Protocol Negotiation (ALPN) protocol for upstream connections.
+# Supported values: "h1" (HTTP/1.1), "h2" (HTTP/2), "h2h1" (HTTP/2 over TLS with HTTP/1.1 fallback).
+# This setting determines which protocol version to use when communicating with upstream servers.
+# Default `h1`
+# alpn = "h1"
+
+# How long to wait before giving up establishing a TCP connection
+# Default `none`
+# connection_timeout = "10s"
+
+# How long to wait before giving up establishing a connection including TLS handshake time
+# Default `none`
+# total_connection_timeout = "30s"
+
+# How long to wait before each individual `read()` from upstream. The timer is reset after each `read()`
+# Default `none`
+# read_timeout = "10s"
+
+# How long to wait before closing a idle connection waiting for connection reuse
+# Default `none`
+# idle_timeout = "2m"
+
+# How long to wait before a `write()` to upstream finishes
+# Default `none`
+# write_timeout = "10s"
+
+# TCP keepalive idle time:
+# - Duration a connection must be idle before TCP starts sending keepalive probes
+# - Helps detect dead peer connections while minimizing unnecessary network traffic
+# - Default: none (system default)
+# tcp_idle = "2m"
+
+# TCP keepalive probe interval:
+# - Time between consecutive keepalive probe attempts
+# - Lower values detect connection failures faster but increase network overhead
+# - Default: none (system default)
+# tcp_interval = "1m"
+
+# TCP keepalive probe count:
+# - Maximum number of failed probes before declaring connection dead
+# - Higher values increase tolerance to temporary network issues
+# - Lower values detect failures faster but may cause premature disconnections
+# - Default: none (system default)
+# tcp_probe_count = 9
+
+# TCP receive buffer size:
+# - Size of the kernel buffer for receiving TCP packets
+# - Larger values can improve throughput for high-bandwidth connections
+# - Smaller values conserve memory but may impact performance
+# - Default: none (system default)
+# tcp_recv_buf = "4kb"
+
+# TCP Fast Open:
+# - Enables TCP Fast Open (TFO) protocol for faster connection establishment
+# - Reduces latency by sending data in the initial SYN packet
+# - Requires kernel support and may not work with all clients/networks
+# - Default: none (system default)
+# tcp_fast_open = true
+
+
+[upstreams.diving]
+addrs = ["127.0.0.1:5001"]

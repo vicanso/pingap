@@ -1,16 +1,93 @@
+###
+# Basic config
+###
 [basic]
-log_level = "INFO"
-name = "pingap"
-pid_file = "/run/pingap.pid"
+# Specify the application instance name, which is used to easily identify the application when sending notifications. Default `pingap`
+# name = "pingap"
 
-[locations.httpLocation]
-path = "/"
-upstream = "httpUpstream"
+# Error response templates, which can be configured as HTML or JSON. The following characters in the template will be replaced.
+# {{version}} - the version of the application
+# {{error_type}} - the type of the error
+# {{content}} - the content of the error
+# Default `the content of error.html`
+# error_template = ""
 
-[servers.httpServer]
-access_log = "combined"
-addr = "0.0.0.0:80"
-locations = ["httpLocation"]
+# Process id file. Default `/run/pingap.pid`
+# pid_file = "/run/pingap.pid"
 
-[upstreams.httpUpstream]
-addrs = ["127.0.0.1:5000"]
+# Unix socket path used for application upgrades. Default `/tmp/pingap_upgrade.sock`
+# upgrade_sock = "/tmp/pingap_upgrade.sock"
+
+# After daemonization, this process will switch to the given user before starting to serve traffic. Default `none`
+# user = ""
+
+# Similar to `user`, the group this process should switch to. Default `none`
+# group = ""
+
+# Set the number of threads per server. If set to 0, it will match the CPU core count. Default `1`
+# threads = 1
+
+# Allow work stealing between threads of the same service. Default `true`.
+# work_stealing = true
+
+# Grace period before starting the final step of the graceful shutdown after signaling shutdown. Default `5m`
+# grace_period = "5m"
+
+# Timeout in seconds of the final step for the graceful shutdown. Default `5s`
+# graceful_shutdown_timeout = "5s"
+
+# Keepalive pool size for client connections to upstream. Default `128`
+# upstream_keepalive_pool_size = 128
+
+# HTTP webhook URL for notifications, default `none`
+# webhook = "https://example.com/webhook"
+
+# Webhook type, supports 'wecom', 'dingtalk' and 'normal' types. Default `none`
+# webhook_type = "wecom"
+
+# Available events: "backend_status" (upstream backend status changes), "lets_encrypt" (Let's Encrypt certificate operations),
+# "diff_config" (configuration changes), "restart" (application restarts), "restart_fail" (application restart fails),
+# "reload_config" (configuration reloads), "reload_config_fail" (configuration reload fails), "tls_validity" (TLS certificate validity changes),
+# "service_discover_fail" (service discovery failures). Default `none`
+# webhook_notifications = ["backend_status"]
+
+# Set log level for application. 
+# Available levels: "debug", "info", "warn", "error"
+# Default `None`
+# log_level = "info"
+
+# Specifies how much log data to buffer in memory before writing to disk.
+# Larger buffer size can improve performance but uses more memory and may lose some logs if the application crashes.
+# Default `None`
+# log_buffered_size = "10MB"
+
+# Enable json log format. Default `false`
+# log_format_json = false
+
+# Sentry connection URI for error tracking and monitoring.
+# Enable this to track errors and exceptions in your application.
+# It's available in the full feature release. Default `none`
+# sentry = ""
+
+# Pyroscope is a continuous profiling platform that helps you understand performance
+# bottlenecks in your application. When configured, it will collect and analyze CPU profiles.
+# Example value: "http://pyroscope:4040"
+# It's available in the full feature release. Default `none`
+# pyroscope = ""
+
+# This setting controls how often Pingap checks for configuration file changes.
+# When changes are detected, the process will automatically restart to apply the new configuration.
+# Default `90s`
+# auto_restart_check_interval = "90s"
+
+# Set the file cache directory. Format: "/path/to/cache?reading_max=1000&writing_max=200&cache_max=100&cache_file_max_size=40960"
+# - reading_max: maximum number of concurrent read operations
+# - writing_max: maximum number of concurrent write operations
+# - cache_max: maximum number of tinyufo items for file cache
+# - cache_file_max_size: maximum size of file for tinyufo, if file size is greater than this value, it will be cached in file not tinyufo.
+# cache_directory = ""
+
+# Maximum size of the in-memory cache for file caching. This limit applies when no cache_directory is set.
+# Increasing this value will allow more files to be cached but consume more memory. It is not limited for file cache.
+# Default `100MB`
+# cache_max_size = "100MB"
