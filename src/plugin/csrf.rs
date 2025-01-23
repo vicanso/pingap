@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_hash_key, get_step_conf, get_str_conf, Error, Plugin, Result};
+use super::{get_hash_key, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NO_STORE};
 use crate::state::State;
@@ -64,11 +64,10 @@ impl TryFrom<&PluginConf> for Csrf {
     type Error = Error;
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value, PluginStep::Request);
 
         let mut csrf = Self {
             hash_value,
-            plugin_step: step,
+            plugin_step: PluginStep::Request,
             name: get_str_conf(value, "name"),
             token_path: get_str_conf(value, "token_path"),
             key: get_str_conf(value, "key"),
@@ -104,14 +103,6 @@ impl TryFrom<&PluginConf> for Csrf {
             return Err(Error::Invalid {
                 category: PluginCategory::Csrf.to_string(),
                 message: "Key is not allowed empty".to_string(),
-            });
-        }
-
-        // 3. CSRF protection must run during request phase (before forwarding to upstream)
-        if ![PluginStep::Request].contains(&csrf.plugin_step) {
-            return Err(Error::Invalid {
-                category: PluginCategory::Csrf.to_string(),
-                message: "Csrf plugin should be executed at request or proxy upstream step".to_string(),
             });
         }
 
@@ -378,22 +369,6 @@ token_path = "/csrf-token"
         );
         assert_eq!(
             "Plugin csrf invalid, message: Key is not allowed empty",
-            result.err().unwrap().to_string()
-        );
-
-        let result = Csrf::try_from(
-            &toml::from_str::<PluginConf>(
-                r###"
-step = "response"
-token_path = "/csrf-token"
-key = "WjrXUG47wu"
-ttl = "1h"
-"###,
-            )
-            .unwrap(),
-        );
-        assert_eq!(
-            "Plugin csrf invalid, message: Csrf plugin should be executed at request or proxy upstream step",
             result.err().unwrap().to_string()
         );
     }

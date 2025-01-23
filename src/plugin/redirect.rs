@@ -12,10 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    get_bool_conf, get_step_conf, get_str_conf, Error, Plugin, Result,
-};
-use crate::config::{PluginCategory, PluginConf, PluginStep};
+use super::{get_bool_conf, get_str_conf, Plugin, Result};
+use crate::config::{PluginConf, PluginStep};
 use crate::http_extra::convert_headers;
 use crate::http_extra::HttpResponse;
 use crate::plugin::get_hash_key;
@@ -69,18 +67,6 @@ impl Redirect {
         debug!(params = params.to_string(), "new redirect plugin");
         let hash_value = get_hash_key(params);
 
-        // Validate plugin step - must be Request
-        // Redirects cannot be handled in response phase as the request would already be processed
-        let step = get_step_conf(params, PluginStep::Request);
-        if step != PluginStep::Request {
-            return Err(Error::Invalid {
-                category: PluginCategory::Redirect.to_string(),
-                message:
-                    "Redirect https plugin should be executed at request step"
-                        .to_string(),
-            });
-        }
-
         // Normalize prefix handling:
         // - Empty or single char prefixes become empty string
         // - Prefixes without leading "/" get one added
@@ -95,7 +81,7 @@ impl Redirect {
             hash_value,
             prefix,
             http_to_https: get_bool_conf(params, "http_to_https"),
-            plugin_step: step,
+            plugin_step: PluginStep::Request,
         })
     }
 }
@@ -234,21 +220,6 @@ prefix = "/api"
         assert_eq!(
             r###"Some([("location", "https://github.com/api/vicanso/pingap?size=1")])"###,
             format!("{:?}", resp.headers)
-        );
-
-        let params = Redirect::new(
-            &toml::from_str::<PluginConf>(
-                r###"
-step = "response"
-http_to_https = true
-prefix = "/api"
-"###,
-            )
-            .unwrap(),
-        );
-        assert_eq!(
-            "Plugin redirect invalid, message: Redirect https plugin should be executed at request step",
-            params.err().unwrap().to_string()
         );
     }
 }

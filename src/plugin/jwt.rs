@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_hash_key, get_step_conf, get_str_conf, Error, Plugin, Result};
+use super::{get_hash_key, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{
     HttpResponse, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_TRANSFER_CHUNKED,
@@ -151,7 +151,7 @@ impl TryFrom<&PluginConf> for JwtAuth {
         };
         let params = Self {
             hash_value,
-            plugin_step: get_step_conf(value, PluginStep::Request),
+            plugin_step: PluginStep::Request,
             secret: get_str_conf(value, "secret"),
             auth_path: get_str_conf(value, "auth_path"),
             algorithm: get_str_conf(value, "algorithm"),
@@ -170,14 +170,6 @@ impl TryFrom<&PluginConf> for JwtAuth {
             return Err(Error::Invalid {
                 category: PluginCategory::Jwt.to_string(),
                 message: "Jwt secret is not allowed empty".to_string(),
-            });
-        }
-
-        if PluginStep::Request != params.plugin_step {
-            return Err(Error::Invalid {
-                category: PluginCategory::Jwt.to_string(),
-                message: "Jwt auth plugin should be executed at request step"
-                    .to_string(),
             });
         }
 

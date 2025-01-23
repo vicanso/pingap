@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_hash_key, get_step_conf, get_str_conf,
-    get_str_slice_conf, Error, Plugin, Result,
+    get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf, Error,
+    Plugin, Result,
 };
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
@@ -103,7 +103,6 @@ impl TryFrom<&PluginConf> for KeyAuth {
     /// * When plugin step is not request or proxy_upstream
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value, PluginStep::Request);
 
         let delay = get_str_conf(value, "delay");
         let delay = if !delay.is_empty() {
@@ -150,7 +149,7 @@ impl TryFrom<&PluginConf> for KeyAuth {
             hash_value,
             keys,
             hide_credentials: get_bool_conf(value, "hide_credentials"),
-            plugin_step: step,
+            plugin_step: PluginStep::Request,
             query,
             header,
             delay,
@@ -165,14 +164,7 @@ impl TryFrom<&PluginConf> for KeyAuth {
                 ..Default::default()
             },
         };
-        if ![PluginStep::Request, PluginStep::ProxyUpstream]
-            .contains(&params.plugin_step)
-        {
-            return Err(Error::Invalid {
-                category: PluginCategory::KeyAuth.to_string(),
-                message: "Key auth plugin should be executed at request or proxy upstream step".to_string(),
-            });
-        }
+
         Ok(params)
     }
 }
@@ -346,24 +338,6 @@ keys = [
         );
         assert_eq!(
             "Plugin key_auth invalid, message: Auth key is not allowed empty",
-            result.err().unwrap().to_string()
-        );
-
-        let result = KeyAuth::try_from(
-            &toml::from_str::<PluginConf>(
-                r###"
-step = "response"
-header = "X-User"
-keys = [
-    "123",
-    "456",
-]
-"###,
-            )
-            .unwrap(),
-        );
-        assert_eq!(
-            "Plugin key_auth invalid, message: Key auth plugin should be executed at request or proxy upstream step",
             result.err().unwrap().to_string()
         );
     }

@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_hash_key, get_step_conf, get_str_conf,
-    get_str_slice_conf, Error, Plugin, Result,
+    get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf, Error,
+    Plugin, Result,
 };
 use crate::cache::{get_cache_backend, HttpCache};
 use crate::config::{
@@ -76,7 +76,7 @@ pub struct Cache {
     // Optional list of headers to include when generating cache keys
     // Allows for variant caching (e.g., different versions based on Accept-Encoding)
     headers: Option<Vec<String>>,
-    // Whether to respect Cache-Control headers from the origin
+    // Whether to check the cache-control header, if not exist the response will not be cached.
     check_cache_control: bool,
     // IP-based access control for cache purge operations
     purge_ip_rules: util::IpRules,
@@ -194,8 +194,6 @@ impl TryFrom<&PluginConf> for Cache {
             None
         };
 
-        let step = get_step_conf(value, PluginStep::Request);
-
         let lock = get_str_conf(value, "lock");
         let lock = if !lock.is_empty() {
             parse_duration(&lock).map_err(|e| Error::Invalid {
@@ -272,7 +270,7 @@ impl TryFrom<&PluginConf> for Cache {
         let params = Self {
             hash_value,
             http_cache: cache,
-            plugin_step: step,
+            plugin_step: PluginStep::Request,
             eviction,
             predictor,
             lock: get_cache_lock(lock),
@@ -284,13 +282,6 @@ impl TryFrom<&PluginConf> for Cache {
             check_cache_control: get_bool_conf(value, "check_cache_control"),
             skip,
         };
-        if params.plugin_step != PluginStep::Request {
-            return Err(Error::Invalid {
-                category: PluginCategory::Cache.to_string(),
-                message: "Cache plugin should be executed at request step"
-                    .to_string(),
-            });
-        }
         Ok(params)
     }
 }

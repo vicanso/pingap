@@ -13,10 +13,9 @@
 // limitations under the License.
 
 use super::{
-    get_hash_key, get_step_conf, get_str_conf, get_str_slice_conf, Error,
-    Plugin, Result,
+    get_hash_key, get_str_conf, get_str_slice_conf, Error, Plugin, Result,
 };
-use crate::config::{PluginCategory, PluginConf, PluginStep};
+use crate::config::{PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use crate::util;
@@ -56,7 +55,6 @@ impl TryFrom<&PluginConf> for IpRestriction {
     fn try_from(value: &PluginConf) -> Result<Self> {
         // Generate unique hash for this plugin instance
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value, PluginStep::Request);
 
         // Parse IP rules from configuration
         // Supports both individual IPs ("192.168.1.1") and CIDR ranges ("10.0.0.0/24")
@@ -71,7 +69,7 @@ impl TryFrom<&PluginConf> for IpRestriction {
 
         let params = Self {
             hash_value,
-            plugin_step: step,
+            plugin_step: PluginStep::Request,
             ip_rules,
             restriction_category: get_str_conf(value, "type"),
             forbidden_resp: HttpResponse {
@@ -81,13 +79,6 @@ impl TryFrom<&PluginConf> for IpRestriction {
             },
         };
 
-        // Plugin must run during request phase to effectively control access
-        if PluginStep::Request != params.plugin_step {
-            return Err(Error::Invalid {
-                category: PluginCategory::IpRestriction.to_string(),
-                message: "Ip restriction plugin should be executed at request or proxy upstream step".to_string(),
-            });
-        }
         Ok(params)
     }
 }
@@ -220,23 +211,6 @@ type = "deny"
             r#"IpRules { ip_net_list: [1.1.1.0/24, 2.1.1.0/24], ip_list: ["192.168.1.1", "10.1.1.1"] }"#,
             format!("{:?}", params.ip_rules)
         );
-
-        let result = IpRestriction::try_from(
-            &toml::from_str::<PluginConf>(
-                r###"
-step = "response"
-ip_list = [
-    "192.168.1.1",
-    "10.1.1.1",
-    "1.1.1.0/24",
-    "2.1.1.0/24",
-]
-type = "deny"
-"###,
-            )
-            .unwrap(),
-        );
-        assert_eq!("Plugin ip_restriction invalid, message: Ip restriction plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
     }
 
     /// Tests IP restriction functionality.

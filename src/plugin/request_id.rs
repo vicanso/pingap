@@ -80,7 +80,7 @@ impl TryFrom<&PluginConf> for RequestId {
         let step = get_step_conf(value, PluginStep::Request);
 
         // Parse and validate the custom header name if provided
-        // An empty string means use the default X-Request-ID header
+        // An empty string means use the default X-Request-Id header
         let header_name = get_str_conf(value, "header_name");
         let header_name = if header_name.is_empty() {
             None
@@ -93,12 +93,16 @@ impl TryFrom<&PluginConf> for RequestId {
                 }
             })?)
         };
+        let mut size = get_int_conf(value, "size") as usize;
+        if size == 0 {
+            size = 8;
+        }
 
         let params = Self {
             hash_value,
             plugin_step: step,
             algorithm: get_str_conf(value, "algorithm"),
-            size: get_int_conf(value, "size") as usize,
+            size,
             header_name,
         };
 

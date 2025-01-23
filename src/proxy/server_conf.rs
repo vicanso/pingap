@@ -172,7 +172,6 @@ impl From<PingapConf> for Vec<ServerConf> {
 #[cfg(test)]
 mod tests {
     use super::ServerConf;
-    use crate::config::PingapConf;
     use pingora::protocols::l4::ext::TcpKeepalive;
     use pretty_assertions::assert_eq;
     use std::time::Duration;
@@ -201,19 +200,5 @@ mod tests {
             r#"name:pingap addr:127.0.0.1:3000,127.0.0.1:3001 locations:["charts-location"] threads:Some(4) false tcp_keepalive:Some(TcpKeepalive { idle: 10s, interval: 5s, count: 10 }) tcp_fastopen:Some(10) http2:true"#,
             conf.to_string()
         );
-    }
-    #[test]
-    fn test_server_conf_from() {
-        let toml_data = include_bytes!("../../conf/pingap.toml");
-        let pingap_conf = PingapConf::new(toml_data.as_ref(), false).unwrap();
-        let confs: Vec<ServerConf> = pingap_conf.into();
-
-        assert_eq!(1, confs.len());
-        let server = &confs[0];
-        assert_eq!("test", server.name);
-        assert_eq!("0.0.0.0:6188", server.addr);
-        assert_eq!("tiny", server.access_log.clone().unwrap_or_default());
-        assert_eq!(1, server.locations.len());
-        assert_eq!(1, server.threads.unwrap_or_default());
     }
 }

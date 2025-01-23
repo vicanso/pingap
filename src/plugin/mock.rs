@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_conf, Error, Plugin, Result};
+use super::{get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{convert_headers, HttpResponse};
 use crate::plugin::{get_hash_key, get_int_conf, get_str_slice_conf};
@@ -74,7 +74,6 @@ impl MockResponse {
     ///   - headers: []string - Response headers in "Key: Value" format
     ///   - data: string - Response body content
     ///   - delay: string - Human-readable duration (e.g., "500ms", "1s") to delay response
-    ///   - step: string - When to execute ("request" or "proxy_upstream")
     ///
     /// # Returns
     /// Result<MockResponse> - Configured mock handler or error if configuration is invalid
@@ -83,15 +82,6 @@ impl MockResponse {
 
         // Generate unique hash for this configuration
         let hash_value = get_hash_key(params);
-
-        // Validate execution step - mock only supports request/proxy_upstream phases
-        let step = get_step_conf(params, PluginStep::Request);
-        if ![PluginStep::Request, PluginStep::ProxyUpstream].contains(&step) {
-            return Err(Error::Invalid {
-                category: PluginCategory::Mock.to_string(),
-                message: "Mock plugin should be executed at request or proxy upstream step".to_string(),
-            });
-        }
 
         // Extract all configuration parameters
         let path = get_str_conf(params, "path"); // Path to match (empty = match all)
@@ -135,7 +125,7 @@ impl MockResponse {
         Ok(MockResponse {
             hash_value,
             resp,
-            plugin_step: step,
+            plugin_step: PluginStep::Request,
             path,
             delay,
         })
@@ -217,25 +207,6 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
         .unwrap();
 
         assert_eq!("/", params.path);
-
-        let result = MockResponse::new(
-            &toml::from_str::<PluginConf>(
-                r###"
-step = "response"
-path = "/"
-status = 500
-headers = [
-    "Content-Type: application/json"
-]
-data = "{\"message\":\"Mock Service Unavailable\"}"
-"###,
-            )
-            .unwrap(),
-        );
-        assert_eq!(
-            "Plugin mock invalid, message: Mock plugin should be executed at request or proxy upstream step",
-            result.err().unwrap().to_string()
-        )
     }
 
     #[tokio::test]

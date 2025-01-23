@@ -16,14 +16,14 @@ export function getPluginSteps(category: string) {
   pluginSupportSteps[PluginCategory.LIMIT] = [0, 1];
   pluginSupportSteps[PluginCategory.COMPRESSION] = [0];
   pluginSupportSteps[PluginCategory.ACCEPT_ENCODING] = [0];
-  pluginSupportSteps[PluginCategory.ADMIN] = [0, 1];
+  pluginSupportSteps[PluginCategory.ADMIN] = [0];
   pluginSupportSteps[PluginCategory.DIRECTORY] = [0, 1];
-  pluginSupportSteps[PluginCategory.MOCK] = [0, 1];
+  pluginSupportSteps[PluginCategory.MOCK] = [0];
   pluginSupportSteps[PluginCategory.REQUEST_ID] = [0, 1];
   pluginSupportSteps[PluginCategory.IP_RESTRICTION] = [0];
   pluginSupportSteps[PluginCategory.UA_RESTRICTION] = [0];
   pluginSupportSteps[PluginCategory.REFERER_RESTRICTION] = [0];
-  pluginSupportSteps[PluginCategory.KEY_AUTH] = [0, 1];
+  pluginSupportSteps[PluginCategory.KEY_AUTH] = [0];
   pluginSupportSteps[PluginCategory.BASIC_AUTH] = [0];
   pluginSupportSteps[PluginCategory.COMBINED_AUTH] = [0];
   pluginSupportSteps[PluginCategory.JWT] = [0];

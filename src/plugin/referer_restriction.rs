@@ -13,10 +13,9 @@
 // limitations under the License.
 
 use super::{
-    get_hash_key, get_step_conf, get_str_conf, get_str_slice_conf, Error,
-    Plugin, Result,
+    get_hash_key, get_str_conf, get_str_slice_conf, Error, Plugin, Result,
 };
-use crate::config::{PluginCategory, PluginConf, PluginStep};
+use crate::config::{PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
@@ -78,7 +77,6 @@ impl TryFrom<&PluginConf> for RefererRestriction {
     /// - Required configuration fields are missing
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value, PluginStep::Request);
         let mut referer_list = vec![];
         let mut prefix_referer_list = vec![];
         for item in get_str_slice_conf(value, "referer_list").iter() {
@@ -96,7 +94,7 @@ impl TryFrom<&PluginConf> for RefererRestriction {
         }
         let params = Self {
             hash_value,
-            plugin_step: step,
+            plugin_step: PluginStep::Request,
             prefix_referer_list,
             referer_list,
             restriction_category: get_str_conf(value, "type"),
@@ -106,12 +104,6 @@ impl TryFrom<&PluginConf> for RefererRestriction {
                 ..Default::default()
             },
         };
-        if PluginStep::Request != params.plugin_step {
-            return Err(Error::Invalid {
-                category: PluginCategory::RefererRestriction.to_string(),
-                message: "Referer restriction plugin should be executed at request or proxy upstream step".to_string(),
-            });
-        }
 
         Ok(params)
     }
@@ -238,21 +230,6 @@ type = "deny"
         assert_eq!("request", params.plugin_step.to_string());
         assert_eq!(".bing.cn", params.prefix_referer_list.join(","));
         assert_eq!("github.com", params.referer_list.join(","));
-
-        let result = RefererRestriction::try_from(
-            &toml::from_str::<PluginConf>(
-                r###"
-step = "response"
-referer_list = [
-    "github.com",
-    "*.bing.cn",
-]
-type = "deny"
-"###,
-            )
-            .unwrap(),
-        );
-        assert_eq!("Plugin referer_restriction invalid, message: Referer restriction plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
     }
 
     #[tokio::test]

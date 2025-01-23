@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_hash_key, get_int_conf, get_step_conf, get_str_conf,
-    get_str_slice_conf, Error, Plugin, Result,
+    get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf, Error,
+    Plugin, Result,
 };
 use crate::config::{
     self, get_current_config, save_config, BasicConf, CertificateConf,
@@ -205,7 +205,7 @@ impl TryFrom<&PluginConf> for AdminServe {
         let params = AdminServe {
             hash_value,
             max_age,
-            plugin_step: get_step_conf(value, PluginStep::Request),
+            plugin_step: PluginStep::Request,
             path,
             ip_fail_limit: TtlLruLimit::new(
                 512,
@@ -214,14 +214,6 @@ impl TryFrom<&PluginConf> for AdminServe {
             ),
             authorizations,
         };
-        if ![PluginStep::Request, PluginStep::ProxyUpstream]
-            .contains(&params.plugin_step)
-        {
-            return Err(Error::Invalid {
-                category: PluginCategory::Admin.to_string(),
-                message: "Admin serve plugin should be executed at request or proxy upstream step".to_string(),
-            });
-        }
 
         Ok(params)
     }
@@ -718,25 +710,6 @@ mod tests {
 
         assert_eq!(
             "Plugin basic_auth, base64 decode error Invalid padding",
-            result.err().unwrap().to_string()
-        );
-
-        let result = AdminServe::try_from(
-            &toml::from_str::<PluginConf>(
-                r#"
-    step = "response"
-    category = "admin"
-    path = "/"
-    authorizations = [
-        "YWRtaW46MTIzMTIz",
-        "cGluZ2FwOjEyMzEyMw=="
-    ]
-    "#,
-            )
-            .unwrap(),
-        );
-        assert_eq!(
-            "Plugin admin invalid, message: Admin serve plugin should be executed at request or proxy upstream step",
             result.err().unwrap().to_string()
         );
     }

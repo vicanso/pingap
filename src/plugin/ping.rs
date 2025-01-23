@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_step_conf, get_str_conf, Error, Plugin, Result};
-use crate::config::{PluginCategory, PluginConf, PluginStep};
+use super::{get_str_conf, Plugin, Result};
+use crate::config::{PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::plugin::get_hash_key;
 use crate::state::State;
@@ -55,18 +55,10 @@ impl Ping {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new ping plugin");
         let hash_value = get_hash_key(params);
-        let step = get_step_conf(params, PluginStep::Request);
-        if step != PluginStep::Request {
-            return Err(Error::Invalid {
-                category: PluginCategory::Ping.to_string(),
-                message: "Ping plugin should be executed at request step"
-                    .to_string(),
-            });
-        }
         Ok(Self {
             hash_value,
             path: get_str_conf(params, "path"),
-            plugin_step: step,
+            plugin_step: PluginStep::Request,
         })
     }
 }
@@ -146,19 +138,5 @@ path = "/ping"
         let resp = result.unwrap();
         assert_eq!(200, resp.status.as_u16());
         assert_eq!(b"pong", resp.body.as_ref());
-
-        let result = Ping::new(
-            &toml::from_str::<PluginConf>(
-                r###"
-step = "response"
-path = "/ping"
-"###,
-            )
-            .unwrap(),
-        );
-        assert_eq!(
-            "Plugin ping invalid, message: Ping plugin should be executed at request step",
-            result.err().unwrap().to_string()
-        );
     }
 }

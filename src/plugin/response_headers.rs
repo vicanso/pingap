@@ -11,9 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use super::{
-    get_hash_key, get_step_conf, get_str_slice_conf, Error, Plugin, Result,
-};
+use super::{get_hash_key, get_str_slice_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{convert_header, convert_header_value, HttpHeader};
 use crate::state::State;
@@ -94,7 +92,6 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
     fn try_from(value: &PluginConf) -> Result<Self> {
         // Generate unique hash for this plugin configuration
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value, PluginStep::Response);
 
         // Parse add_headers from config
         // Format: "Header-Name:header value"
@@ -159,7 +156,7 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
 
         let params = Self {
             hash_value,
-            plugin_step: step,
+            plugin_step: PluginStep::Response,
             add_headers,
             set_headers,
             remove_headers,
@@ -167,12 +164,6 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
             set_headers_not_exists,
         };
 
-        if params.plugin_step != PluginStep::Response {
-            return Err(Error::Invalid {
-                category: PluginCategory::ResponseHeaders.to_string(),
-                message: "Response headers plugin should be executed at response step".to_string(),
-            });
-        }
         Ok(params)
     }
 }

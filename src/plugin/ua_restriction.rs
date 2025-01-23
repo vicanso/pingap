@@ -13,10 +13,9 @@
 // limitations under the License.
 
 use super::{
-    get_hash_key, get_step_conf, get_str_conf, get_str_slice_conf, Error,
-    Plugin, Result,
+    get_hash_key, get_str_conf, get_str_slice_conf, Error, Plugin, Result,
 };
-use crate::config::{PluginCategory, PluginConf, PluginStep};
+use crate::config::{PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
@@ -84,7 +83,6 @@ impl TryFrom<&PluginConf> for UaRestriction {
     fn try_from(value: &PluginConf) -> Result<Self> {
         // Generate unique hash for this plugin configuration
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value, PluginStep::Request);
         let mut ua_list = vec![];
 
         // Parse and compile each regex pattern from the ua_list config
@@ -109,7 +107,7 @@ impl TryFrom<&PluginConf> for UaRestriction {
 
         let params = Self {
             hash_value,
-            plugin_step: step,
+            plugin_step: PluginStep::Request,
             ua_list,
             restriction_category: get_str_conf(value, "type"),
             forbidden_resp: HttpResponse {
@@ -118,14 +116,6 @@ impl TryFrom<&PluginConf> for UaRestriction {
                 ..Default::default()
             },
         };
-
-        // Validate plugin step - can only run during request phase
-        if PluginStep::Request != params.plugin_step {
-            return Err(Error::Invalid {
-                category: PluginCategory::UaRestriction.to_string(),
-                message: "User agent restriction plugin should be executed at request or proxy upstream step".to_string(),
-            });
-        }
 
         Ok(params)
     }

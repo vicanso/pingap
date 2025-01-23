@@ -12,10 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    get_bool_conf, get_hash_key, get_step_conf, get_str_conf, Error, Plugin,
-    Result,
-};
+use super::{get_bool_conf, get_hash_key, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{convert_header_value, HttpHeader, HttpResponse};
 use crate::state::State;
@@ -66,7 +63,6 @@ impl TryFrom<&PluginConf> for Cors {
     fn try_from(value: &PluginConf) -> Result<Self> {
         // Generate unique hash for this configuration
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value, PluginStep::Request);
 
         // Parse max-age duration with human-friendly format (e.g., "60m", "24h")
         // Controls browser caching of preflight results
@@ -162,18 +158,11 @@ impl TryFrom<&PluginConf> for Cors {
 
         let cors = Self {
             hash_value,
-            plugin_step: step,
+            plugin_step: PluginStep::Request,
             path,
             allow_origin: format_header_value(&allow_origin)?,
             headers,
         };
-        if cors.plugin_step != PluginStep::Request {
-            return Err(Error::Invalid {
-                category: PluginCategory::Cors.to_string(),
-                message: "Cors plugin should be executed at request step"
-                    .to_string(),
-            });
-        }
 
         Ok(cors)
     }

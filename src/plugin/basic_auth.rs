@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_hash_key, get_step_conf, get_str_conf,
-    get_str_slice_conf, Error, Plugin, Result,
+    get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf, Error,
+    Plugin, Result,
 };
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
@@ -89,7 +89,6 @@ impl TryFrom<&PluginConf> for BasicAuth {
         // Generate a unique hash for this plugin instance based on configuration
         // This ensures consistent plugin behavior across restarts
         let hash_value = get_hash_key(value);
-        let step = get_step_conf(value, PluginStep::Request);
 
         // Parse optional delay duration for rate limiting
         // Supports human-readable duration strings like "10s", "1m", etc.
@@ -129,7 +128,7 @@ impl TryFrom<&PluginConf> for BasicAuth {
 
         let params = Self {
             hash_value,
-            plugin_step: step,
+            plugin_step: PluginStep::Request,
             delay,
             hide_credentials: get_bool_conf(value, "hide_credentials"),
             authorizations,
@@ -158,13 +157,7 @@ impl TryFrom<&PluginConf> for BasicAuth {
                 ..Default::default()
             },
         };
-        if ![PluginStep::Request].contains(&params.plugin_step) {
-            return Err(Error::Invalid {
-                category: PluginCategory::BasicAuth.to_string(),
-                message: "Basic auth plugin should be executed at request step"
-                    .to_string(),
-            });
-        }
+
         Ok(params)
     }
 }
@@ -277,22 +270,6 @@ authorizations = [
         );
         assert_eq!(
             "Plugin basic_auth, base64 decode error Invalid input length: 1",
-            result.err().unwrap().to_string()
-        );
-
-        let result = BasicAuth::try_from(
-            &toml::from_str::<PluginConf>(
-                r###"
-step = "response"
-authorizations = [
-"1234"
-]
-"###,
-            )
-            .unwrap(),
-        );
-        assert_eq!(
-            "Plugin basic_auth invalid, message: Basic auth plugin should be executed at request step",
             result.err().unwrap().to_string()
         );
     }

@@ -13,8 +13,7 @@
 // limitations under the License.
 
 use super::{
-    get_hash_key, get_step_conf, get_str_conf, get_str_slice_conf, Error,
-    Plugin, Result,
+    get_hash_key, get_str_conf, get_str_slice_conf, Error, Plugin, Result,
 };
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HTTP_HEADER_TRANSFER_CHUNKED;
@@ -176,7 +175,6 @@ impl TryFrom<&PluginConf> for SubFilter {
     /// # Returns
     /// * `Result<Self>` - Configured SubFilter instance or error if configuration is invalid
     fn try_from(value: &PluginConf) -> Result<Self> {
-        let step = get_step_conf(value, PluginStep::Response);
         let path =
             Regex::new(get_str_conf(value, "path").as_str()).map_err(|e| {
                 Error::Invalid {
@@ -195,19 +193,10 @@ impl TryFrom<&PluginConf> for SubFilter {
             .collect::<Result<Vec<_>>>()?;
         let hash_value = get_hash_key(value);
 
-        if PluginStep::Response != step {
-            return Err(Error::Invalid {
-                category: PluginCategory::SubFilter.to_string(),
-                message:
-                    "Sub filter plugin should be executed at response step"
-                        .to_string(),
-            });
-        }
-
         Ok(Self {
             path,
             replacer: SubFilterReplacer { filters },
-            plugin_step: step,
+            plugin_step: PluginStep::Response,
             hash_value,
         })
     }
