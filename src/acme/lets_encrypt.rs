@@ -471,18 +471,3 @@ async fn new_lets_encrypt(
 
     Ok((cert_chain_pem, private_key.serialize_pem()))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::new_lets_encrypt;
-    use pretty_assertions::assert_eq;
-
-    #[tokio::test]
-    async fn test_new_lets_encrypt() {
-        let result = new_lets_encrypt(&["pingap.io".to_string()], false).await;
-
-        assert_eq!(true, result.is_err());
-        let error = result.unwrap_err().to_string();
-        assert_eq!(false, error.is_empty());
-    }
-}

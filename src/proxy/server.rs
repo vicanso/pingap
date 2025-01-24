@@ -1309,7 +1309,66 @@ mod tests {
 
     /// Creates a new test server instance with default configuration
     fn new_server() -> Server {
-        let toml_data = include_bytes!("../../conf/pingap.toml");
+        let toml_data = r###"
+[upstreams.charts]
+# upstream address list
+addrs = ["127.0.0.1:5000"]
+
+
+[upstreams.diving]
+addrs = ["127.0.0.1:5001"]
+
+
+[locations.lo]
+# upstream of location (default none)
+upstream = "charts"
+
+# location match path (default none)
+path = "/"
+
+# location match host, multiple domain names are separated by commas (default none)
+host = ""
+
+# set headers to request (default none)
+includes = ["proxySetHeader"]
+
+# add headers to request (default none)
+proxy_add_headers = ["name:value"]
+
+
+# the weigh of location (default none)
+weight = 1024
+
+
+# plugin list for location
+plugins = ["pingap:requestId", "stats"]
+
+[servers.test]
+# server linsten address, multiple addresses are separated by commas (default none)
+addr = "0.0.0.0:6188"
+
+# access log format (default none)
+access_log = "tiny"
+
+# the locations for server
+locations = ["lo"]
+
+# the threads count for server (default 1)
+threads = 1
+
+[plugins.stats]
+value = "/stats"
+category = "stats"
+
+[storages.authToken]
+category = "secret"
+secret = "123123"
+value = "PLpKJqvfkjTcYTDpauJf+2JnEayP+bm+0Oe60Jk="
+
+[storages.proxySetHeader]
+category = "config"
+value = 'proxy_set_headers = ["name:value"]'
+        "###;
         let pingap_conf = PingapConf::new(toml_data.as_ref(), false).unwrap();
         try_init_upstreams(&pingap_conf.upstreams).unwrap();
         try_init_locations(&pingap_conf.locations).unwrap();

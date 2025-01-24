@@ -12,14 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{ConfigStorage, Error, LoadConfigOptions, PingapConf, Result};
+use super::{
+    read_all_toml_files, ConfigStorage, Error, LoadConfigOptions, PingapConf,
+    Result,
+};
 use crate::util;
 use async_trait::async_trait;
 use futures_util::TryFutureExt;
-use glob::glob;
 use std::path::Path;
 use tokio::fs;
-use tracing::debug;
 
 pub struct FileStorage {
     // Path to the configuration file or directory
@@ -75,25 +76,8 @@ impl ConfigStorage for FileStorage {
         let mut data = vec![];
         // Handle directory of TOML files
         if dir.is_dir() {
-            // Recursively find all .toml files in directory
-            for entry in
-                glob(&format!("{filepath}/**/*.toml")).map_err(|e| {
-                    Error::Pattern {
-                        source: e,
-                        path: filepath,
-                    }
-                })?
-            {
-                let f = entry.map_err(|e| Error::Glob { source: e })?;
-                let mut buf = fs::read(&f).await.map_err(|e| Error::Io {
-                    source: e,
-                    file: f.to_string_lossy().to_string(),
-                })?;
-                debug!(filename = format!("{f:?}"), "load config");
-                // Append file contents and newline
-                data.append(&mut buf);
-                data.push(0x0a);
-            }
+            let mut result = read_all_toml_files(&filepath).await?;
+            data.append(&mut result);
         } else {
             // Handle single TOML file
             let mut buf = fs::read(&filepath).await.map_err(|e| Error::Io {
@@ -213,11 +197,12 @@ impl ConfigStorage for FileStorage {
 #[cfg(test)]
 mod tests {
     use super::FileStorage;
-    use crate::config::{ConfigStorage, LoadConfigOptions, PingapConf};
     use crate::config::{
-        CATEGORY_BASIC, CATEGORY_CERTIFICATE, CATEGORY_LOCATION,
-        CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_STORAGE, CATEGORY_UPSTREAM,
+        read_all_toml_files, CATEGORY_BASIC, CATEGORY_CERTIFICATE,
+        CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_STORAGE,
+        CATEGORY_UPSTREAM,
     };
+    use crate::config::{ConfigStorage, LoadConfigOptions, PingapConf};
     use nanoid::nanoid;
     use pretty_assertions::assert_eq;
 
@@ -237,7 +222,7 @@ mod tests {
         let result = storage.load_config(LoadConfigOptions::default()).await;
         assert_eq!(true, result.is_ok());
 
-        let toml_data = include_bytes!("../../conf/pingap.toml");
+        let toml_data = read_all_toml_files("../../conf").await.unwrap();
         let conf =
             PingapConf::new(toml_data.to_vec().as_slice(), false).unwrap();
         for category in [

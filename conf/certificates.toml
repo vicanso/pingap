@@ -2,12 +2,12 @@
 # Certificate Config
 ###
 
-[certificates.acmeNpmtrend]
+# [certificates.acmeNpmtrend]
 # Domain names this certificate is valid for (comma separated)
-domains = "npmtrend.com,charts.npmtrend.com"
+# domains = "npmtrend.com,charts.npmtrend.com"
 
 # ACME configuration for automated certificate management
-acme = "lets_encrypt"
+# acme = "lets_encrypt"
 
 
 # [certificates.pingap]

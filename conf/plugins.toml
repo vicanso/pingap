@@ -1,0 +1,505 @@
+###
+# Plugin Stats Config
+###
+# Stats plugin configuration for exposing performance metrics
+[plugins.performanceStats]
+# Plugin type
+category = "stats"
+
+# The endpoint path where statistics will be exposed
+# Metrics can be accessed by sending GET request to this path (e.g. http://your-server/stats)
+value = "/stats"
+
+# Specifies when the plugin should execute: "request" or "proxy_upstream"
+# Default `request`
+# step = "request"
+
+
+###
+# Plugin Ping Config
+###
+# Ping plugin configuration for health checks
+[plugins.healthPing]
+# Plugin type
+category = "ping"
+
+# Endpoint path that will respond to health check requests
+# Accessing this path (e.g. http://your-server/ping) will return a 200 OK response
+# when the service is healthy
+path = "/ping"
+
+
+###
+# Plugin Admin Config
+###
+# Admin web page plugin, which is used to expose admin web page.
+[plugins.adminWebPage]
+# Plugin type
+category = "admin"
+
+# Base URL path where the admin interface will be accessible
+# The admin panel will be available at http(s)://your-domain/pingap/
+path = "/pingap"
+
+# List of authorized username:password pairs encoded in base64
+# You can generate new entries using: echo -n "admin:123456" | base64
+authorizations = ["YWRtaW46MTIzNDU2"]
+
+# How long the login session remains valid
+# After this period, users will need to log in again
+# Default `2d`
+# max_age = "2d"
+
+# Maximum number of failed login attempts allowed from an IP address
+# After this many failures, the IP will be blocked for 5 minutes
+# ip_fail_limit = 5
+
+
+###
+# Plugin Directory Config
+###
+# Static directory plugin, which is used to serve static files.
+[plugins.downloadsServe]
+# Plugin type
+category = "directory"
+
+# Root directory path to serve files from
+# Default `None`
+path = "~/Downloads"
+
+# When to execute the plugin: "request" or "proxy_upstream"
+# Default `request`
+# step = "request"
+
+
+# Size of chunks when reading files (in bytes)
+# Default `4096`
+# chunk_size = 4096
+
+# Browser cache duration for static files
+# Default `None`
+# max_age = "30d"
+
+# Set character encoding for text files
+# Default `None`
+# charset = "utf-8"
+
+# Additional HTTP headers to add to responses
+# Format: ["header_name:header_value"]
+# Default `None`
+# headers = ["name:value"]
+
+# If true, prevents caching and adds Cache-Control: private
+# Default `false`
+# private = false
+
+# Default file to serve when requesting a directory
+# Default `None`
+# index = "index.html"
+
+# If true, shows directory files when index file is missing
+# Default `false`
+# autoindex = false
+
+
+###
+# Plugin Mock Config
+###
+# Mock response plugin configuration
+# Used to return predefined responses for testing and development purposes
+[plugins.mockResponse]
+# Plugin type
+category = "mock"
+
+# The URL path that will trigger this mock response
+# Requests to http(s)://your-server/mock will return the configured mock data
+path = "/mock"
+
+# The response body content that will be returned
+# Default `None`
+data = "Hello World!"
+
+# HTTP status code to return in the response
+# 200 indicates a successful request
+# Default `200`
+# status = 200
+
+# Custom HTTP headers to include in the response
+# Format: ["header_name:header_value"]
+# Default `None`
+# headers = ["name:value"]
+
+# Artificial delay before sending the response
+# Useful for testing timeout handling and loading states
+# Default `None`
+# delay = "1s"
+
+
+###
+# Plugin Redirect Config
+###
+# Redirect plugin for redirecting requests to another path or https.
+[plugins.redirectToApi]
+# Plugin type
+category = "redirect"
+
+# When true, automatically redirects HTTP requests to HTTPS
+# Improves security by ensuring encrypted connections
+http_to_https = true
+
+# Any requests does not start with this prefix will be redirected and add prefix to the path
+# prefix = "/api"
+
+
+###
+# Plugin Cache Config
+###
+# Cache plugin, which is used to cache response.
+[plugins.commonCache]
+# Plugin type
+category = "cache"
+
+# Enable cache eviction to automatically remove old entries when cache is full. 
+# Which is useless for file cache backend. Default `None`
+# eviction = true
+
+# Maximum time to wait for a locked cache entry (prevents cache stampede). Default `1s`
+# lock = "1s"
+
+# Maximum time to keep any cached response, regardless of Cache-Control header. Default `None`
+# max_ttl = "1h"
+
+# Don't cache responses larger than this size. Default `1mb`
+# max_file_size = "1mb"
+
+# Namespace to isolate these cached items from other cache configurations. Default `None`
+# namespace = "common"
+
+# Headers to include in the cached response, if the response is compressed, `Accept-Encoding` will be added to headers. Default `None`
+# headers = ["Accept-Encoding"]
+
+# Enable smart caching decisions based on request/response patterns. Default `None`
+# predictor = true
+
+# IPs allowed to send PURGE requests to clear cache entries. Default `None`
+# purge_ip_list = ["127.0.0.1", "192.168.1.1/24"]
+
+# Regular expression pattern for URLs that should not be cached. Default `None`
+# skip = "^/api"
+
+# Only cache responses that include a Cache-Control header
+# check_cache_control = true
+
+
+###
+# Plugin RequestId Config
+###
+# RequestId plugin generating unique request identifiers
+[plugins.nanoRequestId]
+# Plugin type
+category = "requestId"
+
+# The algorithm used to generate request IDs:
+# - "nanoid": Uses NanoID algorithm (URL-safe, compact IDs)
+# - "uuid": Uses UUID v4 (longer, more traditional format)
+# Default `uuid`
+algorithm = "nanoid"
+
+# The HTTP header that will contain the generated requestid. Default `X-Request-Id`
+# header_name = "X-Request-Id"
+
+# The length of the generated NanoID
+# - Only applies when algorithm = "nanoid"
+# - Smaller values create shorter IDs but increase collision probability
+# - 8 characters provides a good balance of uniqueness and brevity
+# size = 8
+
+
+###
+# Plugin Compression Config
+###
+# Compression plugin for compressing response data, which supports gzip, brotli, and zstd.
+[plugins.commonCompression]
+category = "compression"
+# Enable decompression of compressed response data
+# decompression = true
+
+# Compression level for gzip encoding (1-9)
+# Higher values = better compression but more CPU usage
+# Default `None`
+gzip_level = 6
+
+# Compression level for Brotli encoding (1-11)
+# Higher values = better compression but more CPU usage
+# Default `None`
+# br_level = 6
+
+# Compression level for Zstandard encoding (1-19)
+# Higher values = better compression but more CPU usage
+# Default `None`
+# zstd_level = 6
+
+
+###
+# Plugin AcceptEncoding Config
+###
+# AcceptEncoding plugin for adjusting the accept-encoding header, 
+# because the cache key may be using the accept-encoding header.
+[plugins.commonAcceptEncoding]
+# Plugin type
+category = "accept_encoding"
+
+# List of supported compression encodings in order of preference, the accept-encoding header will be adjusted to this order.
+# - zstd: Zstandard compression (fastest)
+# - br: Brotli compression (best compression)
+# - gzip: Gzip compression (most compatible)
+encodings = ["zstd", "br", "gzip"]
+
+# When true, only uses a single encoding type even if client supports multiple
+# This can improve caching efficiency since responses are stored with one encoding
+# only_one_encoding = true
+
+
+###
+# Plugin KeyAuth Config
+###
+# API key authentication plugin, which is used to authenticate requests using API keys.
+[plugins.apiKeyAuth]
+# Plugin type
+category = "key_auth"
+
+# Name of the query parameter that can contain the API key. Default `None`
+query = "api_key"
+
+# List of valid API keys that will be accepted for authentication
+keys = ["123123", "abcd"]
+
+# Delay response for unauthorized requests
+# delay = "1s"
+
+# Name of the HTTP header that can contain the API key, if query is configured, the header will be ignored. Default `None`
+# header = "api_key"
+
+# When true, removes API key from forwarded requests for security
+# hide_credentials = true
+
+
+###
+# Plugin BasicAuth Config
+###
+# Basic authentication plugin, which is used to authenticate requests using basic authentication.
+[plugins.adminBasicAuth]
+# Plugin type
+category = "basic_auth"
+
+# List of valid username:password pairs encoded in base64
+# You can generate new entries using: echo -n "admin:123456" | base64
+authorizations = ["YWRtaW46MTIzNDU2"]
+
+# Delay response for unauthorized requests
+# delay = "1s"
+
+# When true, removes API key from forwarded requests for security
+# hide_credentials = true
+
+
+###
+# Plugin Limit Config
+###
+# Limit plugin, which is used to limit the number of requests per second.
+[plugins.ipLimit]
+# Plugin type - Defines this as a rate/concurrency limiting plugin
+category = "limit"
+
+# The tag type of the limit plugin, how to get the limit key. Default `ip`
+# - "ip": Use ip as limit key
+# - "cookie": Get value from cookie as limit key
+# - "header": Get value from header as limit key
+# - "query": Get value from query parameter as limit key
+# Currently set to use query parameters for identifying requests
+tag = "query"
+
+# Specifies when the plugin executes in the request lifecycle, "request" or "proxy_upstream"
+# step = "request"
+
+# The query parameter name to extract the limit key from
+# Example: If key="app_id", it will look for ?app_id=value in the URL
+# key = "app_id"
+
+# Maximum number of concurrent requests or requests per interval
+# For inflight: Maximum concurrent requests allowed
+# For rate: Maximum requests allowed per interval
+# max = 1000
+
+# Time window for rate limiting
+# Only applies when type="rate"
+# Example: "10s" means 1000 requests per 10 seconds
+# interval = "10s"
+
+# Limiting strategy:
+# - "inflight": Limits concurrent requests (like a semaphore)
+# - "rate": Limits requests per time interval (like a token bucket)
+# type = "inflight"
+
+###
+# Plugin IpRestriction Config
+###
+# IpRestriction plugin for controlling access based on IP addresses
+[plugins.innerIpRestriction]
+# Plugin type
+category = "IpRestriction"
+
+# List of IP addresses or CIDR ranges to match against
+# Examples:
+# - Individual IP: "192.168.1.1"
+# - CIDR range: "10.0.0.0/24" (matches 10.0.0.0 to 10.0.0.255)
+ip_list = ["192.168.1.1", "10.0.0.0/24"]
+
+# Access control type:
+# - "allow": Only IPs in ip_list can access (whitelist)
+# - "deny": IPs in ip_list cannot access (blacklist)
+# Default `allow`
+# type = "allow"
+
+# Custom message returned when access is denied
+# Default `Request is forbidden`
+# message = "Request is forbidden"
+
+
+###
+# Plugin UaRestriction Config
+###
+# UaRestriction plugin for filtering HTTP requests based on User-Agent patterns
+[plugins.uaRestriction]
+# Plugin type
+category = "ua_restriction"
+
+# List of User-Agent regex patterns to match against
+# Examples:
+# - "go-http-client/1.1": Matches Go's default HTTP client
+# - "Twitterspider": Matches Twitter's crawler bot
+ua_list = ["go-http-client/1.1", "Twitterspider"]
+
+# Access control type:
+# - "allow": Only user agent in ua_list can access (whitelist)
+# - "deny": User agent in ua_list cannot access (blacklist)
+# Default `allow`
+# type = "allow"
+
+# Custom message returned when access is denied
+# Default `Request is forbidden`
+# message = "Request is forbidden"
+
+
+###
+# Plugin RefererRestriction Config
+###
+# RefererRestriction plugin for filtering HTTP requests based on Referer header
+[plugins.refererRestriction]
+# Plugin type
+category = "referer_restriction"
+
+# List of hostnames or CIDR ranges to match against
+# Examples:
+# - "example.com": Matches only exact hostname
+# - "*.example.org": Matches any subdomain of example.org
+referer_list = ["example.com", "*.example.org"]
+
+# Access control type:
+# - "allow": Only referer in referer_list can access (whitelist)
+# - "deny": Referer in referer_list cannot access (blacklist)
+# Default `allow`
+# type = "allow"
+
+
+###
+# Plugin Csrf Config
+###
+# Csrf plugin for protecting against Cross-Site Request Forgery (CSRF) attacks
+[plugins.tokenCsrf]
+# Plugin type
+category = "csrf"
+
+# The endpoint path where clients can request a new CSRF token
+# Clients should make a GET request to this path to obtain a token
+token_path = "/csrf_token"
+
+# The key used to store the CSRF token in the session/cookie
+# This is the internal reference name for the token
+key = "csrf_token"
+
+# The name of the HTTP header that should contain the CSRF token
+# Clients must include this header with the token value in their requests
+# Default `x-csrf-token`
+# name = "x-csrf-token"
+
+# Time-to-live duration for CSRF tokens before they expire
+# Default `None` means no expiration
+# ttl = "1h"
+
+
+###
+# Plugin Cors Config
+###
+[plugins.allCors]
+# Plugin type - Handles Cross-Origin Resource Sharing (CORS) headers
+category = "cors"
+
+# How long browsers should cache CORS preflight responses
+# Default `1h`
+# max_age = "1h"
+
+# Regular expression pattern for paths where CORS headers will be applied
+# Here it matches any path starting with /api
+path = "^/api"
+
+# Allowed origins that can access the API
+# '*' means any origin can access (use with caution in production)
+# Default `*`   
+# allow_origin = "*"
+
+# HTTP methods that are allowed when accessing the API
+# Default `GET, POST, PUT, PATCH, DELETE, OPTIONS`
+# allow_methods = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+
+# Custom headers that are allowed in requests
+# Default `None`
+allow_headers = "Content-Type, Authorization"
+
+# Whether to allow credentials (cookies, authorization headers, etc)
+# Set to true if your API needs to handle authenticated requests
+# Default `false`
+# allow_credentials = false
+
+# Headers that can be exposed to the client browser
+# Useful for custom headers that need to be readable by client JavaScript
+# Default `None`
+# expose_headers = "Content-Range, X-Total-Count"
+
+
+###
+# Plugin ResponseHeaders Config
+###
+[plugins.customResponseHeaders]
+# Plugin type
+category = "response_headers"
+
+# Add new headers to the response while preserving any existing headers with the same name
+# Format: ["Header-Name:header-value"]
+add_headers = ["X-Request-Id:123"]
+
+# Set headers in the response, overwriting any existing headers with the same name
+# Format: ["Header-Name:header-value"]
+# set_headers = ["X-Real-Ip:127.0.0.1"]
+
+# Remove specified headers from the response
+# Format: ["Header-Name"]
+# remove_headers = ["User-Agent"]
+
+# Rename headers in the response
+# Format: ["Old-Name:New-Name"]
+# rename_headers = ["Old-Name:New-Name"]
+
+# Set headers only if they don't already exist in the response
+# Format: ["Header-Name:header-value"]
+# set_headers_not_exists = ["X-Time:10231"]

@@ -194,9 +194,9 @@ impl ConfigStorage for EtcdStorage {
 mod tests {
     use super::EtcdStorage;
     use crate::config::{
-        ConfigStorage, LoadConfigOptions, PingapConf, CATEGORY_BASIC,
-        CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_STORAGE,
-        CATEGORY_UPSTREAM,
+        read_all_toml_files, ConfigStorage, LoadConfigOptions, PingapConf,
+        CATEGORY_BASIC, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
+        CATEGORY_STORAGE, CATEGORY_UPSTREAM,
     };
     use nanoid::nanoid;
     use pretty_assertions::assert_eq;
@@ -208,7 +208,7 @@ mod tests {
             nanoid!(16)
         );
         let storage = EtcdStorage::new(&url).unwrap();
-        let toml_data = include_bytes!("../../conf/pingap.toml");
+        let toml_data = read_all_toml_files("../../conf").await.unwrap();
         let conf =
             PingapConf::new(toml_data.to_vec().as_slice(), false).unwrap();
 

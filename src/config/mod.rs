@@ -15,9 +15,12 @@
 // External crate imports for async operations, etcd client, and error handling
 use async_trait::async_trait;
 use etcd_client::WatchStream;
+use glob::glob;
 use once_cell::sync::OnceCell;
 use snafu::Snafu;
 use std::time::Duration;
+use tokio::fs;
+use tracing::debug;
 
 mod common;
 mod etcd;
@@ -172,6 +175,27 @@ pub async fn load_config(opts: LoadConfigOptions) -> Result<PingapConf> {
     storage.load_config(opts).await
 }
 
+pub async fn read_all_toml_files(dir: &str) -> Result<Vec<u8>> {
+    let mut data = vec![];
+    for entry in
+        glob(&format!("{dir}/**/*.toml")).map_err(|e| Error::Pattern {
+            source: e,
+            path: dir.to_string(),
+        })?
+    {
+        let f = entry.map_err(|e| Error::Glob { source: e })?;
+        let mut buf = fs::read(&f).await.map_err(|e| Error::Io {
+            source: e,
+            file: f.to_string_lossy().to_string(),
+        })?;
+        debug!(filename = format!("{f:?}"), "read toml file");
+        // Append file contents and newline
+        data.append(&mut buf);
+        data.push(0x0a);
+    }
+    Ok(data)
+}
+
 pub fn support_observer() -> bool {
     if let Some(storage) = CONFIG_STORAGE.get() {
         storage.support_observer()
@@ -252,7 +276,7 @@ mod tests {
     #[tokio::test]
     async fn test_load_config() {
         assert_eq!(true, get_config_storage().is_none());
-        try_init_config_storage("./conf/pingap.toml").unwrap();
+        try_init_config_storage("./conf").unwrap();
         let conf = load_config(LoadConfigOptions {
             replace_include: true,
             ..Default::default()
