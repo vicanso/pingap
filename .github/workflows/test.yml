@@ -133,7 +133,7 @@ jobs:
           sudo swapoff $SWAP_FILE
           sudo rm $SWAP_FILE
           export SWAP_FILE=/swapfile
-          sudo fallocate -l 16G $SWAP_FILE
+          sudo fallocate -l 20G $SWAP_FILE
           sudo chmod 600 $SWAP_FILE
           sudo mkswap $SWAP_FILE
           sudo swapon $SWAP_FILE
@@ -172,7 +172,7 @@ jobs:
         id: docker_build
         uses: docker/build-push-action@v6
         with:
-          platforms: linux/arm64, linux/amd64
+          platforms: linux/amd64, linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
       - name: Image digest
