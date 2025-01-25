@@ -120,7 +120,9 @@ jobs:
   #         cargo build --release --features=full
   #         ls -lh target/release
   docker:
-    runs-on: ubuntu-20.04
+    runs-on:
+      group: ubuntu-runners
+      labels: ubuntu-20.04-16core
     timeout-minutes: 3600
     steps:
       - name: Change Swap Space
