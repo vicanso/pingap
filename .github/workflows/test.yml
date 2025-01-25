@@ -120,9 +120,7 @@ jobs:
   #         cargo build --release --features=full
   #         ls -lh target/release
   docker:
-    runs-on:
-      group: ubuntu-runners
-      labels: ubuntu-20.04-16core
+    runs-on: ubuntu-20.04
     timeout-minutes: 3600
     steps:
       - name: Change Swap Space
@@ -172,10 +170,11 @@ jobs:
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
       - name: Build and push
         id: docker_build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           platforms: linux/amd64, linux/arm64
           push: true
+          shm-size: 2g
           tags: ${{ steps.meta.outputs.tags }}
       - name: Image digest
         run: |
