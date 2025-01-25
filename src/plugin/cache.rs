@@ -33,7 +33,7 @@ use once_cell::sync::{Lazy, OnceCell};
 use pingora::cache::eviction::simple_lru::Manager;
 use pingora::cache::eviction::EvictionManager;
 use pingora::cache::key::CacheHashKey;
-use pingora::cache::lock::CacheLock;
+use pingora::cache::lock::{CacheKeyLock, CacheLock};
 use pingora::cache::predictor::{CacheablePredictor, Predictor};
 use pingora::proxy::Session;
 use std::str::FromStr;
@@ -49,7 +49,17 @@ static PREDICTOR: OnceCell<Predictor<32>> = OnceCell::new();
 // EvictionManager: Handles removing entries when cache is full using LRU strategy
 static EVICTION_MANAGER: OnceCell<Manager> = OnceCell::new();
 // CacheLock: Prevents multiple requests from generating the same cache entry simultaneously
-static CACHE_LOCK_ONE_SECOND: OnceCell<CacheLock> = OnceCell::new();
+static CACHE_LOCK_ONE_SECOND: Lazy<
+    Box<(dyn CacheKeyLock + std::marker::Send + Sync + 'static)>,
+> = Lazy::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(1)));
+
+static CACHE_LOCK_TWO_SECONDS: Lazy<
+    Box<(dyn CacheKeyLock + std::marker::Send + Sync + 'static)>,
+> = Lazy::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(2)));
+
+static CACHE_LOCK_THREE_SECONDS: Lazy<
+    Box<(dyn CacheKeyLock + std::marker::Send + Sync + 'static)>,
+> = Lazy::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(3)));
 
 pub struct Cache {
     // Determines when this plugin runs in the request/response lifecycle
@@ -62,7 +72,7 @@ pub struct Cache {
     predictor: Option<&'static (dyn CacheablePredictor + Sync)>,
     // Optional lock mechanism to prevent cache stampede
     // (multiple identical requests generating the same cache entry)
-    lock: Option<&'static CacheLock>,
+    lock: Option<&'static (dyn CacheKeyLock + Send + Sync)>,
     // Backend storage implementation for the HTTP cache
     http_cache: &'static HttpCache,
     // Maximum size in bytes for individual cached files
@@ -122,20 +132,13 @@ fn get_eviction_manager() -> &'static Manager {
 ///
 /// # Limitations
 /// Only supports lock durations of exactly 1, 2, or 3 seconds
-fn get_cache_lock(lock: Duration) -> Option<&'static CacheLock> {
+fn get_cache_lock(
+    lock: Duration,
+) -> Option<&'static (dyn CacheKeyLock + Send + Sync)> {
     match lock.as_secs() {
-        1 => Some(
-            CACHE_LOCK_ONE_SECOND
-                .get_or_init(|| CacheLock::new(Duration::from_secs(1))),
-        ),
-        2 => Some(
-            CACHE_LOCK_ONE_SECOND
-                .get_or_init(|| CacheLock::new(Duration::from_secs(2))),
-        ),
-        3 => Some(
-            CACHE_LOCK_ONE_SECOND
-                .get_or_init(|| CacheLock::new(Duration::from_secs(3))),
-        ),
+        1 => Some(CACHE_LOCK_ONE_SECOND.as_ref()),
+        2 => Some(CACHE_LOCK_TWO_SECONDS.as_ref()),
+        3 => Some(CACHE_LOCK_THREE_SECONDS.as_ref()),
         _ => None,
     }
 }

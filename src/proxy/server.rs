@@ -1448,7 +1448,7 @@ value = 'proxy_set_headers = ["name:value"]'
             },
         );
         assert_eq!(
-            r#"Ok(CacheKey { namespace: "pingap", primary: "ss:GET:/vicanso/pingap?size=1", primary_bin_override: None, variance: None, user_tag: "" })"#,
+            r#"Ok(CacheKey { namespace: "pingap", primary: "ss:GET:/vicanso/pingap?size=1", primary_bin_override: None, variance: None, user_tag: "", extensions: Extensions })"#,
             format!("{key:?}")
         );
     }
