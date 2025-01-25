@@ -123,12 +123,25 @@ jobs:
     runs-on: ubuntu-20.04
     timeout-minutes: 3600
     steps:
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          # this might remove tools that are actually needed,
+          # if set to "true" but frees about 6 GB
+          tool-cache: true
+          
+          # all of these default to true, but feel free to set to
+          # "false" if necessary for your workflow
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
       - name: Change Swap Space
         run: |
           swapon --show=NAME | tail -n 1
           df -lh
-          du -sh /usr/local/lib/android
-          sudo rm -rf /usr/local/lib/android
+
           export SWAP_FILE=$(swapon --show=NAME | tail -n 1)
           sudo swapoff $SWAP_FILE
           sudo rm $SWAP_FILE
