@@ -69,6 +69,9 @@ fn parse_certificates(
     let mut dynamic_certs = AHashMap::new();
     let mut errors = vec![];
     for (name, certificate) in certificate_configs.iter() {
+        if certificate.tls_cert.is_none() || certificate.tls_key.is_none() {
+            continue;
+        }
         let result: Result<TlsCertificate, crate::certificate::Error> =
             certificate.try_into();
         match result {
