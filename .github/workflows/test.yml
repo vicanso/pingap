@@ -120,7 +120,7 @@ jobs:
   #         cargo build --release --features=full
   #         ls -lh target/release
   docker:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
     timeout-minutes: 3600
     steps:
       - name: Free Disk Space (Ubuntu)
