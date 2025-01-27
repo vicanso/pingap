@@ -19,7 +19,7 @@ use certificate::{
     new_self_signed_certificate_validity_service,
 };
 use clap::Parser;
-use config::ETCD_PROTOCOL;
+use config::{get_config_storage, ETCD_PROTOCOL};
 use config::{LoadConfigOptions, PingapConf};
 use crossbeam_channel::Sender;
 #[cfg(feature = "full")]
@@ -533,7 +533,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
     }
     if !lets_encrypt_params.is_empty() {
-        simple_tasks.push(new_lets_encrypt_service(lets_encrypt_params));
+        if let Some(storage) = get_config_storage() {
+            simple_tasks
+                .push(new_lets_encrypt_service(storage, lets_encrypt_params));
+        }
     }
 
     let (updated_certificates, errors) =

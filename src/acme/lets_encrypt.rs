@@ -15,8 +15,8 @@
 use super::{get_token_path, Error, Result, LOG_CATEGORY};
 use crate::certificate::Certificate;
 use crate::config::{
-    get_config_storage, get_current_config, load_config, save_config,
-    LoadConfigOptions, PingapConf, CATEGORY_CERTIFICATE,
+    get_current_config, ConfigStorage, LoadConfigOptions, PingapConf,
+    CATEGORY_CERTIFICATE,
 };
 use crate::http_extra::HttpResponse;
 use crate::proxy::try_update_certificates;
@@ -43,27 +43,31 @@ static WELL_KNOWN_PATH_PREFIX: &str = "/.well-known/acme-challenge/";
 /// 2. Update the configuration with the new certificate
 /// 3. Save the updated configuration
 async fn update_certificate_lets_encrypt(
+    storage: &'static (dyn ConfigStorage + Sync + Send),
     name: &str,
     domains: &[String],
 ) -> Result<PingapConf> {
-    let (pem, key) = new_lets_encrypt(domains, true).await?;
-    let mut conf = load_config(LoadConfigOptions {
-        ..Default::default()
-    })
-    .await
-    .map_err(|e| Error::Fail {
-        category: "load_config".to_string(),
-        message: e.to_string(),
-    })?;
+    // get new certificate from lets encrypt
+    let (pem, key) = new_lets_encrypt(storage, domains, true).await?;
+    let mut conf = storage
+        .load_config(LoadConfigOptions {
+            ..Default::default()
+        })
+        .await
+        .map_err(|e| Error::Fail {
+            category: "load_config".to_string(),
+            message: e.to_string(),
+        })?;
 
     if let Some(cert) = conf.certificates.get_mut(name) {
         cert.tls_cert = Some(pem);
         cert.tls_key = Some(key);
     }
-    save_config(&conf, CATEGORY_CERTIFICATE, Some(name))
+    storage
+        .save_config(&conf, CATEGORY_CERTIFICATE, Some(name))
         .await
         .map_err(|e| Error::Fail {
-            category: "load_config".to_string(),
+            category: "save_config".to_string(),
             message: e.to_string(),
         })?;
 
@@ -79,6 +83,7 @@ async fn update_certificate_lets_encrypt(
 /// The check runs every UPDATE_INTERVAL iterations to avoid excessive checks.
 async fn do_update_certificates(
     count: u32,
+    storage: &'static (dyn ConfigStorage + Sync + Send),
     params: &[(String, Vec<String>)],
 ) -> Result<bool, ServiceError> {
     const UPDATE_INTERVAL: u32 = 10;
@@ -89,6 +94,7 @@ async fn do_update_certificates(
     for (name, domains) in params.iter() {
         let should_renew = match get_lets_encrypt_certificate(name) {
             Ok(certificate) => {
+                // check if certificate is valid or domains changed
                 let needs_renewal = !certificate.valid();
                 let domains_changed = {
                     let mut sorted_domains = domains.clone();
@@ -113,18 +119,18 @@ async fn do_update_certificates(
         if !should_renew {
             info!(
                 category = LOG_CATEGORY,
-                domains = %domains.join(","),
+                domains = domains.join(","),
                 name = name,
                 "certificate still valid"
             );
             continue;
         }
 
-        if let Err(e) = renew_certificate(name, domains).await {
+        if let Err(e) = renew_certificate(storage, name, domains).await {
             error!(
                 category = LOG_CATEGORY,
                 error = %e,
-                domains = %domains.join(","),
+                domains = domains.join(","),
                 name = name,
                 "certificate renewal failed, will retry later"
             );
@@ -133,8 +139,12 @@ async fn do_update_certificates(
     Ok(true)
 }
 
-async fn renew_certificate(name: &str, domains: &[String]) -> Result<()> {
-    let conf = update_certificate_lets_encrypt(name, domains).await?;
+async fn renew_certificate(
+    storage: &'static (dyn ConfigStorage + Sync + Send),
+    name: &str,
+    domains: &[String],
+) -> Result<()> {
+    let conf = update_certificate_lets_encrypt(storage, name, domains).await?;
     handle_successful_renewal(domains, &conf).await;
     Ok(())
 }
@@ -170,6 +180,7 @@ async fn handle_successful_renewal(domains: &[String], conf: &PingapConf) {
 /// Create a Let's Encrypt service to generate the certificate,
 /// and regenerate if the certificate is invalid or will be expired.
 pub fn new_lets_encrypt_service(
+    storage: &'static (dyn ConfigStorage + Sync + Send),
     params: Vec<(String, Vec<String>)>,
 ) -> (String, SimpleServiceTaskFuture) {
     let task: SimpleServiceTaskFuture = Box::new(move |count: u32| {
@@ -177,7 +188,7 @@ pub fn new_lets_encrypt_service(
             let value = params.clone();
             async move {
                 let value = value.clone();
-                do_update_certificates(count, &value).await
+                do_update_certificates(count, storage, &value).await
             }
         })
     });
@@ -209,6 +220,7 @@ pub fn get_lets_encrypt_certificate(name: &str) -> Result<Certificate> {
 /// 3. Loads the pre-stored token response from storage
 /// 4. Returns the token response to validate domain ownership
 pub async fn handle_lets_encrypt(
+    storage: &'static (dyn ConfigStorage + Sync + Send),
     session: &mut Session,
     _ctx: &mut State,
 ) -> pingora::Result<bool> {
@@ -217,12 +229,6 @@ pub async fn handle_lets_encrypt(
     if path.starts_with(WELL_KNOWN_PATH_PREFIX) {
         // token auth
         let token = path.substring(WELL_KNOWN_PATH_PREFIX.len(), path.len());
-        let Some(storage) = get_config_storage() else {
-            return Err(util::new_internal_error(
-                500,
-                "get config storage fail".to_string(),
-            ));
-        };
 
         let value =
             storage.load(&get_token_path(token)).await.map_err(|e| {
@@ -230,7 +236,7 @@ pub async fn handle_lets_encrypt(
                     category = LOG_CATEGORY,
                     token,
                     err = e.to_string(),
-                    "let't encrypt http-01 fail"
+                    "load http-01 token fail"
                 );
                 util::new_internal_error(500, e.to_string())
             })?;
@@ -264,6 +270,7 @@ pub async fn handle_lets_encrypt(
 ///
 /// Returns a tuple of (certificate_chain_pem, private_key_pem)
 async fn new_lets_encrypt(
+    storage: &'static (dyn ConfigStorage + Sync + Send),
     domains: &[String],
     production: bool,
 ) -> Result<(String, String)> {
@@ -326,17 +333,11 @@ async fn new_lets_encrypt(
         })?;
     let mut challenges = Vec::with_capacity(authorizations.len());
 
-    let Some(storage) = get_config_storage() else {
-        return Err(Error::NotFound {
-            message: "storage not found".to_string(),
-        });
-    };
-
     for authz in &authorizations {
         info!(
             category = LOG_CATEGORY,
             status = format!("{:?}", authz.status),
-            "acme from let's encrypt"
+            "authorization from let's encrypt"
         );
         match authz.status {
             instant_acme::AuthorizationStatus::Pending => {},
@@ -470,4 +471,34 @@ async fn new_lets_encrypt(
     };
 
     Ok((cert_chain_pem, private_key.serialize_pem()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::FileStorage;
+    use pretty_assertions::assert_eq;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn test_new_lets_encrypt() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        // Create storage and leak it to extend its lifetime to 'static
+        let storage = Box::leak(Box::new(FileStorage::new(&path).unwrap()));
+        let result =
+            new_lets_encrypt(storage, &["pingap.io".to_string()], false).await;
+
+        assert_eq!(true, result.is_err());
+
+        // it will be fail as order invalid because http-01 challenge is not valid
+        assert_eq!(
+            true,
+            result
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("category: order_invalid")
+        );
+    }
 }

@@ -18,6 +18,7 @@ use super::upstream::get_upstream;
 use super::ServerConf;
 use crate::acme::handle_lets_encrypt;
 use crate::config;
+use crate::config::get_config_storage;
 use crate::config::PluginStep;
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 #[cfg(feature = "full")]
@@ -643,7 +644,13 @@ impl ProxyHttp for Server {
         }
         // only enable for http 80
         if self.lets_encrypt_enabled {
-            let done = handle_lets_encrypt(session, ctx).await?;
+            let Some(storage) = get_config_storage() else {
+                return Err(util::new_internal_error(
+                    500,
+                    "get config storage fail".to_string(),
+                ));
+            };
+            let done = handle_lets_encrypt(storage, session, ctx).await?;
             if done {
                 return Ok(true);
             }
