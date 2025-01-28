@@ -30,10 +30,15 @@ const SECONDS_PER_DAY: u64 = 24 * 3600;
 /// Represents a self-signed certificate with usage tracking
 #[derive(Debug)]
 pub struct SelfSignedCertificate {
+    /// The X509 certificate
     pub x509: X509,
+    /// The private key associated with the certificate
     pub key: PKey<Private>,
+    /// Indicates whether the certificate is stale (unused for a period)
     stale: AtomicBool,
+    /// Tracks the number of times this certificate has been used
     count: AtomicU32,
+    /// Unix timestamp indicating when the certificate expires
     not_after: i64,
 }
 
@@ -168,4 +173,100 @@ pub fn add_self_signed_certificate(
     m.insert(name, v.clone());
     SELF_SIGNED_CERTIFICATE_MAP.store(Arc::new(m));
     v
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        add_self_signed_certificate, do_self_signed_certificate_validity,
+        get_self_signed_certificate,
+    };
+    use crate::util;
+    use pingora::tls::pkey::PKey;
+    use pingora::tls::x509::X509;
+    use pretty_assertions::assert_eq;
+
+    #[tokio::test]
+    async fn test_add_self_signed_certificate() {
+        // spellchecker:off
+        let pem = r#"-----BEGIN CERTIFICATE-----
+MIIENzCCAp+gAwIBAgIRALESVNFwfk4BBxPnZLHdLaMwDQYJKoZIhvcNAQELBQAw
+bTEeMBwGA1UEChMVbWtjZXJ0IGRldmVsb3BtZW50IENBMSEwHwYDVQQLDBh0cmVl
+QGFub255bW91cyAoVHJlZVhpZSkxKDAmBgNVBAMMH21rY2VydCB0cmVlQGFub255
+bW91cyAoVHJlZVhpZSkwHhcNMjUwMTI4MDczODE4WhcNMjcwNDI4MDczODE4WjBd
+MScwJQYDVQQKEx5ta2NlcnQgZGV2ZWxvcG1lbnQgY2VydGlmaWNhdGUxMjAwBgNV
+BAsMKXRyZWVAVHJlZVhpZXMtTWFjQm9vay1Qcm8ubG9jYWwgKFRyZWVYaWUpMIIB
+IjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAv/Wt6HfiFrIOnW3eZx7A+iF7
+tywiyqRYX0CoecStk4n0H2s0V2nk6zmPwEvF1Qxd4OjUkwrVtIWCNyC3SXzoG+62
+dYMMCRmDZGqiUPaZjKcpObsxIcWIt1lO6mqZaf7hPNPtAb3gO4lLOgy4Ipv7q0Oy
+BY2myg7X9xOTzXmI6va8XSdGHsoilpic/mF95BE3D7FINx3j12HAwnMGY5/xPAFp
+QTa/3zoE22TCUpZHb1v9X3N2olPCUWRNbgCFWl5vKpfvqLlP19th1jhr2DkUVeWs
+RXYaB2ULwkNKkdhO0ka3hZipu6C3qDmfssfkm+lVhUvgUYWElaKDZG88ia26rQID
+AQABo2IwYDAOBgNVHQ8BAf8EBAMCBaAwEwYDVR0lBAwwCgYIKwYBBQUHAwEwHwYD
+VR0jBBgwFoAU210uBCmUnt7NVBOP3t3kjNq6XlEwGAYDVR0RBBEwD4INKi5leGFt
+cGxlLmNvbTANBgkqhkiG9w0BAQsFAAOCAYEATOEErFNYpxuxFkO/fDoUvuD9c9n3
+UetdrQ3u1E5EeYy+LaCWjEtDLf8t2NYKfuqQGxWgkdQYU6GIF4pbuZeARrReoind
+4SRSaA4Zwc8BvmA+UeCgm0uGAY2B3FQ6oUK7sY+wtIr0ob6nGLUtstZVesvA3elG
+xVcUM5tmBlm2rjLjvumIsfNK7VdKUY6yV2Z50nXNDkpT+achL1sJVMUIRokUezNB
+Pn1UjgblgpjuIA0A+e1XIm0Co/1JtJv8FOfUWGFE0oYJNSqp0sX51ZZ+5flV/3nS
+inJvDyFSfTsSNlgEeFb0Ek8XmFpQqFXd8O20owgkcO/XFCkovFzuPdJwQ0hxTAzU
+yOFUVc2HLxISKWJmyZ2XCoSrZgHjnOxdqY187J9Xv2T7P59H4JYvSB90iwqKLKTW
+GEVKsWU+0lbeWGwpAe46HfSg3xl/zoL62SCNsC0ruoJofprLDF0e6vxJQy9s4Dp6
+DiHunXjaGjAc2C1GAdLdkLDokENUTFp9nZJv
+-----END CERTIFICATE-----"#;
+        let key = r#"-----BEGIN PRIVATE KEY-----
+MIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQC/9a3od+IWsg6d
+bd5nHsD6IXu3LCLKpFhfQKh5xK2TifQfazRXaeTrOY/AS8XVDF3g6NSTCtW0hYI3
+ILdJfOgb7rZ1gwwJGYNkaqJQ9pmMpyk5uzEhxYi3WU7qaplp/uE80+0BveA7iUs6
+DLgim/urQ7IFjabKDtf3E5PNeYjq9rxdJ0YeyiKWmJz+YX3kETcPsUg3HePXYcDC
+cwZjn/E8AWlBNr/fOgTbZMJSlkdvW/1fc3aiU8JRZE1uAIVaXm8ql++ouU/X22HW
+OGvYORRV5axFdhoHZQvCQ0qR2E7SRreFmKm7oLeoOZ+yx+Sb6VWFS+BRhYSVooNk
+bzyJrbqtAgMBAAECggEBAJIME8KY43UtB52TZ/DBH0Wvj/bvJ5FRtMLT6NqsXvuv
+rALzh6EyOi8VXl+JxvyvKgXiX0l4pttv8ICM7aaF1/rYhg2mJNQPiz4tO02qMW0o
+CV+ZImp1Ze1Jj5cef5Z7i1bCTsJSenYRoSCLaNU8JCBLovhCq7Fz1bBwPrXIT/mj
+aoDF68eWuxefM0EiUh0xqNSF/eglyXOIt6Fz6p3gMvTKwYsSM02CXaui6rNbU5aN
+YJ5M6Sem/FqtwIyb48UHMvI26ajVwtMSiNwR2XXV6gxg8xWFpjU+Uh3u1Qxacj2K
+aW5jBFiLQegcZetGvL+z65VYV/cKHkYl4PhULep3CmkCgYEA45BpCntOVP/2ThUP
+oXTDJnRJ8YfiYgP41zPAfK8daeOCuJRNhGXUr8fI/PiAmLIRbs8hJ8TeZTa8nzSE
+0zBJ7CEbjSXbKR6UDCvm85QPGnog7fDpkjk2qcFRbXFZbolerMzHuQfUvFH/t48Q
+SScn64aSq/Ymjkz9O0jPJ4xrK7sCgYEA1/JQEkUdbFsOO/mRA+YEtS1C359UD5Au
+n413sI/D/C8dbTveQ4lNnd5s/JLZEvBCIX6+mczvm7ZAKLv4k9uYHw6mzdEQbUNR
+uf6BNbAeRUxoN90qWzSVqkK9S4vs8x3zWkREqSJeSwW7Kh2DAz8HM4u36gxQhz2V
++eHz0a1Q6LcCgYEAoQOV/y+eDjCJ81edlq0KQ9Q2Waq++IE8+fAJO2+gTUMIRFfS
+vWJb6gBfavbd7qzX/uKZ4AzBGzZuoetELDXXqDcIyodFmcOkFzSdFi3lveM6F4HF
+kove7J/3YIu6LqcOERBYJMiwsosGd7fHWytUaKbwcrIZN8iryN3MjXwifG8CgYEA
+qt0oq/wR1t2JOr0yF+KVUQGaCzSXH6VWrpoR3Rsz2EMzRm37ZHasekA2/fX3WjvO
+J5CQoUL9R7iBtXldqygyikhehTVpiPqeHMuaUu+iU/Sr9Z/CVt4ZmdkqzC7P8mF9
+Xqvro+P0tem3+Q/WzOe++/MON1s9EHUTSN+Wuw4mmasCgYBqzSZro05J6U+74g5X
+1QRl97OzlCgzaIWLHlv9nZzHivIrQxPtK1QStFiJOeQTq5XqdLywkGHWHsgBYQhl
+iama6sNZgokeRWVL1QJBaC2q0312AG8xeOZ7oWqfAtfxGpjhvNpgPJfZi8NA7+WE
+kknq2XUsBMCyIW1BqgLVEyeNxg==
+-----END PRIVATE KEY-----"#;
+        // spellchecker:on
+
+        let cert = X509::from_pem(pem.as_bytes()).unwrap();
+        let key = PKey::private_key_from_pem(key.as_bytes()).unwrap();
+
+        let name = nanoid::nanoid!(10);
+        add_self_signed_certificate(
+            name.clone(),
+            cert,
+            key,
+            (util::now().as_secs() + 1000000000) as i64,
+        );
+
+        let cert = get_self_signed_certificate(&name).unwrap();
+        assert_eq!(
+            r#"[organizationName = "mkcert development certificate", organizationalUnitName = "tree@TreeXies-MacBook-Pro.local (TreeXie)"]"#,
+            format!("{:?}", cert.x509.subject_name())
+        );
+
+        do_self_signed_certificate_validity(0).await.unwrap();
+
+        let cert = get_self_signed_certificate(&name).unwrap();
+        assert_eq!(
+            r#"[organizationName = "mkcert development certificate", organizationalUnitName = "tree@TreeXies-MacBook-Pro.local (TreeXie)"]"#,
+            format!("{:?}", cert.x509.subject_name())
+        );
+    }
 }

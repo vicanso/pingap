@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::Certificate;
+use super::{Certificate, LOG_CATEGORY};
 use crate::proxy::get_certificate_info_list;
 use crate::service::Error as ServiceError;
 use crate::service::SimpleServiceTaskFuture;
@@ -106,7 +106,7 @@ async fn do_validity_check(count: u32) -> Result<bool, ServiceError> {
     let time_offset = DEFAULT_EXPIRATION_WARNING_DAYS * SECONDS_PER_DAY;
 
     if let Err(err) = validity_check(&certificate_info_list, time_offset) {
-        error!(category = "validityChecker", error = %err);
+        error!(category = LOG_CATEGORY, task = "validityChecker", error = %err);
         webhook::send_notification(webhook::SendNotificationParams {
             level: webhook::NotificationLevel::Warn,
             category: webhook::NotificationCategory::TlsValidity,

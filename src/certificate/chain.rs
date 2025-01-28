@@ -23,7 +23,7 @@ const E6: &[u8] = include_bytes!("../assets/e6.pem");
 const R10: &[u8] = include_bytes!("../assets/r10.pem");
 const R11: &[u8] = include_bytes!("../assets/r11.pem");
 
-/// Number of days to check for certificate expiration
+/// Expiration buffer day for chain certificate
 const EXPIRATION_BUFFER_DAYS: u64 = 30;
 /// Seconds in a day
 const SECONDS_PER_DAY: u64 = 24 * 3600;
@@ -66,11 +66,48 @@ static R11_CERTIFICATE: Lazy<Option<X509>> =
 /// * `Some(X509)` if a valid certificate is found for the given name
 /// * `None` if the certificate name is invalid or the certificate is expired
 pub fn get_lets_encrypt_chain_certificate(cn: &str) -> Option<X509> {
-    match cn {
+    match cn.to_uppercase().as_str() {
         "E5" => E5_CERTIFICATE.clone(),
         "E6" => E6_CERTIFICATE.clone(),
         "R10" => R10_CERTIFICATE.clone(),
         "R11" => R11_CERTIFICATE.clone(),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_lets_encrypt_chain_certificate;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_get_lets_encrypt_chain_certificate() {
+        let e5 = get_lets_encrypt_chain_certificate("E5").unwrap();
+        assert_eq!(
+            r#"[countryName = "US", organizationName = "Let's Encrypt", commonName = "E5"]"#,
+            format!("{:?}", e5.subject_name())
+        );
+        assert_eq!("Mar 12 23:59:59 2027 GMT", e5.not_after().to_string());
+
+        let e6 = get_lets_encrypt_chain_certificate("E6").unwrap();
+        assert_eq!(
+            r#"[countryName = "US", organizationName = "Let's Encrypt", commonName = "E6"]"#,
+            format!("{:?}", e6.subject_name())
+        );
+        assert_eq!("Mar 12 23:59:59 2027 GMT", e6.not_after().to_string());
+
+        let r10 = get_lets_encrypt_chain_certificate("R10").unwrap();
+        assert_eq!(
+            r#"[countryName = "US", organizationName = "Let's Encrypt", commonName = "R10"]"#,
+            format!("{:?}", r10.subject_name())
+        );
+        assert_eq!("Mar 12 23:59:59 2027 GMT", r10.not_after().to_string());
+
+        let r11 = get_lets_encrypt_chain_certificate("R11").unwrap();
+        assert_eq!(
+            r#"[countryName = "US", organizationName = "Let's Encrypt", commonName = "R11"]"#,
+            format!("{:?}", r11.subject_name())
+        );
+        assert_eq!("Mar 12 23:59:59 2027 GMT", r11.not_after().to_string());
     }
 }
