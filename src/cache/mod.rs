@@ -25,6 +25,9 @@ mod tiny;
 
 pub static PAGE_SIZE: usize = 4096;
 
+/// Category name for cache related logging
+pub static LOG_CATEGORY: &str = "cache";
+
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("Io error: {source}"))]
@@ -86,7 +89,7 @@ pub fn get_cache_backend() -> Result<&'static HttpCache> {
             new_tiny_ufo_cache(size)
         };
         info!(
-            category = "cache",
+            category = LOG_CATEGORY,
             size = ByteSize::b(size as u64).to_string(),
             cache_type,
             "init cache backend success"

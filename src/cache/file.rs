@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::http_cache::{CacheObject, HttpCacheStats, HttpCacheStorage};
-use super::{Error, Result, PAGE_SIZE};
+use super::{Error, Result, LOG_CATEGORY, PAGE_SIZE};
 #[cfg(feature = "full")]
 use crate::state::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use crate::util;
@@ -122,6 +122,7 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
         std::fs::create_dir_all(path).map_err(|e| Error::Io { source: e })?;
     }
     info!(
+        category = LOG_CATEGORY,
         dir = params.directory,
         reading_max = params.reading_max,
         writing_max = params.writing_max,
@@ -181,7 +182,10 @@ impl HttpCacheStorage for FileCache {
         key: &str,
         namespace: &str,
     ) -> Result<Option<CacheObject>> {
-        debug!(key, namespace, "get cache from file");
+        debug!(
+            category = LOG_CATEGORY,
+            key, namespace, "get cache from file"
+        );
         // Early return if found in cache
         if let Some(cache) = &self.cache {
             if let Some(obj) = cache.get(&key.to_string()) {
@@ -214,6 +218,7 @@ impl HttpCacheStorage for FileCache {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(Error::Io { source: e }),
         }?;
+        // cache get from file, but not in tinyufo, put it to tinyufo
         if let Some(obj) = &obj {
             if let Some(cache) = &self.cache {
                 let weight = obj.get_weight();
@@ -239,7 +244,7 @@ impl HttpCacheStorage for FileCache {
         namespace: &str,
         data: CacheObject,
     ) -> Result<()> {
-        debug!(key, namespace, "put cache to file");
+        debug!(category = LOG_CATEGORY, key, namespace, "put cache to file");
         if let Some(c) = &self.cache {
             let weight = data.get_weight();
             if weight < self.cache_file_max_weight {
@@ -278,7 +283,10 @@ impl HttpCacheStorage for FileCache {
         key: &str,
         namespace: &str,
     ) -> Result<Option<CacheObject>> {
-        debug!(key, namespace, "remove cache from file");
+        debug!(
+            category = LOG_CATEGORY,
+            key, namespace, "remove cache from file"
+        );
         if let Some(c) = &self.cache {
             c.remove(&key.to_string());
         }
@@ -330,6 +338,7 @@ impl HttpCacheStorage for FileCache {
                 Err(e) => {
                     fail += 1;
                     error!(
+                        category = LOG_CATEGORY,
                         err = e.to_string(),
                         entry = entry.path().to_string_lossy().to_string(),
                         "remove cache file fail"

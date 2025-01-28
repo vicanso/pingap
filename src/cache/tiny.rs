@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::http_cache::{CacheObject, HttpCacheStorage};
-use super::Result;
+use super::{Result, LOG_CATEGORY};
 use async_trait::async_trait;
 use tinyufo::TinyUfo;
 use tracing::debug;
@@ -70,7 +70,10 @@ impl HttpCacheStorage for TinyUfoCache {
         key: &str,
         namespace: &str,
     ) -> Result<Option<CacheObject>> {
-        debug!(key, namespace, "getting cache entry from TinyUfo storage");
+        debug!(
+            category = LOG_CATEGORY,
+            key, namespace, "getting cache entry from TinyUfo storage"
+        );
         Ok(self.cache.get(&key.to_string()))
     }
 
@@ -93,6 +96,7 @@ impl HttpCacheStorage for TinyUfoCache {
     ) -> Result<()> {
         let weight = data.get_weight();
         debug!(
+            category = LOG_CATEGORY,
             key,
             namespace,
             weight = weight,
@@ -117,7 +121,10 @@ impl HttpCacheStorage for TinyUfoCache {
         key: &str,
         namespace: &str,
     ) -> Result<Option<CacheObject>> {
-        debug!(key, namespace, "removing cache entry from TinyUfo storage");
+        debug!(
+            category = LOG_CATEGORY,
+            key, namespace, "removing cache entry from TinyUfo storage"
+        );
         Ok(self.cache.remove(&key.to_string()))
     }
 }
