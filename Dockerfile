@@ -18,6 +18,7 @@ RUN cd /pingap \
 
 FROM ubuntu:24.04
 
+COPY --from=builder /etc/ssl /etc/ssl
 COPY --from=builder /pingap/target/release/pingap /usr/local/bin/pingap
 COPY --from=builder /pingap/entrypoint.sh /entrypoint.sh
 
