@@ -77,7 +77,7 @@ pub fn get_cache_backend() -> Result<&'static HttpCache> {
         } else {
             // max memory
             let max_memory = if let Some(value) = memory_stats() {
-                value.physical_mem / 2
+                value.physical_mem * 1024 / 2
             } else {
                 ByteSize::gb(4).as_u64() as usize
             };

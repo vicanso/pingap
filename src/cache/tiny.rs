@@ -38,7 +38,7 @@ impl TinyUfoCache {
     /// * `estimated_size` - Estimated number of items for internal capacity planning
     pub fn new(total_weight_limit: usize, estimated_size: usize) -> Self {
         Self {
-            cache: TinyUfo::new(total_weight_limit, estimated_size),
+            cache: TinyUfo::new(total_weight_limit, estimated_size / 32),
         }
     }
 }
