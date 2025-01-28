@@ -181,14 +181,29 @@ async fn handle_successful_renewal(domains: &[String], conf: &PingapConf) {
 /// and regenerate if the certificate is invalid or will be expired.
 pub fn new_lets_encrypt_service(
     storage: &'static (dyn ConfigStorage + Sync + Send),
-    params: Vec<(String, Vec<String>)>,
 ) -> (String, SimpleServiceTaskFuture) {
     let task: SimpleServiceTaskFuture = Box::new(move |count: u32| {
         Box::pin({
-            let value = params.clone();
             async move {
-                let value = value.clone();
-                do_update_certificates(count, storage, &value).await
+                let mut params = vec![];
+                for (name, certificate) in
+                    get_current_config().certificates.iter()
+                {
+                    let acme = certificate.acme.clone().unwrap_or_default();
+                    let domains =
+                        certificate.domains.clone().unwrap_or_default();
+                    if acme.is_empty() || domains.is_empty() {
+                        continue;
+                    }
+                    params.push((
+                        name.to_string(),
+                        domains
+                            .split(',')
+                            .map(|item| item.to_string())
+                            .collect(),
+                    ));
+                }
+                do_update_certificates(count, storage, &params).await
             }
         })
     });

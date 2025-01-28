@@ -304,6 +304,13 @@ fn parse_arguments() -> Args {
         args.cp = true;
     }
 
+    if args.log.is_none() {
+        let log = get_from_env("log");
+        if !log.is_empty() {
+            args.log = Some(log);
+        }
+    }
+
     if !args.autorestart && !get_from_env("autorestart").is_empty() {
         args.autorestart = true;
     }
@@ -485,7 +492,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let mut enabled_lets_encrypt = false;
     let mut exits_80_server = false;
     for serve_conf in server_conf_list.iter() {
         if serve_conf.addr.ends_with(":80") {
@@ -513,29 +519,18 @@ fn run() -> Result<(), Box<dyn Error>> {
         simple_tasks.push(compression_task);
     }
 
-    let mut lets_encrypt_params = vec![];
-    for (name, certificate) in certificates.iter() {
+    let enabled_lets_encrypt = certificates.iter().any(|(_, certificate)| {
         let acme = certificate.acme.clone().unwrap_or_default();
         let domains = certificate.domains.clone().unwrap_or_default();
-        if acme.is_empty() || domains.is_empty() {
-            continue;
-        }
-        enabled_lets_encrypt = true;
-        // only a single instance of acme is running
-        if std::env::var("PINGAP_DISABLE_ACME")
-            .unwrap_or_default()
-            .is_empty()
-        {
-            lets_encrypt_params.push((
-                name.to_string(),
-                domains.split(',').map(|item| item.to_string()).collect(),
-            ));
-        }
-    }
-    if !lets_encrypt_params.is_empty() {
+        !acme.is_empty() && !domains.is_empty()
+    });
+
+    if !std::env::var("PINGAP_DISABLE_ACME")
+        .unwrap_or_default()
+        .is_empty()
+    {
         if let Some(storage) = get_config_storage() {
-            simple_tasks
-                .push(new_lets_encrypt_service(storage, lets_encrypt_params));
+            simple_tasks.push(new_lets_encrypt_service(storage));
         }
     }
 
