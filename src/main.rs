@@ -525,7 +525,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         !acme.is_empty() && !domains.is_empty()
     });
 
-    if !std::env::var("PINGAP_DISABLE_ACME")
+    if std::env::var("PINGAP_DISABLE_ACME")
         .unwrap_or_default()
         .is_empty()
     {
