@@ -233,7 +233,7 @@ export default function Basic() {
   const schema = z.object({
     name: z.string().optional(),
     threads: newZodNumber().optional(),
-    log_level: z.string().optional(),
+    log_level: z.string().optional().or(z.null()),
     log_buffered_size: newZodBytes().optional(),
     grace_period: newZodDuration().optional(),
     graceful_shutdown_timeout: newZodDuration().optional(),
