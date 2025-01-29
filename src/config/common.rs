@@ -211,10 +211,12 @@ impl CertificateConf {
     /// - Validates certificate chain can be parsed if present
     pub fn validate(&self) -> Result<()> {
         // Validate private key
-        if let Some(value) = &self.tls_key {
-            let buf = util::convert_pem(value).map_err(|e| Error::Invalid {
-                message: e.to_string(),
-            })?;
+        let tls_key = self.tls_key.clone().unwrap_or_default();
+        if !tls_key.is_empty() {
+            let buf =
+                util::convert_pem(&tls_key).map_err(|e| Error::Invalid {
+                    message: e.to_string(),
+                })?;
             let mut key = Cursor::new(buf);
             let _ = rustls_pemfile::private_key(&mut key).map_err(|e| {
                 Error::Invalid {
@@ -224,13 +226,15 @@ impl CertificateConf {
         }
 
         // Validate main certificate
-        if let Some(value) = &self.tls_cert {
-            validate_cert(value)?;
+        let tls_cert = self.tls_cert.clone().unwrap_or_default();
+        if !tls_cert.is_empty() {
+            validate_cert(&tls_cert)?;
         }
 
         // Validate certificate chain
-        if let Some(value) = &self.tls_chain {
-            validate_cert(value)?;
+        let tls_chain = self.tls_chain.clone().unwrap_or_default();
+        if !tls_chain.is_empty() {
+            validate_cert(&tls_chain)?;
         }
         Ok(())
     }
