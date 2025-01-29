@@ -80,6 +80,7 @@ export interface ExFormItem {
   cols?: number[];
   separator?: string;
   notTrim?: boolean;
+  nullAsEmpty?: boolean;
   defaultValue: string[] | string | number | boolean | null | undefined;
 }
 
@@ -345,9 +346,12 @@ export function ExForm({
                         readOnly={item.readOnly}
                         defaultValue={(item.defaultValue as string) || ""}
                         onChange={(e) => {
-                          let value = e.target.value;
+                          let value: string | null = e.target.value;
                           if (!item.notTrim) {
                             value = value.trim();
+                          }
+                          if (item.nullAsEmpty && !value) {
+                            value = null;
                           }
                           setUpdated(item.name, value);
                         }}

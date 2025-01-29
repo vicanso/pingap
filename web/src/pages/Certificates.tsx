@@ -78,6 +78,7 @@ export default function Certificates() {
       span: 6,
       category: ExFormItemCategory.TEXTAREA,
       rows: countLines(certificateConfig.tls_cert || ""),
+      nullAsEmpty: true,
     },
     {
       name: "tls_key",
@@ -87,6 +88,7 @@ export default function Certificates() {
       span: 6,
       category: ExFormItemCategory.TEXTAREA,
       rows: countLines(certificateConfig.tls_key || ""),
+      nullAsEmpty: true,
     },
     {
       name: "tls_chain",
@@ -95,6 +97,7 @@ export default function Certificates() {
       defaultValue: certificateConfig.tls_chain,
       span: 6,
       category: ExFormItemCategory.TEXTAREA,
+      nullAsEmpty: true,
     },
     {
       name: "domains",

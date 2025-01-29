@@ -40,7 +40,7 @@ export default function Home() {
       const infos = await getCertificateInfos();
       const formatDate = (value: number) => {
         const date = new Date(value * 1000);
-        let month = `${date.getMonth()}`;
+        let month = `${date.getMonth() + 1}`;
         if (month.length === 1) {
           month = `0${month}`;
         }
