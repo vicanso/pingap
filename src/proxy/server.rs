@@ -91,7 +91,7 @@ type ServerLocations = AHashMap<String, Arc<Vec<String>>>;
 
 /// Global static map storing server location configurations.
 /// Uses ArcSwap for thread-safe atomic updates without locking.
-static LOCATION_MAP: Lazy<ArcSwap<ServerLocations>> =
+static SERVER_LOCATIONS_MAP: Lazy<ArcSwap<ServerLocations>> =
     Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
 
 /// Initializes server locations with their associated configurations.
@@ -133,47 +133,82 @@ pub fn try_init_server_locations(
             server_locations.insert(name.to_string(), Arc::new(items));
         }
     }
-    LOCATION_MAP.store(Arc::new(server_locations));
+    SERVER_LOCATIONS_MAP.store(Arc::new(server_locations));
     Ok(updated_servers)
 }
 
 #[inline]
 fn get_server_locations(name: &str) -> Option<Arc<Vec<String>>> {
-    LOCATION_MAP.load().get(name).cloned()
+    SERVER_LOCATIONS_MAP.load().get(name).cloned()
 }
 
-/// Core server implementation that handles HTTP proxy functionality.
-/// Manages connection lifecycle, request/response processing, and caching.
+/// Core HTTP proxy server implementation that handles request processing, caching, and monitoring.
+/// Manages server configuration, connection lifecycle, and integration with various modules.
 pub struct Server {
-    /// Server name identifier
+    /// Server name identifier used for logging and metrics
     name: String,
-    /// Whether this is an admin server instance
+
+    /// Whether this instance serves admin endpoints and functionality
     admin: bool,
-    /// Listening address(es), comma-separated for multiple
+
+    /// Comma-separated list of listening addresses (e.g. "127.0.0.1:8080,127.0.0.1:8081")
     addr: String,
-    /// Counter for total accepted connections since server start
+
+    /// Counter tracking total number of accepted connections since server start
     accepted: AtomicU64,
-    /// Counter for currently active request processing
+
+    /// Counter tracking number of currently active request processing operations
     processing: AtomicI32,
-    /// Optional access log parser for customized logging
+
+    /// Optional parser for customizing access log format and output
     log_parser: Option<Parser>,
+
+    /// HTML/JSON template used for rendering error responses
     error_template: String,
+
+    /// Number of worker threads for request processing. None uses default.
     threads: Option<usize>,
+
+    /// OpenSSL cipher list string for TLS connections
     tls_cipher_list: Option<String>,
+
+    /// TLS 1.3 cipher suites configuration
     tls_ciphersuites: Option<String>,
+
+    /// Minimum TLS protocol version to accept (e.g. "TLSv1.2")
     tls_min_version: Option<String>,
+
+    /// Maximum TLS protocol version to accept
     tls_max_version: Option<String>,
+
+    /// Whether HTTP/2 protocol is enabled
     enabled_h2: bool,
+
+    /// Whether Let's Encrypt certificate automation is enabled
     lets_encrypt_enabled: bool,
+
+    /// Whether to use global certificate store for TLS
     global_certificates: bool,
+
+    /// TCP socket configuration options (keepalive, TCP fastopen etc)
     tcp_socket_options: Option<TcpSocketOptions>,
+
+    /// Prometheus metrics registry when metrics collection is enabled
     #[cfg(feature = "full")]
     prometheus: Option<Arc<Prometheus>>,
+
+    /// Whether to push metrics to remote Prometheus pushgateway
     prometheus_push_mode: bool,
+
+    /// Prometheus metrics endpoint path or push gateway URL
     #[cfg(feature = "full")]
     prometheus_metrics: String,
+
+    /// Whether OpenTelemetry tracing is enabled
     #[cfg(feature = "full")]
     enabled_otel: bool,
+
+    /// List of enabled modules (e.g. "grpc-web")
     modules: Option<Vec<String>>,
 }
 
@@ -544,10 +579,9 @@ impl ProxyHttp for Server {
         let host = util::get_host(header).unwrap_or_default();
         let path = header.uri.path();
 
-        // enable open telemtery
-
         #[cfg(feature = "full")]
         if self.enabled_otel {
+            // enable open telemetry
             if let Some(tracer) = otel::new_tracer(&self.name) {
                 let cx = global::get_text_map_propagator(|propagator| {
                     propagator.extract(&HeaderExtractor(&header.headers))
@@ -584,7 +618,7 @@ impl ProxyHttp for Server {
                 break;
             }
         }
-        // set perometheus stats
+        // set prometheus stats
         #[cfg(feature = "full")]
         if let Some(prom) = &self.prometheus {
             let location_name =
@@ -598,8 +632,8 @@ impl ProxyHttp for Server {
                 .map_err(|e| util::new_internal_error(413, e.to_string()))?;
 
             if location.support_grpc_web() {
-                // Initialize gRPC module for this request
-                let grpc = session
+                // Initialize grpc web module for this request
+                let grpc_web = session
                     .downstream_modules_ctx
                     .get_mut::<GrpcWebBridge>()
                     .ok_or_else(|| {
@@ -609,7 +643,7 @@ impl ProxyHttp for Server {
                                 .to_string(),
                         )
                     })?;
-                grpc.init();
+                grpc_web.init();
             }
 
             match location.add_processing() {
