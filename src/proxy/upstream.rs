@@ -472,12 +472,10 @@ impl Upstream {
             } else {
                 self.sni.clone()
             };
+            // use default port for transparent http/https
+            let port = if self.tls { 443 } else { 80 };
             // Create peer with host:port, TLS settings, and SNI
-            Some(HttpPeer::new(
-                format!("{host}:{}", ctx.server_port.unwrap_or(80)),
-                self.tls,
-                sni,
-            ))
+            Some(HttpPeer::new(format!("{host}:{port}"), self.tls, sni))
         } else {
             // For load balanced modes, create peer from selected backend
             upstream.map(|upstream| {
