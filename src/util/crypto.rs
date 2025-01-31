@@ -102,3 +102,21 @@ pub fn aes_decrypt(key: &str, data: &str) -> Result<String> {
         .unwrap_or_default()
         .to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{aes_decrypt, aes_encrypt};
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_aes_encrypt() {
+        let key = "12345678901234567890123456789012";
+        let data = "hello";
+        let result = aes_encrypt(key, data);
+        assert_eq!(result.is_ok(), true);
+
+        let result = aes_decrypt(key, &result.unwrap());
+        assert_eq!(result.is_ok(), true);
+        assert_eq!(result.unwrap(), data);
+    }
+}

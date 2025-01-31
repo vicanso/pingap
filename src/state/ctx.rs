@@ -555,4 +555,15 @@ mod tests {
                 .ends_with(b"ms")
         );
     }
+
+    #[test]
+    fn test_add_variable() {
+        let mut ctx = State::new();
+        ctx.add_variable("key", "value");
+
+        assert_eq!(
+            ctx.variables.unwrap().get("$key"),
+            Some(&"value".to_string())
+        );
+    }
 }
