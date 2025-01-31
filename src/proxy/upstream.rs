@@ -285,7 +285,7 @@ fn new_load_balancer(
     if conf.addrs.is_empty() {
         return Err(Error::Common {
             category: "new_upstream".to_string(),
-            message: "Upstream addrs is empty".to_string(),
+            message: "upstream addrs is empty".to_string(),
         });
     }
 
@@ -576,11 +576,11 @@ pub fn get_upstreams_processing_connected(
 }
 
 fn new_ahash_upstreams(
-    confs: &HashMap<String, UpstreamConf>,
+    upstream_configs: &HashMap<String, UpstreamConf>,
 ) -> Result<(Upstreams, Vec<String>)> {
     let mut upstreams = AHashMap::new();
     let mut updated_upstreams = vec![];
-    for (name, conf) in confs.iter() {
+    for (name, conf) in upstream_configs.iter() {
         let key = conf.hash_key();
         if let Some(found) = get_upstream(name) {
             // not modified
@@ -596,8 +596,10 @@ fn new_ahash_upstreams(
     Ok((upstreams, updated_upstreams))
 }
 
-pub fn try_init_upstreams(confs: &HashMap<String, UpstreamConf>) -> Result<()> {
-    let (upstreams, _) = new_ahash_upstreams(confs)?;
+pub fn try_init_upstreams(
+    upstream_configs: &HashMap<String, UpstreamConf>,
+) -> Result<()> {
+    let (upstreams, _) = new_ahash_upstreams(upstream_configs)?;
     UPSTREAM_MAP.store(Arc::new(upstreams));
     Ok(())
 }
@@ -624,9 +626,9 @@ async fn run_health_check(up: &Arc<Upstream>) -> Result<()> {
 }
 
 pub async fn try_update_upstreams(
-    confs: &HashMap<String, UpstreamConf>,
+    upstream_configs: &HashMap<String, UpstreamConf>,
 ) -> Result<Vec<String>> {
-    let (upstreams, updated_upstreams) = new_ahash_upstreams(confs)?;
+    let (upstreams, updated_upstreams) = new_ahash_upstreams(upstream_configs)?;
     for (name, up) in upstreams.iter() {
         // no need to run health check if not new upstream
         if !updated_upstreams.contains(name) {
@@ -825,7 +827,7 @@ mod tests {
             },
         );
         assert_eq!(
-            "Common error, category: new_upstream, Upstream addrs is empty",
+            "Common error, category: new_upstream, upstream addrs is empty",
             result.err().unwrap().to_string()
         );
 

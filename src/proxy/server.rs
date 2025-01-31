@@ -597,7 +597,7 @@ impl ProxyHttp for Server {
                 .validate_content_length(header)
                 .map_err(|e| util::new_internal_error(413, e.to_string()))?;
 
-            if location.enable_grpc() {
+            if location.support_grpc_web() {
                 // Initialize gRPC module for this request
                 let grpc = session
                     .downstream_modules_ctx

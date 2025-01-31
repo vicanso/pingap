@@ -93,14 +93,40 @@ pub struct ServerConf {
 
 impl fmt::Display for ServerConf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "name:{} ", self.name)?;
-        write!(f, "addr:{} ", self.addr)?;
-        write!(f, "locations:{:?} ", self.locations)?;
-        write!(f, "threads:{:?} ", self.threads)?;
-        write!(f, "{} ", self.global_certificates)?;
-        write!(f, "tcp_keepalive:{:?} ", self.tcp_keepalive)?;
-        write!(f, "tcp_fastopen:{:?} ", self.tcp_fastopen)?;
-        write!(f, "http2:{}", self.enabled_h2)
+        write!(f, "ServerConf {{")?;
+        write!(f, " name: {}, ", self.name)?;
+        write!(f, "admin: {}, ", self.admin)?;
+        write!(f, "addr: {}, ", self.addr)?;
+        write!(f, "access_log: {:?}, ", self.access_log)?;
+        write!(f, "locations: {:?}, ", self.locations)?;
+        if let Some(ref ciphers) = self.tls_cipher_list {
+            write!(f, "tls_cipher_list: {}, ", ciphers)?;
+        }
+        if let Some(ref suites) = self.tls_ciphersuites {
+            write!(f, "tls_ciphersuites: {}, ", suites)?;
+        }
+        if let Some(ref min_ver) = self.tls_min_version {
+            write!(f, "tls_min_version: {}, ", min_ver)?;
+        }
+        if let Some(ref max_ver) = self.tls_max_version {
+            write!(f, "tls_max_version: {}, ", max_ver)?;
+        }
+        write!(f, "threads: {:?}, ", self.threads)?;
+        write!(f, "global_certificates: {}, ", self.global_certificates)?;
+        write!(f, "enabled_h2: {}, ", self.enabled_h2)?;
+        write!(f, "tcp_keepalive: {:?}, ", self.tcp_keepalive)?;
+        write!(f, "tcp_fastopen: {:?}, ", self.tcp_fastopen)?;
+        if let Some(ref metrics) = self.prometheus_metrics {
+            write!(f, "prometheus_metrics: {}, ", metrics)?;
+        }
+        if let Some(ref exporter) = self.otlp_exporter {
+            write!(f, "otlp_exporter: {}, ", exporter)?;
+        }
+        if let Some(ref modules) = self.modules {
+            write!(f, "modules: {:?}, ", modules)?;
+        }
+        write!(f, "error_template: {} }}", self.error_template)?;
+        Ok(())
     }
 }
 
@@ -197,7 +223,7 @@ mod tests {
         };
 
         assert_eq!(
-            r#"name:pingap addr:127.0.0.1:3000,127.0.0.1:3001 locations:["charts-location"] threads:Some(4) false tcp_keepalive:Some(TcpKeepalive { idle: 10s, interval: 5s, count: 10 }) tcp_fastopen:Some(10) http2:true"#,
+            r#"ServerConf { name: pingap, admin: false, addr: 127.0.0.1:3000,127.0.0.1:3001, access_log: Some("combined"), locations: ["charts-location"], threads: Some(4), global_certificates: false, enabled_h2: true, tcp_keepalive: Some(TcpKeepalive { idle: 10s, interval: 5s, count: 10 }), tcp_fastopen: Some(10), error_template: <html></html> }"#,
             conf.to_string()
         );
     }

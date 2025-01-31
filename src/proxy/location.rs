@@ -336,10 +336,25 @@ impl Location {
 
         Ok(location)
     }
+
+    /// Returns whether gRPC-Web protocol support is enabled for this location
+    /// When enabled, the proxy will handle gRPC-Web requests and convert them to regular gRPC
     #[inline]
-    pub fn enable_grpc(&self) -> bool {
+    pub fn support_grpc_web(&self) -> bool {
         self.grpc_web
     }
+
+    /// Validates that the request's Content-Length header does not exceed the configured maximum
+    ///
+    /// # Arguments
+    /// * `header` - The HTTP request header to validate
+    ///
+    /// # Returns
+    /// * `Result<()>` - Ok if validation passes, Error::BodyTooLarge if content length exceeds limit
+    ///
+    /// # Notes
+    /// - Returns Ok if client_max_body_size is 0 (unlimited)
+    /// - Uses get_content_length() helper to parse the Content-Length header
     #[inline]
     pub fn validate_content_length(
         &self,
@@ -358,64 +373,7 @@ impl Location {
 
         Ok(())
     }
-    /// Add processing and accepted count of location.
-    #[inline]
-    pub fn add_processing(&self) -> Result<(u64, i32)> {
-        let accepted = self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
-        let processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
-        if self.max_processing != 0 && processing > self.max_processing {
-            return Err(Error::TooManyRequest {
-                max: self.max_processing,
-            });
-        }
-        Ok((accepted, processing))
-    }
-    /// Sub processing count of location.
-    #[inline]
-    pub fn sub_processing(&self) {
-        self.processing.fetch_sub(1, Ordering::Relaxed);
-    }
-    /// Checks if a request matches this location's path and host rules
-    /// Returns (matched, variables) where variables contains any regex captures
-    #[inline]
-    pub fn matched(
-        &self,
-        host: &str,
-        path: &str,
-    ) -> (bool, Option<Vec<(String, String)>>) {
-        if !self.path.is_empty() {
-            let matched = match &self.path_selector {
-                PathSelector::EqualPath(EqualPath { value }) => value == path,
-                PathSelector::RegexPath(RegexPath { value }) => {
-                    value.is_match(path)
-                },
-                PathSelector::PrefixPath(PrefixPath { value }) => {
-                    path.starts_with(value)
-                },
-                PathSelector::Empty => true,
-            };
-            if !matched {
-                return (false, None);
-            }
-        }
 
-        if self.hosts.is_empty() {
-            return (true, None);
-        }
-
-        let mut variables = None;
-        let matched = self.hosts.iter().any(|item| match item {
-            HostSelector::RegexHost(RegexHost { value }) => {
-                let (matched, value) = value.captures(host);
-                if matched {
-                    variables = value;
-                }
-                matched
-            },
-            HostSelector::EqualHost(EqualHost { value }) => value == host,
-        });
-        (matched, variables)
-    }
     /// Sets the maximum allowed size of the client request body.
     /// If the size in a request exceeds the configured value, the 413 (Request Entity Too Large) error
     /// is returned to the client.
@@ -431,8 +389,132 @@ impl Location {
         }
         Ok(())
     }
-    /// Applies URL rewriting rules if configured
-    /// Returns true if rewriting was performed
+
+    /// Increments the processing and accepted request counters for this location.
+    ///
+    /// This method is called when a new request starts being processed by this location.
+    /// It performs two atomic operations:
+    /// 1. Increments the total accepted requests counter
+    /// 2. Increments the currently processing requests counter
+    ///
+    /// # Returns
+    /// * `Result<(u64, i32)>` - A tuple containing:
+    ///   - The new total number of accepted requests (u64)
+    ///   - The new number of currently processing requests (i32)
+    ///
+    /// # Errors
+    /// Returns `Error::TooManyRequest` if the number of currently processing requests
+    /// would exceed the configured `max_processing` limit (when non-zero).
+    #[inline]
+    pub fn add_processing(&self) -> Result<(u64, i32)> {
+        let accepted = self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
+        let processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
+        if self.max_processing != 0 && processing > self.max_processing {
+            return Err(Error::TooManyRequest {
+                max: self.max_processing,
+            });
+        }
+        Ok((accepted, processing))
+    }
+
+    /// Decrements the processing request counter for this location.
+    ///
+    /// This method is called when a request finishes being processed.
+    /// It performs an atomic decrement of the currently processing requests counter.
+    #[inline]
+    pub fn sub_processing(&self) {
+        self.processing.fetch_sub(1, Ordering::Relaxed);
+    }
+
+    /// Checks if a request matches this location's path and host rules
+    /// Returns a tuple containing:
+    /// - bool: Whether the request matched both path and host rules
+    /// - Option<Vec<(String, String)>>: Any captured variables from regex host matching
+    #[inline]
+    pub fn matched(
+        &self,
+        host: &str,
+        path: &str,
+    ) -> (bool, Option<Vec<(String, String)>>) {
+        // First check path matching if a path pattern is configured
+        if !self.path.is_empty() {
+            let matched = match &self.path_selector {
+                // For exact path matching, compare path strings directly
+                PathSelector::EqualPath(EqualPath { value }) => value == path,
+                // For regex path matching, use regex is_match
+                PathSelector::RegexPath(RegexPath { value }) => {
+                    value.is_match(path)
+                },
+                // For prefix path matching, check if path starts with prefix
+                PathSelector::PrefixPath(PrefixPath { value }) => {
+                    path.starts_with(value)
+                },
+                // Empty path selector matches everything
+                PathSelector::Empty => true,
+            };
+            // If path doesn't match, return false early
+            if !matched {
+                return (false, None);
+            }
+        }
+
+        // If no host patterns configured, path match is sufficient
+        if self.hosts.is_empty() {
+            return (true, None);
+        }
+
+        // Check host matching against configured host patterns
+        let mut variables = None;
+        let matched = self.hosts.iter().any(|item| match item {
+            // For regex host matching:
+            // - Attempt to capture variables from host string
+            // - Store captures in variables if match successful
+            HostSelector::RegexHost(RegexHost { value }) => {
+                let (matched, value) = value.captures(host);
+                if matched {
+                    variables = value;
+                }
+                matched
+            },
+            // For exact host matching:
+            // - Empty host pattern matches everything
+            // - Otherwise compare host strings directly
+            HostSelector::EqualHost(EqualHost { value }) => {
+                if value.is_empty() {
+                    return true;
+                }
+                value == host
+            },
+        });
+
+        // Return whether both path and host matched, along with any captured variables
+        (matched, variables)
+    }
+
+    /// Applies URL rewriting rules if configured for this location.
+    ///
+    /// This method performs path rewriting based on regex patterns and replacement rules.
+    /// It supports variable interpolation from captured values in the host matching.
+    ///
+    /// # Arguments
+    /// * `header` - Mutable reference to the request header containing the URI to rewrite
+    /// * `variables` - Optional map of variables captured from host matching that can be interpolated
+    ///                into the replacement value
+    ///
+    /// # Returns
+    /// * `bool` - Returns true if the path was rewritten, false if no rewriting was performed
+    ///
+    /// # Examples
+    /// ```
+    /// // Configuration example:
+    /// // rewrite: "^/users/(.*)$ /api/users/$1"
+    /// // This would rewrite "/users/123" to "/api/users/123"
+    /// ```
+    ///
+    /// # Notes
+    /// - Preserves query parameters when rewriting the path
+    /// - Logs debug information about path rewrites
+    /// - Logs errors if the new path cannot be parsed as a valid URI
     #[inline]
     pub fn rewrite(
         &self,
@@ -440,21 +522,24 @@ impl Location {
         variables: Option<&AHashMap<String, String>>,
     ) -> bool {
         if let Some((re, value)) = &self.reg_rewrite {
-            let mut replae_value = value.to_string();
+            let mut replace_value = value.to_string();
+            // replace variables for rewrite value
             if let Some(variables) = variables {
                 for (k, v) in variables.iter() {
-                    replae_value = replae_value.replace(k, v);
+                    replace_value = replace_value.replace(k, v);
                 }
             }
             let path = header.uri.path();
-            let mut new_path = re.replace(path, replae_value).to_string();
+            let mut new_path = re.replace(path, replace_value).to_string();
             if path == new_path {
                 return false;
             }
+            // preserve query parameters
             if let Some(query) = header.uri.query() {
                 new_path = format!("{new_path}?{query}");
             }
             debug!(category = LOG_CATEGORY, new_path, "rewrite path");
+            // set new uri
             if let Err(e) =
                 new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri))
             {
@@ -598,11 +683,11 @@ pub fn get_locations_processing() -> HashMap<String, i32> {
 /// Initializes or updates the global location configurations
 /// Returns list of location names that were updated
 pub fn try_init_locations(
-    confs: &HashMap<String, LocationConf>,
+    location_configs: &HashMap<String, LocationConf>,
 ) -> Result<Vec<String>> {
     let mut locations = AHashMap::new();
     let mut updated_locations = vec![];
-    for (name, conf) in confs.iter() {
+    for (name, conf) in location_configs.iter() {
         if let Some(found) = get_location(name) {
             if found.key == conf.hash_key() {
                 locations.insert(name.to_string(), found);
