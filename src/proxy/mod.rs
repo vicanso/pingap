@@ -19,6 +19,8 @@ mod server;
 mod server_conf;
 mod upstream;
 
+pub static LOG_CATEGORY: &str = "proxy";
+
 // for bench
 #[allow(unused_imports)]
 pub use location::Location;

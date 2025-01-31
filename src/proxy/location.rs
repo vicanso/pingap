@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::LOG_CATEGORY;
 use crate::config::{LocationConf, PluginStep};
 use crate::http_extra::{convert_header_value, convert_headers, HttpHeader};
 use crate::plugin::get_plugin;
@@ -327,7 +328,11 @@ impl Location {
                 .enable_reverse_proxy_headers
                 .unwrap_or_default(),
         };
-        debug!("create a new location, {location:?}");
+        debug!(
+            category = LOG_CATEGORY,
+            location = format!("{location:?}"),
+            "create a new location"
+        );
 
         Ok(location)
     }
@@ -449,15 +454,11 @@ impl Location {
             if let Some(query) = header.uri.query() {
                 new_path = format!("{new_path}?{query}");
             }
-            debug!(new_path, "rewrite path");
+            debug!(category = LOG_CATEGORY, new_path, "rewrite path");
             if let Err(e) =
                 new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri))
             {
-                error!(
-                    error = e.to_string(),
-                    location = self.name,
-                    "new path parse fail"
-                );
+                error!(category = LOG_CATEGORY, error = %e, location = self.name, "new path parse fail");
             }
             return true;
         }
@@ -516,7 +517,12 @@ impl Location {
 
         for name in plugins.iter() {
             if let Some(plugin) = get_plugin(name) {
-                debug!(name, step = step.to_string(), "handle request plugin");
+                debug!(
+                    category = LOG_CATEGORY,
+                    name,
+                    step = step.to_string(),
+                    "handle request plugin"
+                );
                 let result = plugin.handle_request(step, session, ctx).await?;
                 if let Some(resp) = result {
                     // ignore http response status >= 900
@@ -544,7 +550,12 @@ impl Location {
         };
         for name in plugins.iter() {
             if let Some(plugin) = get_plugin(name) {
-                debug!(name, step = step.to_string(), "handle response plugin");
+                debug!(
+                    category = LOG_CATEGORY,
+                    name,
+                    step = step.to_string(),
+                    "handle response plugin"
+                );
                 plugin
                     .handle_response(step, session, ctx, upstream_response)
                     .await?;

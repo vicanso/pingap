@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::LOG_CATEGORY;
 use crate::config::UpstreamConf;
 use crate::discovery::{
     is_dns_discovery, is_docker_discovery, is_static_discovery,
@@ -42,7 +43,6 @@ use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tracing::{debug, error, info};
-static LOG_CATEGORY: &str = "upstream";
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -79,11 +79,19 @@ impl UpstreamPeerTracer {
 
 impl Tracing for UpstreamPeerTracer {
     fn on_connected(&self) {
-        debug!(name = self.name, "upstream peer connected");
+        debug!(
+            category = LOG_CATEGORY,
+            name = self.name,
+            "upstream peer connected"
+        );
         self.connected.fetch_add(1, Ordering::Relaxed);
     }
     fn on_disconnected(&self) {
-        debug!(name = self.name, "upstream peer disconnected");
+        debug!(
+            category = LOG_CATEGORY,
+            name = self.name,
+            "upstream peer disconnected"
+        );
         self.connected.fetch_sub(1, Ordering::Relaxed);
     }
     fn boxed_clone(&self) -> Box<dyn Tracing> {
@@ -411,7 +419,11 @@ impl Upstream {
             tracer,
             processing: AtomicI32::new(0),
         };
-        debug!(name = up.name, "new upstream: {up:?}");
+        debug!(
+            category = LOG_CATEGORY,
+            name = up.name,
+            "new upstream: {up:?}"
+        );
         Ok(up)
     }
 
@@ -622,7 +634,8 @@ pub async fn try_update_upstreams(
         }
         if let Err(e) = run_health_check(up).await {
             error!(
-                error = e.to_string(),
+                category = LOG_CATEGORY,
+                error = %e,
                 upstream = name,
                 "update upstream health check fail"
             );
@@ -699,11 +712,16 @@ impl ServiceTask for HealthCheckTask {
                     };
                     if let Err(e) = result {
                         error!(
-                            error = e.to_string(),
-                            name, "update backends fail"
+                            category = LOG_CATEGORY,
+                            error = %e,
+                            name,
+                            "update backends fail"
                         )
                     } else {
-                        debug!(name, "update backend success",);
+                        debug!(
+                            category = LOG_CATEGORY,
+                            name, "update backend success"
+                        );
                     }
                 }
 
