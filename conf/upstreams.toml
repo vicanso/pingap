@@ -9,7 +9,7 @@
 #          "127.0.0.1:5001 10" has weight 10
 addrs = ["127.0.0.1:5000", "127.0.0.1:5001 10"]
 
-# Service discovery, support "dns", "docker", "common", "transparent".
+# Service discovery, support "dns", "docker", "static", "transparent".
 # Default `none`
 # discovery = ""
 

@@ -15,8 +15,8 @@
 use crate::config::UpstreamConf;
 use crate::discovery::{
     is_dns_discovery, is_docker_discovery, is_static_discovery,
-    new_common_discover_backends, new_dns_discover_backends,
-    new_docker_discover_backends, TRANSPARENT_DISCOVERY,
+    new_dns_discover_backends, new_docker_discover_backends,
+    new_static_discovery, TRANSPARENT_DISCOVERY,
 };
 use crate::health::new_health_check;
 use crate::service::{CommonServiceTask, ServiceTask};
@@ -185,7 +185,7 @@ fn new_backends(
             "docker_discovery",
         ),
         _ => (
-            new_common_discover_backends(addrs, tls, ipv4_only),
+            new_static_discovery(addrs, tls, ipv4_only),
             "static_discovery",
         ),
     };

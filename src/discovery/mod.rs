@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::util;
 use hickory_resolver::error::ResolveError;
 use snafu::Snafu;
 
@@ -82,14 +83,33 @@ pub(crate) fn format_addrs(addrs: &[String], tls: bool) -> Vec<Addr> {
 
 pub const DNS_DISCOVERY: &str = "dns";
 pub const DOCKER_DISCOVERY: &str = "docker";
-pub const COMMON_DISCOVERY: &str = "common";
+pub const STATIC_DISCOVERY: &str = "static";
 pub const TRANSPARENT_DISCOVERY: &str = "transparent";
 
 mod common;
 mod dns;
 mod docker;
-pub use common::{is_static_discovery, new_common_discover_backends};
+pub use common::{is_static_discovery, new_static_discovery};
 pub use dns::{is_dns_discovery, new_dns_discover_backends};
 pub use docker::{is_docker_discovery, new_docker_discover_backends};
 
-use crate::util;
+#[cfg(test)]
+mod tests {
+    use super::format_addrs;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_format_addrs() {
+        let addrs = format_addrs(&["127.0.0.1:8080".to_string()], false);
+        assert_eq!(format!("{:?}", addrs), r#"[("127.0.0.1", "8080", 1)]"#);
+
+        let addrs = format_addrs(&["127.0.0.1".to_string()], false);
+        assert_eq!(format!("{:?}", addrs), r#"[("127.0.0.1", "80", 1)]"#);
+
+        let addrs = format_addrs(&["127.0.0.1".to_string()], true);
+        assert_eq!(format!("{:?}", addrs), r#"[("127.0.0.1", "443", 1)]"#);
+
+        let addrs = format_addrs(&["127.0.0.1 10".to_string()], false);
+        assert_eq!(format!("{:?}", addrs), r#"[("127.0.0.1", "80", 10)]"#);
+    }
+}

@@ -1429,7 +1429,7 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
         );
 
         conf.addrs = vec!["127.0.0.1".to_string(), "github".to_string()];
-        conf.discovery = Some("common".to_string());
+        conf.discovery = Some("static".to_string());
         let result = conf.validate("test");
         assert_eq!(true, result.is_err());
         assert_eq!(

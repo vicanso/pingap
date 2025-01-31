@@ -86,7 +86,7 @@ export default function Upstreams() {
       span: 3,
       category: ExFormItemCategory.SELECT,
       options: newStringOptions(
-        ["common", "dns", "docker", "transparent"],
+        ["static", "dns", "docker", "transparent"],
         true,
         true,
       ),

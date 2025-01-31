@@ -135,7 +135,7 @@ impl Dns {
 
                 upstreams.extend(socket_addrs.map(|socket_addr| Backend {
                     addr: SocketAddr::Inet(socket_addr),
-                    weight: weight.to_owned(),
+                    weight: *weight,
                     ext: Extensions::new(),
                 }));
             }
