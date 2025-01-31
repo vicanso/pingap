@@ -15,8 +15,8 @@
 use super::{get_token_path, Error, Result, LOG_CATEGORY};
 use crate::certificate::Certificate;
 use crate::config::{
-    get_current_config, ConfigStorage, LoadConfigOptions, PingapConf,
-    CATEGORY_CERTIFICATE,
+    get_current_config, set_current_config, ConfigStorage, LoadConfigOptions,
+    PingapConf, CATEGORY_CERTIFICATE,
 };
 use crate::http_extra::HttpResponse;
 use crate::proxy::try_update_certificates;
@@ -145,6 +145,7 @@ async fn renew_certificate(
     domains: &[String],
 ) -> Result<()> {
     let conf = update_certificate_lets_encrypt(storage, name, domains).await?;
+    set_current_config(&conf);
     handle_successful_renewal(domains, &conf).await;
     Ok(())
 }

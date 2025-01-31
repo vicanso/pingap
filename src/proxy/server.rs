@@ -498,6 +498,8 @@ fn get_digest_detail(digest: &Digest) -> DigestDetail {
     }
 }
 
+static MODULE_GRPC_WEB: &str = "grpc-web";
+
 #[async_trait]
 impl ProxyHttp for Server {
     type CTX = State;
@@ -514,7 +516,7 @@ impl ProxyHttp for Server {
             return;
         };
         for item in value.iter() {
-            if item == "grpc-web" {
+            if item == MODULE_GRPC_WEB {
                 modules.add_module(Box::new(GrpcWeb));
             }
         }
