@@ -22,9 +22,9 @@ aes-gcm-siv = { version = "0.11.1", default-features = false, features = [
 ] }
 ahash = { version = "0.8.11", default-features = false }
 arc-swap = "1.7.1"
-async-trait = "0.1.83"
+async-trait = "0.1.85"
 base64 = "0.22.1"
-bollard = { version = "0.18.1" }
+bollard = "0.18.1"
 bstr = "1.11.3"
 bytes = "1.9.0"
 bytesize = { version = "1.3.0", features = ["serde"] }
@@ -46,13 +46,13 @@ derive_more = { version = "1.0.0", default-features = false, features = [
     "debug",
 ] }
 diff = "0.1.13"
-dirs = "5.0.1"
+dirs = "6.0.0"
 etcd-client = "0.14.0"
 fancy-regex = "0.14.0"
 flate2 = "1.0.35"
 futures = "0.3.31"
 futures-util = "0.3.31"
-glob = "0.3.1"
+glob = "0.3.2"
 hex = "0.4.3"
 hickory-resolver = "0.24.1"
 hmac-sha256 = "1.1.8"
@@ -62,7 +62,7 @@ http = "1.2.0"
 humantime = "2.1.0"
 humantime-serde = "1.1.1"
 instant-acme = "0.7.2"
-ipnet = "2.10.1"
+ipnet = "2.11.0"
 itoa = "1.0.14"
 local-ip-address = "0.6.3"
 memory-stats = { version = "1.2.0", features = ["always_use_statm"] }
@@ -84,7 +84,7 @@ opentelemetry_sdk = { version = "0.27.1", features = [
     "rt-tokio",
 ], default-features = false, optional = true }
 path-absolutize = "3.1.1"
-pingora = { git = "https://github.com/cloudflare/pingora", rev = "f697eee0991e13d00a67f3ee99288a058cdc5559", default-features = false, features = [
+pingora = { git = "https://github.com/cloudflare/pingora", rev = "e6b823c5d89860bb97713fdf14f197f799aed6af", default-features = false, features = [
     # pingora = { version = "0.4.0", default-features = false, features = [
     "lb",
     "openssl",
@@ -97,7 +97,7 @@ pyroscope = { version = "0.5.8", optional = true }
 pyroscope_pprofrs = { version = "0.2.8", optional = true }
 rcgen = { version = "0.13.2", features = ["pem", "x509-parser"] }
 regex = { version = "1.11.1", default-features = false }
-reqwest = { version = "0.12.9", default-features = false, features = [
+reqwest = { version = "0.12.12", default-features = false, features = [
     "json",
     "default-tls",
 ] }
@@ -109,8 +109,8 @@ rustc_version_runtime = "0.3.0"
 rustls-pemfile = "2.2.0"
 scopeguard = "1.2.0"
 sentry = { version = "0.26", default-features = false, optional = true }
-serde = "1.0.216"
-serde_json = "1.0.133"
+serde = "1.0.217"
+serde_json = "1.0.138"
 sha2 = { version = "0.10.8", default-features = false }
 smallvec = "1.13.2"
 snafu = { version = "0.8.5", features = ["std"], default-features = false }
@@ -119,9 +119,9 @@ substring = "1.4.5"
 sysinfo = { version = "0.33.1", features = [
     "system",
 ], default-features = false }
-tempfile = "3.14.0"
+tempfile = "3.16.0"
 time = { version = "0.3.37", features = ["local-offset"] }
-tokio = { version = "1.42.0", default-features = false, features = ["fs"] }
+tokio = { version = "1.43.0", default-features = false, features = ["fs"] }
 toml = "0.8.19"
 tonic = "0.12.3"
 tonic-health = "0.12.3"
@@ -135,13 +135,13 @@ tracing-subscriber = { version = "0.3.19", features = [
 ], default-features = false }
 url = "2.5.4"
 urlencoding = "2.1.3"
-uuid = { version = "1.11.0", features = [
+uuid = { version = "1.12.1", features = [
     "v7",
     "std",
     "fast-rng",
 ], default-features = false }
 walkdir = "2.5.0"
-x509-parser = "0.16.0"
+x509-parser = "0.17.0"
 zstd = "0.13.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
