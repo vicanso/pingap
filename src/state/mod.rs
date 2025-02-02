@@ -37,3 +37,5 @@ pub enum Error {
 }
 #[cfg(feature = "full")]
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+pub const LOG_CATEGORY: &str = "state";

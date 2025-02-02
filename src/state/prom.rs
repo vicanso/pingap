@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_hostname, get_process_system_info, Error, Result, State};
+use super::{
+    get_hostname, get_process_system_info, Error, Result, State, LOG_CATEGORY,
+};
 use crate::service::Error as ServiceError;
 use crate::service::SimpleServiceTaskFuture;
 use crate::util;
@@ -441,6 +443,7 @@ async fn do_push(
         Ok(res) => {
             if res.status().as_u16() >= 400 {
                 error!(
+                    category = LOG_CATEGORY,
                     name = params.name,
                     status = res.status().to_string(),
                     "push prometheus fail"
@@ -449,8 +452,9 @@ async fn do_push(
         },
         Err(e) => {
             error!(
+                category = LOG_CATEGORY,
                 name = params.name,
-                error = e.to_string(),
+                error = %e,
                 "push prometheus fail"
             );
         },

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::LOG_CATEGORY;
 use crate::config::get_current_config;
 use crate::util;
 use crate::webhook;
@@ -259,13 +260,13 @@ static PROCESS_RESTARTING: Lazy<AtomicBool> =
 pub async fn restart_now() -> io::Result<process::Output> {
     let restarting = PROCESS_RESTARTING.swap(true, Ordering::Relaxed);
     if restarting {
-        error!("pingap is restarting now");
+        error!(category = LOG_CATEGORY, "pingap is restarting now");
         return Err(std::io::Error::new(
             io::ErrorKind::InvalidInput,
             "Pingap is restarting",
         ));
     }
-    info!("pingap will restart");
+    info!(category = LOG_CATEGORY, "pingap will restart");
     webhook::send_notification(webhook::SendNotificationParams {
         category: webhook::NotificationCategory::Restart,
         msg: format!("Restart now, pid:{}", std::process::id()),
@@ -310,7 +311,11 @@ pub async fn restart() {
     if count == PROCESS_RESTAR_COUNT.load(Ordering::Relaxed) {
         match restart_now().await {
             Err(e) => {
-                error!(error = e.to_string(), "restart fail");
+                error!(
+                    category = LOG_CATEGORY,
+                    error = %e,
+                    "restart fail"
+                );
                 webhook::send_notification(webhook::SendNotificationParams {
                     level: webhook::NotificationLevel::Error,
                     category: webhook::NotificationCategory::RestartFail,
@@ -320,7 +325,7 @@ pub async fn restart() {
                 .await;
             },
             Ok(output) => {
-                info!("{output:?}");
+                info!(category = LOG_CATEGORY, "{output:?}");
             },
         }
     }
