@@ -1,5 +1,74 @@
 # Changelog
 
+## [0.9.10](https://github.com/vicanso/pingap/compare/v0.9.9..0.9.10) - 2025-02-02
+
+### 🐛 Bug Fixes
+
+- Fix loop renew certificate, #88 - ([3cbdd38](https://github.com/vicanso/pingap/commit/3cbdd38191e8f9a7c2f57c3426d1e991dbba8d54))
+- Fix disable acme for pingap - ([bc5b506](https://github.com/vicanso/pingap/commit/bc5b5065ab1f1d8b04af0ce0ab4267b19730d010))
+- Fix validate empty tls cert and key - ([95ef582](https://github.com/vicanso/pingap/commit/95ef58295885ab89f9acc0ecafe2a8e2abe2481d))
+- Fix no native root CA certificates, #85 - ([fbef48b](https://github.com/vicanso/pingap/commit/fbef48bc5f25ce2dbc0e6b78ae9b0d84237b9e93))
+- Fix empty certificate parse error - ([5ed9eca](https://github.com/vicanso/pingap/commit/5ed9eca44014e8cb7b2ebc6264342adc52797679))
+
+### 🚜 Refactor
+
+- Add log category for logger - ([64f5cec](https://github.com/vicanso/pingap/commit/64f5cec60a2af411724ff1436bd354fc112506ff))
+- Use default port for transparent http/https, #84 - ([2543cd8](https://github.com/vicanso/pingap/commit/2543cd80258980071c4c6b452f9667f9e533f755))
+- Add log category for proxy - ([ef53962](https://github.com/vicanso/pingap/commit/ef539622e75235c9ea2578d6358fc9b629026de7))
+- Adjust static discovery and add test - ([140f8d2](https://github.com/vicanso/pingap/commit/140f8d20362d368e22056e9f46ccd09d56b26afd))
+- Log level allow null - ([28f2cb4](https://github.com/vicanso/pingap/commit/28f2cb4598aceafcefecc920e146027d48d522fd))
+- Support setting null as empty string - ([7d82026](https://github.com/vicanso/pingap/commit/7d82026e1b1a1ede2d780eeb336bc670ec63a503))
+- Adjust let's encrypt service - ([759a4dc](https://github.com/vicanso/pingap/commit/759a4dc3d33325ba60bae6922c5815965643015d))
+- Add log category for cache - ([51048d3](https://github.com/vicanso/pingap/commit/51048d32c11461633b40d30f56baf742c54dd13c))
+- Adjust tiny ufo estimated size - ([0c153e9](https://github.com/vicanso/pingap/commit/0c153e9b0ed255146489a9ca3e3eea689bf3b070))
+- Adjust let's encrypt - ([f59b204](https://github.com/vicanso/pingap/commit/f59b204a467e8521d71f24d3b89c3744c44c46ee))
+- Use ubuntu 20.04 for docker - ([f785e08](https://github.com/vicanso/pingap/commit/f785e08534b119e362b88762c1cd2bc3dab8c51f))
+- Some plugin use fixed step - ([64cb9e6](https://github.com/vicanso/pingap/commit/64cb9e6271b17a9aaea68d689590108da30a9855))
+- Adjust certificate - ([2092c0c](https://github.com/vicanso/pingap/commit/2092c0c1635e6a21ded685f9d92c84df6967f1d5))
+
+### 📚 Documentation
+
+- Add comments - ([ee93523](https://github.com/vicanso/pingap/commit/ee935231e483070f1a76407529d8583c0793e515))
+- Update copyright - ([df8bb50](https://github.com/vicanso/pingap/commit/df8bb50c1f1eaca8b8c2e8c07f8735a6003c2452))
+- Update documents - ([82d2b07](https://github.com/vicanso/pingap/commit/82d2b077e96dab0e3fbffdffa745d98c9f48529f))
+- Update toml config - ([aab3965](https://github.com/vicanso/pingap/commit/aab3965de6ad134aec788282a2fe28e92fbee2d9))
+- Update documents - ([45733d4](https://github.com/vicanso/pingap/commit/45733d4480c4e5292dd8195c6a347bf4f41b2c56))
+- Update proxy upstream config, #83 - ([df4f6d1](https://github.com/vicanso/pingap/commit/df4f6d1ed519df7163519a14793b5bc94535819e))
+
+### 🎨 Styling
+
+- Add comments for webhook - ([ac22399](https://github.com/vicanso/pingap/commit/ac22399a84eadf36a7e1406675eb52e22ec18b6a))
+- Add comments for state - ([b024e55](https://github.com/vicanso/pingap/commit/b024e556acfc9b18d277078661acf04ac15f3c79))
+- Add comments for service - ([53ee207](https://github.com/vicanso/pingap/commit/53ee207e98fd8fb9b60ca53b5a88393680b940fe))
+- Add comments for otel - ([4e2e41a](https://github.com/vicanso/pingap/commit/4e2e41af1a3f6555fa47fa8278c37fb9ee21bb6e))
+
+### 🧪 Testing
+
+- Add test for crypto - ([1d614c4](https://github.com/vicanso/pingap/commit/1d614c42478350d4d329062b9a042bfdaabdc42c))
+- Add test for certificate - ([8aa1d2b](https://github.com/vicanso/pingap/commit/8aa1d2b8241ffb60c487e64c3782b68e4af15edd))
+
+### ⚙️ Miscellaneous Tasks
+
+- Use sentry core instead of sentry - ([fa1620a](https://github.com/vicanso/pingap/commit/fa1620ad922060e6c13f03292405a83108dd3622))
+- Use rust 1.83.0 - ([1e10601](https://github.com/vicanso/pingap/commit/1e10601b5ea76fa5b92d274c22ceb0405435b195))
+- Update dependencies - ([e64bb71](https://github.com/vicanso/pingap/commit/e64bb71f2c32009d500df986ceed2b4fe87f8b02))
+- Remove modify swap step - ([736123a](https://github.com/vicanso/pingap/commit/736123acfdd88c9ddafcd3a7d65eb854c36e5458))
+- Use self hosted runner - ([8a0e602](https://github.com/vicanso/pingap/commit/8a0e60200b81c12af3298d839ad12a6a9a49de56))
+- Use ubuntu latest for docker build - ([e606384](https://github.com/vicanso/pingap/commit/e60638447567c4d4cbc73b2e2cea625690e55a54))
+- Set docker only build for arm64 - ([d6ed2b5](https://github.com/vicanso/pingap/commit/d6ed2b55ec8280e170f9346c6f007c16bf91c570))
+- Update pingora - ([cc10122](https://github.com/vicanso/pingap/commit/cc10122f6f79c55dec3a57c05c8ecf75d53a263f))
+- Remove arm64 platform - ([76596eb](https://github.com/vicanso/pingap/commit/76596ebe0bcabf54155f609abe2166725ac75d65))
+- Adjust swap size - ([c6da4dd](https://github.com/vicanso/pingap/commit/c6da4dda46081a3ca50e9695f8c6d8499eaa8ca6))
+- Add free disk spacke step - ([f15f3ce](https://github.com/vicanso/pingap/commit/f15f3ce05f6f803b17c6b376d4467b2422bcfb94))
+- Adjust swap size - ([11e6483](https://github.com/vicanso/pingap/commit/11e6483305d7932bc08bbe26d24fb10aa6862e89))
+- Update github workflow - ([14a0dea](https://github.com/vicanso/pingap/commit/14a0deab0371d3b6a95f291000da1c003d27bdbd))
+- Update github action - ([309ca20](https://github.com/vicanso/pingap/commit/309ca20a2f83a5f2dcf859b2abfe813333393e4f))
+- Update github action for large runner - ([2457c68](https://github.com/vicanso/pingap/commit/2457c68459de47e266079dcdec0d72b21b2508da))
+
+### Fest
+
+- Add test for proxy - ([d02b4d9](https://github.com/vicanso/pingap/commit/d02b4d9f85fade655f776b978274abf10a47ae65))
+
 ## [0.9.9](https://github.com/vicanso/pingap/compare/v0.9.8..0.9.9) - 2025-01-18
 
 ### ⛰️  Features
