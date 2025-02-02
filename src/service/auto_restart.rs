@@ -57,6 +57,7 @@ async fn diff_and_update_config(
     let (updated_category_list, original_diff_result) =
         current_config.diff(&new_config);
     debug!(
+        category = LOG_CATEGORY,
         updated_category_list = updated_category_list.join(","),
         original_diff_result = original_diff_result.join("\n"),
         "current config diff from new config"
@@ -139,10 +140,13 @@ async fn diff_and_update_config(
                     let error = e.to_string();
                     reload_fail_messages
                         .push(format!("upstream reload fail: {error}"));
-                    error!(error, "reload upstream fail");
+                    error!(
+                        category = LOG_CATEGORY,
+                        error, "reload upstream fail"
+                    );
                 },
                 Ok(updated_upstreams) => {
-                    info!("reload upstream success");
+                    info!(category = LOG_CATEGORY, "reload upstream success");
                     webhook::send_notification(
                         webhook::SendNotificationParams {
                             category:
@@ -162,10 +166,13 @@ async fn diff_and_update_config(
                     let error = e.to_string();
                     reload_fail_messages
                         .push(format!("location reload fail: {error}",));
-                    error!(error, "reload location fail");
+                    error!(
+                        category = LOG_CATEGORY,
+                        error, "reload location fail"
+                    );
                 },
                 Ok(updated_locations) => {
-                    info!("reload location success");
+                    info!(category = LOG_CATEGORY, "reload location success");
                     webhook::send_notification(
                         webhook::SendNotificationParams {
                             category:
@@ -185,10 +192,13 @@ async fn diff_and_update_config(
                     let error = e.to_string();
                     reload_fail_messages
                         .push(format!("plugin reload fail: {error}"));
-                    error!(error, "reload plugin fail");
+                    error!(
+                        category = LOG_CATEGORY,
+                        error, "reload plugin fail"
+                    );
                 },
                 Ok(updated_plugins) => {
-                    info!("reload plugin success");
+                    info!(category = LOG_CATEGORY, "reload plugin success");
                     webhook::send_notification(
                         webhook::SendNotificationParams {
                             category:
@@ -205,7 +215,7 @@ async fn diff_and_update_config(
         if should_reload_certificate {
             let (updated_certificates, errors) =
                 proxy::try_update_certificates(&new_config.certificates);
-            info!("reload certificate success");
+            info!(category = LOG_CATEGORY, "reload certificate success");
             webhook::send_notification(webhook::SendNotificationParams {
                 category: webhook::NotificationCategory::ReloadConfig,
                 level: webhook::NotificationLevel::Info,
@@ -214,7 +224,11 @@ async fn diff_and_update_config(
             })
             .await;
             if !errors.is_empty() {
-                error!(error = errors, "parse certificate fail");
+                error!(
+                    category = LOG_CATEGORY,
+                    error = errors,
+                    "parse certificate fail"
+                );
                 webhook::send_notification(webhook::SendNotificationParams {
                     category:
                         webhook::NotificationCategory::ParseCertificateFail,
@@ -234,10 +248,16 @@ async fn diff_and_update_config(
                     let error = e.to_string();
                     reload_fail_messages
                         .push(format!("server reload fail: {error}"));
-                    error!(error, "reload server fail");
+                    error!(
+                        category = LOG_CATEGORY,
+                        error, "reload server fail"
+                    );
                 },
                 Ok(updated_servers) => {
-                    info!("reload server location success");
+                    info!(
+                        category = LOG_CATEGORY,
+                        "reload server location success"
+                    );
                     webhook::send_notification(
                         webhook::SendNotificationParams {
                             category:
@@ -262,6 +282,7 @@ async fn diff_and_update_config(
         let (updated_category_list, original_diff_result) =
             current_config.diff(&hot_reload_config);
         debug!(
+            category = LOG_CATEGORY,
             updated_category_list = updated_category_list.join(","),
             original_diff_result = original_diff_result.join("\n"),
             "current config diff from hot reload config"
@@ -298,6 +319,7 @@ async fn diff_and_update_config(
     // diff hot reload config and new config
     let (_, new_config_result) = hot_reload_config.diff(&new_config);
     debug!(
+        category = LOG_CATEGORY,
         new_config_result = new_config_result.join("\n"),
         "hot reload config diff from new config"
     );
@@ -419,7 +441,11 @@ impl BackgroundService for ConfigObserverService {
 
         let result = storage.observe().await;
         if let Err(e) = result {
-            error!(error = e.to_string(), "create storage observe fail");
+            error!(
+                category = LOG_CATEGORY,
+                error = %e,
+                "create storage observe fail"
+            );
             return;
         }
 
@@ -445,7 +471,11 @@ impl BackgroundService for ConfigObserverService {
                            run_diff_and_update_config(true).await;
                        },
                        Err(e) => {
-                           error!(error = e.to_string(), "observe updated fail");
+                           error!(
+                               category = LOG_CATEGORY,
+                               error = %e,
+                               "observe updated fail"
+                           );
                        }
                     }
                 }
@@ -460,7 +490,7 @@ async fn run_diff_and_update_config(hot_reload_only: bool) {
     if let Err(e) = diff_and_update_config(hot_reload_only).await {
         error!(
             category = LOG_CATEGORY,
-            error = e.to_string(),
+            error = %e,
             name = OBSERVER_NAME,
             "update config fail",
         )

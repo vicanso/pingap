@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::LOG_CATEGORY;
 use crate::cache::get_cache_backend;
 use crate::proxy::{
     get_locations_processing, get_upstreams_processing_connected,
@@ -90,7 +91,7 @@ pub fn new_performance_metrics_log_service() -> (String, SimpleServiceTaskFuture
 
                 // Log all metrics using the tracing framework
                 info!(
-                    category = PERFORMANCE_METRICS_LOG_SERVICE,
+                    category = LOG_CATEGORY,
                     threads = system_info.threads, // Number of threads
                     locations_processing,          // Active location requests
                     upstreams_processing,          // Active upstream requests
