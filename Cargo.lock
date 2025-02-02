@@ -2883,7 +2883,7 @@ dependencies = [
  "rustc_version_runtime",
  "rustls-pemfile 2.2.0",
  "scopeguard",
- "sentry",
+ "sentry-core",
  "serde",
  "serde_json",
  "sha2",
