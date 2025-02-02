@@ -31,6 +31,7 @@ use std::time::Duration;
 use tracing::{error, info};
 use url::Url;
 
+const LOG_CATEGORY: &str = "otel";
 /// Default configuration values
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(3);
 const DEFAULT_MAX_ATTRIBUTES: u32 = 16;
@@ -43,14 +44,23 @@ const DEFAULT_MAX_EXPORT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Configuration for the tracer service
 #[derive(Debug, Clone)]
 pub struct TracerConfig {
+    /// Timeout duration for exporting spans
     timeout: Duration,
+    /// Maximum number of attributes allowed per span
     max_attributes: u32,
+    /// Maximum number of events allowed per span
     max_events: u32,
+    /// Maximum size of the span queue before dropping
     max_queue_size: usize,
+    /// Delay between scheduled exports of spans
     scheduled_delay: Duration,
+    /// Maximum number of spans to export in a single batch
     max_export_batch_size: usize,
+    /// Maximum timeout duration for exporting a batch
     max_export_timeout: Duration,
+    /// Enable Jaeger propagation format support
     support_jaeger_propagator: bool,
+    /// Enable W3C Baggage propagation format support
     support_baggage_propagator: bool,
 }
 
@@ -71,6 +81,14 @@ impl Default for TracerConfig {
 }
 
 /// Service for managing OpenTelemetry tracing
+///
+/// This service handles the configuration and lifecycle of OpenTelemetry tracing,
+/// including span export to a collector endpoint.
+///
+/// # Fields
+/// * `name` - The service name used for identifying traces
+/// * `endpoint` - The OpenTelemetry collector endpoint URL
+/// * `config` - Configuration options for the tracer
 #[derive(Debug)]
 pub struct TracerService {
     name: String,
@@ -253,7 +271,12 @@ impl BackgroundService for TracerService {
 
         match result {
             Ok(tracer_provider) => {
-                info!(endpoint = self.endpoint, "opentelemetry init success");
+                info!(
+                    category = LOG_CATEGORY,
+                    name = self.name,
+                    endpoint = self.endpoint,
+                    "opentelemetry init success"
+                );
                 let mut propagators: Vec<
                     Box<dyn TextMapPropagator + Send + Sync>,
                 > = vec![Box::new(TraceContextPropagator::new())];
@@ -276,15 +299,26 @@ impl BackgroundService for TracerService {
                 let _ = shutdown.changed().await;
                 if let Err(e) = tracer_provider.shutdown() {
                     error!(
-                        error = e.to_string(),
+                        category = LOG_CATEGORY,
+                        name = self.name,
+                        error = %e,
                         "opentelemetry shutdown fail"
                     );
                 } else {
-                    info!("opentelemetry shutdown success");
+                    info!(
+                        category = LOG_CATEGORY,
+                        name = self.name,
+                        "opentelemetry shutdown success"
+                    );
                 }
             },
             Err(e) => {
-                error!(error = e.to_string(), "opentelemetry init fail");
+                error!(
+                    category = LOG_CATEGORY,
+                    name = self.name,
+                    error = %e,
+                    "opentelemetry init fail"
+                );
             },
         }
     }
