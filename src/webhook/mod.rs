@@ -27,6 +27,8 @@ static WEBHOOK_URL: OnceCell<String> = OnceCell::new();
 static WEBHOOK_CATEGORY: OnceCell<String> = OnceCell::new();
 static WEBHOOK_NOTIFICATIONS: OnceCell<Vec<String>> = OnceCell::new();
 
+pub const LOG_CATEGORY: &str = "webhook";
+
 /// Sets the webhook configuration parameters
 ///
 /// # Arguments
@@ -128,7 +130,8 @@ pub struct SendNotificationParams {
 /// * `params` - The notification parameters including category, level, message and optional remark
 pub async fn send_notification(params: SendNotificationParams) {
     info!(
-        category = params.category.to_string(),
+        category = LOG_CATEGORY,
+        notification = params.category.to_string(),
         message = params.msg,
         "webhook notification"
     );
@@ -219,13 +222,21 @@ pub async fn send_notification(params: SendNotificationParams) {
     {
         Ok(res) => {
             if res.status().as_u16() < 400 {
-                info!("send webhook success");
+                info!(category = LOG_CATEGORY, "send webhook success");
             } else {
-                error!(status = res.status().to_string(), "send webhook fail");
+                error!(
+                    category = LOG_CATEGORY,
+                    status = res.status().to_string(),
+                    "send webhook fail"
+                );
             }
         },
         Err(e) => {
-            error!(error = e.to_string(), "send webhook fail");
+            error!(
+                category = LOG_CATEGORY,
+                error = %e,
+                "send webhook fail"
+            );
         },
     };
 }
