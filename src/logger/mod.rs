@@ -37,6 +37,8 @@ const DEFAULT_DAYS_AGO: u16 = 7;
 /// below this value, no buffering will be used.
 const MIN_BUFFER_CAPACITY: u64 = 4096;
 
+const LOG_CATEGORY: &str = "logger";
+
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("IO error {source}"))]
@@ -194,11 +196,17 @@ async fn do_compress(
         let file = entry.path().to_string_lossy().to_string();
         match result {
             Err(e) => {
-                error!(err = e.to_string(), file, "compress log fail");
+                error!(
+                    category = LOG_CATEGORY,
+                    error = %e,
+                    file,
+                    "compress log fail"
+                );
             },
             Ok((size, original_size)) => {
                 let elapsed = format!("{}ms", util::elapsed_ms(start));
                 info!(
+                    category = LOG_CATEGORY,
                     file,
                     elapsed,
                     original_size = ByteSize::b(original_size).to_string(),
@@ -281,6 +289,7 @@ pub fn logger_try_init(
         ))
         .with_target(is_dev);
     let mut task = None;
+    let mut log_type = "stdio";
     let writer = if params.log.is_empty() {
         BoxMakeWriter::new(std::io::stderr)
     } else {
@@ -318,6 +327,7 @@ pub fn logger_try_init(
                 message: "parent of file log is invalid".to_string(),
             })?
         };
+        log_type = "file";
         fs::create_dir_all(dir).context(IoSnafu)?;
         if !compression.is_empty() {
             task = new_log_compress_service(LogCompressParams {
@@ -368,7 +378,10 @@ pub fn logger_try_init(
     }
 
     info!(
+        category = LOG_CATEGORY,
         capacity = params.capacity,
+        log_type,
+        json_format = params.json,
         utc_offset = chrono::Local::now().offset().to_string(),
         "init tracing subscriber success",
     );
