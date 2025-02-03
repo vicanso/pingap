@@ -120,7 +120,7 @@ jobs:
   #         cargo build --release --features=full
   #         ls -lh target/release
   docker:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 3600
     steps:
       - name: Free Disk Space (Ubuntu)
@@ -183,7 +183,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           # platforms: linux/amd64, linux/arm64
-          platforms: linux/amd64
+          platforms: linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
       - name: Image digest

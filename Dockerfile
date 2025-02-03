@@ -1,4 +1,4 @@
-FROM node:20-alpine as webbuilder
+FROM node:20-alpine AS webbuilder
 
 COPY . /pingap
 RUN apk update \
@@ -6,7 +6,7 @@ RUN apk update \
   && cd /pingap \
   && make build-web
 
-FROM rust:1.83.0 as builder
+FROM rust:1.83.0 AS builder
 
 COPY --from=webbuilder /pingap /pingap
 
