@@ -409,7 +409,11 @@ pub struct ConfigObserverService {
     interval: Duration,
     /// If true, only perform hot reloads when changes detected
     only_hot_reload: bool,
+    delay: AtomicU32,
 }
+
+const MIN_DELAY: u32 = 500;
+const MAX_DELAY: u32 = 60 * 1000;
 
 pub fn new_observer_service(
     interval: Duration,
@@ -418,6 +422,7 @@ pub fn new_observer_service(
     ConfigObserverService {
         interval,
         only_hot_reload,
+        delay: AtomicU32::new(MIN_DELAY),
     }
 }
 
@@ -462,21 +467,29 @@ impl BackgroundService for ConfigObserverService {
                     run_diff_and_update_config(self.only_hot_reload).await;
                 }
                 result = observer.watch() => {
+                    let delay = self.delay.load(Ordering::Relaxed);
                     match result {
-                       Ok(updated)  => {
-                           if !updated {
-                               continue
-                           }
-                           // only hot reload for observe updated
-                           run_diff_and_update_config(true).await;
-                       },
-                       Err(e) => {
-                           error!(
+                        Ok(updated)  => {
+                            if delay > MIN_DELAY {
+                                self.delay.store(MIN_DELAY, Ordering::Relaxed);
+                            }
+                            if !updated {
+                                continue;
+                            }
+                            // only hot reload for observe updated
+                            run_diff_and_update_config(true).await;
+                        },
+                        Err(e) => {
+                            error!(
                                category = LOG_CATEGORY,
                                error = %e,
                                "observe updated fail"
-                           );
-                       }
+                            );
+                            tokio::time::sleep(Duration::from_millis(delay as u64)).await;
+                            if delay < MAX_DELAY {
+                               self.delay.store(delay * 2, Ordering::Relaxed);
+                            }
+                        }
                     }
                 }
             }
