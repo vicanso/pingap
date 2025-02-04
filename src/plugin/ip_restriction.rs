@@ -147,7 +147,7 @@ impl Plugin for IpRestriction {
 
         // Check if IP matches any configured rules
         // Returns error if IP is malformed
-        let found = match self.ip_rules.matched(&ip) {
+        let found = match self.ip_rules.is_match(&ip) {
             Ok(matched) => matched,
             Err(e) => {
                 return Ok(Some(HttpResponse::bad_request(

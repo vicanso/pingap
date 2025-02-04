@@ -492,7 +492,7 @@ fn get_digest_detail(digest: &Digest) -> DigestDetail {
         connection_reused,
         tcp_established,
         connection_time,
-        tls_established: get_established(digest.timing_digest.get(1)),
+        tls_established: get_established(digest.timing_digest.last()),
         tls_version: Some(ssl_digest.version.to_string()),
         tls_cipher: Some(ssl_digest.cipher.to_string()),
     }
@@ -609,7 +609,7 @@ impl ProxyHttp for Server {
             let Some(location) = get_location(name) else {
                 continue;
             };
-            let (matched, variables) = location.matched(host, path);
+            let (matched, variables) = location.match_host_path(host, path);
             if matched {
                 ctx.location = Some(location);
                 if let Some(variables) = variables {
@@ -633,6 +633,17 @@ impl ProxyHttp for Server {
                 .validate_content_length(header)
                 .map_err(|e| util::new_internal_error(413, e.to_string()))?;
 
+            // add processing, if processing is max than limit,
+            // it will return error with 429 status code
+            match location.add_processing() {
+                Ok((accepted, processing)) => {
+                    ctx.location_accepted = accepted;
+                    ctx.location_processing = processing;
+                },
+                Err(e) => {
+                    return Err(util::new_internal_error(429, e.to_string()));
+                },
+            };
             if location.support_grpc_web() {
                 // Initialize grpc web module for this request
                 let grpc_web = session
@@ -648,15 +659,6 @@ impl ProxyHttp for Server {
                 grpc_web.init();
             }
 
-            match location.add_processing() {
-                Ok((accepted, processing)) => {
-                    ctx.location_accepted = accepted;
-                    ctx.location_processing = processing;
-                },
-                Err(e) => {
-                    return Err(util::new_internal_error(429, e.to_string()));
-                },
-            };
             let _ = location
                 .clone()
                 .handle_request_plugin(PluginStep::EarlyRequest, session, ctx)
@@ -706,10 +708,15 @@ impl ProxyHttp for Server {
             && self.prometheus.is_some()
             && header.uri.path() == self.prometheus_metrics
         {
-            let body =
-                self.prometheus.as_ref().unwrap().metrics().map_err(|e| {
-                    util::new_internal_error(500, e.to_string())
-                })?;
+            let body = self
+                .prometheus
+                .as_ref()
+                .ok_or(util::new_internal_error(
+                    500,
+                    "get prometheus fail".to_string(),
+                ))?
+                .metrics()
+                .map_err(|e| util::new_internal_error(500, e.to_string()))?;
             HttpResponse::text(body.into()).send(session).await?;
             return Ok(true);
         }
@@ -833,9 +840,9 @@ impl ProxyHttp for Server {
     {
         debug!(category = LOG_CATEGORY, "--> connected to upstream");
         defer!(debug!(category = LOG_CATEGORY, "<-- connected to upstream"););
-        if !reused {
-            if let Some(digest) = digest {
-                let detail = get_digest_detail(digest);
+        if let Some(digest) = digest {
+            let detail = get_digest_detail(digest);
+            if !reused {
                 let upstream_connect_time =
                     ctx.upstream_connect_time.unwrap_or_default();
                 if upstream_connect_time > 0
@@ -849,6 +856,7 @@ impl ProxyHttp for Server {
                         Some(detail.tls_established - detail.tcp_established);
                 }
             }
+            ctx.upstream_connection_time = Some(detail.connection_time);
         }
 
         ctx.upstream_reused = reused;
@@ -1192,7 +1200,7 @@ impl ProxyHttp for Server {
             .error_template
             .replace("{{version}}", util::get_pkg_version())
             .replace("{{content}}", &e.to_string())
-            .replace("{{error_ype}}", error_type);
+            .replace("{{error_type}}", error_type);
         let buf = Bytes::from(content);
         ctx.status = Some(
             StatusCode::from_u16(code)

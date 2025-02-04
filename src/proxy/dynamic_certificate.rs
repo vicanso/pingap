@@ -292,12 +292,15 @@ impl pingora::listeners::TlsAccept for GlobalCertificate {
         // 5. Handle special case for CA certificates (self-signed)
         // 6. Apply certificate, private key, and chain to SSL context
 
-        // TODO add more debug log
-        debug!(category = LOG_CATEGORY, ssl = format!("{ssl:?}"));
         let sni = ssl
             .servername(NameType::HOST_NAME)
             .unwrap_or(DEFAULT_SERVER_NAME);
-        debug!(category = LOG_CATEGORY, server_name = sni);
+        // TODO add more debug log
+        debug!(
+            category = LOG_CATEGORY,
+            ssl = format!("{ssl:?}"),
+            server_name = sni
+        );
 
         let mut dynamic_certificate = None;
         let certs = DYNAMIC_CERTIFICATE_MAP.load();

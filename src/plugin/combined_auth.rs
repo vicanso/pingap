@@ -183,7 +183,7 @@ impl CombinedAuth {
         // Uses X-Forwarded-For header for IP detection behind proxies
         if let Some(ip_rules) = &auth_param.ip_rules {
             let ip = util::get_client_ip(session);
-            if !ip_rules.matched(&ip).unwrap_or_default() {
+            if !ip_rules.is_match(&ip).unwrap_or_default() {
                 return Err(Error::Invalid {
                     category: category.to_string(),
                     message: "ip is invalid".to_string(),

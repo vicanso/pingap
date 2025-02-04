@@ -431,7 +431,7 @@ impl Location {
     /// - bool: Whether the request matched both path and host rules
     /// - Option<Vec<(String, String)>>: Any captured variables from regex host matching
     #[inline]
-    pub fn matched(
+    pub fn match_host_path(
         &self,
         host: &str,
         path: &str,
@@ -787,8 +787,8 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(true, lo.matched("pingap", "/api").0);
-        assert_eq!(true, lo.matched("", "").0);
+        assert_eq!(true, lo.match_host_path("pingap", "/api").0);
+        assert_eq!(true, lo.match_host_path("", "").0);
 
         // host
         let lo = Location::new(
@@ -800,9 +800,9 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(true, lo.matched("pingap", "/api").0);
-        assert_eq!(true, lo.matched("pingap", "").0);
-        assert_eq!(false, lo.matched("", "/api").0);
+        assert_eq!(true, lo.match_host_path("pingap", "/api").0);
+        assert_eq!(true, lo.match_host_path("pingap", "").0);
+        assert_eq!(false, lo.match_host_path("", "/api").0);
 
         // regex
         let lo = Location::new(
@@ -814,9 +814,9 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(true, lo.matched("", "/api/users").0);
-        assert_eq!(true, lo.matched("", "/users").0);
-        assert_eq!(false, lo.matched("", "/api").0);
+        assert_eq!(true, lo.match_host_path("", "/api/users").0);
+        assert_eq!(true, lo.match_host_path("", "/users").0);
+        assert_eq!(false, lo.match_host_path("", "/api").0);
 
         // regex ^/api
         let lo = Location::new(
@@ -828,9 +828,9 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(true, lo.matched("", "/api/users").0);
-        assert_eq!(false, lo.matched("", "/users").0);
-        assert_eq!(true, lo.matched("", "/api").0);
+        assert_eq!(true, lo.match_host_path("", "/api/users").0);
+        assert_eq!(false, lo.match_host_path("", "/users").0);
+        assert_eq!(true, lo.match_host_path("", "/api").0);
 
         // prefix
         let lo = Location::new(
@@ -842,9 +842,9 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(true, lo.matched("", "/api/users").0);
-        assert_eq!(false, lo.matched("", "/users").0);
-        assert_eq!(true, lo.matched("", "/api").0);
+        assert_eq!(true, lo.match_host_path("", "/api/users").0);
+        assert_eq!(false, lo.match_host_path("", "/users").0);
+        assert_eq!(true, lo.match_host_path("", "/api").0);
 
         // equal
         let lo = Location::new(
@@ -856,9 +856,9 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(false, lo.matched("", "/api/users").0);
-        assert_eq!(false, lo.matched("", "/users").0);
-        assert_eq!(true, lo.matched("", "/api").0);
+        assert_eq!(false, lo.match_host_path("", "/api/users").0);
+        assert_eq!(false, lo.match_host_path("", "/users").0);
+        assert_eq!(true, lo.match_host_path("", "/api").0);
     }
 
     #[test]

@@ -55,7 +55,7 @@ impl IpRules {
     /// - Ok(true) if IP matches either an individual IP or falls within a network range
     /// - Ok(false) if no match is found
     /// - Err if the IP address string cannot be parsed
-    pub fn matched(&self, ip: &String) -> Result<bool, AddrParseError> {
+    pub fn is_match(&self, ip: &String) -> Result<bool, AddrParseError> {
         let found = if self.ip_list.contains(ip) {
             // First check for exact match in individual IP list
             true

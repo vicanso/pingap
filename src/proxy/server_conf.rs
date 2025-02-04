@@ -72,10 +72,11 @@ pub struct ServerConf {
     pub tcp_fastopen: Option<usize>,
 
     // Whether to use globally configured TLS certificates
-    // False means server-specific certificates will be used
+    // False means the server is using http protocol
     pub global_certificates: bool,
 
     // Whether HTTP/2 protocol support is enabled for this server
+    // False means the server is using h2c protocol
     pub enabled_h2: bool,
 
     // Endpoint path for exposing Prometheus metrics

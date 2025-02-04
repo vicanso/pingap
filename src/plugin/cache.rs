@@ -390,7 +390,7 @@ impl Plugin for Cache {
         if method == METHOD_PURGE.to_owned() {
             let found = match self
                 .purge_ip_rules
-                .matched(&util::get_client_ip(session))
+                .is_match(&util::get_client_ip(session))
             {
                 Ok(matched) => matched,
                 Err(e) => {
