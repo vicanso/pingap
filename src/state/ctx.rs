@@ -148,6 +148,9 @@ pub struct State {
     pub upstream_processing_time: Option<u64>,
     /// Total time taken by upstream server (in milliseconds)
     pub upstream_response_time: Option<u64>,
+    /// Total time the upstream connection has been alive (in milliseconds)
+    /// May be large for reused connections
+    pub upstream_connection_time: Option<u64>,
     /// Size of the request payload in bytes
     pub payload_size: usize,
     /// Statistics about response compression
@@ -296,6 +299,11 @@ impl State {
                 }
             },
             "upstream_tls_handshake_time" => {
+                if let Some(ms) = self.upstream_tls_handshake_time {
+                    buf = format_duration(buf, ms);
+                }
+            },
+            "upstream_connection_time" => {
                 if let Some(ms) = self.upstream_tls_handshake_time {
                     buf = format_duration(buf, ms);
                 }
