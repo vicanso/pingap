@@ -8,7 +8,7 @@ use pingap::config::LocationConf;
 use pingap::http_extra::{convert_headers, HttpResponse};
 use pingap::proxy::{Location, Parser};
 use pingap::state::{CompressionStat, State};
-use pingap::util::{self, get_super_ts};
+use pingap_util::get_super_ts;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
 use std::collections::HashMap;
@@ -285,7 +285,7 @@ fn bench_logger_format(c: &mut Criterion) {
             payload_size: 512,
             upstream_reused: true,
             status: Some(StatusCode::OK),
-            created_at: util::now().as_millis() as u64,
+            created_at: pingap_util::now_ms(),
             request_id: Some("AMwBhEil".to_string()),
             upstream_address: "192.168.1.1:5000".to_string(),
             upstream_connect_time: Some(30),

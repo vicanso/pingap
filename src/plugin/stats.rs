@@ -19,7 +19,6 @@ use crate::state::{
     get_hostname, get_process_system_info, get_processing_accepted,
     get_start_time, State,
 };
-use crate::util;
 use async_trait::async_trait;
 use bytes::Bytes;
 use pingora::proxy::Session;
@@ -157,7 +156,7 @@ impl Plugin for Stats {
         }
         if session.req_header().uri.path() == self.path {
             let uptime: humantime::Duration =
-                Duration::from_secs(util::now().as_secs() - get_start_time())
+                Duration::from_secs(pingap_util::now_sec() - get_start_time())
                     .into();
             let (processing, accepted) = get_processing_accepted();
             let info = get_process_system_info();
@@ -167,8 +166,8 @@ impl Plugin for Stats {
                 location_processing: ctx.location_processing,
                 location_accepted: ctx.location_accepted,
                 hostname: get_hostname().to_string(),
-                version: util::get_pkg_version().to_string(),
-                rustc_version: util::get_rustc_version(),
+                version: pingap_util::get_pkg_version().to_string(),
+                rustc_version: pingap_util::get_rustc_version(),
                 start_time: get_start_time(),
                 uptime: uptime.to_string(),
                 memory_mb: info.memory_mb,

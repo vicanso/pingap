@@ -16,7 +16,6 @@ use super::{Certificate, LOG_CATEGORY};
 use crate::proxy::get_certificate_info_list;
 use crate::service::Error as ServiceError;
 use crate::service::SimpleServiceTaskFuture;
-use crate::util;
 use crate::webhook;
 use snafu::Snafu;
 use tracing::error;
@@ -60,7 +59,7 @@ fn validity_check(
     validity_list: &[(String, Certificate)],
     time_offset: i64,
 ) -> Result<(), ValidityError> {
-    let now = util::now().as_secs() as i64;
+    let now = pingap_util::now_sec() as i64;
     for (name, cert) in validity_list.iter() {
         // Skip ACME certificates as they auto-update
         if cert.acme.is_some() {

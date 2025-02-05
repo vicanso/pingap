@@ -15,7 +15,6 @@
 use super::LOG_CATEGORY;
 use crate::certificate::{Certificate, TlsCertificate};
 use crate::config::CertificateConf;
-use crate::util;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -242,7 +241,7 @@ impl GlobalCertificate {
             }
         }
         if let Some(version) =
-            util::convert_tls_version(&params.tls_min_version)
+            pingap_util::convert_tls_version(&params.tls_min_version)
         {
             if let Err(e) = tls_settings.set_min_proto_version(Some(version)) {
                 error!(category = LOG_CATEGORY, error = %e, name, "set tls min proto version fail");
@@ -254,7 +253,7 @@ impl GlobalCertificate {
             }
         }
         if let Err(e) = tls_settings.set_max_proto_version(
-            util::convert_tls_version(&params.tls_max_version),
+            pingap_util::convert_tls_version(&params.tls_max_version),
         ) {
             error!(category = LOG_CATEGORY, error = %e, name, "set tls max proto version fail");
         }

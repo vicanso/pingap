@@ -50,13 +50,7 @@ mod ip;
 pub use crypto::{aes_decrypt, aes_encrypt};
 pub use ip::IpRules;
 
-const NAME: &str = env!("CARGO_PKG_NAME");
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// Gets the package name.
-pub fn get_pkg_name() -> &'static str {
-    NAME
-}
 
 /// Gets the package version.
 pub fn get_pkg_version() -> &'static str {
@@ -274,10 +268,21 @@ pub fn get_super_ts() -> u32 {
     }
 }
 
+#[inline]
 pub fn now() -> Duration {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
+}
+
+#[inline]
+pub fn now_ms() -> u64 {
+    now().as_millis() as u64
+}
+
+#[inline]
+pub fn now_sec() -> u64 {
+    now().as_secs()
 }
 
 pub fn local_ip_list() -> Vec<String> {
@@ -328,7 +333,7 @@ pub fn get_content_length(header: &RequestHeader) -> Option<usize> {
 
 #[inline]
 pub fn get_latency(value: &Option<u64>) -> Option<u64> {
-    let current = now().as_millis() as u64;
+    let current = now_ms();
     if let Some(value) = value {
         Some(current - value)
     } else {
@@ -384,7 +389,7 @@ pub fn base64_decode<T: AsRef<[u8]>>(
 ///
 /// # Example
 /// ```
-/// use pingap::util::RegexCapture;
+/// use pingap::pingap_util::RegexCapture;
 /// let re = RegexCapture::new(r"(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})").unwrap();
 /// let (matched, captures) = re.captures("2024-03-14");
 /// assert_eq!(true, matched);
@@ -518,10 +523,9 @@ pub fn elapsed_ms(time: SystemTime) -> u64 {
     time.elapsed().unwrap_or_default().as_millis() as u64
 }
 
-#[cfg(feature = "full")]
 #[inline]
 pub fn elapsed_second(time: SystemTime) -> f64 {
-    elapsed_ms(time) as f64 / 1000.0
+    time.elapsed().unwrap_or_default().as_millis() as f64 / 1000.0
 }
 
 pub fn toml_omit_empty_value(value: &str) -> Result<String, Error> {
@@ -558,13 +562,12 @@ pub fn path_join(value1: &str, value2: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::util::base64_encode;
-
     use super::{
         convert_certificate_bytes, convert_tls_version, format_byte_size,
-        format_duration, get_latency, get_pkg_name, get_pkg_version,
-        local_ip_list, remove_query_from_header, resolve_path,
+        format_duration, get_latency, get_pkg_version, local_ip_list,
+        remove_query_from_header, resolve_path,
     };
+    use crate::base64_encode;
     use bytes::BytesMut;
     use pingora::{http::RequestHeader, tls::ssl::SslVersion};
     use pretty_assertions::assert_eq;
@@ -587,7 +590,6 @@ mod tests {
 
     #[test]
     fn test_get_pkg_info() {
-        assert_eq!("pingap", get_pkg_name());
         assert_eq!(false, get_pkg_version().is_empty());
     }
 

@@ -62,7 +62,6 @@ mod pyro;
 mod sentry;
 mod service;
 mod state;
-mod util;
 mod webhook;
 
 static TEMPLATE_CONFIG: &str = r###"
@@ -131,7 +130,7 @@ fn new_server_conf(
     let basic_conf = &conf.basic;
     let mut server_conf = server::configuration::ServerConf {
         pid_file: basic_conf.get_pid_file(),
-        upgrade_sock: format!("/tmp/{}_upgrade.sock", util::get_pkg_name()),
+        upgrade_sock: "/tmp/pingap_upgrade.sock".to_string(),
         user: basic_conf.user.clone(),
         group: basic_conf.group.clone(),
         daemon: args.daemon,
@@ -296,7 +295,7 @@ fn parse_arguments() -> Args {
         let password = get_from_env("admin_password");
         if !user.is_empty() && !password.is_empty() {
             let data = format!("{user}:{password}");
-            addr = format!("{}@{addr}", util::base64_encode(&data));
+            addr = format!("{}@{addr}", pingap_util::base64_encode(&data));
         }
         args.admin = Some(addr)
     }
@@ -401,7 +400,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         let conf_path = if args.conf.starts_with(ETCD_PROTOCOL) {
             args.conf.clone()
         } else {
-            util::resolve_path(&args.conf)
+            pingap_util::resolve_path(&args.conf)
         };
 
         let mut new_args = vec![

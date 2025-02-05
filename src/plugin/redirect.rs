@@ -18,7 +18,6 @@ use crate::http_extra::convert_headers;
 use crate::http_extra::HttpResponse;
 use crate::plugin::get_hash_key;
 use crate::state::State;
-use crate::util;
 use async_trait::async_trait;
 use http::StatusCode;
 use pingora::proxy::Session;
@@ -143,7 +142,8 @@ impl Plugin for Redirect {
 
         // Extract host from request headers
         // Fallback to empty string if not found
-        let host = util::get_host(session.req_header()).unwrap_or_default();
+        let host =
+            pingap_util::get_host(session.req_header()).unwrap_or_default();
 
         // Determine target schema based on configuration
         let schema = if self.http_to_https { "https" } else { "http" };

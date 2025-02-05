@@ -13,12 +13,11 @@
 // limitations under the License.
 
 use crate::proxy::{Location, Upstream};
-use crate::util;
-use crate::util::format_duration;
 use ahash::AHashMap;
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
 use http::Uri;
+use pingap_util::format_duration;
 use pingora::cache::CacheKey;
 
 #[cfg(feature = "full")]
@@ -182,7 +181,7 @@ impl State {
     /// set to their default values.
     pub fn new() -> Self {
         Self {
-            created_at: util::now().as_millis() as u64,
+            created_at: pingap_util::now_ms(),
             ..Default::default()
         }
     }
@@ -362,7 +361,7 @@ impl State {
             "service_time" => {
                 buf = format_duration(
                     buf,
-                    util::now().as_millis() as u64 - self.created_at,
+                    pingap_util::now_ms() - self.created_at,
                 )
             },
             _ => {},
@@ -397,7 +396,6 @@ mod tests {
     use crate::config::LocationConf;
     use crate::proxy::Location;
     use crate::state::CompressionStat;
-    use crate::util;
     use bytes::BytesMut;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
@@ -556,7 +554,7 @@ mod tests {
                 .as_ref()
         );
 
-        ctx.created_at = util::now().as_millis() as u64 - 1;
+        ctx.created_at = pingap_util::now_ms() - 1;
         assert_eq!(
             true,
             ctx.append_value(BytesMut::new(), "service_time")

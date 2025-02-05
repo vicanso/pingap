@@ -16,11 +16,11 @@ use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::proxy::ServerConf;
 use crate::state::{get_admin_addr, State};
-use crate::util::{self, base64_encode};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
+use pingap_util::base64_encode;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use snafu::Snafu;
@@ -95,7 +95,8 @@ pub fn parse_admin_plugin(
     if path.is_empty() {
         path = "/".to_string();
     }
-    let query = util::convert_query_map(info.query().unwrap_or_default());
+    let query =
+        pingap_util::convert_query_map(info.query().unwrap_or_default());
     let max_age = if let Some(value) = query.get("max_age") {
         value.to_string()
     } else {

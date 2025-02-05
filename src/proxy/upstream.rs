@@ -22,7 +22,6 @@ use crate::discovery::{
 use crate::health::new_health_check;
 use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::State;
-use crate::util;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -216,7 +215,7 @@ fn get_hash_value(
             if let Some(client_ip) = &ctx.client_ip {
                 client_ip.to_string()
             } else {
-                util::get_client_ip(session)
+                pingap_util::get_client_ip(session)
             }
         },
         "header" => {
@@ -226,10 +225,12 @@ fn get_hash_value(
                 "".to_string()
             }
         },
-        "cookie" => util::get_cookie_value(session.req_header(), hash_key)
-            .unwrap_or_default()
-            .to_string(),
-        "query" => util::get_query_value(session.req_header(), hash_key)
+        "cookie" => {
+            pingap_util::get_cookie_value(session.req_header(), hash_key)
+                .unwrap_or_default()
+                .to_string()
+        },
+        "query" => pingap_util::get_query_value(session.req_header(), hash_key)
             .unwrap_or_default()
             .to_string(),
         // default: path
@@ -465,7 +466,7 @@ impl Upstream {
         // Create HTTP peer based on load balancing mode
         let p = if matches!(self.lb, SelectionLb::Transparent) {
             // In transparent mode, use the request's host header
-            let host = util::get_host(session.req_header())?;
+            let host = pingap_util::get_host(session.req_header())?;
             // Set SNI: either use host header ($host) or configured value
             let sni = if self.sni == "$host" {
                 host.to_string()

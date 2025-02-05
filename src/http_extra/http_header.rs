@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use crate::state::{get_hostname, State};
-use crate::util;
 use bytes::BytesMut;
 use http::header;
 use http::{HeaderName, HeaderValue};
@@ -100,9 +99,8 @@ pub fn convert_header_value(
     let to_header_value = |s: &str| HeaderValue::from_str(s).ok();
 
     match buf {
-        HOST_TAG => {
-            util::get_host(session.req_header()).and_then(to_header_value)
-        },
+        HOST_TAG => pingap_util::get_host(session.req_header())
+            .and_then(to_header_value),
         SCHEME_TAG => Some(if ctx.tls_version.is_some() {
             SCHEME_HTTPS.clone()
         } else {
@@ -128,9 +126,9 @@ pub fn convert_header_value(
         },
         PROXY_ADD_FORWARDED_TAG => {
             ctx.remote_addr.as_deref().and_then(|remote_addr| {
-                let value = match session
-                    .get_header(util::HTTP_HEADER_X_FORWARDED_FOR.clone())
-                {
+                let value = match session.get_header(
+                    pingap_util::HTTP_HEADER_X_FORWARDED_FOR.clone(),
+                ) {
                     Some(existing) => format!(
                         "{}, {}",
                         existing.to_str().unwrap_or_default(),

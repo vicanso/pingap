@@ -18,7 +18,6 @@ use super::{
 use crate::config::{PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
-use crate::util;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
@@ -29,7 +28,7 @@ use tracing::debug;
 /// It can be configured to either allow or deny requests based on client IP addresses.
 pub struct IpRestriction {
     plugin_step: PluginStep, // Defines when plugin runs in request lifecycle (must be Request)
-    ip_rules: util::IpRules, // Contains parsed IP addresses and CIDR ranges for matching
+    ip_rules: pingap_util::IpRules, // Contains parsed IP addresses and CIDR ranges for matching
     restriction_category: String, // "allow": whitelist mode, "deny": blacklist mode
     forbidden_resp: HttpResponse, // Customizable 403 response returned when access is denied
     hash_value: String, // Unique identifier used for plugin caching/tracking
@@ -59,7 +58,7 @@ impl TryFrom<&PluginConf> for IpRestriction {
         // Parse IP rules from configuration
         // Supports both individual IPs ("192.168.1.1") and CIDR ranges ("10.0.0.0/24")
         let ip_rules =
-            util::IpRules::new(&get_str_slice_conf(value, "ip_list"));
+            pingap_util::IpRules::new(&get_str_slice_conf(value, "ip_list"));
 
         // Get custom error message or use default
         let mut message = get_str_conf(value, "message");
@@ -140,7 +139,7 @@ impl Plugin for IpRestriction {
         let ip = if let Some(ip) = &ctx.client_ip {
             ip.to_string()
         } else {
-            let ip = util::get_client_ip(session);
+            let ip = pingap_util::get_client_ip(session);
             ctx.client_ip = Some(ip.clone()); // Cache for future use
             ip
         };

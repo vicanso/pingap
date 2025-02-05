@@ -16,7 +16,6 @@ use super::http_cache::{CacheObject, HttpCacheStats, HttpCacheStorage};
 use super::{Error, Result, LOG_CATEGORY, PAGE_SIZE};
 #[cfg(feature = "full")]
 use crate::state::{CACHE_READING_TIME, CACHE_WRITING_TIME};
-use crate::util;
 use async_trait::async_trait;
 use bytes::Bytes;
 #[cfg(feature = "full")]
@@ -86,12 +85,12 @@ impl Default for FileCacheParams {
 fn parse_params(dir: &str) -> FileCacheParams {
     let (dir, query) = dir.split_once('?').unwrap_or((dir, ""));
     let mut params = FileCacheParams {
-        directory: util::resolve_path(dir),
+        directory: pingap_util::resolve_path(dir),
         ..Default::default()
     };
 
     if !query.is_empty() {
-        let m = util::convert_query_map(query);
+        let m = pingap_util::convert_query_map(query);
         params.reading_max = m
             .get("reading_max")
             .and_then(|v| v.parse().ok())
@@ -208,7 +207,7 @@ impl HttpCacheStorage for FileCache {
         }
         let result = fs::read(file).await;
         #[cfg(feature = "full")]
-        self.read_time.observe(util::elapsed_second(start));
+        self.read_time.observe(pingap_util::elapsed_second(start));
 
         let obj = match result {
             Ok(buf) if buf.len() >= 8 => {
@@ -266,7 +265,7 @@ impl HttpCacheStorage for FileCache {
         }
         let result = fs::write(file, buf).await;
         #[cfg(feature = "full")]
-        self.write_time.observe(util::elapsed_second(start));
+        self.write_time.observe(pingap_util::elapsed_second(start));
         result.map_err(|e| Error::Io { source: e })
     }
     /// Removes a cache entry from both TinyUfo and disk storage.

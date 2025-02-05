@@ -32,7 +32,6 @@ use crate::state::{accept_request, end_request};
 use crate::state::{get_cache_key, CompressionStat, State};
 #[cfg(feature = "full")]
 use crate::state::{new_prometheus, new_prometheus_push_service, Prometheus};
-use crate::util;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -475,7 +474,7 @@ fn get_digest_detail(digest: &Digest) -> DigestDetail {
     let tcp_established = get_established(digest.timing_digest.first());
     let mut connection_time = 0;
     if tcp_established > 0 {
-        connection_time = util::now().as_millis() as u64 - tcp_established;
+        connection_time = pingap_util::now_ms() - tcp_established;
     }
     let connection_reused = connection_time > 100;
 
@@ -565,7 +564,8 @@ impl ProxyHttp for Server {
 
         ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
         ctx.accepted = self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
-        if let Some((remote_addr, remote_port)) = util::get_remote_addr(session)
+        if let Some((remote_addr, remote_port)) =
+            pingap_util::get_remote_addr(session)
         {
             ctx.remote_addr = Some(remote_addr);
             ctx.remote_port = Some(remote_port);
@@ -578,7 +578,7 @@ impl ProxyHttp for Server {
         }
 
         let header = session.req_header_mut();
-        let host = util::get_host(header).unwrap_or_default();
+        let host = pingap_util::get_host(header).unwrap_or_default();
         let path = header.uri.path();
 
         #[cfg(feature = "full")]
@@ -629,9 +629,9 @@ impl ProxyHttp for Server {
         }
 
         if let Some(location) = &ctx.location {
-            location
-                .validate_content_length(header)
-                .map_err(|e| util::new_internal_error(413, e.to_string()))?;
+            location.validate_content_length(header).map_err(|e| {
+                pingap_util::new_internal_error(413, e.to_string())
+            })?;
 
             // add processing, if processing is max than limit,
             // it will return error with 429 status code
@@ -641,7 +641,10 @@ impl ProxyHttp for Server {
                     ctx.location_processing = processing;
                 },
                 Err(e) => {
-                    return Err(util::new_internal_error(429, e.to_string()));
+                    return Err(pingap_util::new_internal_error(
+                        429,
+                        e.to_string(),
+                    ));
                 },
             };
             if location.support_grpc_web() {
@@ -650,7 +653,7 @@ impl ProxyHttp for Server {
                     .downstream_modules_ctx
                     .get_mut::<GrpcWebBridge>()
                     .ok_or_else(|| {
-                        util::new_internal_error(
+                        pingap_util::new_internal_error(
                             500,
                             "grpc web bridge module should be added"
                                 .to_string(),
@@ -689,7 +692,7 @@ impl ProxyHttp for Server {
         // only enable for http 80
         if self.lets_encrypt_enabled {
             let Some(storage) = get_config_storage() else {
-                return Err(util::new_internal_error(
+                return Err(pingap_util::new_internal_error(
                     500,
                     "get config storage fail".to_string(),
                 ));
@@ -711,18 +714,20 @@ impl ProxyHttp for Server {
             let body = self
                 .prometheus
                 .as_ref()
-                .ok_or(util::new_internal_error(
+                .ok_or(pingap_util::new_internal_error(
                     500,
                     "get prometheus fail".to_string(),
                 ))?
                 .metrics()
-                .map_err(|e| util::new_internal_error(500, e.to_string()))?;
+                .map_err(|e| {
+                    pingap_util::new_internal_error(500, e.to_string())
+                })?;
             HttpResponse::text(body.into()).send(session).await?;
             return Ok(true);
         }
 
         let Some(location) = &ctx.location else {
-            let host = util::get_host(header).unwrap_or_default();
+            let host = pingap_util::get_host(header).unwrap_or_default();
             HttpResponse::unknown_error(Bytes::from(format!(
                 "Location not found, host:{host} path:{}",
                 header.uri.path(),
@@ -812,14 +817,14 @@ impl ProxyHttp for Server {
             None
         }
         .ok_or_else(|| {
-            util::new_internal_error(
+            pingap_util::new_internal_error(
                 503,
                 format!("No available upstream for {location_name}"),
             )
         })?;
 
         ctx.upstream_connect_time =
-            util::get_latency(&ctx.upstream_connect_time);
+            pingap_util::get_latency(&ctx.upstream_connect_time);
 
         Ok(Box::new(peer))
     }
@@ -861,9 +866,9 @@ impl ProxyHttp for Server {
 
         ctx.upstream_reused = reused;
         ctx.upstream_connect_time =
-            util::get_latency(&ctx.upstream_connect_time);
+            pingap_util::get_latency(&ctx.upstream_connect_time);
         ctx.upstream_processing_time =
-            util::get_latency(&ctx.upstream_processing_time);
+            pingap_util::get_latency(&ctx.upstream_processing_time);
 
         Ok(())
     }
@@ -903,7 +908,7 @@ impl ProxyHttp for Server {
             ctx.payload_size += buf.len();
             if let Some(location) = &ctx.location {
                 location.client_body_size_limit(ctx).map_err(|e| {
-                    util::new_internal_error(413, e.to_string())
+                    pingap_util::new_internal_error(413, e.to_string())
                 })?;
             }
         }
@@ -1053,14 +1058,14 @@ impl ProxyHttp for Server {
         if ctx.status.is_none() {
             ctx.status = Some(upstream_response.status);
             ctx.upstream_response_time =
-                util::get_latency(&ctx.upstream_response_time);
+                pingap_util::get_latency(&ctx.upstream_response_time);
         }
         if let Some(id) = &ctx.request_id {
             let _ = upstream_response
                 .insert_header(HTTP_HEADER_NAME_X_REQUEST_ID.clone(), id);
         }
         ctx.upstream_processing_time =
-            util::get_latency(&ctx.upstream_processing_time);
+            pingap_util::get_latency(&ctx.upstream_processing_time);
     }
 
     /// Filters upstream response body chunks.
@@ -1076,7 +1081,7 @@ impl ProxyHttp for Server {
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream response body filter"););
         if end_of_stream {
             ctx.upstream_response_time =
-                util::get_latency(&ctx.upstream_response_time);
+                pingap_util::get_latency(&ctx.upstream_response_time);
             #[cfg(feature = "full")]
             if let Some(ref mut span) = ctx.upstream_span.as_mut() {
                 span.set_attributes([
@@ -1198,7 +1203,7 @@ impl ProxyHttp for Server {
         let error_type = e.etype().as_str();
         let content = self
             .error_template
-            .replace("{{version}}", util::get_pkg_version())
+            .replace("{{version}}", pingap_util::get_pkg_version())
             .replace("{{content}}", &e.to_string())
             .replace("{{error_type}}", error_type);
         let buf = Bytes::from(content);
@@ -1307,7 +1312,7 @@ impl ProxyHttp for Server {
             let ip = if let Some(ip) = &ctx.client_ip {
                 ip.to_string()
             } else {
-                let ip = util::get_client_ip(session);
+                let ip = pingap_util::get_client_ip(session);
                 ctx.client_ip = Some(ip.clone());
                 ip
             };

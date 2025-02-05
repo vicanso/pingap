@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{config::get_current_config, util};
+use crate::config::get_current_config;
 use bytesize::ByteSize;
 use memory_stats::memory_stats;
 use once_cell::sync::OnceCell;
@@ -41,7 +41,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 impl From<Error> for pingora::BError {
     fn from(value: Error) -> Self {
-        util::new_internal_error(500, value.to_string())
+        pingap_util::new_internal_error(500, value.to_string())
     }
 }
 

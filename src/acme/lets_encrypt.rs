@@ -23,7 +23,6 @@ use crate::proxy::try_update_certificates;
 use crate::service::Error as ServiceError;
 use crate::service::SimpleServiceTaskFuture;
 use crate::state::State;
-use crate::util;
 use crate::webhook;
 use http::StatusCode;
 use instant_acme::{
@@ -254,7 +253,7 @@ pub async fn handle_lets_encrypt(
                     err = e.to_string(),
                     "load http-01 token fail"
                 );
-                util::new_internal_error(500, e.to_string())
+                pingap_util::new_internal_error(500, e.to_string())
             })?;
         info!(
             category = LOG_CATEGORY,

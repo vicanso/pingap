@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util;
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -92,12 +91,10 @@ impl Certificate {
     /// # Returns
     /// * `Result<Certificate>` - The parsed certificate or an error if invalid
     pub fn new(pem: &str, key: &str) -> Result<Certificate> {
-        let pem_data =
-            util::convert_certificate_bytes(Some(pem)).ok_or_else(|| {
-                Error::Invalid {
-                    category: "certificate".to_string(),
-                    message: "invalid pem data".to_string(),
-                }
+        let pem_data = pingap_util::convert_certificate_bytes(Some(pem))
+            .ok_or_else(|| Error::Invalid {
+                category: "certificate".to_string(),
+                message: "invalid pem data".to_string(),
             })?;
 
         let (_, p) =
@@ -136,7 +133,8 @@ impl Certificate {
         Ok(Self {
             domains: dns_names,
             pem: pem_data,
-            key: util::convert_certificate_bytes(Some(key)).unwrap_or_default(),
+            key: pingap_util::convert_certificate_bytes(Some(key))
+                .unwrap_or_default(),
             not_after: validity.not_after.timestamp(),
             not_before: validity.not_before.timestamp(),
             issuer: x509.issuer.to_string(),
@@ -164,7 +162,7 @@ impl Certificate {
     /// # Returns
     /// * `bool` - True if the certificate is valid, false otherwise
     pub fn valid(&self) -> bool {
-        let ts = util::now().as_secs() as i64;
+        let ts = pingap_util::now_sec() as i64;
         self.not_after - ts > 2 * 24 * 3600
     }
     /// Returns the PEM-encoded certificate data

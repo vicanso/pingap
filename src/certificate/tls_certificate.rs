@@ -19,7 +19,6 @@ use super::self_signed::{
 };
 use super::{Certificate, Error, Result, LOG_CATEGORY};
 use crate::config::CertificateConf;
-use crate::util;
 use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::x509::X509;
 use std::sync::Arc;
@@ -71,7 +70,7 @@ impl TryFrom<&CertificateConf> for TlsCertificate {
         let hash_key = value.hash_key();
 
         let tls_chain =
-            util::convert_certificate_bytes(value.tls_chain.as_deref());
+            pingap_util::convert_certificate_bytes(value.tls_chain.as_deref());
         let chain_certificate = if let Some(value) = &tls_chain {
             // ignore chain error
             X509::from_pem(value)

@@ -16,7 +16,6 @@ use super::{get_bool_conf, get_hash_key, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{convert_header_value, HttpHeader, HttpResponse};
 use crate::state::State;
-use crate::util;
 use async_trait::async_trait;
 use http::{header, HeaderValue};
 use humantime::parse_duration;
@@ -247,9 +246,9 @@ impl Plugin for Cors {
         // Handle CORS preflight (OPTIONS) requests
         // Preflight happens before actual request to check if it's allowed
         if http::Method::OPTIONS == session.req_header().method {
-            let headers = self
-                .get_headers(session, ctx)
-                .map_err(|e| util::new_internal_error(400, e.to_string()))?;
+            let headers = self.get_headers(session, ctx).map_err(|e| {
+                pingap_util::new_internal_error(400, e.to_string())
+            })?;
             // Return 204 No Content with CORS headers for preflight
             let mut resp = HttpResponse::no_content();
             resp.headers = Some(headers);
@@ -296,7 +295,7 @@ impl Plugin for Cors {
         // Add all configured CORS headers to the response
         let headers = self
             .get_headers(session, ctx)
-            .map_err(|e| util::new_internal_error(400, e.to_string()))?;
+            .map_err(|e| pingap_util::new_internal_error(400, e.to_string()))?;
         for (name, value) in &headers {
             let _ = upstream_response.insert_header(name, value);
         }

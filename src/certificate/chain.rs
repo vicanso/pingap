@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use super::Certificate;
-use crate::util;
 use once_cell::sync::Lazy;
 use pingora::tls::x509::X509;
 
@@ -36,7 +35,7 @@ const SECONDS_PER_DAY: u64 = 24 * 3600;
 /// - The PEM data is invalid UTF-8
 fn parse_chain_certificate(data: &[u8]) -> Option<X509> {
     let expiration_threshold =
-        util::now().as_secs() + EXPIRATION_BUFFER_DAYS * SECONDS_PER_DAY;
+        pingap_util::now_sec() + EXPIRATION_BUFFER_DAYS * SECONDS_PER_DAY;
 
     String::from_utf8(data.to_vec())
         .ok()

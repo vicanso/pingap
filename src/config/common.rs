@@ -16,7 +16,6 @@ use super::{Error, Result};
 use crate::discovery::{is_static_discovery, DNS_DISCOVERY};
 use crate::plugin::parse_plugins;
 use crate::proxy::Parser;
-use crate::util;
 use arc_swap::ArcSwap;
 use bytesize::ByteSize;
 use http::{HeaderName, HeaderValue};
@@ -174,7 +173,7 @@ pub struct CertificateConf {
 /// Validates a certificate in PEM format or base64 encoded
 fn validate_cert(value: &str) -> Result<()> {
     // Convert from PEM/base64 to binary
-    let buf = util::convert_pem(value).map_err(|e| Error::Invalid {
+    let buf = pingap_util::convert_pem(value).map_err(|e| Error::Invalid {
         message: e.to_string(),
     })?;
     let mut cursor = Cursor::new(&buf);
@@ -213,10 +212,11 @@ impl CertificateConf {
         // Validate private key
         let tls_key = self.tls_key.clone().unwrap_or_default();
         if !tls_key.is_empty() {
-            let buf =
-                util::convert_pem(&tls_key).map_err(|e| Error::Invalid {
+            let buf = pingap_util::convert_pem(&tls_key).map_err(|e| {
+                Error::Invalid {
                     message: e.to_string(),
-                })?;
+                }
+            })?;
             let mut key = Cursor::new(buf);
             let _ = rustls_pemfile::private_key(&mut key).map_err(|e| {
                 Error::Invalid {
@@ -768,7 +768,7 @@ impl BasicConf {
         if let Some(pid_file) = &self.pid_file {
             pid_file.clone()
         } else {
-            format!("/run/{}.pid", util::get_pkg_name())
+            "/run/pingap.pid".to_string()
         }
     }
 }
@@ -895,11 +895,11 @@ impl PingapConf {
             }
 
             if let Some(key) = &item.secret {
-                return util::aes_decrypt(key, &item.value).map_err(|e| {
-                    Error::Invalid {
+                return pingap_util::aes_decrypt(key, &item.value).map_err(
+                    |e| Error::Invalid {
                         message: e.to_string(),
-                    }
-                });
+                    },
+                );
             }
             return Ok(item.value.clone());
         }
@@ -1328,7 +1328,7 @@ mod tests {
     use super::{
         LocationConf, PingapConf, PluginCategory, ServerConf, UpstreamConf,
     };
-    use crate::util::base64_encode;
+    use pingap_util::base64_encode;
     use pretty_assertions::assert_eq;
     use serde::{Deserialize, Serialize};
     use std::str::FromStr;

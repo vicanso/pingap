@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util;
 use crate::{config::get_app_name, state};
 use async_trait::async_trait;
 use once_cell::sync::OnceCell;
@@ -156,7 +155,7 @@ pub async fn send_notification(params: SendNotificationParams) {
     }
     let category = params.category.to_string();
     let level = params.level;
-    let ip = util::local_ip_list().join(";");
+    let ip = pingap_util::local_ip_list().join(";");
     let remark = params.remark.unwrap_or_default();
 
     let client = reqwest::Client::new();

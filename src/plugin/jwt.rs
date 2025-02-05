@@ -18,7 +18,6 @@ use crate::http_extra::{
     HttpResponse, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_TRANSFER_CHUNKED,
 };
 use crate::state::{ModifyResponseBody, State};
-use crate::util;
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
@@ -230,8 +229,8 @@ impl Plugin for JwtAuth {
             return Ok(None);
         }
         let value = if let Some(key) = &self.header {
-            let value =
-                util::get_req_header_value(req_header, key).unwrap_or_default();
+            let value = pingap_util::get_req_header_value(req_header, key)
+                .unwrap_or_default();
             let bearer = "Bearer ";
             if value.starts_with(bearer) {
                 value.substring(bearer.len(), value.len())
@@ -239,9 +238,9 @@ impl Plugin for JwtAuth {
                 value
             }
         } else if let Some(key) = &self.cookie {
-            util::get_cookie_value(req_header, key).unwrap_or_default()
+            pingap_util::get_cookie_value(req_header, key).unwrap_or_default()
         } else if let Some(key) = &self.query {
-            util::get_query_value(req_header, key).unwrap_or_default()
+            pingap_util::get_query_value(req_header, key).unwrap_or_default()
         } else {
             ""
         };
@@ -286,7 +285,7 @@ impl Plugin for JwtAuth {
         )
         .unwrap_or_default();
         if let Some(exp) = value.get("exp") {
-            if exp.as_u64().unwrap_or_default() < util::now().as_secs() {
+            if exp.as_u64().unwrap_or_default() < pingap_util::now_sec() {
                 let mut resp = self.unauthorized_resp.clone();
                 resp.body = Bytes::from_static(b"Jwt authorization is expired");
                 return Ok(Some(resp));

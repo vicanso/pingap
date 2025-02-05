@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util;
 use std::time::Duration;
 use tinyufo::TinyUfo;
 use tracing::debug;
@@ -61,7 +60,7 @@ impl TtlLruLimit {
         if let Some(value) = self.ufo.get(&key) {
             debug!(key, value = format!("{value:?}"), "ttl lru limit");
             // validate expired first
-            if util::now() - value.created_at > self.ttl {
+            if pingap_util::now() - value.created_at > self.ttl {
                 valid = true;
                 should_reset = true;
             } else if value.count < self.max {
@@ -96,14 +95,14 @@ impl TtlLruLimit {
         let data = if let Some(mut value) = self.ufo.get(&key) {
             // the reset value
             if value.created_at.as_secs() == 0 {
-                value.created_at = util::now();
+                value.created_at = pingap_util::now();
             }
             value.count += 1;
             value
         } else {
             TtlLimit {
                 count: 1,
-                created_at: util::now(),
+                created_at: pingap_util::now(),
             }
         };
         self.ufo.put(key, data, 1);

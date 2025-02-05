@@ -14,7 +14,6 @@
 
 use crate::service::Error as ServiceError;
 use crate::service::SimpleServiceTaskFuture;
-use crate::util;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use once_cell::sync::Lazy;
@@ -70,7 +69,7 @@ async fn do_self_signed_certificate_validity(
         return Ok(false);
     }
     let mut m = AHashMap::new();
-    let expired = (util::now().as_secs()
+    let expired = (pingap_util::now_sec()
         - CERTIFICATE_EXPIRY_DAYS * SECONDS_PER_DAY) as i64;
 
     m.extend(
@@ -181,7 +180,6 @@ mod tests {
         add_self_signed_certificate, do_self_signed_certificate_validity,
         get_self_signed_certificate,
     };
-    use crate::util;
     use pingora::tls::pkey::PKey;
     use pingora::tls::x509::X509;
     use pretty_assertions::assert_eq;
@@ -252,7 +250,7 @@ kknq2XUsBMCyIW1BqgLVEyeNxg==
             name.clone(),
             cert,
             key,
-            (util::now().as_secs() + 1000000000) as i64,
+            (pingap_util::now_sec() + 1000000000) as i64,
         );
 
         let cert = get_self_signed_certificate(&name).unwrap();

@@ -19,12 +19,12 @@ use super::{
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
-use crate::util::base64_decode;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::HeaderValue;
 use http::StatusCode;
 use humantime::parse_duration;
+use pingap_util::base64_decode;
 use pingora::proxy::Session;
 use std::time::Duration;
 use tokio::time::sleep;

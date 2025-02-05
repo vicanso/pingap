@@ -1,0 +1,41 @@
+[package]
+name = "pingap-util"
+version = "0.9.10"
+edition = "2021"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/pingap"
+repository = "https://github.com/vicanso/pingap"
+keywords = ["pingap", "util"]
+
+
+[lib]
+name = "pingap_util"
+path = "src/lib.rs"
+
+
+[dependencies]
+aes-gcm-siv = { version = "0.11.1", default-features = false, features = [
+    "aes",
+    "alloc",
+] }
+ipnet = "2.11.0"
+base64 = "0.22.1"
+path-absolutize = "3.1.1"
+rustc_version_runtime = "0.3.0"
+local-ip-address = "0.6.3"
+dirs = "6.0.0"
+once_cell = { workspace = true }
+bytes = { workspace = true }
+http = { workspace = true }
+pingora = { workspace = true }
+regex = { workspace = true }
+snafu = { workspace = true }
+substring = { workspace = true }
+itoa = { workspace = true }
+toml = { workspace = true }
+
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"
+tempfile = "3.16.0"

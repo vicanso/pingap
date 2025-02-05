@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util;
 use crate::webhook;
 use async_trait::async_trait;
 use http::Uri;
@@ -338,20 +337,20 @@ impl HealthCheck for GrpcHealthCheck {
         let uri = format!("{}://{}", self.scheme, target.addr);
 
         let conn = tonic::transport::Endpoint::from_shared(uri)
-            .map_err(|e| util::new_internal_error(500, e.to_string()))?
+            .map_err(|e| pingap_util::new_internal_error(500, e.to_string()))?
             .origin(self.origin.clone())
             .connect_timeout(self.connection_timeout)
             .connect()
             .await
-            .map_err(|e| util::new_internal_error(500, e.to_string()))?;
+            .map_err(|e| pingap_util::new_internal_error(500, e.to_string()))?;
         let resp = HealthClient::new(conn)
             .check(HealthCheckRequest {
                 service: self.service.clone(),
             })
             .await
-            .map_err(|e| util::new_internal_error(500, e.to_string()))?;
+            .map_err(|e| pingap_util::new_internal_error(500, e.to_string()))?;
         if resp.get_ref().status() != ServingStatus::Serving.into() {
-            return Err(util::new_internal_error(
+            return Err(pingap_util::new_internal_error(
                 500,
                 "grpc server is not serving".to_string(),
             ));

@@ -14,7 +14,6 @@
 
 use super::{ConfigStorage, Error, LoadConfigOptions, Result};
 use super::{Observer, PingapConf};
-use crate::util;
 use async_trait::async_trait;
 use etcd_client::{Client, ConnectOptions, GetOptions, WatchOptions};
 use humantime::parse_duration;
@@ -58,7 +57,7 @@ impl EtcdStorage {
         let mut password = "".to_string();
         let mut options = ConnectOptions::default();
         let mut separation = false;
-        for (key, value) in util::convert_query_map(&query) {
+        for (key, value) in pingap_util::convert_query_map(&query) {
             match key.as_str() {
                 "user" => user = value,
                 "password" => password = value,
@@ -132,7 +131,7 @@ impl ConfigStorage for EtcdStorage {
         } else {
             conf.get_toml(category, None)?
         };
-        let key = util::path_join(&self.path, &path);
+        let key = pingap_util::path_join(&self.path, &path);
         let mut c = self.connect().await?;
         if toml_value.is_empty() {
             c.delete(key, None)
@@ -169,7 +168,7 @@ impl ConfigStorage for EtcdStorage {
     }
     /// Save key-value data under the base path
     async fn save(&self, key: &str, data: &[u8]) -> Result<()> {
-        let key = util::path_join(&self.path, key);
+        let key = pingap_util::path_join(&self.path, key);
         let mut c = self.connect().await?;
         c.put(key, data, None)
             .await
@@ -178,7 +177,7 @@ impl ConfigStorage for EtcdStorage {
     }
     /// Load key-value data from under the base path
     async fn load(&self, key: &str) -> Result<Vec<u8>> {
-        let key = util::path_join(&self.path, key);
+        let key = pingap_util::path_join(&self.path, key);
         let mut c = self.connect().await?;
         let arr = c
             .get(key, None)

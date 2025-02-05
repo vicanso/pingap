@@ -19,7 +19,6 @@ use super::{
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
-use crate::util;
 use async_trait::async_trait;
 use http::StatusCode;
 use humantime::parse_duration;
@@ -195,25 +194,28 @@ impl Limiter {
         let key = match self.tag {
             LimitTag::Query => {
                 // Get value from URL query parameter
-                util::get_query_value(session.req_header(), &self.key)
+                pingap_util::get_query_value(session.req_header(), &self.key)
                     .unwrap_or_default()
                     .to_string()
             },
             LimitTag::RequestHeader => {
                 // Get value from HTTP request header
-                util::get_req_header_value(session.req_header(), &self.key)
-                    .unwrap_or_default()
-                    .to_string()
+                pingap_util::get_req_header_value(
+                    session.req_header(),
+                    &self.key,
+                )
+                .unwrap_or_default()
+                .to_string()
             },
             LimitTag::Cookie => {
                 // Get value from cookie
-                util::get_cookie_value(session.req_header(), &self.key)
+                pingap_util::get_cookie_value(session.req_header(), &self.key)
                     .unwrap_or_default()
                     .to_string()
             },
             _ => {
                 // Get client IP from X-Forwarded-For or connection
-                let client_ip = util::get_client_ip(session);
+                let client_ip = pingap_util::get_client_ip(session);
                 // Store client IP in context for potential later use
                 ctx.client_ip = Some(client_ip.clone());
                 client_ip

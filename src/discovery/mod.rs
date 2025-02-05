@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::util;
 use hickory_resolver::error::ResolveError;
 use snafu::Snafu;
 
@@ -34,7 +33,7 @@ pub enum Error {
 }
 impl From<Error> for pingora::BError {
     fn from(value: Error) -> Self {
-        util::new_internal_error(500, value.to_string())
+        pingap_util::new_internal_error(500, value.to_string())
     }
 }
 

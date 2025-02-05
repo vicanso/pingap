@@ -18,7 +18,6 @@ use super::{
     HttpHeader, HTTP_HEADER_CONTENT_HTML, HTTP_HEADER_CONTENT_JSON,
     HTTP_HEADER_NO_CACHE, HTTP_HEADER_NO_STORE, HTTP_HEADER_TRANSFER_CHUNKED,
 };
-use crate::util;
 use bytes::Bytes;
 use http::header;
 use http::StatusCode;
@@ -125,7 +124,7 @@ impl HttpResponse {
     pub fn redirect(location: &str) -> pingora::Result<Self> {
         let value = http::HeaderValue::from_str(location).map_err(|e| {
             error!(error = e.to_string(), "to header value fail");
-            util::new_internal_error(500, e.to_string())
+            pingap_util::new_internal_error(500, e.to_string())
         })?;
         Ok(Self {
             status: StatusCode::TEMPORARY_REDIRECT,
@@ -170,7 +169,7 @@ impl HttpResponse {
     {
         let buf = serde_json::to_vec(value).map_err(|e| {
             error!(error = e.to_string(), "to json fail");
-            util::new_internal_error(400, e.to_string())
+            pingap_util::new_internal_error(400, e.to_string())
         })?;
         Ok(Self {
             status: StatusCode::OK,
@@ -198,7 +197,7 @@ impl HttpResponse {
         resp.insert_header(cache_control.0, cache_control.1)?;
 
         if let Some(created_at) = self.created_at {
-            let secs = util::get_super_ts() - created_at;
+            let secs = pingap_util::get_super_ts() - created_at;
             if let Ok(value) = header::HeaderValue::from_str(&secs.to_string())
             {
                 resp.insert_header(header::AGE, value)?;
@@ -287,7 +286,7 @@ where
         loop {
             let size = self.reader.read(&mut buffer).await.map_err(|e| {
                 error!(error = e.to_string(), "read data fail");
-                util::new_internal_error(400, e.to_string())
+                pingap_util::new_internal_error(400, e.to_string())
             })?;
             let end = size < chunk_size;
             session
@@ -311,9 +310,9 @@ where
 mod tests {
     use super::{new_cache_control_header, HttpChunkResponse, HttpResponse};
     use crate::http_extra::convert_headers;
-    use crate::util::{get_super_ts, resolve_path};
     use bytes::Bytes;
     use http::StatusCode;
+    use pingap_util::{get_super_ts, resolve_path};
     use pretty_assertions::assert_eq;
     use serde::Serialize;
     use tokio::fs;

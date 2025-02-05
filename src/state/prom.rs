@@ -17,7 +17,6 @@ use super::{
 };
 use crate::service::Error as ServiceError;
 use crate::service::SimpleServiceTaskFuture;
-use crate::util;
 use humantime::parse_duration;
 use once_cell::sync::Lazy;
 use pingora::proxy::Session;
@@ -220,7 +219,7 @@ impl Prometheus {
             upstream = &lo.upstream;
         }
         let response_time =
-            ((util::now().as_millis() as u64) - ctx.created_at) as f64 / SECOND;
+            ((pingap_util::now_ms()) - ctx.created_at) as f64 / SECOND;
         // payload size(kb)
         let payload_size = ctx.payload_size as f64 / 1024.0;
         let mut code = 0;
@@ -838,7 +837,6 @@ mod tests {
         config::LocationConf,
         proxy::Location,
         state::{CompressionStat, State},
-        util,
     };
     use http::StatusCode;
     use pingora::proxy::Session;
@@ -880,7 +878,7 @@ mod tests {
         p.after(
             &session,
             &State {
-                created_at: util::now().as_millis() as u64 - 10,
+                created_at: pingap_util::now_ms() - 10,
                 status: Some(StatusCode::from_u16(200).unwrap()),
                 connection_reused: true,
                 tls_handshake_time: Some(1),

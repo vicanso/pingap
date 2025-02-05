@@ -19,7 +19,6 @@ use super::{
 use crate::config::{PluginConf, PluginStep};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NO_STORE};
 use crate::state::State;
-use crate::util;
 use ahash::AHashMap;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -33,7 +32,7 @@ use tracing::debug;
 struct AuthParam {
     // Optional IP rules for restricting access to specific IP addresses or CIDR ranges
     // Example: ["127.0.0.1", "192.168.1.0/24"]
-    ip_rules: Option<util::IpRules>,
+    ip_rules: Option<pingap_util::IpRules>,
 
     // Secret key used for HMAC authentication
     // Special value "*" bypasses all authentication (super user mode)
@@ -99,7 +98,7 @@ impl TryFrom<&PluginConf> for CombinedAuth {
             let mut ip_rules = None;
             let ip_list = get_str_slice_conf(value, "ip_list");
             if !ip_list.is_empty() {
-                ip_rules = Some(util::IpRules::new(&ip_list));
+                ip_rules = Some(pingap_util::IpRules::new(&ip_list));
             }
             auths.insert(
                 app_id,
@@ -156,7 +155,8 @@ impl CombinedAuth {
 
         // Step 1: Extract and validate app_id
         // The app_id must be provided as a query parameter: ?app_id=your_app_id
-        let Some(app_id) = util::get_query_value(req_header, "app_id") else {
+        let Some(app_id) = pingap_util::get_query_value(req_header, "app_id")
+        else {
             return Err(Error::Invalid {
                 category: category.to_string(),
                 message: "app id is empty".to_string(),
@@ -182,7 +182,7 @@ impl CombinedAuth {
         // Checks if the client IP is in the allowed list
         // Uses X-Forwarded-For header for IP detection behind proxies
         if let Some(ip_rules) = &auth_param.ip_rules {
-            let ip = util::get_client_ip(session);
+            let ip = pingap_util::get_client_ip(session);
             if !ip_rules.is_match(&ip).unwrap_or_default() {
                 return Err(Error::Invalid {
                     category: category.to_string(),
@@ -193,7 +193,8 @@ impl CombinedAuth {
 
         // Step 5: Timestamp validation
         // Requires a Unix timestamp as query parameter: ?ts=1234567890
-        let ts = util::get_query_value(req_header, "ts").unwrap_or_default();
+        let ts =
+            pingap_util::get_query_value(req_header, "ts").unwrap_or_default();
         if ts.is_empty() {
             return Err(Error::Invalid {
                 category: category.to_string(),
@@ -206,7 +207,7 @@ impl CombinedAuth {
             category: category.to_string(),
             message: e.to_string(),
         })?;
-        let now = util::now().as_secs() as i64;
+        let now = pingap_util::now_sec() as i64;
         if (now - value).abs() > auth_param.deviation {
             return Err(Error::Invalid {
                 category: category.to_string(),
@@ -217,8 +218,8 @@ impl CombinedAuth {
         // Step 6: HMAC Authentication
         // Requires a hex-encoded SHA-256 HMAC digest as query parameter: ?digest=abc123...
         // digest = hex(SHA256(secret:timestamp))
-        let digest =
-            util::get_query_value(req_header, "digest").unwrap_or_default();
+        let digest = pingap_util::get_query_value(req_header, "digest")
+            .unwrap_or_default();
         if digest.is_empty() {
             return Err(Error::Invalid {
                 category: category.to_string(),
@@ -288,7 +289,6 @@ impl Plugin for CombinedAuth {
 mod tests {
     use super::{AuthParam, CombinedAuth};
     use crate::config::PluginStep;
-    use crate::util;
     use ahash::AHashMap;
     use hex::ToHex;
     use pingora::proxy::Session;
@@ -303,7 +303,7 @@ mod tests {
         auths.insert(
             "pingap".to_string(),
             AuthParam {
-                ip_rules: Some(util::IpRules::new(&vec![
+                ip_rules: Some(pingap_util::IpRules::new(&vec![
                     "127.0.0.1".to_string(),
                     "192.168.1.0/24".to_string(),
                 ])),
@@ -393,7 +393,7 @@ mod tests {
 
         // digest is empty
         let headers = ["X-Forwarded-For: 192.168.1.10"].join("\r\n");
-        let ts = util::now().as_secs() as i64;
+        let ts = pingap_util::now_sec() as i64;
         let input_header = format!(
             "GET /vicanso/pingap?app_id=pingap&ts={ts} HTTP/1.1\r\n{headers}\r\n\r\n"
         );
@@ -409,7 +409,7 @@ mod tests {
 
         // digest is invalid
         let headers = ["X-Forwarded-For: 192.168.1.10"].join("\r\n");
-        let ts = util::now().as_secs() as i64;
+        let ts = pingap_util::now_sec() as i64;
         let input_header = format!(
             "GET /vicanso/pingap?app_id=pingap&ts={ts}&digest=abc HTTP/1.1\r\n{headers}\r\n\r\n"
         );
@@ -424,7 +424,7 @@ mod tests {
         );
 
         let headers = ["X-Forwarded-For: 192.168.1.10"].join("\r\n");
-        let ts = util::now().as_secs() as i64;
+        let ts = pingap_util::now_sec() as i64;
         let mut hasher = Sha256::new();
         hasher.update(format!("{secret}:{ts}",).as_bytes());
         let hash256 = hasher.finalize();

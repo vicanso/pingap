@@ -2868,6 +2868,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "path-absolutize",
+ "pingap-util",
  "pingora",
  "pingora-limits",
  "pingora-runtime 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2908,6 +2909,30 @@ dependencies = [
  "walkdir",
  "x509-parser 0.17.0",
  "zstd",
+]
+
+[[package]]
+name = "pingap-util"
+version = "0.9.10"
+dependencies = [
+ "aes-gcm-siv",
+ "base64 0.22.1",
+ "bytes",
+ "dirs",
+ "http 1.2.0",
+ "ipnet",
+ "itoa",
+ "local-ip-address 0.6.3",
+ "once_cell",
+ "path-absolutize",
+ "pingora",
+ "pretty_assertions",
+ "regex",
+ "rustc_version_runtime",
+ "snafu",
+ "substring",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]

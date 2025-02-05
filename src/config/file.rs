@@ -16,7 +16,6 @@ use super::{
     read_all_toml_files, ConfigStorage, Error, LoadConfigOptions, PingapConf,
     Result,
 };
-use crate::util;
 use async_trait::async_trait;
 use futures_util::TryFutureExt;
 use std::path::Path;
@@ -32,12 +31,12 @@ impl FileStorage {
     /// Create a new file storage for config.
     pub fn new(path: &str) -> Result<Self> {
         let mut separation = false;
-        let mut filepath = util::resolve_path(path);
+        let mut filepath = pingap_util::resolve_path(path);
         // Parse query parameters if present (e.g., "path/to/config?separation=true")
         if let Some((path, query)) = path.split_once('?') {
-            let m = util::convert_query_map(query);
+            let m = pingap_util::convert_query_map(query);
             separation = m.contains_key("separation");
-            filepath = util::resolve_path(path);
+            filepath = pingap_util::resolve_path(path);
         }
         // Validate path is not empty
         if filepath.is_empty() {
@@ -142,7 +141,7 @@ impl ConfigStorage for FileStorage {
             conf.get_toml(category, None)?
         };
 
-        let filepath = util::path_join(&filepath, &path);
+        let filepath = pingap_util::path_join(&filepath, &path);
         let target_file = Path::new(&filepath);
         if let Some(p) = Path::new(&target_file).parent() {
             fs::create_dir_all(p).await.map_err(|e| Error::Io {
@@ -169,7 +168,7 @@ impl ConfigStorage for FileStorage {
         Ok(())
     }
     async fn save(&self, key: &str, data: &[u8]) -> Result<()> {
-        let key = util::path_join(&self.path, key);
+        let key = pingap_util::path_join(&self.path, key);
         let path = Path::new(&key);
         if let Some(p) = path.parent() {
             fs::create_dir_all(p).await.map_err(|e| Error::Io {
@@ -184,7 +183,7 @@ impl ConfigStorage for FileStorage {
         Ok(())
     }
     async fn load(&self, key: &str) -> Result<Vec<u8>> {
-        let key = util::path_join(&self.path, key);
+        let key = pingap_util::path_join(&self.path, key);
         let path = Path::new(&key);
         let buf = fs::read(path).await.map_err(|e| Error::Io {
             source: e,

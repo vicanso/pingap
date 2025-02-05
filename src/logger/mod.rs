@@ -14,12 +14,11 @@
 
 use crate::service::Error as ServiceError;
 use crate::service::SimpleServiceTaskFuture;
-use crate::util;
-use crate::util::convert_query_map;
 use bytesize::ByteSize;
 use chrono::Timelike;
 use flate2::write::GzEncoder;
 use flate2::Compression;
+use pingap_util::convert_query_map;
 use snafu::{ResultExt, Snafu};
 use std::fs;
 use std::io;
@@ -204,7 +203,7 @@ async fn do_compress(
                 );
             },
             Ok((size, original_size)) => {
-                let elapsed = format!("{}ms", util::elapsed_ms(start));
+                let elapsed = format!("{}ms", pingap_util::elapsed_ms(start));
                 info!(
                     category = LOG_CATEGORY,
                     file,
@@ -293,7 +292,7 @@ pub fn logger_try_init(
     let writer = if params.log.is_empty() {
         BoxMakeWriter::new(std::io::stderr)
     } else {
-        let mut file = util::resolve_path(&params.log);
+        let mut file = pingap_util::resolve_path(&params.log);
         let mut rolling_type = "".to_string();
         let mut compression = "".to_string();
         let mut level = 0;

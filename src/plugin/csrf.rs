@@ -16,13 +16,13 @@ use super::{get_hash_key, get_str_conf, Error, Plugin, Result};
 use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NO_STORE};
 use crate::state::State;
-use crate::util::{self, base64_encode};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cookie::Cookie;
 use http::{header, HeaderValue, Method, StatusCode};
 use humantime::parse_duration;
 use nanoid::nanoid;
+use pingap_util::base64_encode;
 use pingora::proxy::Session;
 use sha2::{Digest, Sha256};
 use tracing::debug;
@@ -141,7 +141,7 @@ fn generate_token(key: &str) -> String {
     // Generate random ID using nanoid (URL-safe, 12 chars)
     let id = nanoid!(12);
     // Add current timestamp in hex format
-    let prefix = format!("{id}.{:x}", util::now().as_secs());
+    let prefix = format!("{id}.{:x}", pingap_util::now_sec());
 
     // Create cryptographic signature:
     // - Uses SHA-256 for hashing
@@ -178,7 +178,7 @@ fn validate_token(key: &str, ttl: u64, value: &str) -> bool {
 
     // Check expiration if TTL is configured
     if ttl > 0 {
-        let now = util::now().as_secs();
+        let now = pingap_util::now_sec();
         // Parse timestamp from hex and compare with current time
         if now - u64::from_str_radix(arr[1], 16).unwrap_or_default() > ttl {
             return false;
@@ -255,7 +255,7 @@ impl Plugin for Csrf {
             let set_cookie = (
                 header::SET_COOKIE,
                 HeaderValue::from_str(&builder.build().to_string()).map_err(
-                    |e| util::new_internal_error(400, e.to_string()),
+                    |e| pingap_util::new_internal_error(400, e.to_string()),
                 )?,
             );
 
@@ -290,7 +290,7 @@ impl Plugin for Csrf {
         //    - Prevents CSRF as attacker cannot set custom headers
         // 3. Validate token format, expiration, and signature
         if value
-            != util::get_cookie_value(session.req_header(), &self.name)
+            != pingap_util::get_cookie_value(session.req_header(), &self.name)
                 .unwrap_or_default()
             || !validate_token(&self.key, self.ttl, &value)
         {

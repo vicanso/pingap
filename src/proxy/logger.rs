@@ -14,9 +14,8 @@
 
 use crate::http_extra::HOST_NAME_TAG;
 use crate::state::{get_hostname, State};
-use crate::util;
-use crate::util::{format_byte_size, format_duration};
 use bytes::BytesMut;
+use pingap_util::{format_byte_size, format_duration};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::Regex;
@@ -280,7 +279,7 @@ impl Parser {
                 },
                 TagCategory::Host => {
                     // Add the host from request headers
-                    if let Some(host) = util::get_host(req_header) {
+                    if let Some(host) = pingap_util::get_host(req_header) {
                         buf.extend(host.as_bytes());
                     }
                 },
@@ -311,7 +310,9 @@ impl Parser {
                     if let Some(client_ip) = &ctx.client_ip {
                         buf.extend(client_ip.as_bytes());
                     } else {
-                        buf.extend(util::get_client_ip(session).as_bytes());
+                        buf.extend(
+                            pingap_util::get_client_ip(session).as_bytes(),
+                        );
                     }
                 },
                 TagCategory::Scheme => {
@@ -365,17 +366,17 @@ impl Parser {
                     }
                 },
                 TagCategory::Latency => {
-                    let ms = (util::now().as_millis() as u64) - ctx.created_at;
+                    let ms = (pingap_util::now_ms()) - ctx.created_at;
                     buf.extend(itoa::Buffer::new().format(ms).as_bytes())
                 },
                 TagCategory::LatencyHuman => {
-                    let ms = (util::now().as_millis() as u64) - ctx.created_at;
+                    let ms = (pingap_util::now_ms()) - ctx.created_at;
                     buf = format_duration(buf, ms);
                 },
                 TagCategory::Cookie => {
                     if let Some(cookie) = &tag.data {
                         if let Some(value) =
-                            util::get_cookie_value(req_header, cookie)
+                            pingap_util::get_cookie_value(req_header, cookie)
                         {
                             buf.extend(value.as_bytes());
                         }

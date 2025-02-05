@@ -14,7 +14,6 @@
 
 use super::LOG_CATEGORY;
 use crate::config::get_current_config;
-use crate::util;
 use crate::webhook;
 use bytesize::ByteSize;
 use memory_stats::memory_stats;
@@ -31,7 +30,7 @@ use sysinfo::MemoryRefreshKind;
 use sysinfo::{RefreshKind, System};
 use tracing::{error, info};
 
-static START_TIME: Lazy<Duration> = Lazy::new(util::now);
+static START_TIME: Lazy<Duration> = Lazy::new(pingap_util::now);
 
 static ADMIN_ADDR: OnceCell<String> = OnceCell::new();
 

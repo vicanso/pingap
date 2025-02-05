@@ -17,7 +17,6 @@ use crate::config::{LocationConf, PluginStep};
 use crate::http_extra::{convert_header_value, convert_headers, HttpHeader};
 use crate::plugin::get_plugin;
 use crate::state::State;
-use crate::util::{self, get_content_length};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use http::{HeaderName, HeaderValue};
@@ -116,7 +115,7 @@ fn new_path_selector(path: &str) -> Result<PathSelector> {
 
 #[derive(Debug)]
 struct RegexHost {
-    value: util::RegexCapture,
+    value: pingap_util::RegexCapture,
 }
 
 #[derive(Debug)]
@@ -156,9 +155,10 @@ fn new_host_selector(host: &str) -> Result<HostSelector> {
     let last = host.substring(1, host.len()).trim();
     let se = match first {
         '~' => {
-            let re = util::RegexCapture::new(last).context(RegexSnafu {
-                value: last.to_string(),
-            })?;
+            let re =
+                pingap_util::RegexCapture::new(last).context(RegexSnafu {
+                    value: last.to_string(),
+                })?;
             HostSelector::RegexHost(RegexHost { value: re })
         },
         _ => {
@@ -363,7 +363,7 @@ impl Location {
         if self.client_max_body_size == 0 {
             return Ok(());
         }
-        if get_content_length(header).unwrap_or_default()
+        if pingap_util::get_content_length(header).unwrap_or_default()
             > self.client_max_body_size
         {
             return Err(Error::BodyTooLarge {

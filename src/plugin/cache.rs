@@ -22,7 +22,6 @@ use crate::config::{
 };
 use crate::http_extra::HttpResponse;
 use crate::state::{get_cache_key, State};
-use crate::util;
 use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
 use bytesize::ByteSize;
@@ -89,7 +88,7 @@ pub struct Cache {
     // Whether to check the cache-control header, if not exist the response will not be cached.
     check_cache_control: bool,
     // IP-based access control for cache purge operations
-    purge_ip_rules: util::IpRules,
+    purge_ip_rules: pingap_util::IpRules,
     // Optional regex pattern to skip caching for certain requests
     skip: Option<Regex>,
     // Unique identifier for this cache configuration
@@ -257,8 +256,10 @@ impl TryFrom<&PluginConf> for Cache {
             None
         };
 
-        let purge_ip_rules =
-            util::IpRules::new(&get_str_slice_conf(value, "purge_ip_list"));
+        let purge_ip_rules = pingap_util::IpRules::new(&get_str_slice_conf(
+            value,
+            "purge_ip_list",
+        ));
 
         let skip_value = get_str_conf(value, "skip");
         let skip = if skip_value.is_empty() {
@@ -390,7 +391,7 @@ impl Plugin for Cache {
         if method == METHOD_PURGE.to_owned() {
             let found = match self
                 .purge_ip_rules
-                .is_match(&util::get_client_ip(session))
+                .is_match(&pingap_util::get_client_ip(session))
             {
                 Ok(matched) => matched,
                 Err(e) => {

@@ -21,7 +21,6 @@ use crate::http_extra::{
     convert_headers, HttpChunkResponse, HttpHeader, HttpResponse,
 };
 use crate::state::State;
-use crate::util;
 use async_trait::async_trait;
 use bytesize::ByteSize;
 use glob::glob;
@@ -296,8 +295,10 @@ impl TryFrom<&PluginConf> for Directory {
             hash_value,
             autoindex: get_bool_conf(value, "autoindex"),
             index,
-            path: Path::new(&util::resolve_path(&get_str_conf(value, "path")))
-                .to_path_buf(),
+            path: Path::new(&pingap_util::resolve_path(&get_str_conf(
+                value, "path",
+            )))
+            .to_path_buf(),
             chunk_size,
             max_age,
             charset,
