@@ -205,3 +205,4 @@ snafu = { version = "0.8.5", features = ["std"], default-features = false }
 substring = "1.4.5"
 itoa = "1.0.14"
 toml = "0.8.19"
+tokio = { version = "1.43.0", default-features = false, features = ["fs"] }

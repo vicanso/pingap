@@ -105,7 +105,7 @@ pub fn aes_decrypt(key: &str, data: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{aes_decrypt, aes_encrypt};
+    use super::*;
     use pretty_assertions::assert_eq;
 
     #[test]

@@ -34,8 +34,10 @@ snafu = { workspace = true }
 substring = { workspace = true }
 itoa = { workspace = true }
 toml = { workspace = true }
+tokio = { workspace = true }
 
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"
 tempfile = "3.16.0"
+tokio-test = "0.4.4"

@@ -67,3 +67,23 @@ impl IpRules {
         Ok(found)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_ip_rules() {
+        let ip_rules = IpRules::new(&vec![
+            "192.168.1.0/24".to_string(),
+            "192.168.2.1".to_string(),
+        ]);
+        assert_eq!(ip_rules.ip_net_list.len(), 1);
+        assert_eq!(ip_rules.ip_list.len(), 1);
+
+        assert_eq!(ip_rules.is_match(&"192.168.1.1".to_string()), Ok(true));
+        assert_eq!(ip_rules.is_match(&"192.168.2.1".to_string()), Ok(true));
+        assert_eq!(ip_rules.is_match(&"192.168.3.1".to_string()), Ok(false));
+    }
+}

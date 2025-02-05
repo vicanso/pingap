@@ -2932,6 +2932,8 @@ dependencies = [
  "snafu",
  "substring",
  "tempfile",
+ "tokio",
+ "tokio-test",
  "toml",
 ]
 
