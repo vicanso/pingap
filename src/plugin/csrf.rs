@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{get_hash_key, get_str_conf, Error, Plugin, Result};
-use crate::config::{PluginCategory, PluginConf, PluginStep};
+use pingap_config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NO_STORE};
 use crate::state::State;
 use async_trait::async_trait;
@@ -305,7 +305,7 @@ impl Plugin for Csrf {
 #[cfg(test)]
 mod tests {
     use super::{generate_token, validate_token, Csrf};
-    use crate::config::{PluginConf, PluginStep};
+    use pingap_config::{PluginConf, PluginStep};
     use crate::plugin::Plugin;
     use crate::state::State;
     use cookie::Cookie;

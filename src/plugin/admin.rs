@@ -16,18 +16,7 @@ use super::{
     get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf, Error,
     Plugin, Result,
 };
-use crate::config::{
-    self, get_current_config, save_config, BasicConf, CertificateConf,
-    LoadConfigOptions, LocationConf, PluginCategory, PluginConf, PluginStep,
-    ServerConf, StorageConf, UpstreamConf, CATEGORY_CERTIFICATE,
-    CATEGORY_STORAGE,
-};
-use crate::config::{
-    PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
-    CATEGORY_UPSTREAM,
-};
 use crate::http_extra::HttpResponse;
-use crate::limit::TtlLruLimit;
 use crate::proxy::get_certificate_info_list;
 use crate::state::{
     get_process_system_info, get_processing_accepted, get_start_time,
@@ -43,6 +32,17 @@ use hex::ToHex;
 use http::Method;
 use http::{header, HeaderValue, StatusCode};
 use humantime::parse_duration;
+use pingap_config::{
+    self, get_current_config, save_config, BasicConf, CertificateConf,
+    LoadConfigOptions, LocationConf, PluginCategory, PluginConf, PluginStep,
+    ServerConf, StorageConf, UpstreamConf, CATEGORY_CERTIFICATE,
+    CATEGORY_STORAGE,
+};
+use pingap_config::{
+    PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
+    CATEGORY_UPSTREAM,
+};
+use pingap_limit::TtlLruLimit;
 use pingap_util::base64_decode;
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
@@ -285,7 +285,7 @@ impl AdminServe {
         &self,
         replace_include: bool,
     ) -> pingora::Result<PingapConf> {
-        let conf = config::load_config(LoadConfigOptions {
+        let conf = pingap_config::load_config(LoadConfigOptions {
             replace_include,
             admin: true,
         })
@@ -463,11 +463,13 @@ impl AdminServe {
             error!(error = e.to_string(), "import config fail");
             pingap_util::new_internal_error(400, e.to_string())
         })?;
-        if let Some(storage) = config::get_config_storage() {
-            config::sync_config(&conf, storage).await.map_err(|e| {
-                error!(error = e.to_string(), "import config fail");
-                pingap_util::new_internal_error(400, e.to_string())
-            })?;
+        if let Some(storage) = pingap_config::get_config_storage() {
+            pingap_config::sync_config(&conf, storage)
+                .await
+                .map_err(|e| {
+                    error!(error = e.to_string(), "import config fail");
+                    pingap_util::new_internal_error(400, e.to_string())
+                })?;
         }
         Ok(HttpResponse::no_content())
     }
@@ -499,7 +501,7 @@ impl Plugin for AdminServe {
             return Ok(None);
         }
         let ip = pingap_util::get_client_ip(session);
-        if !self.ip_fail_limit.validate(&ip).await {
+        if !self.ip_fail_limit.validate(&ip) {
             return Ok(Some(HttpResponse {
                 status: StatusCode::FORBIDDEN,
                 body: Bytes::from_static(b"Forbidden, too many failures"),
@@ -527,7 +529,7 @@ impl Plugin for AdminServe {
             header.set_uri(uri);
         }
         if !self.auth_validate(header) {
-            self.ip_fail_limit.inc(&ip).await;
+            self.ip_fail_limit.inc(&ip);
             return Ok(Some(HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
                 ..Default::default()
@@ -602,7 +604,7 @@ impl Plugin for AdminServe {
                 start_time: get_start_time(),
                 version: pingap_util::get_pkg_version().to_string(),
                 rustc_version: pingap_util::get_rustc_version(),
-                config_hash: config::get_config_hash(),
+                config_hash: pingap_config::get_config_hash(),
                 user: current_config.basic.user.clone().unwrap_or_default(),
                 group: current_config.basic.group.clone().unwrap_or_default(),
                 pid: info.pid.to_string(),
@@ -672,7 +674,8 @@ impl Plugin for AdminServe {
 #[cfg(test)]
 mod tests {
     use super::{AdminAsset, AdminServe, EmbeddedStaticFile};
-    use crate::{config::PluginConf, http_extra::HttpResponse};
+    use crate::http_extra::HttpResponse;
+    use pingap_config::PluginConf;
     use pretty_assertions::assert_eq;
     use std::time::Duration;
 

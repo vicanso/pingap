@@ -14,10 +14,10 @@
 
 use super::get_cache_backend;
 use super::{Error, Result, PAGE_SIZE};
-use crate::service::Error as ServiceError;
-use crate::service::SimpleServiceTaskFuture;
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use pingap_service::Error as ServiceError;
+use pingap_service::SimpleServiceTaskFuture;
 use pingora::cache::key::CacheHashKey;
 use pingora::cache::key::CompactCacheKey;
 use pingora::cache::storage::{HandleHit, HandleMiss};

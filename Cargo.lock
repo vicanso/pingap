@@ -2868,7 +2868,13 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "path-absolutize",
+ "pingap-config",
+ "pingap-discovery",
+ "pingap-health",
+ "pingap-limit",
+ "pingap-service",
  "pingap-util",
+ "pingap-webhook",
  "pingora",
  "pingora-limits",
  "pingora-runtime 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2912,6 +2918,112 @@ dependencies = [
 ]
 
 [[package]]
+name = "pingap-config"
+version = "0.9.10"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "bytesize",
+ "crc32fast",
+ "diff",
+ "etcd-client",
+ "futures-util",
+ "glob",
+ "http 1.2.0",
+ "humantime",
+ "humantime-serde",
+ "nanoid",
+ "once_cell",
+ "pingap-discovery",
+ "pingap-util",
+ "pingora",
+ "pretty_assertions",
+ "regex",
+ "rustls-pemfile 2.2.0",
+ "serde",
+ "serde_json",
+ "snafu",
+ "strum",
+ "substring",
+ "tempfile",
+ "tokio",
+ "tokio-test",
+ "toml",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "pingap-discovery"
+version = "0.9.10"
+dependencies = [
+ "async-trait",
+ "bollard",
+ "futures",
+ "hickory-resolver",
+ "http 1.2.0",
+ "pingap-util",
+ "pingap-webhook",
+ "pingora",
+ "pretty_assertions",
+ "snafu",
+ "tempfile",
+ "tokio",
+ "tokio-test",
+ "tracing",
+]
+
+[[package]]
+name = "pingap-health"
+version = "0.9.10"
+dependencies = [
+ "async-trait",
+ "http 1.2.0",
+ "humantime",
+ "pingap-util",
+ "pingap-webhook",
+ "pingora",
+ "pretty_assertions",
+ "snafu",
+ "strum",
+ "tempfile",
+ "tokio",
+ "tokio-test",
+ "tonic",
+ "tonic-health",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "pingap-limit"
+version = "0.9.10"
+dependencies = [
+ "TinyUFO",
+ "pingap-util",
+ "pretty_assertions",
+ "tempfile",
+ "tokio",
+ "tokio-test",
+ "tracing",
+]
+
+[[package]]
+name = "pingap-service"
+version = "0.9.10"
+dependencies = [
+ "async-trait",
+ "futures",
+ "humantime",
+ "pingora",
+ "snafu",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "pingap-util"
 version = "0.9.10"
 dependencies = [
@@ -2935,6 +3047,22 @@ dependencies = [
  "tokio",
  "tokio-test",
  "toml",
+]
+
+[[package]]
+name = "pingap-webhook"
+version = "0.9.10"
+dependencies = [
+ "async-trait",
+ "hostname 0.4.0",
+ "once_cell",
+ "pingap-util",
+ "pingora",
+ "reqwest 0.12.12",
+ "serde",
+ "serde_json",
+ "strum",
+ "tracing",
 ]
 
 [[package]]

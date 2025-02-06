@@ -15,11 +15,7 @@
 pub mod acme;
 pub mod cache;
 pub mod certificate;
-pub mod config;
-pub mod discovery;
-pub mod health;
 pub mod http_extra;
-pub mod limit;
 pub mod logger;
 #[cfg(feature = "full")]
 pub mod otel;
@@ -27,4 +23,3 @@ pub mod plugin;
 pub mod proxy;
 pub mod service;
 pub mod state;
-pub mod webhook;

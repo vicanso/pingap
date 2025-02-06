@@ -13,14 +13,6 @@
 // limitations under the License.
 
 use super::LOG_CATEGORY;
-use crate::config::UpstreamConf;
-use crate::discovery::{
-    is_dns_discovery, is_docker_discovery, is_static_discovery,
-    new_dns_discover_backends, new_docker_discover_backends,
-    new_static_discovery, TRANSPARENT_DISCOVERY,
-};
-use crate::health::new_health_check;
-use crate::service::{CommonServiceTask, ServiceTask};
 use crate::state::State;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
@@ -28,6 +20,14 @@ use async_trait::async_trait;
 use derive_more::Debug;
 use futures_util::FutureExt;
 use once_cell::sync::Lazy;
+use pingap_config::UpstreamConf;
+use pingap_discovery::{
+    is_dns_discovery, is_docker_discovery, is_static_discovery,
+    new_dns_discover_backends, new_docker_discover_backends,
+    new_static_discovery, TRANSPARENT_DISCOVERY,
+};
+use pingap_health::new_health_check;
+use pingap_service::{CommonServiceTask, ServiceTask};
 use pingora::lb::selection::{
     BackendIter, BackendSelection, Consistent, RoundRobin,
 };

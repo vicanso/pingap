@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config::PingapConf;
+// use pingap_config::PingapConf;
 use pingora::protocols::l4::ext::TcpKeepalive;
 use std::fmt;
 
@@ -132,68 +132,64 @@ impl fmt::Display for ServerConf {
 }
 
 // Conversion implementation from PingapConf to Vec<ServerConf>
-impl From<PingapConf> for Vec<ServerConf> {
-    fn from(conf: PingapConf) -> Self {
-        let mut upstreams = vec![];
-        for (name, item) in conf.upstreams {
-            upstreams.push((name, item));
-        }
-        let mut locations = vec![];
-        for (name, item) in conf.locations {
-            locations.push((name, item));
-        }
-        // Sort locations by weight in descending order for priority routing
-        locations.sort_by_key(|b| std::cmp::Reverse(b.1.get_weight()));
-        let mut servers = vec![];
-        for (name, item) in conf.servers {
-            // Set up error template, using default if none specified
-            let mut error_template =
-                conf.basic.error_template.clone().unwrap_or_default();
-            if error_template.is_empty() {
-                error_template = ERROR_TEMPLATE.to_string();
-            }
-
-            // Configure TCP keepalive only if all required parameters are present
-            let tcp_keepalive = if item.tcp_idle.is_some()
-                && item.tcp_probe_count.is_some()
-                && item.tcp_interval.is_some()
-            {
-                Some(TcpKeepalive {
-                    idle: item.tcp_idle.unwrap_or_default(),
-                    count: item.tcp_probe_count.unwrap_or_default(),
-                    interval: item.tcp_interval.unwrap_or_default(),
-                })
-            } else {
-                None
-            };
-
-            // Create server configuration with all settings
-            servers.push(ServerConf {
-                name,
-                admin: false,
-                tls_cipher_list: item.tls_cipher_list.clone(),
-                tls_ciphersuites: item.tls_ciphersuites.clone(),
-                tls_min_version: item.tls_min_version.clone(),
-                tls_max_version: item.tls_max_version.clone(),
-                addr: item.addr,
-                access_log: item.access_log,
-                locations: item.locations.unwrap_or_default(),
-                threads: item.threads,
-                global_certificates: item
-                    .global_certificates
-                    .unwrap_or_default(),
-                enabled_h2: item.enabled_h2.unwrap_or_default(),
-                tcp_keepalive,
-                tcp_fastopen: item.tcp_fastopen,
-                prometheus_metrics: item.prometheus_metrics,
-                otlp_exporter: item.otlp_exporter.clone(),
-                modules: item.modules.clone(),
-                error_template,
-            });
-        }
-
-        servers
+pub fn parse_from_conf(conf: pingap_config::PingapConf) -> Vec<ServerConf> {
+    let mut upstreams = vec![];
+    for (name, item) in conf.upstreams {
+        upstreams.push((name, item));
     }
+    let mut locations = vec![];
+    for (name, item) in conf.locations {
+        locations.push((name, item));
+    }
+    // Sort locations by weight in descending order for priority routing
+    locations.sort_by_key(|b| std::cmp::Reverse(b.1.get_weight()));
+    let mut servers = vec![];
+    for (name, item) in conf.servers {
+        // Set up error template, using default if none specified
+        let mut error_template =
+            conf.basic.error_template.clone().unwrap_or_default();
+        if error_template.is_empty() {
+            error_template = ERROR_TEMPLATE.to_string();
+        }
+
+        // Configure TCP keepalive only if all required parameters are present
+        let tcp_keepalive = if item.tcp_idle.is_some()
+            && item.tcp_probe_count.is_some()
+            && item.tcp_interval.is_some()
+        {
+            Some(TcpKeepalive {
+                idle: item.tcp_idle.unwrap_or_default(),
+                count: item.tcp_probe_count.unwrap_or_default(),
+                interval: item.tcp_interval.unwrap_or_default(),
+            })
+        } else {
+            None
+        };
+
+        // Create server configuration with all settings
+        servers.push(ServerConf {
+            name,
+            admin: false,
+            tls_cipher_list: item.tls_cipher_list.clone(),
+            tls_ciphersuites: item.tls_ciphersuites.clone(),
+            tls_min_version: item.tls_min_version.clone(),
+            tls_max_version: item.tls_max_version.clone(),
+            addr: item.addr,
+            access_log: item.access_log,
+            locations: item.locations.unwrap_or_default(),
+            threads: item.threads,
+            global_certificates: item.global_certificates.unwrap_or_default(),
+            enabled_h2: item.enabled_h2.unwrap_or_default(),
+            tcp_keepalive,
+            tcp_fastopen: item.tcp_fastopen,
+            prometheus_metrics: item.prometheus_metrics,
+            otlp_exporter: item.otlp_exporter.clone(),
+            modules: item.modules.clone(),
+            error_template,
+        });
+    }
+
+    servers
 }
 
 #[cfg(test)]

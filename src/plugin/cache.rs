@@ -17,7 +17,7 @@ use super::{
     Plugin, Result,
 };
 use crate::cache::{get_cache_backend, HttpCache};
-use crate::config::{
+use pingap_config::{
     get_current_config, PluginCategory, PluginConf, PluginStep,
 };
 use crate::http_extra::HttpResponse;
@@ -450,7 +450,7 @@ impl Plugin for Cache {
 #[cfg(test)]
 mod tests {
     use super::Cache;
-    use crate::config::{PluginConf, PluginStep};
+    use pingap_config::{PluginConf, PluginStep};
     use crate::plugin::Plugin;
     use crate::state::State;
     use pingora::proxy::Session;

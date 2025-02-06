@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use super::{get_hash_key, get_str_slice_conf, Error, Plugin, Result};
-use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{convert_header, convert_header_value, HttpHeader};
 use crate::state::State;
 use async_trait::async_trait;
 use http::header::HeaderName;
+use pingap_config::{PluginCategory, PluginConf, PluginStep};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use std::str::FromStr;
@@ -287,8 +287,9 @@ impl Plugin for ResponseHeaders {
 #[cfg(test)]
 mod tests {
     use super::ResponseHeaders;
+    use crate::plugin::Plugin;
     use crate::state::State;
-    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
+    use pingap_config::{PluginConf, PluginStep};
     use pingora::http::ResponseHeader;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;

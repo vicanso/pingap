@@ -1,0 +1,26 @@
+[package]
+name = "pingap-limit"
+version = "0.9.10"
+edition = "2021"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/pingap"
+repository = "https://github.com/vicanso/pingap"
+keywords = ["pingap", "limit"]
+
+
+[lib]
+name = "pingap_limit"
+path = "src/lib.rs"
+
+
+[dependencies]
+TinyUFO = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+pingap-util = { path = "../pingap-util" }
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"
+tempfile = "3.16.0"
+tokio-test = "0.4.4"

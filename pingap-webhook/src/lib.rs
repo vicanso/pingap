@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{config::get_app_name, state};
 use async_trait::async_trait;
 use once_cell::sync::OnceCell;
 use pingora::lb::health_check::HealthObserve;
@@ -160,8 +159,13 @@ pub async fn send_notification(params: SendNotificationParams) {
 
     let client = reqwest::Client::new();
     let mut data = serde_json::Map::new();
-    let hostname = state::get_hostname();
-    let name = get_app_name();
+    let hostname = hostname::get()
+        .unwrap_or_default()
+        .to_str()
+        .unwrap_or_default()
+        .to_string();
+    // TODO get app name from config
+    let name = "pingap".to_string();
     let color_type = match level {
         NotificationLevel::Error => "warning",
         NotificationLevel::Warn => "warning",

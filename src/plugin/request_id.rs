@@ -16,13 +16,13 @@ use super::{
     get_hash_key, get_int_conf, get_step_conf, get_str_conf, Error, Plugin,
     Result,
 };
-use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::http_extra::HTTP_HEADER_NAME_X_REQUEST_ID;
 use crate::state::State;
 use async_trait::async_trait;
 use http::HeaderName;
 use nanoid::nanoid;
+use pingap_config::{PluginCategory, PluginConf, PluginStep};
 use pingora::proxy::Session;
 use std::str::FromStr;
 use tracing::debug;
@@ -215,8 +215,9 @@ impl Plugin for RequestId {
 #[cfg(test)]
 mod tests {
     use super::RequestId;
+    use crate::plugin::Plugin;
     use crate::state::State;
-    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
+    use pingap_config::{PluginConf, PluginStep};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;

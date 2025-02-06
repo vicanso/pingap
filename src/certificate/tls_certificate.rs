@@ -18,7 +18,7 @@ use super::self_signed::{
     SelfSignedCertificate,
 };
 use super::{Certificate, Error, Result, LOG_CATEGORY};
-use crate::config::CertificateConf;
+use pingap_config::CertificateConf;
 use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::x509::X509;
 use std::sync::Arc;
@@ -271,7 +271,7 @@ impl TlsCertificate {
 #[cfg(test)]
 mod tests {
     use super::TlsCertificate;
-    use crate::config::CertificateConf;
+    use pingap_config::CertificateConf;
     use pretty_assertions::assert_eq;
 
     #[test]

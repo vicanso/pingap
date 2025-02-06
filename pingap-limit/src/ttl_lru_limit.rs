@@ -52,7 +52,7 @@ impl TtlLruLimit {
     /// # Returns
     ///
     /// Returns `true` if the key is within its limit or has expired, `false` otherwise.
-    pub async fn validate(&self, key: &str) -> bool {
+    pub fn validate(&self, key: &str) -> bool {
         let mut should_reset = false;
         let mut valid = false;
         let key = key.to_string();
@@ -90,7 +90,7 @@ impl TtlLruLimit {
     /// # Arguments
     ///
     /// * `key` - The key to increment
-    pub async fn inc(&self, key: &str) {
+    pub fn inc(&self, key: &str) {
         let key = key.to_string();
         let data = if let Some(mut value) = self.ufo.get(&key) {
             // the reset value
@@ -115,18 +115,18 @@ mod test {
     use pretty_assertions::assert_eq;
     use std::time::Duration;
 
-    #[tokio::test]
-    async fn test_ttl_lru_limit() {
+    #[test]
+    fn test_ttl_lru_limit() {
         let limit = TtlLruLimit::new(5, Duration::from_millis(500), 3);
 
         let key = "abc";
-        assert_eq!(true, limit.validate(key).await);
-        limit.inc(key).await;
-        limit.inc(key).await;
-        assert_eq!(true, limit.validate(key).await);
-        limit.inc(key).await;
-        assert_eq!(false, limit.validate(key).await);
-        tokio::time::sleep(Duration::from_millis(600)).await;
-        assert_eq!(true, limit.validate(key).await);
+        assert_eq!(true, limit.validate(key));
+        limit.inc(key);
+        limit.inc(key);
+        assert_eq!(true, limit.validate(key));
+        limit.inc(key);
+        assert_eq!(false, limit.validate(key));
+        std::thread::sleep(Duration::from_millis(600));
+        assert_eq!(true, limit.validate(key));
     }
 }

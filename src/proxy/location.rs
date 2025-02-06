@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::LOG_CATEGORY;
-use crate::config::{LocationConf, PluginStep};
+use pingap_config::{LocationConf, PluginStep};
 use crate::http_extra::{convert_header_value, convert_headers, HttpHeader};
 use crate::plugin::get_plugin;
 use crate::state::State;
@@ -708,7 +708,7 @@ mod tests {
         format_headers, new_path_selector, Location, PathSelector,
         DEFAULT_PROXY_SET_HEADERS,
     };
-    use crate::config::{LocationConf, PluginStep};
+    use pingap_config::{LocationConf, PluginStep};
     use crate::http_extra::convert_header_value;
     use crate::plugin::initialize_test_plugins;
     use crate::state::State;

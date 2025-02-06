@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config::{PluginCategory, PluginConf, PluginStep};
+use pingap_config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::proxy::ServerConf;
 use crate::state::{get_admin_addr, State};

@@ -196,12 +196,7 @@ impl ConfigStorage for FileStorage {
 #[cfg(test)]
 mod tests {
     use super::FileStorage;
-    use crate::config::{
-        read_all_toml_files, CATEGORY_BASIC, CATEGORY_CERTIFICATE,
-        CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_STORAGE,
-        CATEGORY_UPSTREAM,
-    };
-    use crate::config::{ConfigStorage, LoadConfigOptions, PingapConf};
+    use crate::*;
     use nanoid::nanoid;
     use pretty_assertions::assert_eq;
 

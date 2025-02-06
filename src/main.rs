@@ -19,16 +19,16 @@ use certificate::{
     new_self_signed_certificate_validity_service,
 };
 use clap::Parser;
-use config::{get_config_storage, ETCD_PROTOCOL};
-use config::{LoadConfigOptions, PingapConf};
 use crossbeam_channel::Sender;
 #[cfg(feature = "full")]
 use otel::TracerService;
+use pingap_config::{get_config_storage, ETCD_PROTOCOL};
+use pingap_config::{LoadConfigOptions, PingapConf};
+use pingap_service::new_simple_service_task;
 use pingora::server;
 use pingora::server::configuration::Opt;
 use pingora::services::background::background_service;
 use proxy::{new_upstream_health_check_task, Server, ServerConf};
-use service::new_simple_service_task;
 use service::{
     new_auto_restart_service, new_observer_service,
     new_performance_metrics_log_service,
@@ -45,11 +45,7 @@ use tracing::{error, info};
 mod acme;
 mod cache;
 mod certificate;
-mod config;
-mod discovery;
-mod health;
 mod http_extra;
-mod limit;
 mod logger;
 
 #[cfg(feature = "full")]
@@ -62,7 +58,6 @@ mod pyro;
 mod sentry;
 mod service;
 mod state;
-mod webhook;
 
 static TEMPLATE_CONFIG: &str = r###"
 [basic]
@@ -160,16 +155,20 @@ fn new_server_conf(
     server_conf
 }
 
-fn get_config(admin: bool, s: Sender<Result<PingapConf, config::Error>>) {
+fn get_config(
+    admin: bool,
+    s: Sender<Result<PingapConf, pingap_config::Error>>,
+) {
     std::thread::spawn(move || {
         match tokio::runtime::Runtime::new() {
             Ok(rt) => {
                 let send = async move {
-                    let result = config::load_config(LoadConfigOptions {
-                        replace_include: true,
-                        admin,
-                    })
-                    .await;
+                    let result =
+                        pingap_config::load_config(LoadConfigOptions {
+                            replace_include: true,
+                            admin,
+                        })
+                        .await;
                     if let Err(e) = s.send(result) {
                         // use println because log is not init
                         println!("sender fail, {e}");
@@ -178,7 +177,7 @@ fn get_config(admin: bool, s: Sender<Result<PingapConf, config::Error>>) {
                 rt.block_on(send);
             },
             Err(e) => {
-                if let Err(e) = s.send(Err(config::Error::Invalid {
+                if let Err(e) = s.send(Err(pingap_config::Error::Invalid {
                     message: e.to_string(),
                 })) {
                     // use println because log is not init
@@ -189,12 +188,12 @@ fn get_config(admin: bool, s: Sender<Result<PingapConf, config::Error>>) {
     });
 }
 
-fn sync_config(path: String, s: Sender<Result<(), config::Error>>) {
+fn sync_config(path: String, s: Sender<Result<(), pingap_config::Error>>) {
     std::thread::spawn(move || {
         match tokio::runtime::Runtime::new() {
             Ok(rt) => {
                 let send = async move {
-                    let result = config::sync_to_path(&path).await;
+                    let result = pingap_config::sync_to_path(&path).await;
                     if let Err(e) = s.send(result) {
                         // use println because log is not init
                         println!("sender fail, {e}");
@@ -203,7 +202,7 @@ fn sync_config(path: String, s: Sender<Result<(), config::Error>>) {
                 rt.block_on(send);
             },
             Err(e) => {
-                if let Err(e) = s.send(Err(config::Error::Invalid {
+                if let Err(e) = s.send(Err(pingap_config::Error::Invalid {
                     message: e.to_string(),
                 })) {
                     // use println because log is not init
@@ -226,7 +225,7 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     {
         error!(error = e.to_string(), "init plugins fail",);
     }
-    config::try_init_config_storage(&args.conf)?;
+    pingap_config::try_init_config_storage(&args.conf)?;
     // config::set_config_path(&args.conf);
     let mut my_server = server::Server::new(None)?;
     let ps = Server::new(&server_conf)?;
@@ -338,7 +337,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     // Initialize configuration
-    config::try_init_config_storage(&args.conf)?;
+    pingap_config::try_init_config_storage(&args.conf)?;
     let (s, r) = crossbeam_channel::bounded(0);
     get_config(args.admin.is_some(), s);
     let conf = r.recv()??;
@@ -354,7 +353,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     // TODO a better way
     // since the cache will be initialized in validate function
     // so set the current conf first
-    config::set_current_config(&conf);
+    pingap_config::set_current_config(&conf);
     conf.validate()?;
 
     // sync config to other storage
@@ -367,10 +366,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     let basic_conf = &conf.basic;
-    config::set_app_name(&basic_conf.name.clone().unwrap_or_default());
 
     let webhook_url = basic_conf.webhook.clone().unwrap_or_default();
-    webhook::set_web_hook(
+    pingap_webhook::set_web_hook(
         &webhook_url,
         &conf.basic.webhook_type.clone().unwrap_or_default(),
         &conf.basic.webhook_notifications.clone().unwrap_or_default(),
@@ -477,7 +475,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         error!(error = e.to_string(), "init plugins fail",);
     }
 
-    let mut server_conf_list: Vec<ServerConf> = conf.into();
+    let mut server_conf_list: Vec<ServerConf> = proxy::parse_from_conf(conf);
 
     if let Some(addr) = &get_admin_addr() {
         let (server_conf, _, _) = plugin::parse_admin_plugin(addr)?;
@@ -569,7 +567,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     if args.autorestart || args.autoreload {
         let only_hot_reload = !args.autorestart;
-        if config::support_observer() {
+        if pingap_config::support_observer() {
             my_server.add_service(background_service(
                 "Observer",
                 new_observer_service(

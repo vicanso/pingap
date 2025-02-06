@@ -13,10 +13,10 @@
 // limitations under the License.
 
 use super::{get_bool_conf, get_hash_key, get_str_conf, Error, Plugin, Result};
-use crate::config::{PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
+use pingap_config::{PluginConf, PluginStep};
 use pingora::proxy::Session;
 use smallvec::SmallVec;
 use tracing::debug;
@@ -152,8 +152,8 @@ impl Plugin for AcceptEncoding {
 #[cfg(test)]
 mod tests {
     use super::AcceptEncoding;
-    use crate::state::State;
-    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
+    use crate::{plugin::Plugin, state::State};
+    use pingap_config::{PluginConf, PluginStep};
     use pingora::modules::http::HttpModules;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;

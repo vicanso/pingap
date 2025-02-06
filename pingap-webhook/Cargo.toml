@@ -1,0 +1,22 @@
+[package]
+name = "pingap-webhook"
+version = "0.9.10"
+edition = "2021"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/pingap"
+repository = "https://github.com/vicanso/pingap"
+keywords = ["pingap", "webhook"]
+
+
+[dependencies]
+async-trait = { workspace = true }
+pingora = { workspace = true }
+once_cell = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+strum = { workspace = true }
+reqwest = { workspace = true }
+pingap-util = { path = "../pingap-util" }
+hostname = { workspace = true }

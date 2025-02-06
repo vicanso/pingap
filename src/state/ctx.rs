@@ -393,7 +393,7 @@ pub fn get_cache_key(ctx: &State, method: &str, uri: &Uri) -> CacheKey {
 #[cfg(test)]
 mod tests {
     use super::State;
-    use crate::config::LocationConf;
+    use pingap_config::LocationConf;
     use crate::proxy::Location;
     use crate::state::CompressionStat;
     use bytes::BytesMut;

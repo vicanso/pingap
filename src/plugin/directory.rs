@@ -16,7 +16,6 @@ use super::{
     get_bool_conf, get_hash_key, get_step_conf, get_str_conf,
     get_str_slice_conf, Error, Plugin, Result,
 };
-use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{
     convert_headers, HttpChunkResponse, HttpHeader, HttpResponse,
 };
@@ -27,6 +26,7 @@ use glob::glob;
 use http::{header, HeaderValue, StatusCode};
 use humantime::parse_duration;
 use once_cell::sync::Lazy;
+use pingap_config::{PluginCategory, PluginConf, PluginStep};
 use pingora::proxy::Session;
 use std::fs::Metadata;
 #[cfg(unix)]
@@ -518,8 +518,9 @@ impl Plugin for Directory {
 #[cfg(test)]
 mod tests {
     use super::{get_cacheable_and_headers_from_meta, get_data, Directory};
+    use crate::plugin::Plugin;
     use crate::state::State;
-    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
+    use pingap_config::{PluginConf, PluginStep};
     use pingora::proxy::Session;
     use pretty_assertions::{assert_eq, assert_ne};
     #[cfg(unix)]

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::config::get_current_config;
+use pingap_config::get_current_config;
 use bytesize::ByteSize;
 use memory_stats::memory_stats;
 use once_cell::sync::OnceCell;

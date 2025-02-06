@@ -1,0 +1,33 @@
+[package]
+name = "pingap-health"
+version = "0.9.10"
+edition = "2021"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/pingap"
+repository = "https://github.com/vicanso/pingap"
+keywords = ["pingap", "health"]
+
+[lib]
+name = "pingap_health"
+path = "src/lib.rs"
+
+[dependencies]
+pingora = { workspace = true }
+http = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+humantime = { workspace = true }
+snafu = { workspace = true }
+tokio = { workspace = true }
+url = { workspace = true }
+strum = { workspace = true }
+tonic-health = "0.12.3"
+tonic = "0.12.3"
+pingap-webhook = { path = "../pingap-webhook" }
+pingap-util = { path = "../pingap-util" }
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"
+tempfile = "3.16.0"
+tokio-test = "0.4.4"

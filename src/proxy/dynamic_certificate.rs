@@ -14,11 +14,11 @@
 
 use super::LOG_CATEGORY;
 use crate::certificate::{Certificate, TlsCertificate};
-use crate::config::CertificateConf;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
+use pingap_config::CertificateConf;
 use pingora::listeners::tls::TlsSettings;
 use pingora::tls::ext;
 use pingora::tls::pkey::{PKey, Private};
@@ -353,7 +353,7 @@ mod tests {
         TlsSettingParams, DYNAMIC_CERTIFICATE_MAP,
     };
     use crate::certificate::TlsCertificate;
-    use crate::config::CertificateConf;
+    use pingap_config::CertificateConf;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
 

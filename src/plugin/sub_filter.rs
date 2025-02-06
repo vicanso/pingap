@@ -15,7 +15,7 @@
 use super::{
     get_hash_key, get_str_conf, get_str_slice_conf, Error, Plugin, Result,
 };
-use crate::config::{PluginCategory, PluginConf, PluginStep};
+use pingap_config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HTTP_HEADER_TRANSFER_CHUNKED;
 use crate::state::{ModifyResponseBody, State};
 use async_trait::async_trait;

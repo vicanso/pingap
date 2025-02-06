@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use super::{get_hash_key, get_step_conf, get_str_conf, Error, Plugin, Result};
-use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::{
     get_hostname, get_process_system_info, get_processing_accepted,
@@ -21,6 +20,7 @@ use crate::state::{
 };
 use async_trait::async_trait;
 use bytes::Bytes;
+use pingap_config::{PluginCategory, PluginConf, PluginStep};
 use pingora::proxy::Session;
 use serde::Serialize;
 use std::time::Duration;
@@ -194,8 +194,9 @@ impl Plugin for Stats {
 #[cfg(test)]
 mod tests {
     use super::Stats;
+    use crate::plugin::Plugin;
     use crate::state::State;
-    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
+    use pingap_config::{PluginConf, PluginStep};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;

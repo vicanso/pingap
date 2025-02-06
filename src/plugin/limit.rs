@@ -16,12 +16,12 @@ use super::{
     get_hash_key, get_int_conf, get_step_conf, get_str_conf, Error, Plugin,
     Result,
 };
-use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
 use http::StatusCode;
 use humantime::parse_duration;
+use pingap_config::{PluginCategory, PluginConf, PluginStep};
 use pingora::proxy::Session;
 use pingora_limits::inflight::Inflight;
 use pingora_limits::rate::Rate;
@@ -307,10 +307,9 @@ impl Plugin for Limiter {
 #[cfg(test)]
 mod tests {
     use super::{LimitTag, Limiter};
-    use crate::{
-        config::PluginConf, config::PluginStep, plugin::Plugin, state::State,
-    };
+    use crate::{plugin::Plugin, state::State};
     use http::StatusCode;
+    use pingap_config::{PluginConf, PluginStep};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use std::time::Duration;

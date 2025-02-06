@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::service::Error as ServiceError;
-use crate::service::SimpleServiceTaskFuture;
 use bytesize::ByteSize;
 use chrono::Timelike;
 use flate2::write::GzEncoder;
 use flate2::Compression;
+use pingap_service::Error as ServiceError;
+use pingap_service::SimpleServiceTaskFuture;
 use pingap_util::convert_query_map;
 use snafu::{ResultExt, Snafu};
 use std::fs;

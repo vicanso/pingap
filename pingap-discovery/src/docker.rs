@@ -14,7 +14,6 @@
 
 use super::{Error, Result};
 use super::{DOCKER_DISCOVERY, LOG_CATEGORY};
-use crate::webhook;
 use async_trait::async_trait;
 use bollard::container::ListContainersOptions;
 use bollard::secret::ContainerSummary;
@@ -241,7 +240,7 @@ impl ServiceDiscovery for Docker {
             Err(e) => {
                 error!(
                     category = LOG_CATEGORY,
-                    error = e.to_string(),
+                    error = %e,
                     names = names.join(","),
                     elapsed = format!(
                         "{}ms",
@@ -249,10 +248,10 @@ impl ServiceDiscovery for Docker {
                     ),
                     "docker discover fail"
                 );
-                webhook::send_notification(webhook::SendNotificationParams {
+                pingap_webhook::send_notification(pingap_webhook::SendNotificationParams {
                     category:
-                        webhook::NotificationCategory::ServiceDiscoverFail,
-                    level: webhook::NotificationLevel::Warn,
+                        pingap_webhook::NotificationCategory::ServiceDiscoverFail,
+                    level: pingap_webhook::NotificationLevel::Warn,
                     msg: format!(
                         "docker discovery {:?}, error: {e}",
                         self.labels(),

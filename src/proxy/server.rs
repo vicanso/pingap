@@ -17,15 +17,11 @@ use super::logger::Parser;
 use super::upstream::get_upstream;
 use super::{ServerConf, LOG_CATEGORY};
 use crate::acme::handle_lets_encrypt;
-use crate::config;
-use crate::config::get_config_storage;
-use crate::config::PluginStep;
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 #[cfg(feature = "full")]
 use crate::otel;
 use crate::plugin::{get_plugin, ADMIN_SERVER_PLUGIN};
 use crate::proxy::location::get_location;
-use crate::service::SimpleServiceTaskFuture;
 #[cfg(feature = "full")]
 use crate::state::OtelTracer;
 use crate::state::{accept_request, end_request};
@@ -46,6 +42,9 @@ use opentelemetry::{
 };
 #[cfg(feature = "full")]
 use opentelemetry_http::HeaderExtractor;
+use pingap_config::get_config_storage;
+use pingap_config::PluginStep;
+use pingap_service::SimpleServiceTaskFuture;
 use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::CacheControl;
 use pingora::cache::cache_control::DirectiveValue;
@@ -98,8 +97,8 @@ static SERVER_LOCATIONS_MAP: Lazy<ArcSwap<ServerLocations>> =
 /// - Updates only modified server configurations
 /// - Returns list of updated server names
 pub fn try_init_server_locations(
-    servers: &HashMap<String, config::ServerConf>,
-    locations: &HashMap<String, config::LocationConf>,
+    servers: &HashMap<String, pingap_config::ServerConf>,
+    locations: &HashMap<String, pingap_config::LocationConf>,
 ) -> Result<Vec<String>> {
     // get the location weight
     let mut location_weights = HashMap::new();
@@ -1338,14 +1337,16 @@ impl ProxyHttp for Server {
 
 #[cfg(test)]
 mod tests {
-    use super::Server;
-    use crate::config::{LocationConf, PingapConf};
+    use super::*;
     use crate::proxy::server::get_digest_detail;
+    use crate::proxy::server_conf::parse_from_conf;
+
     use crate::proxy::{
         try_init_locations, try_init_server_locations, try_init_upstreams,
-        Location, ServerConf,
+        Location,
     };
     use crate::state::State;
+    use pingap_config::{LocationConf, PingapConf};
     use pingora::http::ResponseHeader;
     use pingora::protocols::tls::SslDigest;
     use pingora::protocols::{Digest, TimingDigest};
@@ -1446,7 +1447,7 @@ value = 'proxy_set_headers = ["name:value"]'
         try_init_locations(&pingap_conf.locations).unwrap();
         try_init_server_locations(&pingap_conf.servers, &pingap_conf.locations)
             .unwrap();
-        let confs: Vec<ServerConf> = pingap_conf.into();
+        let confs = parse_from_conf(pingap_conf);
         Server::new(&confs[0]).unwrap()
     }
 

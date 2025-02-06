@@ -14,21 +14,20 @@
 
 use super::{get_token_path, Error, Result, LOG_CATEGORY};
 use crate::certificate::Certificate;
-use crate::config::{
+use pingap_config::{
     get_current_config, set_current_config, ConfigStorage, LoadConfigOptions,
     PingapConf, CATEGORY_CERTIFICATE,
 };
 use crate::http_extra::HttpResponse;
 use crate::proxy::try_update_certificates;
-use crate::service::Error as ServiceError;
-use crate::service::SimpleServiceTaskFuture;
 use crate::state::State;
-use crate::webhook;
 use http::StatusCode;
 use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
     OrderStatus,
 };
+use pingap_service::Error as ServiceError;
+use pingap_service::SimpleServiceTaskFuture;
 use pingora::proxy::Session;
 use std::time::Duration;
 use substring::Substring;
@@ -156,8 +155,8 @@ async fn handle_successful_renewal(domains: &[String], conf: &PingapConf) {
         "renew certificate success"
     );
 
-    webhook::send_notification(webhook::SendNotificationParams {
-        category: webhook::NotificationCategory::LetsEncrypt,
+    pingap_webhook::send_notification(pingap_webhook::SendNotificationParams {
+        category: pingap_webhook::NotificationCategory::LetsEncrypt,
         msg: "Generate new cert from lets encrypt".to_string(),
         remark: Some(format!("Domains: {domains:?}")),
         ..Default::default()
@@ -167,12 +166,15 @@ async fn handle_successful_renewal(domains: &[String], conf: &PingapConf) {
     let (_, errors) = try_update_certificates(&conf.certificates);
     if !errors.is_empty() {
         error!(error = errors, "parse certificate fail");
-        webhook::send_notification(webhook::SendNotificationParams {
-            category: webhook::NotificationCategory::ParseCertificateFail,
-            level: webhook::NotificationLevel::Error,
-            msg: errors,
-            remark: None,
-        })
+        pingap_webhook::send_notification(
+            pingap_webhook::SendNotificationParams {
+                category:
+                    pingap_webhook::NotificationCategory::ParseCertificateFail,
+                level: pingap_webhook::NotificationLevel::Error,
+                msg: errors,
+                remark: None,
+            },
+        )
         .await;
     }
 }
@@ -491,7 +493,7 @@ async fn new_lets_encrypt(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::FileStorage;
+    use pingap_config::FileStorage;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 

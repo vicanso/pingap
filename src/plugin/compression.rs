@@ -13,10 +13,10 @@
 // limitations under the License.
 
 use super::{get_bool_conf, get_hash_key, get_int_conf, Error, Plugin, Result};
-use crate::config::{PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
+use pingap_config::{PluginConf, PluginStep};
 use pingora::modules::http::compression::ResponseCompression;
 use pingora::protocols::http::compression::Algorithm;
 use pingora::proxy::Session;
@@ -207,8 +207,9 @@ impl Plugin for Compression {
 #[cfg(test)]
 mod tests {
     use super::Compression;
+    use crate::plugin::Plugin;
     use crate::state::State;
-    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
+    use pingap_config::{PluginConf, PluginStep};
     use pingora::modules::http::compression::{
         ResponseCompression, ResponseCompressionBuilder,
     };

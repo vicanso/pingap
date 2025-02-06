@@ -12,13 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::LOG_CATEGORY;
 use crate::cache::get_cache_backend;
 use crate::proxy::{
     get_locations_processing, get_upstreams_processing_connected,
 };
-use crate::service::SimpleServiceTaskFuture;
 use crate::state::{get_process_system_info, get_processing_accepted};
+use pingap_service::{SimpleServiceTaskFuture, LOG_CATEGORY};
 use tracing::info;
 
 // Service name constant for performance metrics logging

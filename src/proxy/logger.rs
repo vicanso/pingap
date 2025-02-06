@@ -429,8 +429,9 @@ mod tests {
     use std::sync::Arc;
 
     use super::{format_extra_tag, Parser, Tag, TagCategory};
-    use crate::{config::LocationConf, proxy::Location, state::State};
+    use crate::{proxy::Location, state::State};
     use http::Method;
+    use pingap_config::LocationConf;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;

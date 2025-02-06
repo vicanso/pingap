@@ -1,0 +1,52 @@
+[package]
+name = "pingap-config"
+version = "0.9.10"
+edition = "2021"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/pingap"
+repository = "https://github.com/vicanso/pingap"
+keywords = ["pingap", "config"]
+
+
+[lib]
+name = "pingap_config"
+path = "src/lib.rs"
+
+
+[dependencies]
+async-trait = { workspace = true }
+etcd-client = "0.14.0"
+glob = "0.3.2"
+crc32fast = "1.4.2"
+rustls-pemfile = "2.2.0"
+diff = "0.1.13"
+arc-swap = { workspace = true }
+bytesize = { workspace = true }
+bytes = { workspace = true }
+http = { workspace = true }
+pingora = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+toml = { workspace = true }
+once_cell = { workspace = true }
+strum = { workspace = true }
+humantime = { workspace = true }
+substring = { workspace = true }
+futures-util = { workspace = true }
+snafu = { workspace = true }
+base64 = { workspace = true }
+humantime-serde = { workspace = true }
+pingap-discovery = { path = "../pingap-discovery" }
+pingap-util = { path = "../pingap-util" }
+
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"
+tempfile = "3.16.0"
+tokio-test = "0.4.4"
+nanoid = "0.4.0"

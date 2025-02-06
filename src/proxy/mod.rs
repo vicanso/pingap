@@ -29,9 +29,11 @@ pub use dynamic_certificate::{
     get_certificate_info_list, try_update_certificates,
 };
 pub use location::{get_locations_processing, try_init_locations};
+// TODO remove this
+#[allow(unused_imports)]
 pub use logger::Parser;
 pub use server::*;
-pub use server_conf::ServerConf;
+pub use server_conf::{parse_from_conf, ServerConf};
 pub use upstream::{
     get_upstreams_processing_connected, new_upstream_health_check_task,
     try_init_upstreams, try_update_upstreams, Upstream,

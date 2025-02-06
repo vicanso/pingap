@@ -13,8 +13,7 @@
 // limitations under the License.
 
 use super::LOG_CATEGORY;
-use crate::config::get_current_config;
-use crate::webhook;
+use pingap_config::get_current_config;
 use bytesize::ByteSize;
 use memory_stats::memory_stats;
 use once_cell::sync::Lazy;
@@ -266,8 +265,8 @@ pub async fn restart_now() -> io::Result<process::Output> {
         ));
     }
     info!(category = LOG_CATEGORY, "pingap will restart");
-    webhook::send_notification(webhook::SendNotificationParams {
-        category: webhook::NotificationCategory::Restart,
+    pingap_webhook::send_notification(pingap_webhook::SendNotificationParams {
+        category: pingap_webhook::NotificationCategory::Restart,
         msg: format!("Restart now, pid:{}", std::process::id()),
         ..Default::default()
     })
@@ -315,12 +314,15 @@ pub async fn restart() {
                     error = %e,
                     "restart fail"
                 );
-                webhook::send_notification(webhook::SendNotificationParams {
-                    level: webhook::NotificationLevel::Error,
-                    category: webhook::NotificationCategory::RestartFail,
-                    msg: e.to_string(),
-                    remark: None,
-                })
+                pingap_webhook::send_notification(
+                    pingap_webhook::SendNotificationParams {
+                        level: pingap_webhook::NotificationLevel::Error,
+                        category:
+                            pingap_webhook::NotificationCategory::RestartFail,
+                        msg: e.to_string(),
+                        remark: None,
+                    },
+                )
                 .await;
             },
             Ok(output) => {

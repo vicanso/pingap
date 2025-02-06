@@ -14,7 +14,6 @@
 
 use super::{format_addrs, Addr, Error, Result};
 use super::{DNS_DISCOVERY, LOG_CATEGORY};
-use crate::webhook;
 use async_trait::async_trait;
 use hickory_resolver::config::{
     LookupIpStrategy, ResolverConfig, ResolverOpts,
@@ -181,10 +180,10 @@ impl ServiceDiscovery for Dns {
                     ),
                     "dns discover fail"
                 );
-                webhook::send_notification(webhook::SendNotificationParams {
+                pingap_webhook::send_notification(pingap_webhook::SendNotificationParams {
                     category:
-                        webhook::NotificationCategory::ServiceDiscoverFail,
-                    level: webhook::NotificationLevel::Warn,
+                        pingap_webhook::NotificationCategory::ServiceDiscoverFail,
+                    level: pingap_webhook::NotificationLevel::Warn,
                     msg: format!("dns discovery {:?}, error: {e}", self.hosts),
                     remark: None,
                 })

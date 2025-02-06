@@ -1,0 +1,33 @@
+[package]
+name = "pingap-discovery"
+version = "0.9.10"
+edition = "2021"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/pingap"
+repository = "https://github.com/vicanso/pingap"
+keywords = ["pingap", "discovery"]
+
+
+[lib]
+name = "pingap_discovery"
+path = "src/lib.rs"
+
+
+[dependencies]
+pingora = { workspace = true }
+http = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+hickory-resolver = "0.24.1"
+bollard = "0.18.1"
+pingap-webhook = { path = "../pingap-webhook" }
+pingap-util = { path = "../pingap-util" }
+snafu = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"
+tempfile = "3.16.0"
+tokio-test = "0.4.4"

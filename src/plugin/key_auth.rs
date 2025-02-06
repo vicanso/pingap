@@ -16,13 +16,13 @@ use super::{
     get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf, Error,
     Plugin, Result,
 };
-use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::{HeaderName, StatusCode};
 use humantime::parse_duration;
+use pingap_config::{PluginCategory, PluginConf, PluginStep};
 use pingora::proxy::Session;
 use std::str::FromStr;
 use std::time::Duration;
@@ -282,8 +282,9 @@ impl Plugin for KeyAuth {
 #[cfg(test)]
 mod tests {
     use super::KeyAuth;
+    use crate::plugin::Plugin;
     use crate::state::State;
-    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
+    use pingap_config::{PluginConf, PluginStep};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;

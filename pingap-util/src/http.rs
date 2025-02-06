@@ -292,7 +292,7 @@ mod tests {
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         assert_eq!(
-            get_req_header_value(&session.req_header(), "Host"),
+            get_req_header_value(session.req_header(), "Host"),
             Some("pingap.io")
         );
     }
@@ -306,7 +306,7 @@ mod tests {
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         assert_eq!(
-            get_cookie_value(&session.req_header(), "name"),
+            get_cookie_value(session.req_header(), "name"),
             Some("pingap")
         );
     }
@@ -328,7 +328,7 @@ mod tests {
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        assert_eq!(get_query_value(&session.req_header(), "size"), Some("1"));
+        assert_eq!(get_query_value(session.req_header(), "size"), Some("1"));
     }
 
     #[tokio::test]
@@ -339,7 +339,7 @@ mod tests {
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        assert_eq!(get_content_length(&session.req_header()), Some(123));
+        assert_eq!(get_content_length(session.req_header()), Some(123));
     }
 
     #[test]
@@ -360,6 +360,6 @@ mod tests {
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        assert_eq!(get_host(&session.req_header()), Some("pingap.io"));
+        assert_eq!(get_host(session.req_header()), Some("pingap.io"));
     }
 }

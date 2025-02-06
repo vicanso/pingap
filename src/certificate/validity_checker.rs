@@ -14,9 +14,8 @@
 
 use super::{Certificate, LOG_CATEGORY};
 use crate::proxy::get_certificate_info_list;
-use crate::service::Error as ServiceError;
-use crate::service::SimpleServiceTaskFuture;
-use crate::webhook;
+use pingap_service::Error as ServiceError;
+use pingap_service::SimpleServiceTaskFuture;
 use snafu::Snafu;
 use tracing::error;
 
@@ -106,12 +105,14 @@ async fn do_validity_check(count: u32) -> Result<bool, ServiceError> {
 
     if let Err(err) = validity_check(&certificate_info_list, time_offset) {
         error!(category = LOG_CATEGORY, task = "validityChecker", error = %err);
-        webhook::send_notification(webhook::SendNotificationParams {
-            level: webhook::NotificationLevel::Warn,
-            category: webhook::NotificationCategory::TlsValidity,
-            msg: err.to_string(),
-            ..Default::default()
-        })
+        pingap_webhook::send_notification(
+            pingap_webhook::SendNotificationParams {
+                level: pingap_webhook::NotificationLevel::Warn,
+                category: pingap_webhook::NotificationCategory::TlsValidity,
+                msg: err.to_string(),
+                ..Default::default()
+            },
+        )
         .await;
     }
     Ok(true)

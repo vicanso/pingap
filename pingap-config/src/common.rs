@@ -13,14 +13,13 @@
 // limitations under the License.
 
 use super::{Error, Result};
-use crate::discovery::{is_static_discovery, DNS_DISCOVERY};
-use crate::plugin::parse_plugins;
-use crate::proxy::Parser;
+// use crate::plugin::parse_plugins;
+// use crate::proxy::Parser;
 use arc_swap::ArcSwap;
 use bytesize::ByteSize;
 use http::{HeaderName, HeaderValue};
 use once_cell::sync::Lazy;
-use once_cell::sync::OnceCell;
+use pingap_discovery::{is_static_discovery, DNS_DISCOVERY};
 use regex::Regex;
 use serde::{Deserialize, Serialize, Serializer};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -693,12 +692,13 @@ impl ServerConf {
         }
         let access_log = self.access_log.clone().unwrap_or_default();
         if !access_log.is_empty() {
-            let logger = Parser::from(access_log.as_str());
-            if logger.tags.is_empty() {
-                return Err(Error::Invalid {
-                    message: "access log format is invalid".to_string(),
-                });
-            }
+            // TODO: validate access log format
+            // let logger = Parser::from(access_log.as_str());
+            // if logger.tags.is_empty() {
+            //     return Err(Error::Invalid {
+            //         message: "access log format is invalid".to_string(),
+            //     });
+            // }
         }
 
         Ok(())
@@ -1045,13 +1045,14 @@ impl PingapConf {
             }
             server.validate(name, &location_names)?;
         }
-        for (name, plugin) in self.plugins.iter() {
-            parse_plugins(vec![(name.to_string(), plugin.clone())]).map_err(
-                |e| Error::Invalid {
-                    message: e.to_string(),
-                },
-            )?;
-        }
+        // TODO: validate plugins
+        // for (name, plugin) in self.plugins.iter() {
+        //     parse_plugins(vec![(name.to_string(), plugin.clone())]).map_err(
+        //         |e| Error::Invalid {
+        //             message: e.to_string(),
+        //         },
+        //     )?;
+        // }
         for (_, certificate) in self.certificates.iter() {
             certificate.validate()?;
         }
@@ -1291,29 +1292,6 @@ pub fn get_current_config() -> Arc<PingapConf> {
     CURRENT_CONFIG.load().clone()
 }
 
-static DEFAULT_APP_NAME: &str = "Pingap";
-
-static APP_NAME: OnceCell<String> = OnceCell::new();
-/// Set app name, it only can set once
-pub fn set_app_name(name: &str) {
-    APP_NAME.get_or_init(|| {
-        if name.is_empty() {
-            DEFAULT_APP_NAME.to_string()
-        } else {
-            name.to_string()
-        }
-    });
-}
-
-/// Get app name
-pub fn get_app_name() -> String {
-    if let Some(name) = APP_NAME.get() {
-        name.to_string()
-    } else {
-        DEFAULT_APP_NAME.to_string()
-    }
-}
-
 /// Get current running pingap's config crc hash
 pub fn get_config_hash() -> String {
     get_current_config().hash().unwrap_or_default()
@@ -1322,8 +1300,8 @@ pub fn get_config_hash() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        get_app_name, get_config_hash, set_app_name, set_current_config,
-        validate_cert, BasicConf, CertificateConf, PluginStep,
+        get_config_hash, set_current_config, validate_cert, BasicConf,
+        CertificateConf, PluginStep,
     };
     use super::{
         LocationConf, PingapConf, PluginCategory, ServerConf, UpstreamConf,
@@ -1378,13 +1356,6 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
         let value = base64_encode(pem);
         let result = validate_cert(&value);
         assert_eq!(true, result.is_ok());
-    }
-
-    #[test]
-    fn test_app_name() {
-        assert_eq!("Pingap", get_app_name());
-        set_app_name("Pingap-X");
-        assert_eq!("Pingap-X", get_app_name());
     }
 
     #[test]

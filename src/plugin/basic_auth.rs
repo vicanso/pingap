@@ -16,7 +16,7 @@ use super::{
     get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf, Error,
     Plugin, Result,
 };
-use crate::config::{PluginCategory, PluginConf, PluginStep};
+use pingap_config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
@@ -222,7 +222,7 @@ impl Plugin for BasicAuth {
 #[cfg(test)]
 mod tests {
     use super::{BasicAuth, Plugin};
-    use crate::config::{PluginConf, PluginStep};
+    use pingap_config::{PluginConf, PluginStep};
     use crate::state::State;
     use http::StatusCode;
     use pingora::proxy::Session;

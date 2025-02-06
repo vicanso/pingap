@@ -16,7 +16,7 @@ use super::{
     get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf, Error,
     Plugin, Result,
 };
-use crate::config::{PluginConf, PluginStep};
+use pingap_config::{PluginConf, PluginStep};
 use crate::http_extra::{HttpResponse, HTTP_HEADER_NO_STORE};
 use crate::state::State;
 use ahash::AHashMap;
@@ -288,7 +288,7 @@ impl Plugin for CombinedAuth {
 #[cfg(test)]
 mod tests {
     use super::{AuthParam, CombinedAuth};
-    use crate::config::PluginStep;
+    use pingap_config::PluginStep;
     use ahash::AHashMap;
     use hex::ToHex;
     use pingora::proxy::Session;

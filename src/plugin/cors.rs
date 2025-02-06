@@ -13,12 +13,12 @@
 // limitations under the License.
 
 use super::{get_bool_conf, get_hash_key, get_str_conf, Error, Plugin, Result};
-use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{convert_header_value, HttpHeader, HttpResponse};
 use crate::state::State;
 use async_trait::async_trait;
 use http::{header, HeaderValue};
 use humantime::parse_duration;
+use pingap_config::{PluginCategory, PluginConf, PluginStep};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::Regex;
@@ -307,11 +307,8 @@ impl Plugin for Cors {
 mod tests {
     /// Tests CORS plugin configuration parsing
     use super::Cors;
-    use crate::{
-        config::{PluginConf, PluginStep},
-        plugin::Plugin,
-        state::State,
-    };
+    use crate::{plugin::Plugin, state::State};
+    use pingap_config::{PluginConf, PluginStep};
     use pingora::{http::ResponseHeader, proxy::Session};
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;

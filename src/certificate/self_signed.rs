@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::service::Error as ServiceError;
-use crate::service::SimpleServiceTaskFuture;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use once_cell::sync::Lazy;
+use pingap_service::Error as ServiceError;
+use pingap_service::SimpleServiceTaskFuture;
 use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::x509::X509;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};

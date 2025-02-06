@@ -15,10 +15,10 @@
 use super::{
     get_hostname, get_process_system_info, Error, Result, State, LOG_CATEGORY,
 };
-use crate::service::Error as ServiceError;
-use crate::service::SimpleServiceTaskFuture;
 use humantime::parse_duration;
 use once_cell::sync::Lazy;
+use pingap_service::Error as ServiceError;
+use pingap_service::SimpleServiceTaskFuture;
 use pingora::proxy::Session;
 use prometheus::core::Collector;
 use prometheus::{
@@ -834,11 +834,11 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
 mod tests {
     use super::new_prometheus;
     use crate::{
-        config::LocationConf,
         proxy::Location,
         state::{CompressionStat, State},
     };
     use http::StatusCode;
+    use pingap_config::LocationConf;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;

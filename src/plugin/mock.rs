@@ -13,13 +13,13 @@
 // limitations under the License.
 
 use super::{get_str_conf, Error, Plugin, Result};
-use crate::config::{PluginCategory, PluginConf, PluginStep};
 use crate::http_extra::{convert_headers, HttpResponse};
 use crate::plugin::{get_hash_key, get_int_conf, get_str_slice_conf};
 use crate::state::State;
 use async_trait::async_trait;
 use http::StatusCode;
 use humantime::parse_duration;
+use pingap_config::{PluginCategory, PluginConf, PluginStep};
 use pingora::proxy::Session;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -181,10 +181,11 @@ impl Plugin for MockResponse {
 #[cfg(test)]
 mod tests {
     use super::MockResponse;
+    use crate::plugin::Plugin;
     use crate::state::State;
-    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use bytes::Bytes;
     use http::StatusCode;
+    use pingap_config::{PluginConf, PluginStep};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;

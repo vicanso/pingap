@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use super::{get_str_conf, Plugin, Result};
-use crate::config::{PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::plugin::get_hash_key;
 use crate::state::State;
@@ -21,6 +20,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
 use once_cell::sync::Lazy;
+use pingap_config::{PluginConf, PluginStep};
 use pingora::proxy::Session;
 use tracing::debug;
 
@@ -100,8 +100,9 @@ impl Plugin for Ping {
 #[cfg(test)]
 mod tests {
     use super::Ping;
+    use crate::plugin::Plugin;
     use crate::state::State;
-    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
+    use pingap_config::{PluginConf, PluginStep};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;

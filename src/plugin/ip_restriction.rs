@@ -15,12 +15,12 @@
 use super::{
     get_hash_key, get_str_conf, get_str_slice_conf, Error, Plugin, Result,
 };
-use crate::config::{PluginConf, PluginStep};
 use crate::http_extra::HttpResponse;
 use crate::state::State;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
+use pingap_config::{PluginConf, PluginStep};
 use pingora::proxy::Session;
 use tracing::debug;
 
@@ -176,9 +176,10 @@ impl Plugin for IpRestriction {
 #[cfg(test)]
 mod tests {
     use super::IpRestriction;
+    use crate::plugin::Plugin;
     use crate::state::State;
-    use crate::{config::PluginConf, config::PluginStep, plugin::Plugin};
     use http::StatusCode;
+    use pingap_config::{PluginConf, PluginStep};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
