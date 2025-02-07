@@ -1,0 +1,36 @@
+[package]
+name = "pingap-certificate"
+version = "0.9.10"
+edition = "2021"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/pingap"
+repository = "https://github.com/vicanso/pingap"
+keywords = ["pingap", "certificate"]
+
+[lib]
+name = "pingap_certificate"
+path = "src/lib.rs"
+
+[dependencies]
+pingora = { workspace = true }
+once_cell = { workspace = true }
+serde = { workspace = true }
+snafu = { workspace = true }
+x509-parser = { workspace = true }
+regex = { workspace = true }
+ahash = { workspace = true }
+arc-swap = { workspace = true }
+tracing = { workspace = true }
+rcgen = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true }
+pingap-util = { path = "../pingap-util" }
+pingap-service = { path = "../pingap-service" }
+pingap-config = { path = "../pingap-config" }
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"
+tempfile = "3.16.0"
+tokio-test = "0.4.4"
+nanoid = "0.4.0"

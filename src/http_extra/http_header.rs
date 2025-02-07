@@ -12,14 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::state::{get_hostname, State};
 use bytes::BytesMut;
-use http::header;
-use http::{HeaderName, HeaderValue};
-use once_cell::sync::Lazy;
+use http::HeaderValue;
+use pingap_state::Ctx;
+use pingap_util::get_hostname;
 use pingora::proxy::Session;
-use snafu::{ResultExt, Snafu};
-use std::str::FromStr;
 
 pub const HOST_NAME_TAG: &[u8] = b"$hostname";
 const HOST_TAG: &[u8] = b"$host";
@@ -33,44 +30,6 @@ const UPSTREAM_ADDR_TAG: &[u8] = b"$upstream_addr";
 
 static SCHEME_HTTPS: HeaderValue = HeaderValue::from_static("https");
 static SCHEME_HTTP: HeaderValue = HeaderValue::from_static("http");
-
-#[derive(Debug, Snafu)]
-pub enum Error {
-    #[snafu(display("Invalid header value: {value} - {source}"))]
-    InvalidHeaderValue {
-        value: String,
-        source: header::InvalidHeaderValue,
-    },
-    #[snafu(display("Invalid header name: {value} - {source}"))]
-    InvalidHeaderName {
-        value: String,
-        source: header::InvalidHeaderName,
-    },
-}
-type Result<T, E = Error> = std::result::Result<T, E>;
-
-pub type HttpHeader = (HeaderName, HeaderValue);
-
-/// Converts a string in "name: value" format into an HTTP header tuple.
-/// Returns None if the input string doesn't contain a colon separator.
-///
-/// # Arguments
-/// * `value` - A string in the format "header_name: header_value"
-///
-/// # Returns
-/// * `Result<Option<HttpHeader>>` - The parsed header tuple or None if invalid format
-pub fn convert_header(value: &str) -> Result<Option<HttpHeader>> {
-    value
-        .split_once(':')
-        .map(|(k, v)| {
-            let name = HeaderName::from_str(k.trim())
-                .context(InvalidHeaderNameSnafu { value: k })?;
-            let value = HeaderValue::from_str(v.trim())
-                .context(InvalidHeaderValueSnafu { value: v })?;
-            Ok(Some((name, value)))
-        })
-        .unwrap_or(Ok(None))
-}
 
 /// Processes special header values that contain dynamic variables.
 /// Supports variables like $host, $scheme, $remote_addr etc.
@@ -86,7 +45,7 @@ pub fn convert_header(value: &str) -> Result<Option<HttpHeader>> {
 pub fn convert_header_value(
     value: &HeaderValue,
     session: &Session,
-    ctx: &State,
+    ctx: &Ctx,
 ) -> Option<HeaderValue> {
     let buf = value.as_bytes();
 
@@ -150,7 +109,7 @@ const HTTP_HEADER_PREFIX_LEN: usize = HTTP_HEADER_PREFIX.len();
 fn handle_special_headers(
     buf: &[u8],
     session: &Session,
-    ctx: &State,
+    ctx: &Ctx,
 ) -> Option<HeaderValue> {
     // Handle headers that reference other HTTP headers (e.g., $http_origin)
     if buf.starts_with(HTTP_HEADER_PREFIX) {
@@ -186,7 +145,7 @@ fn handle_env_var(buf: &[u8]) -> Option<HeaderValue> {
 }
 
 #[inline]
-fn handle_context_value(buf: &[u8], ctx: &State) -> Option<HeaderValue> {
+fn handle_context_value(buf: &[u8], ctx: &Ctx) -> Option<HeaderValue> {
     // Skip the ":" prefix and convert to context key
     let key = std::str::from_utf8(&buf[1..]).ok()?;
     // Pre-allocate buffer for value
@@ -201,80 +160,12 @@ fn handle_context_value(buf: &[u8], ctx: &State) -> Option<HeaderValue> {
     }
 }
 
-/// Converts a slice of strings into HTTP headers.
-/// Each string should be in "name: value" format.
-///
-/// # Arguments
-/// * `header_values` - Slice of strings representing headers
-///
-/// # Returns
-/// * `Result<Vec<HttpHeader>>` - Vector of parsed HTTP headers
-pub fn convert_headers(header_values: &[String]) -> Result<Vec<HttpHeader>> {
-    let mut arr = vec![];
-    for item in header_values {
-        if let Some(item) = convert_header(item)? {
-            arr.push(item);
-        }
-    }
-    Ok(arr)
-}
-
-pub static HTTP_HEADER_NO_STORE: Lazy<HttpHeader> = Lazy::new(|| {
-    (
-        header::CACHE_CONTROL,
-        HeaderValue::from_str("private, no-store").unwrap(),
-    )
-});
-
-pub static HTTP_HEADER_NO_CACHE: Lazy<HttpHeader> = Lazy::new(|| {
-    (
-        header::CACHE_CONTROL,
-        HeaderValue::from_str("private, no-cache").unwrap(),
-    )
-});
-
-pub static HTTP_HEADER_CONTENT_JSON: Lazy<HttpHeader> = Lazy::new(|| {
-    (
-        header::CONTENT_TYPE,
-        HeaderValue::from_str("application/json; charset=utf-8").unwrap(),
-    )
-});
-
-pub static HTTP_HEADER_CONTENT_HTML: Lazy<HttpHeader> = Lazy::new(|| {
-    (
-        header::CONTENT_TYPE,
-        HeaderValue::from_str("text/html; charset=utf-8").unwrap(),
-    )
-});
-
-#[cfg(feature = "full")]
-pub static HTTP_HEADER_CONTENT_TEXT: Lazy<HttpHeader> = Lazy::new(|| {
-    (
-        header::CONTENT_TYPE,
-        HeaderValue::from_str("text/plain; charset=utf-8").unwrap(),
-    )
-});
-
-pub static HTTP_HEADER_TRANSFER_CHUNKED: Lazy<HttpHeader> = Lazy::new(|| {
-    (
-        header::TRANSFER_ENCODING,
-        HeaderValue::from_str("chunked").unwrap(),
-    )
-});
-
-pub static HTTP_HEADER_NAME_X_REQUEST_ID: Lazy<HeaderName> =
-    Lazy::new(|| HeaderName::from_str("X-Request-Id").unwrap());
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        convert_header_value, convert_headers, HTTP_HEADER_CONTENT_HTML,
-        HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_NAME_X_REQUEST_ID,
-        HTTP_HEADER_NO_CACHE, HTTP_HEADER_NO_STORE,
-        HTTP_HEADER_TRANSFER_CHUNKED,
-    };
-    use crate::state::State;
+    use super::convert_header_value;
     use http::HeaderValue;
+    use pingap_http_extra::convert_headers;
+    use pingap_state::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -303,7 +194,7 @@ mod tests {
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let default_state = State {
+        let default_state = Ctx {
             tls_version: Some("tls1.3".to_string()),
             remote_addr: Some("10.1.1.1".to_string()),
             remote_port: Some(6000),
@@ -317,7 +208,7 @@ mod tests {
         let value = convert_header_value(
             &HeaderValue::from_str("$host").unwrap(),
             &session,
-            &State {
+            &Ctx {
                 ..Default::default()
             },
         );
@@ -327,7 +218,7 @@ mod tests {
         let value = convert_header_value(
             &HeaderValue::from_str("$scheme").unwrap(),
             &session,
-            &State {
+            &Ctx {
                 ..Default::default()
             },
         );
@@ -398,7 +289,7 @@ mod tests {
         let value = convert_header_value(
             &HeaderValue::from_str("$proxy_add_x_forwarded_for").unwrap(),
             &session,
-            &State {
+            &Ctx {
                 remote_addr: Some("10.1.1.1".to_string()),
                 ..Default::default()
             },
@@ -418,7 +309,7 @@ mod tests {
         let value = convert_header_value(
             &HeaderValue::from_str("$proxy_add_x_forwarded_for").unwrap(),
             &session,
-            &State {
+            &Ctx {
                 remote_addr: Some("10.1.1.1".to_string()),
                 ..Default::default()
             },
@@ -435,7 +326,7 @@ mod tests {
         let value = convert_header_value(
             &HeaderValue::from_str("$upstream_addr").unwrap(),
             &session,
-            &State {
+            &Ctx {
                 upstream_address: "10.1.1.1:8001".to_string(),
                 ..Default::default()
             },
@@ -452,7 +343,7 @@ mod tests {
         let value = convert_header_value(
             &HeaderValue::from_str("$http_origin").unwrap(),
             &session,
-            &State::default(),
+            &Ctx::default(),
         );
         assert_eq!(true, value.is_some());
         assert_eq!("https://github.com", value.unwrap().to_str().unwrap());
@@ -466,7 +357,7 @@ mod tests {
         let value = convert_header_value(
             &HeaderValue::from_str("$hostname").unwrap(),
             &session,
-            &State::default(),
+            &Ctx::default(),
         );
         assert_eq!(true, value.is_some());
 
@@ -479,7 +370,7 @@ mod tests {
         let value = convert_header_value(
             &HeaderValue::from_str("$HOME").unwrap(),
             &session,
-            &State::default(),
+            &Ctx::default(),
         );
         assert_eq!(true, value.is_some());
 
@@ -492,61 +383,8 @@ mod tests {
         let value = convert_header_value(
             &HeaderValue::from_str("UUID").unwrap(),
             &session,
-            &State::default(),
+            &Ctx::default(),
         );
         assert_eq!(false, value.is_some());
-    }
-
-    #[test]
-    fn test_static_value() {
-        assert_eq!(
-            "cache-control: private, no-store",
-            format!(
-                "{}: {}",
-                HTTP_HEADER_NO_STORE.0.to_string(),
-                HTTP_HEADER_NO_STORE.1.to_str().unwrap_or_default()
-            )
-        );
-
-        assert_eq!(
-            "cache-control: private, no-cache",
-            format!(
-                "{}: {}",
-                HTTP_HEADER_NO_CACHE.0.to_string(),
-                HTTP_HEADER_NO_CACHE.1.to_str().unwrap_or_default()
-            )
-        );
-
-        assert_eq!(
-            "content-type: application/json; charset=utf-8",
-            format!(
-                "{}: {}",
-                HTTP_HEADER_CONTENT_JSON.0.to_string(),
-                HTTP_HEADER_CONTENT_JSON.1.to_str().unwrap_or_default()
-            )
-        );
-
-        assert_eq!(
-            "content-type: text/html; charset=utf-8",
-            format!(
-                "{}: {}",
-                HTTP_HEADER_CONTENT_HTML.0.to_string(),
-                HTTP_HEADER_CONTENT_HTML.1.to_str().unwrap_or_default()
-            )
-        );
-
-        assert_eq!(
-            "transfer-encoding: chunked",
-            format!(
-                "{}: {}",
-                HTTP_HEADER_TRANSFER_CHUNKED.0.to_string(),
-                HTTP_HEADER_TRANSFER_CHUNKED.1.to_str().unwrap_or_default()
-            )
-        );
-
-        assert_eq!(
-            "x-request-id",
-            format!("{}", HTTP_HEADER_NAME_X_REQUEST_ID.to_string(),)
-        );
     }
 }

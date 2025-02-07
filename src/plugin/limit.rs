@@ -16,12 +16,12 @@ use super::{
     get_hash_key, get_int_conf, get_step_conf, get_str_conf, Error, Plugin,
     Result,
 };
-use crate::http_extra::HttpResponse;
-use crate::state::State;
 use async_trait::async_trait;
 use http::StatusCode;
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf, PluginStep};
+use pingap_http_extra::HttpResponse;
+use pingap_state::Ctx;
 use pingora::proxy::Session;
 use pingora_limits::inflight::Inflight;
 use pingora_limits::rate::Rate;
@@ -189,7 +189,7 @@ impl Limiter {
     /// * For rate limiting: Records request in time window
     /// * For inflight limiting: Increments counter and stores RAII guard in context
     /// * For IP-based limiting: Stores client IP in context
-    pub fn incr(&self, session: &Session, ctx: &mut State) -> Result<()> {
+    pub fn incr(&self, session: &Session, ctx: &mut Ctx) -> Result<()> {
         // Extract the key value based on configured tag type
         let key = match self.tag {
             LimitTag::Query => {
@@ -282,7 +282,7 @@ impl Plugin for Limiter {
         &self,
         step: PluginStep,
         session: &mut Session,
-        ctx: &mut State,
+        ctx: &mut Ctx,
     ) -> pingora::Result<Option<HttpResponse>> {
         // Only run at configured plugin step
         if step != self.plugin_step {
@@ -307,9 +307,10 @@ impl Plugin for Limiter {
 #[cfg(test)]
 mod tests {
     use super::{LimitTag, Limiter};
-    use crate::{plugin::Plugin, state::State};
+    use crate::plugin::Plugin;
     use http::StatusCode;
     use pingap_config::{PluginConf, PluginStep};
+    use pingap_state::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use std::time::Duration;
@@ -387,7 +388,7 @@ max = 10
         .unwrap();
 
         assert_eq!(LimitTag::Cookie, limiter.tag);
-        let mut ctx = State {
+        let mut ctx = Ctx {
             ..Default::default()
         };
         let session = new_session().await;
@@ -410,7 +411,7 @@ max = 10
         )
         .unwrap();
         assert_eq!(LimitTag::RequestHeader, limiter.tag);
-        let mut ctx = State {
+        let mut ctx = Ctx {
             ..Default::default()
         };
         let session = new_session().await;
@@ -433,7 +434,7 @@ max = 10
         )
         .unwrap();
         assert_eq!(LimitTag::Query, limiter.tag);
-        let mut ctx = State {
+        let mut ctx = Ctx {
             ..Default::default()
         };
         let session = new_session().await;
@@ -454,7 +455,7 @@ max = 10
         )
         .unwrap();
         assert_eq!(LimitTag::Ip, limiter.tag);
-        let mut ctx = State {
+        let mut ctx = Ctx {
             ..Default::default()
         };
         let session = new_session().await;
@@ -485,7 +486,7 @@ max = 0
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -507,7 +508,7 @@ max = 1
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -539,7 +540,7 @@ interval = "1s"
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -550,7 +551,7 @@ interval = "1s"
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -561,7 +562,7 @@ interval = "1s"
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -574,7 +575,7 @@ interval = "1s"
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();

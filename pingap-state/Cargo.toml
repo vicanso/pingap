@@ -1,0 +1,36 @@
+[package]
+name = "pingap-state"
+version = "0.9.10"
+edition = "2021"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/pingap"
+repository = "https://github.com/vicanso/pingap"
+keywords = ["pingap", "state"]
+
+[lib]
+name = "pingap_state"
+path = "src/lib.rs"
+
+[dependencies]
+ahash = { workspace = true }
+bytes = { workspace = true }
+http = { workspace = true }
+pingora = { workspace = true }
+pingora-limits = { workspace = true }
+itoa = { workspace = true }
+opentelemetry = { version = "0.27.1", default-features = false, features = [
+    "trace",
+], optional = true }
+pingap-location = { path = "../pingap-location" }
+pingap-upstream = { path = "../pingap-upstream" }
+pingap-util = { path = "../pingap-util" }
+pingap-config = { path = "../pingap-config" }
+
+
+[features]
+full = ["opentelemetry"]
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"
+tokio-test = "0.4.4"

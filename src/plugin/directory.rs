@@ -16,10 +16,6 @@ use super::{
     get_bool_conf, get_hash_key, get_step_conf, get_str_conf,
     get_str_slice_conf, Error, Plugin, Result,
 };
-use crate::http_extra::{
-    convert_headers, HttpChunkResponse, HttpHeader, HttpResponse,
-};
-use crate::state::State;
 use async_trait::async_trait;
 use bytesize::ByteSize;
 use glob::glob;
@@ -27,6 +23,10 @@ use http::{header, HeaderValue, StatusCode};
 use humantime::parse_duration;
 use once_cell::sync::Lazy;
 use pingap_config::{PluginCategory, PluginConf, PluginStep};
+use pingap_http_extra::{
+    convert_headers, HttpChunkResponse, HttpHeader, HttpResponse,
+};
+use pingap_state::Ctx;
 use pingora::proxy::Session;
 use std::fs::Metadata;
 #[cfg(unix)]
@@ -427,7 +427,7 @@ impl Plugin for Directory {
         &self,
         step: PluginStep,
         session: &mut Session,
-        ctx: &mut State,
+        ctx: &mut Ctx,
     ) -> pingora::Result<Option<HttpResponse>> {
         if step != self.plugin_step {
             return Ok(None);
@@ -519,8 +519,8 @@ impl Plugin for Directory {
 mod tests {
     use super::{get_cacheable_and_headers_from_meta, get_data, Directory};
     use crate::plugin::Plugin;
-    use crate::state::State;
     use pingap_config::{PluginConf, PluginStep};
+    use pingap_state::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::{assert_eq, assert_ne};
     #[cfg(unix)]
@@ -611,7 +611,7 @@ download = true
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -638,7 +638,7 @@ download = true
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();

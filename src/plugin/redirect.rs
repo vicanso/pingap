@@ -13,13 +13,12 @@
 // limitations under the License.
 
 use super::{get_bool_conf, get_str_conf, Plugin, Result};
-use crate::http_extra::convert_headers;
-use crate::http_extra::HttpResponse;
 use crate::plugin::get_hash_key;
-use crate::state::State;
 use async_trait::async_trait;
 use http::StatusCode;
 use pingap_config::{PluginConf, PluginStep};
+use pingap_http_extra::{convert_headers, HttpResponse};
+use pingap_state::Ctx;
 use pingora::proxy::Session;
 use tracing::debug;
 
@@ -119,7 +118,7 @@ impl Plugin for Redirect {
         &self,
         step: PluginStep,
         session: &mut Session,
-        ctx: &mut State,
+        ctx: &mut Ctx,
     ) -> pingora::Result<Option<HttpResponse>> {
         // Early return if not in request phase
         if step != self.plugin_step {
@@ -174,9 +173,9 @@ impl Plugin for Redirect {
 mod tests {
     use super::Redirect;
     use crate::plugin::Plugin;
-    use crate::state::State;
     use http::StatusCode;
     use pingap_config::{PluginConf, PluginStep};
+    use pingap_state::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -211,7 +210,7 @@ prefix = "/api"
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();

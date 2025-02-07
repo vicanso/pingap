@@ -15,13 +15,13 @@
 use super::{
     get_hash_key, get_str_conf, get_str_slice_conf, Error, Plugin, Result,
 };
-use pingap_config::{PluginCategory, PluginConf, PluginStep};
-use crate::http_extra::HTTP_HEADER_TRANSFER_CHUNKED;
-use crate::state::{ModifyResponseBody, State};
 use async_trait::async_trait;
 use bstr::ByteSlice;
 use bytes::Bytes;
 use once_cell::sync::Lazy;
+use pingap_config::{PluginCategory, PluginConf, PluginStep};
+use pingap_http_extra::HTTP_HEADER_TRANSFER_CHUNKED;
+use pingap_state::{Ctx, ModifyResponseBody};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::bytes::RegexBuilder;
@@ -236,7 +236,7 @@ impl Plugin for SubFilter {
         &self,
         step: PluginStep,
         session: &mut Session,
-        ctx: &mut State,
+        ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<()> {
         // Skip if not at the correct plugin step
@@ -262,8 +262,8 @@ impl Plugin for SubFilter {
 #[cfg(test)]
 mod tests {
     use super::{parse_subs_filter, SubFilterReplacer};
-    use crate::state::ModifyResponseBody;
     use bytes::Bytes;
+    use pingap_state::ModifyResponseBody;
     use pretty_assertions::assert_eq;
 
     #[test]

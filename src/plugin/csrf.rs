@@ -13,15 +13,15 @@
 // limitations under the License.
 
 use super::{get_hash_key, get_str_conf, Error, Plugin, Result};
-use pingap_config::{PluginCategory, PluginConf, PluginStep};
-use crate::http_extra::{HttpResponse, HTTP_HEADER_NO_STORE};
-use crate::state::State;
 use async_trait::async_trait;
 use bytes::Bytes;
 use cookie::Cookie;
 use http::{header, HeaderValue, Method, StatusCode};
 use humantime::parse_duration;
 use nanoid::nanoid;
+use pingap_config::{PluginCategory, PluginConf, PluginStep};
+use pingap_http_extra::{HttpResponse, HTTP_HEADER_NO_STORE};
+use pingap_state::Ctx;
 use pingap_util::base64_encode;
 use pingora::proxy::Session;
 use sha2::{Digest, Sha256};
@@ -229,7 +229,7 @@ impl Plugin for Csrf {
         &self,
         step: PluginStep,
         session: &mut Session,
-        _ctx: &mut State,
+        _ctx: &mut Ctx,
     ) -> pingora::Result<Option<HttpResponse>> {
         // Only run during request phase
         if step != self.plugin_step {
@@ -305,10 +305,10 @@ impl Plugin for Csrf {
 #[cfg(test)]
 mod tests {
     use super::{generate_token, validate_token, Csrf};
-    use pingap_config::{PluginConf, PluginStep};
     use crate::plugin::Plugin;
-    use crate::state::State;
     use cookie::Cookie;
+    use pingap_config::{PluginConf, PluginStep};
+    use pingap_state::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use std::str::FromStr;
@@ -406,7 +406,7 @@ ttl = "1h"
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap()
@@ -427,7 +427,7 @@ ttl = "1h"
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap()
@@ -448,7 +448,7 @@ ttl = "1h"
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();

@@ -13,10 +13,10 @@
 // limitations under the License.
 
 use super::{get_bool_conf, get_hash_key, get_int_conf, Error, Plugin, Result};
-use crate::http_extra::HttpResponse;
-use crate::state::State;
 use async_trait::async_trait;
 use pingap_config::{PluginConf, PluginStep};
+use pingap_http_extra::HttpResponse;
+use pingap_state::Ctx;
 use pingora::modules::http::compression::ResponseCompression;
 use pingora::protocols::http::compression::Algorithm;
 use pingora::proxy::Session;
@@ -122,7 +122,7 @@ impl Plugin for Compression {
     /// # Arguments
     /// * `step` - Current plugin processing step
     /// * `session` - HTTP session containing request/response data
-    /// * `_ctx` - State context (unused)
+    /// * `_ctx` - Ctx context (unused)
     ///
     /// # Returns
     /// * `pingora::Result<Option<HttpResponse>>` - None if successful, or HTTP response on error
@@ -138,7 +138,7 @@ impl Plugin for Compression {
         &self,
         step: PluginStep,
         session: &mut Session,
-        _ctx: &mut State,
+        _ctx: &mut Ctx,
     ) -> pingora::Result<Option<HttpResponse>> {
         // Early return conditions
         if step != self.plugin_step {
@@ -208,8 +208,8 @@ impl Plugin for Compression {
 mod tests {
     use super::Compression;
     use crate::plugin::Plugin;
-    use crate::state::State;
     use pingap_config::{PluginConf, PluginStep};
+    use pingap_state::Ctx;
     use pingora::modules::http::compression::{
         ResponseCompression, ResponseCompressionBuilder,
     };
@@ -267,7 +267,7 @@ zstd_level = 7
             .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -295,7 +295,7 @@ zstd_level = 7
             .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -323,7 +323,7 @@ zstd_level = 7
             .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -351,7 +351,7 @@ zstd_level = 7
             .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();

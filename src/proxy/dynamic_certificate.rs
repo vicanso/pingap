@@ -13,11 +13,11 @@
 // limitations under the License.
 
 use super::LOG_CATEGORY;
-use crate::certificate::{Certificate, TlsCertificate};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
+use pingap_certificate::{Certificate, TlsCertificate};
 use pingap_config::CertificateConf;
 use pingora::listeners::tls::TlsSettings;
 use pingora::tls::ext;
@@ -72,7 +72,7 @@ fn parse_certificates(
         if certificate.tls_cert.is_none() || certificate.tls_key.is_none() {
             continue;
         }
-        let result: Result<TlsCertificate, crate::certificate::Error> =
+        let result: Result<TlsCertificate, pingap_certificate::Error> =
             certificate.try_into();
         match result {
             Ok(mut dynamic_cert) => {
@@ -352,7 +352,7 @@ mod tests {
         get_certificate_info_list, try_update_certificates, GlobalCertificate,
         TlsSettingParams, DYNAMIC_CERTIFICATE_MAP,
     };
-    use crate::certificate::TlsCertificate;
+    use pingap_certificate::TlsCertificate;
     use pingap_config::CertificateConf;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;

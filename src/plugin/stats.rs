@@ -13,14 +13,14 @@
 // limitations under the License.
 
 use super::{get_hash_key, get_step_conf, get_str_conf, Error, Plugin, Result};
-use crate::http_extra::HttpResponse;
-use crate::state::{
-    get_hostname, get_process_system_info, get_processing_accepted,
-    get_start_time, State,
-};
+use crate::state::get_start_time;
 use async_trait::async_trait;
 use bytes::Bytes;
 use pingap_config::{PluginCategory, PluginConf, PluginStep};
+use pingap_http_extra::HttpResponse;
+use pingap_performance::{get_process_system_info, get_processing_accepted};
+use pingap_state::Ctx;
+use pingap_util::get_hostname;
 use pingora::proxy::Session;
 use serde::Serialize;
 use std::time::Duration;
@@ -149,7 +149,7 @@ impl Plugin for Stats {
         &self,
         step: PluginStep,
         session: &mut Session,
-        ctx: &mut State,
+        ctx: &mut Ctx,
     ) -> pingora::Result<Option<HttpResponse>> {
         if step != self.plugin_step {
             return Ok(None);
@@ -195,8 +195,8 @@ impl Plugin for Stats {
 mod tests {
     use super::Stats;
     use crate::plugin::Plugin;
-    use crate::state::State;
     use pingap_config::{PluginConf, PluginStep};
+    use pingap_state::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -254,7 +254,7 @@ mod tests {
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -270,7 +270,7 @@ mod tests {
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();

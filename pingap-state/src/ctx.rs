@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::proxy::{Location, Upstream};
 use ahash::AHashMap;
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
 use http::Uri;
+use pingap_location::Location;
+use pingap_upstream::Upstream;
 use pingap_util::format_duration;
 use pingora::cache::CacheKey;
 
@@ -74,7 +75,7 @@ impl OtelTracer {
 /// Represents the state of a request/response cycle, tracking various metrics and properties
 /// including connection details, caching information, and upstream server interactions.
 #[derive(Default)]
-pub struct State {
+pub struct Ctx {
     /// Unique identifier for the connection
     pub connection_id: usize,
     /// Number of requests currently being processed
@@ -174,10 +175,10 @@ pub struct State {
 
 const ONE_HOUR_MS: u64 = 60 * 60 * 1000;
 
-impl State {
-    /// Creates a new State instance with the current timestamp and default values.
+impl Ctx {
+    /// Creates a new Ctx instance with the current timestamp and default values.
     ///
-    /// Returns a new State struct initialized with the current timestamp and all other fields
+    /// Returns a new Ctx struct initialized with the current timestamp and all other fields
     /// set to their default values.
     pub fn new() -> Self {
         Self {
@@ -374,12 +375,12 @@ impl State {
 /// The key includes an optional namespace and prefix if configured in the state.
 ///
 /// # Arguments
-/// * `ctx` - The State context containing cache configuration
+/// * `ctx` - The Ctx context containing cache configuration
 /// * `method` - The HTTP method as a string
 /// * `uri` - The request URI
 ///
 /// Returns: A CacheKey combining the namespace, prefix (if any), method and URI
-pub fn get_cache_key(ctx: &State, method: &str, uri: &Uri) -> CacheKey {
+pub fn get_cache_key(ctx: &Ctx, method: &str, uri: &Uri) -> CacheKey {
     let namespace = ctx.cache_namespace.as_ref().map_or("", |v| v);
     let key = if let Some(prefix) = &ctx.cache_prefix {
         format!("{prefix}{method}:{uri}")
@@ -392,18 +393,17 @@ pub fn get_cache_key(ctx: &State, method: &str, uri: &Uri) -> CacheKey {
 
 #[cfg(test)]
 mod tests {
-    use super::State;
-    use pingap_config::LocationConf;
-    use crate::proxy::Location;
-    use crate::state::CompressionStat;
+    use super::*;
     use bytes::BytesMut;
+    use pingap_config::LocationConf;
+    use pingap_location::Location;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
     use std::time::Duration;
 
     #[test]
     fn test_state() {
-        let mut ctx = State::new();
+        let mut ctx = Ctx::new();
 
         ctx.connection_id = 10;
         assert_eq!(
@@ -564,7 +564,7 @@ mod tests {
 
     #[test]
     fn test_add_variable() {
-        let mut ctx = State::new();
+        let mut ctx = Ctx::new();
         ctx.add_variable("key", "value");
 
         assert_eq!(

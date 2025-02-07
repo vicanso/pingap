@@ -13,16 +13,16 @@
 // limitations under the License.
 
 use super::{get_hash_key, get_str_conf, Error, Plugin, Result};
-use pingap_config::{PluginCategory, PluginConf, PluginStep};
-use crate::http_extra::{
-    HttpResponse, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_TRANSFER_CHUNKED,
-};
-use crate::state::{ModifyResponseBody, State};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
 use http::StatusCode;
 use humantime::parse_duration;
+use pingap_config::{PluginCategory, PluginConf, PluginStep};
+use pingap_http_extra::{
+    HttpResponse, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_TRANSFER_CHUNKED,
+};
+use pingap_state::{Ctx, ModifyResponseBody};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use serde::{Deserialize, Serialize};
@@ -219,7 +219,7 @@ impl Plugin for JwtAuth {
         &self,
         step: PluginStep,
         session: &mut Session,
-        _ctx: &mut State,
+        _ctx: &mut Ctx,
     ) -> pingora::Result<Option<HttpResponse>> {
         if step != self.plugin_step {
             return Ok(None);
@@ -310,7 +310,7 @@ impl Plugin for JwtAuth {
         &self,
         step: PluginStep,
         session: &mut Session,
-        ctx: &mut State,
+        ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<()> {
         if step != PluginStep::Response || self.auth_path.is_empty() {
@@ -374,10 +374,10 @@ impl ModifyResponseBody for Sign {
 #[cfg(test)]
 mod tests {
     use super::JwtAuth;
-    use pingap_config::{PluginConf, PluginStep};
     use crate::plugin::Plugin;
-    use crate::state::State;
     use bytes::Bytes;
+    use pingap_config::{PluginConf, PluginStep};
+    use pingap_state::Ctx;
     use pingora::http::ResponseHeader;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -483,7 +483,7 @@ header = "Authorization"
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -500,7 +500,7 @@ header = "Authorization"
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -517,7 +517,7 @@ header = "Authorization"
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap()
@@ -538,7 +538,7 @@ header = "Authorization"
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap()
@@ -558,7 +558,7 @@ header = "Authorization"
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap()
@@ -579,7 +579,7 @@ header = "Authorization"
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap()
@@ -612,7 +612,7 @@ auth_path = "/login"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let mut ctx = State::default();
+        let mut ctx = Ctx::default();
         let mut upstream_response =
             ResponseHeader::build_no_case(200, None).unwrap();
         auth.handle_response(

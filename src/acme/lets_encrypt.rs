@@ -13,21 +13,21 @@
 // limitations under the License.
 
 use super::{get_token_path, Error, Result, LOG_CATEGORY};
-use crate::certificate::Certificate;
-use pingap_config::{
-    get_current_config, set_current_config, ConfigStorage, LoadConfigOptions,
-    PingapConf, CATEGORY_CERTIFICATE,
-};
-use crate::http_extra::HttpResponse;
 use crate::proxy::try_update_certificates;
-use crate::state::State;
 use http::StatusCode;
 use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
     OrderStatus,
 };
+use pingap_certificate::Certificate;
+use pingap_config::{
+    get_current_config, set_current_config, ConfigStorage, LoadConfigOptions,
+    PingapConf, CATEGORY_CERTIFICATE,
+};
+use pingap_http_extra::HttpResponse;
 use pingap_service::Error as ServiceError;
 use pingap_service::SimpleServiceTaskFuture;
+use pingap_state::Ctx;
 use pingora::proxy::Session;
 use std::time::Duration;
 use substring::Substring;
@@ -239,7 +239,7 @@ pub fn get_lets_encrypt_certificate(name: &str) -> Result<Certificate> {
 pub async fn handle_lets_encrypt(
     storage: &'static (dyn ConfigStorage + Sync + Send),
     session: &mut Session,
-    _ctx: &mut State,
+    _ctx: &mut Ctx,
 ) -> pingora::Result<bool> {
     let path = session.req_header().uri.path();
     // lets encrypt acme challenge path

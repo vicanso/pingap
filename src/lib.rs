@@ -13,8 +13,6 @@
 // limitations under the License.
 
 pub mod acme;
-pub mod cache;
-pub mod certificate;
 pub mod http_extra;
 pub mod logger;
 #[cfg(feature = "full")]

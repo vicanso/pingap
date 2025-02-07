@@ -15,12 +15,12 @@
 use super::{
     get_hash_key, get_str_conf, get_str_slice_conf, Error, Plugin, Result,
 };
-use crate::http_extra::HttpResponse;
-use crate::state::State;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
 use pingap_config::{PluginConf, PluginStep};
+use pingap_http_extra::HttpResponse;
+use pingap_state::Ctx;
 use pingora::proxy::Session;
 use tracing::debug;
 
@@ -127,7 +127,7 @@ impl Plugin for IpRestriction {
         &self,
         step: PluginStep,
         session: &mut Session,
-        ctx: &mut State,
+        ctx: &mut Ctx,
     ) -> pingora::Result<Option<HttpResponse>> {
         // Skip processing if not in correct plugin step
         if step != self.plugin_step {
@@ -177,9 +177,9 @@ impl Plugin for IpRestriction {
 mod tests {
     use super::IpRestriction;
     use crate::plugin::Plugin;
-    use crate::state::State;
     use http::StatusCode;
     use pingap_config::{PluginConf, PluginStep};
+    use pingap_state::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -247,7 +247,7 @@ ip_list = [
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -264,7 +264,7 @@ ip_list = [
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -281,7 +281,7 @@ ip_list = [
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State {
+                &mut Ctx {
                     client_ip: Some("2.1.1.2".to_string()),
                     ..Default::default()
                 },
@@ -294,7 +294,7 @@ ip_list = [
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State {
+                &mut Ctx {
                     client_ip: Some("1.1.1.2".to_string()),
                     ..Default::default()
                 },
@@ -328,7 +328,7 @@ ip_list = [
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();

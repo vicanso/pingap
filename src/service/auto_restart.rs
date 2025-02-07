@@ -12,15 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::state::restart;
+use crate::{plugin, proxy};
+use async_trait::async_trait;
 use pingap_config::{
     get_config_storage, get_current_config, load_config, set_current_config,
     LoadConfigOptions, PingapConf, CATEGORY_CERTIFICATE, CATEGORY_LOCATION,
     CATEGORY_PLUGIN, CATEGORY_UPSTREAM,
 };
-use crate::state::restart;
-use crate::{plugin, proxy};
-use async_trait::async_trait;
+use pingap_location::try_init_locations;
 use pingap_service::{CommonServiceTask, ServiceTask, LOG_CATEGORY};
+use pingap_upstream::try_update_upstreams;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -134,7 +136,7 @@ async fn diff_and_update_config(
         };
 
         if should_reload_upstream {
-            match proxy::try_update_upstreams(&new_config.upstreams).await {
+            match try_update_upstreams(&new_config.upstreams).await {
                 Err(e) => {
                     let error = e.to_string();
                     reload_fail_messages
@@ -160,7 +162,7 @@ async fn diff_and_update_config(
             };
         }
         if should_reload_location {
-            match proxy::try_init_locations(&new_config.locations) {
+            match try_init_locations(&new_config.locations) {
                 Err(e) => {
                     let error = e.to_string();
                     reload_fail_messages

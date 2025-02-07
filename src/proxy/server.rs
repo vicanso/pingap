@@ -14,25 +14,18 @@
 
 use super::dynamic_certificate::{GlobalCertificate, TlsSettingParams};
 use super::logger::Parser;
-use super::upstream::get_upstream;
 use super::{ServerConf, LOG_CATEGORY};
 use crate::acme::handle_lets_encrypt;
-use crate::http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
+use crate::http_extra::convert_header_value;
 #[cfg(feature = "full")]
 use crate::otel;
 use crate::plugin::{get_plugin, ADMIN_SERVER_PLUGIN};
-use crate::proxy::location::get_location;
-#[cfg(feature = "full")]
-use crate::state::OtelTracer;
-use crate::state::{accept_request, end_request};
-use crate::state::{get_cache_key, CompressionStat, State};
-#[cfg(feature = "full")]
-use crate::state::{new_prometheus, new_prometheus_push_service, Prometheus};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
+use http::{HeaderName, HeaderValue};
 use once_cell::sync::Lazy;
 #[cfg(feature = "full")]
 use opentelemetry::{
@@ -44,7 +37,19 @@ use opentelemetry::{
 use opentelemetry_http::HeaderExtractor;
 use pingap_config::get_config_storage;
 use pingap_config::PluginStep;
+use pingap_http_extra::{convert_headers, HttpHeader};
+use pingap_http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
+use pingap_location::{get_location, Location};
+use pingap_performance::{accept_request, end_request};
+#[cfg(feature = "full")]
+use pingap_performance::{
+    new_prometheus, new_prometheus_push_service, Prometheus,
+};
 use pingap_service::SimpleServiceTaskFuture;
+#[cfg(feature = "full")]
+use pingap_state::OtelTracer;
+use pingap_state::{get_cache_key, CompressionStat, Ctx};
+use pingap_upstream::get_upstream;
 use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::CacheControl;
 use pingora::cache::cache_control::DirectiveValue;
@@ -418,7 +423,7 @@ impl Server {
     async fn serve_admin(
         &self,
         session: &mut Session,
-        ctx: &mut State,
+        ctx: &mut Ctx,
     ) -> pingora::Result<bool> {
         if let Some(plugin) = get_plugin(ADMIN_SERVER_PLUGIN.as_str()) {
             let result = plugin
@@ -498,12 +503,138 @@ fn get_digest_detail(digest: &Digest) -> DigestDetail {
 
 static MODULE_GRPC_WEB: &str = "grpc-web";
 
+// proxy_set_header X-Real-IP $remote_addr;
+// proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+// proxy_set_header X-Forwarded-Proto $scheme;
+// proxy_set_header X-Forwarded-Host $host;
+// proxy_set_header X-Forwarded-Port $server_port;
+
+static DEFAULT_PROXY_SET_HEADERS: Lazy<Vec<HttpHeader>> = Lazy::new(|| {
+    convert_headers(&[
+        "X-Real-IP:$remote_addr".to_string(),
+        "X-Forwarded-For:$proxy_add_x_forwarded_for".to_string(),
+        "X-Forwarded-Proto:$scheme".to_string(),
+        "X-Forwarded-Host:$host".to_string(),
+        "X-Forwarded-Port:$server_port".to_string(),
+    ])
+    .unwrap()
+});
+
+impl Server {
+    /// Sets or appends proxy-related headers before forwarding request
+    /// Handles both default reverse proxy headers and custom configured headers
+    #[inline]
+    pub fn set_append_proxy_headers(
+        &self,
+        session: &Session,
+        ctx: &Ctx,
+        header: &mut RequestHeader,
+    ) {
+        let Some(location) = &ctx.location else {
+            return;
+        };
+        // Helper closure to avoid code duplication
+        let mut set_header = |k: &HeaderName, v: &HeaderValue, append: bool| {
+            let value = convert_header_value(v, session, ctx)
+                .unwrap_or_else(|| v.clone());
+            // v validate for HeaderValue, so always no error
+            if append {
+                let _ = header.append_header(k, value);
+            } else {
+                let _ = header.insert_header(k, value);
+            };
+        };
+
+        // Set default reverse proxy headers if enabled
+        if location.enable_reverse_proxy_headers {
+            DEFAULT_PROXY_SET_HEADERS
+                .iter()
+                .for_each(|(k, v)| set_header(k, v, false));
+        }
+
+        // Set custom proxy headers
+        if let Some(arr) = &location.proxy_set_headers {
+            arr.iter().for_each(|(k, v)| set_header(k, v, false));
+        }
+
+        // Append custom proxy headers
+        if let Some(arr) = &location.proxy_add_headers {
+            arr.iter().for_each(|(k, v)| set_header(k, v, true));
+        }
+    }
+
+    /// Executes request plugins in the configured chain
+    /// Returns true if a plugin handled the request completely
+    #[inline]
+    pub async fn handle_request_plugin(
+        &self,
+        step: PluginStep,
+        location: Arc<Location>,
+        session: &mut Session,
+        ctx: &mut Ctx,
+    ) -> pingora::Result<bool> {
+        let Some(plugins) = location.plugins.as_ref() else {
+            return Ok(false);
+        };
+
+        for name in plugins.iter() {
+            if let Some(plugin) = get_plugin(name) {
+                debug!(
+                    category = LOG_CATEGORY,
+                    name,
+                    step = step.to_string(),
+                    "handle request plugin"
+                );
+                let result = plugin.handle_request(step, session, ctx).await?;
+                if let Some(resp) = result {
+                    // ignore http response status >= 900
+                    if resp.status.as_u16() < 900 {
+                        ctx.status = Some(resp.status);
+                        resp.send(session).await?;
+                    }
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// Run response plugins
+    #[inline]
+    pub async fn handle_response_plugin(
+        &self,
+        step: PluginStep,
+        location: Arc<Location>,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        upstream_response: &mut ResponseHeader,
+    ) -> pingora::Result<()> {
+        let Some(plugins) = location.plugins.as_ref() else {
+            return Ok(());
+        };
+        for name in plugins.iter() {
+            if let Some(plugin) = get_plugin(name) {
+                debug!(
+                    category = LOG_CATEGORY,
+                    name,
+                    step = step.to_string(),
+                    "handle response plugin"
+                );
+                plugin
+                    .handle_response(step, session, ctx, upstream_response)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+}
+
 #[async_trait]
 impl ProxyHttp for Server {
-    type CTX = State;
+    type CTX = Ctx;
     fn new_ctx(&self) -> Self::CTX {
         debug!(category = LOG_CATEGORY, "new ctx");
-        State::new()
+        Ctx::new()
     }
     fn init_downstream_modules(&self, modules: &mut HttpModules) {
         debug!(category = LOG_CATEGORY, "--> init downstream modules");
@@ -661,9 +792,13 @@ impl ProxyHttp for Server {
                 grpc_web.init();
             }
 
-            let _ = location
-                .clone()
-                .handle_request_plugin(PluginStep::EarlyRequest, session, ctx)
+            let _ = self
+                .handle_request_plugin(
+                    PluginStep::EarlyRequest,
+                    location.clone(),
+                    session,
+                    ctx,
+                )
                 .await?;
         }
         Ok(())
@@ -743,11 +878,14 @@ impl ProxyHttp for Server {
         );
         location.rewrite(header, ctx.variables.as_ref());
 
-        let done = location
-            .clone()
-            .handle_request_plugin(PluginStep::Request, session, ctx)
+        let done = self
+            .handle_request_plugin(
+                PluginStep::Request,
+                location.clone(),
+                session,
+                ctx,
+            )
             .await?;
-
         if done {
             return Ok(true);
         }
@@ -768,10 +906,15 @@ impl ProxyHttp for Server {
         debug!(category = LOG_CATEGORY, "--> proxy upstream filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- proxy upstream filter"););
         if let Some(location) = &ctx.location {
-            let done = location
-                .clone()
-                .handle_request_plugin(PluginStep::ProxyUpstream, session, ctx)
+            let done = self
+                .handle_request_plugin(
+                    PluginStep::ProxyUpstream,
+                    location.clone(),
+                    session,
+                    ctx,
+                )
                 .await?;
+
             if done {
                 return Ok(false);
             }
@@ -784,7 +927,7 @@ impl ProxyHttp for Server {
     async fn upstream_peer(
         &self,
         session: &mut Session,
-        ctx: &mut State,
+        ctx: &mut Ctx,
     ) -> pingora::Result<Box<HttpPeer>> {
         debug!(category = LOG_CATEGORY, "--> upstream peer");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream peer"););
@@ -803,10 +946,11 @@ impl ProxyHttp for Server {
                     ));
                     ctx.upstream_span = Some(span);
                 }
-                let peer = up.new_http_peer(session, ctx).map(|peer| {
-                    ctx.upstream_address = peer.address().to_string();
-                    peer
-                });
+                let peer =
+                    up.new_http_peer(session, &ctx.client_ip).map(|peer| {
+                        ctx.upstream_address = peer.address().to_string();
+                        peer
+                    });
                 ctx.upstream = Some(up);
                 peer
             } else {
@@ -884,9 +1028,7 @@ impl ProxyHttp for Server {
     {
         debug!(category = LOG_CATEGORY, "--> upstream request filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream request filter"););
-        if let Some(location) = &ctx.location {
-            location.set_append_proxy_headers(session, ctx, upstream_response);
-        }
+        self.set_append_proxy_headers(session, ctx, upstream_response);
         Ok(())
     }
     /// Filters request body chunks before sending upstream.
@@ -906,9 +1048,9 @@ impl ProxyHttp for Server {
         if let Some(buf) = body {
             ctx.payload_size += buf.len();
             if let Some(location) = &ctx.location {
-                location.client_body_size_limit(ctx).map_err(|e| {
-                    pingap_util::new_internal_error(413, e.to_string())
-                })?;
+                location.client_body_size_limit(ctx.payload_size).map_err(
+                    |e| pingap_util::new_internal_error(413, e.to_string()),
+                )?;
             }
         }
         Ok(())
@@ -1032,15 +1174,14 @@ impl ProxyHttp for Server {
         }
 
         if let Some(location) = &ctx.location {
-            location
-                .clone()
-                .handle_response_plugin(
-                    PluginStep::Response,
-                    session,
-                    ctx,
-                    upstream_response,
-                )
-                .await?;
+            self.handle_response_plugin(
+                PluginStep::Response,
+                location.clone(),
+                session,
+                ctx,
+                upstream_response,
+            )
+            .await?;
         }
 
         Ok(())
@@ -1340,13 +1481,11 @@ mod tests {
     use super::*;
     use crate::proxy::server::get_digest_detail;
     use crate::proxy::server_conf::parse_from_conf;
-
-    use crate::proxy::{
-        try_init_locations, try_init_server_locations, try_init_upstreams,
-        Location,
-    };
-    use crate::state::State;
+    use crate::proxy::try_init_server_locations;
     use pingap_config::{LocationConf, PingapConf};
+    use pingap_location::{try_init_locations, Location};
+    use pingap_state::Ctx;
+    use pingap_upstream::try_init_upstreams;
     use pingora::http::ResponseHeader;
     use pingora::protocols::tls::SslDigest;
     use pingora::protocols::{Digest, TimingDigest};
@@ -1472,7 +1611,7 @@ value = 'proxy_set_headers = ["name:value"]'
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let mut ctx = State::default();
+        let mut ctx = Ctx::default();
         server
             .early_request_filter(&mut session, &mut ctx)
             .await
@@ -1491,7 +1630,7 @@ value = 'proxy_set_headers = ["name:value"]'
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let mut ctx = State {
+        let mut ctx = Ctx {
             location: Some(Arc::new(
                 Location::new("lo", &LocationConf::default()).unwrap(),
             )),
@@ -1514,7 +1653,7 @@ value = 'proxy_set_headers = ["name:value"]'
 
         let key = server.cache_key_callback(
             &session,
-            &mut State {
+            &mut Ctx {
                 cache_namespace: Some("pingap".to_string()),
                 cache_prefix: Some("ss:".to_string()),
                 ..Default::default()
@@ -1546,7 +1685,7 @@ value = 'proxy_set_headers = ["name:value"]'
             .response_cache_filter(
                 &session,
                 &upstream_response,
-                &mut State {
+                &mut Ctx {
                     cache_prefix: Some("ss:".to_string()),
                     ..Default::default()
                 },
@@ -1563,7 +1702,7 @@ value = 'proxy_set_headers = ["name:value"]'
             .response_cache_filter(
                 &session,
                 &upstream_response,
-                &mut State {
+                &mut Ctx {
                     cache_prefix: Some("ss:".to_string()),
                     ..Default::default()
                 },
@@ -1580,7 +1719,7 @@ value = 'proxy_set_headers = ["name:value"]'
             .response_cache_filter(
                 &session,
                 &upstream_response,
-                &mut State {
+                &mut Ctx {
                     cache_prefix: Some("ss:".to_string()),
                     ..Default::default()
                 },
@@ -1597,7 +1736,7 @@ value = 'proxy_set_headers = ["name:value"]'
             .response_cache_filter(
                 &session,
                 &upstream_response,
-                &mut State {
+                &mut Ctx {
                     cache_prefix: Some("ss:".to_string()),
                     ..Default::default()
                 },

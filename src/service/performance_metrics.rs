@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::cache::get_cache_backend;
-use crate::proxy::{
-    get_locations_processing, get_upstreams_processing_connected,
-};
-use crate::state::{get_process_system_info, get_processing_accepted};
+use pingap_cache::get_cache_backend;
+use pingap_location::get_locations_processing;
+use pingap_performance::{get_process_system_info, get_processing_accepted};
 use pingap_service::{SimpleServiceTaskFuture, LOG_CATEGORY};
+use pingap_upstream::get_upstreams_processing_connected;
 use tracing::info;
 
 // Service name constant for performance metrics logging

@@ -16,13 +16,12 @@ use super::{
     get_hash_key, get_int_conf, get_step_conf, get_str_conf, Error, Plugin,
     Result,
 };
-use crate::http_extra::HttpResponse;
-use crate::http_extra::HTTP_HEADER_NAME_X_REQUEST_ID;
-use crate::state::State;
 use async_trait::async_trait;
 use http::HeaderName;
 use nanoid::nanoid;
 use pingap_config::{PluginCategory, PluginConf, PluginStep};
+use pingap_http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
+use pingap_state::Ctx;
 use pingora::proxy::Session;
 use std::str::FromStr;
 use tracing::debug;
@@ -165,7 +164,7 @@ impl Plugin for RequestId {
         &self,
         step: PluginStep,
         session: &mut Session,
-        ctx: &mut State,
+        ctx: &mut Ctx,
     ) -> pingora::Result<Option<HttpResponse>> {
         // Early return if we're not at the configured execution step
         if step != self.plugin_step {
@@ -216,8 +215,8 @@ impl Plugin for RequestId {
 mod tests {
     use super::RequestId;
     use crate::plugin::Plugin;
-    use crate::state::State;
     use pingap_config::{PluginConf, PluginStep};
+    use pingap_state::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -293,7 +292,7 @@ size = 10
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let mut state = State::default();
+        let mut state = Ctx::default();
         let result = id
             .handle_request(PluginStep::Request, &mut session, &mut state)
             .await
@@ -308,7 +307,7 @@ size = 10
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let mut state = State::default();
+        let mut state = Ctx::default();
         let result = id
             .handle_request(PluginStep::Request, &mut session, &mut state)
             .await

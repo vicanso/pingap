@@ -12,11 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#[cfg(feature = "full")]
-use super::HTTP_HEADER_CONTENT_TEXT;
 use super::{
     HttpHeader, HTTP_HEADER_CONTENT_HTML, HTTP_HEADER_CONTENT_JSON,
-    HTTP_HEADER_NO_CACHE, HTTP_HEADER_NO_STORE, HTTP_HEADER_TRANSFER_CHUNKED,
+    HTTP_HEADER_CONTENT_TEXT, HTTP_HEADER_NO_CACHE, HTTP_HEADER_NO_STORE,
+    HTTP_HEADER_TRANSFER_CHUNKED,
 };
 use bytes::Bytes;
 use http::header;
@@ -136,7 +135,6 @@ impl HttpResponse {
         })
     }
 
-    #[cfg(feature = "full")]
     /// Creates a new HTTP response with 200 OK status, text/plain content type, and the given body
     pub fn text(body: Bytes) -> Self {
         Self {
@@ -309,7 +307,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{new_cache_control_header, HttpChunkResponse, HttpResponse};
-    use crate::http_extra::convert_headers;
+    use crate::convert_headers;
     use bytes::Bytes;
     use http::StatusCode;
     use pingap_util::{get_super_ts, resolve_path};

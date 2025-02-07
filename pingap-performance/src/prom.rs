@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    get_hostname, get_process_system_info, Error, Result, State, LOG_CATEGORY,
-};
+use super::{get_process_system_info, Error, Result, LOG_CATEGORY};
 use humantime::parse_duration;
 use once_cell::sync::Lazy;
 use pingap_service::Error as ServiceError;
 use pingap_service::SimpleServiceTaskFuture;
+use pingap_state::Ctx;
+use pingap_util::get_hostname;
 use pingora::proxy::Session;
 use prometheus::core::Collector;
 use prometheus::{
@@ -211,7 +211,7 @@ impl Prometheus {
     /// # Performance Impact
     /// This method performs multiple metric updates but uses efficient
     /// atomic operations to minimize overhead.
-    pub fn after(&self, session: &Session, ctx: &State) {
+    pub fn after(&self, session: &Session, ctx: &Ctx) {
         let mut location = "";
         let mut upstream = "";
         if let Some(lo) = &ctx.location {
@@ -833,12 +833,10 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
 #[cfg(test)]
 mod tests {
     use super::new_prometheus;
-    use crate::{
-        proxy::Location,
-        state::{CompressionStat, State},
-    };
     use http::StatusCode;
     use pingap_config::LocationConf;
+    use pingap_location::Location;
+    use pingap_state::{CompressionStat, Ctx};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
@@ -877,7 +875,7 @@ mod tests {
 
         p.after(
             &session,
-            &State {
+            &Ctx {
                 created_at: pingap_util::now_ms() - 10,
                 status: Some(StatusCode::from_u16(200).unwrap()),
                 connection_reused: true,

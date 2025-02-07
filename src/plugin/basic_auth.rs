@@ -16,14 +16,14 @@ use super::{
     get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf, Error,
     Plugin, Result,
 };
-use pingap_config::{PluginCategory, PluginConf, PluginStep};
-use crate::http_extra::HttpResponse;
-use crate::state::State;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::HeaderValue;
 use http::StatusCode;
 use humantime::parse_duration;
+use pingap_config::{PluginCategory, PluginConf, PluginStep};
+use pingap_http_extra::HttpResponse;
+use pingap_state::Ctx;
 use pingap_util::base64_decode;
 use pingora::proxy::Session;
 use std::time::Duration;
@@ -181,7 +181,7 @@ impl Plugin for BasicAuth {
         &self,
         step: PluginStep,
         session: &mut Session,
-        _ctx: &mut State,
+        _ctx: &mut Ctx,
     ) -> pingora::Result<Option<HttpResponse>> {
         // Verify we're in the request phase - authentication must happen before processing
         if step != self.plugin_step {
@@ -222,9 +222,9 @@ impl Plugin for BasicAuth {
 #[cfg(test)]
 mod tests {
     use super::{BasicAuth, Plugin};
-    use pingap_config::{PluginConf, PluginStep};
-    use crate::state::State;
     use http::StatusCode;
+    use pingap_config::{PluginConf, PluginStep};
+    use pingap_state::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use std::time::Duration;
@@ -300,7 +300,7 @@ hide_credentials = true
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -321,7 +321,7 @@ hide_credentials = true
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();

@@ -13,13 +13,13 @@
 // limitations under the License.
 
 use super::{get_str_conf, Error, Plugin, Result};
-use crate::http_extra::{convert_headers, HttpResponse};
 use crate::plugin::{get_hash_key, get_int_conf, get_str_slice_conf};
-use crate::state::State;
 use async_trait::async_trait;
 use http::StatusCode;
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf, PluginStep};
+use pingap_http_extra::{convert_headers, HttpResponse};
+use pingap_state::Ctx;
 use pingora::proxy::Session;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -145,7 +145,7 @@ impl Plugin for MockResponse {
     /// # Parameters
     /// - step: Current execution phase
     /// - session: Contains request details including URL path
-    /// - _ctx: State context (unused in mock plugin)
+    /// - _ctx: Ctx context (unused in mock plugin)
     ///
     /// # Returns
     /// - Ok(None) if request should proceed normally
@@ -155,7 +155,7 @@ impl Plugin for MockResponse {
         &self,
         step: PluginStep,
         session: &mut Session,
-        _ctx: &mut State,
+        _ctx: &mut Ctx,
     ) -> pingora::Result<Option<HttpResponse>> {
         // Only process if we're in the correct execution phase
         if step != self.plugin_step {
@@ -182,10 +182,10 @@ impl Plugin for MockResponse {
 mod tests {
     use super::MockResponse;
     use crate::plugin::Plugin;
-    use crate::state::State;
     use bytes::Bytes;
     use http::StatusCode;
     use pingap_config::{PluginConf, PluginStep};
+    use pingap_state::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -237,7 +237,7 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -266,7 +266,7 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();

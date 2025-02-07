@@ -4,10 +4,11 @@ use bytes::Bytes;
 use criterion::{criterion_group, criterion_main, Criterion};
 use http::{HeaderName, HeaderValue, StatusCode};
 use nanoid::nanoid;
-use pingap::http_extra::{convert_headers, HttpResponse};
-use pingap::proxy::{Location, Parser};
-use pingap::state::{CompressionStat, State};
+use pingap::proxy::Parser;
 use pingap_config::LocationConf;
+use pingap_http_extra::{convert_headers, HttpResponse};
+use pingap_location::Location;
+use pingap_state::{CompressionStat, Ctx};
 use pingap_util::get_super_ts;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
@@ -281,7 +282,7 @@ fn bench_logger_format(c: &mut Criterion) {
 {:compression_ratio} {:cache_lookup_time} {:cache_lock_time} \
 {~deviceId} {>accept} {:reused}"
                 .into();
-        let ctx = State {
+        let ctx = Ctx {
             payload_size: 512,
             upstream_reused: true,
             status: Some(StatusCode::OK),

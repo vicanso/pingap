@@ -16,14 +16,14 @@ use super::{
     get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf, Error,
     Plugin, Result,
 };
-use pingap_config::{PluginConf, PluginStep};
-use crate::http_extra::{HttpResponse, HTTP_HEADER_NO_STORE};
-use crate::state::State;
 use ahash::AHashMap;
 use async_trait::async_trait;
 use bytes::Bytes;
 use hex::ToHex;
 use http::StatusCode;
+use pingap_config::{PluginConf, PluginStep};
+use pingap_http_extra::{HttpResponse, HTTP_HEADER_NO_STORE};
+use pingap_state::Ctx;
 use pingora::proxy::Session;
 use sha2::{Digest, Sha256};
 use tracing::debug;
@@ -267,7 +267,7 @@ impl Plugin for CombinedAuth {
         &self,
         step: PluginStep,
         session: &mut Session,
-        _ctx: &mut State,
+        _ctx: &mut Ctx,
     ) -> pingora::Result<Option<HttpResponse>> {
         if step != self.plugin_step {
             return Ok(None);
@@ -288,9 +288,9 @@ impl Plugin for CombinedAuth {
 #[cfg(test)]
 mod tests {
     use super::{AuthParam, CombinedAuth};
-    use pingap_config::PluginStep;
     use ahash::AHashMap;
     use hex::ToHex;
+    use pingap_config::PluginStep;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use sha2::{Digest, Sha256};

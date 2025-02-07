@@ -16,12 +16,6 @@ use super::{
     get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf, Error,
     Plugin, Result,
 };
-use crate::cache::{get_cache_backend, HttpCache};
-use pingap_config::{
-    get_current_config, PluginCategory, PluginConf, PluginStep,
-};
-use crate::http_extra::HttpResponse;
-use crate::state::{get_cache_key, State};
 use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
 use bytesize::ByteSize;
@@ -29,6 +23,12 @@ use fancy_regex::Regex;
 use http::{Method, StatusCode};
 use humantime::parse_duration;
 use once_cell::sync::{Lazy, OnceCell};
+use pingap_cache::{get_cache_backend, HttpCache};
+use pingap_config::{
+    get_current_config, PluginCategory, PluginConf, PluginStep,
+};
+use pingap_http_extra::HttpResponse;
+use pingap_state::{get_cache_key, Ctx};
 use pingora::cache::eviction::simple_lru::Manager;
 use pingora::cache::eviction::EvictionManager;
 use pingora::cache::key::CacheHashKey;
@@ -324,7 +324,7 @@ impl Plugin for Cache {
     /// # Arguments
     /// * `step` - Current plugin execution step
     /// * `session` - HTTP session containing request/response data
-    /// * `ctx` - State context for sharing data between plugins
+    /// * `ctx` - Ctx context for sharing data between plugins
     ///
     /// # Returns
     /// * `Ok(Some(HttpResponse))` - For immediate responses (e.g., PURGE operations)
@@ -343,7 +343,7 @@ impl Plugin for Cache {
         &self,
         step: PluginStep,
         session: &mut Session,
-        ctx: &mut State,
+        ctx: &mut Ctx,
     ) -> pingora::Result<Option<HttpResponse>> {
         // Only process if we're in the correct plugin step
         if step != self.plugin_step {
@@ -450,9 +450,9 @@ impl Plugin for Cache {
 #[cfg(test)]
 mod tests {
     use super::Cache;
-    use pingap_config::{PluginConf, PluginStep};
     use crate::plugin::Plugin;
-    use crate::state::State;
+    use pingap_config::{PluginConf, PluginStep};
+    use pingap_state::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -508,7 +508,7 @@ max_ttl = "1m"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let mut ctx = State::default();
+        let mut ctx = Ctx::default();
         cache
             .handle_request(PluginStep::Request, &mut session, &mut ctx)
             .await
@@ -527,7 +527,7 @@ max_ttl = "1m"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let mut ctx = State::default();
+        let mut ctx = Ctx::default();
         cache
             .handle_request(PluginStep::Request, &mut session, &mut ctx)
             .await

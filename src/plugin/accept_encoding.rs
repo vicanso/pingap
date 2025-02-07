@@ -13,10 +13,10 @@
 // limitations under the License.
 
 use super::{get_bool_conf, get_hash_key, get_str_conf, Error, Plugin, Result};
-use crate::http_extra::HttpResponse;
-use crate::state::State;
 use async_trait::async_trait;
 use pingap_config::{PluginConf, PluginStep};
+use pingap_http_extra::HttpResponse;
+use pingap_state::Ctx;
 use pingora::proxy::Session;
 use smallvec::SmallVec;
 use tracing::debug;
@@ -93,7 +93,7 @@ impl Plugin for AcceptEncoding {
     /// # Arguments
     /// * `step` - Current plugin processing step
     /// * `session` - HTTP session containing request/response data
-    /// * `_ctx` - State context (unused in this implementation)
+    /// * `_ctx` - Ctx context (unused in this implementation)
     ///
     /// # Returns
     /// * `pingora::Result<Option<HttpResponse>>` - None if processing should continue,
@@ -103,7 +103,7 @@ impl Plugin for AcceptEncoding {
         &self,
         step: PluginStep,
         session: &mut Session,
-        _ctx: &mut State,
+        _ctx: &mut Ctx,
     ) -> pingora::Result<Option<HttpResponse>> {
         // Skip if not in the correct plugin step
         if step != self.plugin_step {
@@ -152,8 +152,9 @@ impl Plugin for AcceptEncoding {
 #[cfg(test)]
 mod tests {
     use super::AcceptEncoding;
-    use crate::{plugin::Plugin, state::State};
+    use crate::plugin::Plugin;
     use pingap_config::{PluginConf, PluginStep};
+    use pingap_state::Ctx;
     use pingora::modules::http::HttpModules;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -202,7 +203,7 @@ only_one_encoding = true
             .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -241,7 +242,7 @@ encodings = "zstd, br, gzip"
             .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -270,7 +271,7 @@ encodings = "zstd, br, gzip"
             .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();

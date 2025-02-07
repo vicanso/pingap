@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use base64::{engine::general_purpose::STANDARD, Engine};
+use once_cell::sync::Lazy;
 use path_absolutize::*;
 use snafu::Snafu;
 use std::path::Path;
@@ -218,6 +219,22 @@ pub fn path_join(value1: &str, value2: &str) -> String {
     } else {
         format!("{value1}/{value2}")
     }
+}
+
+static HOST_NAME: Lazy<String> = Lazy::new(|| {
+    hostname::get()
+        .unwrap_or_default()
+        .to_str()
+        .unwrap_or_default()
+        .to_string()
+});
+
+/// Returns the system hostname.
+///
+/// Returns:
+/// * `&'static str` - The system's hostname as a string slice
+pub fn get_hostname() -> &'static str {
+    HOST_NAME.as_str()
 }
 
 #[cfg(test)]

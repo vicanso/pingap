@@ -1,0 +1,45 @@
+[package]
+name = "pingap-performance"
+version = "0.9.10"
+edition = "2021"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/pingap"
+repository = "https://github.com/vicanso/pingap"
+keywords = ["pingap", "performance"]
+
+
+[lib]
+name = "pingap_performance"
+path = "src/lib.rs"
+
+[features]
+full = ["prometheus"]
+
+[dependencies]
+bytesize = { workspace = true }
+memory-stats = { workspace = true }
+once_cell = { workspace = true }
+serde = { workspace = true }
+sysinfo = { workspace = true }
+num_cpus = { workspace = true }
+tracing = { workspace = true }
+cfg-if = { workspace = true }
+humantime = { workspace = true }
+prometheus = { version = "0.13.4", default-features = false, optional = true }
+pingora = { workspace = true }
+url = { workspace = true }
+reqwest = { workspace = true }
+http = { workspace = true }
+snafu = { workspace = true }
+tokio = { workspace = true }
+pingap-config = { path = "../pingap-config" }
+pingap-service = { path = "../pingap-service" }
+pingap-state = { path = "../pingap-state" }
+pingap-util = { path = "../pingap-util" }
+pingap-location = { path = "../pingap-location" }
+
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"
+tokio-test = "0.4.4"

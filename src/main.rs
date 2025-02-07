@@ -13,22 +13,22 @@
 // limitations under the License.
 
 use acme::new_lets_encrypt_service;
-use cache::new_storage_clear_service;
-use certificate::{
-    new_certificate_validity_service,
-    new_self_signed_certificate_validity_service,
-};
 use clap::Parser;
 use crossbeam_channel::Sender;
 #[cfg(feature = "full")]
 use otel::TracerService;
+use pingap_cache::new_storage_clear_service;
+use pingap_certificate::new_self_signed_certificate_validity_service;
 use pingap_config::{get_config_storage, ETCD_PROTOCOL};
 use pingap_config::{LoadConfigOptions, PingapConf};
+use pingap_location::try_init_locations;
 use pingap_service::new_simple_service_task;
+use pingap_upstream::{new_upstream_health_check_task, try_init_upstreams};
 use pingora::server;
 use pingora::server::configuration::Opt;
 use pingora::services::background::background_service;
-use proxy::{new_upstream_health_check_task, Server, ServerConf};
+use proxy::new_certificate_validity_service;
+use proxy::{Server, ServerConf};
 use service::{
     new_auto_restart_service, new_observer_service,
     new_performance_metrics_log_service,
@@ -43,8 +43,6 @@ use std::time::Duration;
 use tracing::{error, info};
 
 mod acme;
-mod cache;
-mod certificate;
 mod http_extra;
 mod logger;
 
@@ -419,8 +417,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         state::set_restart_process_command(cmd);
     }
 
-    proxy::try_init_upstreams(&conf.upstreams)?;
-    proxy::try_init_locations(&conf.locations)?;
+    try_init_upstreams(&conf.upstreams)?;
+    try_init_locations(&conf.locations)?;
     proxy::try_init_server_locations(&conf.servers, &conf.locations)?;
     let certificates = conf.certificates.clone();
 

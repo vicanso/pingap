@@ -16,12 +16,9 @@ use super::{
     get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf, Error,
     Plugin, Result,
 };
-use crate::http_extra::HttpResponse;
 use crate::proxy::get_certificate_info_list;
-use crate::state::{
-    get_process_system_info, get_processing_accepted, get_start_time,
-};
-use crate::state::{restart_now, State};
+use crate::state::get_start_time;
+use crate::state::restart_now;
 use async_trait::async_trait;
 use bytes::Bytes;
 use bytes::{BufMut, BytesMut};
@@ -42,7 +39,11 @@ use pingap_config::{
     PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
     CATEGORY_UPSTREAM,
 };
+use pingap_http_extra::HttpResponse;
 use pingap_limit::TtlLruLimit;
+use pingap_performance::get_process_system_info;
+use pingap_performance::get_processing_accepted;
+use pingap_state::Ctx;
 use pingap_util::base64_decode;
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
@@ -492,7 +493,7 @@ impl Plugin for AdminServe {
         &self,
         step: PluginStep,
         session: &mut Session,
-        _ctx: &mut State,
+        _ctx: &mut Ctx,
     ) -> pingora::Result<Option<HttpResponse>> {
         if self.plugin_step != step {
             return Ok(None);
@@ -674,8 +675,8 @@ impl Plugin for AdminServe {
 #[cfg(test)]
 mod tests {
     use super::{AdminAsset, AdminServe, EmbeddedStaticFile};
-    use crate::http_extra::HttpResponse;
     use pingap_config::PluginConf;
+    use pingap_http_extra::HttpResponse;
     use pretty_assertions::assert_eq;
     use std::time::Duration;
 

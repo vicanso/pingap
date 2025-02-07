@@ -12,6 +12,7 @@ repository = "https://github.com/vicanso/pingap"
 exclude = ["asset/*", "test/*", "Cargo.lock", "web/*", ".github/*", "docs/*"]
 readme = "./README.md"
 rust-version = "1.74"
+default-run = "pingap"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -150,6 +151,13 @@ pingap-discovery = { path = "pingap-discovery" }
 pingap-health = { path = "pingap-health" }
 pingap-service = { path = "pingap-service" }
 pingap-config = { path = "pingap-config" }
+pingap-cache = { path = "pingap-cache" }
+pingap-upstream = { path = "pingap-upstream" }
+pingap-certificate = { path = "pingap-certificate" }
+pingap-http-extra = { path = "pingap-http-extra" }
+pingap-location = { path = "pingap-location" }
+pingap-state = { path = "pingap-state" }
+pingap-performance = { path = "pingap-performance" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 procfs = { version = "0.17.0", default-features = false }
@@ -165,6 +173,9 @@ full = [
     "opentelemetry_sdk",
     "opentelemetry-jaeger-propagator",
     "pingora/sentry",
+    "pingap-cache/full",
+    "pingap-state/full",
+    "pingap-performance/full",
 ]
 perf = ["pyro", "full"]
 default = []
@@ -203,6 +214,13 @@ members = [
     "pingap-health",
     "pingap-service",
     "pingap-config",
+    "pingap-cache",
+    "pingap-upstream",
+    "pingap-certificate",
+    "pingap-http-extra",
+    "pingap-location",
+    "pingap-state",
+    "pingap-performance",
 ]
 
 [workspace.dependencies]
@@ -240,3 +258,20 @@ bytesize = { version = "1.3.0", features = ["serde"] }
 futures-util = "0.3.31"
 base64 = "0.22.1"
 humantime-serde = "1.1.1"
+memory-stats = { version = "1.2.0", features = ["always_use_statm"] }
+scopeguard = "1.2.0"
+walkdir = "2.5.0"
+ahash = { version = "0.8.11", default-features = false }
+derive_more = { version = "1.0.0", default-features = false, features = [
+    "debug",
+] }
+pingora-runtime = "0.4.0"
+x509-parser = "0.17.0"
+rcgen = { version = "0.13.2", features = ["pem", "x509-parser"] }
+time = { version = "0.3.37", features = ["local-offset"] }
+pingora-limits = "0.4.0"
+sysinfo = { version = "0.33.1", features = [
+    "system",
+], default-features = false }
+num_cpus = "1.16.0"
+cfg-if = "1.0.0"

@@ -12,14 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use pingap_config::{PluginCategory, PluginConf, PluginStep};
-use crate::http_extra::HttpResponse;
 use crate::proxy::ServerConf;
-use crate::state::{get_admin_addr, State};
+use crate::state::get_admin_addr;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
+use pingap_config::{PluginCategory, PluginConf, PluginStep};
+use pingap_http_extra::HttpResponse;
+use pingap_state::Ctx;
 use pingap_util::base64_encode;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
@@ -192,7 +193,7 @@ pub trait Plugin: Sync + Send {
         &self,
         _step: PluginStep,
         _session: &mut Session,
-        _ctx: &mut State,
+        _ctx: &mut Ctx,
     ) -> pingora::Result<Option<HttpResponse>> {
         Ok(None)
     }
@@ -200,7 +201,7 @@ pub trait Plugin: Sync + Send {
         &self,
         _step: PluginStep,
         _session: &mut Session,
-        _ctx: &mut State,
+        _ctx: &mut Ctx,
         _upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<()> {
         Ok(())

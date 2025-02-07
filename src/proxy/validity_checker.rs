@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Certificate, LOG_CATEGORY};
-use crate::proxy::get_certificate_info_list;
+use super::{get_certificate_info_list, LOG_CATEGORY};
+use pingap_certificate::Certificate;
 use pingap_service::Error as ServiceError;
 use pingap_service::SimpleServiceTaskFuture;
 use snafu::Snafu;
@@ -134,7 +134,7 @@ pub fn new_certificate_validity_service() -> (String, SimpleServiceTaskFuture) {
 #[cfg(test)]
 mod tests {
     use super::validity_check;
-    use crate::certificate::Certificate;
+    use pingap_certificate::Certificate;
     use pretty_assertions::assert_eq;
     use x509_parser::time::ASN1Time;
 

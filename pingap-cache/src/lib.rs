@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use pingap_config::get_current_config;
 use bytesize::ByteSize;
 use memory_stats::memory_stats;
 use once_cell::sync::OnceCell;
+use pingap_config::get_current_config;
 use snafu::Snafu;
 use std::sync::Arc;
 use tracing::info;

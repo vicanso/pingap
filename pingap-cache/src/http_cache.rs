@@ -234,7 +234,7 @@ pub fn new_storage_clear_service() -> Option<(String, SimpleServiceTaskFuture)>
 
 pub struct HttpCache {
     pub directory: Option<String>,
-    pub(crate) cache: Arc<dyn HttpCacheStorage>,
+    pub cache: Arc<dyn HttpCacheStorage>,
 }
 
 impl HttpCache {
@@ -466,12 +466,8 @@ impl Storage for HttpCache {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        CacheObject, CompleteHit, HttpCacheStorage, ObjectMissHandler,
-        MAX_ONE_CACHE_SIZE,
-    };
-    use crate::cache::tiny::new_tiny_ufo_cache;
-    use crate::cache::PAGE_SIZE;
+    use super::*;
+    use crate::tiny::new_tiny_ufo_cache;
     use bytes::{Bytes, BytesMut};
     use pingora::cache::storage::{HitHandler, MissHandler};
     use pretty_assertions::assert_eq;

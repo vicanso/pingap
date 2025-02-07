@@ -2868,11 +2868,18 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "path-absolutize",
+ "pingap-cache",
+ "pingap-certificate",
  "pingap-config",
  "pingap-discovery",
  "pingap-health",
+ "pingap-http-extra",
  "pingap-limit",
+ "pingap-location",
+ "pingap-performance",
  "pingap-service",
+ "pingap-state",
+ "pingap-upstream",
  "pingap-util",
  "pingap-webhook",
  "pingora",
@@ -2915,6 +2922,57 @@ dependencies = [
  "walkdir",
  "x509-parser 0.17.0",
  "zstd",
+]
+
+[[package]]
+name = "pingap-cache"
+version = "0.9.10"
+dependencies = [
+ "TinyUFO",
+ "async-trait",
+ "bytes",
+ "bytesize",
+ "http 1.2.0",
+ "memory-stats",
+ "once_cell",
+ "pingap-config",
+ "pingap-service",
+ "pingap-util",
+ "pingora",
+ "pretty_assertions",
+ "prometheus",
+ "scopeguard",
+ "snafu",
+ "tempfile",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "walkdir",
+]
+
+[[package]]
+name = "pingap-certificate"
+version = "0.9.10"
+dependencies = [
+ "ahash",
+ "arc-swap",
+ "nanoid",
+ "once_cell",
+ "pingap-config",
+ "pingap-service",
+ "pingap-util",
+ "pingora",
+ "pretty_assertions",
+ "rcgen",
+ "regex",
+ "serde",
+ "snafu",
+ "tempfile",
+ "time",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "x509-parser 0.17.0",
 ]
 
 [[package]]
@@ -2998,6 +3056,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "pingap-http-extra"
+version = "0.9.10"
+dependencies = [
+ "bytes",
+ "http 1.2.0",
+ "nanoid",
+ "once_cell",
+ "pingap-util",
+ "pingora",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "snafu",
+ "tokio",
+ "tokio-test",
+ "tracing",
+]
+
+[[package]]
 name = "pingap-limit"
 version = "0.9.10"
 dependencies = [
@@ -3008,6 +3085,56 @@ dependencies = [
  "tokio",
  "tokio-test",
  "tracing",
+]
+
+[[package]]
+name = "pingap-location"
+version = "0.9.10"
+dependencies = [
+ "ahash",
+ "arc-swap",
+ "bytesize",
+ "http 1.2.0",
+ "once_cell",
+ "pingap-config",
+ "pingap-http-extra",
+ "pingap-util",
+ "pingora",
+ "pretty_assertions",
+ "regex",
+ "snafu",
+ "substring",
+ "tokio-test",
+ "tracing",
+]
+
+[[package]]
+name = "pingap-performance"
+version = "0.9.10"
+dependencies = [
+ "bytesize",
+ "cfg-if",
+ "http 1.2.0",
+ "humantime",
+ "memory-stats",
+ "num_cpus",
+ "once_cell",
+ "pingap-config",
+ "pingap-location",
+ "pingap-service",
+ "pingap-state",
+ "pingap-util",
+ "pingora",
+ "pretty_assertions",
+ "prometheus",
+ "reqwest 0.12.12",
+ "serde",
+ "snafu",
+ "sysinfo",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -3024,6 +3151,51 @@ dependencies = [
 ]
 
 [[package]]
+name = "pingap-state"
+version = "0.9.10"
+dependencies = [
+ "ahash",
+ "bytes",
+ "http 1.2.0",
+ "itoa",
+ "opentelemetry",
+ "pingap-config",
+ "pingap-location",
+ "pingap-upstream",
+ "pingap-util",
+ "pingora",
+ "pingora-limits",
+ "pretty_assertions",
+ "tokio-test",
+]
+
+[[package]]
+name = "pingap-upstream"
+version = "0.9.10"
+dependencies = [
+ "ahash",
+ "arc-swap",
+ "async-trait",
+ "bytesize",
+ "derive_more",
+ "futures",
+ "futures-util",
+ "once_cell",
+ "pingap-config",
+ "pingap-discovery",
+ "pingap-health",
+ "pingap-service",
+ "pingap-util",
+ "pingora",
+ "pingora-runtime 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "pretty_assertions",
+ "snafu",
+ "tokio",
+ "tokio-test",
+ "tracing",
+]
+
+[[package]]
 name = "pingap-util"
 version = "0.9.10"
 dependencies = [
@@ -3031,6 +3203,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "dirs",
+ "hostname 0.4.0",
  "http 1.2.0",
  "ipnet",
  "itoa",

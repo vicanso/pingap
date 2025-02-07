@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::LOG_CATEGORY;
-use crate::state::State;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -42,6 +40,8 @@ use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tracing::{debug, error, info};
+
+const LOG_CATEGORY: &str = "upstream";
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -207,12 +207,12 @@ fn get_hash_value(
     hash: &str,        // Hash strategy (url/ip/header/cookie/query)
     hash_key: &str,    // Key to use for hash lookups
     session: &Session, // Current request session
-    ctx: &State,       // Request context
+    client_ip: &Option<String>, // Request context
 ) -> String {
     match hash {
         "url" => session.req_header().uri.to_string(),
         "ip" => {
-            if let Some(client_ip) = &ctx.client_ip {
+            if let Some(client_ip) = client_ip {
                 client_ip.to_string()
             } else {
                 pingap_util::get_client_ip(session)
@@ -445,7 +445,7 @@ impl Upstream {
     pub fn new_http_peer(
         &self,
         session: &Session,
-        ctx: &State,
+        client_ip: &Option<String>,
     ) -> Option<HttpPeer> {
         // Select a backend based on the load balancing strategy
         let upstream = match &self.lb {
@@ -453,8 +453,12 @@ impl Upstream {
             SelectionLb::RoundRobin(lb) => lb.select(b"", 256),
             // For consistent hashing, generate hash value from request details
             SelectionLb::Consistent(lb) => {
-                let value =
-                    get_hash_value(&self.hash, &self.hash_key, session, ctx);
+                let value = get_hash_value(
+                    &self.hash,
+                    &self.hash_key,
+                    session,
+                    client_ip,
+                );
                 lb.select(value.as_bytes(), 256)
             },
             // For transparent mode, no backend selection needed
@@ -782,7 +786,7 @@ pub fn new_upstream_health_check_task(interval: Duration) -> CommonServiceTask {
 #[cfg(test)]
 mod tests {
     use super::{
-        get_hash_value, new_backends, State, Upstream, UpstreamConf,
+        get_hash_value, new_backends, Upstream, UpstreamConf,
         UpstreamPeerTracer,
     };
     use pingora::protocols::ALPN;
@@ -883,29 +887,30 @@ mod tests {
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let mut ctx = State {
-            ..Default::default()
-        };
-
         assert_eq!(
             "/vicanso/pingap?id=1234",
-            get_hash_value("url", "", &session, &ctx)
+            get_hash_value("url", "", &session, &None)
         );
 
-        assert_eq!("1.1.1.1", get_hash_value("ip", "", &session, &ctx));
-        ctx.client_ip = Some("2.2.2.2".to_string());
-        assert_eq!("2.2.2.2", get_hash_value("ip", "", &session, &ctx));
+        assert_eq!("1.1.1.1", get_hash_value("ip", "", &session, &None));
+        assert_eq!(
+            "2.2.2.2",
+            get_hash_value("ip", "", &session, &Some("2.2.2.2".to_string()))
+        );
 
         assert_eq!(
             "pingap/0.1.1",
-            get_hash_value("header", "User-Agent", &session, &ctx)
+            get_hash_value("header", "User-Agent", &session, &None)
         );
 
-        assert_eq!("abc", get_hash_value("cookie", "deviceId", &session, &ctx));
-        assert_eq!("1234", get_hash_value("query", "id", &session, &ctx));
+        assert_eq!(
+            "abc",
+            get_hash_value("cookie", "deviceId", &session, &None)
+        );
+        assert_eq!("1234", get_hash_value("query", "id", &session, &None));
         assert_eq!(
             "/vicanso/pingap",
-            get_hash_value("path", "", &session, &ctx)
+            get_hash_value("path", "", &session, &None)
         );
     }
     #[tokio::test]
@@ -932,10 +937,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(
-            true,
-            up.new_http_peer(&session, &State::default(),).is_some()
-        );
+        assert_eq!(true, up.new_http_peer(&session, &None,).is_some());
         assert_eq!(true, up.as_round_robin().is_some());
     }
     #[test]

@@ -131,8 +131,7 @@ impl HttpCacheStorage for TinyUfoCache {
 
 #[cfg(test)]
 mod tests {
-    use super::new_tiny_ufo_cache;
-    use crate::cache::http_cache::{CacheObject, HttpCacheStorage};
+    use super::*;
     use bytes::Bytes;
     use pretty_assertions::assert_eq;
     #[tokio::test]

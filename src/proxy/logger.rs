@@ -13,9 +13,9 @@
 // limitations under the License.
 
 use crate::http_extra::HOST_NAME_TAG;
-use crate::state::{get_hostname, State};
 use bytes::BytesMut;
-use pingap_util::{format_byte_size, format_duration};
+use pingap_state::Ctx;
+use pingap_util::{format_byte_size, format_duration, get_hostname};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::Regex;
@@ -264,7 +264,7 @@ fn get_resp_header_value<'a>(
 
 impl Parser {
     // Formats a log entry based on the session and context
-    pub fn format(&self, session: &Session, ctx: &State) -> String {
+    pub fn format(&self, session: &Session, ctx: &Ctx) -> String {
         let mut buf = BytesMut::with_capacity(1024);
         let req_header = session.req_header();
 
@@ -429,9 +429,10 @@ mod tests {
     use std::sync::Arc;
 
     use super::{format_extra_tag, Parser, Tag, TagCategory};
-    use crate::{proxy::Location, state::State};
     use http::Method;
     use pingap_config::LocationConf;
+    use pingap_location::Location;
+    use pingap_state::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -651,7 +652,7 @@ mod tests {
         session.read_request().await.unwrap();
         assert_eq!(Method::GET, session.req_header().method);
 
-        let ctx = State {
+        let ctx = Ctx {
             upstream_reused: true,
             upstream_address: "192.186.1.1:6188".to_string(),
             processing: 1,

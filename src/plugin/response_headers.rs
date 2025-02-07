@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use super::{get_hash_key, get_str_slice_conf, Error, Plugin, Result};
-use crate::http_extra::{convert_header, convert_header_value, HttpHeader};
-use crate::state::State;
+use crate::http_extra::convert_header_value;
 use async_trait::async_trait;
 use http::header::HeaderName;
 use pingap_config::{PluginCategory, PluginConf, PluginStep};
+use pingap_http_extra::{convert_header, HttpHeader};
+use pingap_state::Ctx;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use std::str::FromStr;
@@ -216,7 +217,7 @@ impl Plugin for ResponseHeaders {
         &self,
         step: PluginStep,
         session: &mut Session,
-        ctx: &mut State,
+        ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<()> {
         // Skip if not in response phase
@@ -288,8 +289,8 @@ impl Plugin for ResponseHeaders {
 mod tests {
     use super::ResponseHeaders;
     use crate::plugin::Plugin;
-    use crate::state::State;
     use pingap_config::{PluginConf, PluginStep};
+    use pingap_state::Ctx;
     use pingora::http::ResponseHeader;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -388,7 +389,7 @@ set_headers_not_exists = [
             .handle_response(
                 PluginStep::Response,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
                 &mut upstream_response,
             )
             .await

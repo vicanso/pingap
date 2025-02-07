@@ -16,13 +16,13 @@ use super::{
     get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf, Error,
     Plugin, Result,
 };
-use crate::http_extra::HttpResponse;
-use crate::state::State;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::{HeaderName, StatusCode};
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf, PluginStep};
+use pingap_http_extra::HttpResponse;
+use pingap_state::Ctx;
 use pingora::proxy::Session;
 use std::str::FromStr;
 use std::time::Duration;
@@ -202,7 +202,7 @@ impl Plugin for KeyAuth {
     /// # Arguments
     /// * `step` - Current plugin execution step
     /// * `session` - HTTP session containing request details
-    /// * `_ctx` - State context (unused in this plugin)
+    /// * `_ctx` - Ctx context (unused in this plugin)
     ///
     /// # Returns
     /// * `pingora::Result<Option<HttpResponse>>` - None if authentication succeeds,
@@ -217,7 +217,7 @@ impl Plugin for KeyAuth {
         &self,
         step: PluginStep,
         session: &mut Session,
-        _ctx: &mut State,
+        _ctx: &mut Ctx,
     ) -> pingora::Result<Option<HttpResponse>> {
         // Plugin steps are configurable to support different authentication points
         // Common steps: request (early auth) or proxy_upstream (pre-forwarding)
@@ -283,8 +283,8 @@ impl Plugin for KeyAuth {
 mod tests {
     use super::KeyAuth;
     use crate::plugin::Plugin;
-    use crate::state::State;
     use pingap_config::{PluginConf, PluginStep};
+    use pingap_state::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -378,7 +378,7 @@ hide_credentials = true
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -395,7 +395,7 @@ hide_credentials = true
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -416,7 +416,7 @@ hide_credentials = true
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();
@@ -456,7 +456,7 @@ hide_credentials = true
             .handle_request(
                 PluginStep::Request,
                 &mut session,
-                &mut State::default(),
+                &mut Ctx::default(),
             )
             .await
             .unwrap();

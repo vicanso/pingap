@@ -12,17 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::LOG_CATEGORY;
-use pingap_config::{LocationConf, PluginStep};
-use crate::http_extra::{convert_header_value, convert_headers, HttpHeader};
-use crate::plugin::get_plugin;
-use crate::state::State;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
-use http::{HeaderName, HeaderValue};
 use once_cell::sync::Lazy;
-use pingora::http::{RequestHeader, ResponseHeader};
-use pingora::proxy::Session;
+use pingap_config::LocationConf;
+use pingap_http_extra::{convert_headers, HttpHeader};
+use pingora::http::RequestHeader;
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
 use std::collections::HashMap;
@@ -30,6 +25,8 @@ use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 use substring::Substring;
 use tracing::{debug, error};
+
+const LOG_CATEGORY: &str = "location";
 
 // Error enum for various location-related errors
 #[derive(Debug, Snafu)]
@@ -172,23 +169,6 @@ fn new_host_selector(host: &str) -> Result<HostSelector> {
     Ok(se)
 }
 
-// proxy_set_header X-Real-IP $remote_addr;
-// proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-// proxy_set_header X-Forwarded-Proto $scheme;
-// proxy_set_header X-Forwarded-Host $host;
-// proxy_set_header X-Forwarded-Port $server_port;
-
-static DEFAULT_PROXY_SET_HEADERS: Lazy<Vec<HttpHeader>> = Lazy::new(|| {
-    convert_headers(&[
-        "X-Real-IP:$remote_addr".to_string(),
-        "X-Forwarded-For:$proxy_add_x_forwarded_for".to_string(),
-        "X-Forwarded-Proto:$scheme".to_string(),
-        "X-Forwarded-Host:$host".to_string(),
-        "X-Forwarded-Port:$server_port".to_string(),
-    ])
-    .unwrap()
-});
-
 /// Location represents a routing configuration for handling HTTP requests.
 /// It defines rules for matching requests based on paths and hosts, and specifies
 /// how these requests should be processed and proxied.
@@ -220,14 +200,14 @@ pub struct Location {
 
     /// Additional headers to append to proxied requests
     /// These are added without removing existing headers
-    proxy_add_headers: Option<Vec<HttpHeader>>,
+    pub proxy_add_headers: Option<Vec<HttpHeader>>,
 
     /// Headers to set on proxied requests
     /// These override any existing headers with the same name
-    proxy_set_headers: Option<Vec<HttpHeader>>,
+    pub proxy_set_headers: Option<Vec<HttpHeader>>,
 
     /// Ordered list of plugin names to execute during request/response processing
-    plugins: Option<Vec<String>>,
+    pub plugins: Option<Vec<String>>,
 
     /// Total number of requests accepted by this location
     /// Used for metrics and monitoring
@@ -251,7 +231,7 @@ pub struct Location {
 
     /// Whether to automatically add standard reverse proxy headers like:
     /// X-Forwarded-For, X-Real-IP, X-Forwarded-Proto, etc.
-    enable_reverse_proxy_headers: bool,
+    pub enable_reverse_proxy_headers: bool,
 }
 
 /// Formats a vector of header strings into internal HttpHeader representation.
@@ -378,11 +358,11 @@ impl Location {
     /// If the size in a request exceeds the configured value, the 413 (Request Entity Too Large) error
     /// is returned to the client.
     #[inline]
-    pub fn client_body_size_limit(&self, ctx: &State) -> Result<()> {
+    pub fn client_body_size_limit(&self, payload_size: usize) -> Result<()> {
         if self.client_max_body_size == 0 {
             return Ok(());
         }
-        if ctx.payload_size > self.client_max_body_size {
+        if payload_size > self.client_max_body_size {
             return Err(Error::BodyTooLarge {
                 max: self.client_max_body_size,
             });
@@ -549,105 +529,6 @@ impl Location {
         }
         false
     }
-    /// Sets or appends proxy-related headers before forwarding request
-    /// Handles both default reverse proxy headers and custom configured headers
-    #[inline]
-    pub fn set_append_proxy_headers(
-        &self,
-        session: &Session,
-        ctx: &State,
-        header: &mut RequestHeader,
-    ) {
-        // Helper closure to avoid code duplication
-        let mut set_header = |k: &HeaderName, v: &HeaderValue, append: bool| {
-            let value = convert_header_value(v, session, ctx)
-                .unwrap_or_else(|| v.clone());
-            // v validate for HeaderValue, so always no error
-            if append {
-                let _ = header.append_header(k, value);
-            } else {
-                let _ = header.insert_header(k, value);
-            };
-        };
-
-        // Set default reverse proxy headers if enabled
-        if self.enable_reverse_proxy_headers {
-            DEFAULT_PROXY_SET_HEADERS
-                .iter()
-                .for_each(|(k, v)| set_header(k, v, false));
-        }
-
-        // Set custom proxy headers
-        if let Some(arr) = &self.proxy_set_headers {
-            arr.iter().for_each(|(k, v)| set_header(k, v, false));
-        }
-
-        // Append custom proxy headers
-        if let Some(arr) = &self.proxy_add_headers {
-            arr.iter().for_each(|(k, v)| set_header(k, v, true));
-        }
-    }
-    /// Executes request plugins in the configured chain
-    /// Returns true if a plugin handled the request completely
-    #[inline]
-    pub async fn handle_request_plugin(
-        &self,
-        step: PluginStep,
-        session: &mut Session,
-        ctx: &mut State,
-    ) -> pingora::Result<bool> {
-        let Some(plugins) = self.plugins.as_ref() else {
-            return Ok(false);
-        };
-
-        for name in plugins.iter() {
-            if let Some(plugin) = get_plugin(name) {
-                debug!(
-                    category = LOG_CATEGORY,
-                    name,
-                    step = step.to_string(),
-                    "handle request plugin"
-                );
-                let result = plugin.handle_request(step, session, ctx).await?;
-                if let Some(resp) = result {
-                    // ignore http response status >= 900
-                    if resp.status.as_u16() < 900 {
-                        ctx.status = Some(resp.status);
-                        resp.send(session).await?;
-                    }
-                    return Ok(true);
-                }
-            }
-        }
-        Ok(false)
-    }
-    /// Run response plugins,
-    #[inline]
-    pub async fn handle_response_plugin(
-        &self,
-        step: PluginStep,
-        session: &mut Session,
-        ctx: &mut State,
-        upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<()> {
-        let Some(plugins) = self.plugins.as_ref() else {
-            return Ok(());
-        };
-        for name in plugins.iter() {
-            if let Some(plugin) = get_plugin(name) {
-                debug!(
-                    category = LOG_CATEGORY,
-                    name,
-                    step = step.to_string(),
-                    "handle response plugin"
-                );
-                plugin
-                    .handle_response(step, session, ctx, upstream_response)
-                    .await?;
-            }
-        }
-        Ok(())
-    }
 }
 
 type Locations = AHashMap<String, Arc<Location>>;
@@ -704,50 +585,11 @@ pub fn try_init_locations(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        format_headers, new_path_selector, Location, PathSelector,
-        DEFAULT_PROXY_SET_HEADERS,
-    };
-    use pingap_config::{LocationConf, PluginStep};
-    use crate::http_extra::convert_header_value;
-    use crate::plugin::initialize_test_plugins;
-    use crate::state::State;
+    use super::{format_headers, new_path_selector, Location, PathSelector};
     use bytesize::ByteSize;
-    use http::Method;
-    use pingora::http::{RequestHeader, ResponseHeader};
-    use pingora::proxy::Session;
+    use pingap_config::LocationConf;
+    use pingora::http::RequestHeader;
     use pretty_assertions::assert_eq;
-    use tokio_test::io::Builder;
-
-    #[tokio::test]
-    async fn test_set_reverse_proxy_headers() {
-        let headers = [
-            "X-Forwarded-For:192.168.1.1".to_string(),
-            "Host: pingap.io".to_string(),
-        ]
-        .join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
-        let ctx = State {
-            remote_addr: Some("1.1.1.1".to_string()),
-            server_port: Some(443),
-            tls_version: Some("TLSv1.3".to_string()),
-            ..Default::default()
-        };
-        let mut values = vec![];
-        DEFAULT_PROXY_SET_HEADERS.iter().for_each(|(k, v)| {
-            if let Some(value) = convert_header_value(v, &session, &ctx) {
-                values.push(format!("{k}:{}", value.to_str().unwrap()));
-            }
-        });
-        assert_eq!(
-            r###"["x-real-ip:1.1.1.1", "x-forwarded-for:192.168.1.1, 1.1.1.1", "x-forwarded-proto:https", "x-forwarded-host:pingap.io", "x-forwarded-port:443"]"###,
-            format!("{values:?}")
-        );
-    }
 
     #[test]
     fn test_format_headers() {
@@ -885,44 +727,6 @@ mod tests {
         assert_eq!("/api/me?abc=1", req_header.uri.to_string());
     }
 
-    #[tokio::test]
-    async fn test_insert_header() {
-        let upstream_name = "charts";
-
-        let lo = Location::new(
-            "lo",
-            &LocationConf {
-                upstream: Some(upstream_name.to_string()),
-                rewrite: Some("^/users/(.*)$ /$1".to_string()),
-                proxy_set_headers: Some(vec![
-                    "Cache-Control: no-store".to_string()
-                ]),
-                proxy_add_headers: Some(vec!["X-User: pingap".to_string()]),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-
-        let headers = [""].join("\r\n");
-        let input_header =
-            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
-
-        let mut req_header =
-            RequestHeader::build_no_case(Method::GET, b"", None).unwrap();
-        lo.set_append_proxy_headers(
-            &session,
-            &State::default(),
-            &mut req_header,
-        );
-        assert_eq!(
-            r###"RequestHeader { base: Parts { method: GET, uri: , version: HTTP/1.1, headers: {"cache-control": "no-store", "x-user": "pingap"} }, header_name_map: None, raw_path_fallback: [], send_end_stream: true }"###,
-            format!("{req_header:?}")
-        );
-    }
-
     #[test]
     fn test_client_body_size_limit() {
         let upstream_name = "charts";
@@ -939,113 +743,13 @@ mod tests {
         )
         .unwrap();
 
-        let result = lo.client_body_size_limit(&State {
-            payload_size: 2,
-            ..Default::default()
-        });
+        let result = lo.client_body_size_limit(2);
         assert_eq!(true, result.is_ok());
 
-        let result = lo.client_body_size_limit(&State {
-            payload_size: 20,
-            ..Default::default()
-        });
+        let result = lo.client_body_size_limit(20);
         assert_eq!(
             "Request Entity Too Large, max:10",
             result.err().unwrap().to_string()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_exec_proxy_plugins() {
-        initialize_test_plugins();
-        let upstream_name = "charts";
-
-        let lo = Location::new(
-            "lo",
-            &LocationConf {
-                upstream: Some(upstream_name.to_string()),
-                rewrite: Some("^/users/(.*)$ /$1".to_string()),
-                plugins: Some(vec!["test:mock".to_string()]),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-
-        let headers = [""].join("\r\n");
-        let input_header = format!("GET /mock HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
-        let result = lo
-            .handle_request_plugin(
-                PluginStep::Request,
-                &mut session,
-                &mut State {
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap();
-        assert_eq!(true, result);
-
-        let headers = [""].join("\r\n");
-        let input_header = format!("GET /stats HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
-
-        let result = lo
-            .handle_request_plugin(
-                PluginStep::Request,
-                &mut session,
-                &mut State::default(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(false, result);
-    }
-
-    #[tokio::test]
-    async fn test_exec_response_plugins() {
-        initialize_test_plugins();
-        let upstream_name = "charts";
-
-        let lo = Location::new(
-            "lo",
-            &LocationConf {
-                upstream: Some(upstream_name.to_string()),
-                rewrite: Some("^/users/(.*)$ /$1".to_string()),
-                plugins: Some(vec!["test:add_headers".to_string()]),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-
-        let headers = [""].join("\r\n");
-        let input_header = format!("GET /mock HTTP/1.1\r\n{headers}\r\n\r\n");
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
-
-        let mut upstream_response =
-            ResponseHeader::build(200, Some(4)).unwrap();
-        upstream_response
-            .append_header("Content-Type", "application/json")
-            .unwrap();
-        upstream_response.append_header("X-Server", "abc").unwrap();
-
-        lo.handle_response_plugin(
-            PluginStep::Response,
-            &mut session,
-            &mut State::default(),
-            &mut upstream_response,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(
-            r###"{"x-service": "1", "x-service": "2", "x-server": "abc", "x-response-id": "123"}"###,
-            format!("{:?}", upstream_response.headers)
         );
     }
 }
