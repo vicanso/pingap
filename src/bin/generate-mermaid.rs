@@ -42,7 +42,7 @@ fn main() {
     let mut arr = vec![];
     let mut keys = deps.keys().collect::<Vec<_>>();
     keys.sort();
-    for name in keys {
+    for name in keys.clone() {
         let mut modules = deps.get(name).unwrap().clone();
         if modules.is_empty() {
             continue;
@@ -53,6 +53,10 @@ fn main() {
         }
         arr.push("".to_string());
     }
+    for name in keys {
+        arr.push(format!("    pingap --> {}", name));
+    }
+    arr.push("".to_string());
     let mermaid = format!(
         r#"```mermaid
 graph TD
@@ -60,8 +64,8 @@ graph TD
         arr.join("\n")
     );
     let re = Regex::new(r#"```mermaid[\s\S]*?```"#).unwrap();
-    let mut content =
-        fs::read_to_string("docs/module_dependencies.md").unwrap();
+    let file = "docs/modules.md";
+    let mut content = fs::read_to_string(file).unwrap();
     content = re.replace(&content, &mermaid).to_string();
-    fs::write("docs/module_dependencies.md", content).unwrap();
+    fs::write(file, content).unwrap();
 }

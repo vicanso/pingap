@@ -1,4 +1,4 @@
-# Pingap Module Dependencies
+# Pingap Modules 
 
 ```mermaid
 graph TD
@@ -50,4 +50,23 @@ graph TD
     upstream --> util
 
     webhook --> util
+
+    pingap --> cache
+    pingap --> certificate
+    pingap --> config
+    pingap --> discovery
+    pingap --> health
+    pingap --> http-extra
+    pingap --> limit
+    pingap --> location
+    pingap --> logger
+    pingap --> otel
+    pingap --> performance
+    pingap --> pyroscope
+    pingap --> sentry
+    pingap --> service
+    pingap --> state
+    pingap --> upstream
+    pingap --> util
+    pingap --> webhook
 ```
