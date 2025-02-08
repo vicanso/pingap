@@ -307,7 +307,7 @@ impl Plugin for Limiter {
 #[cfg(test)]
 mod tests {
     use super::{LimitTag, Limiter};
-    use crate::plugin::Plugin;
+    use pingap_plugin::Plugin;
     use http::StatusCode;
     use pingap_config::{PluginConf, PluginStep};
     use pingap_state::Ctx;

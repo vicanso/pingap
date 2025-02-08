@@ -172,7 +172,7 @@ impl Plugin for Redirect {
 #[cfg(test)]
 mod tests {
     use super::Redirect;
-    use crate::plugin::Plugin;
+    use pingap_plugin::Plugin;
     use http::StatusCode;
     use pingap_config::{PluginConf, PluginStep};
     use pingap_state::Ctx;

@@ -897,6 +897,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctor"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32a2785755761f3ddc1492979ce1e48d2c00d09311c39e4466429188f3dd6501"
+dependencies = [
+ "quote",
+ "syn 2.0.98",
+]
+
+[[package]]
 name = "ctr"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -919,6 +929,20 @@ name = "dary_heap"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04d2cd9c18b9f454ed67da600630b021a8a80bf33f8c95896ab33aaf1c26b728"
+
+[[package]]
+name = "dashmap"
+version = "6.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+ "hashbrown 0.14.5",
+ "lock_api",
+ "once_cell",
+ "parking_lot_core",
+]
 
 [[package]]
 name = "data-encoding"
@@ -2859,6 +2883,7 @@ dependencies = [
  "pingap-logger",
  "pingap-otel",
  "pingap-performance",
+ "pingap-plugin",
  "pingap-pyroscope",
  "pingap-sentry",
  "pingap-service",
@@ -3171,6 +3196,29 @@ dependencies = [
  "tokio-test",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "pingap-plugin"
+version = "0.9.10"
+dependencies = [
+ "async-trait",
+ "crc32fast",
+ "ctor",
+ "dashmap",
+ "http 1.2.0",
+ "once_cell",
+ "pingap-config",
+ "pingap-http-extra",
+ "pingap-state",
+ "pingora",
+ "pretty_assertions",
+ "smallvec",
+ "snafu",
+ "tokio",
+ "tokio-test",
+ "toml",
+ "tracing",
 ]
 
 [[package]]

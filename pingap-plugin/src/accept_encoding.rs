@@ -12,14 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_bool_conf, get_hash_key, get_str_conf, Error, Plugin, Result};
+use super::{
+    get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf, Error,
+    Plugin,
+};
 use async_trait::async_trait;
+use ctor::ctor;
 use pingap_config::{PluginConf, PluginStep};
 use pingap_http_extra::HttpResponse;
 use pingap_state::Ctx;
 use pingora::proxy::Session;
 use smallvec::SmallVec;
+use std::sync::Arc;
 use tracing::debug;
+
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// A plugin that filters and modifies the Accept-Encoding header of incoming HTTP requests.
 /// It ensures that only supported compression algorithms are passed to upstream servers.
@@ -149,10 +156,17 @@ impl Plugin for AcceptEncoding {
     }
 }
 
+#[ctor]
+fn init() {
+    let factory = get_plugin_factory();
+    factory.register("accept_encoding", |params| {
+        Ok(Arc::new(AcceptEncoding::new(params)?))
+    });
+}
+
 #[cfg(test)]
 mod tests {
-    use super::AcceptEncoding;
-    use crate::plugin::Plugin;
+    use super::{AcceptEncoding, Plugin};
     use pingap_config::{PluginConf, PluginStep};
     use pingap_state::Ctx;
     use pingora::modules::http::HttpModules;

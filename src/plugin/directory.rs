@@ -518,7 +518,7 @@ impl Plugin for Directory {
 #[cfg(test)]
 mod tests {
     use super::{get_cacheable_and_headers_from_meta, get_data, Directory};
-    use crate::plugin::Plugin;
+    use pingap_plugin::Plugin;
     use pingap_config::{PluginConf, PluginStep};
     use pingap_state::Ctx;
     use pingora::proxy::Session;

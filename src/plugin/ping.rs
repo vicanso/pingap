@@ -100,7 +100,7 @@ impl Plugin for Ping {
 #[cfg(test)]
 mod tests {
     use super::Ping;
-    use crate::plugin::Plugin;
+    use pingap_plugin::Plugin;
     use pingap_config::{PluginConf, PluginStep};
     use pingap_state::Ctx;
     use pingora::proxy::Session;

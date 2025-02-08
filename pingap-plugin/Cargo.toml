@@ -1,0 +1,36 @@
+[package]
+name = "pingap-plugin"
+version = "0.9.10"
+edition = "2021"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/pingap"
+repository = "https://github.com/vicanso/pingap"
+keywords = ["pingap", "plugin"]
+
+
+[lib]
+name = "pingap_plugin"
+path = "src/lib.rs"
+
+[dependencies]
+smallvec = "1.13.2"
+async-trait = { workspace = true }
+pingora = { workspace = true }
+snafu = { workspace = true }
+once_cell = { workspace = true }
+crc32fast = { workspace = true }
+toml = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+http = { workspace = true }
+pingap-http-extra = { path = "../pingap-http-extra" }
+pingap-state = { path = "../pingap-state" }
+pingap-config = { path = "../pingap-config" }
+dashmap = "6.1.0"
+ctor = "0.2.9"
+
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"
+tokio-test = "0.4.4"

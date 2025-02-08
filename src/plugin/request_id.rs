@@ -214,7 +214,7 @@ impl Plugin for RequestId {
 #[cfg(test)]
 mod tests {
     use super::RequestId;
-    use crate::plugin::Plugin;
+    use pingap_plugin::Plugin;
     use pingap_config::{PluginConf, PluginStep};
     use pingap_state::Ctx;
     use pingora::proxy::Session;

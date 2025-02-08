@@ -194,8 +194,8 @@ impl Plugin for Stats {
 #[cfg(test)]
 mod tests {
     use super::Stats;
-    use crate::plugin::Plugin;
     use pingap_config::{PluginConf, PluginStep};
+    use pingap_plugin::Plugin;
     use pingap_state::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;

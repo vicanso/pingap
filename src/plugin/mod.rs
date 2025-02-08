@@ -16,21 +16,17 @@ use crate::process::get_admin_addr;
 use crate::proxy::ServerConf;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
-use async_trait::async_trait;
 use once_cell::sync::Lazy;
 use pingap_config::{PluginCategory, PluginConf, PluginStep};
-use pingap_http_extra::HttpResponse;
-use pingap_state::Ctx;
+use pingap_plugin::get_plugin_factory;
+use pingap_plugin::Plugin;
 use pingap_util::base64_encode;
-use pingora::http::ResponseHeader;
-use pingora::proxy::Session;
 use snafu::Snafu;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use tracing::info;
 
-mod accept_encoding;
 mod admin;
 mod basic_auth;
 mod cache;
@@ -178,34 +174,6 @@ pub(crate) fn get_hash_key(conf: &PluginConf) -> String {
     }
     let hash = crc32fast::hash(lines.join("\n").as_bytes());
     format!("{:X}", hash)
-}
-
-/// Core trait that defines the interface all plugins must implement.
-///
-/// Plugins can handle both requests and responses at different processing steps.
-/// The default implementations do nothing and return Ok.
-#[async_trait]
-pub trait Plugin: Sync + Send {
-    fn hash_key(&self) -> String {
-        "".to_string()
-    }
-    async fn handle_request(
-        &self,
-        _step: PluginStep,
-        _session: &mut Session,
-        _ctx: &mut Ctx,
-    ) -> pingora::Result<Option<HttpResponse>> {
-        Ok(None)
-    }
-    async fn handle_response(
-        &self,
-        _step: PluginStep,
-        _session: &mut Session,
-        _ctx: &mut Ctx,
-        _upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<()> {
-        Ok(())
-    }
 }
 
 /// Returns a list of built-in plugins with their default configurations.
@@ -391,14 +359,24 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
                 let cors = cors::Cors::new(conf)?;
                 plguins.insert(name.clone(), Arc::new(cors));
             },
-            PluginCategory::AcceptEncoding => {
-                let accept_encoding =
-                    accept_encoding::AcceptEncoding::new(conf)?;
-                plguins.insert(name.clone(), Arc::new(accept_encoding));
-            },
+            // PluginCategory::AcceptEncoding => {
+            //     let accept_encoding =
+            //         accept_encoding::AcceptEncoding::new(conf)?;
+            //     plguins.insert(name.clone(), Arc::new(accept_encoding));
+            // },
             PluginCategory::SubFilter => {
                 let s = sub_filter::SubFilter::new(conf)?;
                 plguins.insert(name.clone(), Arc::new(s));
+            },
+            _ => {
+                let plugin =
+                    get_plugin_factory().create(conf).map_err(|e| {
+                        Error::Invalid {
+                            category: "".to_string(),
+                            message: e.to_string(),
+                        }
+                    })?;
+                plguins.insert(name.clone(), plugin.clone());
             },
         };
     }

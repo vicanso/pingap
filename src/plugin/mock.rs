@@ -181,7 +181,7 @@ impl Plugin for MockResponse {
 #[cfg(test)]
 mod tests {
     use super::MockResponse;
-    use crate::plugin::Plugin;
+    use pingap_plugin::Plugin;
     use bytes::Bytes;
     use http::StatusCode;
     use pingap_config::{PluginConf, PluginStep};

@@ -307,7 +307,7 @@ impl Plugin for Cors {
 mod tests {
     /// Tests CORS plugin configuration parsing
     use super::Cors;
-    use crate::plugin::Plugin;
+    use pingap_plugin::Plugin;
     use pingap_config::{PluginConf, PluginStep};
     use pingap_state::Ctx;
     use pingora::{http::ResponseHeader, proxy::Session};

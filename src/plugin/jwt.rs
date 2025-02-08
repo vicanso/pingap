@@ -374,7 +374,7 @@ impl ModifyResponseBody for Sign {
 #[cfg(test)]
 mod tests {
     use super::JwtAuth;
-    use crate::plugin::Plugin;
+    use pingap_plugin::Plugin;
     use bytes::Bytes;
     use pingap_config::{PluginConf, PluginStep};
     use pingap_state::Ctx;

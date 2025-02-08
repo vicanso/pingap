@@ -206,9 +206,9 @@ impl Plugin for UaRestriction {
 #[cfg(test)]
 mod tests {
     use super::UaRestriction;
-    use crate::plugin::Plugin;
     use http::StatusCode;
     use pingap_config::{PluginConf, PluginStep};
+    use pingap_plugin::Plugin;
     use pingap_state::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;

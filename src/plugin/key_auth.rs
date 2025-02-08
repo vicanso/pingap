@@ -282,7 +282,7 @@ impl Plugin for KeyAuth {
 #[cfg(test)]
 mod tests {
     use super::KeyAuth;
-    use crate::plugin::Plugin;
+    use pingap_plugin::Plugin;
     use pingap_config::{PluginConf, PluginStep};
     use pingap_state::Ctx;
     use pingora::proxy::Session;

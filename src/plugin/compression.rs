@@ -207,7 +207,7 @@ impl Plugin for Compression {
 #[cfg(test)]
 mod tests {
     use super::Compression;
-    use crate::plugin::Plugin;
+    use pingap_plugin::Plugin;
     use pingap_config::{PluginConf, PluginStep};
     use pingap_state::Ctx;
     use pingora::modules::http::compression::{
