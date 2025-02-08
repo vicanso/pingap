@@ -17,7 +17,6 @@ path = "src/lib.rs"
 [dependencies]
 TinyUFO = { workspace = true }
 tracing = { workspace = true }
-tokio = { workspace = true }
 pingap-util = { path = "../pingap-util" }
 
 [dev-dependencies]

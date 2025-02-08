@@ -42,7 +42,6 @@ use tracing::{error, info};
 
 mod acme;
 mod http_extra;
-mod logger;
 
 #[cfg(feature = "full")]
 mod otel;
@@ -210,7 +209,7 @@ fn sync_config(path: String, s: Sender<Result<(), pingap_config::Error>>) {
 }
 
 fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
-    logger::logger_try_init(logger::LoggerParams {
+    pingap_logger::logger_try_init(pingap_logger::LoggerParams {
         ..Default::default()
     })?;
     let (server_conf, name, proxy_plugin_info) =
@@ -339,12 +338,13 @@ fn run() -> Result<(), Box<dyn Error>> {
     let conf = r.recv()??;
 
     // Initialize logging system
-    let compression_task = logger::logger_try_init(logger::LoggerParams {
-        capacity: conf.basic.log_buffered_size.unwrap_or_default().as_u64(),
-        log: args.log.clone().unwrap_or_default(),
-        level: conf.basic.log_level.clone().unwrap_or_default(),
-        json: conf.basic.log_format_json.unwrap_or_default(),
-    })?;
+    let compression_task =
+        pingap_logger::logger_try_init(pingap_logger::LoggerParams {
+            capacity: conf.basic.log_buffered_size.unwrap_or_default().as_u64(),
+            log: args.log.clone().unwrap_or_default(),
+            level: conf.basic.log_level.clone().unwrap_or_default(),
+            json: conf.basic.log_format_json.unwrap_or_default(),
+        })?;
 
     // TODO a better way
     // since the cache will be initialized in validate function

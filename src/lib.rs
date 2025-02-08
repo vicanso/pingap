@@ -14,7 +14,6 @@
 
 pub mod acme;
 pub mod http_extra;
-pub mod logger;
 #[cfg(feature = "full")]
 pub mod otel;
 pub mod plugin;

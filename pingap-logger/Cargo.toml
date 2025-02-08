@@ -1,0 +1,32 @@
+[package]
+name = "pingap-logger"
+version = "0.9.10"
+edition = "2021"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/pingap"
+repository = "https://github.com/vicanso/pingap"
+keywords = ["pingap", "logger"]
+
+[dependencies]
+bytesize = { workspace = true }
+chrono = { workspace = true }
+flate2 = { workspace = true }
+snafu = { workspace = true }
+tracing = { workspace = true }
+walkdir = { workspace = true }
+time = { workspace = true }
+tracing-subscriber = { version = "0.3.19", features = [
+    "local-time",
+    "json",
+    "fmt",
+    "ansi",
+], default-features = false }
+tracing-appender = "0.2.3"
+zstd = "0.13.2"
+pingap-service = { path = "../pingap-service" }
+pingap-util = { path = "../pingap-util" }
+
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"
