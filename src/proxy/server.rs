@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::dynamic_certificate::{GlobalCertificate, TlsSettingParams};
 use super::logger::Parser;
 use super::{ServerConf, LOG_CATEGORY};
 use crate::acme::handle_lets_encrypt;
@@ -33,6 +32,7 @@ use opentelemetry::{
 };
 #[cfg(feature = "full")]
 use opentelemetry_http::HeaderExtractor;
+use pingap_certificate::{GlobalCertificate, TlsSettingParams};
 use pingap_config::get_config_storage;
 use pingap_config::PluginStep;
 use pingap_http_extra::{convert_headers, HttpHeader};

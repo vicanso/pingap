@@ -13,12 +13,12 @@
 // limitations under the License.
 
 use super::{get_token_path, Error, Result, LOG_CATEGORY};
-use crate::proxy::try_update_certificates;
 use http::StatusCode;
 use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
     OrderStatus,
 };
+use pingap_certificate::try_update_certificates;
 use pingap_certificate::Certificate;
 use pingap_config::{
     get_current_config, set_current_config, ConfigStorage, LoadConfigOptions,

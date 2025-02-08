@@ -17,6 +17,7 @@ use snafu::Snafu;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 mod chain;
+mod dynamic_certificate;
 mod self_signed;
 mod tls_certificate;
 
@@ -180,6 +181,10 @@ impl Certificate {
     }
 }
 
+pub use dynamic_certificate::{
+    get_certificate_info_list, try_update_certificates, GlobalCertificate,
+    TlsSettingParams,
+};
 pub use self_signed::new_self_signed_certificate_validity_service;
 pub use tls_certificate::TlsCertificate;
 

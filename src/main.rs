@@ -522,7 +522,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     let (updated_certificates, errors) =
-        proxy::try_update_certificates(&certificates);
+        pingap_certificate::try_update_certificates(&certificates);
     if !updated_certificates.is_empty() {
         info!(
             updated_certificates = updated_certificates.join(","),

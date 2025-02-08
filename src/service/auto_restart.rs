@@ -215,7 +215,9 @@ async fn diff_and_update_config(
         }
         if should_reload_certificate {
             let (updated_certificates, errors) =
-                proxy::try_update_certificates(&new_config.certificates);
+                pingap_certificate::try_update_certificates(
+                    &new_config.certificates,
+                );
             info!(category = LOG_CATEGORY, "reload certificate success");
             pingap_webhook::send_notification(
                 pingap_webhook::SendNotificationParams {

@@ -12,29 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::LOG_CATEGORY;
+use super::{Certificate, Error, TlsCertificate, LOG_CATEGORY};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use once_cell::sync::Lazy;
-use pingap_certificate::{Certificate, TlsCertificate};
 use pingap_config::CertificateConf;
 use pingora::listeners::tls::TlsSettings;
 use pingora::tls::ext;
 use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::ssl::{NameType, SslRef};
 use pingora::tls::x509::X509;
-use snafu::Snafu;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::sync::Arc;
 use tracing::{debug, error, info};
 
-#[derive(Debug, Snafu)]
-pub enum Error {
-    #[snafu(display("Invalid error, category: {category}, {message}"))]
-    Invalid { message: String, category: String },
-}
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 // Type alias for storing certificates in a high-performance hash map
@@ -72,8 +65,7 @@ fn parse_certificates(
         if certificate.tls_cert.is_none() || certificate.tls_key.is_none() {
             continue;
         }
-        let result: Result<TlsCertificate, pingap_certificate::Error> =
-            certificate.try_into();
+        let result: Result<TlsCertificate, Error> = certificate.try_into();
         match result {
             Ok(mut dynamic_cert) => {
                 dynamic_cert.name = Some(name.clone());
@@ -348,11 +340,11 @@ impl pingora::listeners::TlsAccept for GlobalCertificate {
 
 #[cfg(test)]
 mod tests {
+    use super::TlsCertificate;
     use super::{
         get_certificate_info_list, try_update_certificates, GlobalCertificate,
         TlsSettingParams, DYNAMIC_CERTIFICATE_MAP,
     };
-    use pingap_certificate::TlsCertificate;
     use pingap_config::CertificateConf;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;

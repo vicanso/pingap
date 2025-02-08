@@ -2922,6 +2922,7 @@ version = "0.9.10"
 dependencies = [
  "ahash",
  "arc-swap",
+ "async-trait",
  "nanoid",
  "once_cell",
  "pingap-config",

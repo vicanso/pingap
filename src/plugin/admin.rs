@@ -16,7 +16,6 @@ use super::{
     get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf, Error,
     Plugin, Result,
 };
-use crate::proxy::get_certificate_info_list;
 use crate::state::get_start_time;
 use crate::state::restart_now;
 use async_trait::async_trait;
@@ -29,6 +28,7 @@ use hex::ToHex;
 use http::Method;
 use http::{header, HeaderValue, StatusCode};
 use humantime::parse_duration;
+use pingap_certificate::get_certificate_info_list;
 use pingap_config::{
     self, get_current_config, save_config, BasicConf, CertificateConf,
     LoadConfigOptions, LocationConf, PluginCategory, PluginConf, PluginStep,

@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod dynamic_certificate;
 mod logger;
 mod server;
 mod server_conf;
@@ -20,9 +19,6 @@ mod validity_checker;
 
 pub static LOG_CATEGORY: &str = "proxy";
 
-pub use dynamic_certificate::{
-    get_certificate_info_list, try_update_certificates,
-};
 // TODO remove this
 #[allow(unused_imports)]
 pub use logger::Parser;

@@ -13,6 +13,7 @@ name = "pingap_certificate"
 path = "src/lib.rs"
 
 [dependencies]
+async-trait = { workspace = true }
 pingora = { workspace = true }
 once_cell = { workspace = true }
 serde = { workspace = true }

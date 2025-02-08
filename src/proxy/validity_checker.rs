@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_certificate_info_list, LOG_CATEGORY};
-use pingap_certificate::Certificate;
+use super::LOG_CATEGORY;
+use pingap_certificate::{get_certificate_info_list, Certificate};
 use pingap_service::Error as ServiceError;
 use pingap_service::SimpleServiceTaskFuture;
 use snafu::Snafu;
