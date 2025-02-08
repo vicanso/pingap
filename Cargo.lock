@@ -2841,7 +2841,6 @@ dependencies = [
  "http 1.2.0",
  "humantime",
  "humantime-serde",
- "instant-acme",
  "itoa",
  "mime_guess",
  "nanoid",
@@ -2850,6 +2849,7 @@ dependencies = [
  "once_cell",
  "opentelemetry",
  "opentelemetry-http",
+ "pingap-acme",
  "pingap-cache",
  "pingap-certificate",
  "pingap-config",
@@ -2869,7 +2869,6 @@ dependencies = [
  "pingora",
  "pingora-limits",
  "pretty_assertions",
- "rcgen",
  "regex",
  "rust-embed",
  "scopeguard",
@@ -2879,7 +2878,6 @@ dependencies = [
  "smallvec",
  "snafu",
  "substring",
- "tempfile",
  "tokio",
  "tokio-test",
  "toml",
@@ -2887,7 +2885,30 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
- "x509-parser 0.17.0",
+]
+
+[[package]]
+name = "pingap-acme"
+version = "0.9.10"
+dependencies = [
+ "http 1.2.0",
+ "instant-acme",
+ "pingap-certificate",
+ "pingap-config",
+ "pingap-http-extra",
+ "pingap-service",
+ "pingap-state",
+ "pingap-util",
+ "pingap-webhook",
+ "pingora",
+ "pretty_assertions",
+ "rcgen",
+ "snafu",
+ "substring",
+ "tempfile",
+ "tokio",
+ "tokio-test",
+ "tracing",
 ]
 
 [[package]]
@@ -3076,14 +3097,25 @@ dependencies = [
 name = "pingap-logger"
 version = "0.9.10"
 dependencies = [
+ "bytes",
  "bytesize",
  "chrono",
  "flate2",
+ "http 1.2.0",
+ "itoa",
+ "pingap-config",
+ "pingap-location",
  "pingap-service",
+ "pingap-state",
  "pingap-util",
+ "pingora",
  "pretty_assertions",
+ "regex",
  "snafu",
+ "substring",
  "time",
+ "tokio",
+ "tokio-test",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",

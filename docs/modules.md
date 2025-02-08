@@ -2,6 +2,14 @@
 
 ```mermaid
 graph TD
+    acme --> certificate
+    acme --> config
+    acme --> http-extra
+    acme --> service
+    acme --> state
+    acme --> util
+    acme --> webhook
+
     cache --> config
     cache --> service
     cache --> util
@@ -9,6 +17,7 @@ graph TD
     certificate --> config
     certificate --> service
     certificate --> util
+    certificate --> webhook
 
     config --> discovery
     config --> util
@@ -27,7 +36,10 @@ graph TD
     location --> http-extra
     location --> util
 
+    logger --> config
+    logger --> location
     logger --> service
+    logger --> state
     logger --> util
 
     performance --> cache
@@ -51,6 +63,7 @@ graph TD
 
     webhook --> util
 
+    pingap --> acme
     pingap --> cache
     pingap --> certificate
     pingap --> config

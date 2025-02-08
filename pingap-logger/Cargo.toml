@@ -16,6 +16,13 @@ snafu = { workspace = true }
 tracing = { workspace = true }
 walkdir = { workspace = true }
 time = { workspace = true }
+bytes = { workspace = true }
+pingora = { workspace = true }
+regex = { workspace = true }
+substring = { workspace = true }
+itoa = { workspace = true }
+tokio = { workspace = true }
+http = { workspace = true }
 tracing-subscriber = { version = "0.3.19", features = [
     "local-time",
     "json",
@@ -26,7 +33,11 @@ tracing-appender = "0.2.3"
 zstd = "0.13.2"
 pingap-service = { path = "../pingap-service" }
 pingap-util = { path = "../pingap-util" }
+pingap-state = { path = "../pingap-state" }
+pingap-location = { path = "../pingap-location" }
+pingap-config = { path = "../pingap-config" }
 
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"
+tokio-test = "0.4.4"

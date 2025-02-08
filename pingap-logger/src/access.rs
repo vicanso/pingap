@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::http_extra::HOST_NAME_TAG;
 use bytes::BytesMut;
 use pingap_state::Ctx;
 use pingap_util::{format_byte_size, format_duration, get_hostname};
@@ -20,6 +19,8 @@ use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::Regex;
 use substring::Substring;
+
+pub const HOST_NAME_TAG: &[u8] = b"$hostname";
 
 // Enum representing different types of log tags that can be used in the logging format
 #[derive(Debug, Clone, PartialEq)]

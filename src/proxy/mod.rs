@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod logger;
 mod server;
 mod server_conf;
 
@@ -20,6 +19,5 @@ pub static LOG_CATEGORY: &str = "proxy";
 
 // TODO remove this
 #[allow(unused_imports)]
-pub use logger::Parser;
 pub use server::*;
 pub use server_conf::{parse_from_conf, ServerConf};

@@ -1,0 +1,37 @@
+[package]
+name = "pingap-acme"
+version = "0.9.10"
+edition = "2021"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/pingap"
+repository = "https://github.com/vicanso/pingap"
+keywords = ["pingap", "acme"]
+
+
+[lib]
+name = "pingap_acme"
+path = "src/lib.rs"
+
+[dependencies]
+instant-acme = "0.7.2"
+rcgen = { workspace = true }
+snafu = { workspace = true }
+http = { workspace = true }
+pingora = { workspace = true }
+substring = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+pingap-certificate = { path = "../pingap-certificate" }
+pingap-config = { path = "../pingap-config" }
+pingap-service = { path = "../pingap-service" }
+pingap-util = { path = "../pingap-util" }
+pingap-state = { path = "../pingap-state" }
+pingap-http-extra = { path = "../pingap-http-extra" }
+pingap-webhook = { path = "../pingap-webhook" }
+
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"
+tempfile = "3.16.0"
+tokio-test = "0.4.4"

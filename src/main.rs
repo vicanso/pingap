@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use acme::new_lets_encrypt_service;
 use clap::Parser;
 use crossbeam_channel::Sender;
+use pingap_acme::new_lets_encrypt_service;
 use pingap_cache::new_storage_clear_service;
 use pingap_certificate::{
     new_certificate_validity_service,
@@ -42,7 +42,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info};
 
-mod acme;
 mod http_extra;
 
 mod plugin;

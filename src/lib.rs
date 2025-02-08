@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod acme;
 pub mod http_extra;
 pub mod plugin;
 pub mod proxy;
