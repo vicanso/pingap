@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{get_hash_key, get_step_conf, get_str_conf, Error, Plugin, Result};
-use crate::state::get_start_time;
+use crate::process::get_start_time;
 use async_trait::async_trait;
 use bytes::Bytes;
 use pingap_config::{PluginCategory, PluginConf, PluginStep};

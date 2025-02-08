@@ -22,6 +22,7 @@ itoa = { workspace = true }
 opentelemetry = { version = "0.27.1", default-features = false, features = [
     "trace",
 ], optional = true }
+tokio = { workspace = true }
 pingap-location = { path = "../pingap-location" }
 pingap-upstream = { path = "../pingap-upstream" }
 pingap-util = { path = "../pingap-util" }

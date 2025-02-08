@@ -3223,6 +3223,7 @@ dependencies = [
  "pingora",
  "pingora-limits",
  "pretty_assertions",
+ "tokio",
  "tokio-test",
 ]
 

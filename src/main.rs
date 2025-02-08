@@ -31,9 +31,11 @@ use pingap_upstream::{new_upstream_health_check_task, try_init_upstreams};
 use pingora::server;
 use pingora::server::configuration::Opt;
 use pingora::services::background::background_service;
+use process::{
+    get_admin_addr, get_start_time, new_auto_restart_service,
+    new_observer_service, set_admin_addr,
+};
 use proxy::{Server, ServerConf};
-use service::{new_auto_restart_service, new_observer_service};
-use state::{get_admin_addr, get_start_time, set_admin_addr};
 use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::OsString;
@@ -42,12 +44,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info};
 
-mod http_extra;
-
 mod plugin;
+mod process;
 mod proxy;
-mod service;
-mod state;
 
 static TEMPLATE_CONFIG: &str = r###"
 [basic]
@@ -379,7 +378,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     info!("Enable feature perf");
 
     if let Ok(exec_path) = std::env::current_exe() {
-        let mut cmd = state::RestartProcessCommand {
+        let mut cmd = process::RestartProcessCommand {
             exec_path,
             ..Default::default()
         };
@@ -407,7 +406,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             new_args.push("--autorestart".to_string());
         }
         cmd.args = new_args;
-        state::set_restart_process_command(cmd);
+        process::set_restart_process_command(cmd);
     }
 
     try_init_upstreams(&conf.upstreams)?;

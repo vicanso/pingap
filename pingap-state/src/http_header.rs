@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::Ctx;
 use bytes::BytesMut;
 use http::HeaderValue;
-use pingap_state::Ctx;
 use pingap_util::get_hostname;
 use pingora::proxy::Session;
 
@@ -162,29 +162,11 @@ fn handle_context_value(buf: &[u8], ctx: &Ctx) -> Option<HeaderValue> {
 
 #[cfg(test)]
 mod tests {
-    use super::convert_header_value;
+    use super::*;
     use http::HeaderValue;
-    use pingap_http_extra::convert_headers;
-    use pingap_state::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
-    #[test]
-    fn test_convert_headers() {
-        let headers = convert_headers(&[
-            "Content-Type: application/octet-stream".to_string(),
-            "X-Server: $hostname".to_string(),
-            "X-User: $USER".to_string(),
-        ])
-        .unwrap();
-        assert_eq!(3, headers.len());
-        assert_eq!("content-type", headers[0].0.to_string());
-        assert_eq!("application/octet-stream", headers[0].1.to_str().unwrap());
-        assert_eq!("x-server", headers[1].0.to_string());
-        assert_eq!(false, headers[1].1.to_str().unwrap().is_empty());
-        assert_eq!("x-user", headers[2].0.to_string());
-        assert_eq!(false, headers[2].1.to_str().unwrap().is_empty());
-    }
 
     #[tokio::test]
     async fn test_convert_header_value() {

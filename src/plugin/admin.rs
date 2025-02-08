@@ -16,8 +16,7 @@ use super::{
     get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf, Error,
     Plugin, Result,
 };
-use crate::state::get_start_time;
-use crate::state::restart_now;
+use crate::process::{get_start_time, restart_now};
 use async_trait::async_trait;
 use bytes::Bytes;
 use bytes::{BufMut, BytesMut};

@@ -13,13 +13,12 @@
 // limitations under the License.
 
 use super::{get_bool_conf, get_hash_key, get_str_conf, Error, Plugin, Result};
-use crate::http_extra::convert_header_value;
 use async_trait::async_trait;
 use http::{header, HeaderValue};
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf, PluginStep};
 use pingap_http_extra::{HttpHeader, HttpResponse};
-use pingap_state::Ctx;
+use pingap_state::{convert_header_value, Ctx};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::Regex;

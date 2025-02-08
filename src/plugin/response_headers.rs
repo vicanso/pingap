@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use super::{get_hash_key, get_str_slice_conf, Error, Plugin, Result};
-use crate::http_extra::convert_header_value;
 use async_trait::async_trait;
 use http::header::HeaderName;
 use pingap_config::{PluginCategory, PluginConf, PluginStep};
 use pingap_http_extra::{convert_header, HttpHeader};
-use pingap_state::Ctx;
+use pingap_state::{convert_header_value, Ctx};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use std::str::FromStr;

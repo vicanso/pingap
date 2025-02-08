@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use super::{ServerConf, LOG_CATEGORY};
-use crate::http_extra::convert_header_value;
 use crate::plugin::{get_plugin, ADMIN_SERVER_PLUGIN};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
@@ -44,6 +43,7 @@ use pingap_performance::{
     new_prometheus, new_prometheus_push_service, Prometheus,
 };
 use pingap_service::SimpleServiceTaskFuture;
+use pingap_state::convert_header_value;
 #[cfg(feature = "full")]
 use pingap_state::OtelTracer;
 use pingap_state::{get_cache_key, CompressionStat, Ctx};
