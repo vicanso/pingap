@@ -29,6 +29,7 @@ tokio = { workspace = true }
 pingap-util = { path = "../pingap-util" }
 pingap-service = { path = "../pingap-service" }
 pingap-config = { path = "../pingap-config" }
+pingap-webhook = { path = "../pingap-webhook" }
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"

@@ -2928,6 +2928,7 @@ dependencies = [
  "pingap-config",
  "pingap-service",
  "pingap-util",
+ "pingap-webhook",
  "pingora",
  "pretty_assertions",
  "rcgen",

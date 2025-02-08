@@ -20,6 +20,7 @@ mod chain;
 mod dynamic_certificate;
 mod self_signed;
 mod tls_certificate;
+mod validity_checker;
 
 pub static LOG_CATEGORY: &str = "certificate";
 
@@ -187,6 +188,7 @@ pub use dynamic_certificate::{
 };
 pub use self_signed::new_self_signed_certificate_validity_service;
 pub use tls_certificate::TlsCertificate;
+pub use validity_checker::new_certificate_validity_service;
 
 #[cfg(test)]
 mod tests {

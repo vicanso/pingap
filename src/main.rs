@@ -16,7 +16,10 @@ use acme::new_lets_encrypt_service;
 use clap::Parser;
 use crossbeam_channel::Sender;
 use pingap_cache::new_storage_clear_service;
-use pingap_certificate::new_self_signed_certificate_validity_service;
+use pingap_certificate::{
+    new_certificate_validity_service,
+    new_self_signed_certificate_validity_service,
+};
 use pingap_config::{get_config_storage, ETCD_PROTOCOL};
 use pingap_config::{LoadConfigOptions, PingapConf};
 use pingap_location::try_init_locations;
@@ -28,7 +31,6 @@ use pingap_upstream::{new_upstream_health_check_task, try_init_upstreams};
 use pingora::server;
 use pingora::server::configuration::Opt;
 use pingora::services::background::background_service;
-use proxy::new_certificate_validity_service;
 use proxy::{Server, ServerConf};
 use service::{new_auto_restart_service, new_observer_service};
 use state::{get_admin_addr, get_start_time, set_admin_addr};

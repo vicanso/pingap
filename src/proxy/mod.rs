@@ -15,7 +15,6 @@
 mod logger;
 mod server;
 mod server_conf;
-mod validity_checker;
 
 pub static LOG_CATEGORY: &str = "proxy";
 
@@ -24,4 +23,3 @@ pub static LOG_CATEGORY: &str = "proxy";
 pub use logger::Parser;
 pub use server::*;
 pub use server_conf::{parse_from_conf, ServerConf};
-pub use validity_checker::new_certificate_validity_service;
