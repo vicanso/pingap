@@ -36,6 +36,8 @@ pub enum Error {
     Invalid { message: String },
     #[snafu(display("Over quota error, max: {max}, {message}"))]
     OverQuota { max: u32, message: String },
+    #[snafu(display("{message}"))]
+    Prometheus { message: String },
 }
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -99,6 +101,11 @@ pub fn get_cache_backend() -> Result<&'static HttpCache> {
 }
 
 pub use http_cache::{new_storage_clear_service, HttpCache};
+
+#[cfg(feature = "full")]
+mod prom;
+#[cfg(feature = "full")]
+pub use prom::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 
 #[cfg(test)]
 mod tests {

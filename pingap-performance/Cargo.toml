@@ -38,6 +38,11 @@ pingap-service = { path = "../pingap-service" }
 pingap-state = { path = "../pingap-state" }
 pingap-util = { path = "../pingap-util" }
 pingap-location = { path = "../pingap-location" }
+pingap-upstream = { path = "../pingap-upstream" }
+pingap-cache = { path = "../pingap-cache" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+procfs = { version = "0.17.0", default-features = false }
 
 
 [dev-dependencies]

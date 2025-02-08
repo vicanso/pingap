@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod metrics;
 mod process;
 
+pub use metrics::*;
 pub use process::*;
-
 #[cfg(feature = "full")]
 use snafu::Snafu;
 #[cfg(feature = "full")]
@@ -34,7 +35,4 @@ pub const LOG_CATEGORY: &str = "performance";
 #[cfg(feature = "full")]
 mod prom;
 #[cfg(feature = "full")]
-pub use prom::{
-    new_prometheus, new_prometheus_push_service, Prometheus,
-    CACHE_READING_TIME, CACHE_WRITING_TIME,
-};
+pub use prom::{new_prometheus, new_prometheus_push_service, Prometheus};

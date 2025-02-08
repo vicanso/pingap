@@ -14,7 +14,8 @@
 
 use super::{get_process_system_info, Error, Result, LOG_CATEGORY};
 use humantime::parse_duration;
-use once_cell::sync::Lazy;
+#[cfg(feature = "full")]
+use pingap_cache::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use pingap_service::Error as ServiceError;
 use pingap_service::SimpleServiceTaskFuture;
 use pingap_state::Ctx;
@@ -35,40 +36,6 @@ use url::Url;
 /// Tag used to dynamically replace with actual hostname in prometheus push URLs.
 /// This allows for dynamic host identification in distributed deployments.
 static HOST_NAME_TAG: &str = "$HOSTNAME";
-
-/// Histogram metric tracking cache read operation latencies.
-/// Buckets are optimized for typical cache read operations:
-/// - 1ms-5ms: Very fast cache hits
-/// - 5ms-50ms: Normal cache operations
-/// - 50ms-1s: Slow operations that may indicate issues
-pub static CACHE_READING_TIME: Lazy<Box<Histogram>> = Lazy::new(|| {
-    Box::new(
-        new_histogram(
-            "",
-            "pingap_cache_storage_read_time",
-            "pingap cache storage read time(second)",
-            &[0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0],
-        )
-        .unwrap(),
-    )
-});
-
-/// Histogram metric tracking cache write operation latencies.
-/// Buckets are configured for slightly longer durations than reads:
-/// - 5ms-25ms: Fast writes
-/// - 25ms-250ms: Normal write operations
-/// - 250ms-1s: Slow writes that may need investigation
-pub static CACHE_WRITING_TIME: Lazy<Box<Histogram>> = Lazy::new(|| {
-    Box::new(
-        new_histogram(
-            "",
-            "pingap_cache_storage_write_time",
-            "pingap cache storage write time(second)",
-            &[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0],
-        )
-        .unwrap(),
-    )
-});
 
 /// Comprehensive metrics collector for HTTP server monitoring.
 ///

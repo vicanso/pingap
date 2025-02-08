@@ -43,10 +43,11 @@ fn main() {
     let mut keys = deps.keys().collect::<Vec<_>>();
     keys.sort();
     for name in keys {
-        let modules = deps.get(name).unwrap();
+        let mut modules = deps.get(name).unwrap().clone();
         if modules.is_empty() {
             continue;
         }
+        modules.sort();
         for module in modules.iter() {
             arr.push(format!("    {} --> {}", name, module));
         }

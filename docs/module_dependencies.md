@@ -2,47 +2,49 @@
 
 ```mermaid
 graph TD
-    cache --> util
-    cache --> service
     cache --> config
+    cache --> service
+    cache --> util
 
     certificate --> config
     certificate --> service
     certificate --> util
 
-    config --> util
     config --> discovery
+    config --> util
 
-    discovery --> webhook
     discovery --> util
+    discovery --> webhook
 
-    health --> webhook
     health --> util
+    health --> webhook
 
     http-extra --> util
 
     limit --> util
 
+    location --> config
     location --> http-extra
     location --> util
-    location --> config
 
+    performance --> cache
+    performance --> config
     performance --> location
     performance --> service
     performance --> state
+    performance --> upstream
     performance --> util
-    performance --> config
 
+    state --> config
     state --> location
     state --> upstream
-    state --> config
     state --> util
 
+    upstream --> config
+    upstream --> discovery
     upstream --> health
     upstream --> service
     upstream --> util
-    upstream --> config
-    upstream --> discovery
 
     webhook --> util
 ```

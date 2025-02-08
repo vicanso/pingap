@@ -14,13 +14,12 @@
 
 use super::http_cache::{CacheObject, HttpCacheStats, HttpCacheStorage};
 use super::{Error, Result, LOG_CATEGORY, PAGE_SIZE};
-// TODO add cache reading writing
-// #[cfg(feature = "full")]
-// use crate::state::{CACHE_READING_TIME, CACHE_WRITING_TIME};
+#[cfg(feature = "full")]
+use super::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use async_trait::async_trait;
 use bytes::Bytes;
-// #[cfg(feature = "full")]
-// use prometheus::Histogram;
+#[cfg(feature = "full")]
+use prometheus::Histogram;
 use scopeguard::defer;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -39,16 +38,16 @@ pub struct FileCache {
     reading: AtomicU32,
     /// Maximum allowed concurrent read operations
     reading_max: u32,
-    // #[cfg(feature = "full")]
-    // /// Histogram metric for tracking cache read operation times
-    // read_time: Box<Histogram>,
+    #[cfg(feature = "full")]
+    /// Histogram metric for tracking cache read operation times
+    read_time: Box<Histogram>,
     /// Counter for current number of concurrent write operations
     writing: AtomicU32,
     /// Maximum allowed concurrent write operations
     writing_max: u32,
-    // #[cfg(feature = "full")]
-    // /// Histogram metric for tracking cache write operation times
-    // write_time: Box<Histogram>,
+    #[cfg(feature = "full")]
+    /// Histogram metric for tracking cache write operation times
+    write_time: Box<Histogram>,
     /// Optional in-memory TinyUfo cache for frequently accessed items
     /// When enabled, reduces disk I/O by serving hot data from memory
     cache: Option<TinyUfo<String, CacheObject>>,
@@ -140,12 +139,12 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
         cache_file_max_weight: params.cache_file_max_weight as u16,
         reading: AtomicU32::new(0),
         reading_max: params.reading_max,
-        // #[cfg(feature = "full")]
-        // read_time: CACHE_READING_TIME.clone(),
+        #[cfg(feature = "full")]
+        read_time: CACHE_READING_TIME.clone(),
         writing: AtomicU32::new(0),
         writing_max: params.writing_max,
-        // #[cfg(feature = "full")]
-        // write_time: CACHE_WRITING_TIME.clone(),
+        #[cfg(feature = "full")]
+        write_time: CACHE_WRITING_TIME.clone(),
         cache,
     })
 }
@@ -193,8 +192,8 @@ impl HttpCacheStorage for FileCache {
             }
         }
 
-        // #[cfg(feature = "full")]
-        // let start = SystemTime::now();
+        #[cfg(feature = "full")]
+        let start = SystemTime::now();
         let file = self.get_file_path(key, namespace);
 
         // add reading count
@@ -207,8 +206,8 @@ impl HttpCacheStorage for FileCache {
             });
         }
         let result = fs::read(file).await;
-        // #[cfg(feature = "full")]
-        // self.read_time.observe(pingap_util::elapsed_second(start));
+        #[cfg(feature = "full")]
+        self.read_time.observe(pingap_util::elapsed_second(start));
 
         let obj = match result {
             Ok(buf) if buf.len() >= 8 => {
@@ -251,8 +250,8 @@ impl HttpCacheStorage for FileCache {
                 c.put(key.to_string(), data.clone(), weight);
             }
         }
-        // #[cfg(feature = "full")]
-        // let start = SystemTime::now();
+        #[cfg(feature = "full")]
+        let start = SystemTime::now();
         let buf: Bytes = data.into();
         let file = self.get_file_path(key, namespace);
         // add writing count
@@ -265,8 +264,8 @@ impl HttpCacheStorage for FileCache {
             });
         }
         let result = fs::write(file, buf).await;
-        // #[cfg(feature = "full")]
-        // self.write_time.observe(pingap_util::elapsed_second(start));
+        #[cfg(feature = "full")]
+        self.write_time.observe(pingap_util::elapsed_second(start));
         result.map_err(|e| Error::Io { source: e })
     }
     /// Removes a cache entry from both TinyUfo and disk storage.
