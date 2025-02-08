@@ -1,0 +1,34 @@
+[package]
+name = "pingap-otel"
+version = "0.9.10"
+edition = "2021"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/pingap"
+repository = "https://github.com/vicanso/pingap"
+keywords = ["pingap", "opentelemetry"]
+
+[lib]
+name = "pingap_otel"
+path = "src/lib.rs"
+
+[dependencies]
+async-trait = { workspace = true }
+opentelemetry = { version = "0.27.1", default-features = false, features = [
+    "trace",
+] }
+opentelemetry-jaeger-propagator = { version = "0.27.0" }
+opentelemetry-otlp = { version = "0.27.0", default-features = false, features = [
+    "grpc-tonic",
+    "trace",
+] }
+opentelemetry_sdk = { version = "0.27.1", features = [
+    "rt-tokio",
+], default-features = false }
+pingora = { workspace = true }
+humantime = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+ahash = { workspace = true }
+once_cell = { workspace = true }
+arc-swap = { workspace = true }

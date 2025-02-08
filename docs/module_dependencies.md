@@ -27,6 +27,9 @@ graph TD
     location --> http-extra
     location --> util
 
+    logger --> service
+    logger --> util
+
     performance --> cache
     performance --> config
     performance --> location

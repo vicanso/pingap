@@ -2850,9 +2850,6 @@ dependencies = [
  "once_cell",
  "opentelemetry",
  "opentelemetry-http",
- "opentelemetry-jaeger-propagator",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
  "pingap-cache",
  "pingap-certificate",
  "pingap-config",
@@ -2860,7 +2857,10 @@ dependencies = [
  "pingap-limit",
  "pingap-location",
  "pingap-logger",
+ "pingap-otel",
  "pingap-performance",
+ "pingap-pyroscope",
+ "pingap-sentry",
  "pingap-service",
  "pingap-state",
  "pingap-upstream",
@@ -2869,13 +2869,10 @@ dependencies = [
  "pingora",
  "pingora-limits",
  "pretty_assertions",
- "pyroscope",
- "pyroscope_pprofrs",
  "rcgen",
  "regex",
  "rust-embed",
  "scopeguard",
- "sentry-core",
  "serde",
  "serde_json",
  "sha2",
@@ -3093,6 +3090,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "pingap-otel"
+version = "0.9.10"
+dependencies = [
+ "ahash",
+ "arc-swap",
+ "async-trait",
+ "humantime",
+ "once_cell",
+ "opentelemetry",
+ "opentelemetry-jaeger-propagator",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "pingora",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "pingap-performance"
 version = "0.9.10"
 dependencies = [
@@ -3122,6 +3137,27 @@ dependencies = [
  "tokio-test",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "pingap-pyroscope"
+version = "0.9.10"
+dependencies = [
+ "async-trait",
+ "pingora",
+ "pyroscope",
+ "pyroscope_pprofrs",
+ "snafu",
+ "substring",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "pingap-sentry"
+version = "0.9.10"
+dependencies = [
+ "sentry-core",
 ]
 
 [[package]]

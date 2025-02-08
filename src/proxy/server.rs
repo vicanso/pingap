@@ -17,8 +17,6 @@ use super::logger::Parser;
 use super::{ServerConf, LOG_CATEGORY};
 use crate::acme::handle_lets_encrypt;
 use crate::http_extra::convert_header_value;
-#[cfg(feature = "full")]
-use crate::otel;
 use crate::plugin::{get_plugin, ADMIN_SERVER_PLUGIN};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
@@ -714,7 +712,7 @@ impl ProxyHttp for Server {
         #[cfg(feature = "full")]
         if self.enabled_otel {
             // enable open telemetry
-            if let Some(tracer) = otel::new_tracer(&self.name) {
+            if let Some(tracer) = pingap_otel::new_tracer(&self.name) {
                 let cx = global::get_text_map_propagator(|propagator| {
                     propagator.extract(&HeaderExtractor(&header.headers))
                 });

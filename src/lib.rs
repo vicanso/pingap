@@ -14,8 +14,6 @@
 
 pub mod acme;
 pub mod http_extra;
-#[cfg(feature = "full")]
-pub mod otel;
 pub mod plugin;
 pub mod proxy;
 pub mod service;

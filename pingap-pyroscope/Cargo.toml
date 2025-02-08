@@ -1,0 +1,23 @@
+[package]
+name = "pingap-pyroscope"
+version = "0.9.10"
+edition = "2021"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/pingap"
+repository = "https://github.com/vicanso/pingap"
+keywords = ["pingap", "pyroscope"]
+
+[lib]
+name = "pingap_pyroscope"
+path = "src/lib.rs"
+
+[dependencies]
+pyroscope = { version = "0.5.8" }
+pyroscope_pprofrs = { version = "0.2.8" }
+async-trait = { workspace = true }
+pingora = { workspace = true }
+snafu = { workspace = true }
+substring = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }

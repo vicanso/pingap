@@ -1,0 +1,16 @@
+[package]
+name = "pingap-sentry"
+version = "0.9.10"
+edition = "2021"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/pingap"
+repository = "https://github.com/vicanso/pingap"
+keywords = ["pingap", "sentry"]
+
+[lib]
+name = "pingap_sentry"
+path = "src/lib.rs"
+
+[dependencies]
+sentry-core = { version = "0.26.0", default-features = false }

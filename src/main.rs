@@ -15,13 +15,13 @@
 use acme::new_lets_encrypt_service;
 use clap::Parser;
 use crossbeam_channel::Sender;
-#[cfg(feature = "full")]
-use otel::TracerService;
 use pingap_cache::new_storage_clear_service;
 use pingap_certificate::new_self_signed_certificate_validity_service;
 use pingap_config::{get_config_storage, ETCD_PROTOCOL};
 use pingap_config::{LoadConfigOptions, PingapConf};
 use pingap_location::try_init_locations;
+#[cfg(feature = "full")]
+use pingap_otel::TracerService;
 use pingap_performance::new_performance_metrics_log_service;
 use pingap_service::new_simple_service_task;
 use pingap_upstream::{new_upstream_health_check_task, try_init_upstreams};
@@ -43,14 +43,8 @@ use tracing::{error, info};
 mod acme;
 mod http_extra;
 
-#[cfg(feature = "full")]
-mod otel;
 mod plugin;
 mod proxy;
-#[cfg(feature = "pyro")]
-mod pyro;
-#[cfg(feature = "full")]
-mod sentry;
 mod service;
 mod state;
 
@@ -447,7 +441,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     {
         let sentry_dsn = basic_conf.sentry.clone().unwrap_or_default();
         if !sentry_dsn.is_empty() {
-            match sentry::new_sentry_options(&sentry_dsn) {
+            match pingap_sentry::new_sentry_options(&sentry_dsn) {
                 Ok(opts) => {
                     my_server.sentry = Some(opts);
                 },
@@ -463,7 +457,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     if let Some(url) = &conf.basic.pyroscope {
         my_server.add_service(background_service(
             "PyroAgent",
-            pyro::new_agent_service(url),
+            pingap_pyroscope::new_agent_service(url),
         ));
     }
 

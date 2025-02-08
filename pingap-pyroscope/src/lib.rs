@@ -76,7 +76,7 @@ fn start_pyroscope(
     let mut tags = vec![];
     let format_tag_value = |value: &str| {
         if value.starts_with("$") {
-            std::env::var(value.substring(1, value.len()).to_string())
+            std::env::var(value.substring(1, value.len()))
                 .unwrap_or(value.to_string())
         } else {
             value.to_string()
