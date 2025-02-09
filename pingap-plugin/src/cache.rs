@@ -13,12 +13,13 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf, Error,
-    Plugin, Result,
+    get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf,
+    get_str_slice_conf, Error, Plugin,
 };
 use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
 use bytesize::ByteSize;
+use ctor::ctor;
 use fancy_regex::Regex;
 use http::{Method, StatusCode};
 use humantime::parse_duration;
@@ -36,8 +37,11 @@ use pingora::cache::lock::{CacheKeyLock, CacheLock};
 use pingora::cache::predictor::{CacheablePredictor, Predictor};
 use pingora::proxy::Session;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error};
+
+type Result<T> = std::result::Result<T, Error>;
 
 // Maximum memory size for cache (100MB) - default if not configured otherwise
 const MAX_MEMORY_SIZE: usize = 100 * 1024 * 1024;
@@ -447,11 +451,16 @@ impl Plugin for Cache {
     }
 }
 
+#[ctor]
+fn init() {
+    get_plugin_factory()
+        .register("cache", |params| Ok(Arc::new(Cache::new(params)?)));
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Cache;
+    use super::*;
     use pingap_config::{PluginConf, PluginStep};
-    use pingap_plugin::Plugin;
     use pingap_state::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;

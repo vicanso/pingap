@@ -33,6 +33,16 @@ pub enum Error {
         max: isize,
         value: isize,
     },
+    #[snafu(display("Plugin {category}, regex error {source}"))]
+    Regex {
+        category: String,
+        source: Box<fancy_regex::Error>,
+    },
+    #[snafu(display("Plugin {category}, base64 decode error {source}"))]
+    ParseDuration {
+        category: String,
+        source: humantime::DurationError,
+    },
 }
 
 /// Helper functions for accessing plugin configuration values
@@ -110,6 +120,7 @@ pub(crate) fn get_hash_key(conf: &PluginConf) -> String {
 
 mod accept_encoding;
 mod basic_auth;
+mod cache;
 mod combined_auth;
 mod compression;
 mod cors;

@@ -19,35 +19,23 @@ default-run = "pingap"
 ahash = { version = "0.8.11", default-features = false }
 arc-swap = "1.7.1"
 async-trait = "0.1.86"
-base64 = "0.22.1"
-bstr = "1.11.3"
 bytes = "1.9.0"
-bytesize = { version = "1.3.0", features = ["serde"] }
 cfg-if = "1.0.0"
-chrono = { version = "0.4.39", default-features = false, features = [
-    "std",
-    "clock",
-] }
 clap = { version = "4.5.28", features = [
     "derive",
     "std",
     "help",
     "usage",
 ], default-features = false }
-cookie = "0.18.1"
 crc32fast = "1.4.2"
 crossbeam-channel = "0.5.14"
-fancy-regex = "0.14.0"
 flate2 = "1.0.35"
 glob = "0.3.2"
 hex = "0.4.3"
-hmac-sha256 = "1.1.8"
-hmac-sha512 = { version = "1.1.6", default-features = false }
 http = "1.2.0"
 humantime = "2.1.0"
 humantime-serde = "1.1.1"
 itoa = "1.0.14"
-mime_guess = "2.0.5"
 nanoid = "0.4.0"
 nix = { version = "0.29.0", features = ["signal"] }
 num_cpus = "1.16.0"
@@ -62,7 +50,6 @@ pingora = { git = "https://github.com/cloudflare/pingora", rev = "e6b823c5d89860
     "openssl",
     "cache",
 ] }
-pingora-limits = "0.4.0"
 regex = { version = "1.11.1", default-features = false }
 rust-embed = { version = "8.5.0", features = [
     "mime-guess",
@@ -72,7 +59,6 @@ scopeguard = "1.2.0"
 serde = "1.0.217"
 serde_json = "1.0.138"
 sha2 = { version = "0.10.8", default-features = false }
-smallvec = "1.13.2"
 snafu = { version = "0.8.5", features = ["std"], default-features = false }
 substring = "1.4.5"
 tokio = { version = "1.43.0", default-features = false, features = ["fs"] }
@@ -103,6 +89,7 @@ pingap-plugin = { path = "pingap-plugin" }
 pingap-otel = { path = "pingap-otel", optional = true }
 pingap-sentry = { path = "pingap-sentry", optional = true }
 pingap-pyroscope = { path = "pingap-pyroscope", optional = true }
+ctor = "0.2.9"
 
 
 [features]

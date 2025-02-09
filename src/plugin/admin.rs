@@ -13,13 +13,13 @@
 // limitations under the License.
 
 use super::{
-    get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf, Error,
-    Plugin, Result,
+    get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf, Plugin,
 };
 use crate::process::{get_start_time, restart_now};
 use async_trait::async_trait;
 use bytes::Bytes;
 use bytes::{BufMut, BytesMut};
+use ctor::ctor;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use hex::encode;
@@ -42,6 +42,7 @@ use pingap_http_extra::HttpResponse;
 use pingap_limit::TtlLruLimit;
 use pingap_performance::get_process_system_info;
 use pingap_performance::get_processing_accepted;
+use pingap_plugin::{get_plugin_factory, Error};
 use pingap_state::Ctx;
 use pingap_util::base64_decode;
 use pingora::http::RequestHeader;
@@ -53,10 +54,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::Write;
+use std::sync::Arc;
 use std::time::Duration;
 use substring::Substring;
 use tracing::{debug, error};
 use urlencoding::decode;
+
+type Result<T> = std::result::Result<T, Error>;
 
 #[derive(RustEmbed)]
 #[folder = "dist/"]
@@ -669,6 +673,12 @@ impl Plugin for AdminServe {
         };
         Ok(Some(resp))
     }
+}
+
+#[ctor]
+fn init() {
+    get_plugin_factory()
+        .register("admin", |params| Ok(Arc::new(AdminServe::new(params)?)));
 }
 
 #[cfg(test)]

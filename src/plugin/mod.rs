@@ -17,9 +17,8 @@ use crate::proxy::ServerConf;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use once_cell::sync::Lazy;
-use pingap_config::{PluginCategory, PluginConf, PluginStep};
-use pingap_plugin::get_plugin_factory;
-use pingap_plugin::Plugin;
+use pingap_config::{PluginConf, PluginStep};
+use pingap_plugin::{get_plugin_factory, Plugin};
 use pingap_util::base64_encode;
 use snafu::Snafu;
 use std::collections::HashMap;
@@ -28,7 +27,6 @@ use std::sync::Arc;
 use tracing::info;
 
 mod admin;
-mod cache;
 mod stats;
 
 /// UUID for the admin server plugin, generated at runtime
@@ -110,21 +108,6 @@ pub fn parse_admin_plugin(
 pub enum Error {
     #[snafu(display("Plugin {category} invalid, message: {message}"))]
     Invalid { category: String, message: String },
-    #[snafu(display("Plugin {category}, base64 decode error {source}"))]
-    Base64Decode {
-        category: String,
-        source: base64::DecodeError,
-    },
-    #[snafu(display("Plugin {category}, base64 decode error {source}"))]
-    ParseDuration {
-        category: String,
-        source: humantime::DurationError,
-    },
-    #[snafu(display("Plugin {category}, regex error {source}"))]
-    Regex {
-        category: String,
-        source: Box<fancy_regex::Error>,
-    },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -240,120 +223,32 @@ static PLUGINS: Lazy<ArcSwap<Plugins>> =
 /// # Errors
 /// Returns Error if plugin initialization fails
 pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
-    let mut plguins: Plugins = AHashMap::new();
+    let mut plugins: Plugins = AHashMap::new();
     for (name, conf) in confs.iter() {
         let name = name.to_string();
-        let category = conf.get("category");
-        if category.is_none() {
+        let category = if let Some(value) = conf.get("category") {
+            value.as_str().unwrap_or_default().to_string()
+        } else {
+            "".to_string()
+        };
+        if category.is_empty() {
             return Err(Error::Invalid {
                 category: "".to_string(),
                 message: "Category can not be empty".to_string(),
             });
         }
-        let category = PluginCategory::from_str(
-            category.unwrap().as_str().unwrap_or_default(),
-        )
-        .unwrap_or_default();
-        match category {
-            // PluginCategory::Limit => {
-            //     let l = limit::Limiter::new(conf)?;
-            //     plguins.insert(name, Arc::new(l));
-            // },
-            // PluginCategory::Compression => {
-            //     let c = compression::Compression::new(conf)?;
-            //     plguins.insert(name, Arc::new(c));
-            // },
-            PluginCategory::Stats => {
-                let s = stats::Stats::new(conf)?;
-                plguins.insert(name, Arc::new(s));
-            },
-            PluginCategory::Admin => {
-                let a = admin::AdminServe::new(conf)?;
-                plguins.insert(name, Arc::new(a));
-            },
-            // PluginCategory::Directory => {
-            //     let d = directory::Directory::new(conf)?;
-            //     plguins.insert(name, Arc::new(d));
-            // },
-            // PluginCategory::Mock => {
-            //     let m = mock::MockResponse::new(conf)?;
-            //     plguins.insert(name, Arc::new(m));
-            // },
-            // PluginCategory::RequestId => {
-            //     let r = request_id::RequestId::new(conf)?;
-            //     plguins.insert(name, Arc::new(r));
-            // },
-            // PluginCategory::IpRestriction => {
-            //     let l = ip_restriction::IpRestriction::new(conf)?;
-            //     plguins.insert(name, Arc::new(l));
-            // },
-            // PluginCategory::KeyAuth => {
-            //     let k = key_auth::KeyAuth::new(conf)?;
-            //     plguins.insert(name, Arc::new(k));
-            // },
-            // PluginCategory::BasicAuth => {
-            //     let b = basic_auth::BasicAuth::new(conf)?;
-            //     plguins.insert(name, Arc::new(b));
-            // },
-            // PluginCategory::CombinedAuth => {
-            //     let c = combined_auth::CombinedAuth::new(conf)?;
-            //     plguins.insert(name, Arc::new(c));
-            // },
-            PluginCategory::Cache => {
-                let c = cache::Cache::new(conf)?;
-                plguins.insert(name, Arc::new(c));
-            },
-            // PluginCategory::Redirect => {
-            //     let r = redirect::Redirect::new(conf)?;
-            //     plguins.insert(name, Arc::new(r));
-            // },
-            // PluginCategory::Ping => {
-            //     let p = ping::Ping::new(conf)?;
-            //     plguins.insert(name, Arc::new(p));
-            // },
-            // PluginCategory::ResponseHeaders => {
-            //     let r = response_headers::ResponseHeaders::new(conf)?;
-            //     plguins.insert(name, Arc::new(r));
-            // },
-            // PluginCategory::RefererRestriction => {
-            //     let r = referer_restriction::RefererRestriction::new(conf)?;
-            //     plguins.insert(name, Arc::new(r));
-            // },
-            // PluginCategory::UaRestriction => {
-            //     let u = ua_restriction::UaRestriction::new(conf)?;
-            //     plguins.insert(name, Arc::new(u));
-            // },
-            // PluginCategory::Csrf => {
-            //     let c = csrf::Csrf::new(conf)?;
-            //     plguins.insert(name, Arc::new(c));
-            // },
-            // PluginCategory::Jwt => {
-            //     let auth = jwt::JwtAuth::new(conf)?;
-            //     plguins.insert(name.clone(), Arc::new(auth));
-            // },
-            // PluginCategory::Cors => {
-            //     let cors = cors::Cors::new(conf)?;
-            //     plguins.insert(name.clone(), Arc::new(cors));
-            // },
-            // PluginCategory::AcceptEncoding => {
-            //     let accept_encoding =
-            //         accept_encoding::AcceptEncoding::new(conf)?;
-            //     plguins.insert(name.clone(), Arc::new(accept_encoding));
-            // },
-            _ => {
-                let plugin =
-                    get_plugin_factory().create(conf).map_err(|e| {
-                        Error::Invalid {
-                            category: "".to_string(),
-                            message: e.to_string(),
-                        }
-                    })?;
-                plguins.insert(name.clone(), plugin.clone());
-            },
-        };
+
+        let plugin =
+            get_plugin_factory()
+                .create(conf)
+                .map_err(|e| Error::Invalid {
+                    category,
+                    message: e.to_string(),
+                })?;
+        plugins.insert(name.clone(), plugin.clone());
     }
 
-    Ok(plguins)
+    Ok(plugins)
 }
 
 /// Initializes or updates plugins based on configuration.
@@ -436,14 +331,6 @@ pub(crate) fn get_int_conf(value: &PluginConf, key: &str) -> i64 {
         value.as_integer().unwrap_or_default()
     } else {
         0
-    }
-}
-
-pub(crate) fn get_bool_conf(value: &PluginConf, key: &str) -> bool {
-    if let Some(value) = value.get(key) {
-        value.as_bool().unwrap_or_default()
-    } else {
-        false
     }
 }
 

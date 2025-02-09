@@ -26,6 +26,7 @@ uuid = { version = "1.12.1", features = [
     "fast-rng",
 ], default-features = false }
 bstr = "1.11.3"
+fancy-regex = "0.14.0"
 url = { workspace = true }
 urlencoding = { workspace = true }
 bytesize = { workspace = true }
@@ -57,6 +58,7 @@ pingap-http-extra = { path = "../pingap-http-extra" }
 pingap-state = { path = "../pingap-state" }
 pingap-config = { path = "../pingap-config" }
 pingap-util = { path = "../pingap-util" }
+pingap-cache = { path = "../pingap-cache" }
 
 
 [dev-dependencies]

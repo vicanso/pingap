@@ -12,19 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_hash_key, get_step_conf, get_str_conf, Error, Plugin, Result};
+use super::{get_hash_key, get_step_conf, get_str_conf, Plugin};
 use crate::process::get_start_time;
 use async_trait::async_trait;
 use bytes::Bytes;
+use ctor::ctor;
 use pingap_config::{PluginCategory, PluginConf, PluginStep};
 use pingap_http_extra::HttpResponse;
 use pingap_performance::{get_process_system_info, get_processing_accepted};
+use pingap_plugin::{get_plugin_factory, Error};
 use pingap_state::Ctx;
 use pingap_util::get_hostname;
 use pingora::proxy::Session;
 use serde::Serialize;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::debug;
+
+type Result<T> = std::result::Result<T, Error>;
 
 /// ServerStats collects and represents comprehensive server metrics including:
 /// - Request processing statistics
@@ -189,6 +194,12 @@ impl Plugin for Stats {
         }
         Ok(None)
     }
+}
+
+#[ctor]
+fn init() {
+    get_plugin_factory()
+        .register("stats", |params| Ok(Arc::new(Stats::new(params)?)));
 }
 
 #[cfg(test)]
