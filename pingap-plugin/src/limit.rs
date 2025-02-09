@@ -13,10 +13,11 @@
 // limitations under the License.
 
 use super::{
-    get_hash_key, get_int_conf, get_step_conf, get_str_conf, Error, Plugin,
-    Result,
+    get_hash_key, get_int_conf, get_plugin_factory, get_step_conf,
+    get_str_conf, Error, Plugin,
 };
 use async_trait::async_trait;
+use ctor::ctor;
 use http::StatusCode;
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf, PluginStep};
@@ -25,8 +26,11 @@ use pingap_state::Ctx;
 use pingora::proxy::Session;
 use pingora_limits::inflight::Inflight;
 use pingora_limits::rate::Rate;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::debug;
+
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 // LimitTag determines what value will be used as the rate limiting key
 #[derive(PartialEq, Debug)]
@@ -304,10 +308,15 @@ impl Plugin for Limiter {
     }
 }
 
+#[ctor]
+fn init() {
+    get_plugin_factory()
+        .register("limit", |params| Ok(Arc::new(Limiter::new(params)?)));
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{LimitTag, Limiter};
-    use pingap_plugin::Plugin;
+    use super::*;
     use http::StatusCode;
     use pingap_config::{PluginConf, PluginStep};
     use pingap_state::Ctx;

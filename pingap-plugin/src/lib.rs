@@ -12,15 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use pingap_config::PluginConf;
+use pingap_config::{PluginConf, PluginStep};
 use snafu::Snafu;
+use std::str::FromStr;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Plugin poisoned, {message}"))]
-    Poisoned { message: String },
+    #[snafu(display("Plugin {category} invalid, message: {message}"))]
+    Invalid { category: String, message: String },
     #[snafu(display("Plugin {category} not found"))]
     NotFound { category: String },
+    #[snafu(display("Plugin {category}, base64 decode error {source}"))]
+    Base64Decode {
+        category: String,
+        source: base64::DecodeError,
+    },
+    #[snafu(display("Plugin {category}, exceed limit {value}/{max}"))]
+    Exceed {
+        category: String,
+        max: isize,
+        value: isize,
+    },
 }
 
 /// Helper functions for accessing plugin configuration values
@@ -32,12 +44,44 @@ pub(crate) fn get_str_conf(value: &PluginConf, key: &str) -> String {
     }
 }
 
+pub(crate) fn get_str_slice_conf(value: &PluginConf, key: &str) -> Vec<String> {
+    if let Some(value) = value.get(key) {
+        if let Some(values) = value.as_array() {
+            return values
+                .iter()
+                .map(|item| item.as_str().unwrap_or_default().to_string())
+                .collect();
+        }
+    }
+    vec![]
+}
+
 pub(crate) fn get_bool_conf(value: &PluginConf, key: &str) -> bool {
     if let Some(value) = value.get(key) {
         value.as_bool().unwrap_or_default()
     } else {
         false
     }
+}
+
+pub(crate) fn get_int_conf(value: &PluginConf, key: &str) -> i64 {
+    if let Some(value) = value.get(key) {
+        value.as_integer().unwrap_or_default()
+    } else {
+        0
+    }
+}
+
+pub(crate) fn get_step_conf(
+    value: &PluginConf,
+    default_value: PluginStep,
+) -> PluginStep {
+    let step = get_str_conf(value, "step");
+    if step.is_empty() {
+        return default_value;
+    }
+
+    PluginStep::from_str(step.as_str()).unwrap_or(default_value)
 }
 
 /// Generates a unique hash key for a plugin configuration to detect changes.
@@ -65,6 +109,25 @@ pub(crate) fn get_hash_key(conf: &PluginConf) -> String {
 }
 
 mod accept_encoding;
+mod basic_auth;
+mod combined_auth;
+mod compression;
+mod cors;
+mod csrf;
+mod directory;
+mod ip_restriction;
+mod jwt;
+mod key_auth;
+mod limit;
+mod mock;
+mod ping;
+mod redirect;
+mod referer_restriction;
+mod request_id;
+mod response_headers;
+mod sub_filter;
+mod ua_restriction;
+
 mod plugin;
 
 pub use plugin::{get_plugin_factory, Plugin};

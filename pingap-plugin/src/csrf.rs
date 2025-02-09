@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_hash_key, get_str_conf, Error, Plugin, Result};
+use super::{get_hash_key, get_plugin_factory, get_str_conf, Error, Plugin};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cookie::Cookie;
+use ctor::ctor;
 use http::{header, HeaderValue, Method, StatusCode};
 use humantime::parse_duration;
 use nanoid::nanoid;
@@ -25,7 +26,10 @@ use pingap_state::Ctx;
 use pingap_util::base64_encode;
 use pingora::proxy::Session;
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 use tracing::debug;
+
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// CSRF protection plugin that implements double-submit cookie pattern
 ///
@@ -302,12 +306,17 @@ impl Plugin for Csrf {
     }
 }
 
+#[ctor]
+fn init() {
+    get_plugin_factory()
+        .register("csrf", |params| Ok(Arc::new(Csrf::new(params)?)));
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{generate_token, validate_token, Csrf};
+    use super::*;
     use cookie::Cookie;
     use pingap_config::{PluginConf, PluginStep};
-    use pingap_plugin::Plugin;
     use pingap_state::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;

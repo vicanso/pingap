@@ -13,11 +13,13 @@
 // limitations under the License.
 
 use super::{
-    get_hash_key, get_str_conf, get_str_slice_conf, Error, Plugin, Result,
+    get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf, Error,
+    Plugin,
 };
 use async_trait::async_trait;
 use bstr::ByteSlice;
 use bytes::Bytes;
+use ctor::ctor;
 use once_cell::sync::Lazy;
 use pingap_config::{PluginCategory, PluginConf, PluginStep};
 use pingap_http_extra::HTTP_HEADER_TRANSFER_CHUNKED;
@@ -26,6 +28,9 @@ use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::bytes::RegexBuilder;
 use regex::Regex;
+use std::sync::Arc;
+
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// SubFilter plugin for modifying response content using pattern matching and replacement.
 /// This plugin supports two types of content replacement:
@@ -259,9 +264,15 @@ impl Plugin for SubFilter {
     }
 }
 
+#[ctor]
+fn init() {
+    get_plugin_factory()
+        .register("sub_filter", |params| Ok(Arc::new(SubFilter::new(params)?)));
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{parse_subs_filter, SubFilterReplacer};
+    use super::*;
     use bytes::Bytes;
     use pingap_state::ModifyResponseBody;
     use pretty_assertions::assert_eq;

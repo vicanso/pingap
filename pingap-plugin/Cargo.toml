@@ -15,9 +15,38 @@ path = "src/lib.rs"
 
 [dependencies]
 smallvec = "1.13.2"
+dashmap = "6.1.0"
+ctor = "0.2.9"
+sha2 = { version = "0.10.8", default-features = false }
+hmac-sha256 = "1.1.8"
+hmac-sha512 = { version = "1.1.6", default-features = false }
+uuid = { version = "1.12.1", features = [
+    "v7",
+    "std",
+    "fast-rng",
+], default-features = false }
+bstr = "1.11.3"
+url = { workspace = true }
+urlencoding = { workspace = true }
+bytesize = { workspace = true }
+glob = { workspace = true }
 async-trait = { workspace = true }
+bytes = { workspace = true }
+base64 = { workspace = true }
+humantime = { workspace = true }
+pingora-limits = { workspace = true }
 pingora = { workspace = true }
 snafu = { workspace = true }
+ahash = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+cookie = { workspace = true }
+substring = { workspace = true }
+mime_guess = { workspace = true }
+nanoid = { workspace = true }
+regex = { workspace = true }
+hex = { workspace = true }
+chrono = { workspace = true }
 once_cell = { workspace = true }
 crc32fast = { workspace = true }
 toml = { workspace = true }
@@ -27,8 +56,7 @@ http = { workspace = true }
 pingap-http-extra = { path = "../pingap-http-extra" }
 pingap-state = { path = "../pingap-state" }
 pingap-config = { path = "../pingap-config" }
-dashmap = "6.1.0"
-ctor = "0.2.9"
+pingap-util = { path = "../pingap-util" }
 
 
 [dev-dependencies]

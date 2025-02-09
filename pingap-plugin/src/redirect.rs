@@ -12,15 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_bool_conf, get_str_conf, Plugin, Result};
-use crate::plugin::get_hash_key;
+use super::{
+    get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf, Error,
+    Plugin,
+};
 use async_trait::async_trait;
+use ctor::ctor;
 use http::StatusCode;
 use pingap_config::{PluginConf, PluginStep};
 use pingap_http_extra::{convert_headers, HttpResponse};
 use pingap_state::Ctx;
 use pingora::proxy::Session;
+use std::sync::Arc;
 use tracing::debug;
+
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// A plugin that handles HTTP/HTTPS redirects and path prefix modifications.
 ///
@@ -169,10 +175,16 @@ impl Plugin for Redirect {
         }))
     }
 }
+
+#[ctor]
+fn init() {
+    get_plugin_factory()
+        .register("redirect", |params| Ok(Arc::new(Redirect::new(params)?)));
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Redirect;
-    use pingap_plugin::Plugin;
+    use super::*;
     use http::StatusCode;
     use pingap_config::{PluginConf, PluginStep};
     use pingap_state::Ctx;

@@ -450,8 +450,8 @@ impl Plugin for Cache {
 #[cfg(test)]
 mod tests {
     use super::Cache;
-    use pingap_plugin::Plugin;
     use pingap_config::{PluginConf, PluginStep};
+    use pingap_plugin::Plugin;
     use pingap_state::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;

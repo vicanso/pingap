@@ -13,16 +13,21 @@
 // limitations under the License.
 
 use super::{
-    get_hash_key, get_str_conf, get_str_slice_conf, Error, Plugin, Result,
+    get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf, Error,
+    Plugin,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
+use ctor::ctor;
 use http::StatusCode;
 use pingap_config::{PluginConf, PluginStep};
 use pingap_http_extra::HttpResponse;
 use pingap_state::Ctx;
 use pingora::proxy::Session;
+use std::sync::Arc;
 use tracing::debug;
+
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// IpRestriction plugin provides IP-based access control for HTTP requests.
 /// It can be configured to either allow or deny requests based on client IP addresses.
@@ -173,10 +178,16 @@ impl Plugin for IpRestriction {
     }
 }
 
+#[ctor]
+fn init() {
+    get_plugin_factory().register("ip_restriction", |params| {
+        Ok(Arc::new(IpRestriction::new(params)?))
+    });
+}
+
 #[cfg(test)]
 mod tests {
-    use super::IpRestriction;
-    use pingap_plugin::Plugin;
+    use super::*;
     use http::StatusCode;
     use pingap_config::{PluginConf, PluginStep};
     use pingap_state::Ctx;

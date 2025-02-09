@@ -26,6 +26,7 @@ use pingap_location::try_init_locations;
 #[cfg(feature = "full")]
 use pingap_otel::TracerService;
 use pingap_performance::new_performance_metrics_log_service;
+use pingap_plugin::get_plugin_factory;
 use pingap_service::new_simple_service_task;
 use pingap_upstream::{new_upstream_health_check_task, try_init_upstreams};
 use pingora::server;
@@ -461,6 +462,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         ));
     }
 
+    info!(
+        "plugins" = get_plugin_factory().supported_plugins().join(","),
+        "plugins are registered"
+    );
     if let Err(e) = plugin::try_init_plugins(&conf.plugins) {
         error!(error = e.to_string(), "init plugins fail",);
     }

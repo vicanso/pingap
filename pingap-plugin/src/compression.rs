@@ -12,15 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_bool_conf, get_hash_key, get_int_conf, Error, Plugin, Result};
+use super::{
+    get_bool_conf, get_hash_key, get_int_conf, get_plugin_factory, Error,
+    Plugin,
+};
 use async_trait::async_trait;
+use ctor::ctor;
 use pingap_config::{PluginConf, PluginStep};
 use pingap_http_extra::HttpResponse;
 use pingap_state::Ctx;
 use pingora::modules::http::compression::ResponseCompression;
 use pingora::protocols::http::compression::Algorithm;
 use pingora::proxy::Session;
+use std::sync::Arc;
 use tracing::debug;
+
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 // Constants defining supported compression algorithm identifiers
 const ZSTD: &str = "zstd"; // Zstandard compression
@@ -204,10 +211,16 @@ impl Plugin for Compression {
     }
 }
 
+#[ctor]
+fn init() {
+    get_plugin_factory().register("compression", |params| {
+        Ok(Arc::new(Compression::new(params)?))
+    });
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Compression;
-    use pingap_plugin::Plugin;
+    use super::*;
     use pingap_config::{PluginConf, PluginStep};
     use pingap_state::Ctx;
     use pingora::modules::http::compression::{

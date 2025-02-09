@@ -13,10 +13,11 @@
 // limitations under the License.
 
 use super::{
-    get_hash_key, get_int_conf, get_step_conf, get_str_conf, Error, Plugin,
-    Result,
+    get_hash_key, get_int_conf, get_plugin_factory, get_step_conf,
+    get_str_conf, Error, Plugin,
 };
 use async_trait::async_trait;
+use ctor::ctor;
 use http::HeaderName;
 use nanoid::nanoid;
 use pingap_config::{PluginCategory, PluginConf, PluginStep};
@@ -24,8 +25,11 @@ use pingap_http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use pingap_state::Ctx;
 use pingora::proxy::Session;
 use std::str::FromStr;
+use std::sync::Arc;
 use tracing::debug;
 use uuid::Uuid;
+
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Represents a plugin that handles request ID generation and management.
 /// This plugin can either use existing request IDs from incoming requests
@@ -211,10 +215,15 @@ impl Plugin for RequestId {
     }
 }
 
+#[ctor]
+fn init() {
+    get_plugin_factory()
+        .register("request_id", |params| Ok(Arc::new(RequestId::new(params)?)));
+}
+
 #[cfg(test)]
 mod tests {
-    use super::RequestId;
-    use pingap_plugin::Plugin;
+    use super::*;
     use pingap_config::{PluginConf, PluginStep};
     use pingap_state::Ctx;
     use pingora::proxy::Session;

@@ -13,11 +13,12 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf, Error,
-    Plugin, Result,
+    get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf,
+    get_str_slice_conf, Error, Plugin,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
+use ctor::ctor;
 use http::{HeaderName, StatusCode};
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf, PluginStep};
@@ -25,9 +26,12 @@ use pingap_http_extra::HttpResponse;
 use pingap_state::Ctx;
 use pingora::proxy::Session;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, error};
+
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// KeyAuth plugin provides key-based authentication for HTTP requests.
 /// It supports two authentication methods:
@@ -182,6 +186,12 @@ impl KeyAuth {
     }
 }
 
+#[ctor]
+fn init() {
+    get_plugin_factory()
+        .register("key_auth", |params| Ok(Arc::new(KeyAuth::new(params)?)));
+}
+
 #[async_trait]
 impl Plugin for KeyAuth {
     /// Returns the unique hash key for this plugin instance.
@@ -281,8 +291,7 @@ impl Plugin for KeyAuth {
 
 #[cfg(test)]
 mod tests {
-    use super::KeyAuth;
-    use pingap_plugin::Plugin;
+    use super::*;
     use pingap_config::{PluginConf, PluginStep};
     use pingap_state::Ctx;
     use pingora::proxy::Session;

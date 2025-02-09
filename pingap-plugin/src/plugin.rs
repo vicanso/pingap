@@ -68,10 +68,13 @@ impl PluginFactory {
     }
 
     pub fn supported_plugins(&self) -> Vec<String> {
-        self.plugins
+        let mut plugins = self
+            .plugins
             .iter()
             .map(|item| item.key().clone())
-            .collect::<Vec<String>>()
+            .collect::<Vec<String>>();
+        plugins.sort();
+        plugins
     }
 
     /// Register a new plugin creator function

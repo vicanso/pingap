@@ -12,8 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_bool_conf, get_hash_key, get_str_conf, Error, Plugin, Result};
+use super::{
+    get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf, Error,
+    Plugin,
+};
 use async_trait::async_trait;
+use ctor::ctor;
 use http::{header, HeaderValue};
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf, PluginStep};
@@ -22,8 +26,11 @@ use pingap_state::{convert_header_value, Ctx};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::Regex;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::debug;
+
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// CORS (Cross-Origin Resource Sharing) plugin for handling cross-origin requests
 /// Supports both preflight requests and actual CORS requests with configurable rules
@@ -303,11 +310,16 @@ impl Plugin for Cors {
     }
 }
 
+#[ctor]
+fn init() {
+    get_plugin_factory()
+        .register("cors", |params| Ok(Arc::new(Cors::new(params)?)));
+}
+
 #[cfg(test)]
 mod tests {
     /// Tests CORS plugin configuration parsing
-    use super::Cors;
-    use pingap_plugin::Plugin;
+    use super::*;
     use pingap_config::{PluginConf, PluginStep};
     use pingap_state::Ctx;
     use pingora::{http::ResponseHeader, proxy::Session};

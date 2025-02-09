@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_hash_key, get_str_conf, Error, Plugin, Result};
+use super::{get_hash_key, get_plugin_factory, get_str_conf, Error, Plugin};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
+use ctor::ctor;
 use http::StatusCode;
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf, PluginStep};
@@ -26,10 +27,13 @@ use pingap_state::{Ctx, ModifyResponseBody};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::Duration;
 use substring::Substring;
 use tokio::time::sleep;
 use tracing::debug;
+
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// JwtAuth struct holds configuration for JWT authentication and validation.
 ///
@@ -371,10 +375,15 @@ impl ModifyResponseBody for Sign {
     }
 }
 
+#[ctor]
+fn init() {
+    get_plugin_factory()
+        .register("jwt", |params| Ok(Arc::new(JwtAuth::new(params)?)));
+}
+
 #[cfg(test)]
 mod tests {
-    use super::JwtAuth;
-    use pingap_plugin::Plugin;
+    use super::*;
     use bytes::Bytes;
     use pingap_config::{PluginConf, PluginStep};
     use pingap_state::Ctx;

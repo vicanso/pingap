@@ -12,18 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_str_conf, Error, Plugin, Result};
-use crate::plugin::{get_hash_key, get_int_conf, get_str_slice_conf};
+use super::{
+    get_hash_key, get_int_conf, get_plugin_factory, get_str_conf,
+    get_str_slice_conf, Error, Plugin,
+};
 use async_trait::async_trait;
+use ctor::ctor;
 use http::StatusCode;
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf, PluginStep};
 use pingap_http_extra::{convert_headers, HttpResponse};
 use pingap_state::Ctx;
 use pingora::proxy::Session;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::debug;
+
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// MockResponse provides a configurable way to return mock HTTP responses for testing and development.
 /// It can match specific paths and introduce artificial delays to simulate various scenarios.
@@ -178,10 +184,15 @@ impl Plugin for MockResponse {
     }
 }
 
+#[ctor]
+fn init() {
+    get_plugin_factory()
+        .register("mock", |params| Ok(Arc::new(MockResponse::new(params)?)));
+}
+
 #[cfg(test)]
 mod tests {
-    use super::MockResponse;
-    use pingap_plugin::Plugin;
+    use super::*;
     use bytes::Bytes;
     use http::StatusCode;
     use pingap_config::{PluginConf, PluginStep};

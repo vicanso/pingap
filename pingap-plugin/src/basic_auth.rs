@@ -13,11 +13,12 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf, Error,
-    Plugin, Result,
+    get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf,
+    get_str_slice_conf, Error, Plugin,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
+use ctor::ctor;
 use http::HeaderValue;
 use http::StatusCode;
 use humantime::parse_duration;
@@ -26,9 +27,12 @@ use pingap_http_extra::HttpResponse;
 use pingap_state::Ctx;
 use pingap_util::base64_decode;
 use pingora::proxy::Session;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::debug;
+
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// BasicAuth implements HTTP Basic Authentication functionality for HTTP requests.
 ///
@@ -217,6 +221,13 @@ impl Plugin for BasicAuth {
         // Authentication successful - continue request processing
         return Ok(None);
     }
+}
+
+#[ctor]
+fn init() {
+    let factory = get_plugin_factory();
+    factory
+        .register("basic_auth", |params| Ok(Arc::new(BasicAuth::new(params)?)));
 }
 
 #[cfg(test)]

@@ -13,12 +13,13 @@
 // limitations under the License.
 
 use super::{
-    get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf, Error,
-    Plugin, Result,
+    get_hash_key, get_int_conf, get_plugin_factory, get_str_conf,
+    get_str_slice_conf, Error, Plugin,
 };
 use ahash::AHashMap;
 use async_trait::async_trait;
 use bytes::Bytes;
+use ctor::ctor;
 use hex::ToHex;
 use http::StatusCode;
 use pingap_config::{PluginConf, PluginStep};
@@ -26,8 +27,10 @@ use pingap_http_extra::{HttpResponse, HTTP_HEADER_NO_STORE};
 use pingap_state::Ctx;
 use pingora::proxy::Session;
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 use tracing::debug;
 
+type Result<T, E = Error> = std::result::Result<T, E>;
 // AuthParam defines the authentication configuration for a single application
 struct AuthParam {
     // Optional IP rules for restricting access to specific IP addresses or CIDR ranges
@@ -283,6 +286,13 @@ impl Plugin for CombinedAuth {
 
         Ok(None)
     }
+}
+
+#[ctor]
+fn init() {
+    get_plugin_factory().register("combined_auth", |params| {
+        Ok(Arc::new(CombinedAuth::new(params)?))
+    });
 }
 
 #[cfg(test)]

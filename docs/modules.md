@@ -50,6 +50,11 @@ graph TD
     performance --> upstream
     performance --> util
 
+    plugin --> config
+    plugin --> http-extra
+    plugin --> state
+    plugin --> util
+
     state --> config
     state --> location
     state --> upstream
@@ -75,6 +80,7 @@ graph TD
     pingap --> logger
     pingap --> otel
     pingap --> performance
+    pingap --> plugin
     pingap --> pyroscope
     pingap --> sentry
     pingap --> service

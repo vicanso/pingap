@@ -13,11 +13,12 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_hash_key, get_step_conf, get_str_conf,
-    get_str_slice_conf, Error, Plugin, Result,
+    get_bool_conf, get_hash_key, get_plugin_factory, get_step_conf,
+    get_str_conf, get_str_slice_conf, Error, Plugin,
 };
 use async_trait::async_trait;
 use bytesize::ByteSize;
+use ctor::ctor;
 use glob::glob;
 use http::{header, HeaderValue, StatusCode};
 use humantime::parse_duration;
@@ -35,12 +36,15 @@ use std::os::unix::fs::MetadataExt;
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 use substring::Substring;
 use tokio::fs;
 use tokio::io::AsyncReadExt;
 use tracing::{debug, error};
 use urlencoding::decode;
+
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 // Static HTML template for directory listing view
 // Includes basic styling and JavaScript for date formatting
@@ -515,10 +519,15 @@ impl Plugin for Directory {
     }
 }
 
+#[ctor]
+fn init() {
+    get_plugin_factory()
+        .register("directory", |params| Ok(Arc::new(Directory::new(params)?)));
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{get_cacheable_and_headers_from_meta, get_data, Directory};
-    use pingap_plugin::Plugin;
+    use super::*;
     use pingap_config::{PluginConf, PluginStep};
     use pingap_state::Ctx;
     use pingora::proxy::Session;

@@ -13,17 +13,22 @@
 // limitations under the License.
 
 use super::{
-    get_hash_key, get_str_conf, get_str_slice_conf, Error, Plugin, Result,
+    get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf, Error,
+    Plugin,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
+use ctor::ctor;
 use http::StatusCode;
 use pingap_config::{PluginConf, PluginStep};
 use pingap_http_extra::HttpResponse;
 use pingap_state::Ctx;
 use pingora::proxy::Session;
+use std::sync::Arc;
 use substring::Substring;
 use tracing::debug;
+
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// A plugin that controls access to resources based on the HTTP Referer header
 ///
@@ -202,10 +207,17 @@ impl Plugin for RefererRestriction {
         return Ok(None);
     }
 }
+
+#[ctor]
+fn init() {
+    get_plugin_factory().register("referer_restriction", |params| {
+        Ok(Arc::new(RefererRestriction::new(params)?))
+    });
+}
+
 #[cfg(test)]
 mod tests {
-    use super::RefererRestriction;
-    use pingap_plugin::Plugin;
+    use super::*;
     use http::StatusCode;
     use pingap_config::{PluginConf, PluginStep};
     use pingap_state::Ctx;

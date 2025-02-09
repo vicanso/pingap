@@ -28,26 +28,8 @@ use std::sync::Arc;
 use tracing::info;
 
 mod admin;
-mod basic_auth;
 mod cache;
-mod combined_auth;
-mod compression;
-mod cors;
-mod csrf;
-mod directory;
-mod ip_restriction;
-mod jwt;
-mod key_auth;
-mod limit;
-mod mock;
-mod ping;
-mod redirect;
-mod referer_restriction;
-mod request_id;
-mod response_headers;
 mod stats;
-mod sub_filter;
-mod ua_restriction;
 
 /// UUID for the admin server plugin, generated at runtime
 pub static ADMIN_SERVER_PLUGIN: Lazy<String> =
@@ -128,12 +110,6 @@ pub fn parse_admin_plugin(
 pub enum Error {
     #[snafu(display("Plugin {category} invalid, message: {message}"))]
     Invalid { category: String, message: String },
-    #[snafu(display("Plugin {category}, exceed limit {value}/{max}"))]
-    Exceed {
-        category: String,
-        max: isize,
-        value: isize,
-    },
     #[snafu(display("Plugin {category}, base64 decode error {source}"))]
     Base64Decode {
         category: String,
@@ -279,14 +255,14 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
         )
         .unwrap_or_default();
         match category {
-            PluginCategory::Limit => {
-                let l = limit::Limiter::new(conf)?;
-                plguins.insert(name, Arc::new(l));
-            },
-            PluginCategory::Compression => {
-                let c = compression::Compression::new(conf)?;
-                plguins.insert(name, Arc::new(c));
-            },
+            // PluginCategory::Limit => {
+            //     let l = limit::Limiter::new(conf)?;
+            //     plguins.insert(name, Arc::new(l));
+            // },
+            // PluginCategory::Compression => {
+            //     let c = compression::Compression::new(conf)?;
+            //     plguins.insert(name, Arc::new(c));
+            // },
             PluginCategory::Stats => {
                 let s = stats::Stats::new(conf)?;
                 plguins.insert(name, Arc::new(s));
@@ -295,79 +271,75 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
                 let a = admin::AdminServe::new(conf)?;
                 plguins.insert(name, Arc::new(a));
             },
-            PluginCategory::Directory => {
-                let d = directory::Directory::new(conf)?;
-                plguins.insert(name, Arc::new(d));
-            },
-            PluginCategory::Mock => {
-                let m = mock::MockResponse::new(conf)?;
-                plguins.insert(name, Arc::new(m));
-            },
-            PluginCategory::RequestId => {
-                let r = request_id::RequestId::new(conf)?;
-                plguins.insert(name, Arc::new(r));
-            },
-            PluginCategory::IpRestriction => {
-                let l = ip_restriction::IpRestriction::new(conf)?;
-                plguins.insert(name, Arc::new(l));
-            },
-            PluginCategory::KeyAuth => {
-                let k = key_auth::KeyAuth::new(conf)?;
-                plguins.insert(name, Arc::new(k));
-            },
-            PluginCategory::BasicAuth => {
-                let b = basic_auth::BasicAuth::new(conf)?;
-                plguins.insert(name, Arc::new(b));
-            },
-            PluginCategory::CombinedAuth => {
-                let c = combined_auth::CombinedAuth::new(conf)?;
-                plguins.insert(name, Arc::new(c));
-            },
+            // PluginCategory::Directory => {
+            //     let d = directory::Directory::new(conf)?;
+            //     plguins.insert(name, Arc::new(d));
+            // },
+            // PluginCategory::Mock => {
+            //     let m = mock::MockResponse::new(conf)?;
+            //     plguins.insert(name, Arc::new(m));
+            // },
+            // PluginCategory::RequestId => {
+            //     let r = request_id::RequestId::new(conf)?;
+            //     plguins.insert(name, Arc::new(r));
+            // },
+            // PluginCategory::IpRestriction => {
+            //     let l = ip_restriction::IpRestriction::new(conf)?;
+            //     plguins.insert(name, Arc::new(l));
+            // },
+            // PluginCategory::KeyAuth => {
+            //     let k = key_auth::KeyAuth::new(conf)?;
+            //     plguins.insert(name, Arc::new(k));
+            // },
+            // PluginCategory::BasicAuth => {
+            //     let b = basic_auth::BasicAuth::new(conf)?;
+            //     plguins.insert(name, Arc::new(b));
+            // },
+            // PluginCategory::CombinedAuth => {
+            //     let c = combined_auth::CombinedAuth::new(conf)?;
+            //     plguins.insert(name, Arc::new(c));
+            // },
             PluginCategory::Cache => {
                 let c = cache::Cache::new(conf)?;
                 plguins.insert(name, Arc::new(c));
             },
-            PluginCategory::Redirect => {
-                let r = redirect::Redirect::new(conf)?;
-                plguins.insert(name, Arc::new(r));
-            },
-            PluginCategory::Ping => {
-                let p = ping::Ping::new(conf)?;
-                plguins.insert(name, Arc::new(p));
-            },
-            PluginCategory::ResponseHeaders => {
-                let r = response_headers::ResponseHeaders::new(conf)?;
-                plguins.insert(name, Arc::new(r));
-            },
-            PluginCategory::RefererRestriction => {
-                let r = referer_restriction::RefererRestriction::new(conf)?;
-                plguins.insert(name, Arc::new(r));
-            },
-            PluginCategory::UaRestriction => {
-                let u = ua_restriction::UaRestriction::new(conf)?;
-                plguins.insert(name, Arc::new(u));
-            },
-            PluginCategory::Csrf => {
-                let c = csrf::Csrf::new(conf)?;
-                plguins.insert(name, Arc::new(c));
-            },
-            PluginCategory::Jwt => {
-                let auth = jwt::JwtAuth::new(conf)?;
-                plguins.insert(name.clone(), Arc::new(auth));
-            },
-            PluginCategory::Cors => {
-                let cors = cors::Cors::new(conf)?;
-                plguins.insert(name.clone(), Arc::new(cors));
-            },
+            // PluginCategory::Redirect => {
+            //     let r = redirect::Redirect::new(conf)?;
+            //     plguins.insert(name, Arc::new(r));
+            // },
+            // PluginCategory::Ping => {
+            //     let p = ping::Ping::new(conf)?;
+            //     plguins.insert(name, Arc::new(p));
+            // },
+            // PluginCategory::ResponseHeaders => {
+            //     let r = response_headers::ResponseHeaders::new(conf)?;
+            //     plguins.insert(name, Arc::new(r));
+            // },
+            // PluginCategory::RefererRestriction => {
+            //     let r = referer_restriction::RefererRestriction::new(conf)?;
+            //     plguins.insert(name, Arc::new(r));
+            // },
+            // PluginCategory::UaRestriction => {
+            //     let u = ua_restriction::UaRestriction::new(conf)?;
+            //     plguins.insert(name, Arc::new(u));
+            // },
+            // PluginCategory::Csrf => {
+            //     let c = csrf::Csrf::new(conf)?;
+            //     plguins.insert(name, Arc::new(c));
+            // },
+            // PluginCategory::Jwt => {
+            //     let auth = jwt::JwtAuth::new(conf)?;
+            //     plguins.insert(name.clone(), Arc::new(auth));
+            // },
+            // PluginCategory::Cors => {
+            //     let cors = cors::Cors::new(conf)?;
+            //     plguins.insert(name.clone(), Arc::new(cors));
+            // },
             // PluginCategory::AcceptEncoding => {
             //     let accept_encoding =
             //         accept_encoding::AcceptEncoding::new(conf)?;
             //     plguins.insert(name.clone(), Arc::new(accept_encoding));
             // },
-            PluginCategory::SubFilter => {
-                let s = sub_filter::SubFilter::new(conf)?;
-                plguins.insert(name.clone(), Arc::new(s));
-            },
             _ => {
                 let plugin =
                     get_plugin_factory().create(conf).map_err(|e| {

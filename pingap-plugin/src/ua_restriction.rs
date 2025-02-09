@@ -13,17 +13,22 @@
 // limitations under the License.
 
 use super::{
-    get_hash_key, get_str_conf, get_str_slice_conf, Error, Plugin, Result,
+    get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf, Error,
+    Plugin,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
+use ctor::ctor;
 use http::StatusCode;
 use pingap_config::{PluginConf, PluginStep};
 use pingap_http_extra::HttpResponse;
 use pingap_state::Ctx;
 use pingora::proxy::Session;
 use regex::Regex;
+use std::sync::Arc;
 use tracing::debug;
+
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// UaRestriction plugin allows filtering HTTP requests based on User-Agent patterns.
 /// Can be configured to either block specific user agents (deny mode) or only allow specific ones (allow mode).
@@ -203,12 +208,18 @@ impl Plugin for UaRestriction {
     }
 }
 
+#[ctor]
+fn init() {
+    get_plugin_factory().register("ua_restriction", |params| {
+        Ok(Arc::new(UaRestriction::new(params)?))
+    });
+}
+
 #[cfg(test)]
 mod tests {
-    use super::UaRestriction;
+    use super::*;
     use http::StatusCode;
     use pingap_config::{PluginConf, PluginStep};
-    use pingap_plugin::Plugin;
     use pingap_state::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
