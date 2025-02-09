@@ -3280,9 +3280,6 @@ dependencies = [
  "http 1.2.0",
  "itoa",
  "opentelemetry",
- "pingap-config",
- "pingap-location",
- "pingap-upstream",
  "pingap-util",
  "pingora",
  "pingora-limits",
@@ -3349,7 +3346,6 @@ name = "pingap-webhook"
 version = "0.9.10"
 dependencies = [
  "async-trait",
- "hostname 0.4.0",
  "once_cell",
  "pingap-util",
  "pingora",

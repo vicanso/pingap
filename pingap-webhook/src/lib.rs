@@ -159,11 +159,7 @@ pub async fn send_notification(params: SendNotificationParams) {
 
     let client = reqwest::Client::new();
     let mut data = serde_json::Map::new();
-    let hostname = hostname::get()
-        .unwrap_or_default()
-        .to_str()
-        .unwrap_or_default()
-        .to_string();
+    let hostname = pingap_util::get_hostname();
     // TODO get app name from config
     let name = "pingap".to_string();
     let color_type = match level {

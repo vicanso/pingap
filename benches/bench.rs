@@ -293,7 +293,7 @@ fn bench_logger_format(c: &mut Criterion) {
             upstream_connected: Some(10),
             upstream_processing_time: Some(50),
             upstream_response_time: Some(5),
-            location: None,
+            location: "".to_string(),
             connection_time: 300,
             tls_version: Some("tls1.2".to_string()),
             processing: 10,
@@ -314,7 +314,12 @@ fn bench_logger_format(c: &mut Criterion) {
 
 fn bench_get_location(c: &mut Criterion) {
     let mut map: AHashMap<String, Arc<Location>> = AHashMap::new();
-    for _ in 0..10 {
+    let id = nanoid!(6);
+    map.insert(
+        id.clone(),
+        Arc::new(Location::new(id.as_str(), &LocationConf::default()).unwrap()),
+    );
+    for _ in 0..20 {
         let id = nanoid!(6);
         map.insert(
             id.clone(),
@@ -326,9 +331,10 @@ fn bench_get_location(c: &mut Criterion) {
 
     let locations: ArcSwap<AHashMap<String, Arc<Location>>> =
         ArcSwap::from_pointee(map);
+    locations.load().get(&id).unwrap();
     c.bench_function("get location", |b| {
         b.iter(|| {
-            let _ = locations.load().get("1").cloned();
+            let _ = locations.load().get(&id).cloned();
         })
     });
 }

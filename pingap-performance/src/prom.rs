@@ -179,12 +179,8 @@ impl Prometheus {
     /// This method performs multiple metric updates but uses efficient
     /// atomic operations to minimize overhead.
     pub fn after(&self, session: &Session, ctx: &Ctx) {
-        let mut location = "";
-        let mut upstream = "";
-        if let Some(lo) = &ctx.location {
-            location = &lo.name;
-            upstream = &lo.upstream;
-        }
+        let location = &ctx.location;
+        let upstream = &ctx.upstream;
         let response_time =
             ((pingap_util::now_ms()) - ctx.created_at) as f64 / SECOND;
         // payload size(kb)
@@ -255,7 +251,7 @@ impl Prometheus {
 
         // upstream
         if !upstream.is_empty() {
-            let upstream_labels = &[upstream];
+            let upstream_labels = &[upstream.as_str()];
             if let Some(count) = ctx.upstream_connected {
                 self.upstream_connections
                     .with_label_values(upstream_labels)
@@ -801,12 +797,9 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
 mod tests {
     use super::new_prometheus;
     use http::StatusCode;
-    use pingap_config::LocationConf;
-    use pingap_location::Location;
     use pingap_state::{CompressionStat, Ctx};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
-    use std::sync::Arc;
     use std::time::Duration;
     use tokio_test::io::Builder;
 
@@ -831,15 +824,6 @@ mod tests {
         let p = new_prometheus("pingap").unwrap();
         p.before("");
 
-        let lo = Location::new(
-            "lo",
-            &LocationConf {
-                upstream: Some("upstream".to_string()),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-
         p.after(
             &session,
             &Ctx {
@@ -860,7 +844,8 @@ mod tests {
                     out_bytes: 512,
                     duration: Duration::from_millis(20),
                 }),
-                location: Some(Arc::new(lo)),
+                location: "lo".to_string(),
+                upstream: "upstream".to_string(),
                 ..Default::default()
             },
         );

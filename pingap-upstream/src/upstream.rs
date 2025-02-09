@@ -564,6 +564,9 @@ static UPSTREAM_MAP: Lazy<ArcSwap<Upstreams>> =
     Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
 
 pub fn get_upstream(name: &str) -> Option<Arc<Upstream>> {
+    if name.is_empty() {
+        return None;
+    }
     UPSTREAM_MAP.load().get(name).cloned()
 }
 

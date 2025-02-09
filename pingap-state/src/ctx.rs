@@ -16,8 +16,6 @@ use ahash::AHashMap;
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
 use http::Uri;
-use pingap_location::Location;
-use pingap_upstream::Upstream;
 use pingap_util::format_duration;
 use pingora::cache::CacheKey;
 
@@ -28,7 +26,7 @@ use opentelemetry::{
     Context,
 };
 use pingora_limits::inflight::Guard;
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 pub trait ModifyResponseBody: Sync + Send {
     fn handle(&self, data: Bytes) -> Bytes;
@@ -102,7 +100,7 @@ pub struct Ctx {
     /// Indicates if this connection is being reused
     pub connection_reused: bool,
     /// The location configuration handling this request
-    pub location: Option<Arc<Location>>,
+    pub location: String,
     /// Address of the upstream server
     pub upstream_address: String,
     /// Client's IP address
@@ -131,7 +129,7 @@ pub struct Ctx {
     pub cache_lock_time: Option<u64>,
     /// Maximum time-to-live for cache entries
     pub cache_max_ttl: Option<Duration>,
-    pub upstream: Option<Arc<Upstream>>,
+    pub upstream: String,
     /// Indicates if the upstream connection is being reused
     pub upstream_reused: bool,
     /// Number of requests being processed by upstream
@@ -309,8 +307,8 @@ impl Ctx {
                 }
             },
             "location" => {
-                if let Some(location) = &self.location {
-                    buf.extend(location.name.as_bytes())
+                if !self.location.is_empty() {
+                    buf.extend(self.location.as_bytes())
                 }
             },
             "connection_time" => {
@@ -395,10 +393,7 @@ pub fn get_cache_key(ctx: &Ctx, method: &str, uri: &Uri) -> CacheKey {
 mod tests {
     use super::*;
     use bytes::BytesMut;
-    use pingap_config::LocationConf;
-    use pingap_location::Location;
     use pretty_assertions::assert_eq;
-    use std::sync::Arc;
     use std::time::Duration;
 
     #[test]
@@ -477,15 +472,7 @@ mod tests {
                 .as_ref()
         );
 
-        ctx.location = Some(Arc::new(
-            Location::new(
-                "pingap",
-                &LocationConf {
-                    ..Default::default()
-                },
-            )
-            .unwrap(),
-        ));
+        ctx.location = "pingap".to_string();
         assert_eq!(
             b"pingap",
             ctx.append_value(BytesMut::new(), "location").as_ref()

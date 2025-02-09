@@ -528,7 +528,7 @@ impl Server {
         ctx: &Ctx,
         header: &mut RequestHeader,
     ) {
-        let Some(location) = &ctx.location else {
+        let Some(location) = get_location(&ctx.location) else {
             return;
         };
         // Helper closure to avoid code duplication
@@ -733,13 +733,16 @@ impl ProxyHttp for Server {
             return Ok(());
         };
 
+        let mut current_location = None;
+
         for name in locations.iter() {
             let Some(location) = get_location(name) else {
                 continue;
             };
+            current_location = Some(location.clone());
             let (matched, variables) = location.match_host_path(host, path);
             if matched {
-                ctx.location = Some(location);
+                ctx.location = location.name.clone();
                 if let Some(variables) = variables {
                     for (key, value) in variables.iter() {
                         ctx.add_variable(key, value);
@@ -751,12 +754,10 @@ impl ProxyHttp for Server {
         // set prometheus stats
         #[cfg(feature = "full")]
         if let Some(prom) = &self.prometheus {
-            let location_name =
-                ctx.location.as_ref().map_or("", |item| &item.name);
-            prom.before(location_name);
+            prom.before(&ctx.location);
         }
 
-        if let Some(location) = &ctx.location {
+        if let Some(location) = &current_location {
             location.validate_content_length(header).map_err(|e| {
                 pingap_util::new_internal_error(413, e.to_string())
             })?;
@@ -858,7 +859,7 @@ impl ProxyHttp for Server {
             return Ok(true);
         }
 
-        let Some(location) = &ctx.location else {
+        let Some(location) = get_location(&ctx.location) else {
             let host = pingap_util::get_host(header).unwrap_or_default();
             HttpResponse::unknown_error(Bytes::from(format!(
                 "Location not found, host:{host} path:{}",
@@ -903,7 +904,7 @@ impl ProxyHttp for Server {
     {
         debug!(category = LOG_CATEGORY, "--> proxy upstream filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- proxy upstream filter"););
-        if let Some(location) = &ctx.location {
+        if let Some(location) = get_location(&ctx.location) {
             let done = self
                 .handle_request_plugin(
                     PluginStep::ProxyUpstream,
@@ -930,7 +931,7 @@ impl ProxyHttp for Server {
         debug!(category = LOG_CATEGORY, "--> upstream peer");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream peer"););
         let mut location_name = "unknown".to_string();
-        let peer = if let Some(location) = &ctx.location {
+        let peer = if let Some(location) = get_location(&ctx.location) {
             location_name.clone_from(&location.name);
             if let Some(up) = get_upstream(&location.upstream) {
                 ctx.upstream_connected = up.connected();
@@ -949,7 +950,7 @@ impl ProxyHttp for Server {
                         ctx.upstream_address = peer.address().to_string();
                         peer
                     });
-                ctx.upstream = Some(up);
+                ctx.upstream = up.name.clone();
                 peer
             } else {
                 None
@@ -1045,7 +1046,7 @@ impl ProxyHttp for Server {
         defer!(debug!(category = LOG_CATEGORY, "<-- request body filter"););
         if let Some(buf) = body {
             ctx.payload_size += buf.len();
-            if let Some(location) = &ctx.location {
+            if let Some(location) = get_location(&ctx.location) {
                 location.client_body_size_limit(ctx.payload_size).map_err(
                     |e| pingap_util::new_internal_error(413, e.to_string()),
                 )?;
@@ -1171,7 +1172,7 @@ impl ProxyHttp for Server {
             }
         }
 
-        if let Some(location) = &ctx.location {
+        if let Some(location) = get_location(&ctx.location) {
             self.handle_response_plugin(
                 PluginStep::Response,
                 location.clone(),
@@ -1408,12 +1409,12 @@ impl ProxyHttp for Server {
         defer!(debug!(category = LOG_CATEGORY, "<-- logging"););
         end_request();
         self.processing.fetch_sub(1, Ordering::Relaxed);
-        if let Some(location) = &ctx.location {
+        if let Some(location) = get_location(&ctx.location) {
             location.sub_processing();
         }
         // get from cache does not connect to upstream
-        if let Some(up) = &ctx.upstream {
-            ctx.upstream_processing = Some(up.completed());
+        if let Some(upstream) = get_upstream(&ctx.upstream) {
+            ctx.upstream_processing = Some(upstream.completed());
         }
         if ctx.status.is_none() {
             if let Some(header) = session.response_written() {
@@ -1461,8 +1462,8 @@ impl ProxyHttp for Server {
                     ctx.status.unwrap_or_default().to_string(),
                 ),
             ];
-            if let Some(lo) = &ctx.location {
-                attrs.push(KeyValue::new("location", lo.name.clone()));
+            if !ctx.location.is_empty() {
+                attrs.push(KeyValue::new("location", ctx.location.clone()));
             }
             tracer.http_request_span.set_attributes(attrs);
             tracer.http_request_span.end()
@@ -1480,8 +1481,8 @@ mod tests {
     use crate::proxy::server::get_digest_detail;
     use crate::proxy::server_conf::parse_from_conf;
     use crate::proxy::try_init_server_locations;
-    use pingap_config::{LocationConf, PingapConf};
-    use pingap_location::{try_init_locations, Location};
+    use pingap_config::PingapConf;
+    use pingap_location::try_init_locations;
     use pingap_state::Ctx;
     use pingap_upstream::try_init_upstreams;
     use pingora::http::ResponseHeader;
@@ -1614,7 +1615,7 @@ value = 'proxy_set_headers = ["name:value"]'
             .early_request_filter(&mut session, &mut ctx)
             .await
             .unwrap();
-        assert_eq!("lo", ctx.location.unwrap().name);
+        assert_eq!("lo", ctx.location);
     }
 
     #[tokio::test]
@@ -1629,9 +1630,7 @@ value = 'proxy_set_headers = ["name:value"]'
         session.read_request().await.unwrap();
 
         let mut ctx = Ctx {
-            location: Some(Arc::new(
-                Location::new("lo", &LocationConf::default()).unwrap(),
-            )),
+            location: "lo".to_string(),
             ..Default::default()
         };
         let done = server.request_filter(&mut session, &mut ctx).await.unwrap();

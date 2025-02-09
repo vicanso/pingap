@@ -50,6 +50,7 @@ graph TD
     performance --> upstream
     performance --> util
 
+    plugin --> cache
     plugin --> config
     plugin --> http-extra
     plugin --> state

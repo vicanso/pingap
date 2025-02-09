@@ -22,3 +22,5 @@ dist
 dhat*.json
 default_*
 report.*
+.shuttle*
+Secrets*.toml
