@@ -3277,10 +3277,11 @@ version = "0.9.10"
 dependencies = [
  "ahash",
  "bytes",
+ "hostname 0.4.0",
  "http 1.2.0",
  "itoa",
+ "once_cell",
  "opentelemetry",
- "pingap-util",
  "pingora",
  "pingora-limits",
  "pretty_assertions",

@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::Ctx;
+use super::{get_hostname, Ctx};
 use bytes::BytesMut;
-use http::HeaderValue;
-use pingap_util::get_hostname;
+use http::{HeaderName, HeaderValue};
+use pingora::http::RequestHeader;
 use pingora::proxy::Session;
 
 pub const HOST_NAME_TAG: &[u8] = b"$hostname";
@@ -30,6 +30,21 @@ const UPSTREAM_ADDR_TAG: &[u8] = b"$upstream_addr";
 
 static SCHEME_HTTPS: HeaderValue = HeaderValue::from_static("https");
 static SCHEME_HTTP: HeaderValue = HeaderValue::from_static("http");
+
+/// Get request host in this order of precedence:
+/// host name from the request line,
+/// or host name from the "Host" request header field
+fn get_host(header: &RequestHeader) -> Option<&str> {
+    if let Some(host) = header.uri.host() {
+        return Some(host);
+    }
+    if let Some(host) = header.headers.get("Host") {
+        if let Ok(value) = host.to_str().map(|host| host.split(':').next()) {
+            return value;
+        }
+    }
+    None
+}
 
 /// Processes special header values that contain dynamic variables.
 /// Supports variables like $host, $scheme, $remote_addr etc.
@@ -58,8 +73,7 @@ pub fn convert_header_value(
     let to_header_value = |s: &str| HeaderValue::from_str(s).ok();
 
     match buf {
-        HOST_TAG => pingap_util::get_host(session.req_header())
-            .and_then(to_header_value),
+        HOST_TAG => get_host(session.req_header()).and_then(to_header_value),
         SCHEME_TAG => Some(if ctx.tls_version.is_some() {
             SCHEME_HTTPS.clone()
         } else {
@@ -85,9 +99,9 @@ pub fn convert_header_value(
         },
         PROXY_ADD_FORWARDED_TAG => {
             ctx.remote_addr.as_deref().and_then(|remote_addr| {
-                let value = match session.get_header(
-                    pingap_util::HTTP_HEADER_X_FORWARDED_FOR.clone(),
-                ) {
+                let value = match session
+                    .get_header(HeaderName::from_static("X-Forwarded-For"))
+                {
                     Some(existing) => format!(
                         "{}, {}",
                         existing.to_str().unwrap_or_default(),

@@ -12,8 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use once_cell::sync::Lazy;
+
 mod ctx;
 mod http_header;
+
+static HOST_NAME: Lazy<String> = Lazy::new(|| {
+    hostname::get()
+        .unwrap_or_default()
+        .to_str()
+        .unwrap_or_default()
+        .to_string()
+});
+
+/// Returns the system hostname.
+///
+/// Returns:
+/// * `&'static str` - The system's hostname as a string slice
+pub fn get_hostname() -> &'static str {
+    HOST_NAME.as_str()
+}
 
 pub use ctx::*;
 pub use http_header::*;

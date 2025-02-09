@@ -16,17 +16,42 @@ use ahash::AHashMap;
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
 use http::Uri;
-use pingap_util::format_duration;
-use pingora::cache::CacheKey;
-
 #[cfg(feature = "full")]
 use opentelemetry::{
     global::{BoxedSpan, BoxedTracer, ObjectSafeSpan},
     trace::{SpanKind, TraceContextExt, Tracer},
     Context,
 };
+use pingora::cache::CacheKey;
 use pingora_limits::inflight::Guard;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+const SEC: u64 = 1_000;
+
+#[inline]
+fn format_duration(mut buf: BytesMut, ms: u64) -> BytesMut {
+    if ms < 1000 {
+        buf.extend(itoa::Buffer::new().format(ms).as_bytes());
+        buf.extend(b"ms");
+    } else {
+        buf.extend(itoa::Buffer::new().format(ms / SEC).as_bytes());
+        let value = (ms % SEC) / 100;
+        if value != 0 {
+            buf.extend(b".");
+            buf.extend(itoa::Buffer::new().format(value).as_bytes());
+        }
+        buf.extend(b"s");
+    }
+    buf
+}
+
+#[inline]
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
 
 pub trait ModifyResponseBody: Sync + Send {
     fn handle(&self, data: Bytes) -> Bytes;
@@ -180,7 +205,7 @@ impl Ctx {
     /// set to their default values.
     pub fn new() -> Self {
         Self {
-            created_at: pingap_util::now_ms(),
+            created_at: now_ms(),
             ..Default::default()
         }
     }
@@ -358,10 +383,7 @@ impl Ctx {
                 }
             },
             "service_time" => {
-                buf = format_duration(
-                    buf,
-                    pingap_util::now_ms() - self.created_at,
-                )
+                buf = format_duration(buf, now_ms() - self.created_at)
             },
             _ => {},
         }
@@ -541,7 +563,7 @@ mod tests {
                 .as_ref()
         );
 
-        ctx.created_at = pingap_util::now_ms() - 1;
+        ctx.created_at = now_ms() - 1;
         assert_eq!(
             true,
             ctx.append_value(BytesMut::new(), "service_time")

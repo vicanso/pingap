@@ -16,6 +16,8 @@ path = "src/lib.rs"
 ahash = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }
+once_cell = { workspace = true }
+hostname = "0.4.0"
 pingora = { workspace = true }
 pingora-limits = { workspace = true }
 itoa = { workspace = true }
@@ -23,7 +25,6 @@ opentelemetry = { version = "0.27.1", default-features = false, features = [
     "trace",
 ], optional = true }
 tokio = { workspace = true }
-pingap-util = { path = "../pingap-util" }
 
 
 [features]

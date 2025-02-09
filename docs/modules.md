@@ -56,11 +56,6 @@ graph TD
     plugin --> state
     plugin --> util
 
-    state --> config
-    state --> location
-    state --> upstream
-    state --> util
-
     upstream --> config
     upstream --> discovery
     upstream --> health
