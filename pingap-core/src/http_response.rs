@@ -327,6 +327,10 @@ mod tests {
         );
         assert_eq!(
             r###"("cache-control", "private, no-cache")"###,
+            format!("{:?}", new_cache_control_header(Some(0), Some(false)))
+        );
+        assert_eq!(
+            r###"("cache-control", "private, no-cache")"###,
             format!("{:?}", new_cache_control_header(None, None))
         );
     }
@@ -357,6 +361,19 @@ mod tests {
         assert_eq!(
             r###"HttpResponse { status: 200, body: b"<p>Pingap</p>", max_age: None, created_at: None, cache_private: None, headers: Some([("content-type", "text/html; charset=utf-8"), ("cache-control", "private, no-cache")]) }"###,
             format!("{:?}", HttpResponse::html("<p>Pingap</p>".into()))
+        );
+
+        assert_eq!(
+            r###"HttpResponse { status: 307, body: b"", max_age: None, created_at: None, cache_private: None, headers: Some([("location", "http://example.com/"), ("cache-control", "private, no-cache")]) }"###,
+            format!(
+                "{:?}",
+                HttpResponse::redirect("http://example.com/").unwrap()
+            )
+        );
+
+        assert_eq!(
+            r###"HttpResponse { status: 200, body: b"Hello World!", max_age: None, created_at: None, cache_private: None, headers: Some([("content-type", "text/plain; charset=utf-8"), ("cache-control", "private, no-cache")]) }"###,
+            format!("{:?}", HttpResponse::text("Hello World!".into()))
         );
 
         #[derive(Serialize)]
@@ -407,6 +424,7 @@ mod tests {
             format!("{header:?}")
         );
     }
+
     #[tokio::test]
     async fn test_http_chunk_response() {
         let file = include_bytes!("../../error.html");

@@ -311,7 +311,6 @@ impl TryFrom<&PluginConf> for Directory {
             download: get_bool_conf(value, "download"),
             headers: Some(headers),
         };
-        println!("directory params: {:?}", params.path);
         if ![PluginStep::Request, PluginStep::ProxyUpstream]
             .contains(&params.plugin_step)
         {

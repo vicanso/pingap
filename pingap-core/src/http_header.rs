@@ -122,11 +122,7 @@ pub static HTTP_HEADER_NAME_X_REQUEST_ID: Lazy<HeaderName> =
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        convert_headers, HTTP_HEADER_CONTENT_HTML, HTTP_HEADER_CONTENT_JSON,
-        HTTP_HEADER_NAME_X_REQUEST_ID, HTTP_HEADER_NO_CACHE,
-        HTTP_HEADER_NO_STORE, HTTP_HEADER_TRANSFER_CHUNKED,
-    };
+    use super::*;
     use pretty_assertions::assert_eq;
     #[test]
     fn test_convert_headers() {
@@ -195,6 +191,15 @@ mod tests {
         assert_eq!(
             "x-request-id",
             format!("{}", HTTP_HEADER_NAME_X_REQUEST_ID.to_string(),)
+        );
+
+        assert_eq!(
+            "content-type: text/plain; charset=utf-8",
+            format!(
+                "{}: {}",
+                HTTP_HEADER_CONTENT_TEXT.0.to_string(),
+                HTTP_HEADER_CONTENT_TEXT.1.to_str().unwrap_or_default()
+            )
         );
     }
 }

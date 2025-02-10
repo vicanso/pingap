@@ -58,3 +58,17 @@ pub use ctx::*;
 pub use http_header::*;
 pub use http_response::*;
 pub use plugin::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_internal_error() {
+        let err = new_internal_error(500, "Internal Server Error".to_string());
+        assert_eq!(
+            err.to_string().trim(),
+            "HTTPStatus context: Internal Server Error cause:  InternalError"
+        );
+    }
+}

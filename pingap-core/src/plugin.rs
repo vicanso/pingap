@@ -12,15 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Ctx, Error, HttpResponse};
+use super::{Ctx, HttpResponse};
 use async_trait::async_trait;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
-use serde::{Deserialize, Serialize, Serializer};
-use std::str::FromStr;
 use strum::EnumString;
-
-type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(
     PartialEq, Debug, Default, Clone, Copy, EnumString, strum::Display,
@@ -32,28 +28,6 @@ pub enum PluginStep {
     Request,
     ProxyUpstream,
     Response,
-}
-
-impl Serialize for PluginStep {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.to_string().as_ref())
-    }
-}
-
-impl<'de> Deserialize<'de> for PluginStep {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value: String = serde::Deserialize::deserialize(deserializer)?;
-        let category =
-            PluginStep::from_str(&value).unwrap_or(PluginStep::default());
-
-        Ok(category)
-    }
 }
 
 /// Core trait that defines the interface all plugins must implement.
@@ -81,5 +55,29 @@ pub trait Plugin: Sync + Send {
         _upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<()> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_plugin_step() {
+        let step = "early_request".parse::<PluginStep>().unwrap();
+        assert_eq!(step, PluginStep::EarlyRequest);
+        assert_eq!(step.to_string(), "early_request");
+
+        let step = "request".parse::<PluginStep>().unwrap();
+        assert_eq!(step, PluginStep::Request);
+        assert_eq!(step.to_string(), "request");
+
+        let step = "proxy_upstream".parse::<PluginStep>().unwrap();
+        assert_eq!(step, PluginStep::ProxyUpstream);
+        assert_eq!(step.to_string(), "proxy_upstream");
+
+        let step = "response".parse::<PluginStep>().unwrap();
+        assert_eq!(step, PluginStep::Response);
+        assert_eq!(step.to_string(), "response");
     }
 }

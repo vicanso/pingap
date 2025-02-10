@@ -327,7 +327,7 @@ impl Ctx {
                 }
             },
             "upstream_connection_time" => {
-                if let Some(ms) = self.upstream_tls_handshake_time {
+                if let Some(ms) = self.upstream_connection_time {
                     buf = format_duration(buf, ms);
                 }
             },
@@ -419,6 +419,62 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn test_format_duration() {
+        let mut buf = BytesMut::new();
+        buf = format_duration(buf, 1000);
+        assert_eq!(b"1s", buf.as_ref());
+
+        buf = BytesMut::new();
+        buf = format_duration(buf, 512);
+        assert_eq!(b"512ms", buf.as_ref());
+
+        buf = BytesMut::new();
+        buf = format_duration(buf, 1112);
+        assert_eq!(b"1.1s", buf.as_ref());
+    }
+
+    #[test]
+    fn test_add_variable() {
+        let mut ctx = Ctx::new();
+        ctx.add_variable("key1", "value1");
+        ctx.add_variable("key2", "value2");
+        assert_eq!(
+            ctx.variables.clone().unwrap().get("$key1"),
+            Some(&"value1".to_string())
+        );
+        assert_eq!(
+            ctx.variables.clone().unwrap().get("$key2"),
+            Some(&"value2".to_string())
+        );
+    }
+
+    #[test]
+    fn test_now_ms() {
+        let now = now_ms();
+        assert!(now > 0);
+    }
+
+    #[test]
+    fn test_get_cache_key() {
+        let mut ctx = Ctx::new();
+        ctx.cache_namespace = Some("test".to_string());
+        let method = "GET";
+        let uri = Uri::from_static("http://example.com/");
+        let key = get_cache_key(&ctx, method, &uri);
+        assert_eq!(
+            format!("{key:?}"),
+            r#"CacheKey { namespace: "test", primary: "GET:http://example.com/", primary_bin_override: None, variance: None, user_tag: "", extensions: Extensions }"#
+        );
+
+        ctx.cache_prefix = Some("prefix_".to_string());
+        let key = get_cache_key(&ctx, method, &uri);
+        assert_eq!(
+            format!("{key:?}"),
+            r#"CacheKey { namespace: "test", primary: "prefix_GET:http://example.com/", primary_bin_override: None, variance: None, user_tag: "", extensions: Extensions }"#
+        );
+    }
+
+    #[test]
     fn test_state() {
         let mut ctx = Ctx::new();
 
@@ -494,6 +550,13 @@ mod tests {
                 .as_ref()
         );
 
+        ctx.upstream_connection_time = Some(120);
+        assert_eq!(
+            b"120ms",
+            ctx.append_value(BytesMut::new(), "upstream_connection_time")
+                .as_ref()
+        );
+
         ctx.location = "pingap".to_string();
         assert_eq!(
             b"pingap",
@@ -507,6 +570,11 @@ mod tests {
                 .as_ref()
         );
 
+        assert_eq!(
+            b"false",
+            ctx.append_value(BytesMut::new(), "connection_reused")
+                .as_ref()
+        );
         ctx.connection_reused = true;
         assert_eq!(
             b"true",
@@ -568,17 +636,6 @@ mod tests {
             true,
             ctx.append_value(BytesMut::new(), "service_time")
                 .ends_with(b"ms")
-        );
-    }
-
-    #[test]
-    fn test_add_variable() {
-        let mut ctx = Ctx::new();
-        ctx.add_variable("key", "value");
-
-        assert_eq!(
-            ctx.variables.unwrap().get("$key"),
-            Some(&"value".to_string())
         );
     }
 }
