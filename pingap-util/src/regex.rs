@@ -18,7 +18,7 @@ use regex::Regex;
 ///
 /// # Example
 /// ```
-/// use pingap::pingap_util::RegexCapture;
+/// use pingap_util::RegexCapture;
 /// let re = RegexCapture::new(r"(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})").unwrap();
 /// let (matched, captures) = re.captures("2024-03-14");
 /// assert_eq!(true, matched);

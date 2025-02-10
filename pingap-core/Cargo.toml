@@ -34,3 +34,4 @@ full = ["opentelemetry"]
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"
+tempfile = "3.16.0"

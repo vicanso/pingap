@@ -49,10 +49,10 @@ unused-features:
 	unused-features analyze
 
 test:
-	cargo test --features=full
+	cargo test --workspace --features=full
 
 cov:
-	cargo llvm-cov --html --open
+	cargo llvm-cov --workspace --html --open
 
 release:
 	cargo build --release

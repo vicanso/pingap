@@ -3033,6 +3033,7 @@ dependencies = [
  "serde_json",
  "snafu",
  "strum",
+ "tempfile",
  "tokio",
  "tracing",
 ]

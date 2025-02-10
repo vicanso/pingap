@@ -311,6 +311,7 @@ impl TryFrom<&PluginConf> for Directory {
             download: get_bool_conf(value, "download"),
             headers: Some(headers),
         };
+        println!("directory params: {:?}", params.path);
         if ![PluginStep::Request, PluginStep::ProxyUpstream]
             .contains(&params.plugin_step)
         {
@@ -597,7 +598,7 @@ path = "./"
 chunk_size = 1024
 max_age = "1h"
 private = true
-index = "/pingap/index.html"
+index = "/index.html"
 autoindex = true
 download = true
     "###,
@@ -608,11 +609,11 @@ download = true
         assert_eq!(4096, dir.chunk_size.unwrap_or_default());
         assert_eq!(3600, dir.max_age.unwrap_or_default());
         assert_eq!(true, dir.cache_private.unwrap_or_default());
-        assert_eq!("/pingap/index.html", dir.index);
+        assert_eq!("/index.html", dir.index);
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
         let input_header =
-            format!("GET /error.html?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+            format!("GET /index.html?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
@@ -633,7 +634,7 @@ download = true
             format!("{:?}", headers[0])
         );
         assert_eq!(
-            r#"("content-disposition", "attachment; filename=\"error.html\"")"#,
+            r#"("content-disposition", "attachment; filename=\"index.html\"")"#,
             format!("{:?}", headers[2])
         );
         assert_eq!(true, !resp.body.is_empty());
@@ -667,7 +668,7 @@ download = true
 
     #[tokio::test]
     async fn test_get_data() {
-        let file = Path::new("./error.html").to_path_buf();
+        let file = Path::new("./index.html").to_path_buf();
         let (meta, _) = get_data(&file).await.unwrap();
 
         assert_ne!(0, meta.size());

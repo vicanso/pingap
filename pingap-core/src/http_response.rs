@@ -312,8 +312,9 @@ mod tests {
     use http::StatusCode;
     use pretty_assertions::assert_eq;
     use serde::Serialize;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
     use tokio::fs;
-
     #[test]
     fn test_new_cache_control_header() {
         assert_eq!(
@@ -408,8 +409,10 @@ mod tests {
     }
     #[tokio::test]
     async fn test_http_chunk_response() {
-        let file = "../../error.html";
-        let mut f = fs::OpenOptions::new().read(true).open(file).await.unwrap();
+        let file = include_bytes!("../../error.html");
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(file).unwrap();
+        let mut f = fs::OpenOptions::new().read(true).open(f).await.unwrap();
         let mut resp = HttpChunkResponse::new(&mut f);
         resp.max_age = Some(3600);
         resp.cache_private = Some(false);
