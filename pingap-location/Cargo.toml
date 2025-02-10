@@ -23,8 +23,8 @@ substring = { workspace = true }
 tracing = { workspace = true }
 http = { workspace = true }
 pingap-config = { path = "../pingap-config" }
-pingap-http-extra = { path = "../pingap-http-extra" }
 pingap-util = { path = "../pingap-util" }
+pingap-core = { path = "../pingap-core" }
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"

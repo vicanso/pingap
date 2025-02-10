@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use bytes::BytesMut;
-use pingap_state::Ctx;
+use pingap_core::Ctx;
 use pingap_util::{format_byte_size, format_duration, get_hostname};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
@@ -429,7 +429,7 @@ impl Parser {
 mod tests {
     use super::{format_extra_tag, Parser, Tag, TagCategory};
     use http::Method;
-    use pingap_state::Ctx;
+    use pingap_core::Ctx;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;

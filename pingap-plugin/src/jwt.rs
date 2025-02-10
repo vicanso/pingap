@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_hash_key, get_plugin_factory, get_str_conf, Error, Plugin};
+use super::{get_hash_key, get_plugin_factory, get_str_conf, Error};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
 use ctor::ctor;
 use http::StatusCode;
 use humantime::parse_duration;
-use pingap_config::{PluginCategory, PluginConf, PluginStep};
-use pingap_http_extra::{
+use pingap_config::{PluginCategory, PluginConf};
+use pingap_core::{Ctx, ModifyResponseBody, Plugin, PluginStep};
+use pingap_core::{
     HttpResponse, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_TRANSFER_CHUNKED,
 };
-use pingap_state::{Ctx, ModifyResponseBody};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use serde::{Deserialize, Serialize};
@@ -385,8 +385,8 @@ fn init() {
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use pingap_config::{PluginConf, PluginStep};
-    use pingap_state::Ctx;
+    use pingap_config::PluginConf;
+    use pingap_core::{Ctx, PluginStep};
     use pingora::http::ResponseHeader;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;

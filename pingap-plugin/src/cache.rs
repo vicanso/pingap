@@ -14,7 +14,7 @@
 
 use super::{
     get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf,
-    get_str_slice_conf, Error, Plugin,
+    get_str_slice_conf, Error,
 };
 use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -25,11 +25,8 @@ use http::{Method, StatusCode};
 use humantime::parse_duration;
 use once_cell::sync::{Lazy, OnceCell};
 use pingap_cache::{get_cache_backend, HttpCache};
-use pingap_config::{
-    get_current_config, PluginCategory, PluginConf, PluginStep,
-};
-use pingap_http_extra::HttpResponse;
-use pingap_state::{get_cache_key, Ctx};
+use pingap_config::{get_current_config, PluginCategory, PluginConf};
+use pingap_core::{get_cache_key, Ctx, HttpResponse, Plugin, PluginStep};
 use pingora::cache::eviction::simple_lru::Manager;
 use pingora::cache::eviction::EvictionManager;
 use pingora::cache::key::CacheHashKey;
@@ -460,8 +457,8 @@ fn init() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pingap_config::{PluginConf, PluginStep};
-    use pingap_state::Ctx;
+    use pingap_config::PluginConf;
+    use pingap_core::{Ctx, PluginStep};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;

@@ -14,15 +14,14 @@
 
 use super::{
     get_hash_key, get_int_conf, get_plugin_factory, get_str_conf,
-    get_str_slice_conf, Error, Plugin,
+    get_str_slice_conf, Error,
 };
 use async_trait::async_trait;
 use ctor::ctor;
 use http::StatusCode;
 use humantime::parse_duration;
-use pingap_config::{PluginCategory, PluginConf, PluginStep};
-use pingap_http_extra::{convert_headers, HttpResponse};
-use pingap_state::Ctx;
+use pingap_config::{PluginCategory, PluginConf};
+use pingap_core::{convert_headers, Ctx, HttpResponse, Plugin, PluginStep};
 use pingora::proxy::Session;
 use std::sync::Arc;
 use std::time::Duration;
@@ -195,8 +194,8 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use http::StatusCode;
-    use pingap_config::{PluginConf, PluginStep};
-    use pingap_state::Ctx;
+    use pingap_config::PluginConf;
+    use pingap_core::{Ctx, PluginStep};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;

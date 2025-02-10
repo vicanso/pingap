@@ -14,7 +14,7 @@
 
 use super::{
     get_bool_conf, get_hash_key, get_plugin_factory, get_step_conf,
-    get_str_conf, get_str_slice_conf, Error, Plugin,
+    get_str_conf, get_str_slice_conf, Error,
 };
 use async_trait::async_trait;
 use bytesize::ByteSize;
@@ -23,11 +23,11 @@ use glob::glob;
 use http::{header, HeaderValue, StatusCode};
 use humantime::parse_duration;
 use once_cell::sync::Lazy;
-use pingap_config::{PluginCategory, PluginConf, PluginStep};
-use pingap_http_extra::{
+use pingap_config::{PluginCategory, PluginConf};
+use pingap_core::{
     convert_headers, HttpChunkResponse, HttpHeader, HttpResponse,
 };
-use pingap_state::Ctx;
+use pingap_core::{Ctx, Plugin, PluginStep};
 use pingora::proxy::Session;
 use std::fs::Metadata;
 #[cfg(unix)]
@@ -528,8 +528,8 @@ fn init() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pingap_config::{PluginConf, PluginStep};
-    use pingap_state::Ctx;
+    use pingap_config::PluginConf;
+    use pingap_core::{Ctx, PluginStep};
     use pingora::proxy::Session;
     use pretty_assertions::{assert_eq, assert_ne};
     #[cfg(unix)]

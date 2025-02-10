@@ -11,15 +11,13 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use super::{
-    get_hash_key, get_plugin_factory, get_str_slice_conf, Error, Plugin,
-};
+use super::{get_hash_key, get_plugin_factory, get_str_slice_conf, Error};
 use async_trait::async_trait;
 use ctor::ctor;
 use http::header::HeaderName;
-use pingap_config::{PluginCategory, PluginConf, PluginStep};
-use pingap_http_extra::{convert_header, HttpHeader};
-use pingap_state::{convert_header_value, Ctx};
+use pingap_config::{PluginCategory, PluginConf};
+use pingap_core::{convert_header, Ctx, HttpHeader, Plugin, PluginStep};
+use pingap_state::convert_header_value;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use std::str::FromStr;
@@ -300,8 +298,8 @@ fn init() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pingap_config::{PluginConf, PluginStep};
-    use pingap_state::Ctx;
+    use pingap_config::PluginConf;
+    use pingap_core::{Ctx, PluginStep};
     use pingora::http::ResponseHeader;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;

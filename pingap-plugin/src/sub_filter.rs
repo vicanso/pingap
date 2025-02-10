@@ -14,16 +14,16 @@
 
 use super::{
     get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf, Error,
-    Plugin,
 };
 use async_trait::async_trait;
 use bstr::ByteSlice;
 use bytes::Bytes;
 use ctor::ctor;
 use once_cell::sync::Lazy;
-use pingap_config::{PluginCategory, PluginConf, PluginStep};
-use pingap_http_extra::HTTP_HEADER_TRANSFER_CHUNKED;
-use pingap_state::{Ctx, ModifyResponseBody};
+use pingap_config::{PluginCategory, PluginConf};
+use pingap_core::{
+    Ctx, ModifyResponseBody, Plugin, PluginStep, HTTP_HEADER_TRANSFER_CHUNKED,
+};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::bytes::RegexBuilder;
@@ -274,7 +274,7 @@ fn init() {
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use pingap_state::ModifyResponseBody;
+    use pingap_core::ModifyResponseBody;
     use pretty_assertions::assert_eq;
 
     #[test]

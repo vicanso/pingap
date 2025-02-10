@@ -12,11 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_hostname, Ctx};
+use super::get_hostname;
 use bytes::BytesMut;
 use http::{HeaderName, HeaderValue};
+use once_cell::sync::Lazy;
+use pingap_core::Ctx;
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
+use std::str::FromStr;
 
 pub const HOST_NAME_TAG: &[u8] = b"$hostname";
 const HOST_TAG: &[u8] = b"$host";
@@ -30,6 +33,9 @@ const UPSTREAM_ADDR_TAG: &[u8] = b"$upstream_addr";
 
 static SCHEME_HTTPS: HeaderValue = HeaderValue::from_static("https");
 static SCHEME_HTTP: HeaderValue = HeaderValue::from_static("http");
+
+static HTTP_HEADER_X_FORWARDED_FOR: Lazy<http::HeaderName> =
+    Lazy::new(|| HeaderName::from_str("X-Forwarded-For").unwrap());
 
 /// Get request host in this order of precedence:
 /// host name from the request line,
@@ -100,7 +106,7 @@ pub fn convert_header_value(
         PROXY_ADD_FORWARDED_TAG => {
             ctx.remote_addr.as_deref().and_then(|remote_addr| {
                 let value = match session
-                    .get_header(HeaderName::from_static("X-Forwarded-For"))
+                    .get_header(HTTP_HEADER_X_FORWARDED_FOR.clone())
                 {
                     Some(existing) => format!(
                         "{}, {}",

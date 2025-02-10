@@ -16,9 +16,9 @@ use super::{get_process_system_info, Error, Result, LOG_CATEGORY};
 use humantime::parse_duration;
 #[cfg(feature = "full")]
 use pingap_cache::{CACHE_READING_TIME, CACHE_WRITING_TIME};
+use pingap_core::Ctx;
 use pingap_service::Error as ServiceError;
 use pingap_service::SimpleServiceTaskFuture;
-use pingap_state::Ctx;
 use pingap_util::get_hostname;
 use pingora::proxy::Session;
 use prometheus::core::Collector;
@@ -797,7 +797,7 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
 mod tests {
     use super::new_prometheus;
     use http::StatusCode;
-    use pingap_state::{CompressionStat, Ctx};
+    use pingap_core::{CompressionStat, Ctx};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use std::time::Duration;

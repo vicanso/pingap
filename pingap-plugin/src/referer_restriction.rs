@@ -14,15 +14,13 @@
 
 use super::{
     get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf, Error,
-    Plugin,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
 use ctor::ctor;
 use http::StatusCode;
-use pingap_config::{PluginConf, PluginStep};
-use pingap_http_extra::HttpResponse;
-use pingap_state::Ctx;
+use pingap_config::PluginConf;
+use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep};
 use pingora::proxy::Session;
 use std::sync::Arc;
 use substring::Substring;
@@ -219,8 +217,8 @@ fn init() {
 mod tests {
     use super::*;
     use http::StatusCode;
-    use pingap_config::{PluginConf, PluginStep};
-    use pingap_state::Ctx;
+    use pingap_config::PluginConf;
+    use pingap_core::{Ctx, PluginStep};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;

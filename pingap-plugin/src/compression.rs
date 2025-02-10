@@ -14,13 +14,11 @@
 
 use super::{
     get_bool_conf, get_hash_key, get_int_conf, get_plugin_factory, Error,
-    Plugin,
 };
 use async_trait::async_trait;
 use ctor::ctor;
-use pingap_config::{PluginConf, PluginStep};
-use pingap_http_extra::HttpResponse;
-use pingap_state::Ctx;
+use pingap_config::PluginConf;
+use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep};
 use pingora::modules::http::compression::ResponseCompression;
 use pingora::protocols::http::compression::Algorithm;
 use pingora::proxy::Session;
@@ -221,8 +219,8 @@ fn init() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pingap_config::{PluginConf, PluginStep};
-    use pingap_state::Ctx;
+    use pingap_config::PluginConf;
+    use pingap_core::{Ctx, PluginStep};
     use pingora::modules::http::compression::{
         ResponseCompression, ResponseCompressionBuilder,
     };

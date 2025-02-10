@@ -14,7 +14,7 @@
 
 use super::{
     get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf,
-    get_str_slice_conf, Error, Plugin,
+    get_str_slice_conf, Error,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -22,9 +22,8 @@ use ctor::ctor;
 use http::HeaderValue;
 use http::StatusCode;
 use humantime::parse_duration;
-use pingap_config::{PluginCategory, PluginConf, PluginStep};
-use pingap_http_extra::HttpResponse;
-use pingap_state::Ctx;
+use pingap_config::{PluginCategory, PluginConf};
+use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep};
 use pingap_util::base64_decode;
 use pingora::proxy::Session;
 use std::sync::Arc;
@@ -234,8 +233,8 @@ fn init() {
 mod tests {
     use super::{BasicAuth, Plugin};
     use http::StatusCode;
-    use pingap_config::{PluginConf, PluginStep};
-    use pingap_state::Ctx;
+    use pingap_config::PluginConf;
+    use pingap_core::{Ctx, PluginStep};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use std::time::Duration;

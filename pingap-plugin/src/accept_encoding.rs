@@ -14,13 +14,11 @@
 
 use super::{
     get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf, Error,
-    Plugin,
 };
 use async_trait::async_trait;
 use ctor::ctor;
-use pingap_config::{PluginConf, PluginStep};
-use pingap_http_extra::HttpResponse;
-use pingap_state::Ctx;
+use pingap_config::PluginConf;
+use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep};
 use pingora::proxy::Session;
 use smallvec::SmallVec;
 use std::sync::Arc;
@@ -167,8 +165,8 @@ fn init() {
 #[cfg(test)]
 mod tests {
     use super::{AcceptEncoding, Plugin};
-    use pingap_config::{PluginConf, PluginStep};
-    use pingap_state::Ctx;
+    use pingap_config::PluginConf;
+    use pingap_core::{Ctx, PluginStep};
     use pingora::modules::http::HttpModules;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;

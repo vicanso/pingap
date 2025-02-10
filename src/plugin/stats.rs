@@ -17,11 +17,10 @@ use crate::process::get_start_time;
 use async_trait::async_trait;
 use bytes::Bytes;
 use ctor::ctor;
-use pingap_config::{PluginCategory, PluginConf, PluginStep};
-use pingap_http_extra::HttpResponse;
+use pingap_config::{PluginCategory, PluginConf};
+use pingap_core::{Ctx, HttpResponse, PluginStep};
 use pingap_performance::{get_process_system_info, get_processing_accepted};
 use pingap_plugin::{get_plugin_factory, Error};
-use pingap_state::Ctx;
 use pingap_util::get_hostname;
 use pingora::proxy::Session;
 use serde::Serialize;
@@ -205,9 +204,8 @@ fn init() {
 #[cfg(test)]
 mod tests {
     use super::Stats;
-    use pingap_config::{PluginConf, PluginStep};
-    use pingap_plugin::Plugin;
-    use pingap_state::Ctx;
+    use pingap_config::PluginConf;
+    use pingap_core::{Ctx, Plugin, PluginStep};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;

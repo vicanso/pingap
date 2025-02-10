@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_hash_key, get_plugin_factory, get_str_conf, Error, Plugin};
+use super::{get_hash_key, get_plugin_factory, get_str_conf, Error};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cookie::Cookie;
@@ -20,9 +20,10 @@ use ctor::ctor;
 use http::{header, HeaderValue, Method, StatusCode};
 use humantime::parse_duration;
 use nanoid::nanoid;
-use pingap_config::{PluginCategory, PluginConf, PluginStep};
-use pingap_http_extra::{HttpResponse, HTTP_HEADER_NO_STORE};
-use pingap_state::Ctx;
+use pingap_config::{PluginCategory, PluginConf};
+use pingap_core::{
+    Ctx, HttpResponse, Plugin, PluginStep, HTTP_HEADER_NO_STORE,
+};
 use pingap_util::base64_encode;
 use pingora::proxy::Session;
 use sha2::{Digest, Sha256};
@@ -316,8 +317,8 @@ fn init() {
 mod tests {
     use super::*;
     use cookie::Cookie;
-    use pingap_config::{PluginConf, PluginStep};
-    use pingap_state::Ctx;
+    use pingap_config::PluginConf;
+    use pingap_core::{Ctx, PluginStep};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use std::str::FromStr;

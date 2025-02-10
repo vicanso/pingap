@@ -14,7 +14,6 @@
 
 use once_cell::sync::Lazy;
 
-mod ctx;
 mod http_header;
 
 static HOST_NAME: Lazy<String> = Lazy::new(|| {
@@ -33,5 +32,4 @@ pub fn get_hostname() -> &'static str {
     HOST_NAME.as_str()
 }
 
-pub use ctx::*;
 pub use http_header::*;

@@ -14,15 +14,16 @@
 
 use super::{
     get_hash_key, get_int_conf, get_plugin_factory, get_step_conf,
-    get_str_conf, Error, Plugin,
+    get_str_conf, Error,
 };
 use async_trait::async_trait;
 use ctor::ctor;
 use http::HeaderName;
 use nanoid::nanoid;
-use pingap_config::{PluginCategory, PluginConf, PluginStep};
-use pingap_http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
-use pingap_state::Ctx;
+use pingap_config::{PluginCategory, PluginConf};
+use pingap_core::{
+    Ctx, HttpResponse, Plugin, PluginStep, HTTP_HEADER_NAME_X_REQUEST_ID,
+};
 use pingora::proxy::Session;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -224,8 +225,8 @@ fn init() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pingap_config::{PluginConf, PluginStep};
-    use pingap_state::Ctx;
+    use pingap_config::PluginConf;
+    use pingap_core::{Ctx, PluginStep};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;

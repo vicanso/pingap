@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use pingap_config::{PluginConf, PluginStep};
+use pingap_config::PluginConf;
+use pingap_core::PluginStep;
 use snafu::Snafu;
 use std::str::FromStr;
 
@@ -141,4 +142,4 @@ mod ua_restriction;
 
 mod plugin;
 
-pub use plugin::{get_plugin_factory, Plugin};
+pub use plugin::get_plugin_factory;

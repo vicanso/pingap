@@ -2869,7 +2869,7 @@ dependencies = [
  "pingap-cache",
  "pingap-certificate",
  "pingap-config",
- "pingap-http-extra",
+ "pingap-core",
  "pingap-limit",
  "pingap-location",
  "pingap-logger",
@@ -2910,9 +2910,8 @@ dependencies = [
  "instant-acme",
  "pingap-certificate",
  "pingap-config",
- "pingap-http-extra",
+ "pingap-core",
  "pingap-service",
- "pingap-state",
  "pingap-util",
  "pingap-webhook",
  "pingora",
@@ -2997,6 +2996,7 @@ dependencies = [
  "humantime-serde",
  "nanoid",
  "once_cell",
+ "pingap-core",
  "pingap-discovery",
  "pingap-util",
  "pretty_assertions",
@@ -3013,6 +3013,28 @@ dependencies = [
  "toml",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "pingap-core"
+version = "0.9.10"
+dependencies = [
+ "ahash",
+ "async-trait",
+ "bytes",
+ "http 1.2.0",
+ "itoa",
+ "once_cell",
+ "opentelemetry",
+ "pingora",
+ "pingora-limits",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "snafu",
+ "strum",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3057,25 +3079,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pingap-http-extra"
-version = "0.9.10"
-dependencies = [
- "bytes",
- "http 1.2.0",
- "nanoid",
- "once_cell",
- "pingap-util",
- "pingora",
- "pretty_assertions",
- "serde",
- "serde_json",
- "snafu",
- "tokio",
- "tokio-test",
- "tracing",
-]
-
-[[package]]
 name = "pingap-limit"
 version = "0.9.10"
 dependencies = [
@@ -3097,7 +3100,7 @@ dependencies = [
  "http 1.2.0",
  "once_cell",
  "pingap-config",
- "pingap-http-extra",
+ "pingap-core",
  "pingap-util",
  "pingora",
  "pretty_assertions",
@@ -3118,10 +3121,8 @@ dependencies = [
  "flate2",
  "http 1.2.0",
  "itoa",
- "pingap-config",
- "pingap-location",
+ "pingap-core",
  "pingap-service",
- "pingap-state",
  "pingap-util",
  "pingora",
  "pretty_assertions",
@@ -3169,9 +3170,9 @@ dependencies = [
  "once_cell",
  "pingap-cache",
  "pingap-config",
+ "pingap-core",
  "pingap-location",
  "pingap-service",
- "pingap-state",
  "pingap-upstream",
  "pingap-util",
  "pingora",
@@ -3215,7 +3216,7 @@ dependencies = [
  "once_cell",
  "pingap-cache",
  "pingap-config",
- "pingap-http-extra",
+ "pingap-core",
  "pingap-state",
  "pingap-util",
  "pingora",
@@ -3275,15 +3276,12 @@ dependencies = [
 name = "pingap-state"
 version = "0.9.10"
 dependencies = [
- "ahash",
  "bytes",
  "hostname 0.4.0",
  "http 1.2.0",
- "itoa",
  "once_cell",
- "opentelemetry",
+ "pingap-core",
  "pingora",
- "pingora-limits",
  "pretty_assertions",
  "tokio",
  "tokio-test",

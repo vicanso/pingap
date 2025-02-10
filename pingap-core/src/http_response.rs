@@ -13,9 +13,9 @@
 // limitations under the License.
 
 use super::{
-    HttpHeader, HTTP_HEADER_CONTENT_HTML, HTTP_HEADER_CONTENT_JSON,
-    HTTP_HEADER_CONTENT_TEXT, HTTP_HEADER_NO_CACHE, HTTP_HEADER_NO_STORE,
-    HTTP_HEADER_TRANSFER_CHUNKED,
+    get_super_ts, new_internal_error, HttpHeader, HTTP_HEADER_CONTENT_HTML,
+    HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_CONTENT_TEXT, HTTP_HEADER_NO_CACHE,
+    HTTP_HEADER_NO_STORE, HTTP_HEADER_TRANSFER_CHUNKED,
 };
 use bytes::Bytes;
 use http::header;
@@ -123,7 +123,7 @@ impl HttpResponse {
     pub fn redirect(location: &str) -> pingora::Result<Self> {
         let value = http::HeaderValue::from_str(location).map_err(|e| {
             error!(error = e.to_string(), "to header value fail");
-            pingap_util::new_internal_error(500, e.to_string())
+            new_internal_error(500, e.to_string())
         })?;
         Ok(Self {
             status: StatusCode::TEMPORARY_REDIRECT,
@@ -167,7 +167,7 @@ impl HttpResponse {
     {
         let buf = serde_json::to_vec(value).map_err(|e| {
             error!(error = e.to_string(), "to json fail");
-            pingap_util::new_internal_error(400, e.to_string())
+            new_internal_error(400, e.to_string())
         })?;
         Ok(Self {
             status: StatusCode::OK,
@@ -195,7 +195,7 @@ impl HttpResponse {
         resp.insert_header(cache_control.0, cache_control.1)?;
 
         if let Some(created_at) = self.created_at {
-            let secs = pingap_util::get_super_ts() - created_at;
+            let secs = get_super_ts() - created_at;
             if let Ok(value) = header::HeaderValue::from_str(&secs.to_string())
             {
                 resp.insert_header(header::AGE, value)?;
@@ -284,7 +284,7 @@ where
         loop {
             let size = self.reader.read(&mut buffer).await.map_err(|e| {
                 error!(error = e.to_string(), "read data fail");
-                pingap_util::new_internal_error(400, e.to_string())
+                new_internal_error(400, e.to_string())
             })?;
             let end = size < chunk_size;
             session
@@ -306,11 +306,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{new_cache_control_header, HttpChunkResponse, HttpResponse};
+    use super::*;
     use crate::convert_headers;
     use bytes::Bytes;
     use http::StatusCode;
-    use pingap_util::{get_super_ts, resolve_path};
     use pretty_assertions::assert_eq;
     use serde::Serialize;
     use tokio::fs;
@@ -409,7 +408,7 @@ mod tests {
     }
     #[tokio::test]
     async fn test_http_chunk_response() {
-        let file = resolve_path("./error.html");
+        let file = "../../error.html";
         let mut f = fs::OpenOptions::new().read(true).open(file).await.unwrap();
         let mut resp = HttpChunkResponse::new(&mut f);
         resp.max_age = Some(3600);

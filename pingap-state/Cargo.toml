@@ -13,22 +13,14 @@ name = "pingap_state"
 path = "src/lib.rs"
 
 [dependencies]
-ahash = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }
 once_cell = { workspace = true }
 hostname = "0.4.0"
 pingora = { workspace = true }
-pingora-limits = { workspace = true }
-itoa = { workspace = true }
-opentelemetry = { version = "0.27.1", default-features = false, features = [
-    "trace",
-], optional = true }
 tokio = { workspace = true }
+pingap-core = { path = "../pingap-core" }
 
-
-[features]
-full = ["opentelemetry"]
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"

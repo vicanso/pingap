@@ -33,9 +33,7 @@ tracing-appender = "0.2.3"
 zstd = "0.13.2"
 pingap-service = { path = "../pingap-service" }
 pingap-util = { path = "../pingap-util" }
-pingap-state = { path = "../pingap-state" }
-pingap-location = { path = "../pingap-location" }
-pingap-config = { path = "../pingap-config" }
+pingap-core = { path = "../pingap-core" }
 
 
 [dev-dependencies]

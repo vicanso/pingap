@@ -1,31 +1,36 @@
 [package]
-name = "pingap-http-extra"
+name = "pingap-core"
 version = "0.9.10"
 edition = "2021"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
 homepage = "https://github.com/vicanso/pingap"
 repository = "https://github.com/vicanso/pingap"
-keywords = ["pingap", "http", "extra"]
+keywords = ["pingap", "core"]
 
-[lib]
-name = "pingap_http_extra"
-path = "src/lib.rs"
 
 [dependencies]
+ahash = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }
 pingora = { workspace = true }
+pingora-limits = { workspace = true }
+itoa = { workspace = true }
 snafu = { workspace = true }
+async-trait = { workspace = true }
 once_cell = { workspace = true }
+strum = { workspace = true }
 serde = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 serde_json = { workspace = true }
+opentelemetry = { version = "0.27.1", default-features = false, features = [
+    "trace",
+], optional = true }
 
-pingap-util = { path = "../pingap-util" }
+
+[features]
+full = ["opentelemetry"]
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"
-tokio-test = "0.4.4"
-nanoid = "0.4.0"

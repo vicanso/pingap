@@ -16,7 +16,7 @@ use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use once_cell::sync::Lazy;
 use pingap_config::LocationConf;
-use pingap_http_extra::{convert_headers, HttpHeader};
+use pingap_core::{convert_headers, HttpHeader};
 use pingora::http::RequestHeader;
 use regex::Regex;
 use snafu::{ResultExt, Snafu};

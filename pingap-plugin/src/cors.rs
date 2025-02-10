@@ -14,15 +14,14 @@
 
 use super::{
     get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf, Error,
-    Plugin,
 };
 use async_trait::async_trait;
 use ctor::ctor;
 use http::{header, HeaderValue};
 use humantime::parse_duration;
-use pingap_config::{PluginCategory, PluginConf, PluginStep};
-use pingap_http_extra::{HttpHeader, HttpResponse};
-use pingap_state::{convert_header_value, Ctx};
+use pingap_config::{PluginCategory, PluginConf};
+use pingap_core::{Ctx, HttpHeader, HttpResponse, Plugin, PluginStep};
+use pingap_state::convert_header_value;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::Regex;
@@ -320,8 +319,8 @@ fn init() {
 mod tests {
     /// Tests CORS plugin configuration parsing
     use super::*;
-    use pingap_config::{PluginConf, PluginStep};
-    use pingap_state::Ctx;
+    use pingap_config::PluginConf;
+    use pingap_core::{Ctx, PluginStep};
     use pingora::{http::ResponseHeader, proxy::Session};
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;

@@ -71,6 +71,7 @@ uuid = { version = "1.12.1", features = [
     "std",
     "fast-rng",
 ], default-features = false }
+pingap-core = { path = "pingap-core" }
 pingap-util = { path = "pingap-util" }
 pingap-limit = { path = "pingap-limit" }
 pingap-webhook = { path = "pingap-webhook" }
@@ -79,7 +80,6 @@ pingap-config = { path = "pingap-config" }
 pingap-cache = { path = "pingap-cache" }
 pingap-upstream = { path = "pingap-upstream" }
 pingap-certificate = { path = "pingap-certificate" }
-pingap-http-extra = { path = "pingap-http-extra" }
 pingap-location = { path = "pingap-location" }
 pingap-state = { path = "pingap-state" }
 pingap-performance = { path = "pingap-performance" }
@@ -99,7 +99,7 @@ full = [
     "opentelemetry-http",
     "pingora/sentry",
     "pingap-cache/full",
-    "pingap-state/full",
+    "pingap-core/full",
     "pingap-performance/full",
     "pingap-otel",
     "pingap-sentry",
@@ -144,7 +144,6 @@ members = [
     "pingap-cache",
     "pingap-upstream",
     "pingap-certificate",
-    "pingap-http-extra",
     "pingap-location",
     "pingap-state",
     "pingap-performance",
@@ -154,6 +153,7 @@ members = [
     "pingap-pyroscope",
     "pingap-acme",
     "pingap-plugin",
+    "pingap-core",
 ]
 
 [workspace.dependencies]

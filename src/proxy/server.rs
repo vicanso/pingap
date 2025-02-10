@@ -32,9 +32,11 @@ use opentelemetry_http::HeaderExtractor;
 use pingap_acme::handle_lets_encrypt;
 use pingap_certificate::{GlobalCertificate, TlsSettingParams};
 use pingap_config::get_config_storage;
-use pingap_config::PluginStep;
-use pingap_http_extra::{convert_headers, HttpHeader};
-use pingap_http_extra::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
+#[cfg(feature = "full")]
+use pingap_core::OtelTracer;
+use pingap_core::{convert_headers, HttpHeader};
+use pingap_core::{get_cache_key, CompressionStat, Ctx, PluginStep};
+use pingap_core::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use pingap_location::{get_location, Location};
 use pingap_logger::Parser;
 use pingap_performance::{accept_request, end_request};
@@ -44,9 +46,6 @@ use pingap_performance::{
 };
 use pingap_service::SimpleServiceTaskFuture;
 use pingap_state::convert_header_value;
-#[cfg(feature = "full")]
-use pingap_state::OtelTracer;
-use pingap_state::{get_cache_key, CompressionStat, Ctx};
 use pingap_upstream::get_upstream;
 use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::CacheControl;
@@ -1482,8 +1481,8 @@ mod tests {
     use crate::proxy::server_conf::parse_from_conf;
     use crate::proxy::try_init_server_locations;
     use pingap_config::PingapConf;
+    use pingap_core::Ctx;
     use pingap_location::try_init_locations;
-    use pingap_state::Ctx;
     use pingap_upstream::try_init_upstreams;
     use pingora::http::ResponseHeader;
     use pingora::protocols::tls::SslDigest;

@@ -4,9 +4,8 @@
 graph TD
     acme --> certificate
     acme --> config
-    acme --> http-extra
+    acme --> core
     acme --> service
-    acme --> state
     acme --> util
     acme --> webhook
 
@@ -19,6 +18,7 @@ graph TD
     certificate --> util
     certificate --> webhook
 
+    config --> core
     config --> discovery
     config --> util
 
@@ -28,33 +28,31 @@ graph TD
     health --> util
     health --> webhook
 
-    http-extra --> util
-
     limit --> util
 
     location --> config
-    location --> http-extra
+    location --> core
     location --> util
 
-    logger --> config
-    logger --> location
+    logger --> core
     logger --> service
-    logger --> state
     logger --> util
 
     performance --> cache
     performance --> config
+    performance --> core
     performance --> location
     performance --> service
-    performance --> state
     performance --> upstream
     performance --> util
 
     plugin --> cache
     plugin --> config
-    plugin --> http-extra
+    plugin --> core
     plugin --> state
     plugin --> util
+
+    state --> core
 
     upstream --> config
     upstream --> discovery
@@ -68,9 +66,9 @@ graph TD
     pingap --> cache
     pingap --> certificate
     pingap --> config
+    pingap --> core
     pingap --> discovery
     pingap --> health
-    pingap --> http-extra
     pingap --> limit
     pingap --> location
     pingap --> logger

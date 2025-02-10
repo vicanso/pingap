@@ -114,40 +114,6 @@ impl<'de> Deserialize<'de> for PluginCategory {
     }
 }
 
-#[derive(
-    PartialEq, Debug, Default, Clone, Copy, EnumString, strum::Display,
-)]
-#[strum(serialize_all = "snake_case")]
-pub enum PluginStep {
-    EarlyRequest,
-    #[default]
-    Request,
-    ProxyUpstream,
-    Response,
-}
-
-impl Serialize for PluginStep {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.to_string().as_ref())
-    }
-}
-
-impl<'de> Deserialize<'de> for PluginStep {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value: String = serde::Deserialize::deserialize(deserializer)?;
-        let category =
-            PluginStep::from_str(&value).unwrap_or(PluginStep::default());
-
-        Ok(category)
-    }
-}
-
 /// Configuration struct for TLS/SSL certificates
 #[derive(Debug, Default, Deserialize, Clone, Serialize, Hash)]
 pub struct CertificateConf {
@@ -1301,11 +1267,12 @@ pub fn get_config_hash() -> String {
 mod tests {
     use super::{
         get_config_hash, set_current_config, validate_cert, BasicConf,
-        CertificateConf, PluginStep,
+        CertificateConf,
     };
     use super::{
         LocationConf, PingapConf, PluginCategory, ServerConf, UpstreamConf,
     };
+    use pingap_core::PluginStep;
     use pingap_util::base64_encode;
     use pretty_assertions::assert_eq;
     use serde::{Deserialize, Serialize};

@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf, Plugin,
-};
+use super::{get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf};
 use crate::process::{get_start_time, restart_now};
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -30,20 +28,18 @@ use humantime::parse_duration;
 use pingap_certificate::get_certificate_info_list;
 use pingap_config::{
     self, get_current_config, save_config, BasicConf, CertificateConf,
-    LoadConfigOptions, LocationConf, PluginCategory, PluginConf, PluginStep,
-    ServerConf, StorageConf, UpstreamConf, CATEGORY_CERTIFICATE,
-    CATEGORY_STORAGE,
+    LoadConfigOptions, LocationConf, PluginCategory, PluginConf, ServerConf,
+    StorageConf, UpstreamConf, CATEGORY_CERTIFICATE, CATEGORY_STORAGE,
 };
 use pingap_config::{
     PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
     CATEGORY_UPSTREAM,
 };
-use pingap_http_extra::HttpResponse;
+use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep};
 use pingap_limit::TtlLruLimit;
 use pingap_performance::get_process_system_info;
 use pingap_performance::get_processing_accepted;
 use pingap_plugin::{get_plugin_factory, Error};
-use pingap_state::Ctx;
 use pingap_util::base64_decode;
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
@@ -685,7 +681,7 @@ fn init() {
 mod tests {
     use super::{AdminAsset, AdminServe, EmbeddedStaticFile};
     use pingap_config::PluginConf;
-    use pingap_http_extra::HttpResponse;
+    use pingap_core::HttpResponse;
     use pretty_assertions::assert_eq;
     use std::time::Duration;
 

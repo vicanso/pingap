@@ -24,10 +24,10 @@ use pingap_config::{
     get_current_config, set_current_config, ConfigStorage, LoadConfigOptions,
     PingapConf, CATEGORY_CERTIFICATE,
 };
-use pingap_http_extra::HttpResponse;
+use pingap_core::HttpResponse;
 use pingap_service::Error as ServiceError;
 use pingap_service::SimpleServiceTaskFuture;
-use pingap_state::Ctx;
+use pingap_core::Ctx;
 use pingora::proxy::Session;
 use std::time::Duration;
 use substring::Substring;

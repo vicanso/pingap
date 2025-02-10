@@ -26,9 +26,8 @@ pingap-certificate = { path = "../pingap-certificate" }
 pingap-config = { path = "../pingap-config" }
 pingap-service = { path = "../pingap-service" }
 pingap-util = { path = "../pingap-util" }
-pingap-state = { path = "../pingap-state" }
-pingap-http-extra = { path = "../pingap-http-extra" }
 pingap-webhook = { path = "../pingap-webhook" }
+pingap-core = { path = "../pingap-core" }
 
 
 [dev-dependencies]
