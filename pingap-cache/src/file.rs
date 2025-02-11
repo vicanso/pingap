@@ -372,7 +372,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let namespace = "pingap";
         std::fs::create_dir(dir.path().join(namespace)).unwrap();
-        let dir = dir.path().to_string_lossy().to_string();
+        let dir = format!("{}?cache_max=100", dir.path().to_string_lossy());
         let cache = new_file_cache(&dir).unwrap();
 
         let key = "key";

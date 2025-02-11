@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::get_cache_backend;
+use super::{get_cache_backend, is_cache_backend_init};
 use super::{Error, Result, PAGE_SIZE};
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
@@ -214,6 +214,10 @@ async fn do_file_storage_clear(
 
 pub fn new_storage_clear_service() -> Option<(String, SimpleServiceTaskFuture)>
 {
+    // if cache backend not initialized, do not create storage clear service
+    if !is_cache_backend_init() {
+        return None;
+    }
     let Ok(backend) = get_cache_backend() else {
         return None;
     };

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{get_process_system_info, get_processing_accepted};
-use pingap_cache::get_cache_backend;
+use pingap_cache::{get_cache_backend, is_cache_backend_init};
 use pingap_location::get_locations_processing;
 use pingap_service::{SimpleServiceTaskFuture, LOG_CATEGORY};
 use pingap_upstream::get_upstreams_processing_connected;
@@ -32,10 +32,13 @@ pub fn new_performance_metrics_log_service() -> (String, SimpleServiceTaskFuture
                 // Get cache statistics (reading/writing counts)
                 let mut cache_reading: i64 = -1;
                 let mut cache_writing: i64 = -1;
-                if let Ok(cache) = get_cache_backend() {
-                    if let Some(stats) = cache.stats() {
-                        cache_reading = stats.reading as i64;
-                        cache_writing = stats.writing as i64;
+                // if cache backend not initialized, do not get cache statistics
+                if is_cache_backend_init() {
+                    if let Ok(cache) = get_cache_backend() {
+                        if let Some(stats) = cache.stats() {
+                            cache_reading = stats.reading as i64;
+                            cache_writing = stats.writing as i64;
+                        }
                     }
                 }
 
