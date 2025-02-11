@@ -185,6 +185,7 @@ export default function Basic() {
           "reload_config",
           "reload_config_fail",
           "tls_validity",
+          "parse_certificate_fail",
           "service_discover_fail",
         ].sort(),
         true,

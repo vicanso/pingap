@@ -155,6 +155,7 @@ struct BasicInfo {
     fd_count: usize,
     tcp_count: usize,
     tcp6_count: usize,
+    supported_plugins: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -624,6 +625,7 @@ impl Plugin for AdminServe {
                 fd_count: info.fd_count,
                 tcp_count: info.tcp_count,
                 tcp6_count: info.tcp6_count,
+                supported_plugins: get_plugin_factory().supported_plugins(),
             })
             .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
         } else if path == "/restart" && method == Method::POST {

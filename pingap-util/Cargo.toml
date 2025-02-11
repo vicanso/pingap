@@ -23,9 +23,7 @@ ipnet = "2.11.0"
 base64 = "0.22.1"
 path-absolutize = "3.1.1"
 rustc_version_runtime = "0.3.0"
-local-ip-address = "0.6.3"
 dirs = "6.0.0"
-hostname = "0.4.0"
 once_cell = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }

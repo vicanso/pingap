@@ -13,7 +13,6 @@
 // limitations under the License.
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use once_cell::sync::Lazy;
 use path_absolutize::*;
 use snafu::Snafu;
 use std::path::Path;
@@ -99,27 +98,6 @@ pub fn resolve_path(path: &str) -> String {
 /// true if the string appears to be PEM-formatted, false otherwise
 pub fn is_pem(value: &str) -> bool {
     value.starts_with("-----")
-}
-
-/// Returns a list of non-loopback IP addresses (both IPv4 and IPv6) for the local machine
-///
-/// # Returns
-/// A vector of IP addresses as strings
-pub fn local_ip_list() -> Vec<String> {
-    let mut ip_list = vec![];
-
-    if let Ok(value) = local_ip_address::local_ip() {
-        ip_list.push(value);
-    }
-    if let Ok(value) = local_ip_address::local_ipv6() {
-        ip_list.push(value);
-    }
-
-    ip_list
-        .iter()
-        .filter(|item| !item.is_loopback())
-        .map(|item| item.to_string())
-        .collect()
 }
 
 /// Converts various certificate/key formats into bytes.
@@ -221,22 +199,6 @@ pub fn path_join(value1: &str, value2: &str) -> String {
     }
 }
 
-static HOST_NAME: Lazy<String> = Lazy::new(|| {
-    hostname::get()
-        .unwrap_or_default()
-        .to_str()
-        .unwrap_or_default()
-        .to_string()
-});
-
-/// Returns the system hostname.
-///
-/// Returns:
-/// * `&'static str` - The system's hostname as a string slice
-pub fn get_hostname() -> &'static str {
-    HOST_NAME.as_str()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,12 +219,6 @@ mod tests {
             resolve_path("~/")
         );
     }
-
-    #[test]
-    fn test_local_ip_list() {
-        assert_eq!(false, local_ip_list().is_empty());
-    }
-
     #[test]
     fn test_get_rustc_version() {
         assert_eq!(false, get_rustc_version().is_empty());

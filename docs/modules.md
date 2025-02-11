@@ -14,6 +14,7 @@ graph TD
     cache --> util
 
     certificate --> config
+    certificate --> core
     certificate --> service
     certificate --> util
     certificate --> webhook
@@ -22,11 +23,9 @@ graph TD
     config --> discovery
     config --> util
 
+    discovery --> core
     discovery --> util
     discovery --> webhook
-
-    health --> util
-    health --> webhook
 
     limit --> util
 
@@ -49,18 +48,16 @@ graph TD
     plugin --> cache
     plugin --> config
     plugin --> core
-    plugin --> state
     plugin --> util
 
-    state --> core
-
     upstream --> config
+    upstream --> core
     upstream --> discovery
     upstream --> health
     upstream --> service
     upstream --> util
 
-    webhook --> util
+    webhook --> core
 
     pingap --> acme
     pingap --> cache
@@ -78,7 +75,6 @@ graph TD
     pingap --> pyroscope
     pingap --> sentry
     pingap --> service
-    pingap --> state
     pingap --> upstream
     pingap --> util
     pingap --> webhook

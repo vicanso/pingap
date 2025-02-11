@@ -155,26 +155,23 @@ async fn handle_successful_renewal(domains: &[String], conf: &PingapConf) {
         "renew certificate success"
     );
 
-    pingap_webhook::send_notification(pingap_webhook::SendNotificationParams {
-        category: pingap_webhook::NotificationCategory::LetsEncrypt,
-        msg: "Generate new cert from lets encrypt".to_string(),
-        remark: Some(format!("Domains: {domains:?}")),
-        ..Default::default()
+    pingap_webhook::send_notification(pingap_core::NotificationData {
+        category: "lets_encrypt".to_string(),
+        level: pingap_core::NotificationLevel::Info,
+        title: "Generate new cert from lets encrypt".to_string(),
+        message: format!("Domains: {domains:?}"),
     })
     .await;
 
     let (_, errors) = try_update_certificates(&conf.certificates);
     if !errors.is_empty() {
         error!(error = errors, "parse certificate fail");
-        pingap_webhook::send_notification(
-            pingap_webhook::SendNotificationParams {
-                category:
-                    pingap_webhook::NotificationCategory::ParseCertificateFail,
-                level: pingap_webhook::NotificationLevel::Error,
-                msg: errors,
-                remark: None,
-            },
-        )
+        pingap_webhook::send_notification(pingap_core::NotificationData {
+            category: "parse_certificate_fail".to_string(),
+            level: pingap_core::NotificationLevel::Error,
+            message: errors,
+            ..Default::default()
+        })
         .await;
     }
 }

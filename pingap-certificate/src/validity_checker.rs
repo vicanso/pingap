@@ -104,14 +104,12 @@ async fn do_validity_check(count: u32) -> Result<bool, ServiceError> {
 
     if let Err(err) = validity_check(&certificate_info_list, time_offset) {
         error!(category = LOG_CATEGORY, task = "validityChecker", error = %err);
-        pingap_webhook::send_notification(
-            pingap_webhook::SendNotificationParams {
-                level: pingap_webhook::NotificationLevel::Warn,
-                category: pingap_webhook::NotificationCategory::TlsValidity,
-                msg: err.to_string(),
-                ..Default::default()
-            },
-        )
+        pingap_webhook::send_notification(pingap_core::NotificationData {
+            level: pingap_core::NotificationLevel::Warn,
+            category: "tls_validity".to_string(),
+            message: err.to_string(),
+            ..Default::default()
+        })
         .await;
     }
     Ok(true)

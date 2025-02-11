@@ -13,7 +13,9 @@
 // limitations under the License.
 
 use humantime::format_duration;
-use pingora::lb::health_check::{HealthCheck, TcpHealthCheck};
+use pingora::lb::health_check::{
+    HealthCheck, HealthObserveCallback, TcpHealthCheck,
+};
 use pingora::upstreams::peer::PeerOptions;
 use snafu::Snafu;
 use std::time::Duration;
@@ -25,6 +27,15 @@ mod grpc;
 mod http;
 pub use grpc::GrpcHealthCheck;
 pub use http::HealthCheckConf;
+
+/// Creates a new internal error
+pub fn new_internal_error(status: u16, message: String) -> pingora::BError {
+    pingora::Error::because(
+        pingora::ErrorType::HTTPStatus(status),
+        message,
+        pingora::Error::new(pingora::ErrorType::InternalError),
+    )
+}
 
 // Add constants for default values
 const DEFAULT_CONNECTION_TIMEOUT: Duration = Duration::from_secs(3);
@@ -62,14 +73,17 @@ fn update_peer_options(
     options
 }
 
-fn new_tcp_health_check(name: &str, conf: &HealthCheckConf) -> TcpHealthCheck {
+fn new_tcp_health_check(
+    _name: &str,
+    conf: &HealthCheckConf,
+    health_changed_callback: Option<HealthObserveCallback>,
+) -> TcpHealthCheck {
     let mut check = TcpHealthCheck::default();
     check.peer_template.options =
         update_peer_options(conf, check.peer_template.options.clone());
     check.consecutive_success = conf.consecutive_success;
     check.consecutive_failure = conf.consecutive_failure;
-    check.health_changed_callback =
-        Some(pingap_webhook::new_backend_observe_notification(name));
+    check.health_changed_callback = health_changed_callback;
 
     check
 }
@@ -77,14 +91,14 @@ fn new_tcp_health_check(name: &str, conf: &HealthCheckConf) -> TcpHealthCheck {
 pub fn new_health_check(
     name: &str,
     health_check: &str,
+    health_changed_callback: Option<HealthObserveCallback>,
 ) -> Result<(Box<dyn HealthCheck + Send + Sync + 'static>, Duration)> {
     let mut health_check_frequency = Duration::from_secs(10);
     let hc: Box<dyn HealthCheck + Send + Sync + 'static> = if health_check
         .is_empty()
     {
         let mut check = TcpHealthCheck::new();
-        check.health_changed_callback =
-            Some(pingap_webhook::new_backend_observe_notification(name));
+        check.health_changed_callback = health_changed_callback;
         check.peer_template.options.connection_timeout =
             Some(Duration::from_secs(3));
         info!(
@@ -116,13 +130,25 @@ pub fn new_health_check(
         );
         match health_check_conf.schema {
             HealthCheckSchema::Http | HealthCheckSchema::Https => {
-                Box::new(http::new_http_health_check(name, &health_check_conf))
+                Box::new(http::new_http_health_check(
+                    name,
+                    &health_check_conf,
+                    health_changed_callback,
+                ))
             },
             HealthCheckSchema::Grpc => {
-                let check = GrpcHealthCheck::new(name, &health_check_conf)?;
+                let check = GrpcHealthCheck::new(
+                    name,
+                    &health_check_conf,
+                    health_changed_callback,
+                )?;
                 Box::new(check)
             },
-            _ => Box::new(new_tcp_health_check(name, &health_check_conf)),
+            _ => Box::new(new_tcp_health_check(
+                name,
+                &health_check_conf,
+                health_changed_callback,
+            )),
         }
     };
     Ok((hc, health_check_frequency))
@@ -154,7 +180,7 @@ mod tests {
             r###"HealthCheckConf { schema: Tcp, host: "upstreamname", path: "", connection_timeout: 3s, read_timeout: 3s, check_frequency: 10s, reuse_connection: false, consecutive_success: 2, consecutive_failure: 1, service: "", tls: false }"###,
             format!("{tcp_check:?}")
         );
-        let tcp_check = new_tcp_health_check("", &tcp_check);
+        let tcp_check = new_tcp_health_check("", &tcp_check, None);
         assert_eq!(1, tcp_check.consecutive_failure);
         assert_eq!(2, tcp_check.consecutive_success);
         assert_eq!(
@@ -164,7 +190,7 @@ mod tests {
     }
     #[test]
     fn test_new_health_check() {
-        let (_, frequency) = new_health_check("upstreamname", "https://upstreamname/ping?connection_timeout=3s&read_timeout=1s&success=2&failure=1&check_frequency=10s&from=nginx&reuse").unwrap();
+        let (_, frequency) = new_health_check("upstreamname", "https://upstreamname/ping?connection_timeout=3s&read_timeout=1s&success=2&failure=1&check_frequency=10s&from=nginx&reuse", None).unwrap();
         assert_eq!(Duration::from_secs(10), frequency);
     }
 }

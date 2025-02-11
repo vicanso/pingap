@@ -2879,7 +2879,6 @@ dependencies = [
  "pingap-pyroscope",
  "pingap-sentry",
  "pingap-service",
- "pingap-state",
  "pingap-upstream",
  "pingap-util",
  "pingap-webhook",
@@ -2961,6 +2960,7 @@ dependencies = [
  "nanoid",
  "once_cell",
  "pingap-config",
+ "pingap-core",
  "pingap-service",
  "pingap-util",
  "pingap-webhook",
@@ -3022,6 +3022,7 @@ dependencies = [
  "ahash",
  "async-trait",
  "bytes",
+ "hostname 0.4.0",
  "http 1.2.0",
  "itoa",
  "once_cell",
@@ -3035,6 +3036,7 @@ dependencies = [
  "strum",
  "tempfile",
  "tokio",
+ "tokio-test",
  "tracing",
 ]
 
@@ -3047,6 +3049,7 @@ dependencies = [
  "futures",
  "hickory-resolver",
  "http 1.2.0",
+ "pingap-core",
  "pingap-util",
  "pingap-webhook",
  "pingora",
@@ -3065,8 +3068,6 @@ dependencies = [
  "async-trait",
  "http 1.2.0",
  "humantime",
- "pingap-util",
- "pingap-webhook",
  "pingora",
  "pretty_assertions",
  "snafu",
@@ -3218,7 +3219,6 @@ dependencies = [
  "pingap-cache",
  "pingap-config",
  "pingap-core",
- "pingap-state",
  "pingap-util",
  "pingora",
  "pingora-limits",
@@ -3274,21 +3274,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pingap-state"
-version = "0.9.10"
-dependencies = [
- "bytes",
- "hostname 0.4.0",
- "http 1.2.0",
- "once_cell",
- "pingap-core",
- "pingora",
- "pretty_assertions",
- "tokio",
- "tokio-test",
-]
-
-[[package]]
 name = "pingap-upstream"
 version = "0.9.10"
 dependencies = [
@@ -3301,6 +3286,7 @@ dependencies = [
  "futures-util",
  "once_cell",
  "pingap-config",
+ "pingap-core",
  "pingap-discovery",
  "pingap-health",
  "pingap-service",
@@ -3322,11 +3308,9 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "dirs",
- "hostname 0.4.0",
  "http 1.2.0",
  "ipnet",
  "itoa",
- "local-ip-address 0.6.3",
  "once_cell",
  "path-absolutize",
  "pingora",
@@ -3346,9 +3330,10 @@ name = "pingap-webhook"
 version = "0.9.10"
 dependencies = [
  "async-trait",
+ "hostname 0.4.0",
+ "local-ip-address 0.6.3",
  "once_cell",
- "pingap-util",
- "pingora",
+ "pingap-core",
  "reqwest 0.12.12",
  "serde_json",
  "strum",

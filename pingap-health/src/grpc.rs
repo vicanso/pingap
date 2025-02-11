@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, HealthCheckConf};
+use super::{new_internal_error, Error, HealthCheckConf};
 use async_trait::async_trait;
 use http::uri::InvalidUri;
 use http::Uri;
@@ -40,7 +40,11 @@ pub struct GrpcHealthCheck {
 }
 
 impl GrpcHealthCheck {
-    pub fn new(name: &str, conf: &HealthCheckConf) -> Result<Self> {
+    pub fn new(
+        _name: &str,
+        conf: &HealthCheckConf,
+        health_changed_callback: Option<HealthObserveCallback>,
+    ) -> Result<Self> {
         let scheme = if conf.tls {
             "https".to_string()
         } else {
@@ -60,9 +64,7 @@ impl GrpcHealthCheck {
             consecutive_success: conf.consecutive_success,
             consecutive_failure: conf.consecutive_failure,
             connection_timeout: conf.connection_timeout,
-            health_changed_callback: Some(
-                pingap_webhook::new_backend_observe_notification(name),
-            ),
+            health_changed_callback,
         })
     }
 }
@@ -73,20 +75,20 @@ impl HealthCheck for GrpcHealthCheck {
         let uri = format!("{}://{}", self.scheme, target.addr);
 
         let conn = tonic::transport::Endpoint::from_shared(uri)
-            .map_err(|e| pingap_util::new_internal_error(500, e.to_string()))?
+            .map_err(|e| new_internal_error(500, e.to_string()))?
             .origin(self.origin.clone())
             .connect_timeout(self.connection_timeout)
             .connect()
             .await
-            .map_err(|e| pingap_util::new_internal_error(500, e.to_string()))?;
+            .map_err(|e| new_internal_error(500, e.to_string()))?;
         let resp = HealthClient::new(conn)
             .check(HealthCheckRequest {
                 service: self.service.clone(),
             })
             .await
-            .map_err(|e| pingap_util::new_internal_error(500, e.to_string()))?;
+            .map_err(|e| new_internal_error(500, e.to_string()))?;
         if resp.get_ref().status() != ServingStatus::Serving.into() {
-            return Err(pingap_util::new_internal_error(
+            return Err(new_internal_error(
                 500,
                 "grpc server is not serving".to_string(),
             ));
@@ -131,7 +133,7 @@ mod tests {
             r###"HealthCheckConf { schema: Grpc, host: "upstreamname", path: "/ping?from=nginx", connection_timeout: 3s, read_timeout: 3s, check_frequency: 10s, reuse_connection: true, consecutive_success: 2, consecutive_failure: 1, service: "grpc", tls: true }"###,
             format!("{grpc_check:?}")
         );
-        let grpc_check = GrpcHealthCheck::new("", &grpc_check).unwrap();
+        let grpc_check = GrpcHealthCheck::new("", &grpc_check, None).unwrap();
         assert_eq!(2, grpc_check.health_threshold(true));
         assert_eq!(1, grpc_check.health_threshold(false));
     }

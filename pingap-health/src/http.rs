@@ -19,7 +19,7 @@ use super::{
 };
 use humantime::parse_duration;
 use pingora::http::RequestHeader;
-use pingora::lb::health_check::HttpHealthCheck;
+use pingora::lb::health_check::{HealthObserveCallback, HttpHealthCheck};
 use std::time::Duration;
 use tracing::error;
 use url::Url;
@@ -29,6 +29,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 pub(crate) fn new_http_health_check(
     name: &str,
     conf: &HealthCheckConf,
+    health_changed_callback: Option<HealthObserveCallback>,
 ) -> HttpHealthCheck {
     let mut check = HttpHealthCheck::new(
         &conf.host,
@@ -40,8 +41,7 @@ pub(crate) fn new_http_health_check(
     check.consecutive_success = conf.consecutive_success;
     check.consecutive_failure = conf.consecutive_failure;
     check.reuse_connection = conf.reuse_connection;
-    check.health_changed_callback =
-        Some(pingap_webhook::new_backend_observe_notification(name));
+    check.health_changed_callback = health_changed_callback;
     // create http get request
     match RequestHeader::build("GET", conf.path.as_bytes(), None) {
         Ok(mut req) => {
@@ -49,6 +49,7 @@ pub(crate) fn new_http_health_check(
             if let Err(e) = req.append_header("Host", &conf.host) {
                 error!(
                     category = LOG_CATEGORY,
+                    name,
                     error = e.to_string(),
                     host = conf.host,
                     "http health check append host fail"
@@ -187,7 +188,7 @@ mod tests {
             r###"HealthCheckConf { schema: Https, host: "upstreamname", path: "/ping?from=nginx", connection_timeout: 3s, read_timeout: 1s, check_frequency: 10s, reuse_connection: true, consecutive_success: 2, consecutive_failure: 1, service: "grpc", tls: true }"###,
             format!("{http_check:?}")
         );
-        let http_check = new_http_health_check("", &http_check);
+        let http_check = new_http_health_check("", &http_check, None);
         assert_eq!(1, http_check.consecutive_failure);
         assert_eq!(2, http_check.consecutive_success);
         assert_eq!(true, http_check.reuse_connection);

@@ -81,7 +81,6 @@ pingap-cache = { path = "pingap-cache" }
 pingap-upstream = { path = "pingap-upstream" }
 pingap-certificate = { path = "pingap-certificate" }
 pingap-location = { path = "pingap-location" }
-pingap-state = { path = "pingap-state" }
 pingap-performance = { path = "pingap-performance" }
 pingap-logger = { path = "pingap-logger" }
 pingap-acme = { path = "pingap-acme" }
@@ -145,7 +144,6 @@ members = [
     "pingap-upstream",
     "pingap-certificate",
     "pingap-location",
-    "pingap-state",
     "pingap-performance",
     "pingap-logger",
     "pingap-otel",

@@ -34,7 +34,7 @@ use pingap_certificate::{GlobalCertificate, TlsSettingParams};
 use pingap_config::get_config_storage;
 #[cfg(feature = "full")]
 use pingap_core::OtelTracer;
-use pingap_core::{convert_headers, HttpHeader};
+use pingap_core::{convert_header_value, convert_headers, HttpHeader};
 use pingap_core::{get_cache_key, CompressionStat, Ctx, PluginStep};
 use pingap_core::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use pingap_location::{get_location, Location};
@@ -45,7 +45,6 @@ use pingap_performance::{
     new_prometheus, new_prometheus_push_service, Prometheus,
 };
 use pingap_service::SimpleServiceTaskFuture;
-use pingap_state::convert_header_value;
 use pingap_upstream::get_upstream;
 use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::CacheControl;
@@ -1580,7 +1579,7 @@ category = "config"
 value = 'proxy_set_headers = ["name:value"]'
         "###;
         let pingap_conf = PingapConf::new(toml_data.as_ref(), false).unwrap();
-        try_init_upstreams(&pingap_conf.upstreams).unwrap();
+        try_init_upstreams(&pingap_conf.upstreams, None).unwrap();
         try_init_locations(&pingap_conf.locations).unwrap();
         try_init_server_locations(&pingap_conf.servers, &pingap_conf.locations)
             .unwrap();

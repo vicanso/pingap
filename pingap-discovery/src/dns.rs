@@ -180,13 +180,17 @@ impl ServiceDiscovery for Dns {
                     ),
                     "dns discover fail"
                 );
-                pingap_webhook::send_notification(pingap_webhook::SendNotificationParams {
-                    category:
-                        pingap_webhook::NotificationCategory::ServiceDiscoverFail,
-                    level: pingap_webhook::NotificationLevel::Warn,
-                    msg: format!("dns discovery {:?}, error: {e}", self.hosts),
-                    remark: None,
-                })
+                pingap_webhook::send_notification(
+                    pingap_core::NotificationData {
+                        category: "service_discover_fail".to_string(),
+                        level: pingap_core::NotificationLevel::Warn,
+                        message: format!(
+                            "dns discovery {:?}, error: {e}",
+                            self.hosts
+                        ),
+                        ..Default::default()
+                    },
+                )
                 .await;
                 Err(e.into())
             },

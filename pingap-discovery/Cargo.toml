@@ -23,6 +23,7 @@ hickory-resolver = "0.24.1"
 bollard = "0.18.1"
 pingap-webhook = { path = "../pingap-webhook" }
 pingap-util = { path = "../pingap-util" }
+pingap-core = { path = "../pingap-core" }
 snafu = { workspace = true }
 tokio = { workspace = true }
 futures = { workspace = true }

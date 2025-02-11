@@ -110,9 +110,9 @@ pub async fn restart_now() -> io::Result<process::Output> {
         ));
     }
     info!(category = LOG_CATEGORY, "pingap will restart");
-    pingap_webhook::send_notification(pingap_webhook::SendNotificationParams {
-        category: pingap_webhook::NotificationCategory::Restart,
-        msg: format!("Restart now, pid:{}", std::process::id()),
+    pingap_webhook::send_notification(pingap_core::NotificationData {
+        category: "restart".to_string(),
+        message: format!("Restart now, pid:{}", std::process::id()),
         ..Default::default()
     })
     .await;
@@ -160,12 +160,11 @@ pub async fn restart() {
                     "restart fail"
                 );
                 pingap_webhook::send_notification(
-                    pingap_webhook::SendNotificationParams {
-                        level: pingap_webhook::NotificationLevel::Error,
-                        category:
-                            pingap_webhook::NotificationCategory::RestartFail,
-                        msg: e.to_string(),
-                        remark: None,
+                    pingap_core::NotificationData {
+                        level: pingap_core::NotificationLevel::Error,
+                        category: "restart_fail".to_string(),
+                        message: e.to_string(),
+                        ..Default::default()
                     },
                 )
                 .await;

@@ -24,6 +24,7 @@ interface Basic {
   fd_count: number;
   tcp_count: number;
   tcp6_count: number;
+  supported_plugins: string[];
 }
 
 interface ConfigState {
@@ -56,6 +57,7 @@ const useBasicState = create<ConfigState>()((set) => ({
     fd_count: 0,
     tcp_count: 0,
     tcp6_count: 0,
+    supported_plugins: [],
   },
   initialized: false,
   fetch: async () => {

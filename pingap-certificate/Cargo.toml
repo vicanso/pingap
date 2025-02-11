@@ -30,6 +30,8 @@ pingap-util = { path = "../pingap-util" }
 pingap-service = { path = "../pingap-service" }
 pingap-config = { path = "../pingap-config" }
 pingap-webhook = { path = "../pingap-webhook" }
+pingap-core = { path = "../pingap-core" }
+
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"

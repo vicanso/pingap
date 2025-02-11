@@ -31,6 +31,7 @@ pingap-discovery = { path = "../pingap-discovery" }
 pingap-health = { path = "../pingap-health" }
 pingap-service = { path = "../pingap-service" }
 pingap-util = { path = "../pingap-util" }
+pingap-core = { path = "../pingap-core" }
 
 
 [dev-dependencies]

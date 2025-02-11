@@ -48,7 +48,7 @@ export default function Home() {
         if (day.length === 1) {
           day = `0${day}`;
         }
-        return `${month}-${day}`;
+        return `${date.getFullYear()}-${month}-${day}`;
       };
       const results = {} as Record<string, string>;
       Object.keys(infos).forEach((name) => {

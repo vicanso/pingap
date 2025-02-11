@@ -54,7 +54,6 @@ toml = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 http = { workspace = true }
-pingap-state = { path = "../pingap-state" }
 pingap-config = { path = "../pingap-config" }
 pingap-util = { path = "../pingap-util" }
 pingap-cache = { path = "../pingap-cache" }

@@ -13,11 +13,13 @@
 // limitations under the License.
 
 use async_trait::async_trait;
-use once_cell::sync::OnceCell;
-use pingora::lb::health_check::HealthObserve;
-use pingora::lb::Backend;
+use once_cell::sync::{Lazy, OnceCell};
+use pingap_core::{
+    Notification, NotificationData, NotificationLevel, NotificationSender,
+};
 use serde_json::{Map, Value};
-use std::{fmt::Display, time::Duration};
+use std::sync::Arc;
+use std::time::Duration;
 use strum::EnumString;
 use tracing::{error, info};
 
@@ -39,14 +41,21 @@ pub fn set_web_hook(url: &str, category: &str, notifications: &[String]) {
     WEBHOOK_NOTIFICATIONS.get_or_init(|| notifications.to_owned());
 }
 
-#[derive(Default)]
-pub enum NotificationLevel {
-    #[default]
-    Info,
-    Warn,
-    Error,
+static WEBHOOK_NOTIFICATION_SENDER: Lazy<Arc<NotificationSender>> =
+    Lazy::new(|| Arc::new(Box::new(WebhookNotificationSender {})));
+
+pub fn get_webhook_notification_sender() -> Arc<NotificationSender> {
+    WEBHOOK_NOTIFICATION_SENDER.clone()
 }
 
+pub struct WebhookNotificationSender {}
+
+#[async_trait]
+impl Notification for WebhookNotificationSender {
+    async fn notify(&self, data: NotificationData) {
+        send_notification(data).await;
+    }
+}
 #[derive(PartialEq, Debug, Clone, EnumString, strum::Display, Default)]
 #[strum(serialize_all = "snake_case")]
 pub enum NotificationCategory {
@@ -63,62 +72,6 @@ pub enum NotificationCategory {
     ServiceDiscoverFail,
 }
 
-impl Display for NotificationLevel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let msg = match self {
-            NotificationLevel::Error => "error",
-            NotificationLevel::Warn => "warn",
-            _ => "info",
-        };
-        write!(f, "{msg}")
-    }
-}
-
-pub struct BackendObserveNotification {
-    name: String,
-}
-
-#[async_trait]
-impl HealthObserve for BackendObserveNotification {
-    async fn observe(&self, backend: &Backend, healthy: bool) {
-        let addr = backend.addr.to_string();
-        let template = format!("upstream {}({addr}) becomes ", self.name);
-        let info = if healthy {
-            (NotificationLevel::Info, template + "healthy")
-        } else {
-            (NotificationLevel::Error, template + "unhealthy")
-        };
-        send_notification(SendNotificationParams {
-            category: NotificationCategory::BackendStatus,
-            level: info.0,
-            msg: info.1,
-            ..Default::default()
-        })
-        .await;
-    }
-}
-
-/// Creates a new backend health observation notification handler
-///
-/// # Arguments
-/// * `name` - Name of the backend service to monitor
-pub fn new_backend_observe_notification(
-    name: &str,
-) -> Box<BackendObserveNotification> {
-    Box::new(BackendObserveNotification {
-        name: name.to_string(),
-    })
-}
-
-/// Parameters for sending a notification
-#[derive(Default)]
-pub struct SendNotificationParams {
-    pub category: NotificationCategory,
-    pub level: NotificationLevel,
-    pub msg: String,
-    pub remark: Option<String>,
-}
-
 /// Sends a notification via configured webhook
 ///
 /// Formats and sends the notification based on the webhook type (wecom, dingtalk, etc).
@@ -126,11 +79,12 @@ pub struct SendNotificationParams {
 ///
 /// # Arguments
 /// * `params` - The notification parameters including category, level, message and optional remark
-pub async fn send_notification(params: SendNotificationParams) {
+pub async fn send_notification(params: NotificationData) {
     info!(
         category = LOG_CATEGORY,
-        notification = params.category.to_string(),
-        message = params.msg,
+        notification = params.category,
+        title = params.title,
+        message = params.message,
         "webhook notification"
     );
     let webhook_type = if let Some(value) = WEBHOOK_CATEGORY.get() {
@@ -154,12 +108,15 @@ pub async fn send_notification(params: SendNotificationParams) {
     }
     let category = params.category.to_string();
     let level = params.level;
-    let ip = pingap_util::local_ip_list().join(";");
-    let remark = params.remark.unwrap_or_default();
+    let ip = local_ip_list().join(";");
 
     let client = reqwest::Client::new();
     let mut data = serde_json::Map::new();
-    let hostname = pingap_util::get_hostname();
+    let hostname = hostname::get()
+        .unwrap_or_default()
+        .to_str()
+        .unwrap_or_default()
+        .to_string();
     // TODO get app name from config
     let name = "pingap".to_string();
     let color_type = match level {
@@ -172,9 +129,8 @@ pub async fn send_notification(params: SendNotificationParams) {
             >hostname: {hostname}
             >ip: {ip}
             >category: {category}
-            >message: {}
-            >remark: {remark}"###,
-        params.msg
+            >message: {}"###,
+        params.message
     );
     match webhook_type.to_lowercase().as_str() {
         "wecom" => {
@@ -208,7 +164,7 @@ pub async fn send_notification(params: SendNotificationParams) {
             );
             data.insert("ip".to_string(), Value::String(ip));
             data.insert("category".to_string(), Value::String(category));
-            data.insert("message".to_string(), Value::String(params.msg));
+            data.insert("message".to_string(), Value::String(params.message));
         },
     }
 
@@ -238,4 +194,25 @@ pub async fn send_notification(params: SendNotificationParams) {
             );
         },
     };
+}
+
+/// Returns a list of non-loopback IP addresses (both IPv4 and IPv6) for the local machine
+///
+/// # Returns
+/// A vector of IP addresses as strings
+fn local_ip_list() -> Vec<String> {
+    let mut ip_list = vec![];
+
+    if let Ok(value) = local_ip_address::local_ip() {
+        ip_list.push(value);
+    }
+    if let Ok(value) = local_ip_address::local_ipv6() {
+        ip_list.push(value);
+    }
+
+    ip_list
+        .iter()
+        .filter(|item| !item.is_loopback())
+        .map(|item| item.to_string())
+        .collect()
 }

@@ -16,8 +16,9 @@ use async_trait::async_trait;
 use ctor::ctor;
 use http::header::HeaderName;
 use pingap_config::{PluginCategory, PluginConf};
-use pingap_core::{convert_header, Ctx, HttpHeader, Plugin, PluginStep};
-use pingap_state::convert_header_value;
+use pingap_core::{
+    convert_header, convert_header_value, Ctx, HttpHeader, Plugin, PluginStep,
+};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use std::str::FromStr;

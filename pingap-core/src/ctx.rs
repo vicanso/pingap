@@ -124,7 +124,7 @@ pub struct Ctx {
     pub connection_time: u64,
     /// Indicates if this connection is being reused
     pub connection_reused: bool,
-    /// The location configuration handling this request
+    /// The location handling this request
     pub location: String,
     /// Address of the upstream server
     pub upstream_address: String,
@@ -154,6 +154,7 @@ pub struct Ctx {
     pub cache_lock_time: Option<u64>,
     /// Maximum time-to-live for cache entries
     pub cache_max_ttl: Option<Duration>,
+    /// The upstream server
     pub upstream: String,
     /// Indicates if the upstream connection is being reused
     pub upstream_reused: bool,

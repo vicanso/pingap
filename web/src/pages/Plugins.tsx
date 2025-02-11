@@ -14,7 +14,7 @@ import {
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
-
+import useBasicState from "@/states/basic";
 function getPluginConfig(
   name: string,
   plugins?: Record<string, Record<string, unknown>>,
@@ -38,6 +38,8 @@ export default function Plugins() {
     ]),
   );
 
+  const [basicInfo] = useBasicState(useShallow((state) => [state.data]));
+
   const newPlugin = "*";
   const plugins = Object.keys(config.plugins || {});
   plugins.sort();
@@ -48,7 +50,7 @@ export default function Plugins() {
   );
   const pluginConfig = getPluginConfig(currentPlugin, config.plugins);
   const [currentCategory, setCurrentCategory] = React.useState(
-    (pluginConfig.catregory as string) || "",
+    (pluginConfig.category as string) || "",
   );
 
   useEffect(() => {
@@ -81,37 +83,7 @@ export default function Plugins() {
         category: ExFormItemCategory.RADIOS,
         span: 6,
         options: newStringOptions(
-          [
-            PluginCategory.STATS,
-            PluginCategory.PING,
-            PluginCategory.ADMIN,
-            PluginCategory.DIRECTORY,
-            PluginCategory.MOCK,
-            PluginCategory.REDIRECT,
-            PluginCategory.CACHE,
-
-            PluginCategory.REQUEST_ID,
-            PluginCategory.COMPRESSION,
-            PluginCategory.ACCEPT_ENCODING,
-
-            // auth
-            PluginCategory.KEY_AUTH,
-            PluginCategory.BASIC_AUTH,
-            PluginCategory.JWT,
-            PluginCategory.COMBINED_AUTH,
-
-            // limit
-            PluginCategory.LIMIT,
-            PluginCategory.IP_RESTRICTION,
-            PluginCategory.UA_RESTRICTION,
-            PluginCategory.REFERER_RESTRICTION,
-            PluginCategory.CSRF,
-            PluginCategory.CORS,
-
-            // response
-            PluginCategory.RESPONSE_HEADERS,
-            PluginCategory.SUB_FILTER,
-          ],
+          basicInfo.supported_plugins,
           true,
         ),
       },

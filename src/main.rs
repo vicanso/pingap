@@ -210,10 +210,10 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     let (server_conf, name, proxy_plugin_info) =
         plugin::parse_admin_plugin(&args.admin.unwrap_or_default())?;
 
-    if let Err(e) =
-        plugin::try_init_plugins(&HashMap::from([(name, proxy_plugin_info)]))
-    {
-        error!(error = e.to_string(), "init plugins fail",);
+    let (_, error) =
+        plugin::try_init_plugins(&HashMap::from([(name, proxy_plugin_info)]));
+    if !error.is_empty() {
+        error!(error, "init plugins fail",);
     }
     pingap_config::try_init_config_storage(&args.conf)?;
     // config::set_config_path(&args.conf);
@@ -410,7 +410,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         process::set_restart_process_command(cmd);
     }
 
-    try_init_upstreams(&conf.upstreams)?;
+    try_init_upstreams(
+        &conf.upstreams,
+        Some(pingap_webhook::get_webhook_notification_sender()),
+    )?;
     try_init_locations(&conf.locations)?;
     proxy::try_init_server_locations(&conf.servers, &conf.locations)?;
     let certificates = conf.certificates.clone();
@@ -466,8 +469,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         "plugins" = get_plugin_factory().supported_plugins().join(","),
         "plugins are registered"
     );
-    if let Err(e) = plugin::try_init_plugins(&conf.plugins) {
-        error!(error = e.to_string(), "init plugins fail",);
+    let (_, error) = plugin::try_init_plugins(&conf.plugins);
+    if !error.is_empty() {
+        error!(error, "init plugins fail",);
     }
 
     let mut server_conf_list: Vec<ServerConf> = proxy::parse_from_conf(conf);

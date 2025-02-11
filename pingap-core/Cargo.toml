@@ -24,6 +24,7 @@ serde = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 serde_json = { workspace = true }
+hostname = "0.4.0"
 opentelemetry = { version = "0.27.1", default-features = false, features = [
     "trace",
 ], optional = true }
@@ -35,3 +36,4 @@ full = ["opentelemetry"]
 [dev-dependencies]
 pretty_assertions = "1.4.0"
 tempfile = "3.16.0"
+tokio-test = "0.4.4"

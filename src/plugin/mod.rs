@@ -25,7 +25,7 @@ use snafu::Snafu;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{error, info};
 
 mod admin;
 mod stats;
@@ -216,16 +216,19 @@ static PLUGINS: Lazy<ArcSwap<Plugins>> =
 /// Parses plugin configurations and instantiates plugin instances.
 ///
 /// # Arguments
-/// * `confs` - Vector of (name, config) tuples for plugins to initialize
+/// * `configs` - Vector of (name, config) tuples for plugins to initialize
 ///
 /// # Returns
 /// HashMap mapping plugin names to initialized plugin instances
 ///
 /// # Errors
 /// Returns Error if plugin initialization fails
-pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
+pub fn parse_plugins(
+    configs: Vec<(String, PluginConf)>,
+) -> (Plugins, Vec<Error>) {
     let mut plugins: Plugins = AHashMap::new();
-    for (name, conf) in confs.iter() {
+    let mut errors: Vec<Error> = vec![];
+    for (name, conf) in configs.iter() {
         let name = name.to_string();
         let category = if let Some(value) = conf.get("category") {
             value.as_str().unwrap_or_default().to_string()
@@ -233,23 +236,37 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
             "".to_string()
         };
         if category.is_empty() {
-            return Err(Error::Invalid {
+            errors.push(Error::Invalid {
                 category: "".to_string(),
-                message: "Category can not be empty".to_string(),
+                message: format!("category of {name} can not be empty"),
             });
+            continue;
         }
 
-        let plugin =
-            get_plugin_factory()
-                .create(conf)
-                .map_err(|e| Error::Invalid {
+        match get_plugin_factory().create(conf) {
+            Ok(plugin) => {
+                plugins.insert(name.clone(), plugin.clone());
+            },
+            Err(e) => {
+                errors.push(Error::Invalid {
                     category,
-                    message: e.to_string(),
-                })?;
-        plugins.insert(name.clone(), plugin.clone());
+                    message: format!("create plugin {name} failed, {}", e),
+                });
+            },
+        }
     }
 
-    Ok(plugins)
+    // let plugin =
+    //     get_plugin_factory()
+    //         .create(conf)
+    //         .map_err(|e| Error::Invalid {
+    //             category,
+    //             message: format!("create plugin {name} failed, {}", e),
+    //         })?;
+    // plugins.insert(name.clone(), plugin.clone());
+    // }
+
+    (plugins, errors)
 }
 
 /// Initializes or updates plugins based on configuration.
@@ -264,23 +281,30 @@ pub fn parse_plugins(confs: Vec<(String, PluginConf)>) -> Result<Plugins> {
 /// Returns Error if plugin initialization fails
 pub fn try_init_plugins(
     plugins: &HashMap<String, PluginConf>,
-) -> Result<Vec<String>> {
-    let mut plugin_confs: Vec<(String, PluginConf)> = plugins
+) -> (Vec<String>, String) {
+    let mut plugin_configs: Vec<(String, PluginConf)> = plugins
         .iter()
         .map(|(name, value)| (name.to_string(), value.clone()))
         .collect();
 
     // add admin plugin
+    let mut errors = vec![];
     if let Some(addr) = &get_admin_addr() {
-        let (_, name, proxy_plugin_info) = parse_admin_plugin(addr)?;
-        plugin_confs.push((name, proxy_plugin_info));
+        match parse_admin_plugin(addr) {
+            Ok((_, name, proxy_plugin_info)) => {
+                plugin_configs.push((name, proxy_plugin_info));
+            },
+            Err(e) => {
+                errors.push(e);
+            },
+        }
     }
 
-    plugin_confs.extend(get_builtin_proxy_plugins());
+    plugin_configs.extend(get_builtin_proxy_plugins());
 
     let mut updated_plugins = vec![];
     let mut plugins = AHashMap::new();
-    let plugin_confs: Vec<(String, PluginConf)> = plugin_confs
+    let plugin_configs: Vec<(String, PluginConf)> = plugin_configs
         .into_iter()
         .filter(|(name, conf)| {
             let conf_hash_key = get_hash_key(conf);
@@ -308,10 +332,23 @@ pub fn try_init_plugins(
             true
         })
         .collect();
-    plugins.extend(parse_plugins(plugin_confs)?);
+    let (new_plugins, new_errors) = parse_plugins(plugin_configs);
+    plugins.extend(new_plugins);
+    errors.extend(new_errors);
     PLUGINS.store(Arc::new(plugins));
+    let error = if !errors.is_empty() {
+        let error = errors
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join(";");
+        error!(error, "parse plugins failed");
+        error
+    } else {
+        "".to_string()
+    };
 
-    Ok(updated_plugins)
+    (updated_plugins, error)
 }
 
 pub fn get_plugin(name: &str) -> Option<Arc<dyn Plugin>> {
@@ -395,5 +432,6 @@ remove_headers = [
             .unwrap(),
         ),
     ]);
-    try_init_plugins(&plugins).unwrap();
+    let (_, error) = try_init_plugins(&plugins);
+    assert!(error.is_empty());
 }

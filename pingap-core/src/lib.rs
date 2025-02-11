@@ -49,14 +49,32 @@ pub fn get_super_ts() -> u32 {
     }
 }
 
+static HOST_NAME: Lazy<String> = Lazy::new(|| {
+    hostname::get()
+        .unwrap_or_default()
+        .to_str()
+        .unwrap_or_default()
+        .to_string()
+});
+
+/// Returns the system hostname.
+///
+/// Returns:
+/// * `&'static str` - The system's hostname as a string slice
+pub fn get_hostname() -> &'static str {
+    HOST_NAME.as_str()
+}
+
 mod ctx;
 mod http_header;
 mod http_response;
+mod notification;
 mod plugin;
 
 pub use ctx::*;
 pub use http_header::*;
 pub use http_response::*;
+pub use notification::*;
 pub use plugin::*;
 
 #[cfg(test)]

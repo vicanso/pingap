@@ -248,16 +248,17 @@ impl ServiceDiscovery for Docker {
                     ),
                     "docker discover fail"
                 );
-                pingap_webhook::send_notification(pingap_webhook::SendNotificationParams {
-                    category:
-                        pingap_webhook::NotificationCategory::ServiceDiscoverFail,
-                    level: pingap_webhook::NotificationLevel::Warn,
-                    msg: format!(
-                        "docker discovery {:?}, error: {e}",
-                        self.labels(),
-                    ),
-                    remark: None,
-                })
+                pingap_webhook::send_notification(
+                    pingap_core::NotificationData {
+                        category: "service_discover_fail".to_string(),
+                        level: pingap_core::NotificationLevel::Warn,
+                        message: format!(
+                            "docker discovery {:?}, error: {e}",
+                            self.labels(),
+                        ),
+                        ..Default::default()
+                    },
+                )
                 .await;
                 return Err(e.into());
             },

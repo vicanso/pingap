@@ -20,8 +20,9 @@ use ctor::ctor;
 use http::{header, HeaderValue};
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
-use pingap_core::{Ctx, HttpHeader, HttpResponse, Plugin, PluginStep};
-use pingap_state::convert_header_value;
+use pingap_core::{
+    convert_header_value, Ctx, HttpHeader, HttpResponse, Plugin, PluginStep,
+};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::Regex;

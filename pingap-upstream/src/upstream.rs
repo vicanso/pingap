@@ -19,6 +19,7 @@ use derive_more::Debug;
 use futures_util::FutureExt;
 use once_cell::sync::Lazy;
 use pingap_config::UpstreamConf;
+use pingap_core::{NotificationData, NotificationLevel, NotificationSender};
 use pingap_discovery::{
     is_dns_discovery, is_docker_discovery, is_static_discovery,
     new_dns_discover_backends, new_docker_discover_backends,
@@ -26,9 +27,11 @@ use pingap_discovery::{
 };
 use pingap_health::new_health_check;
 use pingap_service::{CommonServiceTask, ServiceTask};
+use pingora::lb::health_check::{HealthObserve, HealthObserveCallback};
 use pingora::lb::selection::{
     BackendIter, BackendSelection, Consistent, RoundRobin,
 };
+use pingora::lb::Backend;
 use pingora::lb::{Backends, LoadBalancer};
 use pingora::protocols::l4::ext::TcpKeepalive;
 use pingora::protocols::ALPN;
@@ -49,6 +52,47 @@ pub enum Error {
     Common { message: String, category: String },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
+
+pub struct BackendObserveNotification {
+    name: String,
+    sender: Arc<NotificationSender>,
+}
+
+#[async_trait]
+impl HealthObserve for BackendObserveNotification {
+    async fn observe(&self, backend: &Backend, healthy: bool) {
+        let addr = backend.addr.to_string();
+        let template = format!("upstream {}({addr}) becomes ", self.name);
+        let info = if healthy {
+            (NotificationLevel::Info, template + "healthy")
+        } else {
+            (NotificationLevel::Error, template + "unhealthy")
+        };
+
+        self.sender
+            .notify(NotificationData {
+                category: "backend_status".to_string(),
+                level: info.0,
+                title: "Upstream backend status changed".to_string(),
+                message: info.1,
+            })
+            .await;
+    }
+}
+
+fn new_observe(
+    name: &str,
+    sender: Option<Arc<NotificationSender>>,
+) -> Option<HealthObserveCallback> {
+    if let Some(sender) = sender {
+        Some(Box::new(BackendObserveNotification {
+            name: name.to_string(),
+            sender: sender.clone(),
+        }))
+    } else {
+        None
+    }
+}
 
 // SelectionLb represents different load balancing strategies:
 // - RoundRobin: Distributes requests evenly across backends
@@ -242,6 +286,7 @@ fn update_health_check_params<S>(
     mut lb: LoadBalancer<S>,
     name: &str,
     conf: &UpstreamConf,
+    sender: Option<Arc<NotificationSender>>,
 ) -> Result<LoadBalancer<S>>
 where
     S: BackendSelection + 'static,
@@ -256,12 +301,15 @@ where
     }
 
     // Set up health checking for the backends
-    let (hc, health_check_frequency) =
-        new_health_check(name, &conf.health_check.clone().unwrap_or_default())
-            .map_err(|e| Error::Common {
-                message: e.to_string(),
-                category: "health".to_string(),
-            })?;
+    let (hc, health_check_frequency) = new_health_check(
+        name,
+        &conf.health_check.clone().unwrap_or_default(),
+        new_observe(name, sender),
+    )
+    .map_err(|e| Error::Common {
+        message: e.to_string(),
+        category: "health".to_string(),
+    })?;
     // Configure health checking
     lb.parallel_health_check = true;
     lb.set_health_check(hc);
@@ -281,6 +329,7 @@ where
 fn new_load_balancer(
     name: &str,
     conf: &UpstreamConf,
+    sender: Option<Arc<NotificationSender>>,
 ) -> Result<(SelectionLb, String, String)> {
     // Validate that addresses are provided
     if conf.addrs.is_empty() {
@@ -334,6 +383,7 @@ fn new_load_balancer(
                 LoadBalancer::<Consistent>::from_backends(backends),
                 name,
                 conf,
+                sender,
             )?;
 
             SelectionLb::Consistent(Arc::new(lb))
@@ -344,6 +394,7 @@ fn new_load_balancer(
                 LoadBalancer::<RoundRobin>::from_backends(backends),
                 name,
                 conf,
+                sender,
             )?;
 
             SelectionLb::RoundRobin(Arc::new(lb))
@@ -361,8 +412,12 @@ impl Upstream {
     ///
     /// # Returns
     /// * `Result<Self>` - New Upstream instance or error if creation fails
-    pub fn new(name: &str, conf: &UpstreamConf) -> Result<Self> {
-        let (lb, hash, hash_key) = new_load_balancer(name, conf)?;
+    pub fn new(
+        name: &str,
+        conf: &UpstreamConf,
+        sender: Option<Arc<NotificationSender>>,
+    ) -> Result<Self> {
+        let (lb, hash, hash_key) = new_load_balancer(name, conf, sender)?;
         let key = conf.hash_key();
         let sni = conf.sni.clone().unwrap_or_default();
         let tls = !sni.is_empty();
@@ -583,6 +638,7 @@ pub fn get_upstreams_processing_connected(
 
 fn new_ahash_upstreams(
     upstream_configs: &HashMap<String, UpstreamConf>,
+    sender: Option<Arc<NotificationSender>>,
 ) -> Result<(Upstreams, Vec<String>)> {
     let mut upstreams = AHashMap::new();
     let mut updated_upstreams = vec![];
@@ -595,7 +651,7 @@ fn new_ahash_upstreams(
                 continue;
             }
         }
-        let up = Arc::new(Upstream::new(name, conf)?);
+        let up = Arc::new(Upstream::new(name, conf, sender.clone())?);
         upstreams.insert(name.to_string(), up);
         updated_upstreams.push(name.to_string());
     }
@@ -604,8 +660,9 @@ fn new_ahash_upstreams(
 
 pub fn try_init_upstreams(
     upstream_configs: &HashMap<String, UpstreamConf>,
+    sender: Option<Arc<NotificationSender>>,
 ) -> Result<()> {
-    let (upstreams, _) = new_ahash_upstreams(upstream_configs)?;
+    let (upstreams, _) = new_ahash_upstreams(upstream_configs, sender)?;
     UPSTREAM_MAP.store(Arc::new(upstreams));
     Ok(())
 }
@@ -633,8 +690,10 @@ async fn run_health_check(up: &Arc<Upstream>) -> Result<()> {
 
 pub async fn try_update_upstreams(
     upstream_configs: &HashMap<String, UpstreamConf>,
+    sender: Option<Arc<NotificationSender>>,
 ) -> Result<Vec<String>> {
-    let (upstreams, updated_upstreams) = new_ahash_upstreams(upstream_configs)?;
+    let (upstreams, updated_upstreams) =
+        new_ahash_upstreams(upstream_configs, sender)?;
     for (name, up) in upstreams.iter() {
         // no need to run health check if not new upstream
         if !updated_upstreams.contains(name) {
@@ -831,6 +890,7 @@ mod tests {
             &UpstreamConf {
                 ..Default::default()
             },
+            None,
         );
         assert_eq!(
             "Common error, category: new_upstream, upstream addrs is empty",
@@ -854,6 +914,7 @@ mod tests {
                 tcp_recv_buf: Some(bytesize::ByteSize(1024)),
                 ..Default::default()
             },
+            None,
         )
         .unwrap();
 
@@ -938,6 +999,7 @@ mod tests {
                 addrs: vec!["192.168.1.1:8001".to_string()],
                 ..Default::default()
             },
+            None,
         )
         .unwrap();
         assert_eq!(true, up.new_http_peer(&session, &None,).is_some());
