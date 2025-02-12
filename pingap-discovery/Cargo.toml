@@ -19,7 +19,7 @@ pingora = { workspace = true }
 http = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
-hickory-resolver = "0.24.1"
+hickory-resolver = "0.24.3"
 bollard = "0.18.1"
 pingap-webhook = { path = "../pingap-webhook" }
 pingap-util = { path = "../pingap-util" }
