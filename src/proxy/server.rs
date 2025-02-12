@@ -34,6 +34,7 @@ use pingap_certificate::{GlobalCertificate, TlsSettingParams};
 use pingap_config::get_config_storage;
 #[cfg(feature = "full")]
 use pingap_core::OtelTracer;
+use pingap_core::SimpleServiceTaskFuture;
 use pingap_core::{convert_header_value, convert_headers, HttpHeader};
 use pingap_core::{get_cache_key, CompressionStat, Ctx, PluginStep};
 use pingap_core::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
@@ -44,7 +45,6 @@ use pingap_performance::{accept_request, end_request};
 use pingap_performance::{
     new_prometheus, new_prometheus_push_service, Prometheus,
 };
-use pingap_service::SimpleServiceTaskFuture;
 use pingap_upstream::get_upstream;
 use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::CacheControl;

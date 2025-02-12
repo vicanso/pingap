@@ -67,7 +67,7 @@ pub(crate) fn new_http_health_check(
     check
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct HealthCheckConf {
     pub schema: HealthCheckSchema,
     pub host: String,
@@ -80,6 +80,7 @@ pub struct HealthCheckConf {
     pub consecutive_failure: usize,
     pub service: String,
     pub tls: bool,
+    pub parallel_check: bool,
 }
 
 impl TryFrom<&str> for HealthCheckConf {
@@ -98,6 +99,7 @@ impl TryFrom<&str> for HealthCheckConf {
         let mut query_list = vec![];
         let mut reuse_connection = false;
         let mut tls = false;
+        let mut parallel_check = false;
         let mut service = "".to_string();
         // HttpHealthCheck
         for (key, value) in value.query_pairs().into_iter() {
@@ -136,6 +138,9 @@ impl TryFrom<&str> for HealthCheckConf {
                 "service" => {
                     service = value.to_string();
                 },
+                "parallel" => {
+                    parallel_check = true;
+                },
                 _ => {
                     if value.is_empty() {
                         query_list.push(key.to_string());
@@ -171,6 +176,7 @@ impl TryFrom<&str> for HealthCheckConf {
             consecutive_failure,
             tls,
             service,
+            parallel_check,
         })
     }
 }
@@ -185,7 +191,7 @@ mod tests {
     fn test_http_health_check_conf() {
         let http_check: HealthCheckConf = "https://upstreamname/ping?connection_timeout=3s&read_timeout=1s&success=2&failure=1&check_frequency=10s&from=nginx&reuse&tls&service=grpc".try_into().unwrap();
         assert_eq!(
-            r###"HealthCheckConf { schema: Https, host: "upstreamname", path: "/ping?from=nginx", connection_timeout: 3s, read_timeout: 1s, check_frequency: 10s, reuse_connection: true, consecutive_success: 2, consecutive_failure: 1, service: "grpc", tls: true }"###,
+            r###"HealthCheckConf { schema: Https, host: "upstreamname", path: "/ping?from=nginx", connection_timeout: 3s, read_timeout: 1s, check_frequency: 10s, reuse_connection: true, consecutive_success: 2, consecutive_failure: 1, service: "grpc", tls: true, parallel_check: false }"###,
             format!("{http_check:?}")
         );
         let http_check = new_http_health_check("", &http_check, None);

@@ -5,17 +5,15 @@ graph TD
     acme --> certificate
     acme --> config
     acme --> core
-    acme --> service
     acme --> util
     acme --> webhook
 
     cache --> config
-    cache --> service
+    cache --> core
     cache --> util
 
     certificate --> config
     certificate --> core
-    certificate --> service
     certificate --> util
     certificate --> webhook
 
@@ -27,21 +25,17 @@ graph TD
     discovery --> util
     discovery --> webhook
 
-    limit --> util
-
     location --> config
     location --> core
     location --> util
 
     logger --> core
-    logger --> service
     logger --> util
 
     performance --> cache
     performance --> config
     performance --> core
     performance --> location
-    performance --> service
     performance --> upstream
     performance --> util
 
@@ -54,7 +48,6 @@ graph TD
     upstream --> core
     upstream --> discovery
     upstream --> health
-    upstream --> service
     upstream --> util
 
     webhook --> core
@@ -66,7 +59,6 @@ graph TD
     pingap --> core
     pingap --> discovery
     pingap --> health
-    pingap --> limit
     pingap --> location
     pingap --> logger
     pingap --> otel
@@ -74,7 +66,6 @@ graph TD
     pingap --> plugin
     pingap --> pyroscope
     pingap --> sentry
-    pingap --> service
     pingap --> upstream
     pingap --> util
     pingap --> webhook

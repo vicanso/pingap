@@ -130,7 +130,7 @@ mod tests {
     fn test_grpc_health_check_conf() {
         let grpc_check: HealthCheckConf = "grpc://upstreamname/ping?connection_timeout=3s&success=2&failure=1&check_frequency=10s&from=nginx&reuse&tls&service=grpc".try_into().unwrap();
         assert_eq!(
-            r###"HealthCheckConf { schema: Grpc, host: "upstreamname", path: "/ping?from=nginx", connection_timeout: 3s, read_timeout: 3s, check_frequency: 10s, reuse_connection: true, consecutive_success: 2, consecutive_failure: 1, service: "grpc", tls: true }"###,
+            r###"HealthCheckConf { schema: Grpc, host: "upstreamname", path: "/ping?from=nginx", connection_timeout: 3s, read_timeout: 3s, check_frequency: 10s, reuse_connection: true, consecutive_success: 2, consecutive_failure: 1, service: "grpc", tls: true, parallel_check: false }"###,
             format!("{grpc_check:?}")
         );
         let grpc_check = GrpcHealthCheck::new("", &grpc_check, None).unwrap();

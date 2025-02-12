@@ -11,23 +11,16 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+use super::{Error, LOG_CATEGORY};
 use async_trait::async_trait;
 use futures::future::BoxFuture;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
-use snafu::Snafu;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime};
 use tokio::time::interval;
 use tracing::{error, info};
-
-pub static LOG_CATEGORY: &str = "backgroundService";
-
-#[derive(Debug, Snafu)]
-pub enum Error {
-    #[snafu(display("Invalid error: {message}"))]
-    Invalid { message: String },
-}
 
 // Type alias for a boxed future that represents a background task
 // Takes a u32 counter and returns Result<bool, Error>
@@ -62,6 +55,19 @@ pub fn new_simple_service_task(
     }
 }
 
+fn duration_to_string(duration: Duration) -> String {
+    let secs = duration.as_secs_f64();
+    if secs < 60.0 {
+        format!("{:.1}s", secs)
+    } else if secs < 3600.0 {
+        format!("{:.1}m", secs / 60.0)
+    } else if secs < 86400.0 {
+        format!("{:.1}h", secs / 3600.0)
+    } else {
+        format!("{:.1}d", secs / 86400.0)
+    }
+}
+
 #[async_trait]
 impl BackgroundService for SimpleServiceTask {
     /// Starts the background service, executing all tasks at the specified interval
@@ -81,7 +87,7 @@ impl BackgroundService for SimpleServiceTask {
     /// - Service stops gracefully when shutdown signal is received
     /// - Current task iteration completes before shutdown
     async fn start(&self, mut shutdown: ShutdownWatch) {
-        let period_human: humantime::Duration = self.interval.into();
+        let period_human = duration_to_string(self.interval);
         let task_names: Vec<String> =
             self.tasks.iter().map(|item| item.0.clone()).collect();
         info!(
@@ -217,7 +223,7 @@ impl BackgroundService for CommonServiceTask {
     /// - Task execution time is measured and logged
     /// - Long-running tasks may delay the next interval
     async fn start(&self, mut shutdown: ShutdownWatch) {
-        let period_human: humantime::Duration = self.interval.into();
+        let period_human = duration_to_string(self.interval);
         // if interval is less than 1s
         // the task should only run once
         let once = self.interval.as_millis() < 1000;

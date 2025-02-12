@@ -92,8 +92,15 @@ pub fn new_health_check(
     name: &str,
     health_check: &str,
     health_changed_callback: Option<HealthObserveCallback>,
-) -> Result<(Box<dyn HealthCheck + Send + Sync + 'static>, Duration)> {
-    let mut health_check_frequency = Duration::from_secs(10);
+) -> Result<(
+    HealthCheckConf,
+    Box<dyn HealthCheck + Send + Sync + 'static>,
+)> {
+    let mut health_check_conf = HealthCheckConf {
+        schema: HealthCheckSchema::Tcp,
+        check_frequency: DEFAULT_CHECK_FREQUENCY,
+        ..Default::default()
+    };
     let hc: Box<dyn HealthCheck + Send + Sync + 'static> = if health_check
         .is_empty()
     {
@@ -109,8 +116,7 @@ pub fn new_health_check(
         );
         check
     } else {
-        let health_check_conf: HealthCheckConf = health_check.try_into()?;
-        health_check_frequency = health_check_conf.check_frequency;
+        health_check_conf = health_check.try_into()?;
         info!(
             category = LOG_CATEGORY,
             name,
@@ -151,7 +157,7 @@ pub fn new_health_check(
             )),
         }
     };
-    Ok((hc, health_check_frequency))
+    Ok((health_check_conf, hc))
 }
 
 #[derive(PartialEq, Debug, Default, Clone, EnumString, strum::Display)]
@@ -177,7 +183,7 @@ mod tests {
                 .try_into()
                 .unwrap();
         assert_eq!(
-            r###"HealthCheckConf { schema: Tcp, host: "upstreamname", path: "", connection_timeout: 3s, read_timeout: 3s, check_frequency: 10s, reuse_connection: false, consecutive_success: 2, consecutive_failure: 1, service: "", tls: false }"###,
+            r###"HealthCheckConf { schema: Tcp, host: "upstreamname", path: "", connection_timeout: 3s, read_timeout: 3s, check_frequency: 10s, reuse_connection: false, consecutive_success: 2, consecutive_failure: 1, service: "", tls: false, parallel_check: false }"###,
             format!("{tcp_check:?}")
         );
         let tcp_check = new_tcp_health_check("", &tcp_check, None);
@@ -190,7 +196,7 @@ mod tests {
     }
     #[test]
     fn test_new_health_check() {
-        let (_, frequency) = new_health_check("upstreamname", "https://upstreamname/ping?connection_timeout=3s&read_timeout=1s&success=2&failure=1&check_frequency=10s&from=nginx&reuse", None).unwrap();
-        assert_eq!(Duration::from_secs(10), frequency);
+        let (conf, _) = new_health_check("upstreamname", "https://upstreamname/ping?connection_timeout=3s&read_timeout=1s&success=2&failure=1&check_frequency=10s&from=nginx&reuse", None).unwrap();
+        assert_eq!(Duration::from_secs(10), conf.check_frequency);
     }
 }

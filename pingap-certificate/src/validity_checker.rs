@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_certificate_info_list, Certificate};
-use pingap_service::Error as ServiceError;
-use pingap_service::{SimpleServiceTaskFuture, LOG_CATEGORY};
+use super::{get_certificate_info_list, Certificate, LOG_CATEGORY};
+use pingap_core::Error as ServiceError;
+use pingap_core::SimpleServiceTaskFuture;
 use snafu::Snafu;
 use tracing::error;
 

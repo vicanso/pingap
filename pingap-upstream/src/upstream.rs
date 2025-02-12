@@ -19,6 +19,7 @@ use derive_more::Debug;
 use futures_util::FutureExt;
 use once_cell::sync::Lazy;
 use pingap_config::UpstreamConf;
+use pingap_core::{CommonServiceTask, ServiceTask};
 use pingap_core::{NotificationData, NotificationLevel, NotificationSender};
 use pingap_discovery::{
     is_dns_discovery, is_docker_discovery, is_static_discovery,
@@ -26,7 +27,6 @@ use pingap_discovery::{
     new_static_discovery, TRANSPARENT_DISCOVERY,
 };
 use pingap_health::new_health_check;
-use pingap_service::{CommonServiceTask, ServiceTask};
 use pingora::lb::health_check::{HealthObserve, HealthObserveCallback};
 use pingora::lb::selection::{
     BackendIter, BackendSelection, Consistent, RoundRobin,
@@ -301,7 +301,7 @@ where
     }
 
     // Set up health checking for the backends
-    let (hc, health_check_frequency) = new_health_check(
+    let (health_check_conf, hc) = new_health_check(
         name,
         &conf.health_check.clone().unwrap_or_default(),
         new_observe(name, sender),
@@ -311,10 +311,10 @@ where
         category: "health".to_string(),
     })?;
     // Configure health checking
-    lb.parallel_health_check = true;
+    lb.parallel_health_check = health_check_conf.parallel_check;
     lb.set_health_check(hc);
     lb.update_frequency = conf.update_frequency;
-    lb.health_check_frequency = Some(health_check_frequency);
+    lb.health_check_frequency = Some(health_check_conf.check_frequency);
     Ok(lb)
 }
 

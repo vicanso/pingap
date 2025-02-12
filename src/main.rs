@@ -22,12 +22,12 @@ use pingap_certificate::{
 };
 use pingap_config::{get_config_storage, ETCD_PROTOCOL};
 use pingap_config::{LoadConfigOptions, PingapConf};
+use pingap_core::new_simple_service_task;
 use pingap_location::try_init_locations;
 #[cfg(feature = "full")]
 use pingap_otel::TracerService;
 use pingap_performance::new_performance_metrics_log_service;
 use pingap_plugin::get_plugin_factory;
-use pingap_service::new_simple_service_task;
 use pingap_upstream::{new_upstream_health_check_task, try_init_upstreams};
 use pingora::server;
 use pingora::server::configuration::Opt;

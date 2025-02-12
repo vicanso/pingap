@@ -27,7 +27,6 @@ rcgen = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
 pingap-util = { path = "../pingap-util" }
-pingap-service = { path = "../pingap-service" }
 pingap-config = { path = "../pingap-config" }
 pingap-webhook = { path = "../pingap-webhook" }
 pingap-core = { path = "../pingap-core" }

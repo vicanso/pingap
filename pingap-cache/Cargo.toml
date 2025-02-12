@@ -30,10 +30,11 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 walkdir = { workspace = true }
 http = { workspace = true }
+
 prometheus = { version = "0.13.4", default-features = false, optional = true }
 pingap-config = { path = "../pingap-config" }
-pingap-service = { path = "../pingap-service" }
 pingap-util = { path = "../pingap-util" }
+pingap-core = { path = "../pingap-core" }
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"

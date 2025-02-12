@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::{now_ms, LOG_CATEGORY};
 use std::time::Duration;
 use tinyufo::TinyUfo;
 use tracing::debug;
@@ -19,11 +20,11 @@ use tracing::debug;
 #[derive(Debug, Clone)]
 struct TtlLimit {
     count: usize,
-    created_at: Duration,
+    created_at: u64,
 }
 
 pub struct TtlLruLimit {
-    ttl: Duration,
+    ttl: u64,
     ufo: TinyUfo<String, TtlLimit>,
     max: usize,
 }
@@ -38,9 +39,22 @@ impl TtlLruLimit {
     /// * `max` - The maximum count allowed per key within the TTL window
     pub fn new(size: usize, ttl: Duration, max: usize) -> Self {
         Self {
-            ttl,
+            ttl: ttl.as_millis() as u64,
             max,
             ufo: TinyUfo::new(size, size),
+        }
+    }
+    /// Creates a new compact TTL-based LRU limit with the specified parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `size` - The maximum number of entries to store in the LRU cache
+    /// * `ttl` - The time-to-live duration after which entries are considered expired
+    pub fn new_compact(size: usize, ttl: Duration, max: usize) -> Self {
+        Self {
+            ttl: ttl.as_millis() as u64,
+            max,
+            ufo: TinyUfo::new_compact(size, size),
         }
     }
     /// Validates whether a key has not exceeded its rate limit.
@@ -58,9 +72,14 @@ impl TtlLruLimit {
         let key = key.to_string();
 
         if let Some(value) = self.ufo.get(&key) {
-            debug!(key, value = format!("{value:?}"), "ttl lru limit");
+            debug!(
+                category = LOG_CATEGORY,
+                key,
+                value = format!("{value:?}"),
+                "ttl lru limit"
+            );
             // validate expired first
-            if pingap_util::now() - value.created_at > self.ttl {
+            if now_ms() - value.created_at > self.ttl {
                 valid = true;
                 should_reset = true;
             } else if value.count < self.max {
@@ -75,7 +94,7 @@ impl TtlLruLimit {
                 key,
                 TtlLimit {
                     count: 0,
-                    created_at: Duration::from_secs(0),
+                    created_at: 0,
                 },
                 1,
             );
@@ -94,15 +113,15 @@ impl TtlLruLimit {
         let key = key.to_string();
         let data = if let Some(mut value) = self.ufo.get(&key) {
             // the reset value
-            if value.created_at.as_secs() == 0 {
-                value.created_at = pingap_util::now();
+            if value.created_at == 0 {
+                value.created_at = now_ms();
             }
             value.count += 1;
             value
         } else {
             TtlLimit {
                 count: 1,
-                created_at: pingap_util::now(),
+                created_at: now_ms(),
             }
         };
         self.ufo.put(key, data, 1);

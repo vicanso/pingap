@@ -25,9 +25,9 @@ use pingap_config::{
     PingapConf, CATEGORY_CERTIFICATE,
 };
 use pingap_core::Ctx;
+use pingap_core::Error as ServiceError;
 use pingap_core::HttpResponse;
-use pingap_service::Error as ServiceError;
-use pingap_service::SimpleServiceTaskFuture;
+use pingap_core::SimpleServiceTaskFuture;
 use pingora::proxy::Session;
 use std::time::Duration;
 use substring::Substring;

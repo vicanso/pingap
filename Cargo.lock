@@ -2870,7 +2870,6 @@ dependencies = [
  "pingap-certificate",
  "pingap-config",
  "pingap-core",
- "pingap-limit",
  "pingap-location",
  "pingap-logger",
  "pingap-otel",
@@ -2878,7 +2877,6 @@ dependencies = [
  "pingap-plugin",
  "pingap-pyroscope",
  "pingap-sentry",
- "pingap-service",
  "pingap-upstream",
  "pingap-util",
  "pingap-webhook",
@@ -2910,7 +2908,6 @@ dependencies = [
  "pingap-certificate",
  "pingap-config",
  "pingap-core",
- "pingap-service",
  "pingap-util",
  "pingap-webhook",
  "pingora",
@@ -2936,7 +2933,7 @@ dependencies = [
  "memory-stats",
  "once_cell",
  "pingap-config",
- "pingap-service",
+ "pingap-core",
  "pingap-util",
  "pingora",
  "pretty_assertions",
@@ -2961,7 +2958,6 @@ dependencies = [
  "once_cell",
  "pingap-config",
  "pingap-core",
- "pingap-service",
  "pingap-util",
  "pingap-webhook",
  "pingora",
@@ -3019,9 +3015,11 @@ dependencies = [
 name = "pingap-core"
 version = "0.9.10"
 dependencies = [
+ "TinyUFO",
  "ahash",
  "async-trait",
  "bytes",
+ "futures",
  "hostname 0.4.0",
  "http 1.2.0",
  "itoa",
@@ -3081,18 +3079,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pingap-limit"
-version = "0.9.10"
-dependencies = [
- "TinyUFO",
- "pingap-util",
- "pretty_assertions",
- "tempfile",
- "tokio-test",
- "tracing",
-]
-
-[[package]]
 name = "pingap-location"
 version = "0.9.10"
 dependencies = [
@@ -3124,7 +3110,6 @@ dependencies = [
  "http 1.2.0",
  "itoa",
  "pingap-core",
- "pingap-service",
  "pingap-util",
  "pingora",
  "pretty_assertions",
@@ -3174,7 +3159,6 @@ dependencies = [
  "pingap-config",
  "pingap-core",
  "pingap-location",
- "pingap-service",
  "pingap-upstream",
  "pingap-util",
  "pingora",
@@ -3261,19 +3245,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pingap-service"
-version = "0.9.10"
-dependencies = [
- "async-trait",
- "futures",
- "humantime",
- "pingora",
- "snafu",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "pingap-upstream"
 version = "0.9.10"
 dependencies = [
@@ -3289,7 +3260,6 @@ dependencies = [
  "pingap-core",
  "pingap-discovery",
  "pingap-health",
- "pingap-service",
  "pingap-util",
  "pingora",
  "pingora-runtime 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",

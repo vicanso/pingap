@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::process::restart;
+use super::{restart, LOG_CATEGORY};
 use crate::{plugin, proxy};
 use async_trait::async_trait;
 use pingap_config::{
@@ -20,8 +20,8 @@ use pingap_config::{
     LoadConfigOptions, PingapConf, CATEGORY_CERTIFICATE, CATEGORY_LOCATION,
     CATEGORY_PLUGIN, CATEGORY_UPSTREAM,
 };
+use pingap_core::{CommonServiceTask, ServiceTask};
 use pingap_location::try_init_locations;
-use pingap_service::{CommonServiceTask, ServiceTask, LOG_CATEGORY};
 use pingap_upstream::try_update_upstreams;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;

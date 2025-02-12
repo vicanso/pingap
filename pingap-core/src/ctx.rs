@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::now_ms;
 use ahash::AHashMap;
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
@@ -24,13 +25,13 @@ use opentelemetry::{
 };
 use pingora::cache::CacheKey;
 use pingora_limits::inflight::Guard;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 const SEC: u64 = 1_000;
 
 #[inline]
 fn format_duration(mut buf: BytesMut, ms: u64) -> BytesMut {
-    if ms < 1000 {
+    if ms < SEC {
         buf.extend(itoa::Buffer::new().format(ms).as_bytes());
         buf.extend(b"ms");
     } else {
@@ -43,14 +44,6 @@ fn format_duration(mut buf: BytesMut, ms: u64) -> BytesMut {
         buf.extend(b"s");
     }
     buf
-}
-
-#[inline]
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
 }
 
 pub trait ModifyResponseBody: Sync + Send {
@@ -101,17 +94,17 @@ impl OtelTracer {
 pub struct Ctx {
     /// Unique identifier for the connection
     pub connection_id: usize,
-    /// Number of requests currently being processed
+    /// Number of requests currently processing
     pub processing: i32,
     /// Total number of requests accepted
     pub accepted: u64,
-    /// Number of requests currently being processed for the current location
+    /// Number of requests currently processing for the current location
     pub location_processing: i32,
     /// Total number of requests accepted for the current location
     pub location_accepted: u64,
     /// Timestamp when this context was created (in milliseconds)
     pub created_at: u64,
-    /// TLS version used by the client connection (e.g., "TLS 1.3")
+    /// TLS version used by the client connection (e.g., "TLSv1.3")
     pub tls_version: Option<String>,
     /// TLS cipher suite used by the client connection
     pub tls_cipher: Option<String>,
@@ -122,9 +115,9 @@ pub struct Ctx {
     /// Total time the connection has been alive (in milliseconds)
     /// May be large for reused connections
     pub connection_time: u64,
-    /// Indicates if this connection is being reused
+    /// Indicates if this connection is reused
     pub connection_reused: bool,
-    /// The location handling this request
+    /// The location handling request
     pub location: String,
     /// Address of the upstream server
     pub upstream_address: String,
@@ -156,9 +149,9 @@ pub struct Ctx {
     pub cache_max_ttl: Option<Duration>,
     /// The upstream server
     pub upstream: String,
-    /// Indicates if the upstream connection is being reused
+    /// Indicates if the upstream connection is reused
     pub upstream_reused: bool,
-    /// Number of requests being processed by upstream
+    /// Number of requests processing by upstream
     pub upstream_processing: Option<i32>,
     /// Time taken to establish/reuse upstream connection (in milliseconds)
     pub upstream_connect_time: Option<u64>,
@@ -183,9 +176,9 @@ pub struct Ctx {
     pub modify_response_body: Option<Box<dyn ModifyResponseBody>>,
     /// Response body buffer
     pub response_body: Option<BytesMut>,
-    /// Number of ongoing cache read operations
+    /// Number of cache reading operations
     pub cache_reading: Option<u32>,
-    /// Number of ongoing cache write operations
+    /// Number of cache writing operations
     pub cache_writing: Option<u32>,
     /// OpenTelemetry tracer (only with "full" feature)
     #[cfg(feature = "full")]
@@ -583,9 +576,9 @@ mod tests {
                 .as_ref()
         );
 
-        ctx.tls_version = Some("tls1.3".to_string());
+        ctx.tls_version = Some("TLSv1.3".to_string());
         assert_eq!(
-            b"tls1.3",
+            b"TLSv1.3",
             ctx.append_value(BytesMut::new(), "tls_version").as_ref()
         );
 

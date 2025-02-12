@@ -15,8 +15,8 @@
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use once_cell::sync::Lazy;
-use pingap_service::Error as ServiceError;
-use pingap_service::SimpleServiceTaskFuture;
+use pingap_core::Error as ServiceError;
+use pingap_core::SimpleServiceTaskFuture;
 use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::x509::X509;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};

@@ -73,9 +73,7 @@ uuid = { version = "1.12.1", features = [
 ], default-features = false }
 pingap-core = { path = "pingap-core" }
 pingap-util = { path = "pingap-util" }
-pingap-limit = { path = "pingap-limit" }
 pingap-webhook = { path = "pingap-webhook" }
-pingap-service = { path = "pingap-service" }
 pingap-config = { path = "pingap-config" }
 pingap-cache = { path = "pingap-cache" }
 pingap-upstream = { path = "pingap-upstream" }
@@ -133,12 +131,10 @@ ignored = ["humantime-serde"]
 [workspace]
 members = [
     "pingap-discovery",
-    "pingap-limit",
     "pingap-util",
     "pingap-webhook",
     "pingap-discovery",
     "pingap-health",
-    "pingap-service",
     "pingap-config",
     "pingap-cache",
     "pingap-upstream",

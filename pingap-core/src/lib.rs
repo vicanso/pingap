@@ -16,8 +16,12 @@ use once_cell::sync::Lazy;
 use snafu::Snafu;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+pub static LOG_CATEGORY: &str = "core";
+
 #[derive(Debug, Snafu)]
 pub enum Error {
+    #[snafu(display("Invalid error: {message}"))]
+    Invalid { message: String },
     #[snafu(display("Plugin {category} not found"))]
     NotFound { category: String },
 }
@@ -65,18 +69,29 @@ pub fn get_hostname() -> &'static str {
     HOST_NAME.as_str()
 }
 
+#[inline]
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
 mod ctx;
 mod http_header;
 mod http_response;
 mod notification;
 mod plugin;
+mod service;
+mod ttl_lru_limit;
 
 pub use ctx::*;
 pub use http_header::*;
 pub use http_response::*;
 pub use notification::*;
 pub use plugin::*;
-
+pub use service::*;
+pub use ttl_lru_limit::*;
 #[cfg(test)]
 mod tests {
     use super::*;

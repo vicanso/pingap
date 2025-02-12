@@ -35,8 +35,7 @@ use pingap_config::{
     PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
     CATEGORY_UPSTREAM,
 };
-use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep};
-use pingap_limit::TtlLruLimit;
+use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep, TtlLruLimit};
 use pingap_performance::get_process_system_info;
 use pingap_performance::get_processing_accepted;
 use pingap_plugin::{get_plugin_factory, Error};
@@ -208,7 +207,7 @@ impl TryFrom<&PluginConf> for AdminServe {
             max_age,
             plugin_step: PluginStep::Request,
             path,
-            ip_fail_limit: TtlLruLimit::new(
+            ip_fail_limit: TtlLruLimit::new_compact(
                 512,
                 Duration::from_secs(5 * 60),
                 ip_fail_limit as usize,

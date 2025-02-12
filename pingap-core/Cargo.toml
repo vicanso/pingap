@@ -24,6 +24,8 @@ serde = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 serde_json = { workspace = true }
+futures = { workspace = true }
+TinyUFO = { workspace = true }
 hostname = "0.4.0"
 opentelemetry = { version = "0.27.1", default-features = false, features = [
     "trace",
