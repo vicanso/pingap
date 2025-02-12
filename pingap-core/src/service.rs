@@ -261,3 +261,27 @@ impl BackgroundService for CommonServiceTask {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_simple_service_task() {
+        let task =
+            new_simple_service_task("test", Duration::from_secs(1), vec![]);
+
+        assert_eq!(task.name, "test");
+        assert_eq!(task.interval, Duration::from_secs(1));
+        assert_eq!(task.tasks.len(), 0);
+    }
+
+    #[test]
+    fn test_duration_to_string() {
+        assert_eq!(duration_to_string(Duration::from_secs(1)), "1.0s");
+        assert_eq!(duration_to_string(Duration::from_secs(60)), "1.0m");
+        assert_eq!(duration_to_string(Duration::from_secs(3600)), "1.0h");
+        assert_eq!(duration_to_string(Duration::from_secs(86400)), "1.0d");
+    }
+}

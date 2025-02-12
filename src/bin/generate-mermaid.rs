@@ -32,6 +32,7 @@ fn main() {
             }
             modules.push(name.substring(prefix.len(), name.len()).to_string());
         }
+
         deps.insert(
             package_name
                 .substring(prefix.len(), package_name.len())
@@ -53,10 +54,7 @@ fn main() {
         }
         arr.push("".to_string());
     }
-    for name in keys {
-        arr.push(format!("    pingap --> {}", name));
-    }
-    arr.push("".to_string());
+
     let mermaid = format!(
         r#"```mermaid
 graph TD

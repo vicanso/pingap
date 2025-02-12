@@ -48,3 +48,18 @@ pub trait Notification {
 }
 
 pub type NotificationSender = Box<dyn Notification + Send + Sync>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_notification_level() {
+        let level = NotificationLevel::Error;
+        assert_eq!(level.to_string(), "error");
+        let level = NotificationLevel::Warn;
+        assert_eq!(level.to_string(), "warn");
+        let level = NotificationLevel::Info;
+        assert_eq!(level.to_string(), "info");
+    }
+}

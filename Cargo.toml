@@ -130,26 +130,24 @@ ignored = ["humantime-serde"]
 
 [workspace]
 members = [
-    "pingap-discovery",
-    "pingap-util",
-    "pingap-webhook",
+    "pingap-acme",
+    "pingap-cache",
+    "pingap-certificate",
+    "pingap-config",
+    "pingap-core",
     "pingap-discovery",
     "pingap-health",
-    "pingap-config",
-    "pingap-cache",
-    "pingap-upstream",
-    "pingap-certificate",
     "pingap-location",
-    "pingap-performance",
     "pingap-logger",
     "pingap-otel",
-    "pingap-sentry",
-    "pingap-pyroscope",
-    "pingap-acme",
+    "pingap-performance",
     "pingap-plugin",
-    "pingap-core",
+    "pingap-pyroscope",
+    "pingap-sentry",
+    "pingap-upstream",
+    "pingap-util",
+    "pingap-webhook",
 ]
-
 [workspace.dependencies]
 once_cell = "1.20.2"
 bytes = "1.9.0"
