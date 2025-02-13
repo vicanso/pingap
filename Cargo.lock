@@ -2903,16 +2903,13 @@ dependencies = [
 name = "pingap-acme"
 version = "0.9.10"
 dependencies = [
- "http 1.2.0",
  "instant-acme",
  "pingap-certificate",
  "pingap-config",
  "pingap-core",
- "pingap-util",
  "pingap-webhook",
  "pingora",
  "pretty_assertions",
- "rcgen",
  "snafu",
  "substring",
  "tempfile",

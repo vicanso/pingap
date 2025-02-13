@@ -16,7 +16,6 @@ use http::HeaderName;
 use once_cell::sync::Lazy;
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
-use pingora::tls::ssl::SslVersion;
 use std::collections::HashMap;
 use std::str::FromStr;
 
@@ -216,18 +215,6 @@ pub fn get_host(header: &RequestHeader) -> Option<&str> {
     None
 }
 
-pub fn convert_tls_version(version: &Option<String>) -> Option<SslVersion> {
-    if let Some(version) = &version {
-        let version = match version.to_lowercase().as_str() {
-            "tlsv1.1" => SslVersion::TLS1_1,
-            "tlsv1.3" => SslVersion::TLS1_3,
-            _ => SslVersion::TLS1_2,
-        };
-        return Some(version);
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,22 +233,6 @@ mod tests {
                 .unwrap();
         remove_query_from_header(&mut req, "apikey").unwrap();
         assert_eq!("/?name=pingap", req.uri.to_string());
-    }
-
-    #[test]
-    fn test_convert_tls_version() {
-        assert_eq!(
-            SslVersion::TLS1_1,
-            convert_tls_version(&Some("tlsv1.1".to_string())).unwrap()
-        );
-        assert_eq!(
-            SslVersion::TLS1_2,
-            convert_tls_version(&Some("tlsv1.2".to_string())).unwrap()
-        );
-        assert_eq!(
-            SslVersion::TLS1_3,
-            convert_tls_version(&Some("tlsv1.3".to_string())).unwrap()
-        );
     }
 
     #[tokio::test]

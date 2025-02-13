@@ -115,7 +115,7 @@ pub fn new_self_signed_certificate_validity_service(
         Box::pin(do_self_signed_certificate_validity(count))
     });
 
-    ("selfSignedCertificateStale".to_string(), task)
+    ("self_signed_certificate_stale".to_string(), task)
 }
 
 /// Retrieves a self-signed certificate from the global certificate map.

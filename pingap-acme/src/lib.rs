@@ -14,6 +14,8 @@
 
 use snafu::Snafu;
 
+use pingap_certificate::rcgen;
+
 /// Category name for ACME-related logging
 pub static LOG_CATEGORY: &str = "acme";
 

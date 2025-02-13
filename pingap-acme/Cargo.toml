@@ -15,16 +15,13 @@ path = "src/lib.rs"
 
 [dependencies]
 instant-acme = "0.7.2"
-rcgen = { workspace = true }
 snafu = { workspace = true }
-http = { workspace = true }
 pingora = { workspace = true }
 substring = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 pingap-certificate = { path = "../pingap-certificate" }
 pingap-config = { path = "../pingap-config" }
-pingap-util = { path = "../pingap-util" }
 pingap-webhook = { path = "../pingap-webhook" }
 pingap-core = { path = "../pingap-core" }
 

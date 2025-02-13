@@ -190,6 +190,8 @@ pub use self_signed::new_self_signed_certificate_validity_service;
 pub use tls_certificate::TlsCertificate;
 pub use validity_checker::new_certificate_validity_service;
 
+pub use rcgen;
+
 #[cfg(test)]
 mod tests {
     use super::parse_ip_addr;

@@ -103,7 +103,7 @@ async fn do_validity_check(count: u32) -> Result<bool, ServiceError> {
     let time_offset = DEFAULT_EXPIRATION_WARNING_DAYS * SECONDS_PER_DAY;
 
     if let Err(err) = validity_check(&certificate_info_list, time_offset) {
-        error!(category = LOG_CATEGORY, task = "validityChecker", error = %err);
+        error!(category = LOG_CATEGORY, task = "validity_checker", error = %err);
         pingap_webhook::send_notification(pingap_core::NotificationData {
             level: pingap_core::NotificationLevel::Warn,
             category: "tls_validity".to_string(),
@@ -125,7 +125,7 @@ async fn do_validity_check(count: u32) -> Result<bool, ServiceError> {
 pub fn new_certificate_validity_service() -> (String, SimpleServiceTaskFuture) {
     let task: SimpleServiceTaskFuture =
         Box::new(|count: u32| Box::pin(do_validity_check(count)));
-    ("validityChecker".to_string(), task)
+    ("validity_checker".to_string(), task)
 }
 
 #[cfg(test)]

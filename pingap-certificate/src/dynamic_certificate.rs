@@ -21,6 +21,7 @@ use pingap_config::CertificateConf;
 use pingora::listeners::tls::TlsSettings;
 use pingora::tls::ext;
 use pingora::tls::pkey::{PKey, Private};
+use pingora::tls::ssl::SslVersion;
 use pingora::tls::ssl::{NameType, SslRef};
 use pingora::tls::x509::X509;
 use std::collections::HashMap;
@@ -47,7 +48,6 @@ static DYNAMIC_CERTIFICATE_MAP: Lazy<ArcSwap<DynamicCertificates>> =
 // Fallback server name used when:
 // - No SNI (Server Name Indication) is provided in TLS handshake
 // - No matching certificate is found for the requested domain
-// - Certificate is marked as default with is_default = true
 static DEFAULT_SERVER_NAME: &str = "*";
 
 // Parses certificate configurations and builds the certificate store
@@ -78,8 +78,7 @@ fn parse_certificates(
                 for domain in domains.iter() {
                     dynamic_certs.insert(domain.to_string(), cert.clone());
                 }
-                let is_default = certificate.is_default.unwrap_or_default();
-                if is_default {
+                if certificate.is_default.unwrap_or_default() {
                     dynamic_certs
                         .insert(DEFAULT_SERVER_NAME.to_string(), cert.clone());
                 }
@@ -136,8 +135,8 @@ pub fn get_certificate_info_list() -> Vec<(String, Certificate)> {
     let mut infos = vec![];
     for (name, cert) in DYNAMIC_CERTIFICATE_MAP.load().iter() {
         if let Some(info) = &cert.info {
-            let key = if let Some(name) = &cert.name {
-                name.clone()
+            let key = if let Some(value) = &cert.name {
+                value.clone()
             } else {
                 name.clone()
             };
@@ -194,6 +193,18 @@ fn ssl_certificate(
     }
 }
 
+fn convert_tls_version(version: &Option<String>) -> Option<SslVersion> {
+    if let Some(version) = &version {
+        let version = match version.to_lowercase().as_str() {
+            "tlsv1.1" => SslVersion::TLS1_1,
+            "tlsv1.3" => SslVersion::TLS1_3,
+            _ => SslVersion::TLS1_2,
+        };
+        return Some(version);
+    }
+    None
+}
+
 /// GlobalCertificate implements SNI-based dynamic certificate selection
 ///
 /// Provides runtime certificate selection during TLS handshake based on the
@@ -229,12 +240,10 @@ impl GlobalCertificate {
         }
         if let Some(ciphersuites) = &params.ciphersuites {
             if let Err(e) = tls_settings.set_ciphersuites(ciphersuites) {
-                error!(category = LOG_CATEGORY, error = %e, name, "set ciphersuites fail");
+                error!(category = LOG_CATEGORY, error = %e, name, "set cipher suites fail");
             }
         }
-        if let Some(version) =
-            pingap_util::convert_tls_version(&params.tls_min_version)
-        {
+        if let Some(version) = convert_tls_version(&params.tls_min_version) {
             if let Err(e) = tls_settings.set_min_proto_version(Some(version)) {
                 error!(category = LOG_CATEGORY, error = %e, name, "set tls min proto version fail");
             }
@@ -244,9 +253,9 @@ impl GlobalCertificate {
                     .clear_options(pingora::tls::ssl::SslOptions::NO_TLSV1_1);
             }
         }
-        if let Err(e) = tls_settings.set_max_proto_version(
-            pingap_util::convert_tls_version(&params.tls_max_version),
-        ) {
+        if let Err(e) = tls_settings
+            .set_max_proto_version(convert_tls_version(&params.tls_max_version))
+        {
             error!(category = LOG_CATEGORY, error = %e, name, "set tls max proto version fail");
         }
 
@@ -340,11 +349,7 @@ impl pingora::listeners::TlsAccept for GlobalCertificate {
 
 #[cfg(test)]
 mod tests {
-    use super::TlsCertificate;
-    use super::{
-        get_certificate_info_list, try_update_certificates, GlobalCertificate,
-        TlsSettingParams, DYNAMIC_CERTIFICATE_MAP,
-    };
+    use super::*;
     use pingap_config::CertificateConf;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
@@ -411,6 +416,22 @@ aqcrKJfS+xaKWxXPiNlpBMG5
     }
 
     #[test]
+    fn test_convert_tls_version() {
+        assert_eq!(
+            SslVersion::TLS1_1,
+            convert_tls_version(&Some("tlsv1.1".to_string())).unwrap()
+        );
+        assert_eq!(
+            SslVersion::TLS1_2,
+            convert_tls_version(&Some("tlsv1.2".to_string())).unwrap()
+        );
+        assert_eq!(
+            SslVersion::TLS1_3,
+            convert_tls_version(&Some("tlsv1.3".to_string())).unwrap()
+        );
+    }
+
+    #[test]
     fn test_new_tls_settings() {
         let dynamic = GlobalCertificate::default();
         let mut tls_settings = dynamic
@@ -438,6 +459,7 @@ aqcrKJfS+xaKWxXPiNlpBMG5
         let cert_info = CertificateConf {
             tls_cert: Some(tls_cert),
             tls_key: Some(tls_key),
+            is_default: Some(true),
             ..Default::default()
         };
         let dynamic_certificate: TlsCertificate =
@@ -469,8 +491,16 @@ aqcrKJfS+xaKWxXPiNlpBMG5
             cert.info.clone().unwrap().issuer
         );
 
+        let cert = DYNAMIC_CERTIFICATE_MAP.load().get("*").cloned().unwrap();
+        assert_eq!(true, cert.certificate.is_some());
+        assert_eq!(
+            "O=mkcert development CA, OU=vicanso@tree, CN=mkcert vicanso@tree"
+                .to_string(),
+            cert.info.clone().unwrap().issuer
+        );
+
         let info_list = get_certificate_info_list();
-        assert_eq!(info_list.len(), 1);
+        assert_eq!(info_list.len(), 2);
         assert_eq!(info_list[0].1.domains.join(","), "pingap.io");
     }
 }

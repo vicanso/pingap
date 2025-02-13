@@ -108,5 +108,7 @@ mod tests {
             format!("{:?}", r11.subject_name())
         );
         assert_eq!("Mar 12 23:59:59 2027 GMT", r11.not_after().to_string());
+
+        assert_eq!(true, get_lets_encrypt_chain_certificate("A").is_none());
     }
 }

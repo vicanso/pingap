@@ -346,6 +346,7 @@ kknq2XUsBMCyIW1BqgLVEyeNxg==
         let cert = TlsCertificate::try_from(&CertificateConf {
             tls_cert: Some(pem.to_string()),
             tls_key: Some(key.to_string()),
+            tls_chain: Some(include_str!("../assets/e5.pem").to_string()),
             ..Default::default()
         })
         .unwrap();

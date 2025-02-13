@@ -13,21 +13,22 @@
 // limitations under the License.
 
 use super::{get_token_path, Error, Result, LOG_CATEGORY};
-use http::StatusCode;
 use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
     OrderStatus,
 };
-use pingap_certificate::try_update_certificates;
-use pingap_certificate::Certificate;
+use pingap_certificate::rcgen;
+use pingap_certificate::{try_update_certificates, Certificate};
 use pingap_config::{
     get_current_config, set_current_config, ConfigStorage, LoadConfigOptions,
     PingapConf, CATEGORY_CERTIFICATE,
 };
-use pingap_core::Ctx;
 use pingap_core::Error as ServiceError;
 use pingap_core::HttpResponse;
 use pingap_core::SimpleServiceTaskFuture;
+use pingap_core::{Ctx, NotificationData, NotificationLevel};
+use pingap_webhook::send_notification;
+use pingora::http::StatusCode;
 use pingora::proxy::Session;
 use std::time::Duration;
 use substring::Substring;
@@ -155,20 +156,20 @@ async fn handle_successful_renewal(domains: &[String], conf: &PingapConf) {
         "renew certificate success"
     );
 
-    pingap_webhook::send_notification(pingap_core::NotificationData {
+    send_notification(NotificationData {
         category: "lets_encrypt".to_string(),
-        level: pingap_core::NotificationLevel::Info,
-        title: "Generate new cert from lets encrypt".to_string(),
+        title: "Generate new cert from let's encrypt".to_string(),
         message: format!("Domains: {domains:?}"),
+        ..Default::default()
     })
     .await;
 
     let (_, errors) = try_update_certificates(&conf.certificates);
     if !errors.is_empty() {
         error!(error = errors, "parse certificate fail");
-        pingap_webhook::send_notification(pingap_core::NotificationData {
+        send_notification(NotificationData {
             category: "parse_certificate_fail".to_string(),
-            level: pingap_core::NotificationLevel::Error,
+            level: NotificationLevel::Error,
             message: errors,
             ..Default::default()
         })
@@ -252,7 +253,11 @@ pub async fn handle_lets_encrypt(
                     err = e.to_string(),
                     "load http-01 token fail"
                 );
-                pingap_util::new_internal_error(500, e.to_string())
+                pingora::Error::because(
+                    pingora::ErrorType::HTTPStatus(500),
+                    e.to_string(),
+                    pingora::Error::new(pingora::ErrorType::InternalError),
+                )
             })?;
         info!(
             category = LOG_CATEGORY,
