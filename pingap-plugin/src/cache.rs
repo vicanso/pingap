@@ -24,7 +24,7 @@ use fancy_regex::Regex;
 use http::{Method, StatusCode};
 use humantime::parse_duration;
 use once_cell::sync::{Lazy, OnceCell};
-use pingap_cache::{get_cache_backend, HttpCache};
+use pingap_cache::{get_cache_backend, CacheBackendOption, HttpCache};
 use pingap_config::{get_current_config, PluginCategory, PluginConf};
 use pingap_core::{get_cache_key, Ctx, HttpResponse, Plugin, PluginStep};
 use pingora::cache::eviction::simple_lru::Manager;
@@ -186,7 +186,12 @@ impl TryFrom<&PluginConf> for Cache {
     /// - Compiles skip regex if provided
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let cache = get_cache_backend().map_err(|e| Error::Invalid {
+        let basic_conf = &get_current_config().basic;
+        let cache = get_cache_backend(&CacheBackendOption {
+            cache_directory: basic_conf.cache_directory.clone(),
+            cache_max_size: basic_conf.cache_max_size,
+        })
+        .map_err(|e| Error::Invalid {
             category: "cache_backend".to_string(),
             message: e.to_string(),
         })?;

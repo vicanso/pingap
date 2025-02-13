@@ -15,7 +15,7 @@
 use bytesize::ByteSize;
 use memory_stats::memory_stats;
 use once_cell::sync::OnceCell;
-use pingap_config::get_current_config;
+// use pingap_config::get_current_config;
 use snafu::Snafu;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -44,7 +44,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 impl From<Error> for pingora::BError {
     fn from(value: Error) -> Self {
-        pingap_util::new_internal_error(500, value.to_string())
+        pingap_core::new_internal_error(500, value.to_string())
     }
 }
 
@@ -71,13 +71,22 @@ pub fn is_cache_backend_init() -> bool {
     CACHED_INIT.load(Ordering::Relaxed)
 }
 
+pub struct CacheBackendOption {
+    /// Directory to store cache files
+    pub cache_directory: Option<String>,
+    /// Maximum size of cache storage
+    pub cache_max_size: Option<ByteSize>,
+}
+
 /// Get the cache backend
-pub fn get_cache_backend() -> Result<&'static HttpCache> {
+pub fn get_cache_backend(
+    option: &CacheBackendOption,
+) -> Result<&'static HttpCache> {
     // Get or initialize the global cache backend using OnceCell
     CACHE_BACKEND.get_or_try_init(|| {
-        let basic_conf = &get_current_config().basic;
+        // let basic_conf = &get_current_config().basic;
         // Determine cache size from config or use default MAX_MEMORY_SIZE
-        let mut size = if let Some(cache_max_size) = basic_conf.cache_max_size {
+        let mut size = if let Some(cache_max_size) = option.cache_max_size {
             cache_max_size.as_u64() as usize
         } else {
             MAX_MEMORY_SIZE
@@ -86,7 +95,7 @@ pub fn get_cache_backend() -> Result<&'static HttpCache> {
         let mut cache_type = "memory";
         // Get optional cache directory from config
         let cache_directory =
-            if let Some(cache_directory) = &basic_conf.cache_directory {
+            if let Some(cache_directory) = &option.cache_directory {
                 cache_directory.trim().to_string()
             } else {
                 "".to_string()
@@ -135,7 +144,7 @@ pub use prom::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 
 #[cfg(test)]
 mod tests {
-    use super::{new_file_cache, new_tiny_ufo_cache, Error};
+    use super::*;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
@@ -153,6 +162,10 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_is_cache_backend_init() {
+        assert_eq!(false, is_cache_backend_init());
+    }
     #[test]
     fn test_cache() {
         let _ = new_tiny_ufo_cache(1024);

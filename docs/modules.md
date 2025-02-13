@@ -25,9 +25,7 @@ graph TD
     acme --> core
     acme --> webhook
 
-    cache --> config
     cache --> core
-    cache --> util
 
     certificate --> config
     certificate --> core

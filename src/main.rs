@@ -15,7 +15,7 @@
 use clap::Parser;
 use crossbeam_channel::Sender;
 use pingap_acme::new_lets_encrypt_service;
-use pingap_cache::new_storage_clear_service;
+use pingap_cache::{new_storage_clear_service, CacheBackendOption};
 use pingap_certificate::{
     new_certificate_validity_service,
     new_self_signed_certificate_validity_service,
@@ -474,7 +474,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         error!(error, "init plugins fail",);
     }
 
-    let mut server_conf_list: Vec<ServerConf> = proxy::parse_from_conf(conf);
+    let mut server_conf_list: Vec<ServerConf> =
+        proxy::parse_from_conf(conf.clone());
 
     if let Some(addr) = &get_admin_addr() {
         let (server_conf, _, _) = plugin::parse_admin_plugin(addr)?;
@@ -508,7 +509,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         new_self_signed_certificate_validity_service(),
         new_performance_metrics_log_service(),
     ];
-    if let Some(task) = new_storage_clear_service() {
+    if let Some(task) = new_storage_clear_service(&CacheBackendOption {
+        cache_directory: basic_conf.cache_directory.clone(),
+        cache_max_size: basic_conf.cache_max_size,
+    }) {
         simple_tasks.push(task);
     }
     if let Some(compression_task) = compression_task {

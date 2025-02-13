@@ -21,9 +21,9 @@ aes-gcm-siv = { version = "0.11.1", default-features = false, features = [
 ] }
 ipnet = "2.11.0"
 base64 = "0.22.1"
-path-absolutize = "3.1.1"
 rustc_version_runtime = "0.3.0"
-dirs = "6.0.0"
+path-absolutize = { workspace = true }
+dirs = { workspace = true }
 once_cell = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }

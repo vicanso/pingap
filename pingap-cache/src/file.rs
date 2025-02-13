@@ -18,12 +18,15 @@ use super::{Error, Result, LOG_CATEGORY, PAGE_SIZE};
 use super::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use async_trait::async_trait;
 use bytes::Bytes;
+use path_absolutize::*;
 #[cfg(feature = "full")]
 use prometheus::Histogram;
 use scopeguard::defer;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::SystemTime;
+use substring::Substring;
 use tinyufo::TinyUfo;
 use tokio::fs;
 use tracing::{debug, error, info};
@@ -82,15 +85,58 @@ impl Default for FileCacheParams {
     }
 }
 
+/// Converts query string to key-value map.
+///
+/// # Arguments
+/// * `query` - Query string to parse (without leading '?')
+///
+/// # Returns
+/// HashMap containing the parsed query parameters
+fn convert_query_map(query: &str) -> HashMap<String, String> {
+    let mut m = HashMap::new();
+    for item in query.split('&') {
+        if let Some((key, value)) = item.split_once('=') {
+            m.insert(key.to_string(), value.to_string());
+        }
+    }
+    m
+}
+
+/// Resolves a path string to its absolute form.
+/// If the path starts with '~', it will be expanded to the user's home directory.
+/// Returns an empty string if the input path is empty.
+///
+/// # Arguments
+/// * `path` - The path string to resolve
+///
+/// # Returns
+/// The absolute path as a String
+fn resolve_path(path: &str) -> String {
+    if path.is_empty() {
+        return "".to_string();
+    }
+    let mut p = path.to_string();
+    if p.starts_with('~') {
+        if let Some(home) = dirs::home_dir() {
+            p = home.to_string_lossy().to_string() + p.substring(1, p.len());
+        };
+    }
+    if let Ok(p) = Path::new(&p).absolutize() {
+        p.to_string_lossy().to_string()
+    } else {
+        p
+    }
+}
+
 fn parse_params(dir: &str) -> FileCacheParams {
     let (dir, query) = dir.split_once('?').unwrap_or((dir, ""));
     let mut params = FileCacheParams {
-        directory: pingap_util::resolve_path(dir),
+        directory: resolve_path(dir),
         ..Default::default()
     };
 
     if !query.is_empty() {
-        let m = pingap_util::convert_query_map(query);
+        let m = convert_query_map(query);
         params.reading_max = m
             .get("reading_max")
             .and_then(|v| v.parse().ok())
@@ -160,6 +206,13 @@ impl FileCache {
     }
 }
 
+/// Returns the elapsed time in seconds (as f64) since the given SystemTime
+#[cfg(feature = "full")]
+#[inline]
+fn elapsed_second(time: SystemTime) -> f64 {
+    time.elapsed().unwrap_or_default().as_millis() as f64 / 1000.0
+}
+
 #[async_trait]
 impl HttpCacheStorage for FileCache {
     /// Retrieves a cache object by key and namespace.
@@ -207,7 +260,7 @@ impl HttpCacheStorage for FileCache {
         }
         let result = fs::read(file).await;
         #[cfg(feature = "full")]
-        self.read_time.observe(pingap_util::elapsed_second(start));
+        self.read_time.observe(elapsed_second(start));
 
         let obj = match result {
             Ok(buf) if buf.len() >= 8 => {
@@ -265,7 +318,7 @@ impl HttpCacheStorage for FileCache {
         }
         let result = fs::write(file, buf).await;
         #[cfg(feature = "full")]
-        self.write_time.observe(pingap_util::elapsed_second(start));
+        self.write_time.observe(elapsed_second(start));
         result.map_err(|e| Error::Io { source: e })
     }
     /// Removes a cache entry from both TinyUfo and disk storage.
@@ -468,5 +521,19 @@ mod tests {
         let cache = new_file_cache(&dir).unwrap();
         assert_eq!(0, cache.stats().unwrap().reading);
         assert_eq!(0, cache.stats().unwrap().writing);
+    }
+
+    #[test]
+    fn test_resolve_path() {
+        assert_eq!(
+            dirs::home_dir().unwrap().to_string_lossy().to_string(),
+            resolve_path("~/")
+        );
+
+        assert_eq!("", resolve_path(""));
+
+        let path = resolve_path("../pingap");
+        assert_eq!(true, path.ends_with("/pingap"));
+        assert_eq!(false, path.starts_with(".."));
     }
 }

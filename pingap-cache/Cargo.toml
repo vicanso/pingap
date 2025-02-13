@@ -17,6 +17,9 @@ path = "src/lib.rs"
 full = ["prometheus"]
 
 [dependencies]
+substring = { workspace = true }
+dirs = { workspace = true }
+path-absolutize = { workspace = true }
 bytesize = { workspace = true }
 memory-stats = { workspace = true }
 once_cell = { workspace = true }
@@ -30,10 +33,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 walkdir = { workspace = true }
 http = { workspace = true }
-
 prometheus = { version = "0.13.4", default-features = false, optional = true }
-pingap-config = { path = "../pingap-config" }
-pingap-util = { path = "../pingap-util" }
 pingap-core = { path = "../pingap-core" }
 
 [dev-dependencies]
