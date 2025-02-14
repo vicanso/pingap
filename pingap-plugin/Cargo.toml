@@ -54,10 +54,10 @@ toml = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 http = { workspace = true }
-pingap-config = { path = "../pingap-config" }
-pingap-util = { path = "../pingap-util" }
-pingap-cache = { path = "../pingap-cache" }
-pingap-core = { path = "../pingap-core" }
+pingap-config = { version = "0.9.10", path = "../pingap-config" }
+pingap-util = { version = "0.9.10", path = "../pingap-util" }
+pingap-cache = { version = "0.9.10", path = "../pingap-cache" }
+pingap-core = { version = "0.9.10", path = "../pingap-core" }
 
 
 [dev-dependencies]

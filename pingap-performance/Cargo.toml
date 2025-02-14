@@ -33,11 +33,11 @@ reqwest = { workspace = true }
 http = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }
-pingap-config = { path = "../pingap-config" }
-pingap-location = { path = "../pingap-location" }
-pingap-upstream = { path = "../pingap-upstream" }
-pingap-cache = { path = "../pingap-cache" }
-pingap-core = { path = "../pingap-core" }
+pingap-config = { version = "0.9.10", path = "../pingap-config" }
+pingap-location = { version = "0.9.10", path = "../pingap-location" }
+pingap-upstream = { version = "0.9.10", path = "../pingap-upstream" }
+pingap-cache = { version = "0.9.10", path = "../pingap-cache" }
+pingap-core = { version = "0.9.10", path = "../pingap-core" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 procfs = { version = "0.17.0", default-features = false }

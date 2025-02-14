@@ -39,9 +39,9 @@ substring = { workspace = true }
 futures-util = { workspace = true }
 snafu = { workspace = true }
 base64 = { workspace = true }
-pingap-discovery = { path = "../pingap-discovery" }
-pingap-util = { path = "../pingap-util" }
-pingap-core = { path = "../pingap-core" }
+pingap-discovery = { version = "0.9.10", path = "../pingap-discovery" }
+pingap-util = { version = "0.9.10", path = "../pingap-util" }
+pingap-core = { version = "0.9.10", path = "../pingap-core" }
 
 
 [package.metadata.cargo-machete]

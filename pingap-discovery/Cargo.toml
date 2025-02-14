@@ -21,11 +21,11 @@ tracing = { workspace = true }
 async-trait = { workspace = true }
 hickory-resolver = "0.24.3"
 bollard = "0.18.1"
-pingap-webhook = { path = "../pingap-webhook" }
-pingap-core = { path = "../pingap-core" }
 snafu = { workspace = true }
 tokio = { workspace = true }
 futures = { workspace = true }
+pingap-core = { version = "0.9.10", path = "../pingap-core" }
+pingap-webhook = { version = "0.9.10", path = "../pingap-webhook" }
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"

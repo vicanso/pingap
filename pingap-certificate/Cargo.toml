@@ -26,10 +26,10 @@ arc-swap = { workspace = true }
 tracing = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
-pingap-util = { path = "../pingap-util" }
-pingap-config = { path = "../pingap-config" }
-pingap-webhook = { path = "../pingap-webhook" }
-pingap-core = { path = "../pingap-core" }
+pingap-util = { version = "0.9.10", path = "../pingap-util" }
+pingap-config = { version = "0.9.10", path = "../pingap-config" }
+pingap-webhook = { version = "0.9.10", path = "../pingap-webhook" }
+pingap-core = { version = "0.9.10", path = "../pingap-core" }
 
 
 [dev-dependencies]
