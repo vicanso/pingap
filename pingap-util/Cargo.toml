@@ -26,14 +26,10 @@ path-absolutize = { workspace = true }
 dirs = { workspace = true }
 once_cell = { workspace = true }
 bytes = { workspace = true }
-http = { workspace = true }
-pingora = { workspace = true }
-regex = { workspace = true }
 snafu = { workspace = true }
 substring = { workspace = true }
 itoa = { workspace = true }
 toml = { workspace = true }
-tokio = { workspace = true }
 
 
 [dev-dependencies]
