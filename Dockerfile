@@ -8,13 +8,16 @@ RUN apk update \
 
 FROM rust:1.83.0 AS builder
 
+ARG BUILD_ARGS=""
+
 COPY --from=webbuilder /pingap /pingap
 
 RUN apt update \
   && apt install -y cmake libclang-dev wget gnupg ca-certificates lsb-release protobuf-compiler --no-install-recommends
 RUN rustup target list --installed
 RUN cd /pingap \
-  && make release-full
+  && cargo build --release ${BUILD_ARGS} \
+  && ls -lh target/release
 
 FROM ubuntu:24.04
 
