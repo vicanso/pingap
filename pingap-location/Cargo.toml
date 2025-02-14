@@ -22,8 +22,8 @@ snafu = { workspace = true }
 substring = { workspace = true }
 tracing = { workspace = true }
 http = { workspace = true }
+tokio = { workspace = true }
 pingap-config = { path = "../pingap-config" }
-pingap-util = { path = "../pingap-util" }
 pingap-core = { path = "../pingap-core" }
 
 [dev-dependencies]

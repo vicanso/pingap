@@ -22,7 +22,6 @@ async-trait = { workspace = true }
 hickory-resolver = "0.24.3"
 bollard = "0.18.1"
 pingap-webhook = { path = "../pingap-webhook" }
-pingap-util = { path = "../pingap-util" }
 pingap-core = { path = "../pingap-core" }
 snafu = { workspace = true }
 tokio = { workspace = true }

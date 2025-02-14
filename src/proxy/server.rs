@@ -691,7 +691,7 @@ impl ProxyHttp for Server {
         ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
         ctx.accepted = self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
         if let Some((remote_addr, remote_port)) =
-            pingap_util::get_remote_addr(session)
+            pingap_core::get_remote_addr(session)
         {
             ctx.remote_addr = Some(remote_addr);
             ctx.remote_port = Some(remote_port);
@@ -704,7 +704,7 @@ impl ProxyHttp for Server {
         }
 
         let header = session.req_header_mut();
-        let host = pingap_util::get_host(header).unwrap_or_default();
+        let host = pingap_core::get_host(header).unwrap_or_default();
         let path = header.uri.path();
 
         #[cfg(feature = "full")]
@@ -757,7 +757,7 @@ impl ProxyHttp for Server {
 
         if let Some(location) = &current_location {
             location.validate_content_length(header).map_err(|e| {
-                pingap_util::new_internal_error(413, e.to_string())
+                pingap_core::new_internal_error(413, e.to_string())
             })?;
 
             // add processing, if processing is max than limit,
@@ -768,7 +768,7 @@ impl ProxyHttp for Server {
                     ctx.location_processing = processing;
                 },
                 Err(e) => {
-                    return Err(pingap_util::new_internal_error(
+                    return Err(pingap_core::new_internal_error(
                         429,
                         e.to_string(),
                     ));
@@ -780,7 +780,7 @@ impl ProxyHttp for Server {
                     .downstream_modules_ctx
                     .get_mut::<GrpcWebBridge>()
                     .ok_or_else(|| {
-                        pingap_util::new_internal_error(
+                        pingap_core::new_internal_error(
                             500,
                             "grpc web bridge module should be added"
                                 .to_string(),
@@ -823,7 +823,7 @@ impl ProxyHttp for Server {
         // only enable for http 80
         if self.lets_encrypt_enabled {
             let Some(storage) = get_config_storage() else {
-                return Err(pingap_util::new_internal_error(
+                return Err(pingap_core::new_internal_error(
                     500,
                     "get config storage fail".to_string(),
                 ));
@@ -845,20 +845,20 @@ impl ProxyHttp for Server {
             let body = self
                 .prometheus
                 .as_ref()
-                .ok_or(pingap_util::new_internal_error(
+                .ok_or(pingap_core::new_internal_error(
                     500,
                     "get prometheus fail".to_string(),
                 ))?
                 .metrics()
                 .map_err(|e| {
-                    pingap_util::new_internal_error(500, e.to_string())
+                    pingap_core::new_internal_error(500, e.to_string())
                 })?;
             HttpResponse::text(body.into()).send(session).await?;
             return Ok(true);
         }
 
         let Some(location) = get_location(&ctx.location) else {
-            let host = pingap_util::get_host(header).unwrap_or_default();
+            let host = pingap_core::get_host(header).unwrap_or_default();
             HttpResponse::unknown_error(Bytes::from(format!(
                 "Location not found, host:{host} path:{}",
                 header.uri.path(),
@@ -957,7 +957,7 @@ impl ProxyHttp for Server {
             None
         }
         .ok_or_else(|| {
-            pingap_util::new_internal_error(
+            pingap_core::new_internal_error(
                 503,
                 format!("No available upstream for {location_name}"),
             )
@@ -1046,7 +1046,7 @@ impl ProxyHttp for Server {
             ctx.payload_size += buf.len();
             if let Some(location) = get_location(&ctx.location) {
                 location.client_body_size_limit(ctx.payload_size).map_err(
-                    |e| pingap_util::new_internal_error(413, e.to_string()),
+                    |e| pingap_core::new_internal_error(413, e.to_string()),
                 )?;
             }
         }
@@ -1449,7 +1449,7 @@ impl ProxyHttp for Server {
             let ip = if let Some(ip) = &ctx.client_ip {
                 ip.to_string()
             } else {
-                let ip = pingap_util::get_client_ip(session);
+                let ip = pingap_core::get_client_ip(session);
                 ctx.client_ip = Some(ip.clone());
                 ip
             };

@@ -142,7 +142,7 @@ impl Plugin for IpRestriction {
         let ip = if let Some(ip) = &ctx.client_ip {
             ip.to_string()
         } else {
-            let ip = pingap_util::get_client_ip(session);
+            let ip = pingap_core::get_client_ip(session);
             ctx.client_ip = Some(ip.clone()); // Cache for future use
             ip
         };

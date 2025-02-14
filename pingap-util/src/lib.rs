@@ -21,16 +21,12 @@ use substring::Substring;
 mod crypto;
 mod datetime;
 mod format;
-mod http;
 mod ip;
-mod regex;
 
 pub use crypto::{aes_decrypt, aes_encrypt};
 pub use datetime::*;
 pub use format::*;
-pub use http::*;
 pub use ip::IpRules;
-pub use regex::RegexCapture;
 
 /// Error enum for various error types in the utility module
 #[derive(Debug, Snafu)]

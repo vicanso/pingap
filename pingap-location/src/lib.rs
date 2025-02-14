@@ -13,4 +13,7 @@
 // limitations under the License.
 
 mod location;
+
+mod regex;
+
 pub use location::*;

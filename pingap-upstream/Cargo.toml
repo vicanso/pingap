@@ -29,7 +29,6 @@ futures = { workspace = true }
 pingap-config = { path = "../pingap-config" }
 pingap-discovery = { path = "../pingap-discovery" }
 pingap-health = { path = "../pingap-health" }
-pingap-util = { path = "../pingap-util" }
 pingap-core = { path = "../pingap-core" }
 
 

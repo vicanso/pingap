@@ -15,15 +15,6 @@
 use regex::Regex;
 
 /// RegexCapture provides a way to extract named captures from regex matches
-///
-/// # Example
-/// ```
-/// use pingap_util::RegexCapture;
-/// let re = RegexCapture::new(r"(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})").unwrap();
-/// let (matched, captures) = re.captures("2024-03-14");
-/// assert_eq!(true, matched);
-/// assert_eq!(Some(vec![("year".to_string(), "2024".to_string()), ("month".to_string(), "03".to_string()), ("day".to_string(), "14".to_string())]), captures);
-/// ```
 #[derive(Debug, Clone)]
 pub struct RegexCapture {
     // The compiled regular expression

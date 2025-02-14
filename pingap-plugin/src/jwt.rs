@@ -233,7 +233,7 @@ impl Plugin for JwtAuth {
             return Ok(None);
         }
         let value = if let Some(key) = &self.header {
-            let value = pingap_util::get_req_header_value(req_header, key)
+            let value = pingap_core::get_req_header_value(req_header, key)
                 .unwrap_or_default();
             let bearer = "Bearer ";
             if value.starts_with(bearer) {
@@ -242,9 +242,9 @@ impl Plugin for JwtAuth {
                 value
             }
         } else if let Some(key) = &self.cookie {
-            pingap_util::get_cookie_value(req_header, key).unwrap_or_default()
+            pingap_core::get_cookie_value(req_header, key).unwrap_or_default()
         } else if let Some(key) = &self.query {
-            pingap_util::get_query_value(req_header, key).unwrap_or_default()
+            pingap_core::get_query_value(req_header, key).unwrap_or_default()
         } else {
             ""
         };

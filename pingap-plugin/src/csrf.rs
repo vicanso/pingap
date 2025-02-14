@@ -260,7 +260,7 @@ impl Plugin for Csrf {
             let set_cookie = (
                 header::SET_COOKIE,
                 HeaderValue::from_str(&builder.build().to_string()).map_err(
-                    |e| pingap_util::new_internal_error(400, e.to_string()),
+                    |e| pingap_core::new_internal_error(400, e.to_string()),
                 )?,
             );
 
@@ -295,7 +295,7 @@ impl Plugin for Csrf {
         //    - Prevents CSRF as attacker cannot set custom headers
         // 3. Validate token format, expiration, and signature
         if value
-            != pingap_util::get_cookie_value(session.req_header(), &self.name)
+            != pingap_core::get_cookie_value(session.req_header(), &self.name)
                 .unwrap_or_default()
             || !validate_token(&self.key, self.ttl, &value)
         {

@@ -278,7 +278,7 @@ impl Parser {
                 },
                 TagCategory::Host => {
                     // Add the host from request headers
-                    if let Some(host) = pingap_util::get_host(req_header) {
+                    if let Some(host) = pingap_core::get_host(req_header) {
                         buf.extend(host.as_bytes());
                     }
                 },
@@ -310,7 +310,7 @@ impl Parser {
                         buf.extend(client_ip.as_bytes());
                     } else {
                         buf.extend(
-                            pingap_util::get_client_ip(session).as_bytes(),
+                            pingap_core::get_client_ip(session).as_bytes(),
                         );
                     }
                 },
@@ -375,7 +375,7 @@ impl Parser {
                 TagCategory::Cookie => {
                     if let Some(cookie) = &tag.data {
                         if let Some(value) =
-                            pingap_util::get_cookie_value(req_header, cookie)
+                            pingap_core::get_cookie_value(req_header, cookie)
                         {
                             buf.extend(value.as_bytes());
                         }
@@ -650,6 +650,8 @@ mod tests {
         let ctx = Ctx {
             upstream_reused: true,
             upstream_address: "192.186.1.1:6188".to_string(),
+            remote_addr: Some("10.1.1.1".to_string()),
+            client_ip: Some("1.1.1.1".to_string()),
             processing: 1,
             upstream_connect_time: Some(100),
             location: "test".to_string(),
@@ -660,7 +662,7 @@ mod tests {
         };
         let log = p.format(&session, &ctx);
         assert_eq!(
-            "github.com GET /vicanso/pingap HTTP/1.1 size=1   https /vicanso/pingap?size=1 https://github.com/ pingap/0.1.1 0 0B 0 0 0B abc application/json true 192.186.1.1:6188 1 100ms test 300ms 1.2 nanoid",
+            "github.com GET /vicanso/pingap HTTP/1.1 size=1 10.1.1.1 1.1.1.1 https /vicanso/pingap?size=1 https://github.com/ pingap/0.1.1 0 0B 0 0 0B abc application/json true 192.186.1.1:6188 1 100ms test 300ms 1.2 nanoid",
             log
         );
     }

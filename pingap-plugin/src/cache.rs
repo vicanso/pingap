@@ -187,10 +187,10 @@ impl TryFrom<&PluginConf> for Cache {
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
         let basic_conf = &get_current_config().basic;
-        let cache = get_cache_backend(&CacheBackendOption {
+        let cache = get_cache_backend(Some(CacheBackendOption {
             cache_directory: basic_conf.cache_directory.clone(),
             cache_max_size: basic_conf.cache_max_size,
-        })
+        }))
         .map_err(|e| Error::Invalid {
             category: "cache_backend".to_string(),
             message: e.to_string(),
@@ -397,7 +397,7 @@ impl Plugin for Cache {
         if method == METHOD_PURGE.to_owned() {
             let found = match self
                 .purge_ip_rules
-                .is_match(&pingap_util::get_client_ip(session))
+                .is_match(&pingap_core::get_client_ip(session))
             {
                 Ok(matched) => matched,
                 Err(e) => {

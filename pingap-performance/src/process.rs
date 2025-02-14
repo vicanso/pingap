@@ -49,7 +49,7 @@ pub fn get_processing_accepted() -> (i32, u64) {
     (processing, accepted)
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct ProcessSystemInfo {
     /// Current memory usage in megabytes
     pub memory_mb: usize,
@@ -152,5 +152,38 @@ pub fn get_process_system_info() -> ProcessSystemInfo {
         fd_count,
         tcp_count,
         tcp6_count,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_get_process_system_info() {
+        let info = get_process_system_info();
+        assert_eq!(true, info.memory_mb > 0);
+        assert_eq!(true, !info.memory.is_empty());
+        assert_eq!(true, !info.arch.is_empty());
+        assert_eq!(true, info.cpus > 0);
+        assert_eq!(true, info.physical_cpus > 0);
+        assert_eq!(true, !info.kernel.is_empty());
+        assert_eq!(true, info.pid != 0);
+    }
+
+    #[test]
+    fn test_get_processing_accepted() {
+        let (processing, accepted) = get_processing_accepted();
+        assert_eq!(processing, 0);
+        assert_eq!(accepted, 0);
+        accept_request();
+        let (processing, accepted) = get_processing_accepted();
+        assert_eq!(processing, 1);
+        assert_eq!(accepted, 1);
+        end_request();
+        let (processing, accepted) = get_processing_accepted();
+        assert_eq!(processing, 0);
+        assert_eq!(accepted, 1);
     }
 }

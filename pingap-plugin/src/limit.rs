@@ -197,13 +197,13 @@ impl Limiter {
         let key = match self.tag {
             LimitTag::Query => {
                 // Get value from URL query parameter
-                pingap_util::get_query_value(session.req_header(), &self.key)
+                pingap_core::get_query_value(session.req_header(), &self.key)
                     .unwrap_or_default()
                     .to_string()
             },
             LimitTag::RequestHeader => {
                 // Get value from HTTP request header
-                pingap_util::get_req_header_value(
+                pingap_core::get_req_header_value(
                     session.req_header(),
                     &self.key,
                 )
@@ -212,13 +212,13 @@ impl Limiter {
             },
             LimitTag::Cookie => {
                 // Get value from cookie
-                pingap_util::get_cookie_value(session.req_header(), &self.key)
+                pingap_core::get_cookie_value(session.req_header(), &self.key)
                     .unwrap_or_default()
                     .to_string()
             },
             _ => {
                 // Get client IP from X-Forwarded-For or connection
-                let client_ip = pingap_util::get_client_ip(session);
+                let client_ip = pingap_core::get_client_ip(session);
                 // Store client IP in context for potential later use
                 ctx.client_ip = Some(client_ip.clone());
                 client_ip

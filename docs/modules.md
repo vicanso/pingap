@@ -37,12 +37,10 @@ graph TD
     config --> util
 
     discovery --> core
-    discovery --> util
     discovery --> webhook
 
     location --> config
     location --> core
-    location --> util
 
     logger --> core
     logger --> util
@@ -52,7 +50,6 @@ graph TD
     performance --> core
     performance --> location
     performance --> upstream
-    performance --> util
 
     plugin --> cache
     plugin --> config
@@ -63,7 +60,6 @@ graph TD
     upstream --> core
     upstream --> discovery
     upstream --> health
-    upstream --> util
 
     webhook --> core
 ```

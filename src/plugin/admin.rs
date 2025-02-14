@@ -257,7 +257,7 @@ impl AdminServe {
             return true;
         }
         let value =
-            pingap_util::get_req_header_value(req_header, "Authorization")
+            pingap_core::get_req_header_value(req_header, "Authorization")
                 .unwrap_or_default();
         if value.is_empty() {
             return false;
@@ -292,7 +292,7 @@ impl AdminServe {
         .await
         .map_err(|e| {
             error!("failed to load config: {e}");
-            pingap_util::new_internal_error(400, e.to_string())
+            pingap_core::new_internal_error(400, e.to_string())
         })?;
         Ok(conf)
     }
@@ -305,14 +305,14 @@ impl AdminServe {
             let full_conf = self.load_config(true).await?;
             let mut full_toml =
                 toml::to_string_pretty(&full_conf).map_err(|e| {
-                    pingap_util::new_internal_error(400, e.to_string())
+                    pingap_core::new_internal_error(400, e.to_string())
                 })?;
             if let Ok(value) = pingap_util::toml_omit_empty_value(&full_toml) {
                 full_toml = value;
             };
             let mut original_toml =
                 toml::to_string_pretty(&conf).map_err(|e| {
-                    pingap_util::new_internal_error(400, e.to_string())
+                    pingap_core::new_internal_error(400, e.to_string())
                 })?;
             if let Ok(value) =
                 pingap_util::toml_omit_empty_value(&original_toml)
@@ -345,13 +345,13 @@ impl AdminServe {
         let mut conf = self.load_config(false).await?;
         conf.remove(category, name).map_err(|e| {
             error!(error = e.to_string(), "validate config fail");
-            pingap_util::new_internal_error(400, e.to_string())
+            pingap_core::new_internal_error(400, e.to_string())
         })?;
         save_config(&conf, category, Some(name))
             .await
             .map_err(|e| {
                 error!(error = e.to_string(), "save config fail");
-                pingap_util::new_internal_error(400, e.to_string())
+                pingap_core::new_internal_error(400, e.to_string())
             })?;
         Ok(HttpResponse::no_content())
     }
@@ -362,7 +362,7 @@ impl AdminServe {
         name: &str,
     ) -> pingora::Result<HttpResponse> {
         if name.is_empty() {
-            return Err(pingap_util::new_internal_error(
+            return Err(pingap_core::new_internal_error(
                 400,
                 "name is empty".to_string(),
             ));
@@ -378,7 +378,7 @@ impl AdminServe {
                             error = e.to_string(),
                             "descrialize upstream fail"
                         );
-                        pingap_util::new_internal_error(400, e.to_string())
+                        pingap_core::new_internal_error(400, e.to_string())
                     })?;
                 conf.upstreams.insert(key, upstream);
             },
@@ -389,7 +389,7 @@ impl AdminServe {
                             error = e.to_string(),
                             "descrialize location fail"
                         );
-                        pingap_util::new_internal_error(400, e.to_string())
+                        pingap_core::new_internal_error(400, e.to_string())
                     })?;
                 conf.locations.insert(key, location);
             },
@@ -400,7 +400,7 @@ impl AdminServe {
                             error = e.to_string(),
                             "descrialize server fail"
                         );
-                        pingap_util::new_internal_error(400, e.to_string())
+                        pingap_core::new_internal_error(400, e.to_string())
                     })?;
                 conf.servers.insert(key, server);
             },
@@ -411,7 +411,7 @@ impl AdminServe {
                             error = e.to_string(),
                             "descrialize plugin fail"
                         );
-                        pingap_util::new_internal_error(400, e.to_string())
+                        pingap_core::new_internal_error(400, e.to_string())
                     })?;
                 conf.plugins.insert(key, plugin);
             },
@@ -422,7 +422,7 @@ impl AdminServe {
                             error = e.to_string(),
                             "descrialize certificate fail"
                         );
-                        pingap_util::new_internal_error(400, e.to_string())
+                        pingap_core::new_internal_error(400, e.to_string())
                     })?;
                 conf.certificates.insert(key, certificate);
             },
@@ -433,7 +433,7 @@ impl AdminServe {
                             error = e.to_string(),
                             "descrialize storage fail"
                         );
-                        pingap_util::new_internal_error(400, e.to_string())
+                        pingap_core::new_internal_error(400, e.to_string())
                     })?;
                 conf.storages.insert(key, storage);
             },
@@ -441,7 +441,7 @@ impl AdminServe {
                 let basic_conf: BasicConf = serde_json::from_slice(&buf)
                     .map_err(|e| {
                         error!(error = e.to_string(), "descrialize basic fail");
-                        pingap_util::new_internal_error(400, e.to_string())
+                        pingap_core::new_internal_error(400, e.to_string())
                     })?;
                 conf.basic = basic_conf;
             },
@@ -450,7 +450,7 @@ impl AdminServe {
             .await
             .map_err(|e| {
                 error!(error = e.to_string(), "save config fail");
-                pingap_util::new_internal_error(400, e.to_string())
+                pingap_core::new_internal_error(400, e.to_string())
             })?;
         Ok(HttpResponse::no_content())
     }
@@ -461,14 +461,14 @@ impl AdminServe {
         let buf = get_request_body(session).await?;
         let conf = PingapConf::new(&buf, false).map_err(|e| {
             error!(error = e.to_string(), "import config fail");
-            pingap_util::new_internal_error(400, e.to_string())
+            pingap_core::new_internal_error(400, e.to_string())
         })?;
         if let Some(storage) = pingap_config::get_config_storage() {
             pingap_config::sync_config(&conf, storage)
                 .await
                 .map_err(|e| {
                     error!(error = e.to_string(), "import config fail");
-                    pingap_util::new_internal_error(400, e.to_string())
+                    pingap_core::new_internal_error(400, e.to_string())
                 })?;
         }
         Ok(HttpResponse::no_content())
@@ -500,7 +500,7 @@ impl Plugin for AdminServe {
         if !session.req_header().uri.path().starts_with(&self.path) {
             return Ok(None);
         }
-        let ip = pingap_util::get_client_ip(session);
+        let ip = pingap_core::get_client_ip(session);
         if !self.ip_fail_limit.validate(&ip) {
             return Ok(Some(HttpResponse {
                 status: StatusCode::FORBIDDEN,
@@ -638,14 +638,14 @@ impl Plugin for AdminServe {
             let buf = get_request_body(session).await?;
             let params: AesParmas = serde_json::from_slice(buf.as_ref())
                 .map_err(|e| {
-                    pingap_util::new_internal_error(400, e.to_string())
+                    pingap_core::new_internal_error(400, e.to_string())
                 })?;
             let value = if params.category == "encrypt" {
                 pingap_util::aes_encrypt(&params.key, &params.data)
             } else {
                 pingap_util::aes_decrypt(&params.key, &params.data)
             }
-            .map_err(|e| pingap_util::new_internal_error(400, e.to_string()))?;
+            .map_err(|e| pingap_core::new_internal_error(400, e.to_string()))?;
             HttpResponse::try_from_json(&AesResp { value }).unwrap_or(
                 HttpResponse::unknown_error("Json serde fail".into()),
             )

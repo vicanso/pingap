@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_cache_backend, is_cache_backend_init, CacheBackendOption};
+use super::{get_cache_backend, is_cache_backend_init};
 use super::{Error, Result, PAGE_SIZE};
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
@@ -212,14 +212,15 @@ async fn do_file_storage_clear(
     Ok(true)
 }
 
-pub fn new_storage_clear_service(
-    option: &CacheBackendOption,
-) -> Option<(String, SimpleServiceTaskFuture)> {
+pub fn new_storage_clear_service() -> Option<(String, SimpleServiceTaskFuture)>
+{
     // if cache backend not initialized, do not create storage clear service
     if !is_cache_backend_init() {
         return None;
     }
-    let Ok(backend) = get_cache_backend(option) else {
+    // because the cache backend is initialized once,
+    // so we can use the default option
+    let Ok(backend) = get_cache_backend(None) else {
         return None;
     };
     if !backend.cache.support_clear() {
@@ -503,7 +504,7 @@ mod tests {
     async fn test_object_miss_handler() {
         let key = "key";
 
-        let cache = Arc::new(new_tiny_ufo_cache(10, 10));
+        let cache = Arc::new(new_tiny_ufo_cache("", 10, 10));
         let obj = ObjectMissHandler {
             meta: (b"Hello".to_vec(), b"World".to_vec()),
             body: BytesMut::new(),

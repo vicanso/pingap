@@ -146,7 +146,7 @@ impl Plugin for Redirect {
         // Extract host from request headers
         // Fallback to empty string if not found
         let host =
-            pingap_util::get_host(session.req_header()).unwrap_or_default();
+            pingap_core::get_host(session.req_header()).unwrap_or_default();
 
         // Determine target schema based on configuration
         let schema = if self.http_to_https { "https" } else { "http" };

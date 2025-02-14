@@ -34,11 +34,25 @@ impl TinyUfoCache {
     ///
     /// # Arguments
     ///
+    /// * `mode` - The mode of the cache
     /// * `total_weight_limit` - The maximum total weight of items in the cache
     /// * `estimated_size` - Estimated number of items for internal capacity planning
-    pub fn new(total_weight_limit: usize, estimated_size: usize) -> Self {
-        Self {
-            cache: TinyUfo::new(total_weight_limit, estimated_size / 32),
+    pub fn new(
+        mode: &str,
+        total_weight_limit: usize,
+        estimated_size: usize,
+    ) -> Self {
+        if mode == "compact" {
+            Self {
+                cache: TinyUfo::new_compact(
+                    total_weight_limit,
+                    estimated_size / 32,
+                ),
+            }
+        } else {
+            Self {
+                cache: TinyUfo::new(total_weight_limit, estimated_size / 32),
+            }
         }
     }
 }
@@ -47,10 +61,11 @@ impl TinyUfoCache {
 ///
 /// This is a convenience function that wraps `TinyUfoCache::new`
 pub fn new_tiny_ufo_cache(
+    mode: &str,
     total_weight_limit: usize,
     estimated_size: usize,
 ) -> TinyUfoCache {
-    TinyUfoCache::new(total_weight_limit, estimated_size)
+    TinyUfoCache::new(mode, total_weight_limit, estimated_size)
 }
 
 #[async_trait]
@@ -136,7 +151,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     #[tokio::test]
     async fn test_tiny_ufo_cache() {
-        let cache = new_tiny_ufo_cache(10, 10);
+        let cache = new_tiny_ufo_cache("", 10, 10);
         let key = "key";
         let obj = CacheObject {
             meta: (b"Hello".to_vec(), b"World".to_vec()),

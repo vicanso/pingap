@@ -29,7 +29,7 @@ pub use grpc::GrpcHealthCheck;
 pub use http::HealthCheckConf;
 
 /// Creates a new internal error
-pub fn new_internal_error(status: u16, message: String) -> pingora::BError {
+fn new_internal_error(status: u16, message: String) -> pingora::BError {
     pingora::Error::because(
         pingora::ErrorType::HTTPStatus(status),
         message,
@@ -172,7 +172,7 @@ pub enum HealthCheckSchema {
 
 #[cfg(test)]
 mod tests {
-    use super::{new_health_check, new_tcp_health_check, HealthCheckConf};
+    use super::*;
     use pingora::upstreams::peer::Peer;
     use pretty_assertions::assert_eq;
     use std::time::Duration;
@@ -198,5 +198,14 @@ mod tests {
     fn test_new_health_check() {
         let (conf, _) = new_health_check("upstreamname", "https://upstreamname/ping?connection_timeout=3s&read_timeout=1s&success=2&failure=1&check_frequency=10s&from=nginx&reuse", None).unwrap();
         assert_eq!(Duration::from_secs(10), conf.check_frequency);
+    }
+
+    #[test]
+    fn test_new_internal_error() {
+        let err = new_internal_error(500, "test".to_string());
+        assert_eq!(
+            err.to_string().trim(),
+            "HTTPStatus context: test cause:  InternalError"
+        );
     }
 }

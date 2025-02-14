@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::http_cache::{CacheObject, HttpCacheStats, HttpCacheStorage};
-use super::{Error, Result, LOG_CATEGORY, PAGE_SIZE};
+use super::{convert_query_map, Error, Result, LOG_CATEGORY, PAGE_SIZE};
 #[cfg(feature = "full")]
 use super::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use async_trait::async_trait;
@@ -22,7 +22,6 @@ use path_absolutize::*;
 #[cfg(feature = "full")]
 use prometheus::Histogram;
 use scopeguard::defer;
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::SystemTime;
@@ -83,23 +82,6 @@ impl Default for FileCacheParams {
             cache_file_max_weight: 1024 * 1024 / PAGE_SIZE,
         }
     }
-}
-
-/// Converts query string to key-value map.
-///
-/// # Arguments
-/// * `query` - Query string to parse (without leading '?')
-///
-/// # Returns
-/// HashMap containing the parsed query parameters
-fn convert_query_map(query: &str) -> HashMap<String, String> {
-    let mut m = HashMap::new();
-    for item in query.split('&') {
-        if let Some((key, value)) = item.split_once('=') {
-            m.insert(key.to_string(), value.to_string());
-        }
-    }
-    m
 }
 
 /// Resolves a path string to its absolute form.

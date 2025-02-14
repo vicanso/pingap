@@ -15,14 +15,31 @@
 use bytesize::ByteSize;
 use memory_stats::memory_stats;
 use once_cell::sync::OnceCell;
-// use pingap_config::get_current_config;
 use snafu::Snafu;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::info;
 mod file;
 mod http_cache;
 mod tiny;
+
+/// Converts query string to key-value map.
+///
+/// # Arguments
+/// * `query` - Query string to parse (without leading '?')
+///
+/// # Returns
+/// HashMap containing the parsed query parameters
+fn convert_query_map(query: &str) -> HashMap<String, String> {
+    let mut m = HashMap::new();
+    for item in query.split('&') {
+        if let Some((key, value)) = item.split_once('=') {
+            m.insert(key.to_string(), value.to_string());
+        }
+    }
+    m
+}
 
 pub static PAGE_SIZE: usize = 4096;
 
@@ -48,10 +65,10 @@ impl From<Error> for pingora::BError {
     }
 }
 
-fn new_tiny_ufo_cache(size: usize) -> HttpCache {
+fn new_tiny_ufo_cache(mode: &str, size: usize) -> HttpCache {
     HttpCache {
         directory: None,
-        cache: Arc::new(tiny::new_tiny_ufo_cache(size / PAGE_SIZE, size)),
+        cache: Arc::new(tiny::new_tiny_ufo_cache(mode, size / PAGE_SIZE, size)),
     }
 }
 fn new_file_cache(dir: &str) -> Result<HttpCache> {
@@ -71,6 +88,7 @@ pub fn is_cache_backend_init() -> bool {
     CACHED_INIT.load(Ordering::Relaxed)
 }
 
+#[derive(Debug, Default)]
 pub struct CacheBackendOption {
     /// Directory to store cache files
     pub cache_directory: Option<String>,
@@ -80,8 +98,14 @@ pub struct CacheBackendOption {
 
 /// Get the cache backend
 pub fn get_cache_backend(
-    option: &CacheBackendOption,
+    option: Option<CacheBackendOption>,
 ) -> Result<&'static HttpCache> {
+    if !is_cache_backend_init() && option.is_none() {
+        return Err(Error::Invalid {
+            message: "cache backend is not initialized".to_string(),
+        });
+    };
+    let option = option.unwrap_or_default();
     // Get or initialize the global cache backend using OnceCell
     CACHE_BACKEND.get_or_try_init(|| {
         // let basic_conf = &get_current_config().basic;
@@ -93,6 +117,7 @@ pub fn get_cache_backend(
         };
 
         let mut cache_type = "memory";
+        let mut cache_mode = "".to_string();
         // Get optional cache directory from config
         let cache_directory =
             if let Some(cache_directory) = &option.cache_directory {
@@ -102,7 +127,9 @@ pub fn get_cache_backend(
             };
 
         // Choose between file-based or memory-based cache
-        let cache = if !cache_directory.is_empty() {
+        let cache = if !cache_directory.is_empty()
+            && !cache_directory.starts_with("memory://")
+        {
             // Use file-based cache if directory is specified
             cache_type = "file";
             new_file_cache(cache_directory.as_str()).map_err(|e| {
@@ -112,15 +139,21 @@ pub fn get_cache_backend(
             })?
         } else {
             // For memory cache, limit size to half of available physical memory
-            // or fallback to 4GB if memory stats unavailable
+            // or fallback to 256MB if memory stats unavailable
             let max_memory = if let Some(value) = memory_stats() {
                 value.physical_mem * 1024 / 2
             } else {
-                ByteSize::gb(4).as_u64() as usize
+                ByteSize::mb(256).as_u64() as usize
             };
+
+            if let Some((_, query)) = cache_directory.split_once('?') {
+                let query_map = convert_query_map(query);
+                cache_mode = query_map.get("mode").cloned().unwrap_or_default();
+            }
+
             size = size.min(max_memory);
             // Create memory-based tiny UFO cache
-            new_tiny_ufo_cache(size)
+            new_tiny_ufo_cache(&cache_mode, size)
         };
         CACHED_INIT.store(true, Ordering::Relaxed);
 
@@ -129,6 +162,7 @@ pub fn get_cache_backend(
             category = LOG_CATEGORY,
             size = ByteSize::b(size as u64).to_string(),
             cache_type,
+            cache_mode,
             "init cache backend success"
         );
         Ok(cache)
@@ -168,7 +202,7 @@ mod tests {
     }
     #[test]
     fn test_cache() {
-        let _ = new_tiny_ufo_cache(1024);
+        let _ = new_tiny_ufo_cache("compact", 1024);
 
         let dir = TempDir::new().unwrap();
         let result = new_file_cache(&dir.into_path().to_string_lossy());

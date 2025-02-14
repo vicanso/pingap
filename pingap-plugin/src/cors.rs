@@ -254,7 +254,7 @@ impl Plugin for Cors {
         // Preflight happens before actual request to check if it's allowed
         if http::Method::OPTIONS == session.req_header().method {
             let headers = self.get_headers(session, ctx).map_err(|e| {
-                pingap_util::new_internal_error(400, e.to_string())
+                pingap_core::new_internal_error(400, e.to_string())
             })?;
             // Return 204 No Content with CORS headers for preflight
             let mut resp = HttpResponse::no_content();
@@ -302,7 +302,7 @@ impl Plugin for Cors {
         // Add all configured CORS headers to the response
         let headers = self
             .get_headers(session, ctx)
-            .map_err(|e| pingap_util::new_internal_error(400, e.to_string()))?;
+            .map_err(|e| pingap_core::new_internal_error(400, e.to_string()))?;
         for (name, value) in &headers {
             let _ = upstream_response.insert_header(name, value);
         }

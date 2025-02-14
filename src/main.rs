@@ -15,7 +15,7 @@
 use clap::Parser;
 use crossbeam_channel::Sender;
 use pingap_acme::new_lets_encrypt_service;
-use pingap_cache::{new_storage_clear_service, CacheBackendOption};
+use pingap_cache::new_storage_clear_service;
 use pingap_certificate::{
     new_certificate_validity_service,
     new_self_signed_certificate_validity_service,
@@ -509,10 +509,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         new_self_signed_certificate_validity_service(),
         new_performance_metrics_log_service(),
     ];
-    if let Some(task) = new_storage_clear_service(&CacheBackendOption {
-        cache_directory: basic_conf.cache_directory.clone(),
-        cache_max_size: basic_conf.cache_max_size,
-    }) {
+    if let Some(task) = new_storage_clear_service() {
         simple_tasks.push(task);
     }
     if let Some(compression_task) = compression_task {

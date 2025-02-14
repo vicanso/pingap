@@ -14,7 +14,6 @@
 
 use super::{get_process_system_info, Error, Result, LOG_CATEGORY};
 use humantime::parse_duration;
-#[cfg(feature = "full")]
 use pingap_cache::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use pingap_core::Error as ServiceError;
 use pingap_core::SimpleServiceTaskFuture;
@@ -29,12 +28,21 @@ use prometheus::{
 };
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::error;
 use url::Url;
 
 /// Tag used to dynamically replace with actual hostname in prometheus push URLs.
 /// This allows for dynamic host identification in distributed deployments.
 static HOST_NAME_TAG: &str = "$HOSTNAME";
+
+#[inline]
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
 
 /// Comprehensive metrics collector for HTTP server monitoring.
 ///
@@ -180,8 +188,7 @@ impl Prometheus {
     pub fn after(&self, session: &Session, ctx: &Ctx) {
         let location = &ctx.location;
         let upstream = &ctx.upstream;
-        let response_time =
-            ((pingap_util::now_ms()) - ctx.created_at) as f64 / SECOND;
+        let response_time = ((now_ms()) - ctx.created_at) as f64 / SECOND;
         // payload size(kb)
         let payload_size = ctx.payload_size as f64 / 1024.0;
         let mut code = 0;
@@ -794,7 +801,7 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
 
 #[cfg(test)]
 mod tests {
-    use super::new_prometheus;
+    use super::*;
     use http::StatusCode;
     use pingap_core::{CompressionStat, Ctx};
     use pingora::proxy::Session;
@@ -826,7 +833,7 @@ mod tests {
         p.after(
             &session,
             &Ctx {
-                created_at: pingap_util::now_ms() - 10,
+                created_at: now_ms() - 10,
                 status: Some(StatusCode::from_u16(200).unwrap()),
                 connection_reused: true,
                 tls_handshake_time: Some(1),

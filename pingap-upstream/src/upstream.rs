@@ -259,7 +259,7 @@ fn get_hash_value(
             if let Some(client_ip) = client_ip {
                 client_ip.to_string()
             } else {
-                pingap_util::get_client_ip(session)
+                pingap_core::get_client_ip(session)
             }
         },
         "header" => {
@@ -270,11 +270,11 @@ fn get_hash_value(
             }
         },
         "cookie" => {
-            pingap_util::get_cookie_value(session.req_header(), hash_key)
+            pingap_core::get_cookie_value(session.req_header(), hash_key)
                 .unwrap_or_default()
                 .to_string()
         },
-        "query" => pingap_util::get_query_value(session.req_header(), hash_key)
+        "query" => pingap_core::get_query_value(session.req_header(), hash_key)
             .unwrap_or_default()
             .to_string(),
         // default: path
@@ -525,7 +525,7 @@ impl Upstream {
         // Create HTTP peer based on load balancing mode
         let p = if matches!(self.lb, SelectionLb::Transparent) {
             // In transparent mode, use the request's host header
-            let host = pingap_util::get_host(session.req_header())?;
+            let host = pingap_core::get_host(session.req_header())?;
             // Set SNI: either use host header ($host) or configured value
             let sni = if self.sni == "$host" {
                 host.to_string()

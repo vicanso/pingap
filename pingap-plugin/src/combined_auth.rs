@@ -159,7 +159,7 @@ impl CombinedAuth {
 
         // Step 1: Extract and validate app_id
         // The app_id must be provided as a query parameter: ?app_id=your_app_id
-        let Some(app_id) = pingap_util::get_query_value(req_header, "app_id")
+        let Some(app_id) = pingap_core::get_query_value(req_header, "app_id")
         else {
             return Err(Error::Invalid {
                 category: category.to_string(),
@@ -186,7 +186,7 @@ impl CombinedAuth {
         // Checks if the client IP is in the allowed list
         // Uses X-Forwarded-For header for IP detection behind proxies
         if let Some(ip_rules) = &auth_param.ip_rules {
-            let ip = pingap_util::get_client_ip(session);
+            let ip = pingap_core::get_client_ip(session);
             if !ip_rules.is_match(&ip).unwrap_or_default() {
                 return Err(Error::Invalid {
                     category: category.to_string(),
@@ -198,7 +198,7 @@ impl CombinedAuth {
         // Step 5: Timestamp validation
         // Requires a Unix timestamp as query parameter: ?ts=1234567890
         let ts =
-            pingap_util::get_query_value(req_header, "ts").unwrap_or_default();
+            pingap_core::get_query_value(req_header, "ts").unwrap_or_default();
         if ts.is_empty() {
             return Err(Error::Invalid {
                 category: category.to_string(),
@@ -222,7 +222,7 @@ impl CombinedAuth {
         // Step 6: HMAC Authentication
         // Requires a hex-encoded SHA-256 HMAC digest as query parameter: ?digest=abc123...
         // digest = hex(SHA256(secret:timestamp))
-        let digest = pingap_util::get_query_value(req_header, "digest")
+        let digest = pingap_core::get_query_value(req_header, "digest")
             .unwrap_or_default();
         if digest.is_empty() {
             return Err(Error::Invalid {

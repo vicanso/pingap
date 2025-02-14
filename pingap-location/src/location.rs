@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::regex::RegexCapture;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use once_cell::sync::Lazy;
@@ -112,7 +113,7 @@ fn new_path_selector(path: &str) -> Result<PathSelector> {
 
 #[derive(Debug)]
 struct RegexHost {
-    value: pingap_util::RegexCapture,
+    value: RegexCapture,
 }
 
 #[derive(Debug)]
@@ -152,10 +153,9 @@ fn new_host_selector(host: &str) -> Result<HostSelector> {
     let last = host.substring(1, host.len()).trim();
     let se = match first {
         '~' => {
-            let re =
-                pingap_util::RegexCapture::new(last).context(RegexSnafu {
-                    value: last.to_string(),
-                })?;
+            let re = RegexCapture::new(last).context(RegexSnafu {
+                value: last.to_string(),
+            })?;
             HostSelector::RegexHost(RegexHost { value: re })
         },
         _ => {
@@ -255,6 +255,20 @@ fn format_headers(
     }
 }
 
+/// Get the content length from http request header.
+fn get_content_length(header: &RequestHeader) -> Option<usize> {
+    if let Some(content_length) =
+        header.headers.get(http::header::CONTENT_LENGTH)
+    {
+        if let Ok(size) =
+            content_length.to_str().unwrap_or_default().parse::<usize>()
+        {
+            return Some(size);
+        }
+    }
+    None
+}
+
 impl Location {
     /// Creates a new Location from configuration
     /// Validates and compiles path/host patterns and other settings
@@ -343,7 +357,7 @@ impl Location {
         if self.client_max_body_size == 0 {
             return Ok(());
         }
-        if pingap_util::get_content_length(header).unwrap_or_default()
+        if get_content_length(header).unwrap_or_default()
             > self.client_max_body_size
         {
             return Err(Error::BodyTooLarge {
@@ -585,11 +599,13 @@ pub fn try_init_locations(
 
 #[cfg(test)]
 mod tests {
-    use super::{format_headers, new_path_selector, Location, PathSelector};
+    use super::*;
     use bytesize::ByteSize;
     use pingap_config::LocationConf;
     use pingora::http::RequestHeader;
+    use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
+    use tokio_test::io::Builder;
 
     #[test]
     fn test_format_headers() {
@@ -750,6 +766,64 @@ mod tests {
         assert_eq!(
             "Request Entity Too Large, max:10",
             result.err().unwrap().to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_content_length() {
+        let headers = ["Content-Length: 123"].join("\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        assert_eq!(get_content_length(session.req_header()), Some(123));
+    }
+
+    #[test]
+    fn test_location_processing() {
+        let lo = Location::new(
+            "lo",
+            &LocationConf {
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let value = lo.add_processing().unwrap();
+        assert_eq!(1, value.0);
+        assert_eq!(1, value.1);
+
+        lo.sub_processing();
+        assert_eq!(1, lo.accepted.load(Ordering::Relaxed));
+        assert_eq!(0, lo.processing.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_validate_content_length() {
+        let lo = Location::new(
+            "lo",
+            &LocationConf {
+                client_max_body_size: Some(ByteSize(10)),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut req_header =
+            RequestHeader::build("GET", b"/users/me?abc=1", None).unwrap();
+        assert_eq!(true, lo.validate_content_length(&req_header).is_ok());
+
+        req_header
+            .append_header(
+                http::header::CONTENT_LENGTH,
+                http::HeaderValue::from_str("20").unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            "Request Entity Too Large, max:10",
+            lo.validate_content_length(&req_header)
+                .err()
+                .unwrap()
+                .to_string()
         );
     }
 }

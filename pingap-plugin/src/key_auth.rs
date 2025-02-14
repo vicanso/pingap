@@ -239,7 +239,7 @@ impl Plugin for KeyAuth {
         // 2. Otherwise, look for the key in headers
         // 3. Default to empty bytes if not found
         let value = if let Some(key) = &self.query {
-            pingap_util::get_query_value(session.req_header(), key)
+            pingap_core::get_query_value(session.req_header(), key)
                 .unwrap_or_default()
                 .as_bytes()
         } else {
@@ -275,7 +275,7 @@ impl Plugin for KeyAuth {
             if let Some(name) = &self.header {
                 session.req_header_mut().remove_header(name);
             } else if let Some(name) = &self.query {
-                if let Err(e) = pingap_util::remove_query_from_header(
+                if let Err(e) = pingap_core::remove_query_from_header(
                     session.req_header_mut(),
                     name,
                 ) {

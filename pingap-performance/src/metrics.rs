@@ -13,16 +13,14 @@
 // limitations under the License.
 
 use super::{get_process_system_info, get_processing_accepted, LOG_CATEGORY};
-use pingap_cache::{
-    get_cache_backend, is_cache_backend_init, CacheBackendOption,
-};
+use pingap_cache::{get_cache_backend, is_cache_backend_init};
 use pingap_core::SimpleServiceTaskFuture;
 use pingap_location::get_locations_processing;
 use pingap_upstream::get_upstreams_processing_connected;
 use tracing::info;
 
 // Service name constant for performance metrics logging
-static PERFORMANCE_METRICS_LOG_SERVICE: &str = "performanceMetricsLog";
+static PERFORMANCE_METRICS_LOG_SERVICE: &str = "performance_metrics";
 
 /// Creates a new service that periodically logs performance metrics
 /// Returns a tuple of (service name, service task)
@@ -36,11 +34,9 @@ pub fn new_performance_metrics_log_service() -> (String, SimpleServiceTaskFuture
                 let mut cache_writing: i64 = -1;
                 // if cache backend not initialized, do not get cache statistics
                 if is_cache_backend_init() {
-                    let basic_conf = &pingap_config::get_current_config().basic;
-                    if let Ok(cache) = get_cache_backend(&CacheBackendOption {
-                        cache_directory: basic_conf.cache_directory.clone(),
-                        cache_max_size: basic_conf.cache_max_size,
-                    }) {
+                    // because the cache backend is initialized once,
+                    // so we can use the default option
+                    if let Ok(cache) = get_cache_backend(None) {
                         if let Some(stats) = cache.stats() {
                             cache_reading = stats.reading as i64;
                             cache_writing = stats.writing as i64;
@@ -111,7 +107,6 @@ pub fn new_performance_metrics_log_service() -> (String, SimpleServiceTaskFuture
                     tcp6_count = system_info.tcp6_count, // IPv6 TCP connection count
                     cache_reading,                       // Active cache reads
                     cache_writing,                       // Active cache writes
-                    "performance metrics"
                 );
                 Ok(true)
             }

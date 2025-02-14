@@ -57,7 +57,7 @@ impl EtcdStorage {
         let mut password = "".to_string();
         let mut options = ConnectOptions::default();
         let mut separation = false;
-        for (key, value) in pingap_util::convert_query_map(&query) {
+        for (key, value) in pingap_core::convert_query_map(&query) {
             match key.as_str() {
                 "user" => user = value,
                 "password" => password = value,
