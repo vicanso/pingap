@@ -168,7 +168,7 @@ jobs:
           images: |
             vicanso/pingap
           tags: |
-            type=raw,value=latest
+            type=raw,value=${{ matrix.features }}
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
