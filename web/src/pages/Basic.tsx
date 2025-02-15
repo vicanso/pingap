@@ -50,6 +50,14 @@ export default function Basic() {
       options: newBooleanOptions(),
     },
     {
+      name: "listener_tasks_per_fd",
+      label: basicI18n("listenerTasksPerFd"),
+      placeholder: basicI18n("listenerTasksPerFdPlaceholder"),
+      defaultValue: basic.listener_tasks_per_fd,
+      span: 3,
+      category: ExFormItemCategory.NUMBER,
+    },
+    {
       name: "upstream_keepalive_pool_size",
       label: basicI18n("upstreamKeepalivePoolSize"),
       placeholder: basicI18n("upstreamKeepalivePoolSizePlaceholder"),

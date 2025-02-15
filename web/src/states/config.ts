@@ -125,6 +125,7 @@ interface Basic {
   group?: string;
   threads?: number;
   work_stealing?: boolean;
+  listener_tasks_per_fd?: number;
   grace_period?: string;
   graceful_shutdown_timeout?: string;
   upstream_keepalive_pool_size?: number;

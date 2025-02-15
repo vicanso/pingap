@@ -84,6 +84,8 @@ export default {
     threads: "Threads",
     threadsPlaceholder: "Input the default thread count",
     workStealing: "Work Stealing",
+    listenerTasksPerFd: "Listener Tasks Per Fd",
+    listenerTasksPerFdPlaceholder: "Input the listener tasks per fd(default: 1)",
     upstreamKeepalivePoolSize: "Upstream Keepalive Pool",
     upstreamKeepalivePoolSizePlaceholder:
       "Input the pool size of upstream keepavlie(default: 128)",

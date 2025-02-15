@@ -141,6 +141,9 @@ fn new_server_conf(
     if let Some(work_stealing) = basic_conf.work_stealing {
         server_conf.work_stealing = work_stealing
     }
+    if let Some(listener_tasks_per_fd) = basic_conf.listener_tasks_per_fd {
+        server_conf.listener_tasks_per_fd = listener_tasks_per_fd;
+    }
 
     server_conf
 }
@@ -438,7 +441,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         graceful_shutdown_timeout_seconds =
             server_conf.graceful_shutdown_timeout_seconds,
         upstream_keepalive_pool_size = server_conf.upstream_keepalive_pool_size,
-        "server conf"
+        listener_tasks_per_fd = server_conf.listener_tasks_per_fd,
+        "server configuration"
     );
     my_server.configuration = Arc::new(server_conf);
     #[cfg(feature = "full")]

@@ -690,6 +690,8 @@ pub struct BasicConf {
     pub threads: Option<usize>,
     /// Enable work stealing between worker threads(default: true)
     pub work_stealing: Option<bool>,
+    /// Number of listener tasks to use per fd. This allows for parallel accepts.
+    pub listener_tasks_per_fd: Option<usize>,
     /// Grace period before forcefully terminating during shutdown(default: 5m)
     #[serde(default)]
     #[serde(with = "humantime_serde")]

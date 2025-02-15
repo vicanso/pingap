@@ -84,6 +84,8 @@ export default {
     threads: "线程数",
     threadsPlaceholder: "输入服务线程数",
     workStealing: "线程工作抢占模式",
+    listenerTasksPerFd: "每个fd的监听任务数",
+    listenerTasksPerFdPlaceholder: "输入每个fd的监听任务数(默认值: 1)",
     upstreamKeepalivePoolSize: "上游保持连接池大小",
     upstreamKeepalivePoolSizePlaceholder: "输入上游保持连接池大小(默认值: 128)",
     logLevel: "日志级别",
