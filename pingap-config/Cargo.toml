@@ -16,7 +16,7 @@ path = "src/lib.rs"
 
 [dependencies]
 async-trait = { workspace = true }
-etcd-client = "0.14.0"
+etcd-client = "0.14.1"
 glob = "0.3.2"
 crc32fast = "1.4.2"
 rustls-pemfile = "2.2.0"

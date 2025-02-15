@@ -64,7 +64,7 @@ use pingora::modules::http::HttpModules;
 use pingora::protocols::http::error_resp;
 use pingora::protocols::Digest;
 use pingora::protocols::TimingDigest;
-use pingora::proxy::{http_proxy_service, HttpProxy};
+use pingora::proxy::{http_proxy_service, FailToProxy, HttpProxy};
 use pingora::proxy::{ProxyHttp, Session};
 use pingora::server::configuration;
 use pingora::services::listening::Service;
@@ -1308,7 +1308,7 @@ impl ProxyHttp for Server {
         session: &mut Session,
         e: &pingora::Error,
         ctx: &mut Self::CTX,
-    ) -> u16
+    ) -> FailToProxy
     where
         Self::CTX: Send + Sync,
     {
@@ -1386,7 +1386,10 @@ impl ProxyHttp for Server {
             });
 
         let _ = server_session.write_response_body(buf, true).await;
-        code
+        FailToProxy {
+            error_code: code,
+            can_reuse_downstream: false,
+        }
     }
     /// Performs request logging and cleanup after request completion.
     /// Handles:

@@ -44,7 +44,7 @@ opentelemetry = { version = "0.27.1", default-features = false, features = [
     "trace",
 ], optional = true }
 opentelemetry-http = { version = "0.27.0", default-features = false, optional = true }
-pingora = { git = "https://github.com/cloudflare/pingora", rev = "e6b823c5d89860bb97713fdf14f197f799aed6af", default-features = false, features = [
+pingora = { git = "https://github.com/cloudflare/pingora", rev = "c382ff65ab8bef3292b5074c498d0037c4004066", default-features = false, features = [
     # pingora = { version = "0.4.0", default-features = false, features = [
     "lb",
     "openssl",
@@ -152,7 +152,7 @@ members = [
 once_cell = "1.20.2"
 bytes = "1.9.0"
 http = "1.2.0"
-pingora = { git = "https://github.com/cloudflare/pingora", rev = "e6b823c5d89860bb97713fdf14f197f799aed6af", default-features = false, features = [
+pingora = { git = "https://github.com/cloudflare/pingora", rev = "c382ff65ab8bef3292b5074c498d0037c4004066", default-features = false, features = [
     # pingora = { version = "0.4.0", default-features = false, features = [
     "lb",
     "openssl",
