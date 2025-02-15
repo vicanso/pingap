@@ -71,22 +71,22 @@ uuid = { version = "1.12.1", features = [
     "std",
     "fast-rng",
 ], default-features = false }
-pingap-core = { path = "pingap-core" }
-pingap-util = { path = "pingap-util" }
-pingap-webhook = { path = "pingap-webhook" }
-pingap-config = { path = "pingap-config" }
-pingap-cache = { path = "pingap-cache" }
-pingap-upstream = { path = "pingap-upstream" }
-pingap-certificate = { path = "pingap-certificate" }
-pingap-location = { path = "pingap-location" }
-pingap-performance = { path = "pingap-performance" }
-pingap-logger = { path = "pingap-logger" }
-pingap-acme = { path = "pingap-acme" }
-pingap-plugin = { path = "pingap-plugin" }
-pingap-otel = { path = "pingap-otel", optional = true }
-pingap-sentry = { path = "pingap-sentry", optional = true }
-pingap-pyroscope = { path = "pingap-pyroscope", optional = true }
 ctor = "0.2.9"
+pingap-core = { version = "0.10.0", path = "pingap-core" }
+pingap-util = { version = "0.10.0", path = "pingap-util" }
+pingap-webhook = { version = "0.10.0", path = "pingap-webhook" }
+pingap-config = { version = "0.10.0", path = "pingap-config" }
+pingap-cache = { version = "0.10.0", path = "pingap-cache" }
+pingap-upstream = { version = "0.10.0", path = "pingap-upstream" }
+pingap-certificate = { version = "0.10.0", path = "pingap-certificate" }
+pingap-location = { version = "0.10.0", path = "pingap-location" }
+pingap-performance = { version = "0.10.0", path = "pingap-performance" }
+pingap-logger = { version = "0.10.0", path = "pingap-logger" }
+pingap-acme = { version = "0.10.0", path = "pingap-acme" }
+pingap-plugin = { version = "0.10.0", path = "pingap-plugin" }
+pingap-otel = { version = "0.10.0", path = "pingap-otel", optional = true }
+pingap-sentry = { version = "0.10.0", path = "pingap-sentry", optional = true }
+pingap-pyroscope = { version = "0.10.0", path = "pingap-pyroscope", optional = true }
 
 
 [features]
