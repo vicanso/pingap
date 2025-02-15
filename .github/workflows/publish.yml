@@ -265,6 +265,9 @@ jobs:
   docker:
     runs-on: ubuntu-22.04
     timeout-minutes: 3600
+    strategy:
+      matrix:
+        features: ['', 'full']
     steps:
       - name: Change Swap Space
         run: |
@@ -298,7 +301,7 @@ jobs:
           images: |
             vicanso/pingap
           tags: |
-            type=semver,pattern={{version}}
+            type=semver,pattern={{version}},suffix=${{ matrix.features == 'full' ? '-full' : '' }}
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
@@ -311,13 +314,22 @@ jobs:
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+      - name: Set build args
+        shell: bash
+        id: build_args
+        run: |
+          if [ "${{ matrix.features }}" != "" ]; then
+            echo "BUILD_ARGS=--features=${{ matrix.features }}" >> $GITHUB_OUTPUT
+          fi
       - name: Build and push
         id: docker_build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           platforms: linux/amd64, linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            BUILD_ARGS=${{ steps.build_args.outputs.BUILD_ARGS }}
       - name: Image digest
         run: |
           echo ${{ steps.docker_build.outputs.digest }}

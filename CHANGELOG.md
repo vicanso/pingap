@@ -1,5 +1,67 @@
 # Changelog
 
+## [0.10.0](https://github.com/vicanso/pingap/compare/v0.9.11..0.10.0) - 2025-02-15
+
+### ⛰️  Features
+
+- Support set `listener_tasks_per_fd` for server configuration - ([5a24214](https://github.com/vicanso/pingap/commit/5a24214849feb6b08c0dd320eda7a4159ae562ce))
+- Support plugin factory - ([2c3c2ff](https://github.com/vicanso/pingap/commit/2c3c2ffae27ffbd672fc61b4f00f5a73cab759b4))
+- Support upstream connection time for state - ([e88981d](https://github.com/vicanso/pingap/commit/e88981d1fc6405822f8a1154e2cbb42631202257))
+
+### 🐛 Bug Fixes
+
+- Fix hickory dns failure to verify self-signed, #91 - ([99fb7bc](https://github.com/vicanso/pingap/commit/99fb7bc21d5ae52bf1442ad034dbaad874b6f52a))
+- Fix test - ([f5331b1](https://github.com/vicanso/pingap/commit/f5331b16bfc76528d8f125eb7fa6f20c256bca3f))
+- Fix format - ([56d0149](https://github.com/vicanso/pingap/commit/56d0149356821aa473c0eea5309bf5df5454350f))
+- Fix openssl `ssl::select_next_proto use after free`, #89 - ([938b731](https://github.com/vicanso/pingap/commit/938b731d73b12d692653b4e901ddbdc44feffa13))
+
+### 🚜 Refactor
+
+- Adjust cache, config, discovery, health, location and upsgream - ([c5cce43](https://github.com/vicanso/pingap/commit/c5cce43ce8288b8f22fce550b9de0b3777366a0c))
+- Adjust pingap cache - ([a5fa802](https://github.com/vicanso/pingap/commit/a5fa802a35e2de6ff3535d10fc25c7499c63dd78))
+- Adjust pingap certificate - ([09770e3](https://github.com/vicanso/pingap/commit/09770e3d1e59f3cc3e9009416a83eb1cf75e3398))
+- Merge limit and service module into core module - ([60a7f34](https://github.com/vicanso/pingap/commit/60a7f3428bc5c736fb21b77c945996fa5c7ef6db))
+- Optimize cache backend initialization - ([9b9a80f](https://github.com/vicanso/pingap/commit/9b9a80f89dd8de7b56228630dc67817cba2f8553))
+- Merge the state module with the core module - ([459ba7d](https://github.com/vicanso/pingap/commit/459ba7db0e6a8ea6bbe297fa9ab9c67f25e09c39))
+- Adjust pingap core - ([ce2c262](https://github.com/vicanso/pingap/commit/ce2c262baf216b4a761bd035357f0cdfc5b42488))
+- Remove state's dependency on util - ([a788778](https://github.com/vicanso/pingap/commit/a788778d7e6004c612916f56659d887683464f41))
+- Adjust location and upstream of ctx - ([fdaf7b0](https://github.com/vicanso/pingap/commit/fdaf7b00aeaa46e5bf37c37b1b99302e8be78bae))
+- Adjust pingap workspace member - ([ebe820f](https://github.com/vicanso/pingap/commit/ebe820f70d5d2b498cce1863c9a7f9f9d8362731))
+- Adjust pingap workspace member - ([beecaeb](https://github.com/vicanso/pingap/commit/beecaeb075654b323e0c7832a7bf3857332f420c))
+- Adjust pingap workspace member - ([d372af3](https://github.com/vicanso/pingap/commit/d372af35e08aee01a990b48cd33341e26d66d0dc))
+- Adjust pingap workspace member - ([d31293b](https://github.com/vicanso/pingap/commit/d31293bf6bb93661e61a5c7d573e8411203f3135))
+- Adjust pingap workspace member - ([b7e1a56](https://github.com/vicanso/pingap/commit/b7e1a5611ad39e85a94d9a1f15d0f6b31a5ec791))
+- Adjust pingap workspace member - ([cf41202](https://github.com/vicanso/pingap/commit/cf412029729e5eef35b34cd88a6b10661ffaef20))
+- Adjust pingap workspace member - ([72f24ca](https://github.com/vicanso/pingap/commit/72f24ca47642ead8cbb6ba3a3d1867cb91c54e7c))
+- Adjust pingap workspace member - ([6f6fb10](https://github.com/vicanso/pingap/commit/6f6fb10ccb93ee30751652d94cfcbafc0c9510a4))
+- Adjust pingap workspace member - ([254432a](https://github.com/vicanso/pingap/commit/254432a55566a4a7cfa670e6834325499bc4523f))
+- Adjust pingap workspace member - ([95ba42d](https://github.com/vicanso/pingap/commit/95ba42d6ccb20c331ebe872390eff106bf1400c4))
+- Adjust pingap workspace member - ([670c9e1](https://github.com/vicanso/pingap/commit/670c9e1622a85ffa15738fa66945251fda2d3917))
+- Adjust pingap-util as pingap workspace member - ([2553717](https://github.com/vicanso/pingap/commit/2553717f8fd1239501cf733bf7c46c7d202a9cb2))
+- Adjust proxy handle function - ([226d322](https://github.com/vicanso/pingap/commit/226d32258d1b18e669242fdb9b8986e77339330c))
+- Add delay for observer watch fail - ([be88a90](https://github.com/vicanso/pingap/commit/be88a906b245d212534575bc245320d28833d367))
+
+### 📚 Documentation
+
+- Update modules - ([f7894ea](https://github.com/vicanso/pingap/commit/f7894eae68fe71972ba9d0e374f00ad354c74125))
+- Update module dependency graph - ([d6631e7](https://github.com/vicanso/pingap/commit/d6631e72a2bbe6fbeb585ecc45e7983898c97973))
+
+### 🧪 Testing
+
+- Remove unuse dependencies - ([7ec491a](https://github.com/vicanso/pingap/commit/7ec491aa3df56281ed3b6d10259e23218fe46a06))
+- Add more test for core - ([7eba578](https://github.com/vicanso/pingap/commit/7eba5788b272dfa2b0fb9fcab7996bbd0af5a3dd))
+- Add test for pingap util - ([71c316f](https://github.com/vicanso/pingap/commit/71c316fcc1dbea18dfe041af0f748f019fdeb0a4))
+
+### ⚙️ Miscellaneous Tasks
+
+- Set build args to github output - ([eb628f2](https://github.com/vicanso/pingap/commit/eb628f2509105586ece5eb910a2d1ae36319cc47))
+- Adjust docker image tag - ([caa392d](https://github.com/vicanso/pingap/commit/caa392d2022259eb6f3429e686429bd0d5bf9a68))
+- Update github action for building images with different feature - ([e9826a6](https://github.com/vicanso/pingap/commit/e9826a6867327c404c475370f61ff8a7976d7b82))
+- Update dependencies - ([13a8665](https://github.com/vicanso/pingap/commit/13a8665e35b1627a0e793826999fc1e4ef2206ea))
+- Support build args for dockerfile - ([22add72](https://github.com/vicanso/pingap/commit/22add72d9df1bf160ac4373d0c341a1955263653))
+- Support build args for dockerfile - ([6b8b363](https://github.com/vicanso/pingap/commit/6b8b36357581c1f5303a7535d3e5b444f4ebbfb9))
+- Update cargo - ([0611610](https://github.com/vicanso/pingap/commit/0611610bf37ce6e6c2e33b4b262be833b8ebfcd2))
+
 ## [0.9.10](https://github.com/vicanso/pingap/compare/v0.9.9..0.9.10) - 2025-02-02
 
 ### 🐛 Bug Fixes
