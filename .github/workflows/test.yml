@@ -185,10 +185,8 @@ jobs:
         shell: bash
         id: build_args
         run: |
-          if [ "${{ matrix.features }}" = "latest" ]; then
-            BUILD_ARGS="--features="
-          else
-            BUILD_ARGS="--features=${{ matrix.features }}"
+          if [ "${{ matrix.features }}" != "latest" ]; then
+            echo "BUILD_ARGS=--features=${{ matrix.features }}" >> $GITHUB_OUTPUT
           fi
       - name: Build and push
         id: docker_build
