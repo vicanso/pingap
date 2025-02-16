@@ -482,7 +482,16 @@ fn run() -> Result<(), Box<dyn Error>> {
         proxy::parse_from_conf(conf.clone());
 
     if let Some(addr) = &get_admin_addr() {
-        let (server_conf, _, _) = plugin::parse_admin_plugin(addr)?;
+        let (server_conf, _, plugin_conf) = plugin::parse_admin_plugin(addr)?;
+        let path = if let Some(path) = plugin_conf.get("path") {
+            path.to_string()
+        } else {
+            "".to_string()
+        };
+        info!(
+            admin_addr = server_conf.addr,
+            path, "admin plugin is created"
+        );
         if let Some(server) = server_conf_list
             .iter_mut()
             .find(|item| item.addr == server_conf.addr)
