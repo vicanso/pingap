@@ -267,7 +267,7 @@ jobs:
     timeout-minutes: 3600
     strategy:
       matrix:
-        features: ['', '-full']
+        features: ['', 'full']
     steps:
       - name: Change Swap Space
         run: |
@@ -294,6 +294,12 @@ jobs:
           echo
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Docker suffix
+        id: image_suffix
+        run: |
+          if [ "${{ matrix.features }}" != "" ]; then
+            echo "IMAGE_SUFFIX=-full" >> $GITHUB_OUTPUT
+          fi
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v4
@@ -301,7 +307,7 @@ jobs:
           images: |
             vicanso/pingap
           tags: |
-            type=semver,pattern={{version}},suffix=${{ matrix.features }}
+            type=semver,pattern={{version}},suffix=${{ image_suffix.IMAGE_SUFFIX }}
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
@@ -319,7 +325,7 @@ jobs:
         id: build_args
         run: |
           if [ "${{ matrix.features }}" != "" ]; then
-            echo "BUILD_ARGS=--features=full" >> $GITHUB_OUTPUT
+            echo "BUILD_ARGS=--features=${{ matrix.features }}" >> $GITHUB_OUTPUT
           fi
       - name: Build and push
         id: docker_build

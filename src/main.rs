@@ -464,7 +464,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "pyro")]
     if let Some(url) = &conf.basic.pyroscope {
         my_server.add_service(background_service(
-            "PyroAgent",
+            "pyro_agent",
             pingap_pyroscope::new_agent_service(url),
         ));
     }
@@ -502,7 +502,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         // add otlp service
         if let Some(otlp_exporter) = &serve_conf.otlp_exporter {
             my_server.add_service(background_service(
-                &format!("Otlp:{}", serve_conf.name),
+                &format!("otlp:{}", serve_conf.name),
                 TracerService::new(&serve_conf.name, otlp_exporter),
             ));
         }
@@ -573,7 +573,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         let only_hot_reload = !args.autorestart;
         if pingap_config::support_observer() {
             my_server.add_service(background_service(
-                "Observer",
+                "observer",
                 new_observer_service(
                     auto_restart_check_interval,
                     only_hot_reload,
@@ -581,7 +581,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             ));
         } else {
             my_server.add_service(background_service(
-                "AutoRestart",
+                "auto_restart",
                 new_auto_restart_service(
                     auto_restart_check_interval,
                     only_hot_reload,
@@ -591,20 +591,27 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     my_server.add_service(background_service(
-        "SimpleTask",
+        "simple_task",
         new_simple_service_task(
-            "simpleTask",
+            "simple_task",
             Duration::from_secs(60),
             simple_tasks,
         ),
     ));
 
     my_server.add_service(background_service(
-        "UpstreamHc",
+        "upstream_hc",
         new_upstream_health_check_task(Duration::from_secs(10)),
     ));
 
-    info!("Server is running");
+    info!(
+        daemon = args.daemon,
+        upgrade = args.upgrade,
+        auto_restart = args.autorestart,
+        auto_reload = args.autoreload,
+        control_plane = args.cp,
+        "server is running"
+    );
     let _ = get_start_time();
 
     // TODO not process exit until pingora supports
