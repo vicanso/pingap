@@ -62,7 +62,7 @@ pub(crate) fn new_http_health_check(
             error = e.to_string(),
             "http health check fail"
         ),
-    }
+    };
 
     check
 }

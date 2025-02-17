@@ -15,31 +15,15 @@
 use bytesize::ByteSize;
 use memory_stats::memory_stats;
 use once_cell::sync::OnceCell;
+use pingap_core::convert_query_map;
 use snafu::Snafu;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tracing::info;
+
 mod file;
 mod http_cache;
 mod tiny;
-
-/// Converts query string to key-value map.
-///
-/// # Arguments
-/// * `query` - Query string to parse (without leading '?')
-///
-/// # Returns
-/// HashMap containing the parsed query parameters
-fn convert_query_map(query: &str) -> HashMap<String, String> {
-    let mut m = HashMap::new();
-    for item in query.split('&') {
-        if let Some((key, value)) = item.split_once('=') {
-            m.insert(key.to_string(), value.to_string());
-        }
-    }
-    m
-}
 
 pub static PAGE_SIZE: usize = 4096;
 

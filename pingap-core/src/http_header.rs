@@ -22,6 +22,8 @@ use pingora::proxy::Session;
 use snafu::{ResultExt, Snafu};
 use std::collections::HashMap;
 use std::str::FromStr;
+use url::Url;
+use urlencoding::encode;
 
 pub static HTTP_HEADER_X_FORWARDED_FOR: Lazy<http::HeaderName> =
     Lazy::new(|| HeaderName::from_str("X-Forwarded-For").unwrap());
@@ -362,15 +364,23 @@ pub fn get_cookie_value<'a>(
 /// Converts query string to key-value map.
 ///
 /// # Arguments
-/// * `query` - Query string to parse (without leading '?')
+/// * `value` - Query string or http url to parse (without leading '?')
 ///
 /// # Returns
 /// HashMap containing the parsed query parameters
-pub fn convert_query_map(query: &str) -> HashMap<String, String> {
+pub fn convert_query_map(value: &str) -> HashMap<String, String> {
     let mut m = HashMap::new();
-    for item in query.split('&') {
+    let value = if !value.contains('?') {
+        format!("http://host?{value}")
+    } else {
+        value.to_string()
+    };
+    let Ok(value) = Url::parse(&value) else {
+        return m;
+    };
+    for item in value.query().unwrap_or_default().split('&') {
         if let Some((key, value)) = item.split_once('=') {
-            m.insert(key.to_string(), value.to_string());
+            m.insert(key.to_string(), encode(value).to_string());
         } else {
             m.insert(item.to_string(), "".to_string());
         }
@@ -800,6 +810,12 @@ mod tests {
     #[test]
     fn test_convert_query_map() {
         let query = "apikey=123&name=pingap";
+        let map = convert_query_map(query);
+        assert_eq!(map.len(), 2);
+        assert_eq!(map["apikey"], "123");
+        assert_eq!(map["name"], "pingap");
+
+        let query = "https://pingap.io/vicanso/pingap?apikey=123&name=pingap";
         let map = convert_query_map(query);
         assert_eq!(map.len(), 2);
         assert_eq!(map["apikey"], "123");

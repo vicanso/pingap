@@ -13,12 +13,13 @@
 // limitations under the License.
 
 use super::http_cache::{CacheObject, HttpCacheStats, HttpCacheStorage};
-use super::{convert_query_map, Error, Result, LOG_CATEGORY, PAGE_SIZE};
+use super::{Error, Result, LOG_CATEGORY, PAGE_SIZE};
 #[cfg(feature = "full")]
 use super::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use async_trait::async_trait;
 use bytes::Bytes;
 use path_absolutize::*;
+use pingap_core::convert_query_map;
 #[cfg(feature = "full")]
 use prometheus::Histogram;
 use scopeguard::defer;
