@@ -166,7 +166,11 @@ async fn handle_successful_renewal(domains: &[String], conf: &PingapConf) {
 
     let (_, errors) = try_update_certificates(&conf.certificates);
     if !errors.is_empty() {
-        error!(error = errors, "parse certificate fail");
+        error!(
+            category = LOG_CATEGORY,
+            error = errors,
+            "parse certificate fail"
+        );
         send_notification(NotificationData {
             category: "parse_certificate_fail".to_string(),
             level: NotificationLevel::Error,
@@ -207,7 +211,7 @@ pub fn new_lets_encrypt_service(
             }
         })
     });
-    ("letsEncrypt".to_string(), task)
+    ("lets_encrypt".to_string(), task)
 }
 
 /// Get the cert from file and convert it to certificate struct.
@@ -411,7 +415,11 @@ async fn new_lets_encrypt(
     let detail_url = authorizations.first();
     let state = loop {
         let state = order.state();
-        info!(status = format!("{:?}", state.status), "get order status");
+        info!(
+            category = LOG_CATEGORY,
+            status = format!("{:?}", state.status),
+            "get order status"
+        );
         if let OrderStatus::Ready | OrderStatus::Invalid | OrderStatus::Valid =
             state.status
         {

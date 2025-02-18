@@ -254,8 +254,8 @@ impl HttpCacheStorage for FileCache {
             Err(e) => Err(Error::Io { source: e }),
         }?;
         // cache get from file, but not in tinyufo, put it to tinyufo
-        if let Some(obj) = &obj {
-            if let Some(cache) = &self.cache {
+        if let Some(cache) = &self.cache {
+            if let Some(obj) = &obj {
                 let weight = obj.get_weight();
                 cache.put(key.to_string(), obj.clone(), weight);
             }
@@ -366,8 +366,14 @@ impl HttpCacheStorage for FileCache {
             if accessed > access_before {
                 continue;
             }
-            match fs::remove_file(entry.path()).await {
+            let path = entry.path();
+            let file = path.to_string_lossy().to_string();
+            match fs::remove_file(path).await {
                 Ok(()) => {
+                    info!(
+                        category = LOG_CATEGORY,
+                        file, "remove cache file success"
+                    );
                     success += 1;
                 },
                 Err(e) => {
@@ -375,7 +381,7 @@ impl HttpCacheStorage for FileCache {
                     error!(
                         category = LOG_CATEGORY,
                         err = e.to_string(),
-                        entry = entry.path().to_string_lossy().to_string(),
+                        file,
                         "remove cache file fail"
                     );
                 },

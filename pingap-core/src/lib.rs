@@ -45,11 +45,11 @@ static SUPER_TIMESTAMP: Lazy<SystemTime> = Lazy::new(|| {
 
 /// Returns the number of seconds elapsed since SUPER_TIMESTAMP
 /// Returns 0 if the current time is before SUPER_TIMESTAMP
+#[inline]
 pub fn get_super_ts() -> u32 {
-    if let Ok(value) = SystemTime::now().duration_since(*SUPER_TIMESTAMP) {
-        value.as_secs() as u32
-    } else {
-        0
+    match SystemTime::now().duration_since(*SUPER_TIMESTAMP) {
+        Ok(duration) => duration.as_secs() as u32,
+        Err(_) => 0,
     }
 }
 

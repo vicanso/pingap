@@ -29,6 +29,8 @@ pub struct TinyUfoCache {
     cache: TinyUfo<CacheKey, CacheObject>,
 }
 
+static COMPACT_MODE: &str = "compact";
+
 impl TinyUfoCache {
     /// Creates a new TinyUfoCache instance
     ///
@@ -42,7 +44,7 @@ impl TinyUfoCache {
         total_weight_limit: usize,
         estimated_size: usize,
     ) -> Self {
-        if mode == "compact" {
+        if mode == COMPACT_MODE {
             Self {
                 cache: TinyUfo::new_compact(
                     total_weight_limit,

@@ -12,14 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_cache_backend, is_cache_backend_init};
+use super::{get_cache_backend, is_cache_backend_init, LOG_CATEGORY};
 use super::{Error, Result, PAGE_SIZE};
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use pingap_core::Error as ServiceError;
 use pingap_core::SimpleServiceTaskFuture;
-use pingora::cache::key::CacheHashKey;
-use pingora::cache::key::CompactCacheKey;
+use pingora::cache::key::{CacheHashKey, CompactCacheKey};
 use pingora::cache::storage::{HandleHit, HandleMiss};
 use pingora::cache::trace::SpanHandle;
 use pingora::cache::{
@@ -42,7 +41,7 @@ pub struct CacheObject {
 }
 
 // Maximum size for a single cached object (40MB)
-static MAX_ONE_CACHE_SIZE: usize = 10 * 1024 * PAGE_SIZE;
+static MAX_OBJECT_CACHE_SIZE: usize = 10 * 1024 * PAGE_SIZE;
 
 impl CacheObject {
     pub fn get_weight(&self) -> u16 {
@@ -50,7 +49,7 @@ impl CacheObject {
         if size <= PAGE_SIZE {
             return 1;
         }
-        if size >= MAX_ONE_CACHE_SIZE {
+        if size >= MAX_OBJECT_CACHE_SIZE {
             return u16::MAX;
         }
         (size / PAGE_SIZE) as u16
@@ -208,7 +207,10 @@ async fn do_file_storage_clear(
     if success < 0 {
         return Ok(true);
     }
-    info!(success, fail, "cache storage clear");
+    info!(
+        category = LOG_CATEGORY,
+        success, fail, "file cache storage clear"
+    );
     Ok(true)
 }
 
@@ -235,7 +237,7 @@ pub fn new_storage_clear_service() -> Option<(String, SimpleServiceTaskFuture)>
             }
         })
     });
-    Some(("cacheStorageClear".to_string(), task))
+    Some(("cache_storage_clear".to_string(), task))
 }
 
 pub struct HttpCache {
@@ -542,7 +544,7 @@ mod tests {
         // data larger than max size
         let obj = CacheObject {
             meta: (b"Hello".to_vec(), b"World".to_vec()),
-            body: vec![0; MAX_ONE_CACHE_SIZE + 1].into(),
+            body: vec![0; MAX_OBJECT_CACHE_SIZE + 1].into(),
         };
         assert_eq!(u16::MAX, obj.get_weight());
     }

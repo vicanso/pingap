@@ -371,7 +371,7 @@ impl Server {
             "server is listening"
         );
         let cipher_list = self.tls_cipher_list.clone();
-        let ciphersuites = self.tls_ciphersuites.clone();
+        let cipher_suites = self.tls_ciphersuites.clone();
         let tls_min_version = self.tls_min_version.clone();
         let tls_max_version = self.tls_max_version.clone();
         let mut lb = http_proxy_service(conf, self);
@@ -393,7 +393,7 @@ impl Server {
                         server_name: name.clone(),
                         enabled_h2,
                         cipher_list: cipher_list.clone(),
-                        ciphersuites: ciphersuites.clone(),
+                        cipher_suites: cipher_suites.clone(),
                         tls_min_version: tls_min_version.clone(),
                         tls_max_version: tls_max_version.clone(),
                     })

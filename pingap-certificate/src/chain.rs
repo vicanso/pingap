@@ -16,7 +16,7 @@ use super::Certificate;
 use once_cell::sync::Lazy;
 use pingora::tls::x509::X509;
 
-// Certificate file paths
+// Let's Encrypt chain certificates
 const E5: &[u8] = include_bytes!("../assets/e5.pem");
 const E6: &[u8] = include_bytes!("../assets/e6.pem");
 const R10: &[u8] = include_bytes!("../assets/r10.pem");

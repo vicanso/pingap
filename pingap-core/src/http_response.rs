@@ -274,7 +274,7 @@ where
     }
     /// Sends the chunked response data to the client and returns total bytes sent
     pub async fn send(
-        &mut self,
+        mut self,
         session: &mut Session,
     ) -> pingora::Result<usize> {
         let header = self.get_response_header()?;

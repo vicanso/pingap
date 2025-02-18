@@ -32,10 +32,6 @@ use tracing::{debug, error, info};
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 // Type alias for storing certificates in a high-performance hash map
-// AHashMap provides better performance than std::collections::HashMap by:
-// - Using aHash algorithm optimized for short keys
-// - Reducing collision probability
-// - Having better cache utilization
 type DynamicCertificates = AHashMap<String, Arc<TlsCertificate>>;
 
 // Global certificate storage using thread-safe atomic references
@@ -155,7 +151,7 @@ pub struct TlsSettingParams {
     pub server_name: String,
     pub enabled_h2: bool,            // Enable HTTP/2 support
     pub cipher_list: Option<String>, // Legacy cipher list
-    pub ciphersuites: Option<String>, // Modern cipher suites
+    pub cipher_suites: Option<String>, // Modern cipher suites
     pub tls_min_version: Option<String>, // Minimum TLS version
     pub tls_max_version: Option<String>, // Maximum TLS version
 }
@@ -238,8 +234,8 @@ impl GlobalCertificate {
                 error!(category = LOG_CATEGORY, error = %e, name, "set cipher list fail");
             }
         }
-        if let Some(ciphersuites) = &params.ciphersuites {
-            if let Err(e) = tls_settings.set_ciphersuites(ciphersuites) {
+        if let Some(cipher_suites) = &params.cipher_suites {
+            if let Err(e) = tls_settings.set_ciphersuites(cipher_suites) {
                 error!(category = LOG_CATEGORY, error = %e, name, "set cipher suites fail");
             }
         }
@@ -441,7 +437,7 @@ aqcrKJfS+xaKWxXPiNlpBMG5
                 cipher_list: Some(
                     "ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES128-SHA".to_string(),
                 ),
-                ciphersuites: Some(
+                cipher_suites: Some(
                     "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256"
                         .to_string(),
                 ),
