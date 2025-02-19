@@ -25,7 +25,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useTranslation } from "react-i18next";
 import Logo from "@/assets/pingap.png";
-import LogoLight from "@/assets/pingap-light.png";
 import useBasicState from "@/states/basic";
 import useConfigState from "@/states/config";
 import { useShallow } from "zustand/react/shallow";
@@ -186,11 +185,6 @@ export function MainHeader({
     </DropdownMenu>
   );
 
-  let logoData = Logo;
-  if (theme === "light" || document.documentElement.className.includes("light")) {
-    logoData = LogoLight;
-  }
-
   return (
     <header
       className={cn(
@@ -205,7 +199,7 @@ export function MainHeader({
             width: "32px",
             marginRight: "10px",
           }}
-          src={logoData}
+          src={Logo}
         />
         <Button
           variant="link"
