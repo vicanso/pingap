@@ -234,7 +234,6 @@ impl BackgroundService for TracerService {
         let result = opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()
             .with_endpoint(&self.endpoint)
-            .with_timeout(Duration::from_secs(3))
             .with_timeout(self.config.timeout)
             .build()
             .map(|exporter| {
