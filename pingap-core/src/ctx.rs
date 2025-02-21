@@ -123,9 +123,9 @@ pub struct Ctx {
     pub upstream_address: String,
     /// Client's IP address
     pub client_ip: Option<String>,
-    /// Client's port number
+    /// Remote connection port
     pub remote_port: Option<u16>,
-    /// Client's complete address (IP:port)
+    /// Remote connection address
     pub remote_addr: Option<String>,
     /// Server's listening port
     pub server_port: Option<u16>,

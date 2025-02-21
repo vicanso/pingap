@@ -1,5 +1,7 @@
 # pingap
 
+Before the pingap version is stable, no pull requests will be accepted. If you have any questions, please raise an issue.
+
 ![Pingap Logo](./asset/pingap-logo.png)
 
 ## Overview

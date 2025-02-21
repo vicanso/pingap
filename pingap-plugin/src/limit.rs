@@ -235,11 +235,12 @@ impl Limiter {
             // For rate limiting:
             rate.observe(&key, 1); // Record this request
             let value = rate.rate(&key); // Get current rate for time window
-            value as isize
+            value.ceil() as isize
         } else if let Some(inflight) = &self.inflight {
             // For inflight limiting:
-            let (guard, value) = inflight.incr(&key, 1); // Increment counter
-                                                         // Store guard in context - when guard is dropped, counter auto-decrements
+            // Increment counter
+            // Store guard in context - when guard is dropped, counter auto-decrements
+            let (guard, value) = inflight.incr(&key, 1);
             ctx.guard = Some(guard);
             value
         } else {
