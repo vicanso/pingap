@@ -73,7 +73,7 @@ static TRACER_PROVIDER_MAP: Lazy<ArcSwap<TracerProviders>> =
 /// This operation creates a new copy of the provider map to ensure thread safety
 pub fn add_provider(
     name: &str,
-    provider: opentelemetry_sdk::trace::TracerProvider,
+    provider: opentelemetry_sdk::trace::SdkTracerProvider,
 ) {
     let mut m: TracerProviders = AHashMap::new();
     for (name, provider) in TRACER_PROVIDER_MAP.load().iter() {

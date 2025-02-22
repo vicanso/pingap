@@ -15,7 +15,8 @@
 use async_trait::async_trait;
 use once_cell::sync::{Lazy, OnceCell};
 use pingap_core::{
-    Notification, NotificationData, NotificationLevel, NotificationSender,
+    get_hostname, Notification, NotificationData, NotificationLevel,
+    NotificationSender,
 };
 use serde_json::{Map, Value};
 use std::sync::Arc;
@@ -112,11 +113,7 @@ pub async fn send_notification(params: NotificationData) {
 
     let client = reqwest::Client::new();
     let mut data = serde_json::Map::new();
-    let hostname = hostname::get()
-        .unwrap_or_default()
-        .to_str()
-        .unwrap_or_default()
-        .to_string();
+    let hostname = get_hostname();
     // TODO get app name from config
     let name = "pingap".to_string();
     let color_type = match level {

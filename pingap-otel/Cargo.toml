@@ -14,15 +14,15 @@ path = "src/lib.rs"
 
 [dependencies]
 async-trait = { workspace = true }
-opentelemetry = { version = "0.27.1", default-features = false, features = [
+opentelemetry = { version = "0.28.0", default-features = false, features = [
     "trace",
 ] }
-opentelemetry-jaeger-propagator = { version = "0.27.0" }
-opentelemetry-otlp = { version = "0.27.0", default-features = false, features = [
+opentelemetry-jaeger-propagator = { version = "0.28.0" }
+opentelemetry-otlp = { version = "0.28.0", default-features = false, features = [
     "grpc-tonic",
     "trace",
 ] }
-opentelemetry_sdk = { version = "0.27.1", features = [
+opentelemetry_sdk = { version = "0.28.0", features = [
     "rt-tokio",
 ], default-features = false }
 pingora = { workspace = true }

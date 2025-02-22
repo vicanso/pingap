@@ -19,7 +19,7 @@ use super::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use async_trait::async_trait;
 use bytes::Bytes;
 use path_absolutize::*;
-use pingap_core::convert_query_map;
+use pingap_core::{convert_query_map, TinyUfo};
 #[cfg(feature = "full")]
 use prometheus::Histogram;
 use scopeguard::defer;
@@ -27,7 +27,6 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::SystemTime;
 use substring::Substring;
-use tinyufo::TinyUfo;
 use tokio::fs;
 use tracing::{debug, error, info};
 use walkdir::WalkDir;

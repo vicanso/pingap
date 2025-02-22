@@ -24,7 +24,6 @@ bytesize = { workspace = true }
 memory-stats = { workspace = true }
 once_cell = { workspace = true }
 snafu = { workspace = true }
-TinyUFO = { workspace = true }
 scopeguard = { workspace = true }
 pingora = { workspace = true }
 async-trait = { workspace = true }

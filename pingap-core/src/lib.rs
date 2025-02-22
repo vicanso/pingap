@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use once_cell::sync::Lazy;
 use snafu::Snafu;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub static LOG_CATEGORY: &str = "core";
 
@@ -35,48 +33,6 @@ pub fn new_internal_error(status: u16, message: String) -> pingora::BError {
     )
 }
 
-// 2022-05-07: 1651852800
-// const SUPER_TIMESTAMP: u64 = 1651852800;
-static SUPER_TIMESTAMP: Lazy<SystemTime> = Lazy::new(|| {
-    UNIX_EPOCH
-        .checked_add(Duration::from_secs(1651852800))
-        .unwrap_or(SystemTime::now())
-});
-
-/// Returns the number of seconds elapsed since SUPER_TIMESTAMP
-/// Returns 0 if the current time is before SUPER_TIMESTAMP
-#[inline]
-pub fn get_super_ts() -> u32 {
-    match SystemTime::now().duration_since(*SUPER_TIMESTAMP) {
-        Ok(duration) => duration.as_secs() as u32,
-        Err(_) => 0,
-    }
-}
-
-static HOST_NAME: Lazy<String> = Lazy::new(|| {
-    hostname::get()
-        .unwrap_or_default()
-        .to_str()
-        .unwrap_or_default()
-        .to_string()
-});
-
-/// Returns the system hostname.
-///
-/// Returns:
-/// * `&'static str` - The system's hostname as a string slice
-pub fn get_hostname() -> &'static str {
-    HOST_NAME.as_str()
-}
-
-#[inline]
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-}
-
 mod ctx;
 mod http_header;
 mod http_response;
@@ -84,6 +40,7 @@ mod notification;
 mod plugin;
 mod service;
 mod ttl_lru_limit;
+mod util;
 
 pub use ctx::*;
 pub use http_header::*;
@@ -91,7 +48,10 @@ pub use http_response::*;
 pub use notification::*;
 pub use plugin::*;
 pub use service::*;
+pub use tinyufo::TinyUfo;
 pub use ttl_lru_limit::*;
+pub use util::*;
+
 #[cfg(test)]
 mod tests {
     use super::*;

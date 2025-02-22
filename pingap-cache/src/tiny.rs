@@ -15,7 +15,7 @@
 use super::http_cache::{CacheObject, HttpCacheStorage};
 use super::{Result, LOG_CATEGORY};
 use async_trait::async_trait;
-use tinyufo::TinyUfo;
+use pingap_core::TinyUfo;
 use tracing::debug;
 
 /// Type alias for cache key

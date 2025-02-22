@@ -18,7 +18,6 @@ use opentelemetry::{
     global::{self, BoxedTracer},
     propagation::{TextMapCompositePropagator, TextMapPropagator},
     trace::TracerProvider,
-    KeyValue,
 };
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
@@ -241,7 +240,6 @@ impl BackgroundService for TracerService {
                 let batch =
                     opentelemetry_sdk::trace::BatchSpanProcessor::builder(
                         exporter,
-                        opentelemetry_sdk::runtime::Tokio,
                     )
                     .with_batch_config(
                         BatchConfigBuilder::default()
@@ -250,22 +248,23 @@ impl BackgroundService for TracerService {
                             .with_max_export_batch_size(
                                 self.config.max_export_batch_size,
                             )
-                            .with_max_export_timeout(
-                                self.config.max_export_timeout,
-                            )
+                            // .with_max_export_timeout(
+                            //     self.config.max_export_timeout,
+                            // )
                             .build(),
                     )
                     .build();
-                opentelemetry_sdk::trace::TracerProvider::builder()
+                opentelemetry_sdk::trace::TracerProviderBuilder::default()
                     .with_span_processor(batch)
                     .with_sampler(Sampler::AlwaysOn)
                     .with_id_generator(RandomIdGenerator::default())
                     .with_max_attributes_per_span(self.config.max_attributes)
                     .with_max_events_per_span(self.config.max_events)
-                    .with_resource(Resource::new(vec![KeyValue::new(
-                        "service.name",
-                        get_service_name(&self.name),
-                    )]))
+                    .with_resource(
+                        Resource::builder()
+                            .with_service_name(get_service_name(&self.name))
+                            .build(),
+                    )
                     .build()
             });
 
