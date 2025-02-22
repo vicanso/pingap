@@ -1,6 +1,6 @@
 [package]
 name = "pingap-plugin"
-version = "0.10.0"
+version = "0.10.1"
 edition = "2021"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -54,10 +54,10 @@ toml = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 http = { workspace = true }
-pingap-config = { version = "0.10.0", path = "../pingap-config" }
-pingap-util = { version = "0.10.0", path = "../pingap-util" }
-pingap-cache = { version = "0.10.0", path = "../pingap-cache" }
-pingap-core = { version = "0.10.0", path = "../pingap-core" }
+pingap-config = { version = "0.10.1", path = "../pingap-config" }
+pingap-util = { version = "0.10.1", path = "../pingap-util" }
+pingap-cache = { version = "0.10.1", path = "../pingap-cache" }
+pingap-core = { version = "0.10.1", path = "../pingap-core" }
 
 
 [dev-dependencies]

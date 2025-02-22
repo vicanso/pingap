@@ -1,6 +1,6 @@
 [package]
 name = "pingap-logger"
-version = "0.10.0"
+version = "0.10.1"
 edition = "2021"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -31,8 +31,8 @@ tracing-subscriber = { version = "0.3.19", features = [
 ], default-features = false }
 tracing-appender = "0.2.3"
 zstd = "0.13.2"
-pingap-util = { version = "0.10.0", path = "../pingap-util" }
-pingap-core = { version = "0.10.0", path = "../pingap-core" }
+pingap-util = { version = "0.10.1", path = "../pingap-util" }
+pingap-core = { version = "0.10.1", path = "../pingap-core" }
 
 
 [dev-dependencies]

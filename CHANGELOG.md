@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.10.1](https://github.com/vicanso/pingap/compare/v0.10.1..0.10.1) - 2025-02-22
+
+### 🚜 Refactor
+
+- Update pingora version - ([4e210a0](https://github.com/vicanso/pingap/commit/4e210a016255181c916d0899402604f547772507))
+- Adjust log level selector - ([274f579](https://github.com/vicanso/pingap/commit/274f57905eb448a538ec5ec142d2c2128dbc4c24))
+- Set x-trace-id and x-span-id response header - ([3549dd0](https://github.com/vicanso/pingap/commit/3549dd0a3f0ec54b2a8ee79c250e005dc896f27a))
+- Update dependencies - ([2c0b8e7](https://github.com/vicanso/pingap/commit/2c0b8e732876e52bb25c5d0e789b87a55ea1132d))
+- Use ceil for rate limit plugin - ([bc816c0](https://github.com/vicanso/pingap/commit/bc816c0e2daadaab97014ed70a924cae1fb7d872))
+- Downgrade tailwindcss  to v3 - ([a2f70dc](https://github.com/vicanso/pingap/commit/a2f70dcf1e3e9c2b2f3bb9e429a1f6a48d98e98d))
+- Adjust log of pingap cache - ([4f5d2cb](https://github.com/vicanso/pingap/commit/4f5d2cba0cc123758e32ec6311334166e77f673f))
+- Add log of admin plugin config - ([04526b2](https://github.com/vicanso/pingap/commit/04526b264738b7379c6583bde4f981d6b2dbeb32))
+- Adjust background service name - ([22d1bc9](https://github.com/vicanso/pingap/commit/22d1bc9cfe68b54ac599e4f04707fbad470c355f))
+
+### 📚 Documentation
+
+- Update readme - ([c362e54](https://github.com/vicanso/pingap/commit/c362e54ba0e1e73d8b0cf4ca76b1a152b400f425))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update dependencies - ([cd129f3](https://github.com/vicanso/pingap/commit/cd129f3ee89c0667ff1946254ab5315aaf0bfa92))
+
 ## [0.10.0](https://github.com/vicanso/pingap/compare/v0.9.11..0.10.0) - 2025-02-15
 
 ### ⛰️  Features

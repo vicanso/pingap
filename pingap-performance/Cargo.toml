@@ -1,6 +1,6 @@
 [package]
 name = "pingap-performance"
-version = "0.10.0"
+version = "0.10.1"
 edition = "2021"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -33,11 +33,11 @@ reqwest = { workspace = true }
 http = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }
-pingap-config = { version = "0.10.0", path = "../pingap-config" }
-pingap-location = { version = "0.10.0", path = "../pingap-location" }
-pingap-upstream = { version = "0.10.0", path = "../pingap-upstream" }
-pingap-cache = { version = "0.10.0", path = "../pingap-cache" }
-pingap-core = { version = "0.10.0", path = "../pingap-core" }
+pingap-config = { version = "0.10.1", path = "../pingap-config" }
+pingap-location = { version = "0.10.1", path = "../pingap-location" }
+pingap-upstream = { version = "0.10.1", path = "../pingap-upstream" }
+pingap-cache = { version = "0.10.1", path = "../pingap-cache" }
+pingap-core = { version = "0.10.1", path = "../pingap-core" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 procfs = { version = "0.17.0", default-features = false }
