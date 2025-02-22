@@ -1,6 +1,6 @@
 [package]
 name = "pingap-core"
-version = "0.10.1"
+version = "0.10.2"
 edition = "2021"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"

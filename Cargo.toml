@@ -1,6 +1,6 @@
 [package]
 name = "pingap"
-version = "0.10.1"
+version = "0.10.2"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 edition = "2021"
 categories = ["network-programming", "web-programming::http-server"]
@@ -72,21 +72,21 @@ uuid = { version = "1.12.1", features = [
     "fast-rng",
 ], default-features = false }
 ctor = "0.2.9"
-pingap-core = { version = "0.10.1", path = "pingap-core" }
-pingap-util = { version = "0.10.1", path = "pingap-util" }
-pingap-webhook = { version = "0.10.1", path = "pingap-webhook" }
-pingap-config = { version = "0.10.1", path = "pingap-config" }
-pingap-cache = { version = "0.10.1", path = "pingap-cache" }
-pingap-upstream = { version = "0.10.1", path = "pingap-upstream" }
-pingap-certificate = { version = "0.10.1", path = "pingap-certificate" }
-pingap-location = { version = "0.10.1", path = "pingap-location" }
-pingap-performance = { version = "0.10.1", path = "pingap-performance" }
-pingap-logger = { version = "0.10.1", path = "pingap-logger" }
-pingap-acme = { version = "0.10.1", path = "pingap-acme" }
-pingap-plugin = { version = "0.10.1", path = "pingap-plugin" }
-pingap-otel = { version = "0.10.1", path = "pingap-otel", optional = true }
-pingap-sentry = { version = "0.10.1", path = "pingap-sentry", optional = true }
-pingap-pyroscope = { version = "0.10.1", path = "pingap-pyroscope", optional = true }
+pingap-core = { version = "0.10.2", path = "pingap-core" }
+pingap-util = { version = "0.10.2", path = "pingap-util" }
+pingap-webhook = { version = "0.10.2", path = "pingap-webhook" }
+pingap-config = { version = "0.10.2", path = "pingap-config" }
+pingap-cache = { version = "0.10.2", path = "pingap-cache" }
+pingap-upstream = { version = "0.10.2", path = "pingap-upstream" }
+pingap-certificate = { version = "0.10.2", path = "pingap-certificate" }
+pingap-location = { version = "0.10.2", path = "pingap-location" }
+pingap-performance = { version = "0.10.2", path = "pingap-performance" }
+pingap-logger = { version = "0.10.2", path = "pingap-logger" }
+pingap-acme = { version = "0.10.2", path = "pingap-acme" }
+pingap-plugin = { version = "0.10.2", path = "pingap-plugin" }
+pingap-otel = { version = "0.10.2", path = "pingap-otel", optional = true }
+pingap-sentry = { version = "0.10.2", path = "pingap-sentry", optional = true }
+pingap-pyroscope = { version = "0.10.2", path = "pingap-pyroscope", optional = true }
 
 
 [features]
