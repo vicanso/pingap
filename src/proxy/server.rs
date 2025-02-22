@@ -703,7 +703,7 @@ impl ProxyHttp for Server {
             ctx.server_port = Some(addr.port());
         }
 
-        let header = session.req_header_mut();
+        let header = session.req_header();
         let host = pingap_core::get_host(header).unwrap_or_default();
         let path = header.uri.path();
 
@@ -715,11 +715,16 @@ impl ProxyHttp for Server {
                 let cx = global::get_text_map_propagator(|propagator| {
                     propagator.extract(&HeaderExtractor(&header.headers))
                 });
-                let span_names = [header.method.to_string(), path.to_string()];
-                let span = tracer
-                    .span_builder(span_names.join(" "))
+                let mut span = tracer
+                    .span_builder(path.to_string())
                     .with_kind(SpanKind::Server)
                     .start_with_context(&tracer, &cx);
+                span.set_attributes(vec![
+                    KeyValue::new("http.method", header.method.to_string()),
+                    KeyValue::new("http.url", header.uri.to_string()),
+                    KeyValue::new("http.host", host.to_string()),
+                ]);
+
                 ctx.otel_tracer = Some(OtelTracer {
                     tracer,
                     http_request_span: span,
@@ -940,7 +945,7 @@ impl ProxyHttp for Server {
                     let mut span = tracer.new_upstream_span(&name);
                     span.set_attribute(KeyValue::new(
                         "upstream.connected",
-                        ctx.upstream_connected.unwrap_or_default().to_string(),
+                        ctx.upstream_connected.unwrap_or_default() as i64,
                     ));
                     ctx.upstream_span = Some(span);
                 }
@@ -1246,27 +1251,18 @@ impl ProxyHttp for Server {
                         "upstream.addr",
                         ctx.upstream_address.clone(),
                     ),
-                    KeyValue::new(
-                        "upstream.reused",
-                        ctx.upstream_reused.to_string(),
-                    ),
+                    KeyValue::new("upstream.reused", ctx.upstream_reused),
                     KeyValue::new(
                         "upstream.connect_time",
-                        ctx.upstream_connect_time
-                            .unwrap_or_default()
-                            .to_string(),
+                        ctx.upstream_connect_time.unwrap_or_default() as i64,
                     ),
                     KeyValue::new(
                         "upstream.processing_time",
-                        ctx.upstream_processing_time
-                            .unwrap_or_default()
-                            .to_string(),
+                        ctx.upstream_processing_time.unwrap_or_default() as i64,
                     ),
                     KeyValue::new(
                         "upstream.response_time",
-                        ctx.upstream_response_time
-                            .unwrap_or_default()
-                            .to_string(),
+                        ctx.upstream_response_time.unwrap_or_default() as i64,
                     ),
                 ]);
                 span.end();
@@ -1479,13 +1475,19 @@ impl ProxyHttp for Server {
             let mut attrs = vec![
                 KeyValue::new("http.client_ip", ip),
                 KeyValue::new(
-                    "http.status",
-                    ctx.status.unwrap_or_default().to_string(),
+                    "http.status_code",
+                    ctx.status.unwrap_or_default().as_u16() as i64,
+                ),
+                KeyValue::new(
+                    "http.response.body.size",
+                    session.body_bytes_sent() as i64,
                 ),
             ];
             if !ctx.location.is_empty() {
-                attrs.push(KeyValue::new("location", ctx.location.clone()));
+                attrs
+                    .push(KeyValue::new("http.location", ctx.location.clone()));
             }
+
             tracer.http_request_span.set_attributes(attrs);
             tracer.http_request_span.end()
         }
