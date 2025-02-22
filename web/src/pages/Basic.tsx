@@ -73,7 +73,7 @@ export default function Basic() {
       span: 3,
       category: ExFormItemCategory.SELECT,
       options: newStringOptions(
-        ["INFO", "WARN", "DEBUG", "ERROR"],
+        ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"],
         false,
         true,
       ),

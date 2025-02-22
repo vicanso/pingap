@@ -268,9 +268,10 @@ pub fn logger_try_init(
     };
 
     let level = match level.to_lowercase().as_str() {
-        "error" => Level::ERROR,
-        "warn" => Level::WARN,
+        "trace" => Level::TRACE,
         "debug" => Level::DEBUG,
+        "warn" => Level::WARN,
+        "error" => Level::ERROR,
         _ => Level::INFO,
     };
 
@@ -380,6 +381,7 @@ pub fn logger_try_init(
         category = LOG_CATEGORY,
         capacity = params.capacity,
         log_type,
+        level = level.to_string(),
         json_format = params.json,
         utc_offset = chrono::Local::now().offset().to_string(),
         "init tracing subscriber success",
