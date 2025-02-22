@@ -710,7 +710,8 @@ impl ProxyHttp for Server {
         #[cfg(feature = "full")]
         if self.enabled_otel {
             // enable open telemetry
-            if let Some(tracer) = pingap_otel::new_tracer(&self.name) {
+            if let Some(tracer) = pingap_otel::new_http_proxy_tracer(&self.name)
+            {
                 let cx = global::get_text_map_propagator(|propagator| {
                     propagator.extract(&HeaderExtractor(&header.headers))
                 });
@@ -1192,6 +1193,25 @@ impl ProxyHttp for Server {
     ) {
         debug!(category = LOG_CATEGORY, "--> upstream response filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream response filter"););
+        #[cfg(feature = "full")]
+        // open telemetry
+        if let Some(tracer) = &ctx.otel_tracer {
+            // Add trace context to response headers
+            let span_context = tracer.http_request_span.span_context();
+            if span_context.is_valid() {
+                // Add trace ID
+                let _ = upstream_response.insert_header(
+                    "X-Trace-ID",
+                    span_context.trace_id().to_string(),
+                );
+                // Add span ID
+                let _ = upstream_response.insert_header(
+                    "X-Span-ID",
+                    span_context.span_id().to_string(),
+                );
+            }
+        }
+
         if ctx.status.is_none() {
             ctx.status = Some(upstream_response.status);
             ctx.upstream_response_time =

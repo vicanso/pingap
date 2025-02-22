@@ -25,6 +25,7 @@ use opentelemetry_sdk::{
     trace::{BatchConfigBuilder, RandomIdGenerator, Sampler},
     Resource,
 };
+
 use pingora::{server::ShutdownWatch, services::background::BackgroundService};
 use std::time::Duration;
 use tracing::{error, info};
@@ -219,9 +220,9 @@ fn get_service_name(name: &str) -> String {
 /// # Returns
 /// * `Option<BoxedTracer>` - The created tracer if successful, None otherwise
 #[inline]
-pub fn new_tracer(name: &str) -> Option<BoxedTracer> {
+pub fn new_http_proxy_tracer(name: &str) -> Option<BoxedTracer> {
     if let Some(provider) = provider::get_provider(name) {
-        return Some(provider.tracer(get_service_name(name)));
+        return Some(provider.tracer("http_proxy"));
     }
     None
 }
@@ -233,7 +234,6 @@ impl BackgroundService for TracerService {
         let result = opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()
             .with_endpoint(&self.endpoint)
-            .with_timeout(Duration::from_secs(3))
             .with_timeout(self.config.timeout)
             .build()
             .map(|exporter| {
@@ -254,7 +254,7 @@ impl BackgroundService for TracerService {
                             .build(),
                     )
                     .build();
-                opentelemetry_sdk::trace::TracerProviderBuilder::default()
+                opentelemetry_sdk::trace::SdkTracerProvider::builder()
                     .with_span_processor(batch)
                     .with_sampler(Sampler::AlwaysOn)
                     .with_id_generator(RandomIdGenerator::default())
@@ -270,12 +270,6 @@ impl BackgroundService for TracerService {
 
         match result {
             Ok(tracer_provider) => {
-                info!(
-                    category = LOG_CATEGORY,
-                    name = self.name,
-                    endpoint = self.endpoint,
-                    "opentelemetry init success"
-                );
                 let mut propagators: Vec<
                     Box<dyn TextMapPropagator + Send + Sync>,
                 > = vec![Box::new(TraceContextPropagator::new())];
@@ -293,6 +287,16 @@ impl BackgroundService for TracerService {
 
                 // set tracer provider
                 provider::add_provider(&self.name, tracer_provider.clone());
+                info!(
+                    category = LOG_CATEGORY,
+                    name = self.name,
+                    endpoint = self.endpoint,
+                    support_jaeger_propagator =
+                        self.config.support_jaeger_propagator,
+                    support_baggage_propagator =
+                        self.config.support_baggage_propagator,
+                    "opentelemetry init success"
+                );
 
                 let _ = shutdown.changed().await;
                 if let Err(e) = tracer_provider.shutdown() {
