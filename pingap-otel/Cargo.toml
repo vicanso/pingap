@@ -25,6 +25,7 @@ opentelemetry-otlp = { version = "0.28.0", default-features = false, features = 
 opentelemetry_sdk = { version = "0.28.0", features = [
     "rt-tokio",
 ], default-features = false }
+opentelemetry-http = { version = "0.28.0", default-features = false }
 pingora = { workspace = true }
 humantime = { workspace = true }
 tracing = { workspace = true }

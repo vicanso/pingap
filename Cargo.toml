@@ -40,10 +40,6 @@ nanoid = "0.4.0"
 nix = { version = "0.29.0", features = ["signal"] }
 num_cpus = "1.16.0"
 once_cell = "1.20.2"
-opentelemetry = { version = "0.28.0", default-features = false, features = [
-    "trace",
-], optional = true }
-opentelemetry-http = { version = "0.28.0", default-features = false, optional = true }
 pingora = { git = "https://github.com/cloudflare/pingora", rev = "eef35768d11305d1293468a6c3ce91a3858dc0fc", default-features = false, features = [
     # pingora = { version = "0.4.0", default-features = false, features = [
     "lb",
@@ -92,8 +88,6 @@ pingap-pyroscope = { version = "0.10.3", path = "pingap-pyroscope", optional = t
 [features]
 pyro = ["pingap-pyroscope"]
 full = [
-    "opentelemetry",
-    "opentelemetry-http",
     "pingora/sentry",
     "pingap-cache/full",
     "pingap-core/full",

@@ -21,14 +21,6 @@ use bytes::{Bytes, BytesMut};
 use http::StatusCode;
 use http::{HeaderName, HeaderValue};
 use once_cell::sync::Lazy;
-#[cfg(feature = "full")]
-use opentelemetry::{
-    global,
-    trace::{Span, SpanKind, Tracer},
-    KeyValue,
-};
-#[cfg(feature = "full")]
-use opentelemetry_http::HeaderExtractor;
 use pingap_acme::handle_lets_encrypt;
 use pingap_certificate::{GlobalCertificate, TlsSettingParams};
 use pingap_config::get_config_storage;
@@ -40,6 +32,14 @@ use pingap_core::{get_cache_key, CompressionStat, Ctx, PluginStep};
 use pingap_core::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use pingap_location::{get_location, Location};
 use pingap_logger::Parser;
+#[cfg(feature = "full")]
+use pingap_otel::HeaderExtractor;
+#[cfg(feature = "full")]
+use pingap_otel::{
+    global,
+    trace::{Span, SpanKind, Tracer},
+    KeyValue,
+};
 use pingap_performance::{accept_request, end_request};
 #[cfg(feature = "full")]
 use pingap_performance::{
