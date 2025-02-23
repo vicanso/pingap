@@ -307,7 +307,7 @@ jobs:
           images: |
             vicanso/pingap
           tags: |
-            type=semver,pattern={{version}},suffix=${{ image_suffix.IMAGE_SUFFIX }}
+            type=semver,pattern={{version}},suffix=${{ steps.image_suffix.outputs.IMAGE_SUFFIX }}
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
