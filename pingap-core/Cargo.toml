@@ -14,7 +14,6 @@ ahash = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }
 pingora = { workspace = true }
-pingora-limits = { workspace = true }
 itoa = { workspace = true }
 snafu = { workspace = true }
 async-trait = { workspace = true }
@@ -29,6 +28,7 @@ url = { workspace = true }
 urlencoding = { workspace = true }
 TinyUFO = "0.4.0"
 hostname = "0.4.0"
+pingora-limits = "0.4.0"
 opentelemetry = { version = "0.28.0", default-features = false, features = [
     "trace",
 ], optional = true }

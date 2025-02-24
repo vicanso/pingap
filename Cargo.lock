@@ -3202,7 +3202,6 @@ dependencies = [
  "pingap-core",
  "pingap-util",
  "pingora",
- "pingora-limits",
  "pretty_assertions",
  "regex",
  "serde",

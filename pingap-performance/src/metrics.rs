@@ -16,7 +16,9 @@ use super::{get_process_system_info, get_processing_accepted, LOG_CATEGORY};
 use pingap_cache::{get_cache_backend, is_cache_backend_init};
 use pingap_core::SimpleServiceTaskFuture;
 use pingap_location::get_locations_processing;
-use pingap_upstream::get_upstreams_processing_connected;
+use pingap_upstream::{
+    get_upstream_healthy_status, get_upstreams_processing_connected,
+};
 use tracing::info;
 
 // Service name constant for performance metrics logging
@@ -91,12 +93,20 @@ pub fn new_performance_metrics_log_service() -> (String, SimpleServiceTaskFuture
                 // Get system metrics and request processing stats
                 let system_info = get_process_system_info();
                 let (processing, accepted) = get_processing_accepted();
+                let upstreams_healthy_status = get_upstream_healthy_status()
+                    .iter()
+                    .map(|(name, (healthy, total))| {
+                        format!("{name}:{healthy}/{total}")
+                    })
+                    .collect::<Vec<String>>()
+                    .join(", ");
 
                 // Log all metrics using the tracing framework
                 info!(
                     category = LOG_CATEGORY,
                     threads = system_info.threads, // Number of threads
                     locations_processing,          // Active location requests
+                    upstreams_healthy_status,      // Upstream healthy status
                     upstreams_processing,          // Active upstream requests
                     upstreams_connected, // Active upstream connections
                     accepted,            // Total accepted requests

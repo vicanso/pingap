@@ -133,7 +133,7 @@ If you need a web admin, you should install nodejs and build web asssets.
 ```bash
 # generate admin web asset
 cd web
-yarn install
+npm i 
 cd ..
 make build-web
 ```

@@ -39,6 +39,7 @@ use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep, TtlLruLimit};
 use pingap_performance::get_process_system_info;
 use pingap_performance::get_processing_accepted;
 use pingap_plugin::{get_plugin_factory, Error};
+use pingap_upstream::get_upstream_healthy_status;
 use pingap_util::base64_decode;
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
@@ -155,6 +156,7 @@ struct BasicInfo {
     tcp_count: usize,
     tcp6_count: usize,
     supported_plugins: Vec<String>,
+    upstream_healthy_status: HashMap<String, (u32, u32)>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -625,6 +627,7 @@ impl Plugin for AdminServe {
                 tcp_count: info.tcp_count,
                 tcp6_count: info.tcp6_count,
                 supported_plugins: get_plugin_factory().supported_plugins(),
+                upstream_healthy_status: get_upstream_healthy_status(),
             })
             .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
         } else if path == "/restart" && method == Method::POST {

@@ -625,6 +625,43 @@ pub fn get_upstream(name: &str) -> Option<Arc<Upstream>> {
     UPSTREAM_MAP.load().get(name).cloned()
 }
 
+/// Get the healthy status of all upstreams
+///
+/// # Returns
+/// * `HashMap<String, (u32, u32)>` - Healthy status of all upstreams
+///
+/// This function iterates through all upstreams and checks their health status.
+pub fn get_upstream_healthy_status() -> HashMap<String, (u32, u32)> {
+    let mut healthy_status = HashMap::new();
+    UPSTREAM_MAP.load().iter().for_each(|(k, v)| {
+        let mut total = 0;
+        let mut healthy = 0;
+        if let Some(lb) = v.as_round_robin() {
+            let backends = lb.backends().get_backend();
+            total = backends.len();
+            backends.iter().for_each(|backend| {
+                if lb.backends().ready(backend) {
+                    healthy += 1;
+                }
+            });
+        } else if let Some(lb) = v.as_consistent() {
+            let backends = lb.backends().get_backend();
+            total = backends.len();
+            backends.iter().for_each(|backend| {
+                if lb.backends().ready(backend) {
+                    healthy += 1;
+                }
+            });
+        }
+        healthy_status.insert(k.to_string(), (healthy, total as u32));
+    });
+    healthy_status
+}
+
+/// Get the processing and connected status of all upstreams
+///
+/// # Returns
+/// * `HashMap<String, (i32, Option<i32>)>` - Processing and connected status of all upstreams
 pub fn get_upstreams_processing_connected(
 ) -> HashMap<String, (i32, Option<i32>)> {
     let mut processing_connected = HashMap::new();
@@ -658,6 +695,13 @@ fn new_ahash_upstreams(
     Ok((upstreams, updated_upstreams))
 }
 
+/// Initialize the upstreams
+///
+/// # Arguments
+/// * `upstream_configs` - The upstream configurations
+/// * `sender` - The notification sender
+///
+/// # Returns
 pub fn try_init_upstreams(
     upstream_configs: &HashMap<String, UpstreamConf>,
     sender: Option<Arc<NotificationSender>>,

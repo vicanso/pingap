@@ -46,6 +46,8 @@ pub use ctx::*;
 pub use http_header::*;
 pub use http_response::*;
 pub use notification::*;
+pub use pingora_limits::inflight::*;
+pub use pingora_limits::rate::*;
 pub use plugin::*;
 pub use service::*;
 pub use tinyufo::TinyUfo;

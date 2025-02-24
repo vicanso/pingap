@@ -184,7 +184,6 @@ derive_more = { version = "1.0.0", default-features = false, features = [
 ] }
 pingora-runtime = "0.4.0"
 time = { version = "0.3.37", features = ["local-offset"] }
-pingora-limits = "0.4.0"
 sysinfo = { version = "0.33.1", features = [
     "system",
 ], default-features = false }

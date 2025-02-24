@@ -122,10 +122,18 @@ export default function Home() {
         ? `${upstreamCount} Upstreams`
         : `${upstreamCount} Upstream`;
     listify(config.upstreams, (name, value) => {
+      let desc = value.addrs.map((addr) => {
+        const tmpArr = addr.split(" ");
+        return tmpArr[0];
+      }).join(",");
+      const healthy = basicInfo.upstream_healthy_status[name];
+      if (healthy) {
+        desc += ` (${healthy[0]}/${healthy[1]})`;
+      }
       upstreamSummary.push({
         name,
         link: `${UPSTREMAS}?name=${name}`,
-        value: value.addrs.join(","),
+        value: desc,
       });
     });
   }

@@ -35,7 +35,6 @@ async-trait = { workspace = true }
 bytes = { workspace = true }
 base64 = { workspace = true }
 humantime = { workspace = true }
-pingora-limits = { workspace = true }
 pingora = { workspace = true }
 snafu = { workspace = true }
 ahash = { workspace = true }

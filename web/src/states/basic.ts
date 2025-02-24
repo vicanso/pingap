@@ -25,6 +25,7 @@ interface Basic {
   tcp_count: number;
   tcp6_count: number;
   supported_plugins: string[];
+  upstream_healthy_status: Record<string, [number, number]>;
 }
 
 interface ConfigState {
@@ -58,6 +59,7 @@ const useBasicState = create<ConfigState>()((set) => ({
     tcp_count: 0,
     tcp6_count: 0,
     supported_plugins: [],
+    upstream_healthy_status: {},
   },
   initialized: false,
   fetch: async () => {
