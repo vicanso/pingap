@@ -154,6 +154,7 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
         reading_max = params.reading_max,
         writing_max = params.writing_max,
         cache_max = params.cache_max,
+        cache_file_max_weight = params.cache_file_max_weight,
         "new file cache"
     );
     let mut cache = None;
@@ -216,13 +217,13 @@ impl HttpCacheStorage for FileCache {
         key: &str,
         namespace: &str,
     ) -> Result<Option<CacheObject>> {
-        debug!(
-            category = LOG_CATEGORY,
-            key, namespace, "get cache from file"
-        );
         // Early return if found in cache
         if let Some(cache) = &self.cache {
             if let Some(obj) = cache.get(&key.to_string()) {
+                debug!(
+                    category = LOG_CATEGORY,
+                    key, namespace, "get cache from tinyufo"
+                );
                 return Ok(Some(obj));
             }
         }
@@ -259,6 +260,10 @@ impl HttpCacheStorage for FileCache {
                 cache.put(key.to_string(), obj.clone(), weight);
             }
         }
+        debug!(
+            category = LOG_CATEGORY,
+            key, namespace, "get cache from file"
+        );
         Ok(obj)
     }
     /// Stores a cache object both in TinyUfo cache and on disk.
@@ -278,10 +283,13 @@ impl HttpCacheStorage for FileCache {
         namespace: &str,
         data: CacheObject,
     ) -> Result<()> {
-        debug!(category = LOG_CATEGORY, key, namespace, "put cache to file");
         if let Some(c) = &self.cache {
             let weight = data.get_weight();
             if weight < self.cache_file_max_weight {
+                debug!(
+                    category = LOG_CATEGORY,
+                    key, namespace, "put cache to tinyufo"
+                );
                 c.put(key.to_string(), data.clone(), weight);
             }
         }
@@ -301,7 +309,9 @@ impl HttpCacheStorage for FileCache {
         let result = fs::write(file, buf).await;
         #[cfg(feature = "full")]
         self.write_time.observe(elapsed_second(start));
-        result.map_err(|e| Error::Io { source: e })
+        let _ = result.map_err(|e| Error::Io { source: e })?;
+        debug!(category = LOG_CATEGORY, key, namespace, "put cache to file");
+        Ok(())
     }
     /// Removes a cache entry from both TinyUfo and disk storage.
     ///
@@ -317,17 +327,21 @@ impl HttpCacheStorage for FileCache {
         key: &str,
         namespace: &str,
     ) -> Result<Option<CacheObject>> {
-        debug!(
-            category = LOG_CATEGORY,
-            key, namespace, "remove cache from file"
-        );
         if let Some(c) = &self.cache {
+            debug!(
+                category = LOG_CATEGORY,
+                key, namespace, "remove cache from tinyufo"
+            );
             c.remove(&key.to_string());
         }
         let file = self.get_file_path(key, namespace);
         fs::remove_file(file)
             .await
             .map_err(|e| Error::Io { source: e })?;
+        debug!(
+            category = LOG_CATEGORY,
+            key, namespace, "remove cache from file"
+        );
         Ok(None)
     }
     /// Returns current cache statistics.
@@ -379,7 +393,7 @@ impl HttpCacheStorage for FileCache {
                     fail += 1;
                     error!(
                         category = LOG_CATEGORY,
-                        err = e.to_string(),
+                        error = %e,
                         file,
                         "remove cache file fail"
                     );
@@ -387,6 +401,9 @@ impl HttpCacheStorage for FileCache {
             };
         }
         Ok((success, fail))
+    }
+    fn support_clear(&self) -> bool {
+        true
     }
 }
 

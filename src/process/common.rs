@@ -15,6 +15,8 @@
 use super::LOG_CATEGORY;
 use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
+use pingap_core::{NotificationData, NotificationLevel};
+use pingap_webhook::send_notification;
 use std::io;
 use std::path::PathBuf;
 use std::process;
@@ -110,7 +112,7 @@ pub async fn restart_now() -> io::Result<process::Output> {
         ));
     }
     info!(category = LOG_CATEGORY, "pingap will restart");
-    pingap_webhook::send_notification(pingap_core::NotificationData {
+    send_notification(NotificationData {
         category: "restart".to_string(),
         message: format!("Restart now, pid:{}", std::process::id()),
         ..Default::default()
@@ -159,14 +161,12 @@ pub async fn restart() {
                     error = %e,
                     "restart fail"
                 );
-                pingap_webhook::send_notification(
-                    pingap_core::NotificationData {
-                        level: pingap_core::NotificationLevel::Error,
-                        category: "restart_fail".to_string(),
-                        message: e.to_string(),
-                        ..Default::default()
-                    },
-                )
+                send_notification(NotificationData {
+                    level: NotificationLevel::Error,
+                    category: "restart_fail".to_string(),
+                    message: e.to_string(),
+                    ..Default::default()
+                })
                 .await;
             },
             Ok(output) => {

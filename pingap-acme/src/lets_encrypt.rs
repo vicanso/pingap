@@ -108,7 +108,7 @@ async fn do_update_certificates(
                 error!(
                     category = LOG_CATEGORY,
                     error = %e,
-                    name = name,
+                    name,
                     "failed to get certificate"
                 );
                 true
@@ -119,7 +119,7 @@ async fn do_update_certificates(
             info!(
                 category = LOG_CATEGORY,
                 domains = domains.join(","),
-                name = name,
+                name,
                 "certificate still valid"
             );
             continue;
@@ -130,7 +130,7 @@ async fn do_update_certificates(
                 category = LOG_CATEGORY,
                 error = %e,
                 domains = domains.join(","),
-                name = name,
+                name,
                 "certificate renewal failed, will retry later"
             );
         }
@@ -164,17 +164,17 @@ async fn handle_successful_renewal(domains: &[String], conf: &PingapConf) {
     })
     .await;
 
-    let (_, errors) = try_update_certificates(&conf.certificates);
-    if !errors.is_empty() {
+    let (_, error) = try_update_certificates(&conf.certificates);
+    if !error.is_empty() {
         error!(
             category = LOG_CATEGORY,
-            error = errors,
+            error = error,
             "parse certificate fail"
         );
         send_notification(NotificationData {
             category: "parse_certificate_fail".to_string(),
             level: NotificationLevel::Error,
-            message: errors,
+            message: error,
             ..Default::default()
         })
         .await;
@@ -253,8 +253,8 @@ pub async fn handle_lets_encrypt(
             storage.load(&get_token_path(token)).await.map_err(|e| {
                 error!(
                     category = LOG_CATEGORY,
+                    error = %e,
                     token,
-                    err = e.to_string(),
                     "load http-01 token fail"
                 );
                 pingora::Error::because(

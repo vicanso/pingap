@@ -20,9 +20,12 @@ use pingap_config::{
     LoadConfigOptions, PingapConf, CATEGORY_CERTIFICATE, CATEGORY_LOCATION,
     CATEGORY_PLUGIN, CATEGORY_UPSTREAM,
 };
-use pingap_core::{CommonServiceTask, ServiceTask};
+use pingap_core::{
+    CommonServiceTask, NotificationData, NotificationLevel, ServiceTask,
+};
 use pingap_location::try_init_locations;
 use pingap_upstream::try_update_upstreams;
+use pingap_webhook::send_notification;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -127,12 +130,9 @@ async fn diff_and_update_config(
 
         let format_message = |name: &str, list: Vec<String>| -> String {
             if list.len() > 1 {
-                return format!(
-                    "{name}s({}) are created or updated",
-                    list.join(",")
-                );
+                return format!("{name}s({}) are modified", list.join(","));
             }
-            format!("{name}({}) is created or updated", list.join(","))
+            format!("{name}({}) is modified", list.join(","))
         };
 
         if should_reload_upstream {
@@ -153,17 +153,12 @@ async fn diff_and_update_config(
                 },
                 Ok(updated_upstreams) => {
                     info!(category = LOG_CATEGORY, "reload upstream success");
-                    pingap_webhook::send_notification(
-                        pingap_core::NotificationData {
-                            category: "reload_config".to_string(),
-                            level: pingap_core::NotificationLevel::Info,
-                            message: format_message(
-                                "Upstream",
-                                updated_upstreams,
-                            ),
-                            ..Default::default()
-                        },
-                    )
+                    send_notification(NotificationData {
+                        category: "reload_config".to_string(),
+                        level: NotificationLevel::Info,
+                        message: format_message("Upstream", updated_upstreams),
+                        ..Default::default()
+                    })
                     .await;
                 },
             };
@@ -181,17 +176,12 @@ async fn diff_and_update_config(
                 },
                 Ok(updated_locations) => {
                     info!(category = LOG_CATEGORY, "reload location success");
-                    pingap_webhook::send_notification(
-                        pingap_core::NotificationData {
-                            category: "reload_config".to_string(),
-                            level: pingap_core::NotificationLevel::Info,
-                            message: format_message(
-                                "Location",
-                                updated_locations,
-                            ),
-                            ..Default::default()
-                        },
-                    )
+                    send_notification(NotificationData {
+                        category: "reload_config".to_string(),
+                        level: NotificationLevel::Info,
+                        message: format_message("Location", updated_locations),
+                        ..Default::default()
+                    })
                     .await;
                 },
             };
@@ -201,26 +191,22 @@ async fn diff_and_update_config(
                 plugin::try_init_plugins(&new_config.plugins);
             if !updated_plugins.is_empty() {
                 info!(category = LOG_CATEGORY, "reload plugin success");
-                pingap_webhook::send_notification(
-                    pingap_core::NotificationData {
-                        category: "reload_config".to_string(),
-                        level: pingap_core::NotificationLevel::Info,
-                        message: format_message("Plugin", updated_plugins),
-                        ..Default::default()
-                    },
-                )
+                send_notification(NotificationData {
+                    category: "reload_config".to_string(),
+                    level: NotificationLevel::Info,
+                    message: format_message("Plugin", updated_plugins),
+                    ..Default::default()
+                })
                 .await;
             }
             if !error.is_empty() {
                 error!(category = LOG_CATEGORY, error, "reload plugin fail");
-                pingap_webhook::send_notification(
-                    pingap_core::NotificationData {
-                        category: "reload_config_fail".to_string(),
-                        level: pingap_core::NotificationLevel::Error,
-                        message: error,
-                        ..Default::default()
-                    },
-                )
+                send_notification(NotificationData {
+                    category: "reload_config_fail".to_string(),
+                    level: NotificationLevel::Error,
+                    message: error,
+                    ..Default::default()
+                })
                 .await;
             }
         }
@@ -230,9 +216,9 @@ async fn diff_and_update_config(
                     &new_config.certificates,
                 );
             info!(category = LOG_CATEGORY, "reload certificate success");
-            pingap_webhook::send_notification(pingap_core::NotificationData {
+            send_notification(NotificationData {
                 category: "reload_config".to_string(),
-                level: pingap_core::NotificationLevel::Info,
+                level: NotificationLevel::Info,
                 message: format_message("Certificate", updated_certificates),
                 ..Default::default()
             })
@@ -243,14 +229,12 @@ async fn diff_and_update_config(
                     error = errors,
                     "parse certificate fail"
                 );
-                pingap_webhook::send_notification(
-                    pingap_core::NotificationData {
-                        category: "parse_certificate_fail".to_string(),
-                        level: pingap_core::NotificationLevel::Error,
-                        message: errors,
-                        ..Default::default()
-                    },
-                )
+                send_notification(NotificationData {
+                    category: "parse_certificate_fail".to_string(),
+                    level: NotificationLevel::Error,
+                    message: errors,
+                    ..Default::default()
+                })
                 .await;
             }
         }
@@ -273,17 +257,15 @@ async fn diff_and_update_config(
                         category = LOG_CATEGORY,
                         "reload server location success"
                     );
-                    pingap_webhook::send_notification(
-                        pingap_core::NotificationData {
-                            category: "reload_config".to_string(),
-                            level: pingap_core::NotificationLevel::Info,
-                            message: format_message(
-                                "Server Location",
-                                updated_servers,
-                            ),
-                            ..Default::default()
-                        },
-                    )
+                    send_notification(NotificationData {
+                        category: "reload_config".to_string(),
+                        level: NotificationLevel::Info,
+                        message: format_message(
+                            "Server Location",
+                            updated_servers,
+                        ),
+                        ..Default::default()
+                    })
                     .await;
                 },
             };
@@ -308,20 +290,18 @@ async fn diff_and_update_config(
         // update current config to be hot reload config
         set_current_config(&hot_reload_config);
         if !original_diff_result.is_empty() {
-            pingap_webhook::send_notification(pingap_core::NotificationData {
+            send_notification(NotificationData {
                 category: "diff_config".to_string(),
                 message: original_diff_result.join("\n").trim().to_string(),
                 ..Default::default()
             })
             .await;
             if !reload_fail_message.is_empty() {
-                pingap_webhook::send_notification(
-                    pingap_core::NotificationData {
-                        category: "reload_config_fail".to_string(),
-                        message: reload_fail_message.clone(),
-                        ..Default::default()
-                    },
-                )
+                send_notification(NotificationData {
+                    category: "reload_config_fail".to_string(),
+                    message: reload_fail_message.clone(),
+                    ..Default::default()
+                })
                 .await;
             }
         }
@@ -346,14 +326,14 @@ async fn diff_and_update_config(
     }
 
     if !original_diff_result.is_empty() {
-        pingap_webhook::send_notification(pingap_core::NotificationData {
+        send_notification(NotificationData {
             category: "diff_config".to_string(),
             message: original_diff_result.join("\n").trim().to_string(),
             ..Default::default()
         })
         .await;
         if !reload_fail_message.is_empty() {
-            pingap_webhook::send_notification(pingap_core::NotificationData {
+            send_notification(NotificationData {
                 category: "reload_config_fail".to_string(),
                 message: reload_fail_message.clone(),
                 ..Default::default()
