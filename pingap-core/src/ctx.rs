@@ -383,6 +383,51 @@ impl Ctx {
         }
         buf
     }
+
+    /// Generates a Server-Timing header value based on the context's timing metrics.
+    ///
+    /// The Server-Timing header allows servers to communicate performance metrics
+    /// about the request-response cycle to the client. This implementation includes
+    /// various timing metrics like connection time, processing time, and cache operations.
+    ///
+    /// Returns a String containing the formatted Server-Timing header value.
+    pub fn generate_server_timing(&self) -> String {
+        let mut timings = Vec::new();
+
+        // Add upstream metrics
+        if let Some(time) = self.get_upstream_connect_time() {
+            timings.push(format!("upstream-connect;dur={}", time));
+        }
+
+        if let Some(time) = self.get_upstream_processing_time() {
+            timings.push(format!("upstream-processing;dur={}", time));
+        }
+
+        if let Some(time) = self.get_upstream_response_time() {
+            timings.push(format!("upstream-response;dur={}", time));
+        }
+
+        // Add cache metrics
+        if let Some(time) = self.cache_lookup_time {
+            timings.push(format!("cache-lookup;dur={}", time));
+        }
+
+        if let Some(time) = self.cache_lock_time {
+            timings.push(format!("cache-lock;dur={}", time));
+        }
+
+        // Add compression metrics
+        if let Some(stat) = &self.compression_stat {
+            timings
+                .push(format!("compression;dur={}", stat.duration.as_millis()));
+        }
+
+        // Add total service time
+        let service_time = now_ms() - self.created_at;
+        timings.push(format!("total;dur={}", service_time));
+
+        timings.join(", ")
+    }
 }
 
 /// Generates a cache key from the request method, URI and state context.
@@ -631,5 +676,7 @@ mod tests {
             ctx.append_value(BytesMut::new(), "service_time")
                 .ends_with(b"ms")
         );
+
+        assert_eq!("upstream-connect;dur=1, upstream-processing;dur=2, upstream-response;dur=3, cache-lookup;dur=6, cache-lock;dur=7, compression;dur=5, total;dur=1", ctx.generate_server_timing());
     }
 }
