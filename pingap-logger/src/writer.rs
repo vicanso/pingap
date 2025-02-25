@@ -22,7 +22,10 @@ use pingap_core::SimpleServiceTaskFuture;
 use snafu::{ResultExt, Snafu};
 use std::fs;
 use std::io;
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
@@ -78,7 +81,10 @@ fn zstd_compress(file: &Path, level: u8) -> Result<(u64, u64)> {
     let original_size =
         io::copy(&mut original_file, &mut encoder).context(IoSnafu)?;
     encoder.finish().context(IoSnafu)?;
+    #[cfg(unix)]
     let size = file.metadata().map(|item| item.size()).unwrap_or_default();
+    #[cfg(windows)]
+    let size = file.metadata().map(|item| item.file_size()).unwrap_or_default();
     Ok((size, original_size))
 }
 
@@ -108,7 +114,10 @@ fn gzip_compress(file: &Path, level: u8) -> Result<(u64, u64)> {
     let original_size =
         io::copy(&mut original_file, &mut encoder).context(IoSnafu)?;
     encoder.finish().context(IoSnafu)?;
+    #[cfg(unix)]
     let size = file.metadata().map(|item| item.size()).unwrap_or_default();
+    #[cfg(windows)]
+    let size = file.metadata().map(|item| item.file_size()).unwrap_or_default();
     Ok((size, original_size))
 }
 

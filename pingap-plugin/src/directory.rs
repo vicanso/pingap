@@ -670,7 +670,10 @@ download = true
         let file = Path::new("./index.html").to_path_buf();
         let (meta, _) = get_data(&file).await.unwrap();
 
+        #[cfg(unix)]
         assert_ne!(0, meta.size());
+        #[cfg(windows)]
+        assert_ne!(0, meta.file_size());
 
         let (cacheable, _, headers) = get_cacheable_and_headers_from_meta(
             &file,
