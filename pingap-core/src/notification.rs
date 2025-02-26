@@ -36,17 +36,26 @@ impl Display for NotificationLevel {
 
 #[derive(Default)]
 pub struct NotificationData {
+    /// The category of the notification, used for grouping or filtering notifications
     pub category: String,
+    /// The severity level of the notification (Info, Warn, Error)
     pub level: NotificationLevel,
+    /// The title or subject of the notification
     pub title: String,
+    /// The detailed message content of the notification
     pub message: String,
 }
 
+/// Trait for sending notifications
+///
+/// Implementers of this trait can send notifications with different delivery methods
+/// (email, SMS, push notification, etc.)
 #[async_trait]
 pub trait Notification {
     async fn notify(&self, data: NotificationData);
 }
 
+/// Type alias for a boxed Notification trait object that can be shared between threads
 pub type NotificationSender = Box<dyn Notification + Send + Sync>;
 
 #[cfg(test)]

@@ -143,6 +143,66 @@ jobs:
 
           ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-x86.tar.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-x86-full.tar.gz $GITHUB_TOKEN
+
+  # aarch64 full feature
+  linux-gnu-aarch64-full:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 3600
+    steps:
+      - name: Change Swap Space
+        run: |
+          swapon --show=NAME | tail -n 1
+          df -lh
+          du -sh /usr/local/lib/android
+          sudo rm -rf /usr/local/lib/android
+          export SWAP_FILE=$(swapon --show=NAME | tail -n 1)
+          sudo swapoff $SWAP_FILE
+          sudo rm $SWAP_FILE
+          export SWAP_FILE=/swapfile
+          sudo fallocate -l 16G $SWAP_FILE
+          sudo chmod 600 $SWAP_FILE
+          sudo mkswap $SWAP_FILE
+          sudo swapon $SWAP_FILE
+      - name: Swap space report after modification
+        shell: bash
+        run: |
+          echo "Memory and swap:"
+          free -h
+          echo
+          swapon --show
+          df -lh
+          echo
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: |
+            vicanso/pingap
+          tags: |
+            type=raw,value=latest
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build and export
+        uses: docker/build-push-action@v6
+        with:
+          platforms: linux/arm64
+          build-args: |
+            BUILD_ARGS=--features=full
+          outputs: type=local,dest=/tmp/pingap
+      - name: Upload Assets
+        run: |
+          cp /tmp/pingap/usr/local/bin/pingap ./pingap-linux-gnu-aarch64-full
+          tar -czvf pingap-linux-gnu-aarch64-full.tar.gz ./pingap-linux-gnu-aarch64-full
+
+          ls -lh pingap*.gz
+
+          ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-aarch64-full.tar.gz $GITHUB_TOKEN
+
   linux-gnu-aarch64:
     runs-on: ubuntu-22.04
     timeout-minutes: 3600
@@ -190,15 +250,15 @@ jobs:
         with:
           platforms: linux/arm64
           outputs: type=local,dest=/tmp/pingap
-      # TODO 后续调整为不再使用docker的形式构建再支持full版本
       - name: Upload Assets
         run: |
-          cp /tmp/pingap/usr/local/bin/pingap ./pingap-linux-gnu-aarch64-full
-          tar -czvf pingap-linux-gnu-aarch64-full.tar.gz ./pingap-linux-gnu-aarch64-full
+          cp /tmp/pingap/usr/local/bin/pingap ./pingap-linux-gnu-aarch64
+          tar -czvf pingap-linux-gnu-aarch64.tar.gz ./pingap-linux-gnu-aarch64
 
           ls -lh pingap*.gz
 
-          ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-aarch64-full.tar.gz $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-aarch64.tar.gz $GITHUB_TOKEN
+
   windows:
     runs-on: windows-latest
     name: ${{ matrix.target }}

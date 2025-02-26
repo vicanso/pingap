@@ -78,7 +78,7 @@ impl TryFrom<&CertificateConf> for TlsCertificate {
                     error!(
                         category = LOG_CATEGORY,
                         issuer = info.get_issuer_common_name(),
-                        err = %e,
+                        error = %e,
                         "parse chain certificate error"
                     );
                     e

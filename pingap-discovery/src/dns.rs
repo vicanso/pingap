@@ -23,6 +23,8 @@ use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_resolver::system_conf::read_system_conf;
 use hickory_resolver::AsyncResolver;
 use http::Extensions;
+use pingap_core::{NotificationData, NotificationLevel};
+use pingap_webhook::send_notification;
 use pingora::lb::discovery::ServiceDiscovery;
 use pingora::lb::{Backend, Backends};
 use pingora::protocols::l4::socket::SocketAddr;
@@ -180,17 +182,15 @@ impl ServiceDiscovery for Dns {
                     ),
                     "dns discover fail"
                 );
-                pingap_webhook::send_notification(
-                    pingap_core::NotificationData {
-                        category: "service_discover_fail".to_string(),
-                        level: pingap_core::NotificationLevel::Warn,
-                        message: format!(
-                            "dns discovery {:?}, error: {e}",
-                            self.hosts
-                        ),
-                        ..Default::default()
-                    },
-                )
+                send_notification(NotificationData {
+                    category: "service_discover_fail".to_string(),
+                    level: NotificationLevel::Warn,
+                    message: format!(
+                        "dns discovery {:?}, error: {e}",
+                        self.hosts
+                    ),
+                    ..Default::default()
+                })
                 .await;
                 Err(e.into())
             },

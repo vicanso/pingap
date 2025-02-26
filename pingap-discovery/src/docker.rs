@@ -18,6 +18,8 @@ use async_trait::async_trait;
 use bollard::container::ListContainersOptions;
 use bollard::secret::ContainerSummary;
 use http::Extensions;
+use pingap_core::{NotificationData, NotificationLevel};
+use pingap_webhook::send_notification;
 use pingora::lb::discovery::ServiceDiscovery;
 use pingora::lb::{Backend, Backends};
 use pingora::protocols::l4::socket::SocketAddr;
@@ -248,17 +250,15 @@ impl ServiceDiscovery for Docker {
                     ),
                     "docker discover fail"
                 );
-                pingap_webhook::send_notification(
-                    pingap_core::NotificationData {
-                        category: "service_discover_fail".to_string(),
-                        level: pingap_core::NotificationLevel::Warn,
-                        message: format!(
-                            "docker discovery {:?}, error: {e}",
-                            self.labels(),
-                        ),
-                        ..Default::default()
-                    },
-                )
+                send_notification(NotificationData {
+                    category: "service_discover_fail".to_string(),
+                    level: NotificationLevel::Warn,
+                    message: format!(
+                        "docker discovery {:?}, error: {e}",
+                        self.labels(),
+                    ),
+                    ..Default::default()
+                })
                 .await;
                 return Err(e.into());
             },
