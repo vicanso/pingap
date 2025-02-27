@@ -209,6 +209,9 @@ pub struct Server {
 
     /// List of enabled modules (e.g. "grpc-web")
     modules: Option<Vec<String>>,
+
+    /// Whether to enable server-timing header
+    enable_server_timing: bool,
 }
 
 pub struct ServerServices {
@@ -284,6 +287,7 @@ impl Server {
             prometheus_metrics,
             #[cfg(feature = "full")]
             prometheus,
+            enable_server_timing: conf.enable_server_timing,
             modules: conf.modules.clone(),
         };
         Ok(s)
@@ -1185,6 +1189,11 @@ impl ProxyHttp for Server {
                 upstream_response,
             )
             .await?;
+        }
+
+        if self.enable_server_timing {
+            let _ = upstream_response
+                .insert_header("Server-Timing", ctx.generate_server_timing());
         }
 
         Ok(())

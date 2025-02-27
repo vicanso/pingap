@@ -90,6 +90,9 @@ pub struct ServerConf {
     // List of enabled module names for this server instance
     // Allows for dynamic functionality extension
     pub modules: Option<Vec<String>>,
+
+    // Whether to enable server-timing header
+    pub enable_server_timing: bool,
 }
 
 impl fmt::Display for ServerConf {
@@ -126,6 +129,7 @@ impl fmt::Display for ServerConf {
         if let Some(ref modules) = self.modules {
             write!(f, "modules: {:?}, ", modules)?;
         }
+        write!(f, "enable_server_timing: {}, ", self.enable_server_timing)?;
         write!(f, "error_template: {} }}", self.error_template)?;
         Ok(())
     }
@@ -185,6 +189,7 @@ pub fn parse_from_conf(conf: pingap_config::PingapConf) -> Vec<ServerConf> {
             prometheus_metrics: item.prometheus_metrics,
             otlp_exporter: item.otlp_exporter.clone(),
             modules: item.modules.clone(),
+            enable_server_timing: item.enable_server_timing.unwrap_or_default(),
             error_template,
         });
     }

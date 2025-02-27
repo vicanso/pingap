@@ -394,26 +394,47 @@ impl Ctx {
     pub fn generate_server_timing(&self) -> String {
         let mut timings = Vec::new();
 
+        let mut upstream_time = 0;
+        let mut upstream_time_set = false;
+
         // Add upstream metrics
         if let Some(time) = self.get_upstream_connect_time() {
-            timings.push(format!("upstream-connect;dur={}", time));
+            upstream_time += time;
+            upstream_time_set = true;
+            timings.push(format!("upstream.connect;dur={}", time));
         }
 
         if let Some(time) = self.get_upstream_processing_time() {
-            timings.push(format!("upstream-processing;dur={}", time));
+            upstream_time += time;
+            upstream_time_set = true;
+            timings.push(format!("upstream.processing;dur={}", time));
         }
 
         if let Some(time) = self.get_upstream_response_time() {
-            timings.push(format!("upstream-response;dur={}", time));
+            upstream_time += time;
+            upstream_time_set = true;
+            timings.push(format!("upstream.response;dur={}", time));
+        }
+        if upstream_time_set {
+            timings.push(format!("upstream;dur={}", upstream_time));
         }
 
+        let mut cache_time = 0;
+        let mut cache_time_set = false;
         // Add cache metrics
         if let Some(time) = self.cache_lookup_time {
-            timings.push(format!("cache-lookup;dur={}", time));
+            cache_time += time;
+            cache_time_set = true;
+            timings.push(format!("cache.lookup;dur={}", time));
         }
 
         if let Some(time) = self.cache_lock_time {
-            timings.push(format!("cache-lock;dur={}", time));
+            cache_time += time;
+            cache_time_set = true;
+            timings.push(format!("cache.lock;dur={}", time));
+        }
+        if cache_time_set {
+            timings.push(format!("cache;dur={}", cache_time));
         }
 
         // Add compression metrics

@@ -81,6 +81,7 @@ export interface Server {
   lets_encrypt?: string;
   certificate_file?: string;
   enabled_h2?: boolean;
+  enable_server_timing?: boolean;
   global_certificates?: boolean;
   tls_cipher_list?: string;
   tls_ciphersuites?: string;

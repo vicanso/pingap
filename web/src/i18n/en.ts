@@ -142,8 +142,9 @@ export default {
     accessLog: "Access Log Format",
     accessLogPlaceholder: "Input the format layout for access",
     enabledH2: "Enable Http2(h2c)",
+    enabledServerTiming: "Enable Server Timing",
     modules: "Http Modules",
-    moduleslaceholder: "Select http modules for server",
+    modulesPlaceholder: "Select http modules for server",
     tlsCipherList: "Tls Cipher List",
     tlsCipherListPlaceholder:
       "Input the cipher list for protocols before tlsv1.3",

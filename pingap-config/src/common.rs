@@ -630,6 +630,9 @@ pub struct ServerConf {
     /// List of modules to enable for this server
     pub modules: Option<Vec<String>>,
 
+    /// Whether to enable server-timing header
+    pub enable_server_timing: Option<bool>,
+
     /// Optional description/notes about this server
     pub remark: Option<String>,
 }
