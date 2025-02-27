@@ -225,7 +225,7 @@ mod tests {
         };
 
         assert_eq!(
-            r#"ServerConf { name: pingap, admin: false, addr: 127.0.0.1:3000,127.0.0.1:3001, access_log: Some("combined"), locations: ["charts-location"], threads: Some(4), global_certificates: false, enabled_h2: true, tcp_keepalive: Some(TcpKeepalive { idle: 10s, interval: 5s, count: 10 }), tcp_fastopen: Some(10), error_template: <html></html> }"#,
+            r#"ServerConf { name: pingap, admin: false, addr: 127.0.0.1:3000,127.0.0.1:3001, access_log: Some("combined"), locations: ["charts-location"], threads: Some(4), global_certificates: false, enabled_h2: true, tcp_keepalive: Some(TcpKeepalive { idle: 10s, interval: 5s, count: 10 }), tcp_fastopen: Some(10), enable_server_timing: false, error_template: <html></html> }"#,
             conf.to_string()
         );
     }
