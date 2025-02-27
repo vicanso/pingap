@@ -29,6 +29,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{collections::HashMap, str::FromStr};
 use strum::EnumString;
+use tempfile::tempfile_in;
 use toml::Table;
 use toml::{map::Map, Value};
 use url::Url;
@@ -730,14 +731,19 @@ pub struct BasicConf {
 
 impl BasicConf {
     /// Returns the path to the PID file
-    /// If pid_file is configured, returns that value
-    /// Otherwise returns /run/{pkg_name}.pid
+    /// - If pid_file is explicitly configured, uses that value
+    /// - Otherwise tries to use /run/pingap.pid or /var/run/pingap.pid if writable
+    /// - Falls back to /tmp/pingap.pid if neither system directories are writable
     pub fn get_pid_file(&self) -> String {
         if let Some(pid_file) = &self.pid_file {
-            pid_file.clone()
-        } else {
-            "/run/pingap.pid".to_string()
+            return pid_file.clone();
         }
+        for dir in ["/run", "/var/run"] {
+            if tempfile_in(dir).is_ok() {
+                return format!("{dir}/pingap.pid");
+            }
+        }
+        "/tmp/pingap.pid".to_string()
     }
 }
 
