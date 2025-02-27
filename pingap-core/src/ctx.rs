@@ -698,6 +698,6 @@ mod tests {
                 .ends_with(b"ms")
         );
 
-        assert_eq!("upstream-connect;dur=1, upstream-processing;dur=2, upstream-response;dur=3, cache-lookup;dur=6, cache-lock;dur=7, compression;dur=5, total;dur=1", ctx.generate_server_timing());
+        assert_eq!("upstream.connect;dur=1, upstream.processing;dur=2, upstream.response;dur=3, upstream;dur=6, cache.lookup;dur=6, cache.lock;dur=7, cache;dur=13, compression;dur=5, total;dur=1", ctx.generate_server_timing());
     }
 }
