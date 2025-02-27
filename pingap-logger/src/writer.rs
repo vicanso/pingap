@@ -239,7 +239,7 @@ fn new_log_compress_service(
             }
         })
     });
-    Some(("logCompress".to_string(), task))
+    Some(("log_compress".to_string(), task))
 }
 
 /// Parameters for logger configuration

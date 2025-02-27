@@ -1,5 +1,7 @@
 # pingap
 
+Pingap在发布稳定版本之前，暂时不接受 pull requests，如果有问题可以先提issue，会及时处理。
+
 Pingap是一个基于[pingora](https://github.com/cloudflare/pingora)构建的高性能反向代理服务器。
 
 可选择性地集成Sentry和OpenTelemetry功能。
@@ -80,6 +82,24 @@ RUST_LOG=INFO pingap -c=/opt/pingap/conf \
 - `-a`: 启用配置变更监听
 - `--autoreload`: 支持 upstream 和 location 配置的热重载（10秒内生效）
 - 配置变更时自动应用，无需手动重启
+
+
+## Docker
+
+使用docker启动程序，并支持自动更新配置(仅location与upstream支持)以及管理后台：
+
+
+```bash
+docker run -it -d --restart=always \
+  -v $PWD/pingap:/opt/pingap \
+  -p 3018:3018 \
+  -e PINGAP_ADMIN_ADDR=0.0.0.0:3018 \
+  -e PINGAP_ADMIN_USER=pingap \
+  -e PINGAP_ADMIN_PASSWORD=123123 \
+  -e PINGAP_AUTORELOAD=true \
+  vicanso/pingap -c /opt/pingap/conf
+```
+
 
 ## 应用配置
 

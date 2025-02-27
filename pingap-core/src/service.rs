@@ -140,17 +140,19 @@ impl BackgroundService for SimpleServiceTask {
                            }
                         };
                     }
-                    info!(
-                        category = LOG_CATEGORY,
-                        name = self.name,
-                        success_tasks = success_tasks.join(","),
-                        fails = fail_tasks.len(),
-                        fail_tasks = fail_tasks.join(","),
-                        elapsed = format!(
-                            "{}ms",
-                            now.elapsed().unwrap_or_default().as_millis()
-                        ),
-                    );
+                    if !success_tasks.is_empty() || !fail_tasks.is_empty() {
+                        info!(
+                            category = LOG_CATEGORY,
+                            name = self.name,
+                            success_tasks = success_tasks.join(","),
+                            fails = fail_tasks.len(),
+                            fail_tasks = fail_tasks.join(","),
+                            elapsed = format!(
+                                "{}ms",
+                                now.elapsed().unwrap_or_default().as_millis()
+                            ),
+                        );
+                    }
                 }
             }
         }

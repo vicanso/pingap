@@ -85,6 +85,9 @@ async fn do_update_certificates(
     storage: &'static (dyn ConfigStorage + Sync + Send),
     params: &[(String, Vec<String>)],
 ) -> Result<bool, ServiceError> {
+    if params.is_empty() {
+        return Ok(false);
+    }
     const UPDATE_INTERVAL: u32 = 10;
     if count % UPDATE_INTERVAL != 0 {
         return Ok(false);

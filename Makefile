@@ -6,7 +6,7 @@ lint-full:
 	cargo clippy --features=full --all-targets --all -- --deny=warnings
 
 fmt:
-	cargo fmt
+	cargo fmt --all
 
 build-web:
 	rm -rf dist \

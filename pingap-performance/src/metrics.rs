@@ -36,8 +36,8 @@ pub fn new_performance_metrics_log_service() -> (String, SimpleServiceTaskFuture
                 let mut cache_writing: i64 = -1;
                 // if cache backend not initialized, do not get cache statistics
                 if is_cache_backend_init() {
-                    // because the cache backend is initialized once,
-                    // so we can use the default option
+                    // the cache backend is initialized once,
+                    // we can use the default option
                     if let Ok(cache) = get_cache_backend(None) {
                         if let Some(stats) = cache.stats() {
                             cache_reading = stats.reading as i64;

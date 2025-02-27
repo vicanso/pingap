@@ -33,7 +33,7 @@ pub enum TagCategory {
     ClientIp, // Client IP address
     Scheme,
     Uri,
-    Referer,
+    Referrer,
     UserAgent,
     When,
     WhenUtcIso,
@@ -180,7 +180,7 @@ impl From<&str> for Parser {
                     data: None,
                 }),
                 "{referer}" => tags.push(Tag {
-                    category: TagCategory::Referer,
+                    category: TagCategory::Referrer,
                     data: None,
                 }),
                 "{user_agent}" => tags.push(Tag {
@@ -326,7 +326,7 @@ impl Parser {
                         buf.extend(value.as_str().as_bytes());
                     }
                 },
-                TagCategory::Referer => {
+                TagCategory::Referrer => {
                     let value = session.get_header_bytes("Referer");
                     buf.extend(value);
                 },
@@ -525,7 +525,7 @@ mod tests {
             (
                 "{referer}",
                 Tag {
-                    category: TagCategory::Referer,
+                    category: TagCategory::Referrer,
                     data: None,
                 },
             ),

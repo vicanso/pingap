@@ -1,12 +1,12 @@
 # pingap
 
-Before the pingap version is stable, no pull requests will be accepted. If you have any questions, please raise an issue.
+Before the pingap version is stable, no pull requests will be accepted. If you have any questions, please create a new issue first.
 
 ![Pingap Logo](./asset/pingap-logo.png)
 
 ## Overview
 
-Pingap is a high-performance reverse proxy built on [pingora](https://github.com/cloudflare/pingora), offering a simpler and more efficient alternative to nginx. It includes optional Sentry and OpenTelemetry support in its full-featured version.
+Pingap is a high-performance reverse proxy built on [pingora](https://github.com/cloudflare/pingora), offering a simpler and more efficient alternative to nginx. Sentry and OpenTelemetry are supported in full-featured release version.
 
 [中文说明](./README_zh.md) | [Examples](./examples/README.md) | [Documentation](http://pingap.io/pingap-en/)
 
@@ -30,7 +30,7 @@ flowchart LR
 - **Monitoring & Observability**:
   - 10+ Prometheus metrics (pull/push)
   - OpenTelemetry with W3C context and Jaeger trace support
-  - Detailed access logging with 30+ configurable attributes
+  - Access logging with 30+ configurable attributes
 - **Configuration**:
   - TOML-based configuration
   - File and etcd storage support
@@ -100,15 +100,17 @@ Key flags:
 
 ## Docker
 
-Run Pingap in a Docker container with auto-restart and admin interface enabled:
+Run Pingap in a Docker container with auto-reload and admin interface enabled:
 
 ```bash
 docker run -it -d --restart=always \
   -v $PWD/pingap:/opt/pingap \
   -p 3018:3018 \
-  vicanso/pingap -c /opt/pingap/conf \
-  --autoreload \
-  --admin=pingap:123123@0.0.0.0:3018
+  -e PINGAP_ADMIN_ADDR=0.0.0.0:3018 \
+  -e PINGAP_ADMIN_USER=pingap \
+  -e PINGAP_ADMIN_PASSWORD=123123 \
+  -e PINGAP_AUTORELOAD=true \
+  vicanso/pingap -c /opt/pingap/conf
 ```
 
 Key options:
@@ -117,8 +119,6 @@ Key options:
 - `--restart=always`: Automatically restart container if it stops
 - `-v $PWD/pingap:/opt/pingap`: Mount local config directory into container
 - `-p 3018:3018`: Expose admin interface port
-- `--autoreload`: Enable hot reload for configuration changes
-- `--admin=user:pass@host:port`: Enable admin interface with credentials
 
 Note: Remember to change the default admin credentials (`pingap:123123`) in production environments.
 

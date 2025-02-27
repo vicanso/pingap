@@ -204,13 +204,13 @@ impl TracerServiceBuilder {
     }
 }
 
-/// Gets the full service name by adding the 'pingap-' prefix
+/// Gets the full service name by adding the 'pingap:' prefix
 ///
 /// # Arguments
 /// * `name` - Base service name
 #[inline]
 fn get_service_name(name: &str) -> String {
-    format!("pingap-{name}")
+    format!("pingap:{name}")
 }
 
 /// Creates a new BoxedTracer for the given service name

@@ -103,7 +103,7 @@ fn new_path_selector(path: &str) -> Result<PathSelector> {
         _ => {
             // trim
             PathSelector::PrefixPath(PrefixPath {
-                value: path.trim().to_string(),
+                value: path.to_string(),
             })
         },
     };
@@ -161,7 +161,7 @@ fn new_host_selector(host: &str) -> Result<HostSelector> {
         _ => {
             // trim
             HostSelector::EqualHost(EqualHost {
-                value: host.trim().to_string(),
+                value: host.to_string(),
             })
         },
     };
@@ -281,6 +281,7 @@ impl Location {
         let key = conf.hash_key();
         let upstream = conf.upstream.clone().unwrap_or_default();
         let mut reg_rewrite = None;
+        // rewrite: "^/users/(.*)$ /api/users/$1"
         if let Some(value) = &conf.rewrite {
             let arr: Vec<&str> = value.split(' ').collect();
             let value = if arr.len() == 2 { arr[1] } else { "" };
