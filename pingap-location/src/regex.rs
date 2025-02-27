@@ -32,11 +32,8 @@ impl RegexCapture {
         let mut keys = vec![];
         // Extract all named capture groups from the regex
         for name in re.capture_names() {
-            let name = name.unwrap_or_default().to_string();
-            if name.is_empty() {
-                continue;
-            }
-            keys.push(name);
+            // empty string is a valid capture name
+            keys.push(name.unwrap_or_default().to_string());
         }
         Ok(RegexCapture { re, keys })
     }
