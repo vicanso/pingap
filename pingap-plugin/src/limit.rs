@@ -136,8 +136,7 @@ impl TryFrom<&PluginConf> for Limiter {
             rate = Some(Rate::new(interval));
         }
 
-        let weight =
-            get_int_conf(value, "weight").max(0).min(100) as f64 / 100.0;
+        let weight = get_int_conf(value, "weight").clamp(0, 100) as f64 / 100.0;
 
         let params = Self {
             hash_value,
