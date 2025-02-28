@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use bytes::BytesMut;
+use chrono::{Local, Utc};
 use pingap_core::{get_hostname, Ctx, HOST_NAME_TAG};
 use pingap_util::{format_byte_size, format_duration};
 use pingora::http::ResponseHeader;
@@ -61,6 +62,7 @@ pub struct Tag {
 
 #[derive(Debug, Default, Clone)]
 pub struct Parser {
+    pub needs_timestamp: bool,
     pub capacity: usize,
     pub tags: Vec<Tag>,
 }
@@ -248,8 +250,22 @@ impl From<&str> for Parser {
                 data: Some(value.substring(end, value.len()).to_string()),
             });
         }
+        let needs_timestamp = tags.iter().any(|t| {
+            matches!(
+                t.category,
+                TagCategory::When
+                    | TagCategory::WhenUtcIso
+                    | TagCategory::WhenUnix
+                    | TagCategory::Latency
+                    | TagCategory::LatencyHuman
+            )
+        });
         let capacity = Parser::estimate_capacity(&tags);
-        Parser { capacity, tags }
+        Parser {
+            capacity,
+            tags,
+            needs_timestamp,
+        }
     }
 }
 
@@ -282,8 +298,13 @@ impl Parser {
         let mut buf = BytesMut::with_capacity(self.capacity);
         let req_header = session.req_header();
 
-        let now = chrono::Local::now();
-        let now_ms = now.timestamp_millis() as u64;
+        // Then only calculate if needed
+        let (now, now_ms) = if self.needs_timestamp {
+            let n = Utc::now();
+            (Some(n), Some(n.timestamp_millis() as u64))
+        } else {
+            (None, None)
+        };
 
         // Process each tag in the format string
         for tag in self.tags.iter() {
@@ -355,15 +376,23 @@ impl Parser {
                     buf.extend_from_slice(value);
                 },
                 TagCategory::When => {
-                    buf.extend_from_slice(now.to_rfc3339().as_bytes());
+                    if let Some(now) = &now {
+                        buf.extend_from_slice(
+                            now.with_timezone(&Local).to_rfc3339().as_bytes(),
+                        );
+                    }
                 },
                 TagCategory::WhenUtcIso => {
-                    buf.extend_from_slice(now.to_utc().to_rfc3339().as_bytes());
+                    if let Some(now) = &now {
+                        buf.extend_from_slice(now.to_rfc3339().as_bytes());
+                    }
                 },
                 TagCategory::WhenUnix => {
-                    buf.extend_from_slice(
-                        itoa::Buffer::new().format(now_ms).as_bytes(),
-                    );
+                    if let Some(now_ms) = now_ms {
+                        buf.extend_from_slice(
+                            itoa::Buffer::new().format(now_ms).as_bytes(),
+                        );
+                    }
                 },
                 TagCategory::Size => {
                     buf.extend_from_slice(
@@ -383,14 +412,18 @@ impl Parser {
                     }
                 },
                 TagCategory::Latency => {
-                    let ms = now_ms - ctx.created_at;
-                    buf.extend_from_slice(
-                        itoa::Buffer::new().format(ms).as_bytes(),
-                    )
+                    if let Some(now_ms) = now_ms {
+                        let ms = now_ms - ctx.created_at;
+                        buf.extend_from_slice(
+                            itoa::Buffer::new().format(ms).as_bytes(),
+                        );
+                    }
                 },
                 TagCategory::LatencyHuman => {
-                    let ms = now_ms - ctx.created_at;
-                    buf = format_duration(buf, ms);
+                    if let Some(now_ms) = now_ms {
+                        let ms = now_ms - ctx.created_at;
+                        buf = format_duration(buf, ms);
+                    }
                 },
                 TagCategory::Cookie => {
                     if let Some(cookie) = &tag.data {
@@ -686,5 +719,17 @@ mod tests {
             "github.com GET /vicanso/pingap HTTP/1.1 size=1 10.1.1.1 1.1.1.1 https /vicanso/pingap?size=1 https://github.com/ pingap/0.1.1 0 0B 0 0 0B abc application/json true 192.186.1.1:6188 1 100ms test 300ms 1.2 nanoid",
             log
         );
+
+        let p: Parser = "{when_utc_iso}".into();
+        let log = p.format(&session, &ctx);
+        assert_eq!(true, log.len() > 25);
+
+        let p: Parser = "{when}".into();
+        let log = p.format(&session, &ctx);
+        assert_eq!(true, log.len() > 25);
+
+        let p: Parser = "{when_unix}".into();
+        let log = p.format(&session, &ctx);
+        assert_eq!(true, log.len() == 13);
     }
 }
