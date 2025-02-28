@@ -61,6 +61,7 @@ pub struct Tag {
 
 #[derive(Debug, Default, Clone)]
 pub struct Parser {
+    pub capacity: usize,
     pub tags: Vec<Tag>,
 }
 
@@ -247,7 +248,8 @@ impl From<&str> for Parser {
                 data: Some(value.substring(end, value.len()).to_string()),
             });
         }
-        Parser { tags }
+        let capacity = Parser::estimate_capacity(&tags);
+        Parser { capacity, tags }
     }
 }
 
@@ -255,17 +257,33 @@ fn get_resp_header_value<'a>(
     resp_header: &'a ResponseHeader,
     key: &str,
 ) -> Option<&'a [u8]> {
-    if let Some(value) = resp_header.headers.get(key) {
-        return Some(value.as_bytes());
-    }
-    None
+    resp_header.headers.get(key).map(|v| v.as_bytes())
 }
 
 impl Parser {
+    // Add a method to estimate capacity based on tag types
+    fn estimate_capacity(tags: &[Tag]) -> usize {
+        // Base size plus estimation for each tag type
+        let mut size = 128; // Base size
+        for tag in tags {
+            size += match tag.category {
+                TagCategory::Fill => tag.data.as_ref().map_or(0, |s| s.len()),
+                TagCategory::Uri | TagCategory::Path => 64, // URIs can be long
+                TagCategory::UserAgent => 100, // User agents are often long
+                // Add more specific estimates for other tag types
+                _ => 16, // Default estimate for other tags
+            };
+        }
+        size
+    }
     // Formats a log entry based on the session and context
     pub fn format(&self, session: &Session, ctx: &Ctx) -> String {
-        let mut buf = BytesMut::with_capacity(1024);
+        // Better capacity estimation based on tag types and count
+        let mut buf = BytesMut::with_capacity(self.capacity);
         let req_header = session.req_header();
+
+        let now = chrono::Local::now();
+        let now_ms = now.timestamp_millis() as u64;
 
         // Process each tag in the format string
         for tag in self.tags.iter() {
@@ -273,82 +291,82 @@ impl Parser {
                 TagCategory::Fill => {
                     // Static text, just append it
                     if let Some(data) = &tag.data {
-                        buf.extend(data.as_bytes());
+                        buf.extend_from_slice(data.as_bytes());
                     }
                 },
                 TagCategory::Host => {
                     // Add the host from request headers
                     if let Some(host) = pingap_core::get_host(req_header) {
-                        buf.extend(host.as_bytes());
+                        buf.extend_from_slice(host.as_bytes());
                     }
                 },
                 TagCategory::Method => {
-                    buf.extend(req_header.method.as_str().as_bytes());
+                    buf.extend_from_slice(
+                        req_header.method.as_str().as_bytes(),
+                    );
                 },
                 TagCategory::Path => {
-                    buf.extend(req_header.uri.path().as_bytes());
+                    buf.extend_from_slice(req_header.uri.path().as_bytes());
                 },
                 TagCategory::Proto => {
                     if session.is_http2() {
-                        buf.extend(b"HTTP/2.0");
+                        buf.extend_from_slice(b"HTTP/2.0");
                     } else {
-                        buf.extend(b"HTTP/1.1");
+                        buf.extend_from_slice(b"HTTP/1.1");
                     }
                 },
                 TagCategory::Query => {
                     if let Some(query) = req_header.uri.query() {
-                        buf.extend(query.as_bytes());
+                        buf.extend_from_slice(query.as_bytes());
                     }
                 },
                 TagCategory::Remote => {
                     if let Some(addr) = &ctx.remote_addr {
-                        buf.extend(addr.as_bytes());
+                        buf.extend_from_slice(addr.as_bytes());
                     }
                 },
                 TagCategory::ClientIp => {
                     if let Some(client_ip) = &ctx.client_ip {
-                        buf.extend(client_ip.as_bytes());
+                        buf.extend_from_slice(client_ip.as_bytes());
                     } else {
-                        buf.extend(
+                        buf.extend_from_slice(
                             pingap_core::get_client_ip(session).as_bytes(),
                         );
                     }
                 },
                 TagCategory::Scheme => {
                     if ctx.tls_version.is_some() {
-                        buf.extend(b"https");
+                        buf.extend_from_slice(b"https");
                     } else {
-                        buf.extend(b"http");
+                        buf.extend_from_slice(b"http");
                     }
                 },
                 TagCategory::Uri => {
                     if let Some(value) = req_header.uri.path_and_query() {
-                        buf.extend(value.as_str().as_bytes());
+                        buf.extend_from_slice(value.as_str().as_bytes());
                     }
                 },
                 TagCategory::Referrer => {
                     let value = session.get_header_bytes("Referer");
-                    buf.extend(value);
+                    buf.extend_from_slice(value);
                 },
                 TagCategory::UserAgent => {
                     let value = session.get_header_bytes("User-Agent");
-                    buf.extend(value);
+                    buf.extend_from_slice(value);
                 },
                 TagCategory::When => {
-                    buf.extend(chrono::Local::now().to_rfc3339().as_bytes());
+                    buf.extend_from_slice(now.to_rfc3339().as_bytes());
                 },
                 TagCategory::WhenUtcIso => {
-                    buf.extend(chrono::Utc::now().to_rfc3339().as_bytes());
+                    buf.extend_from_slice(now.to_utc().to_rfc3339().as_bytes());
                 },
                 TagCategory::WhenUnix => {
-                    buf.extend(
-                        itoa::Buffer::new()
-                            .format(chrono::Utc::now().timestamp_millis())
-                            .as_bytes(),
+                    buf.extend_from_slice(
+                        itoa::Buffer::new().format(now_ms).as_bytes(),
                     );
                 },
                 TagCategory::Size => {
-                    buf.extend(
+                    buf.extend_from_slice(
                         itoa::Buffer::new()
                             .format(session.body_bytes_sent())
                             .as_bytes(),
@@ -359,17 +377,19 @@ impl Parser {
                 },
                 TagCategory::Status => {
                     if let Some(status) = ctx.status {
-                        buf.extend(status.as_str().as_bytes());
+                        buf.extend_from_slice(status.as_str().as_bytes());
                     } else {
-                        buf.extend(b"0");
+                        buf.extend_from_slice(b"0");
                     }
                 },
                 TagCategory::Latency => {
-                    let ms = (pingap_util::now_ms()) - ctx.created_at;
-                    buf.extend(itoa::Buffer::new().format(ms).as_bytes())
+                    let ms = now_ms - ctx.created_at;
+                    buf.extend_from_slice(
+                        itoa::Buffer::new().format(ms).as_bytes(),
+                    )
                 },
                 TagCategory::LatencyHuman => {
-                    let ms = (pingap_util::now_ms()) - ctx.created_at;
+                    let ms = now_ms - ctx.created_at;
                     buf = format_duration(buf, ms);
                 },
                 TagCategory::Cookie => {
@@ -377,14 +397,15 @@ impl Parser {
                         if let Some(value) =
                             pingap_core::get_cookie_value(req_header, cookie)
                         {
-                            buf.extend(value.as_bytes());
+                            buf.extend_from_slice(value.as_bytes());
                         }
                     }
                 },
                 TagCategory::RequestHeader => {
                     if let Some(key) = &tag.data {
-                        let value = session.get_header_bytes(key);
-                        buf.extend(value);
+                        if let Some(value) = req_header.headers.get(key) {
+                            buf.extend_from_slice(value.as_bytes());
+                        }
                     }
                 },
                 TagCategory::ResponseHeader => {
@@ -393,13 +414,13 @@ impl Parser {
                             if let Some(value) =
                                 get_resp_header_value(resp_header, key)
                             {
-                                buf.extend(value);
+                                buf.extend_from_slice(value);
                             }
                         }
                     }
                 },
                 TagCategory::PayloadSize => {
-                    buf.extend(
+                    buf.extend_from_slice(
                         itoa::Buffer::new().format(ctx.payload_size).as_bytes(),
                     );
                 },
@@ -408,7 +429,7 @@ impl Parser {
                 },
                 TagCategory::RequestId => {
                     if let Some(key) = &ctx.request_id {
-                        buf.extend(key.as_bytes());
+                        buf.extend_from_slice(key.as_bytes());
                     }
                 },
                 TagCategory::Context => {
