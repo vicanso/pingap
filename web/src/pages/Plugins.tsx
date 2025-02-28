@@ -700,6 +700,14 @@ export default function Plugins() {
           span: 3,
           category: ExFormItemCategory.TEXT,
         },
+        {
+          name: "weight",
+          label: pluginI18n("limitWeight"),
+          placeholder: pluginI18n("limitWeightPlaceholder"),
+          defaultValue: pluginConfig.weight as number,
+          span: 3,
+          category: ExFormItemCategory.NUMBER,
+        },
       );
       break;
     }

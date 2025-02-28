@@ -79,6 +79,9 @@ pub struct Limiter {
     /// Unique identifier for this limiter instance, used to distinguish between
     /// different limiters in the same application
     hash_value: String,
+
+    /// The weight of current slot
+    weight: f64,
 }
 
 /// Converts a plugin configuration into a Limiter instance
@@ -133,6 +136,9 @@ impl TryFrom<&PluginConf> for Limiter {
             rate = Some(Rate::new(interval));
         }
 
+        let weight =
+            get_int_conf(value, "weight").max(0).min(100) as f64 / 100.0;
+
         let params = Self {
             hash_value,
             tag,
@@ -141,6 +147,7 @@ impl TryFrom<&PluginConf> for Limiter {
             inflight,
             rate,
             plugin_step: step,
+            weight,
         };
 
         // Validate plugin step - limiting only makes sense during request or upstream phases
@@ -232,7 +239,16 @@ impl Limiter {
         let value = if let Some(rate) = &self.rate {
             // For rate limiting:
             rate.observe(&key, 1); // Record this request
-            let value = rate.rate(&key); // Get current rate for time window
+            let value = if self.weight > 0.0 {
+                rate.rate_with(&key, |rate_info| {
+                    let prev =
+                        rate_info.prev_samples as f64 * (1. - self.weight);
+                    let curr = rate_info.curr_samples as f64 * self.weight;
+                    (prev + curr) / rate_info.interval.as_secs_f64()
+                })
+            } else {
+                rate.rate(&key) // Get current rate for time window
+            };
             value.ceil() as isize
         } else if let Some(inflight) = &self.inflight {
             // For inflight limiting:

@@ -359,6 +359,8 @@ export default {
     limitMaxPlaceholder: "输入限制的最大值",
     limitInterval: "间隔",
     limitIntervalPlaceholder: "输入限制的间隔时长",
+    limitWeight: "权重",
+    limitWeightPlaceholder: "输入当前插件的权重(0-100), 默认: 0",
     ipRestrictionMode: "限制模式",
     ipList: "ip列表",
     ipListPlaceholder: "输入ip",

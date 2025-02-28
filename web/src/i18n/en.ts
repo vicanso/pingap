@@ -380,6 +380,8 @@ export default {
     limitMaxPlaceholder: "Input the max value of limit",
     limitInterval: "Interval",
     limitIntervalPlaceholder: "Input the interval of limit",
+    limitWeight: "Weight",
+    limitWeightPlaceholder: "Input the weight of current slot(0-100), default: 0",
     ipRestrictionMode: "Restriction Mode",
     ipList: "Ip List",
     ipListPlaceholder: "Input the ip for restriction",
