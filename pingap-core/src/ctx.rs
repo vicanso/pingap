@@ -392,6 +392,9 @@ impl Ctx {
     ///
     /// Returns a String containing the formatted Server-Timing header value.
     pub fn generate_server_timing(&self) -> String {
+        // the response header should be set before get body from upstream,
+        // so upstream response time, compression time, etc. are not included
+
         let mut timings = Vec::new();
 
         let mut upstream_time = 0;
@@ -410,11 +413,6 @@ impl Ctx {
             timings.push(format!("upstream.processing;dur={}", time));
         }
 
-        if let Some(time) = self.get_upstream_response_time() {
-            upstream_time += time;
-            upstream_time_set = true;
-            timings.push(format!("upstream.response;dur={}", time));
-        }
         if upstream_time_set {
             timings.push(format!("upstream;dur={}", upstream_time));
         }
@@ -435,12 +433,6 @@ impl Ctx {
         }
         if cache_time_set {
             timings.push(format!("cache;dur={}", cache_time));
-        }
-
-        // Add compression metrics
-        if let Some(stat) = &self.compression_stat {
-            timings
-                .push(format!("compression;dur={}", stat.duration.as_millis()));
         }
 
         // Add total service time
@@ -698,6 +690,6 @@ mod tests {
                 .ends_with(b"ms")
         );
 
-        assert_eq!("upstream.connect;dur=1, upstream.processing;dur=2, upstream.response;dur=3, upstream;dur=6, cache.lookup;dur=6, cache.lock;dur=7, cache;dur=13, compression;dur=5, total;dur=1", ctx.generate_server_timing());
+        assert_eq!("upstream.connect;dur=1, upstream.processing;dur=2, upstream;dur=3, cache.lookup;dur=6, cache.lock;dur=7, cache;dur=13, total;dur=1", ctx.generate_server_timing());
     }
 }
