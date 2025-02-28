@@ -27,7 +27,8 @@ use tracing::debug;
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// A plugin that filters and modifies the Accept-Encoding header of incoming HTTP requests.
-/// It ensures that only supported compression algorithms are passed to upstream servers.
+/// It ensures that only supported compression encodings are passed to upstream servers.
+/// And the order of encoding is the same as customized encodings.
 pub struct AcceptEncoding {
     /// List of supported compression encodings (e.g., "gzip", "br", "zstd").
     /// These encodings are matched against the client's Accept-Encoding header.

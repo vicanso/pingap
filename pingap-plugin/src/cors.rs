@@ -196,6 +196,7 @@ impl Cors {
     ///
     /// # Returns
     /// * `Result<Vec<HttpHeader>>` - Collection of CORS headers or error
+    #[inline]
     fn get_headers(
         &self,
         session: &mut Session,

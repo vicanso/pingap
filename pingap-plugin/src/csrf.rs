@@ -142,6 +142,7 @@ impl Csrf {
 ///
 /// # Returns
 /// A string containing the generated token
+#[inline]
 fn generate_token(key: &str) -> String {
     // Generate random ID using nanoid (URL-safe, 12 chars)
     let id = nanoid!(12);
@@ -174,6 +175,7 @@ fn generate_token(key: &str) -> String {
 /// # Security
 /// - Uses constant-time comparison for signature verification
 /// - Checks token format, expiration, and cryptographic signature
+#[inline]
 fn validate_token(key: &str, ttl: u64, value: &str) -> bool {
     // Split token into its components
     let arr: Vec<&str> = value.split('.').collect();

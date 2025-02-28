@@ -153,6 +153,7 @@ impl CombinedAuth {
     /// * `app_id` - Application identifier
     /// * `ts` - Unix timestamp
     /// * `digest` - SHA-256 HMAC of `secret:timestamp`
+    #[inline]
     fn validate(&self, session: &Session) -> Result<()> {
         let category = "combined_auth";
         let req_header = session.req_header();

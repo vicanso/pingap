@@ -122,7 +122,7 @@ impl TryFrom<&PluginConf> for KeyAuth {
         if query_name.is_empty() && header_name.is_empty() {
             return Err(Error::Invalid {
                 category: PluginCategory::KeyAuth.to_string(),
-                message: "Auth key is not allowed empty".to_string(),
+                message: "auth key is not allowed empty".to_string(),
             });
         }
         let mut query = None;
@@ -345,7 +345,7 @@ keys = [
             .unwrap(),
         );
         assert_eq!(
-            "Plugin key_auth invalid, message: Auth key is not allowed empty",
+            "Plugin key_auth invalid, message: auth key is not allowed empty",
             result.err().unwrap().to_string()
         );
     }
