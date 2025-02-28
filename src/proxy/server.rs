@@ -1315,6 +1315,9 @@ impl ProxyHttp for Server {
                 if let Some(ref buf) = ctx.response_body {
                     *body = Some(modify.handle(Bytes::from(buf.to_owned())));
                 }
+                // if the body is empty, it will trigger response_body_filter again
+                // so set modify response body to None
+                ctx.modify_response_body = None;
             }
         }
 
