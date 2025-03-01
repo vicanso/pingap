@@ -11,7 +11,7 @@ homepage = "https://github.com/vicanso/pingap"
 repository = "https://github.com/vicanso/pingap"
 exclude = ["asset/*", "test/*", "Cargo.lock", "web/*", ".github/*", "docs/*"]
 readme = "./README.md"
-rust-version = "1.74"
+rust-version = "1.81"
 default-run = "pingap"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
