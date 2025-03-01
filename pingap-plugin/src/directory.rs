@@ -13,21 +13,21 @@
 // limitations under the License.
 
 use super::{
-    Error, get_bool_conf, get_hash_key, get_plugin_factory, get_step_conf,
-    get_str_conf, get_str_slice_conf,
+    get_bool_conf, get_hash_key, get_plugin_factory, get_step_conf,
+    get_str_conf, get_str_slice_conf, Error,
 };
 use async_trait::async_trait;
 use bytesize::ByteSize;
 use ctor::ctor;
 use glob::glob;
-use http::{HeaderValue, StatusCode, header};
+use http::{header, HeaderValue, StatusCode};
 use humantime::parse_duration;
 use once_cell::sync::Lazy;
 use pingap_config::{PluginCategory, PluginConf};
-use pingap_core::{Ctx, Plugin, PluginStep};
 use pingap_core::{
-    HttpChunkResponse, HttpHeader, HttpResponse, convert_headers,
+    convert_headers, HttpChunkResponse, HttpHeader, HttpResponse,
 };
+use pingap_core::{Ctx, Plugin, PluginStep};
 use pingora::proxy::Session;
 use std::fs::Metadata;
 #[cfg(unix)]
@@ -585,10 +585,7 @@ download = true
             )
             .unwrap(),
         );
-        assert_eq!(
-            "Plugin directory invalid, message: Directory serve plugin should be executed at request or proxy upstream step",
-            result.err().unwrap().to_string()
-        );
+        assert_eq!("Plugin directory invalid, message: Directory serve plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
     }
 
     #[tokio::test]

@@ -13,15 +13,15 @@
 // limitations under the License.
 
 use super::{
-    Error, get_hash_key, get_int_conf, get_plugin_factory, get_str_conf,
-    get_str_slice_conf,
+    get_hash_key, get_int_conf, get_plugin_factory, get_str_conf,
+    get_str_slice_conf, Error,
 };
 use async_trait::async_trait;
 use ctor::ctor;
 use http::StatusCode;
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
-use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep, convert_headers};
+use pingap_core::{convert_headers, Ctx, HttpResponse, Plugin, PluginStep};
 use pingora::proxy::Session;
 use std::sync::Arc;
 use std::time::Duration;

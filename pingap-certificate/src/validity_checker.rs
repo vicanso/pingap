@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Certificate, LOG_CATEGORY, get_certificate_info_list};
+use super::{get_certificate_info_list, Certificate, LOG_CATEGORY};
 use pingap_core::Error as ServiceError;
 use pingap_core::{
     NotificationData, NotificationLevel, SimpleServiceTaskFuture,

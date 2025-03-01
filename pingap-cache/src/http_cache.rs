@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, PAGE_SIZE, Result};
-use super::{LOG_CATEGORY, get_cache_backend, is_cache_backend_init};
+use super::{get_cache_backend, is_cache_backend_init, LOG_CATEGORY};
+use super::{Error, Result, PAGE_SIZE};
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use pingap_core::Error as ServiceError;

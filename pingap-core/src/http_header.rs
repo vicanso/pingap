@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Ctx, get_hostname};
+use super::{get_hostname, Ctx};
 use bytes::BytesMut;
 use http::header;
 use http::{HeaderName, HeaderValue};

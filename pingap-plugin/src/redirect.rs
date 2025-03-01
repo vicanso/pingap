@@ -13,13 +13,13 @@
 // limitations under the License.
 
 use super::{
-    Error, get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf,
+    get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf, Error,
 };
 use async_trait::async_trait;
 use ctor::ctor;
 use http::StatusCode;
 use pingap_config::PluginConf;
-use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep, convert_headers};
+use pingap_core::{convert_headers, Ctx, HttpResponse, Plugin, PluginStep};
 use pingora::proxy::Session;
 use std::sync::Arc;
 use tracing::debug;

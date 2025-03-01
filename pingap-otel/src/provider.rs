@@ -16,7 +16,7 @@ use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use once_cell::sync::Lazy;
 use opentelemetry::global::{BoxedTracer, ObjectSafeTracerProvider};
-use opentelemetry::{InstrumentationScope, trace};
+use opentelemetry::{trace, InstrumentationScope};
 use std::sync::Arc;
 
 /// A wrapper around a TracerProvider that implements the ObjectSafeTracerProvider trait.

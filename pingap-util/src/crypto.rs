@@ -15,8 +15,8 @@
 use super::Error;
 use super::{base64_decode, base64_encode};
 use aes_gcm_siv::{
-    Aes256GcmSiv, Nonce,
     aead::{Aead, KeyInit},
+    Aes256GcmSiv, Nonce,
 };
 use once_cell::sync::Lazy;
 

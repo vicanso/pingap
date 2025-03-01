@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{
-    Error, get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf,
+    get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf, Error,
 };
 use async_trait::async_trait;
 use bytes::Bytes;

@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, LOG_CATEGORY, Result, get_process_system_info};
+use super::{get_process_system_info, Error, Result, LOG_CATEGORY};
 use humantime::parse_duration;
 use pingap_cache::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use pingap_core::Error as ServiceError;
 use pingap_core::SimpleServiceTaskFuture;
-use pingap_core::{Ctx, get_hostname};
+use pingap_core::{get_hostname, Ctx};
 use pingora::proxy::Session;
 use prometheus::core::Collector;
 use prometheus::{

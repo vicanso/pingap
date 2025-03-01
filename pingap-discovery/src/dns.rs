@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Addr, Error, Result, format_addrs};
+use super::{format_addrs, Addr, Error, Result};
 use super::{DNS_DISCOVERY, LOG_CATEGORY};
 use async_trait::async_trait;
-use hickory_resolver::AsyncResolver;
 use hickory_resolver::config::{
     LookupIpStrategy, ResolverConfig, ResolverOpts,
 };
 use hickory_resolver::lookup_ip::LookupIp;
 use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_resolver::system_conf::read_system_conf;
+use hickory_resolver::AsyncResolver;
 use http::Extensions;
 use pingap_core::{NotificationData, NotificationLevel};
 use pingap_webhook::send_notification;

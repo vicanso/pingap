@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{
-    Error, get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf,
+    get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf, Error,
 };
 use async_trait::async_trait;
 use bstr::ByteSlice;
@@ -22,12 +22,12 @@ use ctor::ctor;
 use once_cell::sync::Lazy;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
-    Ctx, HTTP_HEADER_TRANSFER_CHUNKED, ModifyResponseBody, Plugin, PluginStep,
+    Ctx, ModifyResponseBody, Plugin, PluginStep, HTTP_HEADER_TRANSFER_CHUNKED,
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
-use regex::Regex;
 use regex::bytes::RegexBuilder;
+use regex::Regex;
 use std::sync::Arc;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -297,13 +297,12 @@ mod tests {
 
     #[test]
     fn test_sub_filter_replacer() {
-        let replacer =
-            SubFilterReplacer {
-                filters: vec![parse_subs_filter(
+        let replacer = SubFilterReplacer {
+            filters: vec![parse_subs_filter(
                 "subs_filter 'http://pingap.io' 'https://pingap.io/api' ig",
             )
             .unwrap()],
-            };
+        };
         let data = b"http://pingap.io http://PinGap.io";
         let result = replacer.handle(Bytes::from_static(data));
         assert_eq!(
@@ -312,13 +311,12 @@ mod tests {
         );
 
         // case sensitive
-        let replacer =
-            SubFilterReplacer {
-                filters: vec![parse_subs_filter(
+        let replacer = SubFilterReplacer {
+            filters: vec![parse_subs_filter(
                 "subs_filter 'http://pingap.io' 'https://pingap.io/api' g",
             )
             .unwrap()],
-            };
+        };
         let data = b"http://pingap.io http://PinGap.io";
         let result = replacer.handle(Bytes::from_static(data));
         assert_eq!(
@@ -327,13 +325,12 @@ mod tests {
         );
 
         // case sensitive and not global
-        let replacer =
-            SubFilterReplacer {
-                filters: vec![parse_subs_filter(
+        let replacer = SubFilterReplacer {
+            filters: vec![parse_subs_filter(
                 "subs_filter 'http://pingap.io' 'https://pingap.io/api'",
             )
             .unwrap()],
-            };
+        };
         let data = b"http://pingap.io http://PinGap.io http://pingap.io";
         let result = replacer.handle(Bytes::from_static(data));
         assert_eq!(
@@ -345,12 +342,10 @@ mod tests {
 
         // sub filter
         let replacer = SubFilterReplacer {
-            filters: vec![
-                parse_subs_filter(
-                    "sub_filter 'http://pingap.io' 'https://pingap.io/api'",
-                )
-                .unwrap(),
-            ],
+            filters: vec![parse_subs_filter(
+                "sub_filter 'http://pingap.io' 'https://pingap.io/api'",
+            )
+            .unwrap()],
         };
         let data = b"http://pingap.io http://PinGap.io http://pingap.io";
         let result = replacer.handle(Bytes::from_static(data));
@@ -362,13 +357,12 @@ mod tests {
         );
 
         // sub filter global
-        let replacer =
-            SubFilterReplacer {
-                filters: vec![parse_subs_filter(
+        let replacer = SubFilterReplacer {
+            filters: vec![parse_subs_filter(
                 "sub_filter 'http://pingap.io' 'https://pingap.io/api' g",
             )
             .unwrap()],
-            };
+        };
         let data = b"http://pingap.io http://PinGap.io http://pingap.io";
         let result = replacer.handle(Bytes::from_static(data));
         assert_eq!(

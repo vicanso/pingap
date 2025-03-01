@@ -35,4 +35,4 @@ pub const LOG_CATEGORY: &str = "performance";
 #[cfg(feature = "full")]
 mod prom;
 #[cfg(feature = "full")]
-pub use prom::{Prometheus, new_prometheus, new_prometheus_push_service};
+pub use prom::{new_prometheus, new_prometheus_push_service, Prometheus};

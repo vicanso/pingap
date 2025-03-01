@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Certificate, Error, LOG_CATEGORY, TlsCertificate};
+use super::{Certificate, Error, TlsCertificate, LOG_CATEGORY};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;

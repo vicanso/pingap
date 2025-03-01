@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{
-    Error, get_bool_conf, get_hash_key, get_int_conf, get_plugin_factory,
+    get_bool_conf, get_hash_key, get_int_conf, get_plugin_factory, Error,
 };
 use async_trait::async_trait;
 use ctor::ctor;
@@ -221,10 +221,10 @@ mod tests {
     use super::*;
     use pingap_config::PluginConf;
     use pingap_core::{Ctx, PluginStep};
-    use pingora::modules::http::HttpModules;
     use pingora::modules::http::compression::{
         ResponseCompression, ResponseCompressionBuilder,
     };
+    use pingora::modules::http::HttpModules;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;

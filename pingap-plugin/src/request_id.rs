@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, get_hash_key, get_int_conf, get_plugin_factory, get_step_conf,
-    get_str_conf,
+    get_hash_key, get_int_conf, get_plugin_factory, get_step_conf,
+    get_str_conf, Error,
 };
 use async_trait::async_trait;
 use ctor::ctor;
@@ -22,7 +22,7 @@ use http::HeaderName;
 use nanoid::nanoid;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
-    Ctx, HTTP_HEADER_NAME_X_REQUEST_ID, HttpResponse, Plugin, PluginStep,
+    Ctx, HttpResponse, Plugin, PluginStep, HTTP_HEADER_NAME_X_REQUEST_ID,
 };
 use pingora::proxy::Session;
 use std::str::FromStr;

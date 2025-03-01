@@ -14,7 +14,7 @@
 
 use bytes::BytesMut;
 use chrono::{Local, Utc};
-use pingap_core::{Ctx, HOST_NAME_TAG, get_hostname};
+use pingap_core::{get_hostname, Ctx, HOST_NAME_TAG};
 use pingap_util::{format_byte_size, format_duration};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
@@ -479,7 +479,7 @@ impl Parser {
 
 #[cfg(test)]
 mod tests {
-    use super::{Parser, Tag, TagCategory, format_extra_tag};
+    use super::{format_extra_tag, Parser, Tag, TagCategory};
     use http::Method;
     use pingap_core::Ctx;
     use pingora::proxy::Session;

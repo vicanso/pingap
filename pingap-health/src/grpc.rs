@@ -12,16 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, HealthCheckConf, new_internal_error};
+use super::{new_internal_error, Error, HealthCheckConf};
 use async_trait::async_trait;
-use http::Uri;
 use http::uri::InvalidUri;
-use pingora::lb::Backend;
+use http::Uri;
 use pingora::lb::health_check::{HealthCheck, HealthObserveCallback};
+use pingora::lb::Backend;
 use std::time::Duration;
 use tonic_health::{
+    pb::{health_client::HealthClient, HealthCheckRequest},
     ServingStatus,
-    pb::{HealthCheckRequest, health_client::HealthClient},
 };
 
 type Result<T, E = Error> = std::result::Result<T, E>;

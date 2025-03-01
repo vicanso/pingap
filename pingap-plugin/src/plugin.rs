@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_str_conf};
+use super::{get_str_conf, Error};
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use pingap_config::PluginConf;
