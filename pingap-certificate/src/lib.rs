@@ -183,8 +183,8 @@ impl Certificate {
 }
 
 pub use dynamic_certificate::{
-    get_certificate_info_list, try_update_certificates, GlobalCertificate,
-    TlsSettingParams,
+    GlobalCertificate, TlsSettingParams, get_certificate_info_list,
+    try_update_certificates,
 };
 pub use self_signed::new_self_signed_certificate_validity_service;
 pub use tls_certificate::TlsCertificate;
@@ -194,8 +194,8 @@ pub use rcgen;
 
 #[cfg(test)]
 mod tests {
-    use super::parse_ip_addr;
     use super::Certificate;
+    use super::parse_ip_addr;
     use pretty_assertions::assert_eq;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 

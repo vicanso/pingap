@@ -14,11 +14,11 @@
 
 use bytesize::ByteSize;
 use chrono::Timelike;
-use flate2::write::GzEncoder;
 use flate2::Compression;
-use pingap_core::convert_query_map;
+use flate2::write::GzEncoder;
 use pingap_core::Error as ServiceError;
 use pingap_core::SimpleServiceTaskFuture;
+use pingap_core::convert_query_map;
 use snafu::{ResultExt, Snafu};
 use std::fs;
 use std::io;
@@ -26,7 +26,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
-use tracing::{error, info, Level};
+use tracing::{Level, error, info};
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 use walkdir::WalkDir;
 

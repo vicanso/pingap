@@ -261,14 +261,14 @@ pub async fn sync_config(
 }
 
 pub use common::*;
-pub use etcd::{EtcdStorage, ETCD_PROTOCOL};
+pub use etcd::{ETCD_PROTOCOL, EtcdStorage};
 pub use file::FileStorage;
 
 #[cfg(test)]
 mod tests {
     use super::{
-        get_config_storage, load_config, support_observer, sync_to_path,
-        try_init_config_storage, LoadConfigOptions,
+        LoadConfigOptions, get_config_storage, load_config, support_observer,
+        sync_to_path, try_init_config_storage,
     };
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;

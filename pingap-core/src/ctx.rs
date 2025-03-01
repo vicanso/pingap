@@ -19,9 +19,9 @@ use http::StatusCode;
 use http::Uri;
 #[cfg(feature = "full")]
 use opentelemetry::{
+    Context,
     global::{BoxedSpan, BoxedTracer, ObjectSafeSpan},
     trace::{SpanKind, TraceContextExt, Tracer},
-    Context,
 };
 use pingora::cache::CacheKey;
 use pingora_limits::inflight::Guard;

@@ -193,9 +193,9 @@ impl ConfigStorage for EtcdStorage {
 mod tests {
     use super::EtcdStorage;
     use crate::{
-        read_all_toml_files, ConfigStorage, LoadConfigOptions, PingapConf,
         CATEGORY_BASIC, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
-        CATEGORY_STORAGE, CATEGORY_UPSTREAM,
+        CATEGORY_STORAGE, CATEGORY_UPSTREAM, ConfigStorage, LoadConfigOptions,
+        PingapConf, read_all_toml_files,
     };
     use nanoid::nanoid;
     use pretty_assertions::assert_eq;

@@ -19,7 +19,7 @@ use arc_swap::ArcSwap;
 use bytesize::ByteSize;
 use http::{HeaderName, HeaderValue};
 use once_cell::sync::Lazy;
-use pingap_discovery::{is_static_discovery, DNS_DISCOVERY};
+use pingap_discovery::{DNS_DISCOVERY, is_static_discovery};
 use regex::Regex;
 use serde::{Deserialize, Serialize, Serializer};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -31,7 +31,7 @@ use std::{collections::HashMap, str::FromStr};
 use strum::EnumString;
 use tempfile::tempfile_in;
 use toml::Table;
-use toml::{map::Map, Value};
+use toml::{Value, map::Map};
 use url::Url;
 
 pub const CATEGORY_BASIC: &str = "basic";
@@ -1071,8 +1071,10 @@ impl PingapConf {
                     if let Some(locations) = &server.locations {
                         if locations.contains(&name.to_string()) {
                             return Err(Error::Invalid {
-                               message: format!("location({name}) is in used by server({server_name})"),
-                           });
+                                message: format!(
+                                    "location({name}) is in used by server({server_name})"
+                                ),
+                            });
                         }
                     }
                 }
@@ -1277,8 +1279,8 @@ pub fn get_config_hash() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        get_config_hash, set_current_config, validate_cert, BasicConf,
-        CertificateConf,
+        BasicConf, CertificateConf, get_config_hash, set_current_config,
+        validate_cert,
     };
     use super::{
         LocationConf, PingapConf, PluginCategory, ServerConf, UpstreamConf,

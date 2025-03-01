@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_hash_key, get_plugin_factory, get_str_conf, Error};
+use super::{Error, get_hash_key, get_plugin_factory, get_str_conf};
 use async_trait::async_trait;
 use bytes::Bytes;
 use ctor::ctor;

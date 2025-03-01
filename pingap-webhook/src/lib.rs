@@ -15,8 +15,8 @@
 use async_trait::async_trait;
 use once_cell::sync::{Lazy, OnceCell};
 use pingap_core::{
-    get_hostname, Notification, NotificationData, NotificationLevel,
-    NotificationSender,
+    Notification, NotificationData, NotificationLevel, NotificationSender,
+    get_hostname,
 };
 use serde_json::{Map, Value};
 use std::sync::Arc;

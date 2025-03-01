@@ -14,10 +14,10 @@
 
 use super::chain::get_lets_encrypt_chain_certificate;
 use super::self_signed::{
-    add_self_signed_certificate, get_self_signed_certificate,
-    SelfSignedCertificate,
+    SelfSignedCertificate, add_self_signed_certificate,
+    get_self_signed_certificate,
 };
-use super::{Certificate, Error, Result, LOG_CATEGORY};
+use super::{Certificate, Error, LOG_CATEGORY, Result};
 use pingap_config::CertificateConf;
 use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::x509::X509;

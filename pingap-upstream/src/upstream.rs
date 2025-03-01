@@ -22,25 +22,25 @@ use pingap_config::UpstreamConf;
 use pingap_core::{CommonServiceTask, ServiceTask};
 use pingap_core::{NotificationData, NotificationLevel, NotificationSender};
 use pingap_discovery::{
-    is_dns_discovery, is_docker_discovery, is_static_discovery,
-    new_dns_discover_backends, new_docker_discover_backends,
-    new_static_discovery, TRANSPARENT_DISCOVERY,
+    TRANSPARENT_DISCOVERY, is_dns_discovery, is_docker_discovery,
+    is_static_discovery, new_dns_discover_backends,
+    new_docker_discover_backends, new_static_discovery,
 };
 use pingap_health::new_health_check;
+use pingora::lb::Backend;
 use pingora::lb::health_check::{HealthObserve, HealthObserveCallback};
 use pingora::lb::selection::{
     BackendIter, BackendSelection, Consistent, RoundRobin,
 };
-use pingora::lb::Backend;
 use pingora::lb::{Backends, LoadBalancer};
-use pingora::protocols::l4::ext::TcpKeepalive;
 use pingora::protocols::ALPN;
+use pingora::protocols::l4::ext::TcpKeepalive;
 use pingora::proxy::Session;
 use pingora::upstreams::peer::{HttpPeer, Tracer, Tracing};
 use snafu::Snafu;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::time::{Duration, SystemTime};
 use tracing::{debug, error, info};
 
@@ -662,8 +662,8 @@ pub fn get_upstream_healthy_status() -> HashMap<String, (u32, u32)> {
 ///
 /// # Returns
 /// * `HashMap<String, (i32, Option<i32>)>` - Processing and connected status of all upstreams
-pub fn get_upstreams_processing_connected(
-) -> HashMap<String, (i32, Option<i32>)> {
+pub fn get_upstreams_processing_connected()
+-> HashMap<String, (i32, Option<i32>)> {
     let mut processing_connected = HashMap::new();
     UPSTREAM_MAP.load().iter().for_each(|(k, v)| {
         let count = v.processing.load(Ordering::Relaxed);
@@ -892,8 +892,8 @@ pub fn new_upstream_health_check_task(interval: Duration) -> CommonServiceTask {
 #[cfg(test)]
 mod tests {
     use super::{
-        get_hash_value, new_backends, Upstream, UpstreamConf,
-        UpstreamPeerTracer,
+        Upstream, UpstreamConf, UpstreamPeerTracer, get_hash_value,
+        new_backends,
     };
     use pingora::protocols::ALPN;
     use pingora::proxy::Session;

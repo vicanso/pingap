@@ -11,13 +11,13 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use super::{get_hash_key, get_plugin_factory, get_str_slice_conf, Error};
+use super::{Error, get_hash_key, get_plugin_factory, get_str_slice_conf};
 use async_trait::async_trait;
 use ctor::ctor;
 use http::header::HeaderName;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
-    convert_header, convert_header_value, Ctx, HttpHeader, Plugin, PluginStep,
+    Ctx, HttpHeader, Plugin, PluginStep, convert_header, convert_header_value,
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;

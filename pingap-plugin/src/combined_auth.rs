@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_hash_key, get_int_conf, get_plugin_factory, get_str_conf,
-    get_str_slice_conf, Error,
+    Error, get_hash_key, get_int_conf, get_plugin_factory, get_str_conf,
+    get_str_slice_conf,
 };
 use ahash::AHashMap;
 use async_trait::async_trait;
@@ -24,7 +24,7 @@ use hex::ToHex;
 use http::StatusCode;
 use pingap_config::PluginConf;
 use pingap_core::{
-    Ctx, HttpResponse, Plugin, PluginStep, HTTP_HEADER_NO_STORE,
+    Ctx, HTTP_HEADER_NO_STORE, HttpResponse, Plugin, PluginStep,
 };
 use pingora::proxy::Session;
 use sha2::{Digest, Sha256};

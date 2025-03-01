@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_hash_key, get_plugin_factory, get_str_conf, Error};
+use super::{Error, get_hash_key, get_plugin_factory, get_str_conf};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cookie::Cookie;
 use ctor::ctor;
-use http::{header, HeaderValue, Method, StatusCode};
+use http::{HeaderValue, Method, StatusCode, header};
 use humantime::parse_duration;
 use nanoid::nanoid;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
-    Ctx, HttpResponse, Plugin, PluginStep, HTTP_HEADER_NO_STORE,
+    Ctx, HTTP_HEADER_NO_STORE, HttpResponse, Plugin, PluginStep,
 };
 use pingap_util::base64_encode;
 use pingora::proxy::Session;

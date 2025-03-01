@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::http_cache::{CacheObject, HttpCacheStorage};
-use super::{Result, LOG_CATEGORY};
+use super::{LOG_CATEGORY, Result};
 use async_trait::async_trait;
 use pingap_core::TinyUfo;
 use tracing::debug;

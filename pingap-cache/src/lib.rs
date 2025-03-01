@@ -17,8 +17,8 @@ use memory_stats::memory_stats;
 use once_cell::sync::OnceCell;
 use pingap_core::convert_query_map;
 use snafu::Snafu;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::info;
 
 mod file;
@@ -154,7 +154,7 @@ pub fn get_cache_backend(
     })
 }
 
-pub use http_cache::{new_storage_clear_service, HttpCache};
+pub use http_cache::{HttpCache, new_storage_clear_service};
 
 #[cfg(feature = "full")]
 mod prom;

@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    read_all_toml_files, ConfigStorage, Error, LoadConfigOptions, PingapConf,
-    Result,
+    ConfigStorage, Error, LoadConfigOptions, PingapConf, Result,
+    read_all_toml_files,
 };
 use async_trait::async_trait;
 use futures_util::TryFutureExt;

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{now_ms, LOG_CATEGORY};
+use super::{LOG_CATEGORY, now_ms};
 use std::time::Duration;
 use tinyufo::TinyUfo;
 use tracing::debug;

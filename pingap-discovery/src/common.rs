@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{format_addrs, Error, Result};
+use super::{Error, Result, format_addrs};
 use super::{LOG_CATEGORY, STATIC_DISCOVERY};
 use http::Extensions;
 use pingora::lb::discovery;

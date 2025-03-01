@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, Result};
 use super::{DOCKER_DISCOVERY, LOG_CATEGORY};
+use super::{Error, Result};
 use async_trait::async_trait;
 use bollard::container::ListContainersOptions;
 use bollard::secret::ContainerSummary;

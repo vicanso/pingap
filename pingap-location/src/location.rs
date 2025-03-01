@@ -17,13 +17,13 @@ use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use once_cell::sync::Lazy;
 use pingap_config::LocationConf;
-use pingap_core::{convert_headers, HttpHeader};
+use pingap_core::{HttpHeader, convert_headers};
 use pingora::http::RequestHeader;
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use substring::Substring;
 use tracing::{debug, error};
 

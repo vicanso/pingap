@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_hash_key, get_int_conf, get_plugin_factory, get_step_conf,
-    get_str_conf, Error,
+    Error, get_hash_key, get_int_conf, get_plugin_factory, get_step_conf,
+    get_str_conf,
 };
 use async_trait::async_trait;
 use ctor::ctor;

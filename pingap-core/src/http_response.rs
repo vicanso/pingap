@@ -13,13 +13,14 @@
 // limitations under the License.
 
 use super::{
-    get_super_ts, new_internal_error, HttpHeader, HTTP_HEADER_CONTENT_HTML,
-    HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_CONTENT_TEXT, HTTP_HEADER_NO_CACHE,
-    HTTP_HEADER_NO_STORE, HTTP_HEADER_TRANSFER_CHUNKED, LOG_CATEGORY,
+    HTTP_HEADER_CONTENT_HTML, HTTP_HEADER_CONTENT_JSON,
+    HTTP_HEADER_CONTENT_TEXT, HTTP_HEADER_NO_CACHE, HTTP_HEADER_NO_STORE,
+    HTTP_HEADER_TRANSFER_CHUNKED, HttpHeader, LOG_CATEGORY, get_super_ts,
+    new_internal_error,
 };
 use bytes::Bytes;
-use http::header;
 use http::StatusCode;
+use http::header;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use serde::Serialize;

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_process_system_info, get_processing_accepted, LOG_CATEGORY};
+use super::{LOG_CATEGORY, get_process_system_info, get_processing_accepted};
 use pingap_cache::{get_cache_backend, is_cache_backend_init};
 use pingap_core::SimpleServiceTaskFuture;
 use pingap_location::get_locations_processing;

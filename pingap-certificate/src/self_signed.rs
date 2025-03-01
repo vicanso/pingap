@@ -19,8 +19,8 @@ use pingap_core::Error as ServiceError;
 use pingap_core::SimpleServiceTaskFuture;
 use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::x509::X509;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 const VALIDITY_CHECK_INTERVAL: u32 = 24 * 60; // 24 hours in minutes
 const CERTIFICATE_EXPIRY_DAYS: u64 = 2;
@@ -109,8 +109,8 @@ async fn do_self_signed_certificate_validity(
 ///
 /// This service is responsible for maintaining the health of the certificate pool
 /// by regularly checking and cleaning up expired or unused certificates.
-pub fn new_self_signed_certificate_validity_service(
-) -> (String, SimpleServiceTaskFuture) {
+pub fn new_self_signed_certificate_validity_service()
+-> (String, SimpleServiceTaskFuture) {
     let task: SimpleServiceTaskFuture = Box::new(|count: u32| {
         Box::pin(do_self_signed_certificate_validity(count))
     });
