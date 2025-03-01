@@ -969,9 +969,8 @@ impl ProxyHttp for Server {
                     ctx.upstream_span = Some(span);
                 }
                 let peer =
-                    up.new_http_peer(session, &ctx.client_ip).map(|peer| {
+                    up.new_http_peer(session, &ctx.client_ip).inspect(|peer| {
                         ctx.upstream_address = peer.address().to_string();
-                        peer
                     });
                 ctx.upstream = up.name.clone();
                 peer
