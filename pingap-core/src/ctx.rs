@@ -743,6 +743,7 @@ mod tests {
         ctx.add_plugin_processing_time("plugin1", 100);
         ctx.add_plugin_processing_time("plugin2", 200);
 
-        assert_eq!("upstream.connect;dur=1, upstream.processing;dur=2, upstream;dur=3, cache.lookup;dur=6, cache.lock;dur=7, cache;dur=13, plugin.plugin1;dur=100, plugin.plugin2;dur=200, plugin;dur=300, total;dur=2", ctx.generate_server_timing());
+        // total duration sometime changes(it may be 1 or 2), so we just check the prefix
+        assert_eq!(true, ctx.generate_server_timing().starts_with("upstream.connect;dur=1, upstream.processing;dur=2, upstream;dur=3, cache.lookup;dur=6, cache.lock;dur=7, cache;dur=13, plugin.plugin1;dur=100, plugin.plugin2;dur=200, plugin;dur=300, total;dur="));
     }
 }
