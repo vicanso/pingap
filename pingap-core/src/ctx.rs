@@ -188,6 +188,8 @@ pub struct Ctx {
     pub upstream_span: Option<BoxedSpan>,
     /// Custom variables map for request processing
     pub variables: Option<AHashMap<String, String>>,
+    /// Plugin processing times
+    pub plugin_processing_times: Option<Vec<(String, u32)>>,
 }
 
 const ONE_HOUR_MS: u64 = 60 * 60 * 1000;
@@ -262,6 +264,22 @@ impl Ctx {
             }
         }
         None
+    }
+
+    /// Adds a plugin processing time to the context
+    ///
+    /// # Arguments
+    /// * `name` - The name of the plugin
+    /// * `time` - The time taken by the plugin in milliseconds
+    #[inline]
+    pub fn add_plugin_processing_time(&mut self, name: &str, time: u32) {
+        if let Some(times) = self.plugin_processing_times.as_mut() {
+            times.push((name.to_string(), time));
+        } else {
+            let mut times = Vec::with_capacity(5);
+            times.push((name.to_string(), time));
+            self.plugin_processing_times = Some(times);
+        }
     }
 
     /// Appends a formatted value to the provided buffer based on the given key.
@@ -433,6 +451,15 @@ impl Ctx {
         }
         if cache_time_set {
             timings.push(format!("cache;dur={}", cache_time));
+        }
+
+        if let Some(times) = self.plugin_processing_times.as_ref() {
+            let mut plugin_time = 0;
+            for (name, time) in times {
+                plugin_time += time;
+                timings.push(format!("plugin.{name};dur={}", time));
+            }
+            timings.push(format!("plugin;dur={}", plugin_time));
         }
 
         // Add total service time
@@ -689,7 +716,33 @@ mod tests {
             ctx.append_value(BytesMut::new(), "service_time")
                 .ends_with(b"ms")
         );
+    }
 
-        assert_eq!("upstream.connect;dur=1, upstream.processing;dur=2, upstream;dur=3, cache.lookup;dur=6, cache.lock;dur=7, cache;dur=13, total;dur=1", ctx.generate_server_timing());
+    #[test]
+    fn test_add_plugin_processing_time() {
+        let mut ctx = Ctx::new();
+        ctx.add_plugin_processing_time("plugin1", 100);
+        ctx.add_plugin_processing_time("plugin2", 200);
+        assert_eq!(
+            ctx.plugin_processing_times,
+            Some(vec![
+                ("plugin1".to_string(), 100),
+                ("plugin2".to_string(), 200)
+            ])
+        );
+    }
+
+    #[test]
+    fn test_generate_server_timing() {
+        let mut ctx = Ctx::new();
+        ctx.upstream_connect_time = Some(1);
+        ctx.upstream_processing_time = Some(2);
+        ctx.cache_lookup_time = Some(6);
+        ctx.cache_lock_time = Some(7);
+        ctx.created_at = now_ms() - 1;
+        ctx.add_plugin_processing_time("plugin1", 100);
+        ctx.add_plugin_processing_time("plugin2", 200);
+
+        assert_eq!("upstream.connect;dur=1, upstream.processing;dur=2, upstream;dur=3, cache.lookup;dur=6, cache.lock;dur=7, cache;dur=13, plugin.plugin1;dur=100, plugin.plugin2;dur=200, plugin;dur=300, total;dur=2", ctx.generate_server_timing());
     }
 }

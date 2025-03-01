@@ -74,7 +74,7 @@ use snafu::Snafu;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 use tracing::{debug, error, info};
 
 #[derive(Debug, Snafu)]
@@ -579,15 +579,21 @@ impl Server {
 
         for name in plugins.iter() {
             if let Some(plugin) = get_plugin(name) {
+                let now = Instant::now();
                 let (executed, result) =
                     plugin.handle_request(step, session, ctx).await?;
-                debug!(
-                    category = LOG_CATEGORY,
-                    name,
-                    executed,
-                    step = step.to_string(),
-                    "handle request plugin"
-                );
+                if executed {
+                    let elapsed = now.elapsed().as_millis() as u32;
+                    debug!(
+                        category = LOG_CATEGORY,
+                        name,
+                        executed,
+                        elapsed,
+                        step = step.to_string(),
+                        "handle request plugin"
+                    );
+                    ctx.add_plugin_processing_time(name, elapsed);
+                }
                 if let Some(resp) = result {
                     // ignore http response status >= 900
                     if resp.status.as_u16() < 900 {
@@ -616,16 +622,22 @@ impl Server {
         };
         for name in plugins.iter() {
             if let Some(plugin) = get_plugin(name) {
+                let now = Instant::now();
                 let executed = plugin
                     .handle_response(step, session, ctx, upstream_response)
                     .await?;
-                debug!(
-                    category = LOG_CATEGORY,
-                    name,
-                    executed,
-                    step = step.to_string(),
-                    "handle response plugin"
-                );
+                if executed {
+                    let elapsed = now.elapsed().as_millis() as u32;
+                    debug!(
+                        category = LOG_CATEGORY,
+                        name,
+                        executed,
+                        elapsed,
+                        step = step.to_string(),
+                        "handle response plugin"
+                    );
+                    ctx.add_plugin_processing_time(name, elapsed);
+                }
             }
         }
         Ok(())
