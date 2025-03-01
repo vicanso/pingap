@@ -41,11 +41,9 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Run cargo clippy
         run: |
-          if [ "${{ matrix.toolchain }}" == "stable" ]; then
-            cargo install typos-cli
-          fi
-            make lint
-            make lint-full
+          cargo install typos-cli
+          make lint
+          make lint-full
       - name: Run cargo machete
         run: |
           cargo install cargo-machete
