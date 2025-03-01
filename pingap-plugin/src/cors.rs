@@ -238,16 +238,16 @@ impl Plugin for Cors {
         step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
-    ) -> pingora::Result<Option<HttpResponse>> {
+    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
         // Early return if not in request phase
         if step != self.plugin_step {
-            return Ok(None);
+            return Ok((false, None));
         }
 
         // Check if request path matches CORS rules
         if let Some(reg) = &self.path {
             if !reg.is_match(session.req_header().uri.path()) {
-                return Ok(None);
+                return Ok((false, None));
             }
         }
 
@@ -260,9 +260,9 @@ impl Plugin for Cors {
             // Return 204 No Content with CORS headers for preflight
             let mut resp = HttpResponse::no_content();
             resp.headers = Some(headers);
-            return Ok(Some(resp));
+            return Ok((true, Some(resp)));
         }
-        Ok(None)
+        Ok((true, None))
     }
 
     /// Modifies responses to add appropriate CORS headers for actual (non-preflight) requests
@@ -281,23 +281,23 @@ impl Plugin for Cors {
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<()> {
+    ) -> pingora::Result<bool> {
         // Only process during response phase
         if step != PluginStep::Response {
-            return Ok(());
+            return Ok(false);
         }
 
         // Skip if path doesn't match CORS rules
         if let Some(reg) = &self.path {
             if !reg.is_match(session.req_header().uri.path()) {
-                return Ok(());
+                return Ok(false);
             }
         }
 
         // Only add CORS headers if request has Origin header
         // (indicates it's a CORS request)
         if session.get_header(header::ORIGIN).is_none() {
-            return Ok(());
+            return Ok(false);
         }
 
         // Add all configured CORS headers to the response
@@ -307,7 +307,7 @@ impl Plugin for Cors {
         for (name, value) in &headers {
             let _ = upstream_response.insert_header(name, value);
         }
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -378,15 +378,17 @@ max_age = "60m"
         )
         .unwrap();
 
-        let resp = cors
+        let (executed, result) = cors
             .handle_request(
                 PluginStep::Request,
                 &mut session,
                 &mut Ctx::default(),
             )
             .await
-            .unwrap()
             .unwrap();
+        assert_eq!(true, executed);
+        assert_eq!(true, result.is_some());
+        let resp = result.unwrap();
         assert_eq!(204, resp.status.as_u16());
         assert_eq!(
             r#"[("access-control-allow-methods", "GET"), ("access-control-allow-headers", "Content-Type, X-User-Id"), ("access-control-max-age", "3600"), ("access-control-allow-credentials", "true"), ("access-control-expose-headers", "Content-Encoding, Kuma-Revision"), ("access-control-allow-origin", "https://pingap.io")]"#,

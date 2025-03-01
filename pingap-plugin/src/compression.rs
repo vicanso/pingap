@@ -144,13 +144,13 @@ impl Plugin for Compression {
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut Ctx,
-    ) -> pingora::Result<Option<HttpResponse>> {
+    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
         // Early return conditions
         if step != self.plugin_step {
-            return Ok(None);
+            return Ok((false, None));
         }
         if !self.support_compression {
-            return Ok(None);
+            return Ok((false, None));
         }
 
         // Extract and validate Accept-Encoding header
@@ -158,11 +158,11 @@ impl Plugin for Compression {
         let Some(accept_encoding) =
             header.headers.get(http::header::ACCEPT_ENCODING)
         else {
-            return Ok(None);
+            return Ok((false, None));
         };
         let accept_encoding = accept_encoding.to_str().unwrap_or_default();
         if accept_encoding.is_empty() {
-            return Ok(None);
+            return Ok((false, None));
         }
 
         // Select compression algorithm based on priority and client support
@@ -178,7 +178,7 @@ impl Plugin for Compression {
         };
         debug!(level, "compression level");
         if level == 0 {
-            return Ok(None);
+            return Ok((false, None));
         }
 
         // Get compression context from session
@@ -186,7 +186,7 @@ impl Plugin for Compression {
             .downstream_modules_ctx
             .get_mut::<ResponseCompression>()
         else {
-            return Ok(None);
+            return Ok((false, None));
         };
 
         // Configure decompression if specified
@@ -205,7 +205,7 @@ impl Plugin for Compression {
             c.adjust_algorithm_level(Algorithm::Gzip, self.gzip_level);
         }
 
-        Ok(None)
+        Ok((true, None))
     }
 }
 
@@ -274,7 +274,7 @@ zstd_level = 7
         let mut session =
             Session::new_h1_with_modules(Box::new(mock_io), &modules);
         session.read_request().await.unwrap();
-        let result = compression
+        let (executed, result) = compression
             .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
@@ -282,6 +282,7 @@ zstd_level = 7
             )
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_none());
         assert_eq!(
             true,
@@ -302,7 +303,7 @@ zstd_level = 7
         let mut session =
             Session::new_h1_with_modules(Box::new(mock_io), &modules);
         session.read_request().await.unwrap();
-        let result = compression
+        let (executed, result) = compression
             .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
@@ -310,6 +311,7 @@ zstd_level = 7
             )
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_none());
         assert_eq!(
             true,
@@ -330,7 +332,7 @@ zstd_level = 7
         let mut session =
             Session::new_h1_with_modules(Box::new(mock_io), &modules);
         session.read_request().await.unwrap();
-        let result = compression
+        let (executed, result) = compression
             .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
@@ -338,6 +340,7 @@ zstd_level = 7
             )
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_none());
         assert_eq!(
             true,
@@ -358,7 +361,7 @@ zstd_level = 7
         let mut session =
             Session::new_h1_with_modules(Box::new(mock_io), &modules);
         session.read_request().await.unwrap();
-        let result = compression
+        let (executed, result) = compression
             .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
@@ -366,6 +369,7 @@ zstd_level = 7
             )
             .await
             .unwrap();
+        assert_eq!(false, executed);
         assert_eq!(true, result.is_none());
         assert_eq!(
             false,

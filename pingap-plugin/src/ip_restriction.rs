@@ -131,10 +131,10 @@ impl Plugin for IpRestriction {
         step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
-    ) -> pingora::Result<Option<HttpResponse>> {
+    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
         // Skip processing if not in correct plugin step
         if step != self.plugin_step {
-            return Ok(None);
+            return Ok((false, None));
         }
 
         // Get client IP address, using cached value if available
@@ -152,9 +152,10 @@ impl Plugin for IpRestriction {
         let found = match self.ip_rules.is_match(&ip) {
             Ok(matched) => matched,
             Err(e) => {
-                return Ok(Some(HttpResponse::bad_request(
-                    e.to_string().into(),
-                )));
+                return Ok((
+                    true,
+                    Some(HttpResponse::bad_request(e.to_string().into())),
+                ));
             },
         };
 
@@ -169,10 +170,10 @@ impl Plugin for IpRestriction {
 
         if !allow {
             // Return forbidden response with custom message if configured
-            return Ok(Some(self.forbidden_resp.clone()));
+            return Ok((true, Some(self.forbidden_resp.clone())));
         }
         // Allow request to proceed
-        return Ok(None);
+        Ok((true, None))
     }
 }
 
@@ -252,7 +253,7 @@ ip_list = [
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let result = deny
+        let (executed, result) = deny
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -260,6 +261,7 @@ ip_list = [
             )
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_none());
 
         let headers = ["X-Forwarded-For: 192.168.1.1"].join("\r\n");
@@ -269,7 +271,7 @@ ip_list = [
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let result = deny
+        let (executed, result) = deny
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -277,6 +279,7 @@ ip_list = [
             )
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_some());
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
@@ -286,7 +289,7 @@ ip_list = [
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let result = deny
+        let (executed, result) = deny
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -297,9 +300,10 @@ ip_list = [
             )
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_none());
 
-        let result = deny
+        let (executed, result) = deny
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -310,8 +314,10 @@ ip_list = [
             )
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_some());
-        assert_eq!(StatusCode::FORBIDDEN, result.unwrap().status);
+        let resp = result.unwrap();
+        assert_eq!(StatusCode::FORBIDDEN, resp.status);
 
         let allow = IpRestriction::new(
             &toml::from_str::<PluginConf>(
@@ -333,7 +339,7 @@ ip_list = [
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let result = allow
+        let (executed, result) = allow
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -341,6 +347,7 @@ ip_list = [
             )
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_none());
     }
 }

@@ -171,10 +171,10 @@ impl Plugin for UaRestriction {
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut Ctx,
-    ) -> pingora::Result<Option<HttpResponse>> {
+    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
         // Skip processing if not in request phase
         if step != self.plugin_step {
-            return Ok(None);
+            return Ok((false, None));
         }
 
         let mut found = false;
@@ -200,9 +200,9 @@ impl Plugin for UaRestriction {
 
         // Return forbidden response if request is not allowed
         if !allow {
-            return Ok(Some(self.forbidden_resp.clone()));
+            return Ok((true, Some(self.forbidden_resp.clone())));
         }
-        return Ok(None); // Request allowed - continue normal processing
+        Ok((true, None)) // Request allowed - continue normal processing
     }
 }
 
@@ -284,7 +284,7 @@ type = "deny"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let result = deny
+        let (executed, result) = deny
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -292,6 +292,7 @@ type = "deny"
             )
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_none());
 
         let headers = ["User-Agent: go-http-client/1.1"].join("\r\n");
@@ -301,7 +302,7 @@ type = "deny"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let result = deny
+        let (executed, result) = deny
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -309,6 +310,7 @@ type = "deny"
             )
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_some());
         assert_eq!(StatusCode::FORBIDDEN, result.unwrap().status);
 
@@ -318,7 +320,7 @@ type = "deny"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = deny
+        let (executed, result) = deny
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -329,6 +331,7 @@ type = "deny"
             )
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_some());
         assert_eq!(StatusCode::FORBIDDEN, result.unwrap().status);
     }

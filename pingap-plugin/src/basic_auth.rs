@@ -185,17 +185,17 @@ impl Plugin for BasicAuth {
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut Ctx,
-    ) -> pingora::Result<Option<HttpResponse>> {
+    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
         // Verify we're in the request phase - authentication must happen before processing
         if step != self.plugin_step {
-            return Ok(None);
+            return Ok((false, None));
         }
 
         // Extract and validate Authorization header
         // An empty value means the header is missing entirely
         let value = session.get_header_bytes(http::header::AUTHORIZATION);
         if value.is_empty() {
-            return Ok(Some(self.miss_authorization_resp.clone()));
+            return Ok((true, Some(self.miss_authorization_resp.clone())));
         }
 
         // Validate credentials against our authorized list
@@ -206,7 +206,7 @@ impl Plugin for BasicAuth {
             if let Some(d) = self.delay {
                 sleep(d).await;
             }
-            return Ok(Some(self.unauthorized_resp.clone()));
+            return Ok((true, Some(self.unauthorized_resp.clone())));
         }
 
         // On successful authentication, optionally remove credentials
@@ -218,7 +218,7 @@ impl Plugin for BasicAuth {
         }
 
         // Authentication successful - continue request processing
-        return Ok(None);
+        return Ok((true, None));
     }
 }
 
@@ -306,7 +306,7 @@ hide_credentials = true
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = auth
+        let (executed, result) = auth
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -314,6 +314,7 @@ hide_credentials = true
             )
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_none());
         assert_eq!(
             false,
@@ -327,7 +328,7 @@ hide_credentials = true
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = auth
+        let (executed, result) = auth
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -335,6 +336,7 @@ hide_credentials = true
             )
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_some());
         assert_eq!(StatusCode::UNAUTHORIZED, result.unwrap().status);
     }

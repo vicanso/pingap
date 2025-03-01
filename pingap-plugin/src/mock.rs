@@ -161,16 +161,16 @@ impl Plugin for MockResponse {
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut Ctx,
-    ) -> pingora::Result<Option<HttpResponse>> {
+    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
         // Only process if we're in the correct execution phase
         if step != self.plugin_step {
-            return Ok(None);
+            return Ok((false, None));
         }
 
         // Check if request path matches our configured path (if any)
         if !self.path.is_empty() && session.req_header().uri.path() != self.path
         {
-            return Ok(None);
+            return Ok((false, None));
         }
 
         // Implement artificial delay if configured
@@ -179,7 +179,7 @@ impl Plugin for MockResponse {
         }
 
         // Return our pre-configured mock response
-        Ok(Some(self.resp.clone()))
+        Ok((true, Some(self.resp.clone())))
     }
 }
 
@@ -236,6 +236,7 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
 
         let mock = MockResponse::new(&params).unwrap();
 
+        // match request path, get mock response
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
         let input_header =
             format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
@@ -243,7 +244,7 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let result = mock
+        let (executed, result) = mock
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -252,6 +253,7 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
             .await
             .unwrap();
 
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_some());
 
         let resp = result.unwrap();
@@ -265,6 +267,7 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
             resp.body
         );
 
+        // not match request path
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
         let input_header =
             format!("GET /vicanso?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
@@ -272,7 +275,7 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let result = mock
+        let (executed, result) = mock
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -280,6 +283,7 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
             )
             .await
             .unwrap();
+        assert_eq!(false, executed);
         assert_eq!(true, result.is_none());
     }
 }

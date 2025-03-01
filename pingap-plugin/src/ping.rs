@@ -88,14 +88,14 @@ impl Plugin for Ping {
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut Ctx,
-    ) -> pingora::Result<Option<HttpResponse>> {
+    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
         if step != self.plugin_step {
-            return Ok(None);
+            return Ok((false, None));
         }
         if session.req_header().uri.path() == self.path {
-            return Ok(Some(PONG_RESPONSE.clone()));
+            return Ok((true, Some(PONG_RESPONSE.clone())));
         }
-        Ok(None)
+        Ok((true, None))
     }
 }
 
@@ -133,7 +133,7 @@ path = "/ping"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = ping
+        let (executed, result) = ping
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -142,6 +142,7 @@ path = "/ping"
             .await
             .unwrap();
 
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_some());
         let resp = result.unwrap();
         assert_eq!(200, resp.status.as_u16());

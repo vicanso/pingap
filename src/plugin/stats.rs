@@ -153,44 +153,44 @@ impl Plugin for Stats {
         step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
-    ) -> pingora::Result<Option<HttpResponse>> {
+    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
         if step != self.plugin_step {
-            return Ok(None);
+            return Ok((false, None));
         }
-        if session.req_header().uri.path() == self.path {
-            let uptime: humantime::Duration =
-                Duration::from_secs(pingap_util::now_sec() - get_start_time())
-                    .into();
-            let (processing, accepted) = get_processing_accepted();
-            let info = get_process_system_info();
-            let resp = HttpResponse::try_from_json(&ServerStats {
-                accepted,
-                processing,
-                location_processing: ctx.location_processing,
-                location_accepted: ctx.location_accepted,
-                hostname: get_hostname().to_string(),
-                version: pingap_util::get_pkg_version().to_string(),
-                rustc_version: pingap_util::get_rustc_version(),
-                start_time: get_start_time(),
-                uptime: uptime.to_string(),
-                memory_mb: info.memory_mb,
-                memory: info.memory,
-                arch: info.arch,
-                cpus: info.cpus,
-                physical_cpus: info.physical_cpus,
-                total_memory: info.total_memory,
-                used_memory: info.used_memory,
-                threads: info.threads,
-                fd_count: info.fd_count,
-                tcp_count: info.tcp_count,
-                tcp6_count: info.tcp6_count,
-            })
-            .unwrap_or_else(|e| {
-                HttpResponse::unknown_error(Bytes::from(e.to_string()))
-            });
-            return Ok(Some(resp));
+        if session.req_header().uri.path() != self.path {
+            return Ok((false, None));
         }
-        Ok(None)
+        let uptime: humantime::Duration =
+            Duration::from_secs(pingap_util::now_sec() - get_start_time())
+                .into();
+        let (processing, accepted) = get_processing_accepted();
+        let info = get_process_system_info();
+        let resp = HttpResponse::try_from_json(&ServerStats {
+            accepted,
+            processing,
+            location_processing: ctx.location_processing,
+            location_accepted: ctx.location_accepted,
+            hostname: get_hostname().to_string(),
+            version: pingap_util::get_pkg_version().to_string(),
+            rustc_version: pingap_util::get_rustc_version(),
+            start_time: get_start_time(),
+            uptime: uptime.to_string(),
+            memory_mb: info.memory_mb,
+            memory: info.memory,
+            arch: info.arch,
+            cpus: info.cpus,
+            physical_cpus: info.physical_cpus,
+            total_memory: info.total_memory,
+            used_memory: info.used_memory,
+            threads: info.threads,
+            fd_count: info.fd_count,
+            tcp_count: info.tcp_count,
+            tcp6_count: info.tcp6_count,
+        })
+        .unwrap_or_else(|e| {
+            HttpResponse::unknown_error(Bytes::from(e.to_string()))
+        });
+        Ok((true, Some(resp)))
     }
 }
 
@@ -258,7 +258,7 @@ mod tests {
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let result = stats
+        let (executed, result) = stats
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -266,6 +266,7 @@ mod tests {
             )
             .await
             .unwrap();
+        assert_eq!(false, executed);
         assert_eq!(true, result.is_none());
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
@@ -274,7 +275,8 @@ mod tests {
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let result = stats
+        // pass
+        let (executed, result) = stats
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -282,6 +284,7 @@ mod tests {
             )
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_some());
     }
 }

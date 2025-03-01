@@ -432,9 +432,9 @@ impl Plugin for Directory {
         step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
-    ) -> pingora::Result<Option<HttpResponse>> {
+    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
         if step != self.plugin_step {
-            return Ok(None);
+            return Ok((false, None));
         }
         let mut filename = session.req_header().uri.path().to_string();
         if !self.autoindex && filename.len() <= 1 {
@@ -451,7 +451,7 @@ impl Plugin for Directory {
                 Ok(html) => HttpResponse::html(html.into()),
                 Err(e) => HttpResponse::bad_request(e.to_string().into()),
             };
-            return Ok(Some(resp));
+            return Ok((true, Some(resp)));
         }
 
         // Content-Disposition: attachment; filename="example.pdf"
@@ -515,7 +515,7 @@ impl Plugin for Directory {
             },
         };
 
-        Ok(Some(resp))
+        Ok((true, Some(resp)))
     }
 }
 
@@ -616,7 +616,7 @@ download = true
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = dir
+        let (executed, result) = dir
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -624,6 +624,7 @@ download = true
             )
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_some());
         let resp = result.unwrap();
         assert_eq!(200, resp.status.as_u16());
@@ -643,7 +644,7 @@ download = true
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = dir
+        let (executed, result) = dir
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -651,6 +652,7 @@ download = true
             )
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_some());
         let resp = result.unwrap();
         assert_eq!(200, resp.status.as_u16());

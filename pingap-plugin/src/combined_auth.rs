@@ -273,20 +273,23 @@ impl Plugin for CombinedAuth {
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut Ctx,
-    ) -> pingora::Result<Option<HttpResponse>> {
+    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
         if step != self.plugin_step {
-            return Ok(None);
+            return Ok((false, None));
         }
         if let Err(e) = self.validate(session) {
-            return Ok(Some(HttpResponse {
-                status: StatusCode::UNAUTHORIZED,
-                headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
-                body: Bytes::from(e.to_string()),
-                ..Default::default()
-            }));
+            return Ok((
+                true,
+                Some(HttpResponse {
+                    status: StatusCode::UNAUTHORIZED,
+                    headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
+                    body: Bytes::from(e.to_string()),
+                    ..Default::default()
+                }),
+            ));
         }
 
-        Ok(None)
+        Ok((true, None))
     }
 }
 

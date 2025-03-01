@@ -300,24 +300,27 @@ impl Plugin for Limiter {
         step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
-    ) -> pingora::Result<Option<HttpResponse>> {
+    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
         // Only run at configured plugin step
         if step != self.plugin_step {
-            return Ok(None);
+            return Ok((false, None));
         }
 
         // Try to increment counter
         if let Err(e) = self.incr(session, ctx) {
             // If limit exceeded, return 429 Too Many Requests
-            return Ok(Some(HttpResponse {
-                status: StatusCode::TOO_MANY_REQUESTS,
-                body: e.to_string().into(),
-                ..Default::default()
-            }));
+            return Ok((
+                true,
+                Some(HttpResponse {
+                    status: StatusCode::TOO_MANY_REQUESTS,
+                    body: e.to_string().into(),
+                    ..Default::default()
+                }),
+            ));
         }
 
         // Continue normal request processing if within limits
-        Ok(None)
+        Ok((true, None))
     }
 }
 
@@ -504,7 +507,7 @@ max = 0
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = limiter
+        let (executed, result) = limiter
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -513,6 +516,7 @@ max = 0
             .await
             .unwrap();
 
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_some());
         assert_eq!(StatusCode::TOO_MANY_REQUESTS, result.unwrap().status);
 
@@ -526,7 +530,7 @@ max = 1
             .unwrap(),
         )
         .unwrap();
-        let result = limiter
+        let (executed, result) = limiter
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -535,6 +539,7 @@ max = 1
             .await
             .unwrap();
 
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_none());
     }
 
@@ -558,7 +563,7 @@ interval = "1s"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = limiter
+        let (executed, result) = limiter
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -567,6 +572,7 @@ interval = "1s"
             .await
             .unwrap();
 
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_none());
 
         let _ = limiter
@@ -578,9 +584,9 @@ interval = "1s"
             .await
             .unwrap();
 
+        // wait for the next loop
         tokio::time::sleep(Duration::from_secs(1)).await;
-
-        let result = limiter
+        let (executed, result) = limiter
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -588,12 +594,13 @@ interval = "1s"
             )
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_some());
         assert_eq!(StatusCode::TOO_MANY_REQUESTS, result.unwrap().status);
 
+        // wait for rate limiter to reset
         tokio::time::sleep(Duration::from_secs(1)).await;
-
-        let result = limiter
+        let (executed, result) = limiter
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -601,6 +608,7 @@ interval = "1s"
             )
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_none());
     }
 }

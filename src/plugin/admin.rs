@@ -484,6 +484,177 @@ fn get_method_path(session: &Session) -> (Method, String) {
     (method, path.to_string())
 }
 
+async fn handle_request_admin(
+    plugin: &AdminServe,
+    session: &mut Session,
+    _ctx: &mut Ctx,
+) -> pingora::Result<Option<HttpResponse>> {
+    let ip = pingap_core::get_client_ip(session);
+    if !plugin.ip_fail_limit.validate(&ip) {
+        return Ok(Some(HttpResponse {
+            status: StatusCode::FORBIDDEN,
+            body: Bytes::from_static(b"Forbidden, too many failures"),
+            ..Default::default()
+        }));
+    }
+
+    let header = session.req_header_mut();
+    let path = header.uri.path();
+    let mut new_path =
+        path.substring(plugin.path.len(), path.len()).to_string();
+    if plugin.path.len() > 1 && new_path.is_empty() {
+        new_path = format!("{path}/");
+        if let Some(query) = header.uri.query() {
+            new_path = format!("{new_path}?{query}");
+        }
+        let resp = HttpResponse::redirect(&new_path)?;
+        return Ok(Some(resp));
+    }
+    if let Some(query) = header.uri.query() {
+        new_path = format!("{new_path}?{query}");
+    }
+    // ignore parse error
+    if let Ok(uri) = new_path.parse::<http::Uri>() {
+        header.set_uri(uri);
+    }
+    if !plugin.auth_validate(header) {
+        plugin.ip_fail_limit.inc(&ip);
+        return Ok(Some(HttpResponse {
+            status: StatusCode::UNAUTHORIZED,
+            ..Default::default()
+        }));
+    }
+
+    let (method, mut path) = get_method_path(session);
+    let api_prefix = "/api";
+    if path.starts_with(api_prefix) {
+        path = path.substring(api_prefix.len(), path.len()).to_string();
+    }
+    let params: Vec<String> = path
+        .split('/')
+        .map(|item| decode(item).unwrap_or_default().to_string())
+        .collect();
+    let mut category = "";
+    if params.len() >= 3 {
+        category = &params[2];
+    }
+    let resp = if path.starts_with("/configs") {
+        match method {
+            Method::POST => {
+                if category == "import" {
+                    plugin.import_config(session).await
+                } else if params.len() < 4 {
+                    Err(pingora::Error::new_str("Url is invalid(no name)"))
+                } else {
+                    plugin.update_config(session, category, &params[3]).await
+                }
+            },
+            Method::DELETE => {
+                if params.len() < 4 {
+                    Err(pingora::Error::new_str("Url is invalid(no name)"))
+                } else {
+                    plugin.remove_config(category, &params[3]).await
+                }
+            },
+            _ => plugin.get_config(category).await,
+        }
+        .unwrap_or_else(|err| {
+            HttpResponse::try_from_json_status(
+                &ErrorResponse {
+                    message: err.to_string(),
+                },
+                StatusCode::INTERNAL_SERVER_ERROR,
+            )
+            .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
+        })
+    } else if path == "/basic" {
+        let current_config = get_current_config();
+        let info = get_process_system_info();
+
+        let (processing, accepted) = get_processing_accepted();
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "full")] {
+                let enabled_full = true;
+            } else {
+                let enabled_full = false;
+            }
+        }
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "pyro")] {
+                let enabled_pyroscope = true;
+            } else {
+                let enabled_pyroscope = false;
+            }
+        }
+
+        HttpResponse::try_from_json(&BasicInfo {
+            start_time: get_start_time(),
+            version: pingap_util::get_pkg_version().to_string(),
+            rustc_version: pingap_util::get_rustc_version(),
+            config_hash: pingap_config::get_config_hash(),
+            user: current_config.basic.user.clone().unwrap_or_default(),
+            group: current_config.basic.group.clone().unwrap_or_default(),
+            pid: info.pid.to_string(),
+            threads: info.threads,
+            accepted,
+            processing,
+            kernel: info.kernel,
+            memory_mb: info.memory_mb,
+            memory: info.memory,
+            arch: info.arch,
+            cpus: info.cpus,
+            physical_cpus: info.physical_cpus,
+            total_memory: info.total_memory,
+            used_memory: info.used_memory,
+            enabled_full,
+            enabled_pyroscope,
+            fd_count: info.fd_count,
+            tcp_count: info.tcp_count,
+            tcp6_count: info.tcp6_count,
+            supported_plugins: get_plugin_factory().supported_plugins(),
+            upstream_healthy_status: get_upstream_healthy_status(),
+        })
+        .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
+    } else if path == "/restart" && method == Method::POST {
+        if let Err(e) = restart_now().await {
+            error!("Restart fail: {e}");
+            HttpResponse::bad_request(e.to_string().into())
+        } else {
+            HttpResponse::no_content()
+        }
+    } else if path == "/aes" {
+        let buf = get_request_body(session).await?;
+        let params: AesParmas = serde_json::from_slice(buf.as_ref())
+            .map_err(|e| pingap_core::new_internal_error(400, e.to_string()))?;
+        let value = if params.category == "encrypt" {
+            pingap_util::aes_encrypt(&params.key, &params.data)
+        } else {
+            pingap_util::aes_decrypt(&params.key, &params.data)
+        }
+        .map_err(|e| pingap_core::new_internal_error(400, e.to_string()))?;
+        HttpResponse::try_from_json(&AesResp { value })
+            .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
+    } else if path == "/certificates" {
+        let mut infos = HashMap::new();
+        for (name, info) in get_certificate_info_list() {
+            infos.insert(name, info);
+        }
+        HttpResponse::try_from_json(&infos)
+            .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
+    } else {
+        let mut file = path.substring(1, path.len());
+        if file.is_empty() {
+            file = "index.html";
+        }
+        EmbeddedStaticFile(
+            AdminAsset::get(file),
+            Duration::from_secs(365 * 24 * 3600),
+        )
+        .into()
+    };
+    Ok(Some(resp))
+}
+
 #[async_trait]
 impl Plugin for AdminServe {
     #[inline]
@@ -495,183 +666,15 @@ impl Plugin for AdminServe {
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut Ctx,
-    ) -> pingora::Result<Option<HttpResponse>> {
+    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
         if self.plugin_step != step {
-            return Ok(None);
+            return Ok((false, None));
         }
         if !session.req_header().uri.path().starts_with(&self.path) {
-            return Ok(None);
+            return Ok((false, None));
         }
-        let ip = pingap_core::get_client_ip(session);
-        if !self.ip_fail_limit.validate(&ip) {
-            return Ok(Some(HttpResponse {
-                status: StatusCode::FORBIDDEN,
-                body: Bytes::from_static(b"Forbidden, too many failures"),
-                ..Default::default()
-            }));
-        }
-
-        let header = session.req_header_mut();
-        let path = header.uri.path();
-        let mut new_path =
-            path.substring(self.path.len(), path.len()).to_string();
-        if self.path.len() > 1 && new_path.is_empty() {
-            new_path = format!("{path}/");
-            if let Some(query) = header.uri.query() {
-                new_path = format!("{new_path}?{query}");
-            }
-            let resp = HttpResponse::redirect(&new_path)?;
-            return Ok(Some(resp));
-        }
-        if let Some(query) = header.uri.query() {
-            new_path = format!("{new_path}?{query}");
-        }
-        // ignore parse error
-        if let Ok(uri) = new_path.parse::<http::Uri>() {
-            header.set_uri(uri);
-        }
-        if !self.auth_validate(header) {
-            self.ip_fail_limit.inc(&ip);
-            return Ok(Some(HttpResponse {
-                status: StatusCode::UNAUTHORIZED,
-                ..Default::default()
-            }));
-        }
-
-        let (method, mut path) = get_method_path(session);
-        let api_prefix = "/api";
-        if path.starts_with(api_prefix) {
-            path = path.substring(api_prefix.len(), path.len()).to_string();
-        }
-        let params: Vec<String> = path
-            .split('/')
-            .map(|item| decode(item).unwrap_or_default().to_string())
-            .collect();
-        let mut category = "";
-        if params.len() >= 3 {
-            category = &params[2];
-        }
-        let resp = if path.starts_with("/configs") {
-            match method {
-                Method::POST => {
-                    if category == "import" {
-                        self.import_config(session).await
-                    } else if params.len() < 4 {
-                        Err(pingora::Error::new_str("Url is invalid(no name)"))
-                    } else {
-                        self.update_config(session, category, &params[3]).await
-                    }
-                },
-                Method::DELETE => {
-                    if params.len() < 4 {
-                        Err(pingora::Error::new_str("Url is invalid(no name)"))
-                    } else {
-                        self.remove_config(category, &params[3]).await
-                    }
-                },
-                _ => self.get_config(category).await,
-            }
-            .unwrap_or_else(|err| {
-                HttpResponse::try_from_json_status(
-                    &ErrorResponse {
-                        message: err.to_string(),
-                    },
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                )
-                .unwrap_or(HttpResponse::unknown_error(
-                    "Json serde fail".into(),
-                ))
-            })
-        } else if path == "/basic" {
-            let current_config = get_current_config();
-            let info = get_process_system_info();
-
-            let (processing, accepted) = get_processing_accepted();
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "full")] {
-                    let enabled_full = true;
-                } else {
-                    let enabled_full = false;
-                }
-            }
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "pyro")] {
-                    let enabled_pyroscope = true;
-                } else {
-                    let enabled_pyroscope = false;
-                }
-            }
-
-            HttpResponse::try_from_json(&BasicInfo {
-                start_time: get_start_time(),
-                version: pingap_util::get_pkg_version().to_string(),
-                rustc_version: pingap_util::get_rustc_version(),
-                config_hash: pingap_config::get_config_hash(),
-                user: current_config.basic.user.clone().unwrap_or_default(),
-                group: current_config.basic.group.clone().unwrap_or_default(),
-                pid: info.pid.to_string(),
-                threads: info.threads,
-                accepted,
-                processing,
-                kernel: info.kernel,
-                memory_mb: info.memory_mb,
-                memory: info.memory,
-                arch: info.arch,
-                cpus: info.cpus,
-                physical_cpus: info.physical_cpus,
-                total_memory: info.total_memory,
-                used_memory: info.used_memory,
-                enabled_full,
-                enabled_pyroscope,
-                fd_count: info.fd_count,
-                tcp_count: info.tcp_count,
-                tcp6_count: info.tcp6_count,
-                supported_plugins: get_plugin_factory().supported_plugins(),
-                upstream_healthy_status: get_upstream_healthy_status(),
-            })
-            .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
-        } else if path == "/restart" && method == Method::POST {
-            if let Err(e) = restart_now().await {
-                error!("Restart fail: {e}");
-                HttpResponse::bad_request(e.to_string().into())
-            } else {
-                HttpResponse::no_content()
-            }
-        } else if path == "/aes" {
-            let buf = get_request_body(session).await?;
-            let params: AesParmas = serde_json::from_slice(buf.as_ref())
-                .map_err(|e| {
-                    pingap_core::new_internal_error(400, e.to_string())
-                })?;
-            let value = if params.category == "encrypt" {
-                pingap_util::aes_encrypt(&params.key, &params.data)
-            } else {
-                pingap_util::aes_decrypt(&params.key, &params.data)
-            }
-            .map_err(|e| pingap_core::new_internal_error(400, e.to_string()))?;
-            HttpResponse::try_from_json(&AesResp { value }).unwrap_or(
-                HttpResponse::unknown_error("Json serde fail".into()),
-            )
-        } else if path == "/certificates" {
-            let mut infos = HashMap::new();
-            for (name, info) in get_certificate_info_list() {
-                infos.insert(name, info);
-            }
-            HttpResponse::try_from_json(&infos).unwrap_or(
-                HttpResponse::unknown_error("Json serde fail".into()),
-            )
-        } else {
-            let mut file = path.substring(1, path.len());
-            if file.is_empty() {
-                file = "index.html";
-            }
-            EmbeddedStaticFile(
-                AdminAsset::get(file),
-                Duration::from_secs(365 * 24 * 3600),
-            )
-            .into()
-        };
-        Ok(Some(resp))
+        let resp = handle_request_admin(self, session, _ctx).await?;
+        Ok((true, resp))
     }
 }
 

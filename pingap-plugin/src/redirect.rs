@@ -123,10 +123,10 @@ impl Plugin for Redirect {
         step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
-    ) -> pingora::Result<Option<HttpResponse>> {
+    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
         // Early return if not in request phase
         if step != self.plugin_step {
-            return Ok(None);
+            return Ok((false, None));
         }
 
         // Check current request state:
@@ -140,7 +140,7 @@ impl Plugin for Redirect {
         if schema_match
             && session.req_header().uri.path().starts_with(&self.prefix)
         {
-            return Ok(None);
+            return Ok((false, None));
         }
 
         // Extract host from request headers
@@ -166,11 +166,14 @@ impl Plugin for Redirect {
         // Return 307 Temporary Redirect
         // Using 307 instead of 301/302 to preserve HTTP method
         // This is important for POST/PUT/DELETE requests
-        Ok(Some(HttpResponse {
-            status: StatusCode::TEMPORARY_REDIRECT,
-            headers: Some(convert_headers(&[location]).unwrap_or_default()),
-            ..Default::default()
-        }))
+        Ok((
+            true,
+            Some(HttpResponse {
+                status: StatusCode::TEMPORARY_REDIRECT,
+                headers: Some(convert_headers(&[location]).unwrap_or_default()),
+                ..Default::default()
+            }),
+        ))
     }
 }
 
@@ -216,7 +219,7 @@ prefix = "/api"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = redirect
+        let (executed, result) = redirect
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -224,6 +227,7 @@ prefix = "/api"
             )
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_some());
         let resp = result.unwrap();
         assert_eq!(StatusCode::TEMPORARY_REDIRECT, resp.status);

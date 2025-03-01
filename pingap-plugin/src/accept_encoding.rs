@@ -110,10 +110,10 @@ impl Plugin for AcceptEncoding {
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut Ctx,
-    ) -> pingora::Result<Option<HttpResponse>> {
+    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
         // Skip if not in the correct plugin step
         if step != self.plugin_step {
-            return Ok(None);
+            return Ok((false, None));
         }
         let header = session.req_header_mut();
 
@@ -121,7 +121,7 @@ impl Plugin for AcceptEncoding {
         let Some(accept_encoding) =
             header.headers.get(http::header::ACCEPT_ENCODING)
         else {
-            return Ok(None);
+            return Ok((false, None));
         };
         let accept_encoding = accept_encoding.to_str().unwrap_or_default();
 
@@ -151,7 +151,7 @@ impl Plugin for AcceptEncoding {
                 new_accept_encodings.join(", "),
             );
         }
-        Ok(None)
+        Ok((true, None))
     }
 }
 

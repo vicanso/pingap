@@ -224,13 +224,13 @@ impl Plugin for JwtAuth {
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut Ctx,
-    ) -> pingora::Result<Option<HttpResponse>> {
+    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
         if step != self.plugin_step {
-            return Ok(None);
+            return Ok((false, None));
         }
         let req_header = session.req_header();
         if req_header.uri.path() == self.auth_path {
-            return Ok(None);
+            return Ok((false, None));
         }
         let value = if let Some(key) = &self.header {
             let value = pingap_core::get_req_header_value(req_header, key)
@@ -251,14 +251,14 @@ impl Plugin for JwtAuth {
         if value.is_empty() {
             let mut resp = self.unauthorized_resp.clone();
             resp.body = Bytes::from_static(b"Jwt authorization is missing");
-            return Ok(Some(resp));
+            return Ok((true, Some(resp)));
         }
         let arr: Vec<&str> = value.split('.').collect();
         if arr.len() != 3 {
             let mut resp = self.unauthorized_resp.clone();
             resp.body =
                 Bytes::from_static(b"Jwt authorization format is invalid");
-            return Ok(Some(resp));
+            return Ok((true, Some(resp)));
         }
         let jwt_header = serde_json::from_slice::<JwtHeader>(
             &URL_SAFE_NO_PAD.decode(arr[0]).unwrap_or_default(),
@@ -282,7 +282,7 @@ impl Plugin for JwtAuth {
             }
             let mut resp = self.unauthorized_resp.clone();
             resp.body = Bytes::from_static(b"Jwt authorization is invalid");
-            return Ok(Some(resp));
+            return Ok((true, Some(resp)));
         }
         let value: serde_json::Value = serde_json::from_slice(
             &URL_SAFE_NO_PAD.decode(arr[1]).unwrap_or_default(),
@@ -292,11 +292,11 @@ impl Plugin for JwtAuth {
             if exp.as_u64().unwrap_or_default() < pingap_util::now_sec() {
                 let mut resp = self.unauthorized_resp.clone();
                 resp.body = Bytes::from_static(b"Jwt authorization is expired");
-                return Ok(Some(resp));
+                return Ok((true, Some(resp)));
             }
         }
 
-        Ok(None)
+        Ok((true, None))
     }
 
     /// Handles responses for the token generation endpoint
@@ -316,12 +316,12 @@ impl Plugin for JwtAuth {
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<()> {
+    ) -> pingora::Result<bool> {
         if step != PluginStep::Response || self.auth_path.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
         if session.req_header().uri.path() != self.auth_path {
-            return Ok(());
+            return Ok(false);
         }
         upstream_response.remove_header(&http::header::CONTENT_LENGTH);
         let json = HTTP_HEADER_CONTENT_JSON.clone();
@@ -337,7 +337,7 @@ impl Plugin for JwtAuth {
             secret: self.secret.clone(),
         }));
 
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -488,7 +488,7 @@ header = "Authorization"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = auth
+        let (executed, result) = auth
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -497,6 +497,7 @@ header = "Authorization"
             .await
             .unwrap();
 
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_none());
 
         // auth success(hs512)
@@ -505,7 +506,7 @@ header = "Authorization"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = auth
+        let (executed, result) = auth
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -514,6 +515,7 @@ header = "Authorization"
             .await
             .unwrap();
 
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_none());
 
         // no auth token
@@ -522,15 +524,17 @@ header = "Authorization"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let resp = auth
+        let (executed, result) = auth
             .handle_request(
                 PluginStep::Request,
                 &mut session,
                 &mut Ctx::default(),
             )
             .await
-            .unwrap()
             .unwrap();
+        assert_eq!(true, executed);
+        assert_eq!(true, result.is_some());
+        let resp = result.unwrap();
         assert_eq!(401, resp.status.as_u16());
         assert_eq!(
             "Jwt authorization is missing",
@@ -543,15 +547,17 @@ header = "Authorization"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let resp = auth
+        let (executed, result) = auth
             .handle_request(
                 PluginStep::Request,
                 &mut session,
                 &mut Ctx::default(),
             )
             .await
-            .unwrap()
             .unwrap();
+        assert_eq!(true, executed);
+        assert_eq!(true, result.is_some());
+        let resp = result.unwrap();
         assert_eq!(401, resp.status.as_u16());
         assert_eq!(
             "Jwt authorization format is invalid",
@@ -563,15 +569,17 @@ header = "Authorization"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let resp = auth
+        let (executed, result) = auth
             .handle_request(
                 PluginStep::Request,
                 &mut session,
                 &mut Ctx::default(),
             )
             .await
-            .unwrap()
             .unwrap();
+        assert_eq!(true, executed);
+        assert_eq!(true, result.is_some());
+        let resp = result.unwrap();
         assert_eq!(401, resp.status.as_u16());
         assert_eq!(
             "Jwt authorization is invalid",
@@ -584,15 +592,17 @@ header = "Authorization"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let resp = auth
+        let (executed, result) = auth
             .handle_request(
                 PluginStep::Request,
                 &mut session,
                 &mut Ctx::default(),
             )
             .await
-            .unwrap()
             .unwrap();
+        assert_eq!(true, executed);
+        assert_eq!(true, result.is_some());
+        let resp = result.unwrap();
         assert_eq!(401, resp.status.as_u16());
         assert_eq!(
             "Jwt authorization is expired",

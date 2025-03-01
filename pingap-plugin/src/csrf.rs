@@ -237,10 +237,10 @@ impl Plugin for Csrf {
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut Ctx,
-    ) -> pingora::Result<Option<HttpResponse>> {
+    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
         // Only run during request phase
         if step != self.plugin_step {
-            return Ok(None);
+            return Ok((false, None));
         }
 
         // Handle token generation requests
@@ -272,7 +272,7 @@ impl Plugin for Csrf {
                 ..Default::default()
             };
 
-            return Ok(Some(resp));
+            return Ok((true, Some(resp)));
         }
 
         // Skip CSRF checks for safe HTTP methods
@@ -280,14 +280,14 @@ impl Plugin for Csrf {
         if [Method::GET, Method::HEAD, Method::OPTIONS]
             .contains(&session.req_header().method)
         {
-            return Ok(None);
+            return Ok((false, None));
         }
 
         // For unsafe methods:
         // 1. Check token exists in header
         let value = session.get_header_bytes(&self.name);
         if value.is_empty() {
-            return Ok(Some(self.unauthorized_resp.clone()));
+            return Ok((true, Some(self.unauthorized_resp.clone())));
         }
 
         let value = std::string::String::from_utf8_lossy(value);
@@ -301,11 +301,11 @@ impl Plugin for Csrf {
                 .unwrap_or_default()
             || !validate_token(&self.key, self.ttl, &value)
         {
-            return Ok(Some(self.unauthorized_resp.clone()));
+            return Ok((true, Some(self.unauthorized_resp.clone())));
         }
 
         // Token is valid - allow request to proceed
-        Ok(None)
+        Ok((true, None))
     }
 }
 
@@ -407,45 +407,51 @@ ttl = "1h"
         )
         .unwrap();
 
+        // get csrf token success
         let headers = [""].join("\r\n");
         let input_header =
             format!("GET /csrf-token HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-
-        let resp = csrf
+        let (executed, result) = csrf
             .handle_request(
                 PluginStep::Request,
                 &mut session,
                 &mut Ctx::default(),
             )
             .await
-            .unwrap()
             .unwrap();
+        assert_eq!(true, executed);
+        assert_eq!(true, result.is_some());
+        let resp = result.unwrap();
         let binding = resp.headers.unwrap();
         let cookie = binding[1].1.to_str().unwrap();
         let c = Cookie::from_str(cookie).unwrap();
         assert_eq!("x-csrf-token", c.name());
         assert_eq!(66, c.value().len());
 
+        // validate fail
         let headers = [format!("x-csrf-token:{}", "123")].join("\r\n");
         let input_header = format!("POST / HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let resp = csrf
+        let (executed, result) = csrf
             .handle_request(
                 PluginStep::Request,
                 &mut session,
                 &mut Ctx::default(),
             )
             .await
-            .unwrap()
             .unwrap();
+        assert_eq!(true, executed);
+        assert_eq!(true, result.is_some());
+        let resp = result.unwrap();
         assert_eq!(401, resp.status.as_u16());
 
+        // validate success
         let headers = [
             format!("x-csrf-token: {}", c.value()),
             format!("Cookie: x-csrf-token={}", c.value()),
@@ -455,8 +461,7 @@ ttl = "1h"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-
-        let result = csrf
+        let (executed, result) = csrf
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -464,7 +469,7 @@ ttl = "1h"
             )
             .await
             .unwrap();
-
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_none());
     }
 }

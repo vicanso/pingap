@@ -350,10 +350,10 @@ impl Plugin for Cache {
         step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
-    ) -> pingora::Result<Option<HttpResponse>> {
+    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
         // Only process if we're in the correct plugin step
         if step != self.plugin_step {
-            return Ok(None);
+            return Ok((false, None));
         }
 
         // Cache operations only support GET/HEAD for retrieval and PURGE for invalidation
@@ -362,14 +362,14 @@ impl Plugin for Cache {
         if ![Method::GET, Method::HEAD, METHOD_PURGE.to_owned()]
             .contains(method)
         {
-            return Ok(None);
+            return Ok((false, None));
         }
 
         // Check if request matches skip pattern (if configured)
         if let Some(skip) = &self.skip {
             if let Some(value) = req_header.uri.path_and_query() {
                 if skip.is_match(value.as_str()).unwrap_or_default() {
-                    return Ok(None);
+                    return Ok((false, None));
                 }
             }
         }
@@ -401,17 +401,23 @@ impl Plugin for Cache {
             {
                 Ok(matched) => matched,
                 Err(e) => {
-                    return Ok(Some(HttpResponse::bad_request(
-                        e.to_string().into(),
-                    )));
+                    return Ok((
+                        true,
+                        Some(HttpResponse::bad_request(e.to_string().into())),
+                    ));
                 },
             };
             if !found {
-                return Ok(Some(HttpResponse {
-                    status: StatusCode::FORBIDDEN,
-                    body: Bytes::from_static(b"Forbidden, ip is not allowed"),
-                    ..Default::default()
-                }));
+                return Ok((
+                    true,
+                    Some(HttpResponse {
+                        status: StatusCode::FORBIDDEN,
+                        body: Bytes::from_static(
+                            b"Forbidden, ip is not allowed",
+                        ),
+                        ..Default::default()
+                    }),
+                ));
             }
 
             let key = get_cache_key(
@@ -423,7 +429,7 @@ impl Plugin for Cache {
                 .cache
                 .remove(&key.combined(), key.namespace())
                 .await?;
-            return Ok(Some(HttpResponse::no_content()));
+            return Ok((true, Some(HttpResponse::no_content())));
         }
 
         // Configure cache settings for this request
@@ -449,7 +455,7 @@ impl Plugin for Cache {
             ctx.cache_writing = Some(stats.writing);
         }
 
-        Ok(None)
+        Ok((true, None))
     }
 }
 

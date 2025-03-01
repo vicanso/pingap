@@ -426,7 +426,7 @@ impl Server {
         ctx: &mut Ctx,
     ) -> pingora::Result<bool> {
         if let Some(plugin) = get_plugin(ADMIN_SERVER_PLUGIN.as_str()) {
-            let result = plugin
+            let (_, result) = plugin
                 .handle_request(PluginStep::Request, session, ctx)
                 .await?;
             if let Some(resp) = result {
@@ -579,13 +579,15 @@ impl Server {
 
         for name in plugins.iter() {
             if let Some(plugin) = get_plugin(name) {
+                let (executed, result) =
+                    plugin.handle_request(step, session, ctx).await?;
                 debug!(
                     category = LOG_CATEGORY,
                     name,
+                    executed,
                     step = step.to_string(),
                     "handle request plugin"
                 );
-                let result = plugin.handle_request(step, session, ctx).await?;
                 if let Some(resp) = result {
                     // ignore http response status >= 900
                     if resp.status.as_u16() < 900 {
@@ -614,15 +616,16 @@ impl Server {
         };
         for name in plugins.iter() {
             if let Some(plugin) = get_plugin(name) {
+                let executed = plugin
+                    .handle_response(step, session, ctx, upstream_response)
+                    .await?;
                 debug!(
                     category = LOG_CATEGORY,
                     name,
+                    executed,
                     step = step.to_string(),
                     "handle response plugin"
                 );
-                plugin
-                    .handle_response(step, session, ctx, upstream_response)
-                    .await?;
             }
         }
         Ok(())

@@ -223,10 +223,10 @@ impl Plugin for ResponseHeaders {
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<()> {
+    ) -> pingora::Result<bool> {
         // Skip if not in response phase
         if step != self.plugin_step {
-            return Ok(());
+            return Ok(false);
         }
 
         // Headers are processed in a specific order to ensure predictable behavior:
@@ -285,7 +285,7 @@ impl Plugin for ResponseHeaders {
                 let _ = upstream_response.append_header(new_name, value);
             }
         }
-        Ok(())
+        Ok(true)
     }
 }
 

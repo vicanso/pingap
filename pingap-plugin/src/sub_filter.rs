@@ -243,10 +243,10 @@ impl Plugin for SubFilter {
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<()> {
+    ) -> pingora::Result<bool> {
         // Skip if not at the correct plugin step
         if self.plugin_step != step {
-            return Ok(());
+            return Ok(false);
         }
         // If request path matches, modify the response
         if self.path.is_match(session.req_header().uri.path()) {
@@ -260,7 +260,7 @@ impl Plugin for SubFilter {
             // Set up the response body modifier
             ctx.modify_response_body = Some(Box::new(self.replacer.clone()));
         }
-        Ok(())
+        Ok(true)
     }
 }
 

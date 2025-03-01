@@ -170,10 +170,10 @@ impl Plugin for RequestId {
         step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
-    ) -> pingora::Result<Option<HttpResponse>> {
+    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
         // Early return if we're not at the configured execution step
         if step != self.plugin_step {
-            return Ok(None);
+            return Ok((false, None));
         }
 
         // Determine which header name to use for the request ID
@@ -189,7 +189,7 @@ impl Plugin for RequestId {
         // This preserves request IDs across service boundaries
         if let Some(id) = session.get_header(&key) {
             ctx.request_id = Some(id.to_str().unwrap_or_default().to_string());
-            return Ok(None);
+            return Ok((true, None));
         }
 
         // Generate new request ID based on configured algorithm
@@ -212,7 +212,7 @@ impl Plugin for RequestId {
         // Header insertion ensures it's forwarded to upstream services
         ctx.request_id = Some(id.clone());
         let _ = session.req_header_mut().insert_header(key, &id);
-        Ok(None)
+        Ok((true, None))
     }
 }
 
@@ -303,10 +303,11 @@ size = 10
         session.read_request().await.unwrap();
 
         let mut state = Ctx::default();
-        let result = id
+        let (executed, result) = id
             .handle_request(PluginStep::Request, &mut session, &mut state)
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_none());
         assert_eq!("123", state.request_id.unwrap_or_default());
 
@@ -318,10 +319,11 @@ size = 10
         session.read_request().await.unwrap();
 
         let mut state = Ctx::default();
-        let result = id
+        let (executed, result) = id
             .handle_request(PluginStep::Request, &mut session, &mut state)
             .await
             .unwrap();
+        assert_eq!(true, executed);
         assert_eq!(true, result.is_none());
         assert_eq!(10, state.request_id.unwrap_or_default().len());
     }
