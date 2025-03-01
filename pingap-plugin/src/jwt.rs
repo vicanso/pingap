@@ -198,7 +198,9 @@ impl JwtAuth {
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
 struct JwtHeader {
     alg: String,
+    // spellchecker:off
     typ: String,
+    // spellchecker:on
 }
 
 #[async_trait]
@@ -358,8 +360,10 @@ impl ModifyResponseBody for Sign {
     fn handle(&self, data: Bytes) -> Bytes {
         let is_hs512 = self.algorithm == "HS512";
         let alg = if is_hs512 { "HS512" } else { "HS256" };
+        // spellchecker:off
         let header = URL_SAFE_NO_PAD
             .encode(r#"{"alg": ""#.to_owned() + alg + r#"","typ": "JWT"}"#);
+        // spellchecker:on
         let payload = URL_SAFE_NO_PAD.encode(data);
         let content = format!("{header}.{payload}");
         let secret = self.secret.as_bytes();
