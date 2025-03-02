@@ -1,6 +1,6 @@
 [package]
 name = "pingap-certificate"
-version = "0.10.3"
+version = "0.10.4"
 edition = "2021"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -26,10 +26,10 @@ arc-swap = { workspace = true }
 tracing = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
-pingap-util = { version = "0.10.3", path = "../pingap-util" }
-pingap-config = { version = "0.10.3", path = "../pingap-config" }
-pingap-webhook = { version = "0.10.3", path = "../pingap-webhook" }
-pingap-core = { version = "0.10.3", path = "../pingap-core" }
+pingap-util = { version = "0.10.4", path = "../pingap-util" }
+pingap-config = { version = "0.10.4", path = "../pingap-config" }
+pingap-webhook = { version = "0.10.4", path = "../pingap-webhook" }
+pingap-core = { version = "0.10.4", path = "../pingap-core" }
 
 
 [dev-dependencies]

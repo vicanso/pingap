@@ -1,6 +1,6 @@
 [package]
 name = "pingap-location"
-version = "0.10.3"
+version = "0.10.4"
 edition = "2021"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -23,8 +23,8 @@ substring = { workspace = true }
 tracing = { workspace = true }
 http = { workspace = true }
 tokio = { workspace = true }
-pingap-config = { version = "0.10.3", path = "../pingap-config" }
-pingap-core = { version = "0.10.3", path = "../pingap-core" }
+pingap-config = { version = "0.10.4", path = "../pingap-config" }
+pingap-core = { version = "0.10.4", path = "../pingap-core" }
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"

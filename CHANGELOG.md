@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.10.4](https://github.com/vicanso/pingap/compare/v0.10.3..0.10.4) - 2025-03-02
+
+### ⛰️  Features
+
+- Record the plugin's processing time in context and server timing header - ([17234d7](https://github.com/vicanso/pingap/commit/17234d791d343a6422db9b378ba09ed9eb49c4b8))
+- Add weight for rate limit slot - ([177ad52](https://github.com/vicanso/pingap/commit/177ad523ec85663424227171c74ff2a3872f79e1))
+- Support http server timing - ([be5fd74](https://github.com/vicanso/pingap/commit/be5fd7426a281b179f7b38e5a970a6f656e10d23))
+- Generate server timing from context - ([163482e](https://github.com/vicanso/pingap/commit/163482eec9f6ec25aabdc9e39386b77adcb82ba9))
+- Get upstream healthy status - ([3ffe796](https://github.com/vicanso/pingap/commit/3ffe7968ca539ac327f4003121a7b3abe6d72a87))
+
+### 🐛 Bug Fixes
+
+- Fix clippy error - ([4cb7c08](https://github.com/vicanso/pingap/commit/4cb7c0875255abe579b1bb5933071ab97c2f7e94))
+- Fix test for server timing - ([b695018](https://github.com/vicanso/pingap/commit/b69501811ff814399659a5adf99c09c0867b93f2))
+- Fix spelling check - ([30c0158](https://github.com/vicanso/pingap/commit/30c0158389868095a452cea209344fa187abe57d))
+- Fix lint - ([c8ea679](https://github.com/vicanso/pingap/commit/c8ea679452bf8eac246338d7bdf38bfba8da8859))
+- Fix sub filter loop modify response body if the data from cache - ([ce7e0ce](https://github.com/vicanso/pingap/commit/ce7e0ce852c0f0855ef0ee9d288779b9285f2b07))
+- Fix regex capture - ([8c77612](https://github.com/vicanso/pingap/commit/8c77612f617571493bb600c234ace514c2998c03))
+- Fix scheduled clearing of expired data - ([9acebe6](https://github.com/vicanso/pingap/commit/9acebe639d70b972c4af4793713e321277d76c9f))
+
+### 🚜 Refactor
+
+- Sort summary description by name - ([eac4d50](https://github.com/vicanso/pingap/commit/eac4d50580091ab52d60151508e09272da073505))
+- Adjust plugin trait to add an "executed" flag that indicates whether the plugin was executed or not - ([1c1264b](https://github.com/vicanso/pingap/commit/1c1264b18635753b7f6a92d7b9eebaf1b2109046))
+- Add inline to some plugin functions - ([b75e797](https://github.com/vicanso/pingap/commit/b75e797ebb4686b7b0ea04eac878c3ccce3b9565))
+- Lazy formatting for timestamp - ([06386ef](https://github.com/vicanso/pingap/commit/06386ef59346020f4c025b1af00f1fddb9ad9fea))
+- Improve the performance of access log format - ([295a20b](https://github.com/vicanso/pingap/commit/295a20bceef4f151cb36cbb7955b00e94f3da6c8))
+- Remove not include value of server timing - ([c66c618](https://github.com/vicanso/pingap/commit/c66c618ff6263fc73c890ea8e4d0da5b24eed7c1))
+- Support more path options for pid file to facilitate non-root user execution - ([6d70d48](https://github.com/vicanso/pingap/commit/6d70d4804d8a1e6a0168f33fa3425681f6829a8f))
+- Adjust open telemetry service name - ([032f544](https://github.com/vicanso/pingap/commit/032f54436435c0d3fbed0566409241d3056c8999))
+- Adjust dependencies of open telemetry - ([d807e11](https://github.com/vicanso/pingap/commit/d807e11ae5cc2199c39c0faf46bd5923897717ff))
+
+### 🧪 Testing
+
+- Fix test of generate server timing - ([b205ac0](https://github.com/vicanso/pingap/commit/b205ac0f30c735c729196d374a9cd1c5d01710a9))
+- Fix test of server config - ([c1534d3](https://github.com/vicanso/pingap/commit/c1534d3705571555a30e5c5aab51d4f4f9aa17a5))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update rust version to 1.84.0 - ([f8d789c](https://github.com/vicanso/pingap/commit/f8d789c53e2578c4599615a24df48965ac401f83))
+- Update machete version for github workflow - ([9cc0495](https://github.com/vicanso/pingap/commit/9cc04957bf00d304b7b7a24fadd890feabe2f262))
+- Use edition 2024 - ([609878f](https://github.com/vicanso/pingap/commit/609878ffd1a10aaff9db7bc6c5df44650af958b6))
+- Update github workflow - ([862814b](https://github.com/vicanso/pingap/commit/862814b01e639e336833fcd7cc367f9c77a36abc))
+- Update msrv - ([5df07a6](https://github.com/vicanso/pingap/commit/5df07a6fb6a23db40d3d11aadf47457514fa422e))
+- Update github workflow for rust 1.74.0 - ([c1b9d7a](https://github.com/vicanso/pingap/commit/c1b9d7a96983f2736761517373b64a526c6e176d))
+- Support aarch64 full feature release - ([89a358f](https://github.com/vicanso/pingap/commit/89a358f7d135364b759e3daa1afddf28ba580ec0))
+
 ## [0.10.1](https://github.com/vicanso/pingap/compare/v0.10.1..0.10.1) - 2025-02-22
 
 ### 🚜 Refactor
