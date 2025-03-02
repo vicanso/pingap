@@ -83,6 +83,10 @@ export default function Home() {
       });
     });
   }
+  serverSummary.sort((item1, item2) => {
+    return item1.name.localeCompare(item2.name);
+  });
+
   let locationDescription = "";
   const locationSummary: Summary[] = [];
   if (config.locations) {
@@ -137,6 +141,9 @@ export default function Home() {
       });
     });
   }
+  upstreamSummary.sort((item1, item2) => {
+    return item1.name.localeCompare(item2.name);
+  });
 
   let pluginDescription = "";
   const pluginSummary: Summary[] = [];
@@ -155,6 +162,9 @@ export default function Home() {
       item1.value.localeCompare(item2.value),
     );
   }
+  pluginSummary.sort((item1, item2) => {
+    return item1.name.localeCompare(item2.name);
+  });
 
   let certificateDescription = "";
   const certificateSummary: Summary[] = [];
@@ -176,6 +186,9 @@ export default function Home() {
       });
     });
   }
+  certificateSummary.sort((item1, item2) => {
+    return item1.name.localeCompare(item2.name);
+  });
 
   const items = [
     {
