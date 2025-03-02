@@ -162,9 +162,13 @@ impl Certificate {
     ///
     /// # Returns
     /// * `bool` - True if the certificate is valid, false otherwise
-    pub fn valid(&self) -> bool {
+    pub fn valid(&self, buffer_days: u16) -> bool {
         let ts = pingap_util::now_sec() as i64;
-        self.not_after - ts > 2 * 24 * 3600
+        let mut days = buffer_days as i64;
+        if days == 0 {
+            days = 2;
+        }
+        self.not_after - ts > days * 24 * 3600
     }
     /// Returns the PEM-encoded certificate data
     ///
@@ -183,8 +187,8 @@ impl Certificate {
 }
 
 pub use dynamic_certificate::{
-    get_certificate_info_list, try_update_certificates, GlobalCertificate,
-    TlsSettingParams,
+    get_certificate_info_list, list_certificates, try_update_certificates,
+    GlobalCertificate, TlsSettingParams,
 };
 pub use self_signed::new_self_signed_certificate_validity_service;
 pub use tls_certificate::TlsCertificate;
@@ -251,6 +255,6 @@ CRVQZGgOQL6WDg3tUUDXYOs=
         assert_eq!(1720232616, cert.not_before);
         assert_eq!(1791253416, cert.not_after);
         assert_eq!("mkcert vicanso@tree", cert.get_issuer_common_name());
-        assert_eq!(true, cert.valid());
+        assert_eq!(true, cert.valid(2));
     }
 }

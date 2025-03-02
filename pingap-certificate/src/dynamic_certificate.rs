@@ -123,6 +123,14 @@ pub fn try_update_certificates(
 /// Retrieves a list of all certificates and their associated information
 ///
 /// # Returns
+/// * `Arc<DynamicCertificates>` - List of tuples containing certificate names and their info
+pub fn list_certificates() -> Arc<DynamicCertificates> {
+    DYNAMIC_CERTIFICATE_MAP.load().clone()
+}
+
+/// Retrieves a list of all certificates and their associated information
+///
+/// # Returns
 /// * `Vec<(String, Certificate)>` - List of tuples containing certificate names and their info
 ///
 /// The name will be either the configured certificate name or the domain name if no

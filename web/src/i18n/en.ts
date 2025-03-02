@@ -259,6 +259,8 @@ export default {
     acme: "Acme",
     isDefault: "Default Certificate",
     isCa: "Certificate Authority",
+    bufferDays: "Buffer Days",
+    bufferDaysPlaceholder: "Input the buffer days for certificate",
   },
   plugin: {
     name: "Name",

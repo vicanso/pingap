@@ -134,6 +134,14 @@ export default function Certificates() {
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
+    {
+      name: "buffer_days",
+      label: certificateI18n("bufferDays"),
+      placeholder: certificateI18n("bufferDaysPlaceholder"),
+      defaultValue: certificateConfig.buffer_days,
+      span: 3,
+      category: ExFormItemCategory.NUMBER,
+    },
   ];
 
   let defaultShow = 2;

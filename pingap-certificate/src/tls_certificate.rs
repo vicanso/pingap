@@ -48,6 +48,8 @@ pub struct TlsCertificate {
     pub hash_key: String,
     // Indicates if this certificate is a Certificate Authority
     pub is_ca: bool,
+    // Buffer days for certificate renewal
+    pub buffer_days: u16,
 }
 
 impl TryFrom<&CertificateConf> for TlsCertificate {
@@ -110,6 +112,7 @@ impl TryFrom<&CertificateConf> for TlsCertificate {
             certificate: Some((cert, key)),
             info: Some(info),
             is_ca: value.is_ca.unwrap_or_default(),
+            buffer_days: value.buffer_days.unwrap_or_default(),
             ..Default::default()
         })
     }

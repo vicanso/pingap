@@ -12,79 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_certificate_info_list, Certificate, LOG_CATEGORY};
+use super::{list_certificates, LOG_CATEGORY};
 use pingap_core::Error as ServiceError;
 use pingap_core::{
     NotificationData, NotificationLevel, SimpleServiceTaskFuture,
 };
 use pingap_webhook::send_notification;
-use snafu::Snafu;
 use tracing::error;
 
 /// Number of seconds in a day
 const SECONDS_PER_DAY: i64 = 24 * 3600;
 /// Default certificate expiration warning threshold (7 days)
-const DEFAULT_EXPIRATION_WARNING_DAYS: i64 = 7;
+const DEFAULT_EXPIRATION_WARNING_DAYS: u16 = 7;
 /// Check interval in minutes
 const CHECK_INTERVAL_MINUTES: u32 = 24 * 60;
-
-/// Certificate validity error types
-#[derive(Debug, Snafu)]
-pub enum ValidityError {
-    #[snafu(display("{name} cert will expire on {date}, issuer: {issuer}"))]
-    WillExpire {
-        name: String,
-        issuer: String,
-        date: i64,
-    },
-    #[snafu(display("{name} cert not valid until {date}, issuer: {issuer}"))]
-    NotYetValid {
-        name: String,
-        issuer: String,
-        date: i64,
-    },
-}
-
-/// Checks the validity of certificates against current time and expiration threshold
-///
-/// # Arguments
-///
-/// * `validity_list` - List of tuples containing certificate name and certificate data
-/// * `time_offset` - Time offset in seconds to check for upcoming expiration
-///
-/// # Returns
-///
-/// * `Ok(())` if all certificates are valid
-/// * `Err(ValidityError)` if any certificate is invalid or about to expire
-fn validity_check(
-    validity_list: &[(String, Certificate)],
-    time_offset: i64,
-) -> Result<(), ValidityError> {
-    let now = pingap_util::now_sec() as i64;
-    for (name, cert) in validity_list.iter() {
-        // Skip ACME certificates as they auto-update
-        if cert.acme.is_some() {
-            continue;
-        }
-
-        if now > cert.not_after - time_offset {
-            return Err(ValidityError::WillExpire {
-                name: name.clone(),
-                issuer: cert.issuer.clone(),
-                date: cert.not_after,
-            });
-        }
-
-        if now < cert.not_before {
-            return Err(ValidityError::NotYetValid {
-                name: name.clone(),
-                issuer: cert.issuer.clone(),
-                date: cert.not_before,
-            });
-        }
-    }
-    Ok(())
-}
 
 /// Performs periodic certificate validity checks and sends notifications for issues
 ///
@@ -102,15 +43,52 @@ async fn do_validity_check(count: u32) -> Result<bool, ServiceError> {
         return Ok(false);
     }
 
-    let certificate_info_list = get_certificate_info_list();
-    let time_offset = DEFAULT_EXPIRATION_WARNING_DAYS * SECONDS_PER_DAY;
+    let now = pingap_util::now_sec() as i64;
+    let mut name_list = vec![];
+    for (name, cert) in list_certificates().iter() {
+        let Some(info) = &cert.info else {
+            continue;
+        };
+        if info.acme.is_some() {
+            continue;
+        }
+        let mut buffer_days = cert.buffer_days;
+        if buffer_days == 0 {
+            buffer_days = DEFAULT_EXPIRATION_WARNING_DAYS;
+        }
+        let time_offset = (buffer_days as i64) * SECONDS_PER_DAY;
 
-    if let Err(err) = validity_check(&certificate_info_list, time_offset) {
-        error!(category = LOG_CATEGORY, task = "validity_checker", error = %err);
+        if now > info.not_after - time_offset {
+            error!(
+                category = LOG_CATEGORY,
+                expired_date = info.not_after.to_string(),
+                name,
+                "certificate will expired",
+            );
+            name_list.push(name.clone());
+            continue;
+        }
+
+        if now < info.not_before {
+            error!(
+                category = LOG_CATEGORY,
+                valid_date = info.not_before.to_string(),
+                name,
+                "certificate is not valid",
+            );
+            name_list.push(name.clone());
+            continue;
+        }
+    }
+
+    if !name_list.is_empty() {
         send_notification(NotificationData {
             level: NotificationLevel::Warn,
             category: "tls_validity".to_string(),
-            message: err.to_string(),
+            message: format!(
+                "certificate {} will expired",
+                name_list.join(",")
+            ),
             ..Default::default()
         })
         .await;
@@ -129,57 +107,4 @@ pub fn new_certificate_validity_service() -> (String, SimpleServiceTaskFuture) {
     let task: SimpleServiceTaskFuture =
         Box::new(|count: u32| Box::pin(do_validity_check(count)));
     ("validity_checker".to_string(), task)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use pretty_assertions::assert_eq;
-    use x509_parser::time::ASN1Time;
-
-    #[test]
-    fn test_validity_check() {
-        let result = validity_check(
-            &[(
-                "Pingap".to_string(),
-                Certificate {
-                    not_after: ASN1Time::from_timestamp(2651852800)
-                        .unwrap()
-                        .timestamp(),
-                    not_before: ASN1Time::from_timestamp(2651852800)
-                        .unwrap()
-                        .timestamp(),
-                    issuer: "pingap".to_string(),
-                    ..Default::default()
-                },
-            )],
-            7 * 24 * 3600,
-        );
-
-        assert_eq!(
-            "Pingap cert not valid until 2651852800, issuer: pingap",
-            result.unwrap_err().to_string()
-        );
-
-        let result = validity_check(
-            &[(
-                "Pingap".to_string(),
-                Certificate {
-                    not_after: ASN1Time::from_timestamp(2651852800)
-                        .unwrap()
-                        .timestamp(),
-                    not_before: ASN1Time::from_timestamp(2651852800)
-                        .unwrap()
-                        .timestamp(),
-                    issuer: "pingap".to_string(),
-                    ..Default::default()
-                },
-            )],
-            7 * 24 * 3600,
-        );
-        assert_eq!(
-            "Pingap cert not valid until 2651852800, issuer: pingap",
-            result.unwrap_err().to_string()
-        );
-    }
 }

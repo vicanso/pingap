@@ -243,6 +243,8 @@ export default {
     acme: "acme",
     isDefault: "是否默认证书",
     isCa: "CA证书",
+    bufferDays: "证书有效期校验、更新预留时长",
+    bufferDaysPlaceholder: "输入证书有效期校验、更新预留时长",
   },
   plugin: {
     name: "名称",

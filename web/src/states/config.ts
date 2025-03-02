@@ -107,6 +107,7 @@ export interface Certificate {
   acme?: string;
   is_default?: boolean;
   is_ca?: boolean;
+  buffer_days?: number;
   remark?: string;
 }
 

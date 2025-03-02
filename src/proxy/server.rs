@@ -372,6 +372,7 @@ impl Server {
             threads,
             is_tls,
             h2 = enabled_h2,
+            tcp_socket_options = format!("{:?}", tcp_socket_options),
             "server is listening"
         );
         let cipher_list = self.tls_cipher_list.clone();

@@ -73,6 +73,14 @@ async fn update_certificate_lets_encrypt(
     Ok(conf)
 }
 
+/// File cache parameters
+#[derive(Debug, Clone)]
+struct UpdateCertificateParams {
+    name: String,
+    domains: Vec<String>,
+    buffer_days: u16,
+}
+
 /// Periodically checks and updates certificates that need renewal.
 /// A certificate needs renewal if:
 /// - It is invalid or expired
@@ -83,7 +91,7 @@ async fn update_certificate_lets_encrypt(
 async fn do_update_certificates(
     count: u32,
     storage: &'static (dyn ConfigStorage + Sync + Send),
-    params: &[(String, Vec<String>)],
+    params: &[UpdateCertificateParams],
 ) -> Result<bool, ServiceError> {
     if params.is_empty() {
         return Ok(false);
@@ -93,11 +101,13 @@ async fn do_update_certificates(
         return Ok(false);
     }
 
-    for (name, domains) in params.iter() {
+    for item in params.iter() {
+        let name = &item.name;
+        let domains = &item.domains;
         let should_renew = match get_lets_encrypt_certificate(name) {
             Ok(certificate) => {
                 // check if certificate is valid or domains changed
-                let needs_renewal = !certificate.valid();
+                let needs_renewal = !certificate.valid(item.buffer_days);
                 let domains_changed = {
                     let mut sorted_domains = domains.clone();
                     let mut cert_domains = certificate.domains.clone();
@@ -202,13 +212,16 @@ pub fn new_lets_encrypt_service(
                     if acme.is_empty() || domains.is_empty() {
                         continue;
                     }
-                    params.push((
-                        name.to_string(),
-                        domains
+                    params.push(UpdateCertificateParams {
+                        name: name.to_string(),
+                        buffer_days: certificate
+                            .buffer_days
+                            .unwrap_or_default(),
+                        domains: domains
                             .split(',')
                             .map(|item| item.to_string())
                             .collect(),
-                    ));
+                    });
                 }
                 do_update_certificates(count, storage, &params).await
             }
