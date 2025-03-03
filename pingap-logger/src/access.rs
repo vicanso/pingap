@@ -682,8 +682,8 @@ mod tests {
 {scheme} {uri} {referer} {user_agent} {size} \
 {size_human} {status} {payload_size} {payload_size_human} \
 {~deviceId} {>accept} {:upstream_reused} {:upstream_addr} \
-{:processing} {:upstream_connect_time} {:location} \
-{:connection_time} {:tls_version} {request_id}"
+{:processing} {:upstream_connect_time_human} {:location} \
+{:connection_time_human} {:tls_version} {request_id}"
                 .into();
         let headers = [
             "Host: github.com",

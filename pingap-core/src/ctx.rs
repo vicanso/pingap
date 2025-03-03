@@ -27,21 +27,39 @@ use pingora::cache::CacheKey;
 use pingora_limits::inflight::Guard;
 use std::time::Duration;
 
-const SEC: u64 = 1_000;
+const SECOND: u64 = 1_000;
+const MINUTE: u64 = 60 * SECOND;
+const HOUR: u64 = 60 * MINUTE;
 
 #[inline]
 fn format_duration(mut buf: BytesMut, ms: u64) -> BytesMut {
-    if ms < SEC {
-        buf.extend(itoa::Buffer::new().format(ms).as_bytes());
-        buf.extend(b"ms");
-    } else {
-        buf.extend(itoa::Buffer::new().format(ms / SEC).as_bytes());
-        let value = (ms % SEC) / 100;
+    if ms >= HOUR {
+        buf.extend(itoa::Buffer::new().format(ms / HOUR).as_bytes());
+        let value = ms % HOUR * 10 / HOUR;
+        if value != 0 {
+            buf.extend(b".");
+            buf.extend(itoa::Buffer::new().format(value).as_bytes());
+        }
+        buf.extend(b"h");
+    } else if ms >= MINUTE {
+        buf.extend(itoa::Buffer::new().format(ms / MINUTE).as_bytes());
+        let value = ms % MINUTE * 10 / MINUTE;
+        if value != 0 {
+            buf.extend(b".");
+            buf.extend(itoa::Buffer::new().format(value).as_bytes());
+        }
+        buf.extend(b"m");
+    } else if ms >= SECOND {
+        buf.extend(itoa::Buffer::new().format(ms / SECOND).as_bytes());
+        let value = (ms % SECOND) / 100;
         if value != 0 {
             buf.extend(b".");
             buf.extend(itoa::Buffer::new().format(value).as_bytes());
         }
         buf.extend(b"s");
+    } else {
+        buf.extend(itoa::Buffer::new().format(ms).as_bytes());
+        buf.extend(b"ms");
     }
     buf
 }
@@ -310,6 +328,11 @@ impl Ctx {
                 .extend(itoa::Buffer::new().format(self.processing).as_bytes()),
             "upstream_connect_time" => {
                 if let Some(ms) = self.get_upstream_connect_time() {
+                    buf.extend(itoa::Buffer::new().format(ms).as_bytes());
+                }
+            },
+            "upstream_connect_time_human" => {
+                if let Some(ms) = self.get_upstream_connect_time() {
                     buf = format_duration(buf, ms);
                 }
             },
@@ -320,25 +343,50 @@ impl Ctx {
             },
             "upstream_processing_time" => {
                 if let Some(ms) = self.get_upstream_processing_time() {
+                    buf.extend(itoa::Buffer::new().format(ms).as_bytes());
+                }
+            },
+            "upstream_processing_time_human" => {
+                if let Some(ms) = self.get_upstream_processing_time() {
                     buf = format_duration(buf, ms);
                 }
             },
             "upstream_response_time" => {
+                if let Some(ms) = self.get_upstream_response_time() {
+                    buf.extend(itoa::Buffer::new().format(ms).as_bytes());
+                }
+            },
+            "upstream_response_time_human" => {
                 if let Some(ms) = self.get_upstream_response_time() {
                     buf = format_duration(buf, ms);
                 }
             },
             "upstream_tcp_connect_time" => {
                 if let Some(ms) = self.upstream_tcp_connect_time {
+                    buf.extend(itoa::Buffer::new().format(ms).as_bytes());
+                }
+            },
+            "upstream_tcp_connect_time_human" => {
+                if let Some(ms) = self.upstream_tcp_connect_time {
                     buf = format_duration(buf, ms);
                 }
             },
             "upstream_tls_handshake_time" => {
                 if let Some(ms) = self.upstream_tls_handshake_time {
+                    buf.extend(itoa::Buffer::new().format(ms).as_bytes());
+                }
+            },
+            "upstream_tls_handshake_time_human" => {
+                if let Some(ms) = self.upstream_tls_handshake_time {
                     buf = format_duration(buf, ms);
                 }
             },
             "upstream_connection_time" => {
+                if let Some(ms) = self.upstream_connection_time {
+                    buf.extend(itoa::Buffer::new().format(ms).as_bytes());
+                }
+            },
+            "upstream_connection_time_human" => {
                 if let Some(ms) = self.upstream_connection_time {
                     buf = format_duration(buf, ms);
                 }
@@ -349,6 +397,11 @@ impl Ctx {
                 }
             },
             "connection_time" => {
+                buf.extend(
+                    itoa::Buffer::new().format(self.connection_time).as_bytes(),
+                );
+            },
+            "connection_time_human" => {
                 buf = format_duration(buf, self.connection_time)
             },
             "connection_reused" => {
@@ -369,11 +422,25 @@ impl Ctx {
                 }
             },
             "tls_handshake_time" => {
+                if let Some(ms) = self.tls_handshake_time {
+                    buf.extend(itoa::Buffer::new().format(ms).as_bytes());
+                }
+            },
+            "tls_handshake_time_human" => {
                 if let Some(value) = self.tls_handshake_time {
                     buf = format_duration(buf, value);
                 }
             },
             "compression_time" => {
+                if let Some(value) = &self.compression_stat {
+                    buf.extend(
+                        itoa::Buffer::new()
+                            .format(value.duration.as_millis() as u64)
+                            .as_bytes(),
+                    );
+                }
+            },
+            "compression_time_human" => {
                 if let Some(value) = &self.compression_stat {
                     buf =
                         format_duration(buf, value.duration.as_millis() as u64);
@@ -386,15 +453,32 @@ impl Ctx {
             },
             "cache_lookup_time" => {
                 if let Some(ms) = self.cache_lookup_time {
+                    buf.extend(itoa::Buffer::new().format(ms).as_bytes());
+                }
+            },
+            "cache_lookup_time_human" => {
+                if let Some(ms) = self.cache_lookup_time {
                     buf = format_duration(buf, ms);
                 }
             },
             "cache_lock_time" => {
                 if let Some(ms) = self.cache_lock_time {
+                    buf.extend(itoa::Buffer::new().format(ms).as_bytes());
+                }
+            },
+            "cache_lock_time_human" => {
+                if let Some(ms) = self.cache_lock_time {
                     buf = format_duration(buf, ms);
                 }
             },
             "service_time" => {
+                buf.extend(
+                    itoa::Buffer::new()
+                        .format(now_ms() - self.created_at)
+                        .as_bytes(),
+                );
+            },
+            "service_time_human" => {
                 buf = format_duration(buf, now_ms() - self.created_at)
             },
             _ => {},
@@ -500,6 +584,26 @@ mod tests {
     #[test]
     fn test_format_duration() {
         let mut buf = BytesMut::new();
+        buf = format_duration(buf, (3600 + 3500) * 1000);
+        assert_eq!(b"1.9h", buf.as_ref());
+
+        buf = BytesMut::new();
+        buf = format_duration(buf, (3600 + 1800) * 1000);
+        assert_eq!(b"1.5h", buf.as_ref());
+
+        buf = BytesMut::new();
+        buf = format_duration(buf, (3600 + 100) * 1000);
+        assert_eq!(b"1h", buf.as_ref());
+
+        buf = BytesMut::new();
+        buf = format_duration(buf, (60 + 50) * 1000);
+        assert_eq!(b"1.8m", buf.as_ref());
+
+        buf = BytesMut::new();
+        buf = format_duration(buf, (60 + 2) * 1000);
+        assert_eq!(b"1m", buf.as_ref());
+
+        buf = BytesMut::new();
         buf = format_duration(buf, 1000);
         assert_eq!(b"1s", buf.as_ref());
 
@@ -590,8 +694,13 @@ mod tests {
 
         ctx.upstream_connect_time = Some(1);
         assert_eq!(
-            b"1ms",
+            b"1",
             ctx.append_value(BytesMut::new(), "upstream_connect_time")
+                .as_ref()
+        );
+        assert_eq!(
+            b"1ms",
+            ctx.append_value(BytesMut::new(), "upstream_connect_time_human")
                 .as_ref()
         );
 
@@ -604,35 +713,67 @@ mod tests {
 
         ctx.upstream_processing_time = Some(2);
         assert_eq!(
-            b"2ms",
+            b"2",
             ctx.append_value(BytesMut::new(), "upstream_processing_time")
+                .as_ref()
+        );
+        assert_eq!(
+            b"2ms",
+            ctx.append_value(BytesMut::new(), "upstream_processing_time_human")
                 .as_ref()
         );
 
         ctx.upstream_response_time = Some(3);
         assert_eq!(
-            b"3ms",
+            b"3",
             ctx.append_value(BytesMut::new(), "upstream_response_time")
+                .as_ref()
+        );
+        assert_eq!(
+            b"3ms",
+            ctx.append_value(BytesMut::new(), "upstream_response_time_human")
                 .as_ref()
         );
 
         ctx.upstream_tcp_connect_time = Some(100);
         assert_eq!(
-            b"100ms",
+            b"100",
             ctx.append_value(BytesMut::new(), "upstream_tcp_connect_time")
                 .as_ref()
         );
+        assert_eq!(
+            b"100ms",
+            ctx.append_value(
+                BytesMut::new(),
+                "upstream_tcp_connect_time_human"
+            )
+            .as_ref()
+        );
+
         ctx.upstream_tls_handshake_time = Some(110);
         assert_eq!(
-            b"110ms",
+            b"110",
             ctx.append_value(BytesMut::new(), "upstream_tls_handshake_time")
                 .as_ref()
+        );
+        assert_eq!(
+            b"110ms",
+            ctx.append_value(
+                BytesMut::new(),
+                "upstream_tls_handshake_time_human"
+            )
+            .as_ref()
         );
 
         ctx.upstream_connection_time = Some(120);
         assert_eq!(
-            b"120ms",
+            b"120",
             ctx.append_value(BytesMut::new(), "upstream_connection_time")
+                .as_ref()
+        );
+        assert_eq!(
+            b"120ms",
+            ctx.append_value(BytesMut::new(), "upstream_connection_time_human")
                 .as_ref()
         );
 
@@ -644,8 +785,13 @@ mod tests {
 
         ctx.connection_time = 4;
         assert_eq!(
-            b"4ms",
+            b"4",
             ctx.append_value(BytesMut::new(), "connection_time")
+                .as_ref()
+        );
+        assert_eq!(
+            b"4ms",
+            ctx.append_value(BytesMut::new(), "connection_time_human")
                 .as_ref()
         );
 
@@ -673,10 +819,16 @@ mod tests {
             b"ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
             ctx.append_value(BytesMut::new(), "tls_cipher").as_ref()
         );
+
         ctx.tls_handshake_time = Some(101);
         assert_eq!(
-            b"101ms",
+            b"101",
             ctx.append_value(BytesMut::new(), "tls_handshake_time")
+                .as_ref()
+        );
+        assert_eq!(
+            b"101ms",
+            ctx.append_value(BytesMut::new(), "tls_handshake_time_human")
                 .as_ref()
         );
 
@@ -686,8 +838,13 @@ mod tests {
             duration: Duration::from_millis(5),
         });
         assert_eq!(
-            b"5ms",
+            b"5",
             ctx.append_value(BytesMut::new(), "compression_time")
+                .as_ref()
+        );
+        assert_eq!(
+            b"5ms",
+            ctx.append_value(BytesMut::new(), "compression_time_human")
                 .as_ref()
         );
         assert_eq!(
@@ -698,22 +855,32 @@ mod tests {
 
         ctx.cache_lookup_time = Some(6);
         assert_eq!(
-            b"6ms",
+            b"6",
             ctx.append_value(BytesMut::new(), "cache_lookup_time")
+                .as_ref()
+        );
+        assert_eq!(
+            b"6ms",
+            ctx.append_value(BytesMut::new(), "cache_lookup_time_human")
                 .as_ref()
         );
 
         ctx.cache_lock_time = Some(7);
         assert_eq!(
-            b"7ms",
+            b"7",
             ctx.append_value(BytesMut::new(), "cache_lock_time")
+                .as_ref()
+        );
+        assert_eq!(
+            b"7ms",
+            ctx.append_value(BytesMut::new(), "cache_lock_time_human")
                 .as_ref()
         );
 
         ctx.created_at = now_ms() - 1;
         assert_eq!(
             true,
-            ctx.append_value(BytesMut::new(), "service_time")
+            ctx.append_value(BytesMut::new(), "service_time_human")
                 .ends_with(b"ms")
         );
     }

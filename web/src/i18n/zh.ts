@@ -105,7 +105,7 @@ export default {
     cacheDirectory: "缓存目录",
     cacheDirectoryPlaceholder: "输入文件缓存目录(如/opt/cache)",
     cacheMaxSize: "缓存空间最大限制",
-    cacheMaxSizePlaceholder: "输入最大缓存空间限制(如100mb)",
+    cacheMaxSizePlaceholder: "输入最大缓存空间限制(如100mb), 仅对内存缓存有效",
     upgradeSock: "更新配置使用的sock",
     upgradeSockPlaceholder: "输入后台服务更新配置使用的sock",
     user: "启用后台服务的用户",

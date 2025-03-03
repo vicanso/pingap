@@ -63,7 +63,7 @@ async fn do_validity_check(count: u32) -> Result<bool, ServiceError> {
                 category = LOG_CATEGORY,
                 expired_date = info.not_after.to_string(),
                 name,
-                "certificate will expired",
+                "certificate will be expired",
             );
             name_list.push(name.clone());
             continue;
@@ -86,7 +86,7 @@ async fn do_validity_check(count: u32) -> Result<bool, ServiceError> {
             level: NotificationLevel::Warn,
             category: "tls_validity".to_string(),
             message: format!(
-                "certificate {} will expired",
+                "certificate {} will be expired",
                 name_list.join(",")
             ),
             ..Default::default()

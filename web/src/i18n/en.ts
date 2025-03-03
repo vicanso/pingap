@@ -108,7 +108,7 @@ export default {
     cacheDirectoryPlaceholder:
       "Input the file cache directory(e.g. /opt/cache)",
     cacheMaxSize: "Cache Max Size",
-    cacheMaxSizePlaceholder: "Input max size of cache(e.g. 100mb)",
+    cacheMaxSizePlaceholder: "Input max size of cache(e.g. 100mb), it's only for memory cache",
     upgradeSock: "Upgrade Sock For Daemon",
     upgradeSockPlaceholder: "Input upgrade unix sock for daemon",
     user: "User For Daemon",

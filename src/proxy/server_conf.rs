@@ -36,7 +36,6 @@ pub struct ServerConf {
     pub access_log: Option<String>,
 
     // List of location route identifiers that this server will handle
-    // These correspond to the location configurations defined elsewhere
     pub locations: Vec<String>,
 
     // OpenSSL cipher list string for TLS versions below 1.3
@@ -76,7 +75,7 @@ pub struct ServerConf {
     pub global_certificates: bool,
 
     // Whether HTTP/2 protocol support is enabled for this server
-    // False means the server is using h2c protocol
+    // The http protocol is using h2c
     pub enabled_h2: bool,
 
     // Endpoint path for exposing Prometheus metrics

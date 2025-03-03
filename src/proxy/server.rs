@@ -320,6 +320,7 @@ impl Server {
                         error!(
                             category = LOG_CATEGORY,
                             error = %e,
+                            name = self.name,
                             "new prometheus push service fail"
                         );
                         None
@@ -896,7 +897,8 @@ impl ProxyHttp for Server {
 
         debug!(
             category = LOG_CATEGORY,
-            name = location.name,
+            server = self.name,
+            location = location.name,
             "location is matched"
         );
         location.rewrite(header, ctx.variables.as_ref());
@@ -1401,9 +1403,16 @@ impl ProxyHttp for Server {
         let _ = resp
             .insert_header(http::header::CONTENT_LENGTH, buf.len().to_string());
 
+        let user_agent = server_session
+            .get_header(http::header::USER_AGENT)
+            .map(|v| v.clone().to_str().unwrap_or_default().to_string());
+
         error!(
             category = LOG_CATEGORY,
             error = %e,
+            remote_addr = ctx.remote_addr,
+            client_ip = ctx.client_ip,
+            user_agent,
             error_type,
             path = server_session.req_header().uri.path(),
             "fail to proxy"

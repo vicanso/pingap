@@ -276,10 +276,10 @@ fn bench_logger_format(c: &mut Criterion) {
 {when_unix} {size} {size_human} {status} {latency} \
 {payload_size} {latency_human} {payload_size} \
 {payload_size_human} {request_id} \
-{:upstream_reused} {:upstream_addr} {:processing} {:upstream_connect_time} \
-{:upstream_connected} {:upstream_processing_time} {:upstream_response_time} \
-{:location} {:established} {:tls_version} {:compression_time} \
-{:compression_ratio} {:cache_lookup_time} {:cache_lock_time} \
+{:upstream_reused} {:upstream_addr} {:processing} {:upstream_connect_time_human} \
+{:upstream_connected} {:upstream_processing_time_human} {:upstream_response_time_human} \
+{:location} {:established} {:tls_version} {:compression_time_human} \
+{:compression_ratio} {:cache_lookup_time_human} {:cache_lock_time_human} \
 {~deviceId} {>accept} {:reused}"
                 .into();
         let ctx = Ctx {
