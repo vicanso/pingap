@@ -94,7 +94,7 @@ locations = ["lo"]
 
 # OpenTelemetry (OTLP) exporter endpoint for distributed tracing and metrics, it's supported only on full feature release.
 # Examples :
-# - http://localhost:4317/?timeout=10s&max_queue_size=1000&scheduled_delay=10s&max_export_batch_size=100&max_export_timeout=10s&max_attributes=100&max_events=100&jaeger
+# - http://localhost:4317/?timeout=10s&max_queue_size=1000&scheduled_delay=10s&max_export_batch_size=100&max_export_timeout=10s&max_attributes=100&max_events=100&jaeger&compression=zstd
 # Default `none`
 # otlp_exporter = ""
 

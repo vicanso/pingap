@@ -21,9 +21,6 @@ bench:
 	cargo bench
 
 dev:
-	RUST_LOG=INFO cargo watch -w src -x 'run -- -c=~/github/pingap/conf/pingap.toml'
-
-devtest:
 	RUST_LOG=INFO cargo watch -w src -x 'run -- -c=~/tmp/pingap?separation --admin=pingap:123123@127.0.0.1:3018 --autoreload'
 
 devetcd:

@@ -20,7 +20,7 @@ use opentelemetry::{
     propagation::{TextMapCompositePropagator, TextMapPropagator},
     trace::TracerProvider,
 };
-use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_otlp::{Compression, WithExportConfig, WithTonicConfig};
 use opentelemetry_sdk::{
     propagation::{BaggagePropagator, TraceContextPropagator},
     trace::{BatchConfigBuilder, RandomIdGenerator, Sampler},
@@ -63,6 +63,7 @@ pub struct TracerConfig {
     support_jaeger_propagator: bool,
     /// Enable W3C Baggage propagation format support
     support_baggage_propagator: bool,
+    compression: Option<Compression>,
 }
 
 impl Default for TracerConfig {
@@ -77,6 +78,7 @@ impl Default for TracerConfig {
             max_export_timeout: DEFAULT_MAX_EXPORT_TIMEOUT,
             support_jaeger_propagator: false,
             support_baggage_propagator: false,
+            compression: None,
         }
     }
 }
@@ -187,6 +189,13 @@ impl TracerServiceBuilder {
                 "baggage" => {
                     self.config.support_baggage_propagator = true;
                 },
+                "compression" => {
+                    if value.to_lowercase() == "zstd" {
+                        self.config.compression = Some(Compression::Zstd);
+                    } else {
+                        self.config.compression = Some(Compression::Gzip);
+                    }
+                },
                 _ => {},
             }
         }
@@ -232,16 +241,17 @@ pub fn new_http_proxy_tracer(name: &str) -> Option<BoxedTracer> {
 impl BackgroundService for TracerService {
     /// Open telemetry background service, it will schedule export data to server.
     async fn start(&self, mut shutdown: ShutdownWatch) {
-        let result = opentelemetry_otlp::SpanExporter::builder()
+        let mut builder = opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()
             .with_endpoint(&self.endpoint)
-            .with_timeout(self.config.timeout)
-            .build()
-            .map(|exporter| {
-                let batch =
-                    opentelemetry_sdk::trace::BatchSpanProcessor::builder(
-                        exporter,
-                    )
+            .with_timeout(self.config.timeout);
+        if let Some(compression) = self.config.compression {
+            builder = builder.with_compression(compression);
+        }
+
+        let result = builder.build().map(|exporter| {
+            let batch =
+                opentelemetry_sdk::trace::BatchSpanProcessor::builder(exporter)
                     .with_batch_config(
                         BatchConfigBuilder::default()
                             .with_max_queue_size(self.config.max_queue_size)
@@ -255,19 +265,19 @@ impl BackgroundService for TracerService {
                             .build(),
                     )
                     .build();
-                opentelemetry_sdk::trace::SdkTracerProvider::builder()
-                    .with_span_processor(batch)
-                    .with_sampler(Sampler::AlwaysOn)
-                    .with_id_generator(RandomIdGenerator::default())
-                    .with_max_attributes_per_span(self.config.max_attributes)
-                    .with_max_events_per_span(self.config.max_events)
-                    .with_resource(
-                        Resource::builder()
-                            .with_service_name(get_service_name(&self.name))
-                            .build(),
-                    )
-                    .build()
-            });
+            opentelemetry_sdk::trace::SdkTracerProvider::builder()
+                .with_span_processor(batch)
+                .with_sampler(Sampler::AlwaysOn)
+                .with_id_generator(RandomIdGenerator::default())
+                .with_max_attributes_per_span(self.config.max_attributes)
+                .with_max_events_per_span(self.config.max_events)
+                .with_resource(
+                    Resource::builder()
+                        .with_service_name(get_service_name(&self.name))
+                        .build(),
+                )
+                .build()
+        });
 
         match result {
             Ok(tracer_provider) => {

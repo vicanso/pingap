@@ -1232,12 +1232,12 @@ impl ProxyHttp for Server {
             if span_context.is_valid() {
                 // Add trace ID
                 let _ = upstream_response.insert_header(
-                    "X-Trace-ID",
+                    "X-Trace-Id",
                     span_context.trace_id().to_string(),
                 );
                 // Add span ID
                 let _ = upstream_response.insert_header(
-                    "X-Span-ID",
+                    "X-Span-Id",
                     span_context.span_id().to_string(),
                 );
             }
