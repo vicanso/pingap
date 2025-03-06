@@ -77,6 +77,7 @@ export default {
     yes: "是",
     no: "否",
     to: "至",
+    locationSubTitle: "按权重排序",
   },
   basic: {
     name: "名称",

@@ -199,6 +199,7 @@ export default function Home() {
     },
     {
       title: "Location",
+      subTitle: homeI18n("locationSubTitle"),
       path: LOCATIONS,
       description: locationDescription,
       summary: locationSummary,
@@ -226,7 +227,9 @@ export default function Home() {
     return (
       <Card key={item.title}>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 relative">
-          <CardTitle className="text-sm font-medium ">{item.title}</CardTitle>
+          <CardTitle className="text-sm font-medium ">{item.title}
+            {item.subTitle && <span className="text-muted-foreground text-xs ml-2">{item.subTitle}</span>}
+          </CardTitle>
           <Link to={item.path} className="absolute top-3 right-3">
             <Button variant="ghost" size="icon">
               <FilePlus2 className="w-5 h-5" />

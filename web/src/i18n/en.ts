@@ -77,6 +77,7 @@ export default {
     yes: "Yes",
     no: "No",
     to: "to",
+    locationSubTitle: "Sort by weight",
   },
   basic: {
     name: "Name",
