@@ -1179,21 +1179,45 @@ impl ProxyHttp for Server {
         defer!(debug!(category = LOG_CATEGORY, "<-- response filter"););
         if session.cache.enabled() {
             // ignore insert header error
-            let _ = upstream_response.insert_header(
-                "X-Cache-Status",
-                session.cache.phase().as_str(),
-            );
+            let cache_status = session.cache.phase().as_str();
+            let _ =
+                upstream_response.insert_header("X-Cache-Status", cache_status);
+            #[cfg(feature = "full")]
+            let mut lookup_duration = "".to_string();
             if let Some(d) = session.cache.lookup_duration() {
+                #[cfg(feature = "full")]
+                {
+                    lookup_duration = humantime::Duration::from(d).to_string();
+                }
+
                 let ms = d.as_millis() as u64;
                 let _ = upstream_response
                     .insert_header("X-Cache-Lookup", format!("{ms}ms"));
                 ctx.cache_lookup_time = Some(ms);
             }
+            #[cfg(feature = "full")]
+            let mut lock_duration = "".to_string();
             if let Some(d) = session.cache.lock_duration() {
+                #[cfg(feature = "full")]
+                {
+                    lock_duration = humantime::Duration::from(d).to_string();
+                }
+
                 let ms = d.as_millis() as u64;
                 let _ = upstream_response
                     .insert_header("X-Cache-Lock", format!("{ms}ms"));
                 ctx.cache_lock_time = Some(ms);
+            }
+
+            #[cfg(feature = "full")]
+            // open telemetry
+            if let Some(ref mut tracer) = ctx.otel_tracer.as_mut() {
+                let attrs = vec![
+                    KeyValue::new("cache.status", cache_status),
+                    KeyValue::new("cache.lookup", lookup_duration),
+                    KeyValue::new("cache.lookup", lock_duration),
+                ];
+                tracer.http_request_span.set_attributes(attrs);
             }
         }
 
