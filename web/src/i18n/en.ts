@@ -33,6 +33,10 @@ export default {
   encrypt: "Encrypt",
   decrypt: "Decrypt",
   secret: "Secret",
+  base64: "Base64",
+  base64Tips: "Encode or decode base64 data",
+  encode: "Encode",
+  decode: "Decode",
   value: "Value",
   result: "Result",
   nav: {

@@ -42,6 +42,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import request from "@/helpers/request";
 import HTTPError from "@/helpers/http-error";
 
@@ -61,6 +62,9 @@ export function MainHeader({
     data: "",
   });
   const [aesResult, setAesResult] = React.useState("");
+
+  const [base64Type, setBase64Type] = React.useState("encode");
+  const [base64Data, setBase64Data] = React.useState("");
 
   const [fetchBasicInfo, basicInfo] = useBasicState(
     useShallow((state) => [state.fetch, state.data]),
@@ -191,6 +195,168 @@ export function MainHeader({
     logoData = LogoLight;
   }
 
+  const aesTab = <TabsContent value="aes" className="mt-2">
+    <div className="grid gap-4">
+      <div className="space-y-2">
+        <h4 className="font-medium leading-none">{t("aesGcm")}</h4>
+        <p className="text-sm text-muted-foreground">
+          {t("aesTips")}
+        </p>
+      </div>
+      <div className="grid gap-2">
+        <RadioGroup
+          className="flex flex-wrap items-start"
+          onValueChange={(option) => {
+            setAesType(option);
+          }}
+          defaultValue={aesType}
+        >
+          <RadioGroupItem value="encrypt" id="encrypt" />
+          <Label className="pl-2 cursor-pointer" htmlFor="encrypt">
+            {t("encrypt")}
+          </Label>
+          <RadioGroupItem value="decrypt" id="decrypt" />
+          <Label className="pl-2 cursor-pointer" htmlFor="decrypt">
+            {t("decrypt")}
+          </Label>
+        </RadioGroup>
+        <div className="flex">
+          <Label
+            htmlFor="secret"
+            className="flex-none leading-9 mr-4"
+          >
+            {t("secret")}
+          </Label>
+          <Input
+            id="secret"
+            className="grow"
+            onChange={(e) => {
+              aesData.key = e.target.value.trim();
+              setAesData(aesData);
+            }}
+          />
+        </div>
+        <div className="flex">
+          <Label htmlFor="value" className="flex-none leading-9 mr-4">
+            {t("value")}
+          </Label>
+          <Input
+            id="value"
+            className="grow"
+            onChange={(e) => {
+              aesData.data = e.target.value.trim();
+              setAesData(aesData);
+            }}
+          />
+        </div>
+        <div className="flex">
+          <Label htmlFor="value" className="flex-none leading-9 mr-4">
+            {t("result")}
+          </Label>
+          <p className="grow text-sm text-muted-foreground leading-9 relative">
+            <Button
+              className="absolute right-0"
+              variant="ghost"
+              size="icon"
+              onClick={async (e) => {
+                e.preventDefault();
+                handleAes();
+              }}
+            >
+              <ClipboardCopy />
+            </Button>
+            {!aesProcessing && (
+              <Input
+                id="value"
+                className="grow"
+                value={aesResult}
+                readOnly
+              />
+            )}
+            {aesProcessing && (
+              <LoaderCircle className="ml-2 h-4 w-4 inline animate-spin" />
+            )}
+          </p>
+        </div>
+      </div>
+    </div>
+  </TabsContent>
+
+  const base64Tab = <TabsContent value="base64" className="mt-2">
+    <div className="grid gap-4">
+      <div className="space-y-2">
+        <h4 className="font-medium leading-none">{t("base64")}</h4>
+        <p className="text-sm text-muted-foreground">
+          {t("base64Tips")}
+        </p>
+      </div>
+      <div className="grid gap-2">
+        <RadioGroup
+          className="flex flex-wrap items-start"
+          onValueChange={(option) => {
+            setBase64Type(option);
+          }}
+          defaultValue={base64Type}
+        >
+          <RadioGroupItem value="encode" id="encode" />
+          <Label className="pl-2 cursor-pointer" htmlFor="encode">
+            {t("encode")}
+          </Label>
+          <RadioGroupItem value="decode" id="decode" />
+          <Label className="pl-2 cursor-pointer" htmlFor="decode">
+            {t("decode")}
+          </Label>
+        </RadioGroup>
+        <div className="flex">
+          <Label htmlFor="value" className="flex-none leading-9 mr-4">
+            {t("value")}
+          </Label>
+          <Input
+            id="value"
+            className="grow"
+            onChange={(e) => {
+              const value = e.target.value.trim();
+              try {
+                if (base64Type == "encode") {
+                  setBase64Data(window.btoa(value));
+                } else {
+                  setBase64Data(window.atob(value));
+                }
+              } catch (err) {
+                console.error(err);
+                setBase64Data("");
+              }
+            }}
+          />
+        </div>
+        <div className="flex">
+          <Label htmlFor="value" className="flex-none leading-9 mr-4">
+            {t("result")}
+          </Label>
+          <p className="grow text-sm text-muted-foreground leading-9 relative">
+            <Button
+              className="absolute right-0"
+              variant="ghost"
+              size="icon"
+              onClick={async (e) => {
+                e.preventDefault();
+                await navigator.clipboard.writeText(base64Data);
+              }}
+            >
+              <ClipboardCopy />
+            </Button>
+            <Input
+              id="value"
+              className="grow"
+              value={base64Data}
+              readOnly
+            />
+          </p>
+        </div>
+      </div>
+    </div>
+  </TabsContent>
+
 
 
   return (
@@ -231,90 +397,14 @@ export function MainHeader({
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-[400px]" align="end">
-              <div className="grid gap-4">
-                <div className="space-y-2">
-                  <h4 className="font-medium leading-none">{t("aesGcm")}</h4>
-                  <p className="text-sm text-muted-foreground">
-                    {t("aesTips")}
-                  </p>
-                </div>
-                <div className="grid gap-2">
-                  <RadioGroup
-                    className="flex flex-wrap items-start"
-                    onValueChange={(option) => {
-                      setAesType(option);
-                    }}
-                    defaultValue={aesType}
-                  >
-                    <RadioGroupItem value="encrypt" id="encrypt" />
-                    <Label className="pl-2 cursor-pointer" htmlFor="encrypt">
-                      {t("encrypt")}
-                    </Label>
-                    <RadioGroupItem value="decrypt" id="decrypt" />
-                    <Label className="pl-2 cursor-pointer" htmlFor="decrypt">
-                      {t("decrypt")}
-                    </Label>
-                  </RadioGroup>
-                  <div className="flex">
-                    <Label
-                      htmlFor="secret"
-                      className="flex-none leading-9 mr-4"
-                    >
-                      {t("secret")}
-                    </Label>
-                    <Input
-                      id="secret"
-                      className="grow"
-                      onChange={(e) => {
-                        aesData.key = e.target.value.trim();
-                        setAesData(aesData);
-                      }}
-                    />
-                  </div>
-                  <div className="flex">
-                    <Label htmlFor="value" className="flex-none leading-9 mr-4">
-                      {t("value")}
-                    </Label>
-                    <Input
-                      id="value"
-                      className="grow"
-                      onChange={(e) => {
-                        aesData.data = e.target.value.trim();
-                        setAesData(aesData);
-                      }}
-                    />
-                  </div>
-                  <div className="flex">
-                    <Label htmlFor="value" className="flex-none leading-9 mr-4">
-                      {t("result")}
-                    </Label>
-                    <p className="grow text-sm text-muted-foreground leading-9 relative">
-                      <Button
-                        className="absolute right-0"
-                        variant="ghost"
-                        size="icon"
-                        onClick={async (e) => {
-                          e.preventDefault();
-                          handleAes();
-                        }}
-                      >
-                        <ClipboardCopy />
-                      </Button>
-                      {!aesProcessing && (
-                        <Input
-                          id="value"
-                          className="grow"
-                          value={aesResult}
-                          readOnly
-                        />
-                      )}
-                      {aesProcessing && (
-                        <LoaderCircle className="ml-2 h-4 w-4 inline animate-spin" />
-                      )}
-                    </p>
-                  </div>
-                </div>
-              </div>
+              <Tabs defaultValue="base64" className="w-full">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="base64">Base64</TabsTrigger>
+                  <TabsTrigger value="aes">AES</TabsTrigger>
+                </TabsList>
+                {base64Tab}
+                {aesTab}
+              </Tabs>
             </PopoverContent>
           </Popover>
           <Button

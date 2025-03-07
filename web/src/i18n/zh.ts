@@ -33,6 +33,10 @@ export default {
   encrypt: "加密",
   decrypt: "解密",
   secret: "密钥",
+  base64: "Base64",
+  base64Tips: "编码或解码Base64数据",
+  encode: "编码",
+  decode: "解码",
   value: "数据",
   result: "结果",
   nav: {
