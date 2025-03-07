@@ -50,3 +50,10 @@ sudo cargo run -- -c=~/github/pingap/examples/transparent-proxy.toml --admin=127
 ```bash
 curl -kv --resolve '*:443:127.0.0.1' 'https://cn.bing.com/'
 ```
+
+
+## Web Socket
+
+```bash
+cargo run -- -c=~/github/pingap/examples/web-socket.toml --admin=127.0.0.1:3018
+```
