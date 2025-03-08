@@ -134,7 +134,7 @@ pub async fn restart_now() -> io::Result<process::Output> {
 
 /// Initiates an immediate process restart (Windows systems - not supported)
 #[cfg(windows)]
-pub fn restart_now() -> io::Result<process::Output> {
+pub async fn restart_now() -> io::Result<process::Output> {
     return Err(io::Error::new(
         io::ErrorKind::Other,
         "Not support restart".to_string(),
