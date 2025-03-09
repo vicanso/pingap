@@ -12,7 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use snafu::Snafu;
+
 mod access;
+mod syslog;
 mod writer;
+
+const LOG_CATEGORY: &str = "logger";
+
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("IO error {source}"))]
+    Io { source: std::io::Error },
+    #[snafu(display("Invalid {message}"))]
+    Invalid { message: String },
+}
+
 pub use access::*;
 pub use writer::*;

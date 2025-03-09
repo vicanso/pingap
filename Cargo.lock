@@ -3113,6 +3113,7 @@ dependencies = [
  "regex",
  "snafu",
  "substring",
+ "syslog",
  "time",
  "tokio",
  "tokio-test",
@@ -4865,6 +4866,18 @@ dependencies = [
  "memchr",
  "ntapi",
  "windows 0.57.0",
+]
+
+[[package]]
+name = "syslog"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "019f1500a13379b7d051455df397c75770de6311a7a188a699499502704d9f10"
+dependencies = [
+ "hostname 0.4.0",
+ "libc",
+ "log",
+ "time",
 ]
 
 [[package]]

@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::syslog::new_syslog_writer;
+use super::{Error, LOG_CATEGORY};
 use bytesize::ByteSize;
 use chrono::Timelike;
 use flate2::write::GzEncoder;
@@ -19,7 +21,6 @@ use flate2::Compression;
 use pingap_core::convert_query_map;
 use pingap_core::Error as ServiceError;
 use pingap_core::SimpleServiceTaskFuture;
-use snafu::{ResultExt, Snafu};
 use std::fs;
 use std::io;
 use std::os::unix::fs::MetadataExt;
@@ -36,19 +37,10 @@ const DEFAULT_DAYS_AGO: u16 = 7;
 /// below this value, no buffering will be used.
 const MIN_BUFFER_CAPACITY: u64 = 4096;
 
-const LOG_CATEGORY: &str = "logger";
-
-#[derive(Debug, Snafu)]
-pub enum Error {
-    #[snafu(display("IO error {source}"))]
-    Io { source: std::io::Error },
-    #[snafu(display("Invalid {message}"))]
-    Invalid { message: String },
-}
-type Result<T, E = Error> = std::result::Result<T, E>;
-
 static GZIP_EXT: &str = "gz";
 static ZSTD_EXT: &str = "zst";
+
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Compresses a file using zstd compression
 ///
@@ -65,19 +57,20 @@ fn zstd_compress(file: &Path, level: u8) -> Result<(u64, u64)> {
         level
     };
     let zst_file = file.with_extension(ZSTD_EXT);
-    let mut original_file = fs::File::open(file).context(IoSnafu)?;
+    let mut original_file =
+        fs::File::open(file).map_err(|e| Error::Io { source: e })?;
     let file = fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create_new(true)
         .open(&zst_file)
-        .context(IoSnafu)?;
+        .map_err(|e| Error::Io { source: e })?;
 
-    let mut encoder =
-        zstd::stream::Encoder::new(&file, level as i32).context(IoSnafu)?;
-    let original_size =
-        io::copy(&mut original_file, &mut encoder).context(IoSnafu)?;
-    encoder.finish().context(IoSnafu)?;
+    let mut encoder = zstd::stream::Encoder::new(&file, level as i32)
+        .map_err(|e| Error::Io { source: e })?;
+    let original_size = io::copy(&mut original_file, &mut encoder)
+        .map_err(|e| Error::Io { source: e })?;
+    encoder.finish().map_err(|e| Error::Io { source: e })?;
     let size = file.metadata().map(|item| item.size()).unwrap_or_default();
     Ok((size, original_size))
 }
@@ -92,22 +85,23 @@ fn zstd_compress(file: &Path, level: u8) -> Result<(u64, u64)> {
 /// A tuple of (compressed_size, original_size) in bytes
 fn gzip_compress(file: &Path, level: u8) -> Result<(u64, u64)> {
     let gzip_file = file.with_extension(GZIP_EXT);
-    let mut original_file = fs::File::open(file).context(IoSnafu)?;
+    let mut original_file =
+        fs::File::open(file).map_err(|e| Error::Io { source: e })?;
     let file = fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create_new(true)
         .open(&gzip_file)
-        .context(IoSnafu)?;
+        .map_err(|e| Error::Io { source: e })?;
     let level = if level == 0 {
         Compression::best()
     } else {
         Compression::new(level as u32)
     };
     let mut encoder = GzEncoder::new(&file, level);
-    let original_size =
-        io::copy(&mut original_file, &mut encoder).context(IoSnafu)?;
-    encoder.finish().context(IoSnafu)?;
+    let original_size = io::copy(&mut original_file, &mut encoder)
+        .map_err(|e| Error::Io { source: e })?;
+    encoder.finish().map_err(|e| Error::Io { source: e })?;
     let size = file.metadata().map(|item| item.size()).unwrap_or_default();
     Ok((size, original_size))
 }
@@ -251,6 +245,86 @@ pub struct LoggerParams {
     pub json: bool,
 }
 
+fn new_file_writer(
+    params: &LoggerParams,
+) -> Result<(BoxMakeWriter, Option<(String, SimpleServiceTaskFuture)>)> {
+    let mut file = pingap_util::resolve_path(&params.log);
+    let mut rolling_type = "".to_string();
+    let mut compression = "".to_string();
+    let mut level = 0;
+    let mut days_ago = 0;
+    let mut time_point_hour = 0;
+    let mut task = None;
+    if let Some((_, query)) = params.log.split_once('?') {
+        file = file.replace(&format!("?{query}"), "");
+        let m = convert_query_map(query);
+        if let Some(value) = m.get("rolling") {
+            rolling_type = value.to_string();
+        }
+        if let Some(value) = m.get("compression") {
+            compression = value.to_string();
+        }
+        if let Some(value) = m.get("level") {
+            level = value.parse::<u8>().unwrap_or_default();
+        }
+        if let Some(value) = m.get("days_ago") {
+            days_ago = value.parse::<u16>().unwrap_or_default();
+        }
+        if let Some(value) = m.get("time_point_hour") {
+            time_point_hour = value.parse::<u8>().unwrap_or_default();
+        }
+    }
+
+    let filepath = Path::new(&file);
+    let dir = if filepath.is_dir() {
+        filepath
+    } else {
+        filepath.parent().ok_or_else(|| Error::Invalid {
+            message: "parent of file log is invalid".to_string(),
+        })?
+    };
+    fs::create_dir_all(dir).map_err(|e| Error::Io { source: e })?;
+    if !compression.is_empty() {
+        task = new_log_compress_service(LogCompressParams {
+            compression,
+            path: dir.to_path_buf(),
+            days_ago,
+            level,
+            time_point_hour,
+        });
+    }
+
+    let filename = if filepath.is_dir() {
+        "".to_string()
+    } else {
+        filepath
+            .file_name()
+            .ok_or_else(|| Error::Invalid {
+                message: "file log is invalid".to_string(),
+            })?
+            .to_string_lossy()
+            .to_string()
+    };
+    let file_appender = match rolling_type.as_str() {
+        "minutely" => tracing_appender::rolling::minutely(dir, filename),
+        "hourly" => tracing_appender::rolling::hourly(dir, filename),
+        "never" => tracing_appender::rolling::never(dir, filename),
+        _ => tracing_appender::rolling::daily(dir, filename),
+    };
+
+    let writer = if params.capacity < MIN_BUFFER_CAPACITY {
+        BoxMakeWriter::new(file_appender)
+    } else {
+        // buffer writer for better performance
+        let w = io::BufWriter::with_capacity(
+            params.capacity as usize,
+            file_appender,
+        );
+        BoxMakeWriter::new(Mutex::new(w))
+    };
+    Ok((writer, task))
+}
+
 /// Initializes the logging system with the specified configuration
 ///
 /// # Arguments
@@ -292,81 +366,13 @@ pub fn logger_try_init(
     let mut log_type = "stdio";
     let writer = if params.log.is_empty() {
         BoxMakeWriter::new(std::io::stderr)
+    } else if params.log.starts_with("syslog://") {
+        new_syslog_writer(&params.log)?
     } else {
-        let mut file = pingap_util::resolve_path(&params.log);
-        let mut rolling_type = "".to_string();
-        let mut compression = "".to_string();
-        let mut level = 0;
-        let mut days_ago = 0;
-        let mut time_point_hour = 0;
-        if let Some((_, query)) = params.log.split_once('?') {
-            file = file.replace(&format!("?{query}"), "");
-            let m = convert_query_map(query);
-            if let Some(value) = m.get("rolling") {
-                rolling_type = value.to_string();
-            }
-            if let Some(value) = m.get("compression") {
-                compression = value.to_string();
-            }
-            if let Some(value) = m.get("level") {
-                level = value.parse::<u8>().unwrap_or_default();
-            }
-            if let Some(value) = m.get("days_ago") {
-                days_ago = value.parse::<u16>().unwrap_or_default();
-            }
-            if let Some(value) = m.get("time_point_hour") {
-                time_point_hour = value.parse::<u8>().unwrap_or_default();
-            }
-        }
-
-        let filepath = Path::new(&file);
-        let dir = if filepath.is_dir() {
-            filepath
-        } else {
-            filepath.parent().ok_or_else(|| Error::Invalid {
-                message: "parent of file log is invalid".to_string(),
-            })?
-        };
         log_type = "file";
-        fs::create_dir_all(dir).context(IoSnafu)?;
-        if !compression.is_empty() {
-            task = new_log_compress_service(LogCompressParams {
-                compression,
-                path: dir.to_path_buf(),
-                days_ago,
-                level,
-                time_point_hour,
-            });
-        }
-
-        let filename = if filepath.is_dir() {
-            "".to_string()
-        } else {
-            filepath
-                .file_name()
-                .ok_or_else(|| Error::Invalid {
-                    message: "file log is invalid".to_string(),
-                })?
-                .to_string_lossy()
-                .to_string()
-        };
-        let file_appender = match rolling_type.as_str() {
-            "minutely" => tracing_appender::rolling::minutely(dir, filename),
-            "hourly" => tracing_appender::rolling::hourly(dir, filename),
-            "never" => tracing_appender::rolling::never(dir, filename),
-            _ => tracing_appender::rolling::daily(dir, filename),
-        };
-
-        if params.capacity < MIN_BUFFER_CAPACITY {
-            BoxMakeWriter::new(file_appender)
-        } else {
-            // buffer writer for better performance
-            let w = io::BufWriter::with_capacity(
-                params.capacity as usize,
-                file_appender,
-            );
-            BoxMakeWriter::new(Mutex::new(w))
-        }
+        let (w, t) = new_file_writer(&params)?;
+        task = t;
+        w
     };
     if params.json {
         builder

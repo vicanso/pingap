@@ -33,6 +33,7 @@ tracing-appender = "0.2.3"
 zstd = "0.13.2"
 pingap-util = { version = "0.10.4", path = "../pingap-util" }
 pingap-core = { version = "0.10.4", path = "../pingap-core" }
+syslog = "7.0.0"
 
 
 [dev-dependencies]
