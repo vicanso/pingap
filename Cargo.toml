@@ -84,6 +84,8 @@ pingap-otel = { version = "0.10.4", path = "pingap-otel", optional = true }
 pingap-sentry = { version = "0.10.4", path = "pingap-sentry", optional = true }
 pingap-pyroscope = { version = "0.10.4", path = "pingap-pyroscope", optional = true }
 
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc = "0.1.43"
 
 [features]
 pyro = ["pingap-pyroscope"]
@@ -103,6 +105,7 @@ default = []
 criterion = { version = "0.5.1", features = ["html_reports"] }
 pretty_assertions = "1.4.0"
 tokio-test = "0.4.4"
+
 
 [profile.release]
 codegen-units = 1
