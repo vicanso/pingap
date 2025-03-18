@@ -250,7 +250,7 @@ export default function Basic() {
     cache_max_size: newZodBytes().optional(),
   });
   return (
-    <div className="grow lg:border-l overflow-auto p-4">
+    <div className="grow overflow-auto p-4">
       <ExForm
         category="basic"
         items={items}

@@ -41,7 +41,7 @@ export default function Login() {
     }
   };
   return (
-    <div className="grow lg:border-l overflow-auto p-4">
+    <div className="grow overflow-auto p-4">
       <div className="flex justify-center mt-10">
         <Card className="w-[500px] self-center">
           <CardHeader>

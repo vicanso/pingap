@@ -15,7 +15,7 @@ export const HOME = "/";
 export const BASIC = "/basic";
 export const SERVERS = "/servers";
 export const LOCATIONS = "/locations";
-export const UPSTREMAS = "/upstreams";
+export const UPSTREAMS = "/upstreams";
 export const PLUGINS = "/plugins";
 export const CERTIFICATES = "/certificates";
 export const STORAGES = "/storages";
@@ -43,7 +43,7 @@ const router = createHashRouter([
         element: <Locations />,
       },
       {
-        path: UPSTREMAS,
+        path: UPSTREAMS,
         element: <Upstreams />,
       },
       {

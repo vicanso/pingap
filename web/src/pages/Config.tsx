@@ -15,7 +15,7 @@ import React from "react";
 export default function Config() {
   const { t } = useTranslation();
   const { toast } = useToast();
-  const [importing, setImportings] = React.useState(false);
+  const [importing, setImporting] = React.useState(false);
   const [newToml, setNewToml] = React.useState("");
   const [fetchToml, importToml, fullToml, originalToml] = useConfigState(
     useShallow((state) => [
@@ -53,7 +53,7 @@ export default function Config() {
     if (importing) {
       return;
     }
-    setImportings(true);
+    setImporting(true);
     try {
       await importToml(value);
       toast({
@@ -65,7 +65,7 @@ export default function Config() {
         description: formatError(err),
       });
     } finally {
-      setImportings(false);
+      setImporting(false);
     }
   };
 
@@ -79,7 +79,7 @@ export default function Config() {
     importText += "...";
   }
   return (
-    <div className="grow lg:border-l overflow-auto p-4">
+    <div className="grow overflow-auto p-4">
       <Tabs defaultValue="original">
         <TabsList className={cn("grid w-full", tabClass)}>
           <TabsTrigger value="original">{t("original")}</TabsTrigger>

@@ -995,7 +995,7 @@ export default function Plugins() {
   };
 
   return (
-    <div className="grow lg:border-l overflow-auto p-4">
+    <div className="grow overflow-auto p-4">
       <ExForm
         category="plugin"
         key={key}

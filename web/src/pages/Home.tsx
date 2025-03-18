@@ -7,7 +7,7 @@ import {
   LOCATIONS,
   PLUGINS,
   SERVERS,
-  UPSTREMAS,
+  UPSTREAMS,
 } from "@/routers";
 import { LoadingPage } from "@/components/loading";
 import useBasicState from "@/states/basic";
@@ -136,7 +136,7 @@ export default function Home() {
       }
       upstreamSummary.push({
         name,
-        link: `${UPSTREMAS}?name=${name}`,
+        link: `${UPSTREAMS}?name=${name}`,
         value: desc,
       });
     });
@@ -206,7 +206,7 @@ export default function Home() {
     },
     {
       title: "Upstream",
-      path: UPSTREMAS,
+      path: UPSTREAMS,
       description: upstreamDescription,
       summary: upstreamSummary,
     },
@@ -334,7 +334,7 @@ export default function Home() {
   ];
 
   return (
-    <div className="grow lg:border-l overflow-auto p-4">
+    <div className="grow overflow-auto p-4">
       <h3>{homeI18n("dashboard")}</h3>
       <Card className="my-4">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 col-span-2">

@@ -12,7 +12,7 @@ import {
   AudioWaveform,
   ClipboardCopy,
 } from "lucide-react";
-import { goToConfig, goToHome, goToLogin } from "@/routers";
+import { goToConfig } from "@/routers";
 import { useTheme } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,13 +24,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useTranslation } from "react-i18next";
-import Logo from "@/assets/pingap.png";
-import LogoLight from "@/assets/pingap-light.png";
-import useBasicState from "@/states/basic";
-import useConfigState from "@/states/config";
-import { useShallow } from "zustand/react/shallow";
-
-import { useAsync } from "react-async-hook";
 import { useToast } from "@/hooks/use-toast";
 import { formatError } from "@/helpers/util";
 import i18n from "@/i18n";
@@ -44,7 +37,6 @@ import {
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import request from "@/helpers/request";
-import HTTPError from "@/helpers/http-error";
 
 export function MainHeader({
   className,
@@ -65,13 +57,6 @@ export function MainHeader({
 
   const [base64Type, setBase64Type] = React.useState("encode");
   const [base64Data, setBase64Data] = React.useState("");
-
-  const [fetchBasicInfo, basicInfo] = useBasicState(
-    useShallow((state) => [state.fetch, state.data]),
-  );
-  const [fetchConfig, initialized] = useConfigState(
-    useShallow((state) => [state.fetch, state.initialized]),
-  );
 
   const handleAes = async () => {
     const secret = aesData.key;
@@ -106,22 +91,7 @@ export function MainHeader({
     }
   };
 
-  useAsync(async () => {
-    try {
-      await fetchBasicInfo();
-      await fetchConfig();
-    } catch (err) {
-      const status = ((err as HTTPError)?.status || 0) as number;
-      if (status == 401) {
-        goToLogin();
-        return;
-      }
-      toast({
-        title: t("fetchFail"),
-        description: formatError(err),
-      });
-    }
-  }, []);
+
   const zhLang = "zh";
   const enLang = "en";
 
@@ -190,10 +160,7 @@ export function MainHeader({
     </DropdownMenu>
   );
 
-  let logoData = Logo;
-  if (theme === "light" || document.documentElement.className.includes("light")) {
-    logoData = LogoLight;
-  }
+
 
   const aesTab = <TabsContent value="aes" className="mt-2">
     <div className="grid gap-4">
@@ -357,39 +324,15 @@ export function MainHeader({
     </div>
   </TabsContent>
 
-
-
   return (
     <header
       className={cn(
-        "sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60",
+        "border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60",
         className,
       )}
     >
-      <div className="ml-2 flex h-14 items-center">
-        <img
-          style={{
-            float: "left",
-            width: "32px",
-            marginRight: "10px",
-          }}
-          src={logoData}
-        />
-        <Button
-          variant="link"
-          className="px-0"
-          onClick={(e) => {
-            e.preventDefault();
-            goToHome();
-          }}
-        >
-          Pingap
-          {!initialized && (
-            <LoaderCircle className="ml-2 h-4 w-4 inline animate-spin" />
-          )}
-          <span>{basicInfo.version}</span>
-        </Button>
-        <div className="flex flex-1 items-center space-x-2 justify-end mr-5">
+      <div className="ml-2 flex h-11 items-center">
+        <div className="flex flex-1 items-center space-x-2 justify-end mr-2">
           <Popover>
             <PopoverTrigger asChild>
               <Button variant="ghost" size="icon">

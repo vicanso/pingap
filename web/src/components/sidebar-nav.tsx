@@ -1,5 +1,6 @@
 import { cn } from "@/lib/utils";
-import { Nav, NavLink } from "@/components/nav";
+import { LucideIcon } from "lucide-react";
+import { Link } from "react-router-dom";
 import {
   AppWindow,
   Server,
@@ -14,18 +15,38 @@ import router, {
   BASIC,
   SERVERS,
   LOCATIONS,
-  UPSTREMAS,
+  UPSTREAMS,
   PLUGINS,
   CERTIFICATES,
   STORAGES,
 } from "@/routers.tsx";
 import useConfigState from "@/states/config";
 import { useI18n } from "@/i18n";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import React, { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useLocation } from "react-router-dom";
+import {
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubItem,
+  SidebarMenuSubButton,
+} from "@/components/ui/sidebar"
+
+
+interface NavLink {
+  title: string;
+  label?: string;
+  icon?: LucideIcon;
+  path: string;
+  variant: "default" | "ghost";
+  children?: NavLink[];
+}
 
 export function MainSidebar({
   className,
@@ -106,72 +127,83 @@ export function MainSidebar({
     });
     return arr;
   };
-  const nav = (
-    <Nav
-      size="lg"
-      isCollapsed={false}
-      links={[
-        {
-          title: navI18n("basic"),
-          icon: AppWindow,
-          variant: getVariant(BASIC),
-          path: BASIC,
-        },
-        {
-          title: navI18n("server"),
-          icon: Server,
-          variant: getVariant(SERVERS),
-          label: getLabel("server"),
-          path: SERVERS,
-          children: generateChildren(SERVERS, servers),
-        },
-        {
-          title: navI18n("location"),
-          icon: Webhook,
-          variant: getVariant(LOCATIONS),
-          label: getLabel("location"),
-          path: LOCATIONS,
-          children: generateChildren(LOCATIONS, locations),
-        },
-        {
-          title: navI18n("upstream"),
-          icon: TrendingUpDown,
-          variant: getVariant(UPSTREMAS),
-          label: getLabel("upstream"),
-          path: UPSTREMAS,
-          children: generateChildren(UPSTREMAS, upstreams),
-        },
-        {
-          title: navI18n("plugin"),
-          icon: PlugZap,
-          variant: getVariant(PLUGINS),
-          label: getLabel("plugin"),
-          path: PLUGINS,
-          children: generateChildren(PLUGINS, plugins),
-        },
-        {
-          title: navI18n("certificate"),
-          icon: ShieldCheck,
-          variant: getVariant(CERTIFICATES),
-          label: getLabel("certificate"),
-          path: CERTIFICATES,
-          children: generateChildren(CERTIFICATES, certificates),
-        },
-        {
-          title: navI18n("storage"),
-          icon: Container,
-          variant: getVariant(STORAGES),
-          label: getLabel("storage"),
-          path: STORAGES,
-          children: generateChildren(STORAGES, storages),
-        },
-      ]}
-    ></Nav>
-  );
+  const items = [
+    {
+      title: navI18n("basic"),
+      icon: AppWindow,
+      variant: getVariant(BASIC),
+      path: BASIC,
+    },
+    {
+      title: navI18n("server"),
+      icon: Server,
+      variant: getVariant(SERVERS),
+      label: getLabel("server"),
+      path: SERVERS,
+      children: generateChildren(SERVERS, servers),
+    },
+    {
+      title: navI18n("location"),
+      icon: Webhook,
+      variant: getVariant(LOCATIONS),
+      label: getLabel("location"),
+      path: LOCATIONS,
+      children: generateChildren(LOCATIONS, locations),
+    },
+    {
+      title: navI18n("upstream"),
+      icon: TrendingUpDown,
+      variant: getVariant(UPSTREAMS),
+      label: getLabel("upstream"),
+      path: UPSTREAMS,
+      children: generateChildren(UPSTREAMS, upstreams),
+    },
+    {
+      title: navI18n("plugin"),
+      icon: PlugZap,
+      variant: getVariant(PLUGINS),
+      label: getLabel("plugin"),
+      path: PLUGINS,
+      children: generateChildren(PLUGINS, plugins),
+    },
+    {
+      title: navI18n("certificate"),
+      icon: ShieldCheck,
+      variant: getVariant(CERTIFICATES),
+      label: getLabel("certificate"),
+      path: CERTIFICATES,
+      children: generateChildren(CERTIFICATES, certificates),
+    },
+    {
+      title: navI18n("storage"),
+      icon: Container,
+      variant: getVariant(STORAGES),
+      label: getLabel("storage"),
+      path: STORAGES,
+      children: generateChildren(STORAGES, storages),
+    },
+  ];
+
+  const renderMenuSub = (items: NavLink[] | undefined) => {
+    if (!items || items.length == 0) {
+      return <></>
+    };
+    return <SidebarMenuSub>
+      {items.map((item) => (
+        <SidebarMenuSubItem key={item.title}>
+          <SidebarMenuSubButton className="!h-9" asChild>
+            <Link to={item.path}>
+              <span>{item.title}</span>
+            </Link>
+          </SidebarMenuSubButton>
+        </SidebarMenuSubItem>
+      ))}
+    </SidebarMenuSub>
+  }
   return (
-    <div className={cn("pb-12", className)}>
-      <ScrollArea className="h-full">
-        <div className="m-2 mb-0 relative">
+    <SidebarContent className={className}>
+      <SidebarGroup>
+        <div className="m-2 mt-0 relative">
           <Input
             type="search"
             placeholder={navI18n("searchPlaceholder")}
@@ -182,8 +214,32 @@ export function MainSidebar({
           />
           <Search className="pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 select-none opacity-50" />
         </div>
-        {nav}
-      </ScrollArea>
-    </div>
+        <SidebarGroupContent>
+          <SidebarMenu>
+            {items.map((item) => (
+              <SidebarMenuItem key={item.title}>
+                <SidebarMenuButton className="!h-10" asChild>
+                  <Link to={item.path}>
+                    <item.icon />
+                    <span>{item.title}</span>
+                    {item.label && (
+                      <span
+                        className={cn(
+                          "ml-auto",
+                          item.variant === "default" && "text-background dark:text-white",
+                        )}
+                      >
+                        {item.label}
+                      </span>
+                    )}
+                  </Link>
+                </SidebarMenuButton>
+                {renderMenuSub(item.children)}
+              </SidebarMenuItem>
+            ))}
+          </SidebarMenu>
+        </SidebarGroupContent>
+      </SidebarGroup>
+    </SidebarContent>
   );
 }

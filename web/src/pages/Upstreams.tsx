@@ -312,7 +312,7 @@ export default function Upstreams() {
   };
 
   return (
-    <div className="grow lg:border-l overflow-auto p-4">
+    <div className="grow overflow-auto p-4">
       <h2 className="h-8 mb-1">
         {formatLabel(currentUpstream)}
       </h2>
