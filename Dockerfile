@@ -27,6 +27,6 @@ COPY --from=builder /pingap/entrypoint.sh /entrypoint.sh
 
 RUN mkdir -p /opt/pingap/conf
 
-CMD ["pingap", "-c", "/opt/pingap/conf", "--autoreload"]
+CMD ["pingap"]
 
 ENTRYPOINT ["/entrypoint.sh"]
