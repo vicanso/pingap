@@ -45,7 +45,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(Debug)]
 struct RegexPath {
-    value: Regex,
+    value: RegexCapture,
 }
 
 #[derive(Debug)]
@@ -92,7 +92,7 @@ fn new_path_selector(path: &str) -> Result<PathSelector> {
     let last = path.substring(1, path.len()).trim();
     let se = match first {
         '~' => {
-            let re = Regex::new(last).context(RegexSnafu {
+            let re = RegexCapture::new(last).context(RegexSnafu {
                 value: last.to_string(),
             })?;
             PathSelector::RegexPath(RegexPath { value: re })
@@ -283,7 +283,12 @@ impl Location {
         let mut reg_rewrite = None;
         // rewrite: "^/users/(.*)$ /api/users/$1"
         if let Some(value) = &conf.rewrite {
-            let arr: Vec<&str> = value.split(' ').collect();
+            let mut arr: Vec<&str> = value.split(' ').collect();
+            if arr.len() == 1 && arr[0].contains("$") {
+                arr.push(arr[0]);
+                arr[0] = ".*";
+            }
+
             let value = if arr.len() == 2 { arr[1] } else { "" };
             if let Ok(re) = Regex::new(arr[0]) {
                 reg_rewrite = Some((re, value.to_string()));
@@ -431,6 +436,9 @@ impl Location {
         host: &str,
         path: &str,
     ) -> (bool, Option<Vec<(String, String)>>) {
+        // Check host matching against configured host patterns
+        let mut variables: Vec<(String, String)> = vec![];
+
         // First check path matching if a path pattern is configured
         if !self.path.is_empty() {
             let matched = match &self.path_selector {
@@ -438,7 +446,11 @@ impl Location {
                 PathSelector::EqualPath(EqualPath { value }) => value == path,
                 // For regex path matching, use regex is_match
                 PathSelector::RegexPath(RegexPath { value }) => {
-                    value.is_match(path)
+                    let (matched, value) = value.captures(path);
+                    if let (true, Some(vars)) = (matched, value) {
+                        variables.extend(vars);
+                    }
+                    matched
                 },
                 // For prefix path matching, check if path starts with prefix
                 PathSelector::PrefixPath(PrefixPath { value }) => {
@@ -458,16 +470,14 @@ impl Location {
             return (true, None);
         }
 
-        // Check host matching against configured host patterns
-        let mut variables = None;
         let matched = self.hosts.iter().any(|item| match item {
             // For regex host matching:
             // - Attempt to capture variables from host string
             // - Store captures in variables if match successful
             HostSelector::RegexHost(RegexHost { value }) => {
                 let (matched, value) = value.captures(host);
-                if matched {
-                    variables = value;
+                if let (true, Some(vars)) = (matched, value) {
+                    variables.extend(vars);
                 }
                 matched
             },
@@ -481,9 +491,12 @@ impl Location {
                 value == host
             },
         });
+        if variables.is_empty() {
+            return (matched, None);
+        }
 
         // Return whether both path and host matched, along with any captured variables
-        (matched, variables)
+        (matched, Some(variables))
     }
 
     /// Applies URL rewriting rules if configured for this location.
@@ -525,7 +538,11 @@ impl Location {
                 }
             }
             let path = header.uri.path();
-            let mut new_path = re.replace(path, replace_value).to_string();
+            let mut new_path = if re.to_string() == ".*" {
+                replace_value
+            } else {
+                re.replace(path, replace_value).to_string()
+            };
             if path == new_path {
                 return false;
             }
@@ -718,6 +735,30 @@ mod tests {
         assert_eq!(false, lo.match_host_path("", "/api/users").0);
         assert_eq!(false, lo.match_host_path("", "/users").0);
         assert_eq!(true, lo.match_host_path("", "/api").0);
+    }
+
+    #[test]
+    fn test_match_host_path_variables() {
+        let lo = Location::new(
+            "lo",
+            &LocationConf {
+                upstream: Some("charts".to_string()),
+                host: Some("~(?<name>.+).npmtrend.com".to_string()),
+                path: Some("~/(?<route>.+)/(.*)".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let (matched, variables) =
+            lo.match_host_path("charts.npmtrend.com", "/users/123");
+        assert_eq!(true, matched);
+        assert_eq!(
+            Some(vec![
+                ("route".to_string(), "users".to_string()),
+                ("name".to_string(), "charts".to_string()),
+            ]),
+            variables
+        );
     }
 
     #[test]

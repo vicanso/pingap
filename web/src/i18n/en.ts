@@ -182,7 +182,7 @@ export default {
     pathPlaceholder:
       "Input the path for location, supports regexp, prefix and equal mode",
     upstream: "Upstream",
-    upstreamPlaceholder: "Select the upstream for location",
+    upstreamPlaceholder: "Select the upstream for location : Input the upstream name",
     rewrite: "Path Rewrite",
     rewritePlaceholder: "Input the rewrite for path(e.g. ^/api/ /)",
     proxySetHeaders: "Proxy Set Headers",

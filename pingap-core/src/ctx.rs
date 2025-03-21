@@ -242,6 +242,19 @@ impl Ctx {
         }
     }
 
+    /// Returns the value of a variable by key.
+    ///
+    /// # Arguments
+    /// * `key` - The key of the variable to retrieve
+    ///
+    /// Returns: Option<&str> representing the value of the variable, or None if the variable does not exist
+    #[inline]
+    pub fn get_variable(&self, key: &str) -> Option<&str> {
+        self.variables
+            .as_ref()
+            .and_then(|vars| vars.get(key).map(|v| v.as_str()))
+    }
+
     /// Returns the upstream response time if it's less than one hour, otherwise None.
     /// This helps filter out potentially invalid or stale timing data.
     ///

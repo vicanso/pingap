@@ -175,7 +175,7 @@ export default {
     path: "路径",
     pathPlaceholder: "输入location的路径，支持正则、前缀以及全等模式",
     upstream: "上游服务",
-    upstreamPlaceholder: "选择location使用的上游服务",
+    upstreamPlaceholder: "选择location使用的上游服务 : 输入上游服务名称",
     rewrite: "路径重写",
     rewritePlaceholder: "输入路径重写规则(如^/api/ /)",
     proxySetHeaders: "转发设置请求头",

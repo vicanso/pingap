@@ -38,6 +38,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { InputSelect } from "./input_select";
 
 function getOption(
   value: string | number | boolean | null | undefined,
@@ -330,6 +331,28 @@ export function ExForm({
                         </SelectTrigger>
                         <SelectContent>{options}</SelectContent>
                       </Select>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                );
+              }
+              case ExFormItemCategory.INPUT_SELECT: {
+                const placeholders = item.placeholder.split(" : ");
+                return (
+                  <FormItem>
+                    <FormLabel>{item.label}</FormLabel>
+                    <FormControl>
+                      <InputSelect
+                        defaultValue={item.defaultValue as string}
+                        name={item.name}
+                        selectPlaceholder={placeholders[0]}
+                        inputPlaceholder={placeholders[1]}
+                        onValueChange={(option) => {
+                          form.setValue(item.name, option);
+                          setUpdated(item.name, option);
+                        }}
+                        options={item.options}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

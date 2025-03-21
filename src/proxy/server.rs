@@ -45,7 +45,7 @@ use pingap_performance::{accept_request, end_request};
 use pingap_performance::{
     new_prometheus, new_prometheus_push_service, Prometheus,
 };
-use pingap_upstream::get_upstream;
+use pingap_upstream::{get_upstream, Upstream};
 use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::CacheControl;
 use pingora::cache::cache_control::DirectiveValue;
@@ -646,6 +646,22 @@ impl Server {
     }
 }
 
+#[inline]
+fn get_upstream_with_variables(
+    upstream: &str,
+    ctx: &Ctx,
+) -> Option<Arc<Upstream>> {
+    if upstream.starts_with("$") {
+        if let Some(value) = ctx.get_variable(upstream) {
+            get_upstream(value)
+        } else {
+            get_upstream(upstream)
+        }
+    } else {
+        get_upstream(upstream)
+    }
+}
+
 #[async_trait]
 impl ProxyHttp for Server {
     type CTX = Ctx;
@@ -776,6 +792,7 @@ impl ProxyHttp for Server {
                 break;
             }
         }
+        debug!(category = LOG_CATEGORY, "variables: {:?}", ctx.variables);
         // set prometheus stats
         #[cfg(feature = "full")]
         if let Some(prom) = &self.prometheus {
@@ -959,7 +976,9 @@ impl ProxyHttp for Server {
         let mut location_name = "unknown".to_string();
         let peer = if let Some(location) = get_location(&ctx.location) {
             location_name.clone_from(&location.name);
-            if let Some(up) = get_upstream(&location.upstream) {
+            if let Some(up) =
+                get_upstream_with_variables(&location.upstream, ctx)
+            {
                 ctx.upstream_connected = up.connected();
                 #[cfg(feature = "full")]
                 if let Some(tracer) = &ctx.otel_tracer {
@@ -1490,7 +1509,8 @@ impl ProxyHttp for Server {
             location.sub_processing();
         }
         // get from cache does not connect to upstream
-        if let Some(upstream) = get_upstream(&ctx.upstream) {
+        if let Some(upstream) = get_upstream_with_variables(&ctx.upstream, ctx)
+        {
             ctx.upstream_processing = Some(upstream.completed());
         }
         if ctx.status.is_none() {

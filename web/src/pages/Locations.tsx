@@ -114,7 +114,7 @@ export default function Locations() {
       placeholder: locationI18n("upstreamPlaceholder"),
       defaultValue: locationConfig.upstream,
       span: 3,
-      category: ExFormItemCategory.SELECT,
+      category: ExFormItemCategory.INPUT_SELECT,
       options: newStringOptions(upstreams, false, true),
     },
     {

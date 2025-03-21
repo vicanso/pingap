@@ -511,7 +511,10 @@ impl LocationConf {
 
         // Validate upstream exists if specified
         let upstream = self.upstream.clone().unwrap_or_default();
-        if !upstream.is_empty() && !upstream_names.contains(&upstream) {
+        if !upstream.is_empty()
+            && !upstream.starts_with("$")
+            && !upstream_names.contains(&upstream)
+        {
             return Err(Error::Invalid {
                 message: format!(
                     "upstream({upstream}) is not found(location:{name})"

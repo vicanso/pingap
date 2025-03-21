@@ -101,6 +101,7 @@ export enum ExFormItemCategory {
   LABEL = "label",
   TEXTAREA = "textarea",
   SELECT = "select",
+  INPUT_SELECT = "inputSelect",
   MULTI_SELECT = "multiSelect",
   RADIOS = "radios",
   NUMBER = "number",
