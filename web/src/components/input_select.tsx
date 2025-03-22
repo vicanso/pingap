@@ -41,7 +41,7 @@ export const InputSelect = React.forwardRef<HTMLInputElement, InputSelectProps>(
             exists = true;
         }
         const [isInputMode, setIsInputMode] = React.useState(!exists);
-        let container = <Input type="text" value={defaultValue} onChange={(e) => {
+        let container = <Input type="text" defaultValue={defaultValue} onChange={(e) => {
             onValueChange(e.target.value);
         }} placeholder={inputPlaceholder} />;
         if (!isInputMode) {
