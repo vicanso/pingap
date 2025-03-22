@@ -569,7 +569,7 @@ impl LocationConf {
             let exist_regex = host.split(',').any(|item| item.starts_with("~"));
             // exact host weight is 128
             // regexp host weight is host length
-            if !exist_regex {
+            if !exist_regex && !host.is_empty() {
                 weight += 128;
             } else {
                 weight += host.len() as u16;
@@ -1486,6 +1486,9 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
         conf.path = None;
         conf.host = Some("github.com".to_string());
         assert_eq!(128, conf.get_weight());
+
+        conf.host = Some("~github.com".to_string());
+        assert_eq!(11, conf.get_weight());
 
         conf.host = Some("".to_string());
         assert_eq!(0, conf.get_weight());
