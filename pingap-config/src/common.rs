@@ -564,10 +564,16 @@ impl LocationConf {
             }
             weight += path.len().min(64) as u16;
         };
-
         // Add weight if host is specified
-        if !self.host.clone().unwrap_or_default().is_empty() {
-            weight += 128;
+        if let Some(host) = &self.host {
+            let exist_regex = host.split(',').any(|item| item.starts_with("~"));
+            // exact host weight is 128
+            // regexp host weight is host length
+            if !exist_regex {
+                weight += 128;
+            } else {
+                weight += host.len() as u16;
+            }
         }
 
         weight

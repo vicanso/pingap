@@ -66,7 +66,17 @@ export function getLocationWeight(location: Location) {
   }
   weight += path.length;
   if (location.host) {
-    weight += 128;
+    let exists_regex = false;
+    location.host.split(",").forEach((host) => {
+      if (host.startsWith("~")) {
+        exists_regex = true;
+      }
+    });
+    if (!exists_regex) {
+      weight += 128;
+    } else {
+      weight += location.host.length;
+    }
   }
   return weight;
 }
