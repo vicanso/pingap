@@ -1,6 +1,6 @@
 [package]
 name = "pingap-discovery"
-version = "0.10.4"
+version = "0.10.5"
 edition = "2021"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -24,8 +24,8 @@ bollard = "0.18.1"
 snafu = { workspace = true }
 tokio = { workspace = true }
 futures = { workspace = true }
-pingap-core = { version = "0.10.4", path = "../pingap-core" }
-pingap-webhook = { version = "0.10.4", path = "../pingap-webhook" }
+pingap-core = { version = "0.10.5", path = "../pingap-core" }
+pingap-webhook = { version = "0.10.5", path = "../pingap-webhook" }
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"

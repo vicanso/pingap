@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.10.5](https://github.com/vicanso/pingap/compare/v0.10.4..0.10.5) - 2025-03-23
+
+### ⛰️  Features
+
+- Path rewrite and upstream support variables, #104 - ([3786735](https://github.com/vicanso/pingap/commit/37867358b7569037055ec71ddc582414d2b63937))
+- Add syslog writer for logger - ([113d758](https://github.com/vicanso/pingap/commit/113d758889640182e5d1d325f079d10f1fabd8d6))
+- Add base64 encode and decode function - ([3d27056](https://github.com/vicanso/pingap/commit/3d27056573e1067c4aecaef614a7c58720651aa7))
+- Add cache span attributes of open telemetry - ([103d6c8](https://github.com/vicanso/pingap/commit/103d6c8dcfc57c2d50a84412715d3858224f4bc0))
+- Open telemetry support compression - ([36ea569](https://github.com/vicanso/pingap/commit/36ea56943e036c3c7bc5ebc31997193fbd57b0a8))
+- Custom buffer days for acme renew or certificate validate - ([dde9738](https://github.com/vicanso/pingap/commit/dde9738bc8083b8e3f50097d72a6e8351f80aec0))
+
+### 🐛 Bug Fixes
+
+- Fix default value of upstream input - ([88fefe1](https://github.com/vicanso/pingap/commit/88fefe17b707a053564941fe337de6f24a081baa))
+
+### 🚜 Refactor
+
+- Adjust location weight calculation method - ([6eb396c](https://github.com/vicanso/pingap/commit/6eb396c5c0eaa1cde950fc7834c7c42af43b0209))
+- Adjust sidebar navigation - ([08cc8d0](https://github.com/vicanso/pingap/commit/08cc8d045e35c28609bcaa4e3f188d2985fb986b))
+- Adjust sentry core version - ([61182c4](https://github.com/vicanso/pingap/commit/61182c4cd0a437c25141aa7c2f9f6bab06edfde4))
+- Remove default parameters for docker run cmd, #103 - ([654ee51](https://github.com/vicanso/pingap/commit/654ee5106c5824658a805ccae05a241ccf0a2fea))
+- Update pingora version - ([b3dc30f](https://github.com/vicanso/pingap/commit/b3dc30f742d7ae409cccf1d18a1f134623c9908a))
+- Use mimalloc for better performance of musl - ([45cd230](https://github.com/vicanso/pingap/commit/45cd2308a77456cfd8ca1fcb75de93235271ae42))
+- Add sub title of location - ([9936ee6](https://github.com/vicanso/pingap/commit/9936ee6606c5da74bba341a265a86bbaefa5f009))
+- Adjust access log format - ([85f96f9](https://github.com/vicanso/pingap/commit/85f96f99ae4d87728f180ad931d8bc20fd833895))
+
+### 📚 Documentation
+
+- Add web socket example - ([8a8fd7d](https://github.com/vicanso/pingap/commit/8a8fd7d59ad6197b210c9ef114b942d4c3511e61))
+
+### 🧪 Testing
+
+- Fix test of location weight - ([5c30952](https://github.com/vicanso/pingap/commit/5c309525cda71e73f981f24511a27f4285ee0878))
+
 ## [0.10.4](https://github.com/vicanso/pingap/compare/v0.10.3..0.10.4) - 2025-03-02
 
 ### ⛰️  Features

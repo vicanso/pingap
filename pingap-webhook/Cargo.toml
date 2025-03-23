@@ -1,6 +1,6 @@
 [package]
 name = "pingap-webhook"
-version = "0.10.4"
+version = "0.10.5"
 edition = "2021"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -17,4 +17,4 @@ tracing = { workspace = true }
 strum = { workspace = true }
 reqwest = { workspace = true }
 local-ip-address = "0.6.3"
-pingap-core = { version = "0.10.4", path = "../pingap-core" }
+pingap-core = { version = "0.10.5", path = "../pingap-core" }
