@@ -26,10 +26,12 @@ use pingap_config::{
 use pingap_core::Error as ServiceError;
 use pingap_core::HttpResponse;
 use pingap_core::SimpleServiceTaskFuture;
-use pingap_core::{Ctx, NotificationData, NotificationLevel};
-use pingap_webhook::send_notification;
+use pingap_core::{
+    Ctx, NotificationData, NotificationLevel, NotificationSender,
+};
 use pingora::http::StatusCode;
 use pingora::proxy::Session;
+use std::sync::Arc;
 use std::time::Duration;
 use substring::Substring;
 use tracing::{error, info};
@@ -92,6 +94,7 @@ async fn do_update_certificates(
     count: u32,
     storage: &'static (dyn ConfigStorage + Sync + Send),
     params: &[UpdateCertificateParams],
+    sender: Option<Arc<NotificationSender>>,
 ) -> Result<bool, ServiceError> {
     if params.is_empty() {
         return Ok(false);
@@ -138,7 +141,9 @@ async fn do_update_certificates(
             continue;
         }
 
-        if let Err(e) = renew_certificate(storage, name, domains).await {
+        if let Err(e) =
+            renew_certificate(storage, name, domains, sender.clone()).await
+        {
             error!(
                 category = LOG_CATEGORY,
                 error = %e,
@@ -155,27 +160,34 @@ async fn renew_certificate(
     storage: &'static (dyn ConfigStorage + Sync + Send),
     name: &str,
     domains: &[String],
+    sender: Option<Arc<NotificationSender>>,
 ) -> Result<()> {
     let conf = update_certificate_lets_encrypt(storage, name, domains).await?;
     set_current_config(&conf);
-    handle_successful_renewal(domains, &conf).await;
+    handle_successful_renewal(domains, &conf, sender).await;
     Ok(())
 }
 
-async fn handle_successful_renewal(domains: &[String], conf: &PingapConf) {
+async fn handle_successful_renewal(
+    domains: &[String],
+    conf: &PingapConf,
+    sender: Option<Arc<NotificationSender>>,
+) {
     info!(
         category = LOG_CATEGORY,
         domains = domains.join(","),
         "renew certificate success"
     );
-
-    send_notification(NotificationData {
-        category: "lets_encrypt".to_string(),
-        title: "Generate new cert from let's encrypt".to_string(),
-        message: format!("Domains: {domains:?}"),
-        ..Default::default()
-    })
-    .await;
+    if let Some(sender) = &sender {
+        sender
+            .notify(NotificationData {
+                category: "lets_encrypt".to_string(),
+                title: "Generate new cert from let's encrypt".to_string(),
+                message: format!("Domains: {domains:?}"),
+                ..Default::default()
+            })
+            .await;
+    }
 
     let (_, error) = try_update_certificates(&conf.certificates);
     if !error.is_empty() {
@@ -184,13 +196,16 @@ async fn handle_successful_renewal(domains: &[String], conf: &PingapConf) {
             error = error,
             "parse certificate fail"
         );
-        send_notification(NotificationData {
-            category: "parse_certificate_fail".to_string(),
-            level: NotificationLevel::Error,
-            message: error,
-            ..Default::default()
-        })
-        .await;
+        if let Some(sender) = &sender {
+            sender
+                .notify(NotificationData {
+                    category: "parse_certificate_fail".to_string(),
+                    level: NotificationLevel::Error,
+                    message: error,
+                    ..Default::default()
+                })
+                .await;
+        }
     }
 }
 
@@ -198,8 +213,10 @@ async fn handle_successful_renewal(domains: &[String], conf: &PingapConf) {
 /// and regenerate if the certificate is invalid or will be expired.
 pub fn new_lets_encrypt_service(
     storage: &'static (dyn ConfigStorage + Sync + Send),
+    sender: Option<Arc<NotificationSender>>,
 ) -> (String, SimpleServiceTaskFuture) {
     let task: SimpleServiceTaskFuture = Box::new(move |count: u32| {
+        let sender = sender.clone();
         Box::pin({
             async move {
                 let mut params = vec![];
@@ -223,7 +240,7 @@ pub fn new_lets_encrypt_service(
                             .collect(),
                     });
                 }
-                do_update_certificates(count, storage, &params).await
+                do_update_certificates(count, storage, &params, sender).await
             }
         })
     });

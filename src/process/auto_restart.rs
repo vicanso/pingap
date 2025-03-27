@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::{restart, LOG_CATEGORY};
+use crate::webhook::get_webhook_sender;
 use crate::{plugin, proxy};
 use async_trait::async_trait;
 use pingap_config::{
@@ -25,7 +26,6 @@ use pingap_core::{
 };
 use pingap_location::try_init_locations;
 use pingap_upstream::try_update_upstreams;
-use pingap_webhook::send_notification;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -70,6 +70,12 @@ async fn diff_and_update_config(
     if original_diff_result.is_empty() {
         return Ok(());
     }
+
+    let send_notification = async move |data: NotificationData| {
+        if let Some(sender) = get_webhook_sender() {
+            sender.notify(data).await;
+        }
+    };
 
     let mut reload_fail_messages = vec![];
     let mut hot_reload_config = current_config.clone();
@@ -138,7 +144,7 @@ async fn diff_and_update_config(
         if should_reload_upstream {
             match try_update_upstreams(
                 &new_config.upstreams,
-                Some(pingap_webhook::get_webhook_notification_sender()),
+                get_webhook_sender(),
             )
             .await
             {

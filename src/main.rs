@@ -48,6 +48,7 @@ use tracing::{error, info};
 mod plugin;
 mod process;
 mod proxy;
+mod webhook;
 
 // Avoid musl's default allocator due to lackluster performance
 // https://nickb.dev/blog/default-musl-allocator-considered-harmful-to-performance
@@ -368,10 +369,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     let basic_conf = &conf.basic;
 
     let webhook_url = basic_conf.webhook.clone().unwrap_or_default();
-    pingap_webhook::set_web_hook(
-        &webhook_url,
-        &conf.basic.webhook_type.clone().unwrap_or_default(),
-        &conf.basic.webhook_notifications.clone().unwrap_or_default(),
+    webhook::init_webhook_notification_sender(
+        webhook_url,
+        conf.basic.webhook_type.clone().unwrap_or_default(),
+        conf.basic.webhook_notifications.clone().unwrap_or_default(),
     );
 
     // return if test mode
@@ -419,10 +420,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         process::set_restart_process_command(cmd);
     }
 
-    try_init_upstreams(
-        &conf.upstreams,
-        Some(pingap_webhook::get_webhook_notification_sender()),
-    )?;
+    try_init_upstreams(&conf.upstreams, webhook::get_webhook_sender())?;
     try_init_locations(&conf.locations)?;
     proxy::try_init_server_locations(&conf.servers, &conf.locations)?;
     let certificates = conf.certificates.clone();
@@ -524,7 +522,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     let mut simple_tasks = vec![
-        new_certificate_validity_service(),
+        new_certificate_validity_service(webhook::get_webhook_sender()),
         new_self_signed_certificate_validity_service(),
         new_performance_metrics_log_service(),
     ];
@@ -546,7 +544,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         .is_empty()
     {
         if let Some(storage) = get_config_storage() {
-            simple_tasks.push(new_lets_encrypt_service(storage));
+            simple_tasks.push(new_lets_encrypt_service(
+                storage,
+                webhook::get_webhook_sender(),
+            ));
         }
     }
 

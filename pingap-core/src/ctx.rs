@@ -32,6 +32,7 @@ const MINUTE: u64 = 60 * SECOND;
 const HOUR: u64 = 60 * MINUTE;
 
 #[inline]
+/// Format the duration in human readable format
 fn format_duration(mut buf: BytesMut, ms: u64) -> BytesMut {
     if ms >= HOUR {
         buf.extend(itoa::Buffer::new().format(ms / HOUR).as_bytes());
@@ -64,6 +65,7 @@ fn format_duration(mut buf: BytesMut, ms: u64) -> BytesMut {
     buf
 }
 
+/// Trait for modifying the response body
 pub trait ModifyResponseBody: Sync + Send {
     fn handle(&self, data: Bytes) -> Bytes;
 }
@@ -110,7 +112,7 @@ impl OtelTracer {
 /// including connection details, caching information, and upstream server interactions.
 #[derive(Default)]
 pub struct Ctx {
-    /// Unique identifier for the connection
+    /// Unique identifier for the connection, it should be unique among all existing connections of the same type
     pub connection_id: usize,
     /// Number of requests currently processing
     pub processing: i32,
@@ -192,7 +194,7 @@ pub struct Ctx {
     pub compression_stat: Option<CompressionStat>,
     /// Handler for modifying response body
     pub modify_response_body: Option<Box<dyn ModifyResponseBody>>,
-    /// Response body buffer
+    /// Body buffer of modified response
     pub response_body: Option<BytesMut>,
     /// Number of cache reading operations
     pub cache_reading: Option<u32>,

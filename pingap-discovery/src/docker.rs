@@ -18,13 +18,13 @@ use async_trait::async_trait;
 use bollard::container::ListContainersOptions;
 use bollard::secret::ContainerSummary;
 use http::Extensions;
-use pingap_core::{NotificationData, NotificationLevel};
-use pingap_webhook::send_notification;
+use pingap_core::{NotificationData, NotificationLevel, NotificationSender};
 use pingora::lb::discovery::ServiceDiscovery;
 use pingora::lb::{Backend, Backends};
 use pingora::protocols::l4::socket::SocketAddr;
 use std::collections::{BTreeSet, HashMap};
 use std::net::ToSocketAddrs;
+use std::sync::Arc;
 use std::time::SystemTime;
 use tracing::{debug, error, info};
 
@@ -74,6 +74,7 @@ struct Docker {
     ipv4_only: bool,
     docker: bollard::Docker,
     containers: Vec<Container>,
+    sender: Option<Arc<NotificationSender>>,
 }
 
 /// Checks if the discovery type is Docker
@@ -96,7 +97,18 @@ impl Docker {
             docker,
             containers,
             ipv4_only,
+            sender: None,
         })
+    }
+
+    /// Sets the notification sender
+    ///
+    /// # Arguments
+    /// * `sender` - The notification sender
+    ///
+    /// # Returns
+    pub fn with_sender(&mut self, sender: Option<Arc<NotificationSender>>) {
+        self.sender = sender;
     }
 
     /// Extracts port information from a container
@@ -250,16 +262,19 @@ impl ServiceDiscovery for Docker {
                     ),
                     "docker discover fail"
                 );
-                send_notification(NotificationData {
-                    category: "service_discover_fail".to_string(),
-                    level: NotificationLevel::Warn,
-                    message: format!(
-                        "docker discovery {:?}, error: {e}",
-                        self.labels(),
-                    ),
-                    ..Default::default()
-                })
-                .await;
+                if let Some(sender) = &self.sender {
+                    sender
+                        .notify(NotificationData {
+                            category: "service_discover_fail".to_string(),
+                            level: NotificationLevel::Warn,
+                            message: format!(
+                                "docker discovery {:?}, error: {e}",
+                                self.labels(),
+                            ),
+                            ..Default::default()
+                        })
+                        .await;
+                }
                 return Err(e.into());
             },
         }
@@ -274,8 +289,10 @@ pub fn new_docker_discover_backends(
     addrs: &[String],
     _tls: bool,
     ipv4_only: bool,
+    sender: Option<Arc<NotificationSender>>,
 ) -> Result<Backends> {
-    let docker = Docker::new(addrs, ipv4_only)?;
+    let mut docker = Docker::new(addrs, ipv4_only)?;
+    docker.with_sender(sender);
     let backends = Backends::new(Box::new(docker));
     Ok(backends)
 }

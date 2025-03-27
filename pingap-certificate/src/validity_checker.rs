@@ -15,9 +15,10 @@
 use super::{list_certificates, LOG_CATEGORY};
 use pingap_core::Error as ServiceError;
 use pingap_core::{
-    NotificationData, NotificationLevel, SimpleServiceTaskFuture,
+    NotificationData, NotificationLevel, NotificationSender,
+    SimpleServiceTaskFuture,
 };
-use pingap_webhook::send_notification;
+use std::sync::Arc;
 use tracing::error;
 
 /// Number of seconds in a day
@@ -38,7 +39,10 @@ const CHECK_INTERVAL_MINUTES: u32 = 24 * 60;
 /// * `Ok(true)` if check was performed
 /// * `Ok(false)` if check was skipped due to interval
 /// * `Err(ServiceError)` if an error occurred during the check
-async fn do_validity_check(count: u32) -> Result<bool, ServiceError> {
+async fn do_validity_check(
+    count: u32,
+    sender: Option<Arc<NotificationSender>>,
+) -> Result<bool, ServiceError> {
     if count % CHECK_INTERVAL_MINUTES != 0 {
         return Ok(false);
     }
@@ -82,16 +86,19 @@ async fn do_validity_check(count: u32) -> Result<bool, ServiceError> {
     }
 
     if !name_list.is_empty() {
-        send_notification(NotificationData {
-            level: NotificationLevel::Warn,
-            category: "tls_validity".to_string(),
-            message: format!(
-                "certificate {} will be expired",
-                name_list.join(",")
-            ),
-            ..Default::default()
-        })
-        .await;
+        if let Some(sender) = &sender {
+            sender
+                .notify(NotificationData {
+                    level: NotificationLevel::Warn,
+                    category: "tls_validity".to_string(),
+                    message: format!(
+                        "certificate {} will be expired",
+                        name_list.join(",")
+                    ),
+                    ..Default::default()
+                })
+                .await;
+        }
     }
     Ok(true)
 }
@@ -103,8 +110,11 @@ async fn do_validity_check(count: u32) -> Result<bool, ServiceError> {
 /// A tuple containing:
 /// * Service name as String
 /// * Service task future for executing validity checks
-pub fn new_certificate_validity_service() -> (String, SimpleServiceTaskFuture) {
-    let task: SimpleServiceTaskFuture =
-        Box::new(|count: u32| Box::pin(do_validity_check(count)));
+pub fn new_certificate_validity_service(
+    sender: Option<Arc<NotificationSender>>,
+) -> (String, SimpleServiceTaskFuture) {
+    let task: SimpleServiceTaskFuture = Box::new(move |count: u32| {
+        Box::pin(do_validity_check(count, sender.clone()))
+    });
     ("validity_checker".to_string(), task)
 }

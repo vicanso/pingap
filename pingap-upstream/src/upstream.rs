@@ -225,14 +225,15 @@ fn new_backends(
     tls: bool,
     ipv4_only: bool,
     discovery: &str,
+    sender: Option<Arc<NotificationSender>>,
 ) -> Result<Backends> {
     let (result, category) = match discovery {
         d if is_dns_discovery(d) => (
-            new_dns_discover_backends(addrs, tls, ipv4_only),
+            new_dns_discover_backends(addrs, tls, ipv4_only, sender),
             "dns_discovery",
         ),
         d if is_docker_discovery(d) => (
-            new_docker_discover_backends(addrs, tls, ipv4_only),
+            new_docker_discover_backends(addrs, tls, ipv4_only, sender),
             "docker_discovery",
         ),
         _ => (
@@ -360,6 +361,7 @@ fn new_load_balancer(
         tls,
         conf.ipv4_only.unwrap_or_default(),
         discovery.as_str(),
+        sender.clone(),
     )?;
 
     // Parse the load balancing algorithm configuration
@@ -913,6 +915,7 @@ mod tests {
             false,
             true,
             "",
+            None,
         )
         .unwrap();
 
@@ -921,11 +924,13 @@ mod tests {
             true,
             true,
             "",
+            None,
         )
         .unwrap();
 
-        let _ = new_backends(&["github.com".to_string()], true, false, "dns")
-            .unwrap();
+        let _ =
+            new_backends(&["github.com".to_string()], true, false, "dns", None)
+                .unwrap();
     }
     #[test]
     fn test_new_upstream() {

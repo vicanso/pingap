@@ -3236,7 +3236,6 @@ version = "0.10.5"
 dependencies = [
  "async-trait",
  "local-ip-address 0.6.3",
- "once_cell",
  "pingap-core",
  "reqwest",
  "serde_json",

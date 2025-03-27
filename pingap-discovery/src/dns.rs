@@ -23,13 +23,14 @@ use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_resolver::system_conf::read_system_conf;
 use hickory_resolver::AsyncResolver;
 use http::Extensions;
+use pingap_core::NotificationSender;
 use pingap_core::{NotificationData, NotificationLevel};
-use pingap_webhook::send_notification;
 use pingora::lb::discovery::ServiceDiscovery;
 use pingora::lb::{Backend, Backends};
 use pingora::protocols::l4::socket::SocketAddr;
 use std::collections::{BTreeSet, HashMap};
 use std::net::ToSocketAddrs;
+use std::sync::Arc;
 use std::time::SystemTime;
 use tracing::{debug, error, info};
 
@@ -37,6 +38,7 @@ use tracing::{debug, error, info};
 struct Dns {
     ipv4_only: bool,
     hosts: Vec<Addr>,
+    sender: Option<Arc<NotificationSender>>,
 }
 
 /// Checks if the discovery type is DNS
@@ -56,7 +58,21 @@ impl Dns {
     /// * `Result<Self>` - New DNS discovery instance
     fn new(addrs: &[String], tls: bool, ipv4_only: bool) -> Result<Self> {
         let hosts = format_addrs(addrs, tls);
-        Ok(Self { hosts, ipv4_only })
+        Ok(Self {
+            hosts,
+            ipv4_only,
+            sender: None,
+        })
+    }
+    /// Sets the notification sender
+    ///
+    /// # Arguments
+    /// * `sender` - The notification sender
+    ///
+    /// # Returns
+    /// * `Self` - The DNS discovery instance
+    pub fn with_sender(&mut self, sender: Option<Arc<NotificationSender>>) {
+        self.sender = sender;
     }
 
     /// Reads system DNS resolver configuration
@@ -182,16 +198,19 @@ impl ServiceDiscovery for Dns {
                     ),
                     "dns discover fail"
                 );
-                send_notification(NotificationData {
-                    category: "service_discover_fail".to_string(),
-                    level: NotificationLevel::Warn,
-                    message: format!(
-                        "dns discovery {:?}, error: {e}",
-                        self.hosts
-                    ),
-                    ..Default::default()
-                })
-                .await;
+                if let Some(sender) = &self.sender {
+                    sender
+                        .notify(NotificationData {
+                            category: "service_discover_fail".to_string(),
+                            level: NotificationLevel::Warn,
+                            message: format!(
+                                "dns discovery {:?}, error: {e}",
+                                self.hosts
+                            ),
+                            ..Default::default()
+                        })
+                        .await;
+                }
                 Err(e.into())
             },
         }
@@ -211,8 +230,10 @@ pub fn new_dns_discover_backends(
     addrs: &[String],
     tls: bool,
     ipv4_only: bool,
+    sender: Option<Arc<NotificationSender>>,
 ) -> Result<Backends> {
-    let dns = Dns::new(addrs, tls, ipv4_only)?;
+    let mut dns = Dns::new(addrs, tls, ipv4_only)?;
+    dns.with_sender(sender);
     let backends = Backends::new(Box::new(dns));
     Ok(backends)
 }
