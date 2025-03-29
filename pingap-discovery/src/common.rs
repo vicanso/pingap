@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{format_addrs, Error, Result};
-use super::{LOG_CATEGORY, STATIC_DISCOVERY};
+use super::{Discovery, LOG_CATEGORY, STATIC_DISCOVERY};
 use http::Extensions;
 use pingora::lb::discovery;
 use pingora::lb::{Backend, Backends};
@@ -39,18 +39,11 @@ pub fn is_static_discovery(value: &str) -> bool {
 /// It will resolve the domain to socket address at the beginning stage.
 ///
 /// # Arguments
-/// * `addrs` - List of address strings to resolve
-/// * `tls` - Whether to use TLS
-/// * `ipv4_only` - Whether to only use IPv4 addresses
-/// * `weight` - Weight for load balancing (higher values mean more traffic)
-pub fn new_static_discovery(
-    addrs: &[String],
-    tls: bool,
-    ipv4_only: bool,
-) -> Result<Backends> {
-    let hosts = addrs.join(",");
+/// * `discovery` - The discovery configuration
+pub fn new_static_discovery(discovery: &Discovery) -> Result<Backends> {
+    let hosts = discovery.addr.join(",");
     let start_time = SystemTime::now();
-    let formatted_addrs = format_addrs(addrs, tls);
+    let formatted_addrs = format_addrs(&discovery.addr, discovery.tls);
 
     let mut backends: Vec<Backend> = vec![];
 
@@ -62,7 +55,7 @@ pub fn new_static_discovery(
                 source: e,
                 content: format!("{addr} to socket addr fail"),
             })?
-            .filter(|socket_addr| !ipv4_only || socket_addr.is_ipv4())
+            .filter(|socket_addr| !discovery.ipv4_only || socket_addr.is_ipv4())
             .for_each(|socket_addr| {
                 backends.push(Backend {
                     addr: SocketAddr::Inet(socket_addr),
@@ -100,13 +93,18 @@ pub fn new_static_discovery(
 #[cfg(test)]
 mod tests {
     use super::new_static_discovery;
+    use super::Discovery;
     use pretty_assertions::assert_eq;
 
     #[tokio::test]
     async fn test_new_static_discovery() {
-        let backends =
-            new_static_discovery(&["127.0.0.1:8080".to_string()], false, false)
-                .unwrap();
+        let backends = new_static_discovery(&Discovery {
+            addr: vec!["127.0.0.1:8080".to_string()],
+            tls: false,
+            ipv4_only: false,
+            sender: None,
+        })
+        .unwrap();
 
         // no health check, so no healthy backend
         assert_eq!(backends.get_backend().len(), 0);

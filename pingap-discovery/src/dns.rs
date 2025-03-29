@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{format_addrs, Addr, Error, Result};
-use super::{DNS_DISCOVERY, LOG_CATEGORY};
+use super::{Discovery, DNS_DISCOVERY, LOG_CATEGORY};
 use async_trait::async_trait;
 use hickory_resolver::config::{
     LookupIpStrategy, ResolverConfig, ResolverOpts,
@@ -71,8 +71,12 @@ impl Dns {
     ///
     /// # Returns
     /// * `Self` - The DNS discovery instance
-    pub fn with_sender(&mut self, sender: Option<Arc<NotificationSender>>) {
+    pub fn with_sender(
+        mut self,
+        sender: Option<Arc<NotificationSender>>,
+    ) -> Self {
         self.sender = sender;
+        self
     }
 
     /// Reads system DNS resolver configuration
@@ -220,21 +224,14 @@ impl ServiceDiscovery for Dns {
 /// Creates a new DNS-based service discovery backend
 ///
 /// # Arguments
-/// * `addrs` - List of addresses to resolve
-/// * `tls` - Whether to use TLS
-/// * `ipv4_only` - Whether to only use IPv4 addresses
+/// * `discovery` - The discovery configuration
 ///
 /// # Returns
 /// * `Result<Backends>` - Configured service discovery backend
-pub fn new_dns_discover_backends(
-    addrs: &[String],
-    tls: bool,
-    ipv4_only: bool,
-    sender: Option<Arc<NotificationSender>>,
-) -> Result<Backends> {
-    let mut dns = Dns::new(addrs, tls, ipv4_only)?;
-    dns.with_sender(sender);
-    let backends = Backends::new(Box::new(dns));
+pub fn new_dns_discover_backends(discovery: &Discovery) -> Result<Backends> {
+    let dns = Dns::new(&discovery.addr, discovery.tls, discovery.ipv4_only)?;
+    let backends =
+        Backends::new(Box::new(dns.with_sender(discovery.sender.clone())));
     Ok(backends)
 }
 

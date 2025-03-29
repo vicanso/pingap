@@ -24,7 +24,7 @@ use pingap_core::{NotificationData, NotificationLevel, NotificationSender};
 use pingap_discovery::{
     is_dns_discovery, is_docker_discovery, is_static_discovery,
     new_dns_discover_backends, new_docker_discover_backends,
-    new_static_discovery, TRANSPARENT_DISCOVERY,
+    new_static_discovery, Discovery, TRANSPARENT_DISCOVERY,
 };
 use pingap_health::new_health_check;
 use pingora::lb::health_check::{HealthObserve, HealthObserveCallback};
@@ -221,25 +221,17 @@ pub struct Upstream {
 
 // Creates new backend servers based on discovery method (DNS/Docker/Static)
 fn new_backends(
-    addrs: &[String],
-    tls: bool,
-    ipv4_only: bool,
-    discovery: &str,
-    sender: Option<Arc<NotificationSender>>,
+    discovery_category: &str,
+    discovery: &Discovery,
 ) -> Result<Backends> {
-    let (result, category) = match discovery {
-        d if is_dns_discovery(d) => (
-            new_dns_discover_backends(addrs, tls, ipv4_only, sender),
-            "dns_discovery",
-        ),
-        d if is_docker_discovery(d) => (
-            new_docker_discover_backends(addrs, tls, ipv4_only, sender),
-            "docker_discovery",
-        ),
-        _ => (
-            new_static_discovery(addrs, tls, ipv4_only),
-            "static_discovery",
-        ),
+    let (result, category) = match discovery_category {
+        d if is_dns_discovery(d) => {
+            (new_dns_discover_backends(discovery), "dns_discovery")
+        },
+        d if is_docker_discovery(d) => {
+            (new_docker_discover_backends(discovery), "docker_discovery")
+        },
+        _ => (new_static_discovery(discovery), "static_discovery"),
     };
     result.map_err(|e| Error::Common {
         category: category.to_string(),
@@ -341,9 +333,9 @@ fn new_load_balancer(
     }
 
     // Determine the service discovery method
-    let discovery = conf.guess_discovery();
+    let discovery_category = conf.guess_discovery();
     // For transparent discovery, return early with no load balancing
-    if discovery == TRANSPARENT_DISCOVERY {
+    if discovery_category == TRANSPARENT_DISCOVERY {
         return Ok((SelectionLb::Transparent, "".to_string(), "".to_string()));
     }
 
@@ -356,13 +348,11 @@ fn new_load_balancer(
         .unwrap_or_default();
 
     // Create backend servers using the configured addresses and discovery method
-    let backends = new_backends(
-        &conf.addrs,
-        tls,
-        conf.ipv4_only.unwrap_or_default(),
-        discovery.as_str(),
-        sender.clone(),
-    )?;
+    let discovery = Discovery::new(conf.addrs.clone())
+        .with_ipv4_only(conf.ipv4_only.unwrap_or_default())
+        .with_tls(tls)
+        .with_sender(sender.clone());
+    let backends = new_backends(&discovery_category, &discovery)?;
 
     // Parse the load balancing algorithm configuration
     // Format: "algo:hash_type:hash_key" (e.g. "hash:cookie:session_id")
@@ -897,6 +887,7 @@ mod tests {
         get_hash_value, new_backends, Upstream, UpstreamConf,
         UpstreamPeerTracer,
     };
+    use pingap_discovery::Discovery;
     use pingora::protocols::ALPN;
     use pingora::proxy::Session;
     use pingora::upstreams::peer::Tracing;
@@ -908,29 +899,28 @@ mod tests {
     #[test]
     fn test_new_backends() {
         let _ = new_backends(
-            &[
+            "",
+            &Discovery::new(vec![
                 "192.168.1.1:8001 10".to_string(),
                 "192.168.1.2:8001".to_string(),
-            ],
-            false,
-            true,
-            "",
-            None,
+            ]),
         )
         .unwrap();
 
         let _ = new_backends(
-            &["192.168.1.1".to_string(), "192.168.1.2:8001".to_string()],
-            true,
-            true,
             "",
-            None,
+            &Discovery::new(vec![
+                "192.168.1.1".to_string(),
+                "192.168.1.2:8001".to_string(),
+            ]),
         )
         .unwrap();
 
-        let _ =
-            new_backends(&["github.com".to_string()], true, false, "dns", None)
-                .unwrap();
+        let _ = new_backends(
+            "dns",
+            &Discovery::new(vec!["github.com".to_string()]),
+        )
+        .unwrap();
     }
     #[test]
     fn test_new_upstream() {

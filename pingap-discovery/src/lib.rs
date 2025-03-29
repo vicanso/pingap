@@ -13,7 +13,9 @@
 // limitations under the License.
 
 use hickory_resolver::error::ResolveError;
+use pingap_core::NotificationSender;
 use snafu::Snafu;
+use std::sync::Arc;
 
 pub static LOG_CATEGORY: &str = "discovery";
 
@@ -88,6 +90,40 @@ pub const DNS_DISCOVERY: &str = "dns";
 pub const DOCKER_DISCOVERY: &str = "docker";
 pub const STATIC_DISCOVERY: &str = "static";
 pub const TRANSPARENT_DISCOVERY: &str = "transparent";
+
+#[derive(Default)]
+pub struct Discovery {
+    addr: Vec<String>,
+    tls: bool,
+    ipv4_only: bool,
+    sender: Option<Arc<NotificationSender>>,
+}
+
+impl Discovery {
+    pub fn new(addr: Vec<String>) -> Self {
+        Self {
+            addr,
+            tls: false,
+            ipv4_only: false,
+            sender: None,
+        }
+    }
+    pub fn with_sender(
+        mut self,
+        sender: Option<Arc<NotificationSender>>,
+    ) -> Self {
+        self.sender = sender;
+        self
+    }
+    pub fn with_tls(mut self, tls: bool) -> Self {
+        self.tls = tls;
+        self
+    }
+    pub fn with_ipv4_only(mut self, ipv4_only: bool) -> Self {
+        self.ipv4_only = ipv4_only;
+        self
+    }
+}
 
 mod common;
 mod dns;

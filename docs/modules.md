@@ -23,21 +23,18 @@ graph TD
     acme --> certificate
     acme --> config
     acme --> core
-    acme --> webhook
 
     cache --> core
 
     certificate --> config
     certificate --> core
     certificate --> util
-    certificate --> webhook
 
     config --> core
     config --> discovery
     config --> util
 
     discovery --> core
-    discovery --> webhook
 
     location --> config
     location --> core

@@ -22,7 +22,6 @@ tracing = { workspace = true }
 tokio = { workspace = true }
 pingap-certificate = { version = "0.10.5", path = "../pingap-certificate" }
 pingap-config = { version = "0.10.5", path = "../pingap-config" }
-pingap-webhook = { version = "0.10.5", path = "../pingap-webhook" }
 pingap-core = { version = "0.10.5", path = "../pingap-core" }
 
 

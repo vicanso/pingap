@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::{Discovery, DOCKER_DISCOVERY, LOG_CATEGORY};
 use super::{Error, Result};
-use super::{DOCKER_DISCOVERY, LOG_CATEGORY};
 use async_trait::async_trait;
 use bollard::container::ListContainersOptions;
 use bollard::secret::ContainerSummary;
@@ -107,8 +107,13 @@ impl Docker {
     /// * `sender` - The notification sender
     ///
     /// # Returns
-    pub fn with_sender(&mut self, sender: Option<Arc<NotificationSender>>) {
+    /// * `Self` - The docker discovery instance
+    pub fn with_sender(
+        mut self,
+        sender: Option<Arc<NotificationSender>>,
+    ) -> Self {
         self.sender = sender;
+        self
     }
 
     /// Extracts port information from a container
@@ -282,17 +287,15 @@ impl ServiceDiscovery for Docker {
 }
 
 /// Creates a new Docker service discovery backend
-/// - addrs: List of container specifications
-/// - _tls: TLS configuration (currently unused)
-/// - ipv4_only: Whether to only use IPv4 addresses
-pub fn new_docker_discover_backends(
-    addrs: &[String],
-    _tls: bool,
-    ipv4_only: bool,
-    sender: Option<Arc<NotificationSender>>,
-) -> Result<Backends> {
-    let mut docker = Docker::new(addrs, ipv4_only)?;
-    docker.with_sender(sender);
-    let backends = Backends::new(Box::new(docker));
+///
+/// # Arguments
+/// * `discovery` - The discovery configuration
+///
+/// # Returns
+/// * `Result<Backends>` - Configured service discovery backend
+pub fn new_docker_discover_backends(discovery: &Discovery) -> Result<Backends> {
+    let docker = Docker::new(&discovery.addr, discovery.ipv4_only)?;
+    let backends =
+        Backends::new(Box::new(docker.with_sender(discovery.sender.clone())));
     Ok(backends)
 }

@@ -17,9 +17,6 @@ use pingap_core::NotificationSender;
 use pingap_webhook::WebhookNotificationSender;
 use std::sync::Arc;
 
-// static WEBHOOK_NOTIFICATION_SENDER: Lazy<Arc<NotificationSender>> =
-//     Lazy::new(|| Arc::new(Box::new(WebhookNotificationSender {})));
-
 static WEBHOOK_NOTIFICATION_SENDER: OnceCell<Arc<NotificationSender>> =
     OnceCell::new();
 
