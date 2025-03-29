@@ -33,6 +33,12 @@ use std::time::Duration;
 use tokio::time::interval;
 use tracing::{debug, error, info};
 
+async fn send_notification(data: NotificationData) {
+    if let Some(sender) = get_webhook_sender() {
+        sender.notify(data).await;
+    }
+}
+
 /// Compares configurations and handles updates through hot reload or full restart
 ///
 /// This function:
@@ -70,12 +76,6 @@ async fn diff_and_update_config(
     if original_diff_result.is_empty() {
         return Ok(());
     }
-
-    let send_notification = async move |data: NotificationData| {
-        if let Some(sender) = get_webhook_sender() {
-            sender.notify(data).await;
-        }
-    };
 
     let mut reload_fail_messages = vec![];
     let mut hot_reload_config = current_config.clone();
