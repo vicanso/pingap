@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{restart, LOG_CATEGORY};
-use crate::webhook::get_webhook_sender;
+use crate::webhook::{get_webhook_sender, send_notification};
 use crate::{plugin, proxy};
 use async_trait::async_trait;
 use pingap_config::{
@@ -32,12 +32,6 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 use tokio::time::interval;
 use tracing::{debug, error, info};
-
-async fn send_notification(data: NotificationData) {
-    if let Some(sender) = get_webhook_sender() {
-        sender.notify(data).await;
-    }
-}
 
 /// Compares configurations and handles updates through hot reload or full restart
 ///

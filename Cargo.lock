@@ -3236,7 +3236,6 @@ dependencies = [
  "pingap-core",
  "reqwest",
  "serde_json",
- "strum",
  "tracing",
 ]
 

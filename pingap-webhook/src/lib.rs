@@ -18,7 +18,6 @@ use pingap_core::{
 };
 use serde_json::{Map, Value};
 use std::time::Duration;
-use strum::EnumString;
 use tracing::{error, info};
 
 pub const LOG_CATEGORY: &str = "webhook";
@@ -172,22 +171,6 @@ impl Notification for WebhookNotificationSender {
     async fn notify(&self, data: NotificationData) {
         self.send_notification(data).await;
     }
-}
-
-#[derive(PartialEq, Debug, Clone, EnumString, strum::Display, Default)]
-#[strum(serialize_all = "snake_case")]
-pub enum NotificationCategory {
-    #[default]
-    BackendStatus,
-    LetsEncrypt,
-    DiffConfig,
-    Restart,
-    RestartFail,
-    ReloadConfig,
-    ReloadConfigFail,
-    TlsValidity,
-    ParseCertificateFail,
-    ServiceDiscoverFail,
 }
 
 /// Returns a list of non-loopback IP addresses (both IPv4 and IPv6) for the local machine

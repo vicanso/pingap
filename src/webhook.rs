@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use once_cell::sync::OnceCell;
-use pingap_core::NotificationSender;
+use pingap_core::{NotificationData, NotificationSender};
 use pingap_webhook::WebhookNotificationSender;
 use std::sync::Arc;
 
@@ -32,4 +32,10 @@ pub fn init_webhook_notification_sender(
 
 pub fn get_webhook_sender() -> Option<Arc<NotificationSender>> {
     WEBHOOK_NOTIFICATION_SENDER.get().cloned()
+}
+
+pub async fn send_notification(data: NotificationData) {
+    if let Some(sender) = WEBHOOK_NOTIFICATION_SENDER.get() {
+        sender.notify(data).await;
+    }
 }

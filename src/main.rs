@@ -617,7 +617,10 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     my_server.add_service(background_service(
         "upstream_hc",
-        new_upstream_health_check_task(Duration::from_secs(10)),
+        new_upstream_health_check_task(
+            Duration::from_secs(10),
+            webhook::get_webhook_sender(),
+        ),
     ));
 
     info!(

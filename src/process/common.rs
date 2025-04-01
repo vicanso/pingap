@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::LOG_CATEGORY;
-use crate::webhook::get_webhook_sender;
+use crate::webhook::send_notification;
 use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
 use pingap_core::{NotificationData, NotificationLevel};
@@ -112,15 +112,12 @@ pub async fn restart_now() -> io::Result<process::Output> {
         ));
     }
     info!(category = LOG_CATEGORY, "pingap will restart");
-    if let Some(sender) = get_webhook_sender() {
-        sender
-            .notify(NotificationData {
-                category: "restart".to_string(),
-                message: format!("Restart now, pid:{}", std::process::id()),
-                ..Default::default()
-            })
-            .await;
-    }
+    send_notification(NotificationData {
+        category: "restart".to_string(),
+        message: format!("Restart now, pid:{}", std::process::id()),
+        ..Default::default()
+    })
+    .await;
     if let Some(cmd) = CMD.get() {
         nix::sys::signal::kill(
             nix::unistd::Pid::from_raw(std::process::id() as i32),
@@ -164,16 +161,13 @@ pub async fn restart() {
                     error = %e,
                     "restart fail"
                 );
-                if let Some(sender) = get_webhook_sender() {
-                    sender
-                        .notify(NotificationData {
-                            level: NotificationLevel::Error,
-                            category: "restart_fail".to_string(),
-                            message: e.to_string(),
-                            ..Default::default()
-                        })
-                        .await;
-                }
+                send_notification(NotificationData {
+                    level: NotificationLevel::Error,
+                    category: "restart_fail".to_string(),
+                    message: e.to_string(),
+                    ..Default::default()
+                })
+                .await;
             },
             Ok(output) => {
                 info!(category = LOG_CATEGORY, "{output:?}");

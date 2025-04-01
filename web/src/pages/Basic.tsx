@@ -195,6 +195,7 @@ export default function Basic() {
           "tls_validity",
           "parse_certificate_fail",
           "service_discover_fail",
+          "upstream_status",
         ].sort(),
         true,
       ),

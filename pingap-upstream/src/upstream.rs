@@ -857,6 +857,49 @@ impl ServiceTask for HealthCheckTask {
             })
         });
         futures::future::join_all(jobs).await;
+
+        // each 10 times, check unhealthy upstreams
+        if check_count % 10 == 1 {
+            let current_unhealthy_upstreams =
+                self.unhealthy_upstreams.load().clone();
+            let mut notify_healthy_upstreams = vec![];
+            let mut unhealthy_upstreams = vec![];
+            for (name, (healthy, _)) in get_upstream_healthy_status().iter() {
+                if *healthy == 0 {
+                    unhealthy_upstreams.push(name.to_string());
+                } else if current_unhealthy_upstreams.contains(name) {
+                    notify_healthy_upstreams.push(name.to_string());
+                }
+            }
+            let mut notify_unhealthy_upstreams = vec![];
+            for name in unhealthy_upstreams.iter() {
+                if !current_unhealthy_upstreams.contains(name) {
+                    notify_unhealthy_upstreams.push(name.to_string());
+                }
+            }
+            self.unhealthy_upstreams
+                .store(Arc::new(unhealthy_upstreams));
+            if let Some(sender) = &self.sender {
+                if !notify_unhealthy_upstreams.is_empty() {
+                    let data = NotificationData {
+                        category: "upstream_status".to_string(),
+                        title: "Upstream unhealthy".to_string(),
+                        message: notify_unhealthy_upstreams.join(", "),
+                        level: NotificationLevel::Error,
+                    };
+                    sender.notify(data).await;
+                }
+                if !notify_healthy_upstreams.is_empty() {
+                    let data = NotificationData {
+                        category: "upstream_status".to_string(),
+                        title: "Upstream healthy".to_string(),
+                        message: notify_healthy_upstreams.join(", "),
+                        ..Default::default()
+                    };
+                    sender.notify(data).await;
+                }
+            }
+        }
         None
     }
     fn description(&self) -> String {
@@ -868,15 +911,22 @@ impl ServiceTask for HealthCheckTask {
 struct HealthCheckTask {
     interval: Duration,
     count: AtomicU32,
+    sender: Option<Arc<NotificationSender>>,
+    unhealthy_upstreams: ArcSwap<Vec<String>>,
 }
 
-pub fn new_upstream_health_check_task(interval: Duration) -> CommonServiceTask {
+pub fn new_upstream_health_check_task(
+    interval: Duration,
+    sender: Option<Arc<NotificationSender>>,
+) -> CommonServiceTask {
     let interval = interval.max(Duration::from_secs(10));
     CommonServiceTask::new(
         interval,
         HealthCheckTask {
             interval,
             count: AtomicU32::new(0),
+            sender,
+            unhealthy_upstreams: ArcSwap::new(Arc::new(vec![])),
         },
     )
 }
