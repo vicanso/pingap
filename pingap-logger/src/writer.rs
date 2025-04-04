@@ -24,7 +24,10 @@ use pingap_core::Error as ServiceError;
 use pingap_core::SimpleServiceTaskFuture;
 use std::fs;
 use std::io;
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
@@ -374,9 +377,9 @@ pub fn logger_try_init(
         }
         #[cfg(not(unix))]
         {
-            Err(Error::Invalid {
+            return Err(Error::Invalid {
                 message: "syslog is only supported on Unix systems".to_string(),
-            })
+            });
         }
     } else {
         log_type = "file";

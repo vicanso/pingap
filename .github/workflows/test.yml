@@ -2,66 +2,66 @@ name: "publish"
 on:
   push:
     # tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
-    branches: [main]
+    branches: [windows]
 
 env:
   GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
   CARGO_TERM_COLOR: always
 
 jobs:
-  linux:
-    runs-on: ubuntu-22.04
-    strategy:
-      matrix:
-        toolchain: [1.81.0, 1.84.0, stable]
-    services:
-      etcd:
-        image: quay.io/coreos/etcd:v3.5.5
-        env:
-          ETCD_ADVERTISE_CLIENT_URLS: http://0.0.0.0:2379
-          ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
-        ports:
-          - 2379:2379
-    steps:
-      - uses: actions/checkout@v4
-      - name: setup node
-        uses: actions/setup-node@v4
-      - name: build-web
-        run: make build-web
-      - name: Install build dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y cmake libclang-dev wget gnupg ca-certificates lsb-release --no-install-recommends protobuf-compiler
-      - name: Install toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.toolchain }}
-          components: rustfmt, clippy
-      - name: Run cargo fmt
-        run: cargo fmt --all -- --check
-      - name: Run cargo clippy
-        run: |
-          cargo install typos-cli
-          make lint
-          make lint-full
-      - name: Run cargo machete
-        run: |
-          cargo install cargo-machete@0.7.0
-          cargo machete
-      - name: Run cargo test
-        run: make test
-      - name: Run cargo msrv
-        run: |
-          cargo install cargo-msrv --version 0.16.3
-          cargo msrv list
-      - name: Run cargo cov
-        run: |
-          cargo install cargo-llvm-cov
-          cargo llvm-cov
-      - name: Run cargo release
-        run: |
-          make release-all
-          ldd target/release/pingap
+  # linux:
+  #   runs-on: ubuntu-22.04
+  #   strategy:
+  #     matrix:
+  #       toolchain: [1.81.0, 1.84.0, stable]
+  #   services:
+  #     etcd:
+  #       image: quay.io/coreos/etcd:v3.5.5
+  #       env:
+  #         ETCD_ADVERTISE_CLIENT_URLS: http://0.0.0.0:2379
+  #         ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+  #       ports:
+  #         - 2379:2379
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: setup node
+  #       uses: actions/setup-node@v4
+  #     - name: build-web
+  #       run: make build-web
+  #     - name: Install build dependencies
+  #       run: |
+  #         sudo apt update
+  #         sudo apt install -y cmake libclang-dev wget gnupg ca-certificates lsb-release --no-install-recommends protobuf-compiler
+  #     - name: Install toolchain
+  #       uses: dtolnay/rust-toolchain@master
+  #       with:
+  #         toolchain: ${{ matrix.toolchain }}
+  #         components: rustfmt, clippy
+  #     - name: Run cargo fmt
+  #       run: cargo fmt --all -- --check
+  #     - name: Run cargo clippy
+  #       run: |
+  #         cargo install typos-cli
+  #         make lint
+  #         make lint-full
+  #     - name: Run cargo machete
+  #       run: |
+  #         cargo install cargo-machete@0.7.0
+  #         cargo machete
+  #     - name: Run cargo test
+  #       run: make test
+  #     - name: Run cargo msrv
+  #       run: |
+  #         cargo install cargo-msrv --version 0.16.3
+  #         cargo msrv list
+  #     - name: Run cargo cov
+  #       run: |
+  #         cargo install cargo-llvm-cov
+  #         cargo llvm-cov
+  #     - name: Run cargo release
+  #       run: |
+  #         make release-all
+  #         ldd target/release/pingap
   windows:
     runs-on: windows-latest
     name: ${{ matrix.target }}
@@ -119,84 +119,84 @@ jobs:
           cargo --version
           cargo build --release --features=full
           ls -lh target/release
-  docker:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 3600
-    strategy:
-      matrix:
-        features: ['latest', 'full']
-    steps:
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@main
-        with:
-          # this might remove tools that are actually needed,
-          # if set to "true" but frees about 6 GB
-          tool-cache: true
+  # docker:
+  #   runs-on: ubuntu-22.04
+  #   timeout-minutes: 3600
+  #   strategy:
+  #     matrix:
+  #       features: ['latest', 'full']
+  #   steps:
+  #     - name: Free Disk Space (Ubuntu)
+  #       uses: jlumbroso/free-disk-space@main
+  #       with:
+  #         # this might remove tools that are actually needed,
+  #         # if set to "true" but frees about 6 GB
+  #         tool-cache: true
           
-          # all of these default to true, but feel free to set to
-          # "false" if necessary for your workflow
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-      - name: Change Swap Space
-        run: |
-          swapon --show=NAME | tail -n 1
-          df -lh
+  #         # all of these default to true, but feel free to set to
+  #         # "false" if necessary for your workflow
+  #         android: true
+  #         dotnet: true
+  #         haskell: true
+  #         large-packages: true
+  #         docker-images: true
+  #     - name: Change Swap Space
+  #       run: |
+  #         swapon --show=NAME | tail -n 1
+  #         df -lh
 
-          export SWAP_FILE=/swapfile
-          sudo fallocate -l 24G $SWAP_FILE
-          sudo chmod 600 $SWAP_FILE
-          sudo mkswap $SWAP_FILE
-          sudo swapon $SWAP_FILE
-      - name: Swap space report after modification
-        shell: bash
-        run: |
-          echo "Memory and swap:"
-          free -h
-          echo
-          swapon --show
-          df -lh
-          echo
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v4
-        with:
-          images: |
-            vicanso/pingap
-          tags: |
-            type=raw,value=${{ matrix.features }}
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Available platforms
-        run: echo ${{ steps.buildx.outputs.platforms }}
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
-      - name: Set build args
-        shell: bash
-        id: build_args
-        run: |
-          if [ "${{ matrix.features }}" != "latest" ]; then
-            echo "BUILD_ARGS=--features=${{ matrix.features }}" >> $GITHUB_OUTPUT
-          fi
-      - name: Build and push
-        id: docker_build
-        uses: docker/build-push-action@v6
-        with:
-          platforms: linux/amd64, linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          build-args: |
-            BUILD_ARGS=${{ steps.build_args.outputs.BUILD_ARGS }}
-      - name: Image digest
-        run: |
-          echo ${{ steps.docker_build.outputs.digest }}
+  #         export SWAP_FILE=/swapfile
+  #         sudo fallocate -l 24G $SWAP_FILE
+  #         sudo chmod 600 $SWAP_FILE
+  #         sudo mkswap $SWAP_FILE
+  #         sudo swapon $SWAP_FILE
+  #     - name: Swap space report after modification
+  #       shell: bash
+  #       run: |
+  #         echo "Memory and swap:"
+  #         free -h
+  #         echo
+  #         swapon --show
+  #         df -lh
+  #         echo
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+  #     - name: Docker meta
+  #       id: meta
+  #       uses: docker/metadata-action@v4
+  #       with:
+  #         images: |
+  #           vicanso/pingap
+  #         tags: |
+  #           type=raw,value=${{ matrix.features }}
+  #     - name: Set up QEMU
+  #       uses: docker/setup-qemu-action@v3
+  #     - name: Set up Docker Buildx
+  #       id: buildx
+  #       uses: docker/setup-buildx-action@v3
+  #     - name: Available platforms
+  #       run: echo ${{ steps.buildx.outputs.platforms }}
+  #     - name: Login to Docker Hub
+  #       uses: docker/login-action@v3
+  #       with:
+  #         username: ${{ secrets.DOCKER_HUB_USERNAME }}
+  #         password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
+  #     - name: Set build args
+  #       shell: bash
+  #       id: build_args
+  #       run: |
+  #         if [ "${{ matrix.features }}" != "latest" ]; then
+  #           echo "BUILD_ARGS=--features=${{ matrix.features }}" >> $GITHUB_OUTPUT
+  #         fi
+  #     - name: Build and push
+  #       id: docker_build
+  #       uses: docker/build-push-action@v6
+  #       with:
+  #         platforms: linux/amd64, linux/arm64
+  #         push: true
+  #         tags: ${{ steps.meta.outputs.tags }}
+  #         build-args: |
+  #           BUILD_ARGS=${{ steps.build_args.outputs.BUILD_ARGS }}
+  #     - name: Image digest
+  #       run: |
+  #         echo ${{ steps.docker_build.outputs.digest }}

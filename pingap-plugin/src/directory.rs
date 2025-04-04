@@ -371,7 +371,6 @@ fn get_autoindex_html(path: &Path) -> Result<String, String> {
         let mut is_file = false;
         if f.is_file() {
             is_file = true;
-            #[cfg(unix)]
             let _ = f.metadata().map(|meta| {
                 size = ByteSize(meta.size()).to_string();
                 last_modified =
