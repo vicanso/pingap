@@ -24,7 +24,10 @@ use pingap_core::Error as ServiceError;
 use pingap_core::SimpleServiceTaskFuture;
 use std::fs;
 use std::io;
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
@@ -72,7 +75,13 @@ fn zstd_compress(file: &Path, level: u8) -> Result<(u64, u64)> {
     let original_size = io::copy(&mut original_file, &mut encoder)
         .map_err(|e| Error::Io { source: e })?;
     encoder.finish().map_err(|e| Error::Io { source: e })?;
+    #[cfg(unix)]
     let size = file.metadata().map(|item| item.size()).unwrap_or_default();
+    #[cfg(windows)]
+    let size = file
+        .metadata()
+        .map(|item| item.file_size())
+        .unwrap_or_default();
     Ok((size, original_size))
 }
 
@@ -103,7 +112,13 @@ fn gzip_compress(file: &Path, level: u8) -> Result<(u64, u64)> {
     let original_size = io::copy(&mut original_file, &mut encoder)
         .map_err(|e| Error::Io { source: e })?;
     encoder.finish().map_err(|e| Error::Io { source: e })?;
+    #[cfg(unix)]
     let size = file.metadata().map(|item| item.size()).unwrap_or_default();
+    #[cfg(windows)]
+    let size = file
+        .metadata()
+        .map(|item| item.file_size())
+        .unwrap_or_default();
     Ok((size, original_size))
 }
 
@@ -374,9 +389,9 @@ pub fn logger_try_init(
         }
         #[cfg(not(unix))]
         {
-            Err(Error::Invalid {
+            return Err(Error::Invalid {
                 message: "syslog is only supported on Unix systems".to_string(),
-            })
+            });
         }
     } else {
         log_type = "file";
