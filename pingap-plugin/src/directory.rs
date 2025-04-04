@@ -382,10 +382,12 @@ fn get_autoindex_html(path: &Path) -> Result<String, String> {
             #[cfg(windows)]
             let _ = f.metadata().map(|meta| {
                 size = ByteSize(meta.file_size()).to_string();
-                last_modified =
-                    chrono::DateTime::from_timestamp(meta.last_write_time(), 0)
-                        .unwrap_or_default()
-                        .to_string();
+                last_modified = chrono::DateTime::from_timestamp(
+                    meta.last_write_time() as i64,
+                    0,
+                )
+                .unwrap_or_default()
+                .to_string();
             });
         }
 
