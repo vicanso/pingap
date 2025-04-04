@@ -371,10 +371,19 @@ fn get_autoindex_html(path: &Path) -> Result<String, String> {
         let mut is_file = false;
         if f.is_file() {
             is_file = true;
+            #[cfg(unix)]
             let _ = f.metadata().map(|meta| {
                 size = ByteSize(meta.size()).to_string();
                 last_modified =
                     chrono::DateTime::from_timestamp(meta.mtime(), 0)
+                        .unwrap_or_default()
+                        .to_string();
+            });
+            #[cfg(windows)]
+            let _ = f.metadata().map(|meta| {
+                size = ByteSize(meta.file_size()).to_string();
+                last_modified =
+                    chrono::DateTime::from_timestamp(meta.last_write_time(), 0)
                         .unwrap_or_default()
                         .to_string();
             });
