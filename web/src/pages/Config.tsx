@@ -88,7 +88,7 @@ export default function Config() {
         </TabsList>
         <TabsContent value="full">
           <Card className="p-4">
-            <pre>{fullToml}</pre>
+            <pre className="whitespace-pre-wrap">{fullToml}</pre>
           </Card>
         </TabsContent>
         <TabsContent value="original">
@@ -105,7 +105,7 @@ export default function Config() {
               >
                 <ClipboardCopy />
               </Button>
-              <pre>{originalToml}</pre>
+              <pre className="whitespace-pre-wrap">{originalToml}</pre>
             </Card>
           )}
         </TabsContent>

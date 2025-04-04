@@ -326,7 +326,7 @@ export function ExForm({
                           setUpdated(item.name, value);
                         }}
                       >
-                        <SelectTrigger>
+                        <SelectTrigger className="w-full">
                           <SelectValue placeholder={item.placeholder} />
                         </SelectTrigger>
                         <SelectContent>{options}</SelectContent>
@@ -551,7 +551,7 @@ export function ExForm({
     showButton = (
       <Button
         variant="ghost"
-        className="absolute right-0 top-2"
+        className="absolute right-0 top-[-20px]"
         title={tips}
         onClick={(e) => {
           if (showCount > defaultShow) {
@@ -562,9 +562,6 @@ export function ExForm({
             localStorage.setItem(showAllKey, "all");
           }
           e.preventDefault();
-        }}
-        style={{
-          marginTop: "-18px",
         }}
       >
         {icon}

@@ -191,7 +191,7 @@ export function MainSidebar({
     return <SidebarMenuSub>
       {items.map((item) => (
         <SidebarMenuSubItem key={item.title}>
-          <SidebarMenuSubButton className="!h-9" asChild>
+          <SidebarMenuSubButton className="h-9!" asChild>
             <Link to={item.path}>
               <span>{item.title}</span>
             </Link>
@@ -218,7 +218,7 @@ export function MainSidebar({
           <SidebarMenu>
             {items.map((item) => (
               <SidebarMenuItem key={item.title}>
-                <SidebarMenuButton className="!h-10" asChild>
+                <SidebarMenuButton className="h-10!" asChild>
                   <Link to={item.path}>
                     <item.icon />
                     <span>{item.title}</span>

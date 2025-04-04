@@ -327,7 +327,7 @@ export function MainHeader({
   return (
     <header
       className={cn(
-        "border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60",
+        "border-b bg-background/95 backdrop-blur-sm supports-backdrop-filter:bg-background/60",
         className,
       )}
     >
