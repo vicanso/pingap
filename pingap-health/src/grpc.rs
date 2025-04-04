@@ -98,11 +98,10 @@ impl HealthCheck for GrpcHealthCheck {
     }
 
     /// Check the given backend.
-    // ///
-    // /// `Ok(())`` if the check passes, otherwise the check fails.
+    //
+    // `Ok(())`` if the check passes, otherwise the check fails.
     // async fn check(&self, target: &Backend) -> Result<()>;
-
-    // /// Called when the health changes for a [Backend].
+    // Called when the health changes for a [Backend].
     async fn health_status_change(&self, target: &Backend, healthy: bool) {
         if let Some(callback) = &self.health_changed_callback {
             callback.observe(target, healthy).await;

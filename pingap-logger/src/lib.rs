@@ -15,6 +15,7 @@
 use snafu::Snafu;
 
 mod access;
+#[cfg(unix)]
 mod syslog;
 mod writer;
 

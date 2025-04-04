@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#[cfg(unix)]
 use super::syslog::new_syslog_writer;
 use super::{Error, LOG_CATEGORY};
 use bytesize::ByteSize;
@@ -367,7 +368,16 @@ pub fn logger_try_init(
     let writer = if params.log.is_empty() {
         BoxMakeWriter::new(std::io::stderr)
     } else if params.log.starts_with("syslog://") {
-        new_syslog_writer(&params.log)?
+        #[cfg(unix)]
+        {
+            new_syslog_writer(&params.log)?
+        }
+        #[cfg(not(unix))]
+        {
+            Err(Error::Invalid {
+                message: "syslog is only supported on Unix systems".to_string(),
+            })
+        }
     } else {
         log_type = "file";
         let (w, t) = new_file_writer(&params)?;
