@@ -39,34 +39,34 @@ pub struct ResponseHeaders {
     /// - Allows multiple values for the same header name
     /// - Preserves any existing header values
     /// - Format: Vec of (header_name, header_value) pairs
-    ///     Example: [("x-service", "1"), ("x-service", "2")]
+    ///   Example: [("x-service", "1"), ("x-service", "2")]
     add_headers: Vec<HttpHeader>,
 
     /// Headers to be completely removed from the response
     /// - Removes all values for specified header names
     /// - Headers are removed regardless of their values
-    ///     Example: ["content-type", "x-powered-by"]
+    ///   Example: ["content-type", "x-powered-by"]
     remove_headers: Vec<HeaderName>,
 
     /// Headers to be set with specific values
     /// - Overwrites any existing values for the header
     /// - If header doesn't exist, it will be created
     /// - Format: Vec of (header_name, header_value) pairs
-    ///     Example: [("x-response-id", "123")]
+    ///   Example: [("x-response-id", "123")]
     set_headers: Vec<HttpHeader>,
 
     /// Headers to be renamed while preserving their values
     /// - Format: Vec of (original_name, new_name) tuples
     /// - Values are moved from original name to new name
     /// - If new name already exists, values are appended
-    ///     Example: [("x-old-header", "x-new-header")]
+    ///   Example: [("x-old-header", "x-new-header")]
     rename_headers: Vec<(HeaderName, HeaderName)>,
 
     /// Headers to be set only if they don't already exist in the response
     /// - Only sets the header if it's not present
     /// - Does not modify existing header values
     /// - Format: Vec of (header_name, header_value) pairs
-    ///     Example: [("x-default-header", "default-value")]
+    ///   Example: [("x-default-header", "default-value")]
     set_headers_not_exists: Vec<HttpHeader>,
 
     /// Unique identifier for this plugin instance

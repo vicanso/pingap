@@ -36,14 +36,14 @@ pub struct MockResponse {
     /// The URL path to match against incoming requests.
     /// - If empty string: matches all paths
     /// - If set: must exactly match the request path
-    ///     Example: "/api/users" will only mock requests to that exact path
+    ///   Example: "/api/users" will only mock requests to that exact path
     pub path: String,
 
     /// Determines at which point in the request lifecycle this mock should execute.
     /// Only supports two phases:
     /// - Request: Early in the cycle, before any upstream processing
     /// - ProxyUpstream: Just before the request would be sent to the upstream server
-    ///     This allows testing different failure scenarios and response behaviors
+    ///   This allows testing different failure scenarios and response behaviors
     pub plugin_step: PluginStep,
 
     /// The pre-configured HTTP response that will be returned when this mock is triggered.
@@ -51,7 +51,7 @@ pub struct MockResponse {
     /// - status: HTTP status code (defaults to 200 OK)
     /// - headers: Optional response headers
     /// - body: Response body content
-    ///     This response is constructed once during initialization for better performance
+    ///   This response is constructed once during initialization for better performance
     pub resp: HttpResponse,
 
     /// Optional artificial delay before sending the mock response.
@@ -59,7 +59,7 @@ pub struct MockResponse {
     /// - Testing timeout handling
     /// - Simulating slow network conditions
     /// - Load testing with controlled response times
-    ///     Format: Standard Duration (e.g., 500ms, 1s, 1m)
+    ///   Format: Standard Duration (e.g., 500ms, 1s, 1m)
     pub delay: Option<Duration>,
 
     /// Unique identifier for this plugin instance.

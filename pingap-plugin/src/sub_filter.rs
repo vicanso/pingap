@@ -83,7 +83,7 @@ struct SubFilterParams {
     /// Special flags that modify the replacement behavior:
     /// - 'i': case-insensitive matching
     /// - 'g': global replacement (replace all occurrences)
-    ///     If 'g' is not present, only the first match is replaced
+    ///   If 'g' is not present, only the first match is replaced
     flags: Vec<char>,
 }
 

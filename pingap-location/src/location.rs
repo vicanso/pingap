@@ -507,7 +507,7 @@ impl Location {
     /// # Arguments
     /// * `header` - Mutable reference to the request header containing the URI to rewrite
     /// * `variables` - Optional map of variables captured from host matching that can be interpolated
-    ///                into the replacement value
+    ///   into the replacement value
     ///
     /// # Returns
     /// * `bool` - Returns true if the path was rewritten, false if no rewriting was performed

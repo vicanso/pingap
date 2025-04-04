@@ -46,22 +46,22 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 /// # Fields
 ///
 /// * `plugin_step` - Execution phase of the plugin (must be PluginStep::Request)
-///                   as UA filtering only makes sense during request processing
+///   as UA filtering only makes sense during request processing
 ///
 /// * `ua_list` - Vector of compiled regular expressions used to match against
-///               incoming User-Agent headers. Each pattern can be either an exact
-///               match (e.g., "go-http-client/1.1") or a regex pattern
-///               (e.g., "(Twitterspider)/(\d+)\.(\d+)")
+///   incoming User-Agent headers. Each pattern can be either an exact
+///   match (e.g., "go-http-client/1.1") or a regex pattern
+///   (e.g., "(Twitterspider)/(\d+)\.(\d+)")
 ///
 /// * `restriction_category` - Determines the filtering behavior:
-///                           - "deny": blocks requests matching any pattern
-///                           - "allow": only permits requests matching at least one pattern
+///   - "deny": blocks requests matching any pattern
+///   - "allow": only permits requests matching at least one pattern
 ///
 /// * `forbidden_resp` - The HTTP response returned when a request is blocked.
-///                     Defaults to 403 Forbidden with a configurable message
+///   Defaults to 403 Forbidden with a configurable message
 ///
 /// * `hash_value` - Unique identifier generated from the plugin configuration,
-///                 used for caching and tracking plugin instances
+///   used for caching and tracking plugin instances
 pub struct UaRestriction {
     plugin_step: PluginStep, // Defines when plugin runs (must be Request phase)
     ua_list: Vec<Regex>, // List of compiled regex patterns to match User-Agents

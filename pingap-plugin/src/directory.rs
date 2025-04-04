@@ -386,8 +386,10 @@ fn get_autoindex_html(path: &Path) -> Result<String, String> {
             continue;
         }
 
-        let mut target =
-            format!("./{}", filepath.split('/').last().unwrap_or_default());
+        let mut target = format!(
+            "./{}",
+            filepath.split('/').next_back().unwrap_or_default()
+        );
         if !is_file {
             target += "/";
         }
