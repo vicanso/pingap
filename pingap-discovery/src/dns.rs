@@ -275,10 +275,10 @@ mod tests {
     #[tokio::test]
     async fn test_async_dns_discover() {
         let dns = Dns::new(&["github.com".to_string()], true, true).unwrap();
-        let ip_list = dns.tokio_lookup_ip().await.unwrap();
+        let (ip_list, _) = dns.tokio_lookup_ip().await.unwrap();
         assert_eq!(true, !ip_list.is_empty());
 
-        let (backends, _) = dns.run_discover().await.unwrap();
+        let (backends, _, _) = dns.run_discover().await.unwrap();
         assert_eq!(true, !backends.is_empty());
     }
 }
