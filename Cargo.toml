@@ -206,3 +206,6 @@ glob = "0.3.2"
 mime_guess = "2.0.5"
 dirs = "6.0.0"
 path-absolutize = "3.1.1"
+
+[patch.crates-io]
+sfv = { git = "https://github.com/undef1nd/sfv.git", tag = "v0.9.4" }

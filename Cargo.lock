@@ -493,15 +493,6 @@ checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
 
 [[package]]
 name = "bytesize"
-version = "1.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e93abca9e28e0a1b9877922aacb20576e05d4679ffa78c3d6dc22a26a216659"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "bytesize"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a3c8f83209414aacf0eeae3cf730b18d6981697fba62f200fcfb92b9f082acba"
@@ -2919,7 +2910,7 @@ version = "0.10.5"
 dependencies = [
  "async-trait",
  "bytes",
- "bytesize 2.0.1",
+ "bytesize",
  "dirs",
  "http",
  "memory-stats",
@@ -2972,7 +2963,7 @@ dependencies = [
  "arc-swap",
  "async-trait",
  "base64",
- "bytesize 2.0.1",
+ "bytesize",
  "crc32fast",
  "diff",
  "etcd-client",
@@ -3075,7 +3066,7 @@ version = "0.10.5"
 dependencies = [
  "ahash",
  "arc-swap",
- "bytesize 1.3.3",
+ "bytesize",
  "http",
  "once_cell",
  "pingap-config",
@@ -3095,7 +3086,7 @@ name = "pingap-logger"
 version = "0.10.5"
 dependencies = [
  "bytes",
- "bytesize 2.0.1",
+ "bytesize",
  "chrono",
  "flate2",
  "http",
@@ -3141,7 +3132,7 @@ dependencies = [
 name = "pingap-performance"
 version = "0.10.5"
 dependencies = [
- "bytesize 2.0.1",
+ "bytesize",
  "cfg-if",
  "http",
  "humantime",
@@ -3176,7 +3167,7 @@ dependencies = [
  "base64",
  "bstr",
  "bytes",
- "bytesize 2.0.1",
+ "bytesize",
  "chrono",
  "cookie",
  "crc32fast",
@@ -3242,7 +3233,7 @@ dependencies = [
  "ahash",
  "arc-swap",
  "async-trait",
- "bytesize 2.0.1",
+ "bytesize",
  "derive_more",
  "futures",
  "futures-util",
@@ -4016,26 +4007,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ref-cast"
-version = "1.0.24"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a0ae411dbe946a674d89546582cea4ba2bb8defac896622d6496f14c23ba5cf"
-dependencies = [
- "ref-cast-impl",
-]
-
-[[package]]
-name = "ref-cast-impl"
-version = "1.0.24"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1165225c21bff1f3bbce98f5a1f889949bc902d3575308cc7b0de30b4f6d27c7"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.100",
-]
-
-[[package]]
 name = "regex"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4196,6 +4167,16 @@ dependencies = [
  "mime_guess",
  "sha2",
  "walkdir",
+]
+
+[[package]]
+name = "rust_decimal"
+version = "1.37.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "faa7de2ba56ac291bd90c6b9bece784a52ae1411f9506544b3eae36dd2356d50"
+dependencies = [
+ "arrayvec",
+ "num-traits",
 ]
 
 [[package]]
@@ -4596,13 +4577,12 @@ dependencies = [
 
 [[package]]
 name = "sfv"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcb06c0da8bc20b8e9f0349d655d1d29ce732b919c13c8d0ed7a14a8fcb9c90f"
+version = "0.9.4"
+source = "git+https://github.com/undef1nd/sfv.git?tag=v0.9.4#e6499d8ce11271dd0a4c1f72445775a58b835a56"
 dependencies = [
- "base64",
+ "data-encoding",
  "indexmap 2.9.0",
- "ref-cast",
+ "rust_decimal",
 ]
 
 [[package]]

@@ -129,7 +129,7 @@ pub fn get_process_system_info() -> ProcessSystemInfo {
     let mut memory_mb = 0;
     if let Some(value) = memory_stats() {
         memory_mb = value.physical_mem / (1024 * 1024);
-        memory = ByteSize(value.physical_mem as u64).to_string_as(true);
+        memory = ByteSize(value.physical_mem as u64).to_string();
     }
     let cpus = num_cpus::get();
     let physical_cpus = num_cpus::get_physical();
@@ -145,8 +145,8 @@ pub fn get_process_system_info() -> ProcessSystemInfo {
         cpus,
         physical_cpus,
         kernel: System::kernel_version().unwrap_or_default(),
-        total_memory: ByteSize(sys.total_memory()).to_string_as(true),
-        used_memory: ByteSize(sys.used_memory()).to_string_as(true),
+        total_memory: ByteSize(sys.total_memory()).to_string(),
+        used_memory: ByteSize(sys.used_memory()).to_string(),
         pid,
         threads,
         fd_count,

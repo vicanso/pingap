@@ -29,4 +29,4 @@ pingap-core = { version = "0.10.5", path = "../pingap-core" }
 [dev-dependencies]
 pretty_assertions = "1.4.0"
 tokio-test = "0.4.4"
-bytesize = { version = "1.3.0", features = ["serde"] }
+bytesize = { workspace = true }
