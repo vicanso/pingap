@@ -2,6 +2,7 @@ import useConfigState, { getLocationWeight } from "@/states/config";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FilePlus2 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { cn } from "@/lib/utils";
 import {
   CERTIFICATES,
   LOCATIONS,
@@ -22,6 +23,7 @@ interface Summary {
   name: string;
   value: string;
   link: string;
+  nameClass?: string;
 }
 
 export default function Home() {
@@ -131,11 +133,19 @@ export default function Home() {
         return tmpArr[0];
       }).join(",");
       const healthy = basicInfo.upstream_healthy_status[name];
+      let nameClass = "";
       if (healthy) {
         desc += ` (${healthy[0]}/${healthy[1]})`;
+        if (healthy[0] === 0) {
+          nameClass = "text-rose-600";
+        }
+        else if (healthy[0] < healthy[1]) {
+          nameClass = "text-amber-600";
+        }
       }
       upstreamSummary.push({
         name,
+        nameClass,
         link: `${UPSTREAMS}?name=${name}`,
         value: desc,
       });
@@ -244,7 +254,7 @@ export default function Home() {
                 return (
                   <li key={item.name} className="break-all mt-2">
                     <Link className="mr-1" to={item.link}>
-                      <Button variant="link" size={null}>
+                      <Button variant="link" size={null} className={cn(item.nameClass)}>
                         [{item.name}]
                       </Button>
                     </Link>
