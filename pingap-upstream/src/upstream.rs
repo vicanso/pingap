@@ -37,6 +37,7 @@ use pingora::protocols::l4::ext::TcpKeepalive;
 use pingora::protocols::ALPN;
 use pingora::proxy::Session;
 use pingora::upstreams::peer::{HttpPeer, Tracer, Tracing};
+use serde::{Deserialize, Serialize};
 use snafu::Snafu;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
@@ -617,23 +618,33 @@ pub fn get_upstream(name: &str) -> Option<Arc<Upstream>> {
     UPSTREAM_MAP.load().get(name).cloned()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamHealthyStatus {
+    pub healthy: u32,
+    pub total: u32,
+    pub unhealthy_backends: Vec<String>,
+}
+
 /// Get the healthy status of all upstreams
 ///
 /// # Returns
-/// * `HashMap<String, (u32, u32)>` - Healthy status of all upstreams
+/// * `HashMap<String, UpstreamHealthyStatus>` - Healthy status of all upstreams
 ///
 /// This function iterates through all upstreams and checks their health status.
-pub fn get_upstream_healthy_status() -> HashMap<String, (u32, u32)> {
+pub fn get_upstream_healthy_status() -> HashMap<String, UpstreamHealthyStatus> {
     let mut healthy_status = HashMap::new();
     UPSTREAM_MAP.load().iter().for_each(|(k, v)| {
         let mut total = 0;
         let mut healthy = 0;
+        let mut unhealthy_backends = vec![];
         if let Some(lb) = v.as_round_robin() {
             let backends = lb.backends().get_backend();
             total = backends.len();
             backends.iter().for_each(|backend| {
                 if lb.backends().ready(backend) {
                     healthy += 1;
+                } else {
+                    unhealthy_backends.push(backend.to_string());
                 }
             });
         } else if let Some(lb) = v.as_consistent() {
@@ -642,10 +653,19 @@ pub fn get_upstream_healthy_status() -> HashMap<String, (u32, u32)> {
             backends.iter().for_each(|backend| {
                 if lb.backends().ready(backend) {
                     healthy += 1;
+                } else {
+                    unhealthy_backends.push(backend.to_string());
                 }
             });
         }
-        healthy_status.insert(k.to_string(), (healthy, total as u32));
+        healthy_status.insert(
+            k.to_string(),
+            UpstreamHealthyStatus {
+                healthy,
+                total: total as u32,
+                unhealthy_backends,
+            },
+        );
     });
     healthy_status
 }
@@ -864,8 +884,8 @@ impl ServiceTask for HealthCheckTask {
                 self.unhealthy_upstreams.load().clone();
             let mut notify_healthy_upstreams = vec![];
             let mut unhealthy_upstreams = vec![];
-            for (name, (healthy, _)) in get_upstream_healthy_status().iter() {
-                if *healthy == 0 {
+            for (name, status) in get_upstream_healthy_status().iter() {
+                if status.healthy == 0 {
                     unhealthy_upstreams.push(name.to_string());
                 } else if current_unhealthy_upstreams.contains(name) {
                     notify_healthy_upstreams.push(name.to_string());

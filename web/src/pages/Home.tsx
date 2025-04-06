@@ -24,6 +24,7 @@ interface Summary {
   value: string;
   link: string;
   nameClass?: string;
+  extra?: React.ReactNode;
 }
 
 export default function Home() {
@@ -132,15 +133,27 @@ export default function Home() {
         const tmpArr = addr.split(" ");
         return tmpArr[0];
       }).join(",");
-      const healthy = basicInfo.upstream_healthy_status[name];
+      const status = basicInfo.upstream_healthy_status[name];
       let nameClass = "";
-      if (healthy) {
-        desc += ` (${healthy[0]}/${healthy[1]})`;
-        if (healthy[0] === 0) {
+      let extra = <></>;
+      if (status) {
+        desc += ` (${status.healthy}/${status.total})`;
+        if (status.healthy === 0) {
           nameClass = "text-rose-600";
         }
-        else if (healthy[0] < healthy[1]) {
+        else if (status.healthy < status.total) {
           nameClass = "text-amber-600";
+        }
+        if (status.unhealthy_backends.length > 0) {
+          extra = <ul className="text-sm">
+            {status.unhealthy_backends.map((backend) => {
+              return <li key={backend} className="relative pl-4 before:content-[''] before:absolute before:left-0 before:top-2 before:w-2 before:h-2 before:rounded-full before:bg-rose-600">
+                <span className="text-muted-foreground">
+                  {backend}
+                </span>
+              </li>
+            })}
+          </ul>;
         }
       }
       upstreamSummary.push({
@@ -148,6 +161,7 @@ export default function Home() {
         nameClass,
         link: `${UPSTREAMS}?name=${name}`,
         value: desc,
+        extra,
       });
     });
   }
@@ -259,6 +273,7 @@ export default function Home() {
                       </Button>
                     </Link>
                     <span className="text-muted-foreground">{item.value}</span>
+                    {item.extra}
                   </li>
                 );
               })}

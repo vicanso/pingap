@@ -1,6 +1,13 @@
 import request from "@/helpers/request";
 import { create } from "zustand";
 
+
+interface UpstreamHealthyStatus {
+  healthy: number;
+  total: number;
+  unhealthy_backends: string[];
+}
+
 interface Basic {
   start_time: number;
   version: string;
@@ -25,7 +32,7 @@ interface Basic {
   tcp_count: number;
   tcp6_count: number;
   supported_plugins: string[];
-  upstream_healthy_status: Record<string, [number, number]>;
+  upstream_healthy_status: Record<string, UpstreamHealthyStatus>;
 }
 
 interface ConfigState {

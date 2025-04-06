@@ -14,8 +14,4 @@
 
 mod upstream;
 
-pub use upstream::{
-    get_upstream, get_upstream_healthy_status,
-    get_upstreams_processing_connected, new_upstream_health_check_task,
-    try_init_upstreams, try_update_upstreams, Upstream,
-};
+pub use upstream::*;

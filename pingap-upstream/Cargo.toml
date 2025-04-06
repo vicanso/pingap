@@ -26,6 +26,7 @@ bytesize = { workspace = true }
 tokio = { workspace = true }
 pingora-runtime = { workspace = true }
 futures = { workspace = true }
+serde = { workspace = true }
 pingap-config = { version = "0.10.5", path = "../pingap-config" }
 pingap-discovery = { version = "0.10.5", path = "../pingap-discovery" }
 pingap-health = { version = "0.10.5", path = "../pingap-health" }

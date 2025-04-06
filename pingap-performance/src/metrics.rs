@@ -95,8 +95,8 @@ pub fn new_performance_metrics_log_service() -> (String, SimpleServiceTaskFuture
                 let (processing, accepted) = get_processing_accepted();
                 let upstreams_healthy_status = get_upstream_healthy_status()
                     .iter()
-                    .map(|(name, (healthy, total))| {
-                        format!("{name}:{healthy}/{total}")
+                    .map(|(name, status)| {
+                        format!("{name}:{}/{}", status.healthy, status.total)
                     })
                     .collect::<Vec<String>>()
                     .join(", ");
