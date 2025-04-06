@@ -23,7 +23,6 @@ hickory-resolver = "0.24.3"
 bollard = "0.18.1"
 snafu = { workspace = true }
 tokio = { workspace = true }
-futures = { workspace = true }
 pingap-core = { version = "0.10.5", path = "../pingap-core" }
 
 [dev-dependencies]
