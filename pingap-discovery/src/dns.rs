@@ -99,22 +99,37 @@ impl Dns {
     /// Performs DNS lookups for configured hosts using tokio runtime
     ///
     /// # Returns
-    /// * `Result<Vec<LookupIp>>` - List of DNS lookup results
-    async fn tokio_lookup_ip(&self) -> Result<Vec<LookupIp>> {
+    /// * `Result<(Vec<LookupIp>, Vec<String>)>` - List of DNS lookup results and unhealthy backends
+    async fn tokio_lookup_ip(&self) -> Result<(Vec<LookupIp>, Vec<String>)> {
         let provider = TokioConnectionProvider::default();
         let (config, options) = self.read_system_conf()?;
         let resolver = AsyncResolver::new(config, options, provider);
 
-        // Use futures::future::try_join_all for concurrent lookups
-        let lookups = futures::future::try_join_all(
-            self.hosts
-                .iter()
-                .map(|(host, _, _)| resolver.lookup_ip(host)),
-        )
-        .await
-        .map_err(|e| Error::Resolve { source: e })?;
+        let mut lookup_ips = Vec::new();
+        let mut failed_hosts = Vec::new();
 
-        Ok(lookups)
+        for (host, _, _) in self.hosts.iter() {
+            match resolver.lookup_ip(host).await {
+                Ok(lookup) => {
+                    lookup_ips.push(lookup);
+                },
+                Err(e) => {
+                    error!(
+                        category = LOG_CATEGORY,
+                        error = %e,
+                        host,
+                        "dns lookup failed"
+                    );
+                    failed_hosts.push(host.clone());
+                },
+            }
+        }
+        if lookup_ips.is_empty() {
+            return Err(Error::Invalid {
+                message: "resolve dns failed".to_string(),
+            });
+        }
+        Ok((lookup_ips, failed_hosts))
     }
 
     /// Discovers backend services by resolving DNS
@@ -123,7 +138,7 @@ impl Dns {
     /// * `Result<(BTreeSet<Backend>, HashMap<u64, bool>)>` - Set of discovered backends and their states
     async fn run_discover(
         &self,
-    ) -> Result<(BTreeSet<Backend>, HashMap<u64, bool>)> {
+    ) -> Result<(BTreeSet<Backend>, HashMap<u64, bool>, Vec<String>)> {
         let mut upstreams = BTreeSet::new();
 
         debug!(
@@ -131,10 +146,10 @@ impl Dns {
             "dns discover is running"
         );
 
-        let lookup_ip_list = self.tokio_lookup_ip().await?;
+        let (lookup_ips, failed_hosts) = self.tokio_lookup_ip().await?;
 
         for ((_, port, weight), lookup_ip) in
-            self.hosts.iter().zip(lookup_ip_list.iter())
+            self.hosts.iter().zip(lookup_ips.iter())
         {
             for ip in lookup_ip
                 .iter()
@@ -162,7 +177,7 @@ impl Dns {
             }
         }
 
-        Ok((upstreams, HashMap::new()))
+        Ok((upstreams, HashMap::new(), failed_hosts))
     }
 }
 
@@ -175,9 +190,11 @@ impl ServiceDiscovery for Dns {
         let hosts: Vec<String> =
             self.hosts.iter().map(|item| item.0.clone()).collect();
         match self.run_discover().await {
-            Ok(data) => {
-                let addrs: Vec<String> =
-                    data.0.iter().map(|item| item.addr.to_string()).collect();
+            Ok((upstreams, healthy, failed_hosts)) => {
+                let addrs: Vec<String> = upstreams
+                    .iter()
+                    .map(|item| item.addr.to_string())
+                    .collect();
 
                 info!(
                     category = LOG_CATEGORY,
@@ -189,7 +206,22 @@ impl ServiceDiscovery for Dns {
                     ),
                     "dns discover success"
                 );
-                return Ok(data);
+                if !failed_hosts.is_empty() {
+                    if let Some(sender) = &self.sender {
+                        sender
+                            .notify(NotificationData {
+                                category: "service_discover_fail".to_string(),
+                                level: NotificationLevel::Warn,
+                                message: format!(
+                                    "dns discovery resolve failed: {:?}",
+                                    failed_hosts
+                                ),
+                                ..Default::default()
+                            })
+                            .await;
+                    }
+                }
+                return Ok((upstreams, healthy));
             },
             Err(e) => {
                 error!(
