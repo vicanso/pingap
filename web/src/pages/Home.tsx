@@ -129,10 +129,12 @@ export default function Home() {
         ? `${upstreamCount} Upstreams`
         : `${upstreamCount} Upstream`;
     listify(config.upstreams, (name, value) => {
-      let desc = value.addrs.map((addr) => {
-        const tmpArr = addr.split(" ");
-        return tmpArr[0];
-      }).join(",");
+      let desc = value.addrs
+        .map((addr) => {
+          const tmpArr = addr.split(" ");
+          return tmpArr[0];
+        })
+        .join(",");
       const status = basicInfo.upstream_healthy_status[name];
       let nameClass = "";
       let extra = <></>;
@@ -140,20 +142,24 @@ export default function Home() {
         desc += ` (${status.healthy}/${status.total})`;
         if (status.healthy === 0) {
           nameClass = "text-rose-600";
-        }
-        else if (status.healthy < status.total) {
+        } else if (status.healthy < status.total) {
           nameClass = "text-amber-600";
         }
         if (status.unhealthy_backends.length > 0) {
-          extra = <ul className="text-sm">
-            {status.unhealthy_backends.map((backend) => {
-              return <li key={backend} className="relative pl-4 before:content-[''] before:absolute before:left-0 before:top-2 before:w-2 before:h-2 before:rounded-full before:bg-rose-600">
-                <span className="text-muted-foreground">
-                  {backend}
-                </span>
-              </li>
-            })}
-          </ul>;
+          extra = (
+            <ul className="text-sm">
+              {status.unhealthy_backends.map((backend) => {
+                return (
+                  <li
+                    key={backend}
+                    className="relative pl-4 before:content-[''] before:absolute before:left-0 before:top-2 before:w-2 before:h-2 before:rounded-full before:bg-rose-600"
+                  >
+                    <span className="text-muted-foreground">{backend}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          );
         }
       }
       upstreamSummary.push({
@@ -251,8 +257,13 @@ export default function Home() {
     return (
       <Card key={item.title}>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 relative">
-          <CardTitle className="text-sm font-medium ">{item.title}
-            {item.subTitle && <span className="text-muted-foreground text-xs ml-2">{item.subTitle}</span>}
+          <CardTitle className="text-sm font-medium ">
+            {item.title}
+            {item.subTitle && (
+              <span className="text-muted-foreground text-xs ml-2">
+                {item.subTitle}
+              </span>
+            )}
           </CardTitle>
           <Link to={item.path} className="absolute top-3 right-3">
             <Button variant="ghost" size="icon">
@@ -268,7 +279,11 @@ export default function Home() {
                 return (
                   <li key={item.name} className="break-all mt-2">
                     <Link className="mr-1" to={item.link}>
-                      <Button variant="link" size={null} className={cn(item.nameClass)}>
+                      <Button
+                        variant="link"
+                        size={null}
+                        className={cn(item.nameClass)}
+                      >
                         [{item.name}]
                       </Button>
                     </Link>

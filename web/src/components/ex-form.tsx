@@ -3,7 +3,7 @@ import { Input } from "@/components/ui/input";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
   Select,
@@ -115,7 +115,6 @@ export function ExForm({
   cols = 6,
 }: ExFormProps) {
   const { t } = useTranslation();
-  const { toast } = useToast();
   const maxCount = items.length;
   let showCountDefaultValue = defaultShow;
   let showAllKey = "";
@@ -186,13 +185,11 @@ export function ExForm({
     try {
       await onSave(data);
       setUpdatedCount(0);
-      toast({
-        title: t("saveSuccessTitle"),
+      toast(t("saveSuccessTitle"), {
         description: t("saveSuccessDescription"),
       });
     } catch (err) {
-      toast({
-        title: t("saveConfigFail"),
+      toast(t("saveConfigFail"), {
         description: formatError(err),
       });
     } finally {
@@ -207,13 +204,11 @@ export function ExForm({
     setProcessing(true);
     try {
       await onRemove();
-      toast({
-        title: t("removeSuccessTitle"),
+      toast(t("removeSuccessTitle"), {
         description: t("removeSuccessDescription"),
       });
     } catch (err) {
-      toast({
-        title: t("removeFailTitle"),
+      toast(t("removeFailTitle"), {
         description: formatError(err),
       });
     } finally {

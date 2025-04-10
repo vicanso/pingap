@@ -74,7 +74,6 @@ export function random(length = 8) {
   return str;
 }
 
-
 export async function sha256(message: string) {
   const hashDigest = sha256hash(message);
   return hex.stringify(hashDigest);

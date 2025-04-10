@@ -36,8 +36,7 @@ import {
   SidebarMenuSub,
   SidebarMenuSubItem,
   SidebarMenuSubButton,
-} from "@/components/ui/sidebar"
-
+} from "@/components/ui/sidebar";
 
 interface NavLink {
   title: string;
@@ -186,20 +185,22 @@ export function MainSidebar({
 
   const renderMenuSub = (items: NavLink[] | undefined) => {
     if (!items || items.length == 0) {
-      return <></>
-    };
-    return <SidebarMenuSub>
-      {items.map((item) => (
-        <SidebarMenuSubItem key={item.title}>
-          <SidebarMenuSubButton className="h-9!" asChild>
-            <Link to={item.path}>
-              <span>{item.title}</span>
-            </Link>
-          </SidebarMenuSubButton>
-        </SidebarMenuSubItem>
-      ))}
-    </SidebarMenuSub>
-  }
+      return <></>;
+    }
+    return (
+      <SidebarMenuSub>
+        {items.map((item) => (
+          <SidebarMenuSubItem key={item.title}>
+            <SidebarMenuSubButton className="h-9!" asChild>
+              <Link to={item.path}>
+                <span>{item.title}</span>
+              </Link>
+            </SidebarMenuSubButton>
+          </SidebarMenuSubItem>
+        ))}
+      </SidebarMenuSub>
+    );
+  };
   return (
     <SidebarContent className={className}>
       <SidebarGroup>
@@ -226,7 +227,8 @@ export function MainSidebar({
                       <span
                         className={cn(
                           "ml-auto",
-                          item.variant === "default" && "text-background dark:text-white",
+                          item.variant === "default" &&
+                            "text-background dark:text-white",
                         )}
                       >
                         {item.label}

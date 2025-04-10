@@ -9,11 +9,7 @@ import {
   newStringOptions,
   newBooleanOptions,
 } from "@/constants";
-import {
-  newZodBytes,
-  newZodDuration,
-  omitEmptyArray,
-} from "@/helpers/util";
+import { newZodBytes, newZodDuration, omitEmptyArray } from "@/helpers/util";
 import { formatLabel } from "@/helpers/html";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
@@ -313,9 +309,7 @@ export default function Upstreams() {
 
   return (
     <div className="grow overflow-auto p-4">
-      <h2 className="h-8 mb-1">
-        {formatLabel(currentUpstream)}
-      </h2>
+      <h2 className="h-8 mb-1">{formatLabel(currentUpstream)}</h2>
       <ExForm
         category="upstream"
         key={currentUpstream}

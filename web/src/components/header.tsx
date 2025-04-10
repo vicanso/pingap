@@ -24,7 +24,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useTranslation } from "react-i18next";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { formatError } from "@/helpers/util";
 import i18n from "@/i18n";
 import { Input } from "@/components/ui/input";
@@ -42,7 +42,6 @@ export function MainHeader({
   className,
 }: React.HTMLAttributes<HTMLDivElement>) {
   const { t } = useTranslation();
-  const { toast } = useToast();
 
   const iconClassName = "mr-2 h-4 w-4";
   const { setTheme, theme } = useTheme();
@@ -80,8 +79,7 @@ export function MainHeader({
         await navigator.clipboard.writeText(data.value);
       }
     } catch (err) {
-      toast({
-        title: t("aesFail"),
+      toast(t("aesFail"), {
         description: formatError(err),
       });
     } finally {
@@ -90,7 +88,6 @@ export function MainHeader({
       }
     }
   };
-
 
   const zhLang = "zh";
   const enLang = "en";
@@ -160,169 +157,154 @@ export function MainHeader({
     </DropdownMenu>
   );
 
-
-
-  const aesTab = <TabsContent value="aes" className="mt-2">
-    <div className="grid gap-4">
-      <div className="space-y-2">
-        <h4 className="font-medium leading-none">{t("aesGcm")}</h4>
-        <p className="text-sm text-muted-foreground">
-          {t("aesTips")}
-        </p>
-      </div>
-      <div className="grid gap-2">
-        <RadioGroup
-          className="flex flex-wrap items-start"
-          onValueChange={(option) => {
-            setAesType(option);
-          }}
-          defaultValue={aesType}
-        >
-          <RadioGroupItem value="encrypt" id="encrypt" />
-          <Label className="pl-2 cursor-pointer" htmlFor="encrypt">
-            {t("encrypt")}
-          </Label>
-          <RadioGroupItem value="decrypt" id="decrypt" />
-          <Label className="pl-2 cursor-pointer" htmlFor="decrypt">
-            {t("decrypt")}
-          </Label>
-        </RadioGroup>
-        <div className="flex">
-          <Label
-            htmlFor="secret"
-            className="flex-none leading-9 mr-4"
+  const aesTab = (
+    <TabsContent value="aes" className="mt-2">
+      <div className="grid gap-4">
+        <div className="space-y-2">
+          <h4 className="font-medium leading-none">{t("aesGcm")}</h4>
+          <p className="text-sm text-muted-foreground">{t("aesTips")}</p>
+        </div>
+        <div className="grid gap-2">
+          <RadioGroup
+            className="flex flex-wrap items-start"
+            onValueChange={(option) => {
+              setAesType(option);
+            }}
+            defaultValue={aesType}
           >
-            {t("secret")}
-          </Label>
-          <Input
-            id="secret"
-            className="grow"
-            onChange={(e) => {
-              aesData.key = e.target.value.trim();
-              setAesData(aesData);
-            }}
-          />
-        </div>
-        <div className="flex">
-          <Label htmlFor="value" className="flex-none leading-9 mr-4">
-            {t("value")}
-          </Label>
-          <Input
-            id="value"
-            className="grow"
-            onChange={(e) => {
-              aesData.data = e.target.value.trim();
-              setAesData(aesData);
-            }}
-          />
-        </div>
-        <div className="flex">
-          <Label htmlFor="value" className="flex-none leading-9 mr-4">
-            {t("result")}
-          </Label>
-          <p className="grow text-sm text-muted-foreground leading-9 relative">
-            <Button
-              className="absolute right-0"
-              variant="ghost"
-              size="icon"
-              onClick={async (e) => {
-                e.preventDefault();
-                handleAes();
+            <RadioGroupItem value="encrypt" id="encrypt" />
+            <Label className="pl-2 cursor-pointer" htmlFor="encrypt">
+              {t("encrypt")}
+            </Label>
+            <RadioGroupItem value="decrypt" id="decrypt" />
+            <Label className="pl-2 cursor-pointer" htmlFor="decrypt">
+              {t("decrypt")}
+            </Label>
+          </RadioGroup>
+          <div className="flex">
+            <Label htmlFor="secret" className="flex-none leading-9 mr-4">
+              {t("secret")}
+            </Label>
+            <Input
+              id="secret"
+              className="grow"
+              onChange={(e) => {
+                aesData.key = e.target.value.trim();
+                setAesData(aesData);
               }}
-            >
-              <ClipboardCopy />
-            </Button>
-            {!aesProcessing && (
-              <Input
-                id="value"
-                className="grow"
-                value={aesResult}
-                readOnly
-              />
-            )}
-            {aesProcessing && (
-              <LoaderCircle className="ml-2 h-4 w-4 inline animate-spin" />
-            )}
-          </p>
-        </div>
-      </div>
-    </div>
-  </TabsContent>
-
-  const base64Tab = <TabsContent value="base64" className="mt-2">
-    <div className="grid gap-4">
-      <div className="space-y-2">
-        <h4 className="font-medium leading-none">{t("base64")}</h4>
-        <p className="text-sm text-muted-foreground">
-          {t("base64Tips")}
-        </p>
-      </div>
-      <div className="grid gap-2">
-        <RadioGroup
-          className="flex flex-wrap items-start"
-          onValueChange={(option) => {
-            setBase64Type(option);
-          }}
-          defaultValue={base64Type}
-        >
-          <RadioGroupItem value="encode" id="encode" />
-          <Label className="pl-2 cursor-pointer" htmlFor="encode">
-            {t("encode")}
-          </Label>
-          <RadioGroupItem value="decode" id="decode" />
-          <Label className="pl-2 cursor-pointer" htmlFor="decode">
-            {t("decode")}
-          </Label>
-        </RadioGroup>
-        <div className="flex">
-          <Label htmlFor="value" className="flex-none leading-9 mr-4">
-            {t("value")}
-          </Label>
-          <Input
-            id="value"
-            className="grow"
-            onChange={(e) => {
-              const value = e.target.value.trim();
-              try {
-                if (base64Type == "encode") {
-                  setBase64Data(window.btoa(value));
-                } else {
-                  setBase64Data(window.atob(value));
-                }
-              } catch (err) {
-                console.error(err);
-                setBase64Data("");
-              }
-            }}
-          />
-        </div>
-        <div className="flex">
-          <Label htmlFor="value" className="flex-none leading-9 mr-4">
-            {t("result")}
-          </Label>
-          <p className="grow text-sm text-muted-foreground leading-9 relative">
-            <Button
-              className="absolute right-0"
-              variant="ghost"
-              size="icon"
-              onClick={async (e) => {
-                e.preventDefault();
-                await navigator.clipboard.writeText(base64Data);
-              }}
-            >
-              <ClipboardCopy />
-            </Button>
+            />
+          </div>
+          <div className="flex">
+            <Label htmlFor="value" className="flex-none leading-9 mr-4">
+              {t("value")}
+            </Label>
             <Input
               id="value"
               className="grow"
-              value={base64Data}
-              readOnly
+              onChange={(e) => {
+                aesData.data = e.target.value.trim();
+                setAesData(aesData);
+              }}
             />
-          </p>
+          </div>
+          <div className="flex">
+            <Label htmlFor="value" className="flex-none leading-9 mr-4">
+              {t("result")}
+            </Label>
+            <p className="grow text-sm text-muted-foreground leading-9 relative">
+              <Button
+                className="absolute right-0"
+                variant="ghost"
+                size="icon"
+                onClick={async (e) => {
+                  e.preventDefault();
+                  handleAes();
+                }}
+              >
+                <ClipboardCopy />
+              </Button>
+              {!aesProcessing && (
+                <Input id="value" className="grow" value={aesResult} readOnly />
+              )}
+              {aesProcessing && (
+                <LoaderCircle className="ml-2 h-4 w-4 inline animate-spin" />
+              )}
+            </p>
+          </div>
         </div>
       </div>
-    </div>
-  </TabsContent>
+    </TabsContent>
+  );
+
+  const base64Tab = (
+    <TabsContent value="base64" className="mt-2">
+      <div className="grid gap-4">
+        <div className="space-y-2">
+          <h4 className="font-medium leading-none">{t("base64")}</h4>
+          <p className="text-sm text-muted-foreground">{t("base64Tips")}</p>
+        </div>
+        <div className="grid gap-2">
+          <RadioGroup
+            className="flex flex-wrap items-start"
+            onValueChange={(option) => {
+              setBase64Type(option);
+            }}
+            defaultValue={base64Type}
+          >
+            <RadioGroupItem value="encode" id="encode" />
+            <Label className="pl-2 cursor-pointer" htmlFor="encode">
+              {t("encode")}
+            </Label>
+            <RadioGroupItem value="decode" id="decode" />
+            <Label className="pl-2 cursor-pointer" htmlFor="decode">
+              {t("decode")}
+            </Label>
+          </RadioGroup>
+          <div className="flex">
+            <Label htmlFor="value" className="flex-none leading-9 mr-4">
+              {t("value")}
+            </Label>
+            <Input
+              id="value"
+              className="grow"
+              onChange={(e) => {
+                const value = e.target.value.trim();
+                try {
+                  if (base64Type == "encode") {
+                    setBase64Data(window.btoa(value));
+                  } else {
+                    setBase64Data(window.atob(value));
+                  }
+                } catch (err) {
+                  console.error(err);
+                  setBase64Data("");
+                }
+              }}
+            />
+          </div>
+          <div className="flex">
+            <Label htmlFor="value" className="flex-none leading-9 mr-4">
+              {t("result")}
+            </Label>
+            <p className="grow text-sm text-muted-foreground leading-9 relative">
+              <Button
+                className="absolute right-0"
+                variant="ghost"
+                size="icon"
+                onClick={async (e) => {
+                  e.preventDefault();
+                  await navigator.clipboard.writeText(base64Data);
+                }}
+              >
+                <ClipboardCopy />
+              </Button>
+              <Input id="value" className="grow" value={base64Data} readOnly />
+            </p>
+          </div>
+        </div>
+      </div>
+    </TabsContent>
+  );
 
   return (
     <header

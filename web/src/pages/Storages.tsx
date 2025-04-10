@@ -118,9 +118,7 @@ export default function Storages() {
 
   return (
     <div className="grow overflow-auto p-4">
-      <h2 className="h-8 mb-1">
-        {formatLabel(currentStorage)}
-      </h2>
+      <h2 className="h-8 mb-1">{formatLabel(currentStorage)}</h2>
       <ExForm
         category="storage"
         key={currentStorage}

@@ -15,13 +15,12 @@ import { saveLoginToken } from "@/states/token";
 import useBasicState from "@/states/basic";
 import { goToHome } from "@/routers";
 import useConfigState from "@/states/config";
-import { useToast } from "@/hooks/use-toast";
 import { formatError } from "@/helpers/util";
 import { useShallow } from "zustand/react/shallow";
+import { toast } from "sonner";
 
 export default function Login() {
   const loginI18n = useI18n("login");
-  const { toast } = useToast();
 
   const [account, setAccount] = React.useState("");
   const [password, setPassword] = React.useState("");
@@ -34,8 +33,7 @@ export default function Login() {
       await fetchConfig();
       goToHome();
     } catch (err) {
-      toast({
-        title: loginI18n("fail"),
+      toast(loginI18n("fail"), {
         description: formatError(err),
       });
     }

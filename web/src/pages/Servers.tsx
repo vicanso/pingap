@@ -278,9 +278,7 @@ export default function Servers() {
 
   return (
     <div className="grow overflow-auto p-4">
-      <h2 className="h-8 mb-1">
-        {formatLabel(currentServer)}
-      </h2>
+      <h2 className="h-8 mb-1">{formatLabel(currentServer)}</h2>
       <ExForm
         category="server"
         key={currentServer}

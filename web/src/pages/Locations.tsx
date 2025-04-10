@@ -234,9 +234,7 @@ export default function Locations() {
 
   return (
     <div className="grow overflow-auto p-4">
-      <h2 className="h-8 mb-1">
-        {formatLabel(currentLocation)}
-      </h2>
+      <h2 className="h-8 mb-1">{formatLabel(currentLocation)}</h2>
       <ExForm
         category="location"
         key={currentLocation}

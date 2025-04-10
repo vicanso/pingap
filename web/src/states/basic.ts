@@ -1,7 +1,6 @@
 import request from "@/helpers/request";
 import { create } from "zustand";
 
-
 interface UpstreamHealthyStatus {
   healthy: number;
   total: number;

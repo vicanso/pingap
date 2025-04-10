@@ -1,7 +1,7 @@
 import useConfigState from "@/states/config";
 import { formatError } from "@/helpers/util";
 import { useAsync } from "react-async-hook";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -14,7 +14,6 @@ import React from "react";
 
 export default function Config() {
   const { t } = useTranslation();
-  const { toast } = useToast();
   const [importing, setImporting] = React.useState(false);
   const [newToml, setNewToml] = React.useState("");
   const [fetchToml, importToml, fullToml, originalToml] = useConfigState(
@@ -29,8 +28,7 @@ export default function Config() {
     try {
       await fetchToml();
     } catch (err) {
-      toast({
-        title: t("fetchFail"),
+      toast(t("fetchFail"), {
         description: formatError(err),
       });
     }
@@ -39,12 +37,9 @@ export default function Config() {
   const copyToml = async () => {
     try {
       await navigator.clipboard.writeText(originalToml);
-      toast({
-        title: t("copyTomlSuccess"),
-      });
+      toast(t("copyTomlSuccess"));
     } catch (err) {
-      toast({
-        title: t("copyTomlFail"),
+      toast(t("copyTomlFail"), {
         description: formatError(err),
       });
     }
@@ -56,12 +51,9 @@ export default function Config() {
     setImporting(true);
     try {
       await importToml(value);
-      toast({
-        title: t("importSuccess"),
-      });
+      toast(t("importSuccess"));
     } catch (err) {
-      toast({
-        title: t("importFail"),
+      toast(t("importFail"), {
         description: formatError(err),
       });
     } finally {

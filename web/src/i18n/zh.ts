@@ -428,7 +428,8 @@ export default {
     subFilterPath: "路径",
     subFilterPathPlaceholder: "输入子过滤器的路径(如 ^/api/)",
     subFilterFilters: "过滤规则",
-    subFilterFiltersPlaceholder: "输入子过滤器的规则(如 subs_filter 'http://pingap.io' 'https://pingap.io/api' ig)",
+    subFilterFiltersPlaceholder:
+      "输入子过滤器的规则(如 subs_filter 'http://pingap.io' 'https://pingap.io/api' ig)",
     remark: "备注",
   },
   storage: {

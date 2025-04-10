@@ -90,7 +90,8 @@ export default {
     threadsPlaceholder: "Input the default thread count",
     workStealing: "Work Stealing",
     listenerTasksPerFd: "Listener Tasks Per Fd",
-    listenerTasksPerFdPlaceholder: "Input the listener tasks per fd(default: 1)",
+    listenerTasksPerFdPlaceholder:
+      "Input the listener tasks per fd(default: 1)",
     upstreamKeepalivePoolSize: "Upstream Keepalive Pool",
     upstreamKeepalivePoolSizePlaceholder:
       "Input the pool size of upstream keepavlie(default: 128)",
@@ -113,7 +114,8 @@ export default {
     cacheDirectoryPlaceholder:
       "Input the file cache directory(e.g. /opt/cache)",
     cacheMaxSize: "Cache Max Size",
-    cacheMaxSizePlaceholder: "Input max size of cache(e.g. 100mb), it's only for memory cache",
+    cacheMaxSizePlaceholder:
+      "Input max size of cache(e.g. 100mb), it's only for memory cache",
     upgradeSock: "Upgrade Sock For Daemon",
     upgradeSockPlaceholder: "Input upgrade unix sock for daemon",
     user: "User For Daemon",
@@ -182,7 +184,8 @@ export default {
     pathPlaceholder:
       "Input the path for location, supports regexp, prefix and equal mode",
     upstream: "Upstream",
-    upstreamPlaceholder: "Select the upstream for location : Input the upstream name",
+    upstreamPlaceholder:
+      "Select the upstream for location : Input the upstream name",
     rewrite: "Path Rewrite",
     rewritePlaceholder: "Input the rewrite for path(e.g. ^/api/ /)",
     proxySetHeaders: "Proxy Set Headers",
@@ -388,7 +391,8 @@ export default {
     limitInterval: "Interval",
     limitIntervalPlaceholder: "Input the interval of limit",
     limitWeight: "Weight",
-    limitWeightPlaceholder: "Input the weight of current slot(0-100), default: 0",
+    limitWeightPlaceholder:
+      "Input the weight of current slot(0-100), default: 0",
     ipRestrictionMode: "Restriction Mode",
     ipList: "Ip List",
     ipListPlaceholder: "Input the ip for restriction",
@@ -450,7 +454,8 @@ export default {
     subFilterPath: "Path",
     subFilterPathPlaceholder: "Input the path for sub filter(e.g. ^/api/)",
     subFilterFilters: "Filters",
-    subFilterFiltersPlaceholder: "Input the filters for sub filter(e.g. subs_filter 'http://pingap.io' 'https://pingap.io/api' ig)",
+    subFilterFiltersPlaceholder:
+      "Input the filters for sub filter(e.g. subs_filter 'http://pingap.io' 'https://pingap.io/api' ig)",
     remark: "Remark",
   },
   storage: {

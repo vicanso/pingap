@@ -82,10 +82,7 @@ export default function Plugins() {
         defaultValue: currentCategory,
         category: ExFormItemCategory.RADIOS,
         span: 6,
-        options: newStringOptions(
-          basicInfo.supported_plugins,
-          true,
-        ),
+        options: newStringOptions(basicInfo.supported_plugins, true),
       },
       {
         name: "_name_",
@@ -937,7 +934,9 @@ export default function Plugins() {
         {
           name: "set_headers_not_exists",
           label: pluginI18n("responseHeadersSetHeaderNotExists"),
-          placeholder: pluginI18n("responseHeadersSetHeaderNotExistsPlaceholder"),
+          placeholder: pluginI18n(
+            "responseHeadersSetHeaderNotExistsPlaceholder",
+          ),
           defaultValue: pluginConfig.set_headers_not_exists as string[],
           span: 6,
           category: ExFormItemCategory.KV_LIST,

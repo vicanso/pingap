@@ -4,7 +4,7 @@ import {
   SidebarHeader,
   SidebarProvider,
   SidebarTrigger,
-  SidebarInset
+  SidebarInset,
 } from "@/components/ui/sidebar";
 import { MainSidebar } from "@/components/sidebar-nav";
 import { MainHeader } from "@/components/header";
@@ -15,10 +15,8 @@ import useBasicState from "@/states/basic";
 import { useShallow } from "zustand/react/shallow";
 import useConfigState from "@/states/config";
 import { Button } from "@/components/ui/button";
-import {
-  LoaderCircle,
-} from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { LoaderCircle } from "lucide-react";
+import { toast } from "sonner";
 import { goToHome, goToLogin } from "@/routers";
 import { useAsync } from "react-async-hook";
 import HTTPError from "@/helpers/http-error";
@@ -26,7 +24,6 @@ import { formatError } from "@/helpers/util";
 import { useTranslation } from "react-i18next";
 
 export default function Root() {
-  const { toast } = useToast();
   const { t } = useTranslation();
   const [fetchBasicInfo, basicInfo] = useBasicState(
     useShallow((state) => [state.fetch, state.data]),
@@ -45,8 +42,7 @@ export default function Root() {
         goToLogin();
         return;
       }
-      toast({
-        title: t("fetchFail"),
+      toast(t("fetchFail"), {
         description: formatError(err),
       });
     }
@@ -55,7 +51,10 @@ export default function Root() {
   const { theme } = useTheme();
 
   let logoData = Logo;
-  if (theme === "light" || document.documentElement.className.includes("light")) {
+  if (
+    theme === "light" ||
+    document.documentElement.className.includes("light")
+  ) {
     logoData = LogoLight;
   }
   return (
@@ -70,17 +69,18 @@ export default function Root() {
         <Sidebar>
           <SidebarHeader>
             {/* Logo or app name can go here */}
-            <div className="text-lg font-bold border-b"><img
-              style={{
-                float: "left",
-                width: "32px",
-                marginRight: "10px",
-              }}
-              src={logoData}
-            />
+            <div className="text-lg font-bold border-b">
+              <img
+                style={{
+                  float: "left",
+                  width: "32px",
+                  marginRight: "10px",
+                }}
+                src={logoData}
+              />
               <Button
                 variant="link"
-                className="px-0"
+                className="px-0 cursor-pointer"
                 onClick={(e) => {
                   e.preventDefault();
                   goToHome();
@@ -90,7 +90,9 @@ export default function Root() {
                 {!initialized && (
                   <LoaderCircle className="ml-2 h-4 w-4 inline animate-spin" />
                 )}
-                <span>{basicInfo.version}</span></Button></div>
+                <span>{basicInfo.version}</span>
+              </Button>
+            </div>
           </SidebarHeader>
           <MainSidebar />
         </Sidebar>
@@ -103,6 +105,6 @@ export default function Root() {
           </div>
         </SidebarInset>
       </div>
-    </SidebarProvider >
+    </SidebarProvider>
   );
 }
