@@ -28,7 +28,7 @@ clap = { version = "4.5.35", features = [
     "usage",
 ], default-features = false }
 crc32fast = "1.4.2"
-crossbeam-channel = "0.5.14"
+crossbeam-channel = "0.5.15"
 flate2 = "1.1.1"
 glob = "0.3.2"
 hex = "0.4.3"
