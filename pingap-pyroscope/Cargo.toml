@@ -1,6 +1,6 @@
 [package]
 name = "pingap-pyroscope"
-version = "0.10.5"
+version = "0.10.6"
 edition = "2021"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"

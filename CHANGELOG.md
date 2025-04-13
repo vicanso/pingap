@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.10.6](https://github.com/vicanso/pingap/compare/v0.10.5..0.10.6) - 2025-04-13
+
+### ⛰️  Features
+
+- Add upstream status notification - ([fdd4354](https://github.com/vicanso/pingap/commit/fdd43546b363433d4a3c875188c0e0f61312914b))
+
+### 🐛 Bug Fixes
+
+- Fix crossbeam channel, #109 - ([45d4758](https://github.com/vicanso/pingap/commit/45d4758b83d7d0cf65205d9fe1cc88aa28929795))
+- Remove unused module - ([8ba1d2a](https://github.com/vicanso/pingap/commit/8ba1d2a9cdf2852955acef693bc891454424f443))
+- Fix lint - ([8c8e772](https://github.com/vicanso/pingap/commit/8c8e772472f0cd34c85d67726d99b4b9c78696d2))
+- Temporarily fix sfv - ([c345985](https://github.com/vicanso/pingap/commit/c345985110b8bf53c27217b22ef72d647fe2713a))
+- Fix lint of rust 1.86.0 - ([d8bb02b](https://github.com/vicanso/pingap/commit/d8bb02b6f1935744426a9b75fd4f257e5ba6f833))
+- Remove syslog of windows target - ([6a58fcc](https://github.com/vicanso/pingap/commit/6a58fcc19e6433778697f4701b33a20faafdacc3))
+- Fix async send notification for rust 1.81.0 - ([49e210e](https://github.com/vicanso/pingap/commit/49e210ec4a21506f6c6d356bf5ff0a58c6dad686))
+
+### 🚜 Refactor
+
+- Enhance dns service discovery handling when resolved fail - ([10c449b](https://github.com/vicanso/pingap/commit/10c449b0eea0713fd2f934b618a4c4ca914d09c2))
+- Adjust get upstream healthy status - ([51697ba](https://github.com/vicanso/pingap/commit/51697baf69a081a9504202165345c6fe648d7024))
+- Add text color for upstream status - ([614fa44](https://github.com/vicanso/pingap/commit/614fa44ff48b7f9ef921fc9ac570ac4ab2b9d872))
+- Update tailwind and shadcn - ([20d8b7a](https://github.com/vicanso/pingap/commit/20d8b7a12f002833f6cafd4643cfe790f8778014))
+- Adjust webhook notification sender - ([260c861](https://github.com/vicanso/pingap/commit/260c86126e99bfa3bba1b590b9e1b58702ba6dc1))
+- Adjust webhook sender - ([7b634e6](https://github.com/vicanso/pingap/commit/7b634e6dd8785a50fd54ef3cdf4ee3dc44fad47f))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update shadcn ui - ([f13f5b2](https://github.com/vicanso/pingap/commit/f13f5b284068018293b474926cd4d87acfe588c7))
+- Update modules, #106 - ([6aac395](https://github.com/vicanso/pingap/commit/6aac39590dfff78e88151e555548b33bab1cb405))
+- Remove unused components - ([4b02929](https://github.com/vicanso/pingap/commit/4b02929ad2578ce4d97948061662bf1df795fb57))
+- Update github workflow - ([6581459](https://github.com/vicanso/pingap/commit/6581459966e6ed7c3b2b8e5ee7eefd1e0ee7b974))
+- Add windows build script - ([58117fa](https://github.com/vicanso/pingap/commit/58117fa64d0358cedd7ea93549fe2f2067d5c372))
+- Use baco instead of cargo watch - ([8614e25](https://github.com/vicanso/pingap/commit/8614e25b9fb9f83e13032a8e7a38fd8bc40170be))
+
 ## [0.10.5](https://github.com/vicanso/pingap/compare/v0.10.4..0.10.5) - 2025-03-23
 
 ### ⛰️  Features
