@@ -85,7 +85,7 @@ pingap-sentry = { version = "0.10.5", path = "pingap-sentry", optional = true }
 pingap-pyroscope = { version = "0.10.5", path = "pingap-pyroscope", optional = true }
 
 [target.'cfg(target_env = "musl")'.dependencies]
-mimalloc = "0.1.43"
+mimalloc = "0.1.46"
 
 [features]
 pyro = ["pingap-pyroscope"]
