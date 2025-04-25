@@ -11,10 +11,17 @@ import {
   newBooleanOptions,
 } from "@/constants";
 import { newZodDuration, omitEmptyArray } from "@/helpers/util";
-import { formatLabel } from "@/helpers/html";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 
 function getServerConfig(name: string, servers?: Record<string, Server>) {
   if (!servers) {
@@ -276,9 +283,39 @@ export default function Servers() {
     });
   };
 
+  const selectItems = servers.map((server) => {
+    let name = server;
+    if (name === newServer) {
+      name = "new";
+    }
+    return (
+      <SelectItem key={server} value={server}>
+        {name}
+      </SelectItem>
+    );
+  });
+
   return (
     <div className="grow overflow-auto p-4">
-      <h2 className="h-8 mb-1">{formatLabel(currentServer)}</h2>
+      <div className="flex flex-row gap-2 mb-2">
+        <Label>{serverI18n("server")}:</Label>
+        <Select
+          value={currentServer}
+          onValueChange={(value) => {
+            if (value === newServer) {
+              searchParams.delete("name");
+            } else {
+              searchParams.set("name", value);
+            }
+            setSearchParams(searchParams);
+          }}
+        >
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder={serverI18n("serverPlaceholder")} />
+          </SelectTrigger>
+          <SelectContent>{selectItems}</SelectContent>
+        </Select>
+      </div>
       <ExForm
         category="server"
         key={currentServer}

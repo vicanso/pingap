@@ -3,7 +3,6 @@ import {
   Sidebar,
   SidebarHeader,
   SidebarProvider,
-  SidebarTrigger,
   SidebarInset,
 } from "@/components/ui/sidebar";
 import { MainSidebar } from "@/components/sidebar-nav";
@@ -22,8 +21,12 @@ import { useAsync } from "react-async-hook";
 import HTTPError from "@/helpers/http-error";
 import { formatError } from "@/helpers/util";
 import { useTranslation } from "react-i18next";
+import { useState } from "react";
 
 export default function Root() {
+  const key = "sidebarOpen";
+  const sidebarOpen = window.localStorage.getItem(key);
+  const [open, setOpen] = useState(sidebarOpen == "true" || !sidebarOpen);
   const { t } = useTranslation();
   const [fetchBasicInfo, basicInfo] = useBasicState(
     useShallow((state) => [state.fetch, state.data]),
@@ -58,15 +61,16 @@ export default function Root() {
     logoData = LogoLight;
   }
   return (
-    <SidebarProvider defaultOpen={true}>
+    <SidebarProvider
+      open={open}
+      onOpenChange={(open) => {
+        window.localStorage.setItem(key, open.toString());
+        setOpen(open);
+      }}
+    >
       <div className="flex min-h-screen w-full">
-        {/* Sidebar Toggle Button - Shown on mobile */}
-        <div className="fixed top-4 left-4 z-40 md:hidden">
-          <SidebarTrigger />
-        </div>
-
         {/* Sidebar Component */}
-        <Sidebar>
+        <Sidebar collapsible="icon">
           <SidebarHeader>
             {/* Logo or app name can go here */}
             <div className="text-lg font-bold border-b">
@@ -78,29 +82,31 @@ export default function Root() {
                 }}
                 src={logoData}
               />
-              <Button
-                variant="link"
-                className="px-0 cursor-pointer"
-                onClick={(e) => {
-                  e.preventDefault();
-                  goToHome();
-                }}
-              >
-                Pingap
-                {!initialized && (
-                  <LoaderCircle className="ml-2 h-4 w-4 inline animate-spin" />
-                )}
-                <span>{basicInfo.version}</span>
-              </Button>
+              {open && (
+                <Button
+                  variant="link"
+                  className="px-0 cursor-pointer"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    goToHome();
+                  }}
+                >
+                  Pingap
+                  {!initialized && (
+                    <LoaderCircle className="ml-2 h-4 w-4 inline animate-spin" />
+                  )}
+                  <span>{basicInfo.version}</span>
+                </Button>
+              )}
             </div>
           </SidebarHeader>
-          <MainSidebar />
+          <MainSidebar sidebarOpen={open} />
         </Sidebar>
 
         {/* Main Content - Using SidebarInset for proper spacing */}
-        <SidebarInset>
-          <div className="p-4 pt-0 w-full">
-            <MainHeader />
+        <SidebarInset className="w-[var(--sidebar-width)]">
+          <MainHeader />
+          <div className="flex flex-1 flex-col gap-4">
             <Outlet />
           </div>
         </SidebarInset>

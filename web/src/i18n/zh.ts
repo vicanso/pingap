@@ -133,6 +133,8 @@ export default {
   server: {
     name: "名称",
     namePlaceholder: "输入服务名称",
+    server: "服务",
+    serverPlaceholder: "选择服务",
     addr: "监听地址",
     addrPlaceholder: "输入监控的地址，多个地址以`,`分隔",
     locations: "Location列表",
@@ -170,6 +172,8 @@ export default {
   location: {
     name: "名称",
     namePlaceholder: "输入location的名称",
+    location: "Location",
+    locationPlaceholder: "选择location",
     host: "域名",
     hostPlaceholder: "输入location使用的域名，多个域名使用`,`分隔",
     path: "路径",
@@ -197,6 +201,8 @@ export default {
   upstream: {
     name: "名称",
     namePlaceholder: "输入上游服务的名称",
+    upstream: "上游服务",
+    upstreamPlaceholder: "选择上游服务",
     addrs: "上游服务地址列表",
     addrsPlaceholder: "输入上游服务地址(如127.0.0.1:3000) : 输入对应权重",
     discovery: "服务发现",
@@ -237,6 +243,8 @@ export default {
   certificate: {
     name: "名称",
     namePlaceholder: "输入证书名称",
+    certificate: "证书",
+    certificatePlaceholder: "选择证书",
     tlsCert: "tls证书",
     tlsCertPlaceholder: "输入pem格式的tls证书",
     tlsKey: "tls密钥",
@@ -254,6 +262,8 @@ export default {
   plugin: {
     name: "名称",
     namePlaceholder: "输入插件名称",
+    plugin: "插件",
+    pluginPlaceholder: "选择插件",
     category: "类型",
     step: "执行步骤",
     statsPath: "路径",
@@ -435,6 +445,8 @@ export default {
   storage: {
     name: "名称",
     namePlaceholder: "输入存储数据的名称",
+    storage: "存储",
+    storagePlaceholder: "选择存储数据",
     category: "类型",
     categoryPlaceholder: "选择存储数据的类型",
     secret: "密钥",

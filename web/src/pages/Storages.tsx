@@ -7,8 +7,15 @@ import React from "react";
 import { ExFormItemCategory, newStringOptions } from "@/constants";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
-import { formatLabel } from "@/helpers/html";
 import { useShallow } from "zustand/react/shallow";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 
 function getStorageConfig(name: string, storages?: Record<string, Storage>) {
   if (!storages) {
@@ -116,9 +123,39 @@ export default function Storages() {
     });
   };
 
+  const selectItems = storages.map((storage) => {
+    let name = storage;
+    if (name === newStorage) {
+      name = "new";
+    }
+    return (
+      <SelectItem key={storage} value={storage}>
+        {name}
+      </SelectItem>
+    );
+  });
+
   return (
     <div className="grow overflow-auto p-4">
-      <h2 className="h-8 mb-1">{formatLabel(currentStorage)}</h2>
+      <div className="flex flex-row gap-2 mb-2">
+        <Label>{storageI18n("storage")}:</Label>
+        <Select
+          value={currentStorage}
+          onValueChange={(value) => {
+            if (value === newStorage) {
+              searchParams.delete("name");
+            } else {
+              searchParams.set("name", value);
+            }
+            setSearchParams(searchParams);
+          }}
+        >
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder={storageI18n("storagePlaceholder")} />
+          </SelectTrigger>
+          <SelectContent>{selectItems}</SelectContent>
+        </Select>
+      </div>
       <ExForm
         category="storage"
         key={currentStorage}

@@ -37,6 +37,7 @@ import {
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import request from "@/helpers/request";
+import { SidebarTrigger } from "./ui/sidebar";
 
 export function MainHeader({
   className,
@@ -314,6 +315,7 @@ export function MainHeader({
       )}
     >
       <div className="ml-2 flex h-11 items-center">
+        <SidebarTrigger className="cursor-pointer" />
         <div className="flex flex-1 items-center space-x-2 justify-end mr-2">
           <Popover>
             <PopoverTrigger asChild>

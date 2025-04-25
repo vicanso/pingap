@@ -11,8 +11,15 @@ import {
 } from "@/constants";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
-import { formatLabel } from "@/helpers/html";
 import { useShallow } from "zustand/react/shallow";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 
 function getCertificateConfig(
   name: string,
@@ -163,9 +170,41 @@ export default function Certificates() {
     });
   };
 
+  const selectItems = certificates.map((certificate) => {
+    let name = certificate;
+    if (name === newCertificate) {
+      name = "new";
+    }
+    return (
+      <SelectItem key={certificate} value={certificate}>
+        {name}
+      </SelectItem>
+    );
+  });
+
   return (
     <div className="grow overflow-auto p-4">
-      <h2 className="h-8 mb-1">{formatLabel(currentCertificate)}</h2>
+      <div className="flex flex-row gap-2 mb-2">
+        <Label>{certificateI18n("certificate")}:</Label>
+        <Select
+          value={currentCertificate}
+          onValueChange={(value) => {
+            if (value === newCertificate) {
+              searchParams.delete("name");
+            } else {
+              searchParams.set("name", value);
+            }
+            setSearchParams(searchParams);
+          }}
+        >
+          <SelectTrigger className="w-[180px]">
+            <SelectValue
+              placeholder={certificateI18n("certificatePlaceholder")}
+            />
+          </SelectTrigger>
+          <SelectContent>{selectItems}</SelectContent>
+        </Select>
+      </div>
       <ExForm
         category="certificate"
         key={currentCertificate}

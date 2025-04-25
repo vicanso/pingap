@@ -139,6 +139,8 @@ export default {
   server: {
     name: "Name",
     namePlaceholder: "Input the name of server",
+    server: "Server",
+    serverPlaceholder: "Select the server",
     addr: "Listen Addresses",
     addrPlaceholder: "Input listen addresses, separated by comma",
     locations: "Locations",
@@ -177,6 +179,8 @@ export default {
   location: {
     name: "Name",
     namePlaceholder: "Input the name of location",
+    location: "Location",
+    locationPlaceholder: "Select the location",
     host: "Host",
     hostPlaceholder:
       "Input the host for location, multiple hosts separated by comma",
@@ -209,6 +213,8 @@ export default {
   upstream: {
     name: "Name",
     namePlaceholder: "Input the name of upstream",
+    upstream: "Upstream",
+    upstreamPlaceholder: "Select the upstream",
     addrs: "Upstream Address",
     addrsPlaceholder:
       "Input the address of upstream(e.g. 127.0.0.1:3000) : Input the weight of upstream",
@@ -255,6 +261,8 @@ export default {
   certificate: {
     name: "Name",
     namePlaceholder: "Input the name of certificate",
+    certificate: "Certificate",
+    certificatePlaceholder: "Select the certificate",
     tlsCert: "Tls Cert",
     tlsCertPlaceholder: "Input the pem format certificate of tls",
     tlsKey: "Tls Key",
@@ -273,6 +281,8 @@ export default {
   plugin: {
     name: "Name",
     namePlaceholder: "Input the name of plugin",
+    plugin: "Plugin",
+    pluginPlaceholder: "Select the plugin",
     category: "Category",
     step: "Plugin Step",
     statsPath: "Stats Path",
@@ -461,6 +471,8 @@ export default {
   storage: {
     name: "Name",
     namePlaceholder: "Input the name of storage",
+    storage: "Storage",
+    storagePlaceholder: "Select the storage",
     category: "Category",
     categoryPlaceholder: "Select the category of storage",
     secret: "Secret",

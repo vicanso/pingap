@@ -15,6 +15,15 @@ import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
 import useBasicState from "@/states/basic";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
+
 function getPluginConfig(
   name: string,
   plugins?: Record<string, Record<string, unknown>>,
@@ -993,8 +1002,40 @@ export default function Plugins() {
     });
   };
 
+  const selectItems = plugins.map((plugin) => {
+    console.dir(plugin);
+    let name = plugin;
+    if (name === newPlugin) {
+      name = "new";
+    }
+    return (
+      <SelectItem key={plugin} value={plugin}>
+        {name}
+      </SelectItem>
+    );
+  });
+
   return (
     <div className="grow overflow-auto p-4">
+      <div className="flex flex-row gap-2 mb-2">
+        <Label>{pluginI18n("plugin")}:</Label>
+        <Select
+          value={currentPlugin}
+          onValueChange={(value) => {
+            if (value === newPlugin) {
+              searchParams.delete("name");
+            } else {
+              searchParams.set("name", value);
+            }
+            setSearchParams(searchParams);
+          }}
+        >
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder={pluginI18n("pluginPlaceholder")} />
+          </SelectTrigger>
+          <SelectContent>{selectItems}</SelectContent>
+        </Select>
+      </div>
       <ExForm
         category="plugin"
         key={key}

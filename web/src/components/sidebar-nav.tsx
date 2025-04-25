@@ -49,7 +49,10 @@ interface NavLink {
 
 export function MainSidebar({
   className,
-}: React.HTMLAttributes<HTMLDivElement>) {
+  sidebarOpen,
+}: React.HTMLAttributes<HTMLDivElement> & {
+  sidebarOpen: boolean;
+}) {
   const navI18n = useI18n("nav");
   const [keyword, setKeyword] = React.useState("");
   const [pathname, setPathname] = React.useState(
@@ -204,17 +207,19 @@ export function MainSidebar({
   return (
     <SidebarContent className={className}>
       <SidebarGroup>
-        <div className="m-2 mt-0 relative">
-          <Input
-            type="search"
-            placeholder={navI18n("searchPlaceholder")}
-            className="pl-8"
-            onChange={(e) => {
-              setKeyword(e.target.value.trim().toLowerCase());
-            }}
-          />
-          <Search className="pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 select-none opacity-50" />
-        </div>
+        {sidebarOpen && (
+          <div className="m-2 mt-0 relative">
+            <Input
+              type="search"
+              placeholder={navI18n("searchPlaceholder")}
+              className="pl-8"
+              onChange={(e) => {
+                setKeyword(e.target.value.trim().toLowerCase());
+              }}
+            />
+            <Search className="pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 select-none opacity-50" />
+          </div>
+        )}
         <SidebarGroupContent>
           <SidebarMenu>
             {items.map((item) => (

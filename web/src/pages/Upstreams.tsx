@@ -10,10 +10,17 @@ import {
   newBooleanOptions,
 } from "@/constants";
 import { newZodBytes, newZodDuration, omitEmptyArray } from "@/helpers/util";
-import { formatLabel } from "@/helpers/html";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 
 function getUpstreamConfig(name: string, upstreams?: Record<string, Upstream>) {
   if (!upstreams) {
@@ -307,9 +314,39 @@ export default function Upstreams() {
     });
   };
 
+  const selectItems = upstreams.map((upstream) => {
+    let name = upstream;
+    if (name === newUpstream) {
+      name = "new";
+    }
+    return (
+      <SelectItem key={upstream} value={upstream}>
+        {name}
+      </SelectItem>
+    );
+  });
+
   return (
     <div className="grow overflow-auto p-4">
-      <h2 className="h-8 mb-1">{formatLabel(currentUpstream)}</h2>
+      <div className="flex flex-row gap-2 mb-2">
+        <Label>{upstreamI18n("upstream")}:</Label>
+        <Select
+          value={currentUpstream}
+          onValueChange={(value) => {
+            if (value === newUpstream) {
+              searchParams.delete("name");
+            } else {
+              searchParams.set("name", value);
+            }
+            setSearchParams(searchParams);
+          }}
+        >
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder={upstreamI18n("upstreamPlaceholder")} />
+          </SelectTrigger>
+          <SelectContent>{selectItems}</SelectContent>
+        </Select>
+      </div>
       <ExForm
         category="upstream"
         key={currentUpstream}

@@ -11,10 +11,17 @@ import {
   newStringOptions,
 } from "@/constants";
 import { newZodBytes, omitEmptyArray } from "@/helpers/util";
-import { formatLabel } from "@/helpers/html";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
 
 function getLocationConfig(name: string, locations?: Record<string, Location>) {
   if (!locations) {
@@ -232,9 +239,39 @@ export default function Locations() {
     });
   };
 
+  const selectItems = locations.map((location) => {
+    let name = location;
+    if (name === newLocation) {
+      name = "new";
+    }
+    return (
+      <SelectItem key={location} value={location}>
+        {name}
+      </SelectItem>
+    );
+  });
+
   return (
     <div className="grow overflow-auto p-4">
-      <h2 className="h-8 mb-1">{formatLabel(currentLocation)}</h2>
+      <div className="flex flex-row gap-2 mb-2">
+        <Label>{locationI18n("location")}:</Label>
+        <Select
+          value={currentLocation}
+          onValueChange={(value) => {
+            if (value === newLocation) {
+              searchParams.delete("name");
+            } else {
+              searchParams.set("name", value);
+            }
+            setSearchParams(searchParams);
+          }}
+        >
+          <SelectTrigger className="w-[180px]">
+            <SelectValue placeholder={locationI18n("locationPlaceholder")} />
+          </SelectTrigger>
+          <SelectContent>{selectItems}</SelectContent>
+        </Select>
+      </div>
       <ExForm
         category="location"
         key={currentLocation}
