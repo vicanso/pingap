@@ -40,7 +40,7 @@ nanoid = "0.4.0"
 nix = { version = "0.29.0", features = ["signal"] }
 num_cpus = "1.16.0"
 once_cell = "1.21.3"
-pingora = { git = "https://github.com/cloudflare/pingora", rev = "a1baa60d5ab39c35804f5b98f0b0322e6cf94535", default-features = false, features = [
+pingora = { git = "https://github.com/cloudflare/pingora", rev = "46e3742e1f86be9a7a0f8183bbca184ed3a97c83", default-features = false, features = [
     # pingora = { version = "0.4.0", default-features = false, features = [
     "lb",
     "openssl",
@@ -149,7 +149,7 @@ members = [
 once_cell = "1.21.3"
 bytes = "1.10.1"
 http = "1.3.1"
-pingora = { git = "https://github.com/cloudflare/pingora", rev = "a1baa60d5ab39c35804f5b98f0b0322e6cf94535", default-features = false, features = [
+pingora = { git = "https://github.com/cloudflare/pingora", rev = "46e3742e1f86be9a7a0f8183bbca184ed3a97c83", default-features = false, features = [
     # pingora = { version = "0.4.0", default-features = false, features = [
     "lb",
     "openssl",
