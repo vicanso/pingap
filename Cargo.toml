@@ -1,6 +1,6 @@
 [package]
 name = "pingap"
-version = "0.10.6"
+version = "0.10.7"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 edition = "2021"
 categories = ["network-programming", "web-programming::http-server"]
@@ -68,21 +68,21 @@ uuid = { version = "1.16.0", features = [
     "fast-rng",
 ], default-features = false }
 ctor = "0.4.1"
-pingap-core = { version = "0.10.5", path = "pingap-core" }
-pingap-util = { version = "0.10.5", path = "pingap-util" }
-pingap-webhook = { version = "0.10.5", path = "pingap-webhook" }
-pingap-config = { version = "0.10.5", path = "pingap-config" }
-pingap-cache = { version = "0.10.5", path = "pingap-cache" }
-pingap-upstream = { version = "0.10.5", path = "pingap-upstream" }
-pingap-certificate = { version = "0.10.5", path = "pingap-certificate" }
-pingap-location = { version = "0.10.5", path = "pingap-location" }
-pingap-performance = { version = "0.10.5", path = "pingap-performance" }
-pingap-logger = { version = "0.10.5", path = "pingap-logger" }
-pingap-acme = { version = "0.10.5", path = "pingap-acme" }
-pingap-plugin = { version = "0.10.5", path = "pingap-plugin" }
-pingap-otel = { version = "0.10.5", path = "pingap-otel", optional = true }
-pingap-sentry = { version = "0.10.5", path = "pingap-sentry", optional = true }
-pingap-pyroscope = { version = "0.10.5", path = "pingap-pyroscope", optional = true }
+pingap-core = { version = "0.10.7", path = "pingap-core" }
+pingap-util = { version = "0.10.7", path = "pingap-util" }
+pingap-webhook = { version = "0.10.7", path = "pingap-webhook" }
+pingap-config = { version = "0.10.7", path = "pingap-config" }
+pingap-cache = { version = "0.10.7", path = "pingap-cache" }
+pingap-upstream = { version = "0.10.7", path = "pingap-upstream" }
+pingap-certificate = { version = "0.10.7", path = "pingap-certificate" }
+pingap-location = { version = "0.10.7", path = "pingap-location" }
+pingap-performance = { version = "0.10.7", path = "pingap-performance" }
+pingap-logger = { version = "0.10.7", path = "pingap-logger" }
+pingap-acme = { version = "0.10.7", path = "pingap-acme" }
+pingap-plugin = { version = "0.10.7", path = "pingap-plugin" }
+pingap-otel = { version = "0.10.7", path = "pingap-otel", optional = true }
+pingap-sentry = { version = "0.10.7", path = "pingap-sentry", optional = true }
+pingap-pyroscope = { version = "0.10.7", path = "pingap-pyroscope", optional = true }
 
 [target.'cfg(target_env = "musl")'.dependencies]
 mimalloc = "0.1.46"

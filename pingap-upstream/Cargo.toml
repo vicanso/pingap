@@ -1,6 +1,6 @@
 [package]
 name = "pingap-upstream"
-version = "0.10.6"
+version = "0.10.7"
 edition = "2021"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -27,10 +27,10 @@ tokio = { workspace = true }
 pingora-runtime = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }
-pingap-config = { version = "0.10.6", path = "../pingap-config" }
-pingap-discovery = { version = "0.10.6", path = "../pingap-discovery" }
-pingap-health = { version = "0.10.6", path = "../pingap-health" }
-pingap-core = { version = "0.10.6", path = "../pingap-core" }
+pingap-config = { version = "0.10.7", path = "../pingap-config" }
+pingap-discovery = { version = "0.10.7", path = "../pingap-discovery" }
+pingap-health = { version = "0.10.7", path = "../pingap-health" }
+pingap-core = { version = "0.10.7", path = "../pingap-core" }
 
 
 [dev-dependencies]

@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.10.7](https://github.com/vicanso/pingap/compare/v0.10.6..0.10.7) - 2025-04-27
+
+### 🚜 Refactor
+
+- Update pingora - ([59f9822](https://github.com/vicanso/pingap/commit/59f9822ddf07f09a1ac13644890dd5ddcfad6f5f))
+- Adjust app sidebar - ([01d7b6e](https://github.com/vicanso/pingap/commit/01d7b6ee72ff8a3e1f54b3ff6387f9fee6fdc9a8))
+- Update dependencies - ([03c0b1e](https://github.com/vicanso/pingap/commit/03c0b1ec9535e15b3c5228b70de4f04e3f21eb22))
+- Update mimalloc version ([#110](https://github.com/orhun/git-cliff/issues/110)) - ([d91592c](https://github.com/vicanso/pingap/commit/d91592c38339bec7bd54352e24547cc56e75ed5b))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update github workflow - ([ddffa4a](https://github.com/vicanso/pingap/commit/ddffa4abd13f42d4b940bd862d00b4a753cc3d81))
+
 ## [0.10.6](https://github.com/vicanso/pingap/compare/v0.10.5..0.10.6) - 2025-04-13
 
 ### ⛰️  Features

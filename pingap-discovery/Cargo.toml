@@ -1,6 +1,6 @@
 [package]
 name = "pingap-discovery"
-version = "0.10.6"
+version = "0.10.7"
 edition = "2021"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -23,7 +23,7 @@ hickory-resolver = "0.24.3"
 bollard = "0.18.1"
 snafu = { workspace = true }
 tokio = { workspace = true }
-pingap-core = { version = "0.10.6", path = "../pingap-core" }
+pingap-core = { version = "0.10.7", path = "../pingap-core" }
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"
