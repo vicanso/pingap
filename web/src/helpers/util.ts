@@ -16,7 +16,7 @@ export function newZodNumber() {
 }
 
 export function newZodBytes() {
-  const reg = /(^$)|([(\d+)|(\d+.\d+)]\s?[kmg]b)/i;
+  const reg = /(^$)|([(\d+)|(\d+.\d+)]\s?[kmg]i?b)/i;
   return z.string().regex(reg);
 }
 

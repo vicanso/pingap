@@ -73,15 +73,17 @@ export default function Root() {
         <Sidebar collapsible="icon">
           <SidebarHeader>
             {/* Logo or app name can go here */}
-            <div className="text-lg font-bold border-b">
-              <img
-                style={{
-                  float: "left",
-                  width: "32px",
-                  marginRight: "10px",
+            <div className="text-lg font-bold border-b flex items-center">
+              <Button
+                size="icon"
+                variant="ghost"
+                className="cursor-pointer"
+                onClick={() => {
+                  goToHome();
                 }}
-                src={logoData}
-              />
+              >
+                <img src={logoData} />
+              </Button>
               {open && (
                 <Button
                   variant="link"
