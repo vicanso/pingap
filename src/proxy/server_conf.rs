@@ -15,6 +15,8 @@
 // use pingap_config::PingapConf;
 use pingora::protocols::l4::ext::TcpKeepalive;
 use std::fmt;
+#[cfg(target_os = "linux")]
+use std::time::Duration;
 
 static ERROR_TEMPLATE: &str = include_str!("../../error.html");
 
@@ -164,6 +166,8 @@ pub fn parse_from_conf(conf: pingap_config::PingapConf) -> Vec<ServerConf> {
                 idle: item.tcp_idle.unwrap_or_default(),
                 count: item.tcp_probe_count.unwrap_or_default(),
                 interval: item.tcp_interval.unwrap_or_default(),
+                #[cfg(target_os = "linux")]
+                user_timeout: Duration::from_secs(0),
             })
         } else {
             None

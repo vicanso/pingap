@@ -19,6 +19,7 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use pingap_core::Error as ServiceError;
 use pingap_core::SimpleServiceTaskFuture;
 use pingora::cache::key::{CacheHashKey, CompactCacheKey};
+use pingora::cache::storage::MissFinishType;
 use pingora::cache::storage::{HandleHit, HandleMiss};
 use pingora::cache::trace::SpanHandle;
 use pingora::cache::{
@@ -351,7 +352,7 @@ impl HandleMiss for ObjectMissHandler {
         Ok(())
     }
 
-    async fn finish(self: Box<Self>) -> pingora::Result<usize> {
+    async fn finish(self: Box<Self>) -> pingora::Result<MissFinishType> {
         let size = self.body.len(); // FIXME: this just body size, also track meta size
         let _ = self
             .cache
@@ -365,7 +366,7 @@ impl HandleMiss for ObjectMissHandler {
             )
             .await?;
 
-        Ok(size)
+        Ok(MissFinishType::Created(size))
     }
 }
 

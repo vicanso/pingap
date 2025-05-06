@@ -433,6 +433,8 @@ impl Upstream {
                 idle: conf.tcp_idle.unwrap_or_default(),
                 count: conf.tcp_probe_count.unwrap_or_default(),
                 interval: conf.tcp_interval.unwrap_or_default(),
+                #[cfg(target_os = "linux")]
+                user_timeout: Duration::from_secs(0),
             })
         } else {
             None

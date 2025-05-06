@@ -1264,7 +1264,7 @@ impl ProxyHttp for Server {
         _session: &mut Session,
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
-    ) {
+    ) -> pingora::Result<()> {
         debug!(category = LOG_CATEGORY, "--> upstream response filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream response filter"););
         #[cfg(feature = "full")]
@@ -1297,6 +1297,7 @@ impl ProxyHttp for Server {
         }
         ctx.upstream_processing_time =
             pingap_util::get_latency(&ctx.upstream_processing_time);
+        Ok(())
     }
 
     /// Filters upstream response body chunks.
