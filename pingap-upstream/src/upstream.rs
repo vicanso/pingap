@@ -1037,6 +1037,12 @@ mod tests {
         assert_eq!("Some(3s)", format!("{:?}", up.read_timeout));
         assert_eq!("Some(30s)", format!("{:?}", up.idle_timeout));
         assert_eq!("Some(5s)", format!("{:?}", up.write_timeout));
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            "Some(TcpKeepalive { idle: 60s, interval: 60s, count: 100, user_timeout: 0ns })",
+            format!("{:?}", up.tcp_keepalive)
+        );
+        #[cfg(not(target_os = "linux"))]
         assert_eq!(
             "Some(TcpKeepalive { idle: 60s, interval: 60s, count: 100 })",
             format!("{:?}", up.tcp_keepalive)
