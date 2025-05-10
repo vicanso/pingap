@@ -2801,7 +2801,7 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pingap"
-version = "0.10.7"
+version = "0.11.0"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -2861,7 +2861,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-acme"
-version = "0.10.7"
+version = "0.11.0"
 dependencies = [
  "instant-acme",
  "pingap-certificate",
@@ -2879,7 +2879,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-cache"
-version = "0.10.7"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2905,7 +2905,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-certificate"
-version = "0.10.7"
+version = "0.11.0"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -2931,7 +2931,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-config"
-version = "0.10.7"
+version = "0.11.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -2968,7 +2968,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-core"
-version = "0.10.7"
+version = "0.11.0"
 dependencies = [
  "TinyUFO",
  "ahash",
@@ -2997,7 +2997,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-discovery"
-version = "0.10.7"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "bollard",
@@ -3015,7 +3015,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-health"
-version = "0.10.7"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "http",
@@ -3034,7 +3034,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-location"
-version = "0.10.7"
+version = "0.11.0"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -3055,7 +3055,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-logger"
-version = "0.10.7"
+version = "0.11.0"
 dependencies = [
  "bytes",
  "bytesize",
@@ -3083,7 +3083,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-otel"
-version = "0.10.7"
+version = "0.11.0"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -3102,7 +3102,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-performance"
-version = "0.10.7"
+version = "0.11.0"
 dependencies = [
  "bytesize",
  "cfg-if",
@@ -3132,7 +3132,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-plugin"
-version = "0.10.7"
+version = "0.11.0"
 dependencies = [
  "ahash",
  "async-trait",
@@ -3179,7 +3179,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-pyroscope"
-version = "0.10.7"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "pingora",
@@ -3193,14 +3193,14 @@ dependencies = [
 
 [[package]]
 name = "pingap-sentry"
-version = "0.10.7"
+version = "0.11.0"
 dependencies = [
  "sentry-core",
 ]
 
 [[package]]
 name = "pingap-upstream"
-version = "0.10.7"
+version = "0.11.0"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -3226,7 +3226,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-util"
-version = "0.10.7"
+version = "0.11.0"
 dependencies = [
  "aes-gcm-siv",
  "base64",
@@ -3247,7 +3247,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-webhook"
-version = "0.10.7"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "local-ip-address 0.6.5",

@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.11.0](https://github.com/vicanso/pingap/compare/v0.10.7..0.11.0) - 2025-05-10
+
+### 🐛 Bug Fixes
+
+- Skip plugin for websocket, #114 - ([be345dd](https://github.com/vicanso/pingap/commit/be345dd073bb11c8d326d8b1262fe30d9258f94b))
+- Fix test - ([0cbba40](https://github.com/vicanso/pingap/commit/0cbba4005068823d1945c56b22e67f31ac34afa9))
+- Fix lint - ([8aa03d0](https://github.com/vicanso/pingap/commit/8aa03d0355f7de1dfa0673e577b0098b69b53113))
+- Fix lint - ([eb1faa7](https://github.com/vicanso/pingap/commit/eb1faa757d2f5cc1c50c13c0f3fb78df8e0ff0bd))
+- Fix byte size validate function, #112 - ([de9f9b5](https://github.com/vicanso/pingap/commit/de9f9b5e031368049eb26588a7ee427dd8f55e61))
+
+### 🚜 Refactor
+
+- Update pingora to 0.5.0 - ([ed443eb](https://github.com/vicanso/pingap/commit/ed443eb8f3eb6ae24e70fcd5b38eeb2a497fa09a))
+- Update pingora version - ([9e93c99](https://github.com/vicanso/pingap/commit/9e93c99182ff36eca5dfbec7700fddd00ae3b246))
+
+### ⚙️ Miscellaneous Tasks
+
+- Set rust min version to 1.82.0 - ([30abd2e](https://github.com/vicanso/pingap/commit/30abd2e0c4706a2f9fdee943866f5aa2668736a4))
+
 ## [0.10.7](https://github.com/vicanso/pingap/compare/v0.10.6..0.10.7) - 2025-04-27
 
 ### 🚜 Refactor
