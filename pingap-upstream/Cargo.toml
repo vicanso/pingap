@@ -6,7 +6,8 @@ authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
 homepage = "https://github.com/vicanso/pingap"
 repository = "https://github.com/vicanso/pingap"
-keywords = ["pingap", "config"]
+keywords = ["pingap", "upstream"]
+description = "Upstream for pingap"
 
 [lib]
 name = "pingap_upstream"

@@ -7,7 +7,7 @@ license = "Apache-2.0"
 homepage = "https://github.com/vicanso/pingap"
 repository = "https://github.com/vicanso/pingap"
 keywords = ["pingap", "health"]
-
+description = "Health check handler for pingap"
 [lib]
 name = "pingap_health"
 path = "src/lib.rs"
