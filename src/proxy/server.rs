@@ -575,6 +575,9 @@ impl Server {
         session: &mut Session,
         ctx: &mut Ctx,
     ) -> pingora::Result<bool> {
+        if session.is_upgrade_req() {
+            return Ok(false);
+        }
         let Some(plugins) = location.plugins.as_ref() else {
             return Ok(false);
         };
@@ -619,6 +622,9 @@ impl Server {
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<()> {
+        if session.is_upgrade_req() {
+            return Ok(());
+        }
         let Some(plugins) = location.plugins.as_ref() else {
             return Ok(());
         };
