@@ -40,8 +40,8 @@ nanoid = "0.4.0"
 nix = { version = "0.29.0", features = ["signal"] }
 num_cpus = "1.16.0"
 once_cell = "1.21.3"
-pingora = { git = "https://github.com/cloudflare/pingora", rev = "128aafe4ce8d84a1d768277a5f4aaf635aa25fae", default-features = false, features = [
-    # pingora = { version = "0.4.0", default-features = false, features = [
+# pingora = { git = "https://github.com/cloudflare/pingora", rev = "128aafe4ce8d84a1d768277a5f4aaf635aa25fae", default-features = false, features = [
+pingora = { version = "0.5.0", default-features = false, features = [
     "lb",
     "openssl",
     "cache",
@@ -149,8 +149,8 @@ members = [
 once_cell = "1.21.3"
 bytes = "1.10.1"
 http = "1.3.1"
-pingora = { git = "https://github.com/cloudflare/pingora", rev = "128aafe4ce8d84a1d768277a5f4aaf635aa25fae", default-features = false, features = [
-    # pingora = { version = "0.4.0", default-features = false, features = [
+# pingora = { git = "https://github.com/cloudflare/pingora", rev = "128aafe4ce8d84a1d768277a5f4aaf635aa25fae", default-features = false, features = [
+pingora = { version = "0.5.0", default-features = false, features = [
     "lb",
     "openssl",
     "cache",
@@ -185,7 +185,7 @@ ahash = { version = "0.8.11", default-features = false }
 derive_more = { version = "2.0.1", default-features = false, features = [
     "debug",
 ] }
-pingora-runtime = "0.4.0"
+pingora-runtime = "0.5.0"
 time = { version = "0.3.41", features = ["local-offset"] }
 sysinfo = { version = "0.34.2", features = [
     "system",

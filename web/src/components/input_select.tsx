@@ -64,7 +64,7 @@ export const InputSelect = React.forwardRef<HTMLInputElement, InputSelectProps>(
             onValueChange(option);
           }}
         >
-          <SelectTrigger>
+          <SelectTrigger className="w-full">
             <SelectValue placeholder={selectPlaceholder} />
           </SelectTrigger>
           <SelectContent>{items}</SelectContent>
