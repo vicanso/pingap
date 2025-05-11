@@ -1,17 +1,17 @@
 #!/bin/bash
 
-# 发布顺序按照依赖关系排序
+# publish order
 CRATES=(
     "pingap-util"
     "pingap-core"
+    "pingap-discovery"
     "pingap-config"
     "pingap-logger"
     "pingap-certificate"
     "pingap-cache"
     "pingap-location"
-    "pingap-upstream"
-    "pingap-discovery"
     "pingap-health"
+    "pingap-upstream"
     "pingap-acme"
     "pingap-otel"
     "pingap-performance"
@@ -30,8 +30,8 @@ for crate in "${CRATES[@]}"; do
         exit 1
     fi
     cd ..
-    # 等待一段时间让 crates.io 处理
-    sleep 10
+    # wait for crates.io to process
+    sleep 60
 done
 
 echo "All crates published successfully!" 
