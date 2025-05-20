@@ -1003,7 +1003,6 @@ export default function Plugins() {
   };
 
   const selectItems = plugins.map((plugin) => {
-    console.dir(plugin);
     let name = plugin;
     if (name === newPlugin) {
       name = "new";

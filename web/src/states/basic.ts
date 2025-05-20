@@ -38,6 +38,7 @@ interface ConfigState {
   data: Basic;
   initialized: boolean;
   fetch: () => Promise<Basic>;
+  restart: () => Promise<void>;
 }
 
 const useBasicState = create<ConfigState>()((set) => ({
@@ -75,6 +76,9 @@ const useBasicState = create<ConfigState>()((set) => ({
       data,
     });
     return data;
+  },
+  restart: async () => {
+    await request.post("/restart");
   },
 }));
 

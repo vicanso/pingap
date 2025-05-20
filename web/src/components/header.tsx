@@ -11,6 +11,7 @@ import {
   FileCode2,
   AudioWaveform,
   ClipboardCopy,
+  PowerOff,
 } from "lucide-react";
 import { goToConfig } from "@/routers";
 import { useTheme } from "@/components/theme-provider";
@@ -37,8 +38,20 @@ import {
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import request from "@/helpers/request";
-import { SidebarTrigger } from "./ui/sidebar";
-
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { SidebarTrigger } from "@/components/ui/sidebar";
+import useBasicState from "@/states/basic";
+import { useShallow } from "zustand/react/shallow";
 export function MainHeader({
   className,
 }: React.HTMLAttributes<HTMLDivElement>) {
@@ -57,6 +70,8 @@ export function MainHeader({
 
   const [base64Type, setBase64Type] = React.useState("encode");
   const [base64Data, setBase64Data] = React.useState("");
+
+  const [restart] = useBasicState(useShallow((state) => [state.restart]));
 
   const handleAes = async () => {
     const secret = aesData.key;
@@ -88,6 +103,11 @@ export function MainHeader({
         setAesProcessing(false);
       }
     }
+  };
+
+  const confirmRestart = async () => {
+    await restart();
+    toast(t("restartSuccess"));
   };
 
   const zhLang = "zh";
@@ -154,6 +174,31 @@ export function MainHeader({
             English
           </DropdownMenuItem>
         </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="ghost" className="cursor-pointer">
+                <PowerOff className={iconClassName} />
+                <span>{t("restart")}</span>
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{t("restartTitle")}</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {t("restartDescription")}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
+                <AlertDialogAction onClick={confirmRestart}>
+                  {t("confirm")}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
