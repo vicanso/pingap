@@ -53,9 +53,7 @@ impl io::Write for SyslogWriterGuard<'_, Formatter3164> {
         // trim end of line, syslog will auto add '\n'
         let s = s.trim_end_matches('\n');
         if !s.is_empty() {
-            self.guard
-                .info(s)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+            self.guard.info(s).map_err(io::Error::other)?;
         }
 
         Ok(buf.len())
@@ -79,7 +77,7 @@ impl io::Write for SyslogWriterGuard<'_, Formatter5424> {
             let empty_data = std::collections::BTreeMap::new(); // empty structured data
             self.guard
                 .info((msg_id, empty_data, s))
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                .map_err(io::Error::other)?;
         }
 
         Ok(buf.len())

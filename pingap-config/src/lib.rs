@@ -62,7 +62,7 @@ pub enum Error {
     #[snafu(display("Regex error {source}"))]
     Regex { source: regex::Error },
     #[snafu(display("Etcd error {source}"))]
-    Etcd { source: etcd_client::Error },
+    Etcd { source: Box<etcd_client::Error> },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -81,10 +81,9 @@ impl Observer {
             tokio::time::sleep(sleep_time).await;
             return Ok(false);
         };
-        let resp = stream
-            .message()
-            .await
-            .map_err(|e| Error::Etcd { source: e })?;
+        let resp = stream.message().await.map_err(|e| Error::Etcd {
+            source: Box::new(e),
+        })?;
 
         Ok(resp.is_some())
     }

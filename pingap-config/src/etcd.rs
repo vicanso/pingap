@@ -92,7 +92,9 @@ impl EtcdStorage {
     async fn connect(&self) -> Result<Client> {
         Client::connect(&self.addrs, Some(self.options.clone()))
             .await
-            .map_err(|e| Error::Etcd { source: e })
+            .map_err(|e| Error::Etcd {
+                source: Box::new(e),
+            })
     }
 }
 
@@ -107,7 +109,9 @@ impl ConfigStorage for EtcdStorage {
         let arr = c
             .get(self.path.as_bytes(), Some(opts))
             .await
-            .map_err(|e| Error::Etcd { source: e })?
+            .map_err(|e| Error::Etcd {
+                source: Box::new(e),
+            })?
             .take_kvs();
         let mut buffer = vec![];
         for item in arr {
@@ -134,13 +138,15 @@ impl ConfigStorage for EtcdStorage {
         let key = pingap_util::path_join(&self.path, &path);
         let mut c = self.connect().await?;
         if toml_value.is_empty() {
-            c.delete(key, None)
-                .await
-                .map_err(|e| Error::Etcd { source: e })?;
+            c.delete(key, None).await.map_err(|e| Error::Etcd {
+                source: Box::new(e),
+            })?;
         } else {
             c.put(key, toml_value, None)
                 .await
-                .map_err(|e| Error::Etcd { source: e })?;
+                .map_err(|e| Error::Etcd {
+                    source: Box::new(e),
+                })?;
         }
         Ok(())
     }
@@ -161,7 +167,9 @@ impl ConfigStorage for EtcdStorage {
                 Some(WatchOptions::default().with_prefix()),
             )
             .await
-            .map_err(|e| Error::Etcd { source: e })?;
+            .map_err(|e| Error::Etcd {
+                source: Box::new(e),
+            })?;
         Ok(Observer {
             etcd_watch_stream: Some(stream),
         })
@@ -170,9 +178,9 @@ impl ConfigStorage for EtcdStorage {
     async fn save(&self, key: &str, data: &[u8]) -> Result<()> {
         let key = pingap_util::path_join(&self.path, key);
         let mut c = self.connect().await?;
-        c.put(key, data, None)
-            .await
-            .map_err(|e| Error::Etcd { source: e })?;
+        c.put(key, data, None).await.map_err(|e| Error::Etcd {
+            source: Box::new(e),
+        })?;
         Ok(())
     }
     /// Load key-value data from under the base path
@@ -182,7 +190,9 @@ impl ConfigStorage for EtcdStorage {
         let arr = c
             .get(key, None)
             .await
-            .map_err(|e| Error::Etcd { source: e })?
+            .map_err(|e| Error::Etcd {
+                source: Box::new(e),
+            })?
             .take_kvs();
         let buf = if arr.is_empty() { b"" } else { arr[0].value() };
         Ok(buf.into())
