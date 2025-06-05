@@ -49,10 +49,11 @@ impl WebhookNotificationSender {
     /// # Arguments
     /// * `params` - The notification parameters including category, level, message and optional remark
     pub async fn send_notification(&self, params: NotificationData) {
+        let title = &params.title;
         info!(
             category = LOG_CATEGORY,
             notification = params.category,
-            title = params.title,
+            title,
             message = params.message,
             "webhook notification"
         );
@@ -81,6 +82,7 @@ impl WebhookNotificationSender {
         };
         let content = format!(
             r###" <font color="{color_type}">{name}({level})</font>
+                >title: {title}
                 >hostname: {hostname}
                 >ip: {ip}
                 >category: {category}
