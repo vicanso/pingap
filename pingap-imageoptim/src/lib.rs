@@ -82,7 +82,7 @@ pub struct ImageOptim {
     hash_value: String,
     support_types: Vec<String>,
     plugin_step: PluginStep,
-    format_types: Vec<String>,
+    output_types: Vec<String>,
     png_quality: u8,
     jpeg_quality: u8,
     avif_quality: u8,
@@ -94,12 +94,13 @@ impl TryFrom<&PluginConf> for ImageOptim {
     fn try_from(value: &PluginConf) -> Result<Self> {
         debug!(params = value.to_string(), "new image optimizer plugin");
         let hash_value = get_hash_key(value);
-        let mut format_types = vec![];
-        for item in get_str_conf(value, "format_types").split(",") {
+        let mut output_types = vec![];
+        for item in get_str_conf(value, "output_types").split(",") {
+            let item = item.trim();
             if item.is_empty() {
                 continue;
             }
-            format_types.push(item.to_string());
+            output_types.push(item.to_string());
         }
         let mut png_quality = get_int_conf(value, "png_quality") as u8;
         if png_quality == 0 || png_quality > 100 {
@@ -120,7 +121,7 @@ impl TryFrom<&PluginConf> for ImageOptim {
         Ok(Self {
             hash_value,
             support_types: vec!["jpeg".to_string(), "png".to_string()],
-            format_types,
+            output_types,
             plugin_step: PluginStep::Response,
             png_quality,
             jpeg_quality,
@@ -176,7 +177,7 @@ impl Plugin for ImageOptim {
         let mut format_type = image_type.clone();
         if let Some(accept) = session.get_header(http::header::ACCEPT) {
             if let Ok(accept) = accept.to_str() {
-                for item in self.format_types.iter() {
+                for item in self.output_types.iter() {
                     if accept.contains(format!("image/{}", item).as_str()) {
                         format_type = item.to_string();
                         break;
@@ -215,7 +216,7 @@ impl Plugin for ImageOptim {
 
 #[ctor]
 fn init() {
-    get_plugin_factory().register("imageoptim", |params| {
+    get_plugin_factory().register("image_optim", |params| {
         Ok(Arc::new(ImageOptim::new(params)?))
     });
 }

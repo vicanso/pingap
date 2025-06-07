@@ -974,6 +974,51 @@ export default function Plugins() {
       );
       break;
     }
+    case PluginCategory.IMAGE_OPTIM: {
+      items.push(
+        {
+          name: "output_types",
+          label: pluginI18n("imageOptimOutputTypes"),
+          placeholder: pluginI18n("imageOptimOutputTypesPlaceholder"),
+          defaultValue: pluginConfig.output_types as string,
+          span: 6,
+          category: ExFormItemCategory.TEXT,
+        },
+        {
+          name: "png_quality",
+          label: pluginI18n("imageOptimPngQuality"),
+          placeholder: pluginI18n("imageOptimPngQualityPlaceholder"),
+          defaultValue: pluginConfig.png_quality as number,
+          span: 3,
+          category: ExFormItemCategory.NUMBER,
+        },
+        {
+          name: "jpeg_quality",
+          label: pluginI18n("imageOptimJpegQuality"),
+          placeholder: pluginI18n("imageOptimJpegQualityPlaceholder"),
+          defaultValue: pluginConfig.jpeg_quality as number,
+          span: 3,
+          category: ExFormItemCategory.NUMBER,
+        },
+        {
+          name: "avif_quality",
+          label: pluginI18n("imageOptimAvifQuality"),
+          placeholder: pluginI18n("imageOptimAvifQualityPlaceholder"),
+          defaultValue: pluginConfig.avif_quality as number,
+          span: 3,
+          category: ExFormItemCategory.NUMBER,
+        },
+        {
+          name: "avif_speed",
+          label: pluginI18n("imageOptimAvifSpeed"),
+          placeholder: pluginI18n("imageOptimAvifSpeedPlaceholder"),
+          defaultValue: pluginConfig.avif_speed as number,
+          span: 3,
+          category: ExFormItemCategory.NUMBER,
+        },
+      );
+      break;
+    }
     default: {
       break;
     }

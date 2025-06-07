@@ -446,6 +446,16 @@ export default {
     subFilterFilters: "过滤规则",
     subFilterFiltersPlaceholder:
       "输入子过滤器的规则(如 subs_filter 'http://pingap.io' 'https://pingap.io/api' ig)",
+    imageOptimOutputTypes: "输出类型",
+    imageOptimOutputTypesPlaceholder: "输入输出类型(如 png, jpeg, avif, webp)",
+    imageOptimPngQuality: "Png质量",
+    imageOptimPngQualityPlaceholder: "输入png质量(如 90)",
+    imageOptimJpegQuality: "Jpeg质量",
+    imageOptimJpegQualityPlaceholder: "输入jpeg质量(如 80)",
+    imageOptimAvifQuality: "Avif质量",
+    imageOptimAvifQualityPlaceholder: "输入avif质量(如 75)",
+    imageOptimAvifSpeed: "Avif速度",
+    imageOptimAvifSpeedPlaceholder: "输入avif速度(如 3)",
     remark: "备注",
   },
   storage: {
