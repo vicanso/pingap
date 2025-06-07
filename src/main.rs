@@ -23,6 +23,9 @@ use pingap_certificate::{
 use pingap_config::{get_config_storage, ETCD_PROTOCOL};
 use pingap_config::{LoadConfigOptions, PingapConf};
 use pingap_core::new_simple_service_task;
+#[cfg(feature = "imageoptim")]
+#[allow(unused_imports)]
+use pingap_imageoptim::ImageOptim;
 use pingap_location::try_init_locations;
 #[cfg(feature = "full")]
 use pingap_otel::TracerService;

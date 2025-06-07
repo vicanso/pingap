@@ -156,9 +156,9 @@ pub fn get_cache_backend(
 
 pub use http_cache::{new_storage_clear_service, HttpCache};
 
-#[cfg(feature = "full")]
+#[cfg(feature = "tracing")]
 mod prom;
-#[cfg(feature = "full")]
+#[cfg(feature = "tracing")]
 pub use prom::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 
 #[cfg(test)]

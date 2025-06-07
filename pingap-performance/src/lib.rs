@@ -17,9 +17,9 @@ mod process;
 
 pub use metrics::*;
 pub use process::*;
-#[cfg(feature = "full")]
+#[cfg(feature = "tracing")]
 use snafu::Snafu;
-#[cfg(feature = "full")]
+#[cfg(feature = "tracing")]
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("{source}"))]
@@ -27,12 +27,12 @@ pub enum Error {
     #[snafu(display("{message}"))]
     Prometheus { message: String },
 }
-#[cfg(feature = "full")]
+#[cfg(feature = "tracing")]
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub const LOG_CATEGORY: &str = "performance";
 
-#[cfg(feature = "full")]
+#[cfg(feature = "tracing")]
 mod prom;
-#[cfg(feature = "full")]
+#[cfg(feature = "tracing")]
 pub use prom::{new_prometheus, new_prometheus_push_service, Prometheus};

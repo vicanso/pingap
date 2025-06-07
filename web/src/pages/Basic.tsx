@@ -209,7 +209,7 @@ export default function Basic() {
       category: ExFormItemCategory.TEXT,
     },
   ];
-  if (basicInfo.enabled_full) {
+  if (basicInfo.features.includes("tracing")) {
     items.push({
       name: "sentry",
       label: basicI18n("sentry"),
@@ -219,7 +219,7 @@ export default function Basic() {
       category: ExFormItemCategory.TEXT,
     });
   }
-  if (basicInfo.enabled_pyroscope) {
+  if (basicInfo.features.includes("pyroscope")) {
     items.push({
       name: "pyroscope",
       label: basicI18n("pyroscope"),

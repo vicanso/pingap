@@ -83,20 +83,23 @@ pingap-plugin = { version = "0.11.0", path = "pingap-plugin" }
 pingap-otel = { version = "0.11.0", path = "pingap-otel", optional = true }
 pingap-sentry = { version = "0.11.0", path = "pingap-sentry", optional = true }
 pingap-pyroscope = { version = "0.11.0", path = "pingap-pyroscope", optional = true }
+pingap-imageoptim = { version = "0.11.0", path = "pingap-imageoptim", optional = true }
 
 [target.'cfg(target_env = "musl")'.dependencies]
 mimalloc = "0.1.46"
 
 [features]
 pyro = ["pingap-pyroscope"]
-full = [
+imageoptim = ["pingap-imageoptim"]
+tracing = [
     "pingora/sentry",
-    "pingap-cache/full",
-    "pingap-core/full",
-    "pingap-performance/full",
+    "pingap-cache/tracing",
+    "pingap-core/tracing",
+    "pingap-performance/tracing",
     "pingap-otel",
     "pingap-sentry",
 ]
+full = ["tracing", "imageoptim"]
 perf = ["pyro", "full"]
 default = []
 
@@ -134,6 +137,7 @@ members = [
     "pingap-core",
     "pingap-discovery",
     "pingap-health",
+    "pingap-imageoptim",
     "pingap-location",
     "pingap-logger",
     "pingap-otel",

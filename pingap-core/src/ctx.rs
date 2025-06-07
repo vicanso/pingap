@@ -17,7 +17,7 @@ use ahash::AHashMap;
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
 use http::Uri;
-#[cfg(feature = "full")]
+#[cfg(feature = "tracing")]
 use opentelemetry::{
     global::{BoxedSpan, BoxedTracer, ObjectSafeSpan},
     trace::{SpanKind, TraceContextExt, Tracer},
@@ -86,13 +86,13 @@ impl CompressionStat {
     }
 }
 
-#[cfg(feature = "full")]
+#[cfg(feature = "tracing")]
 pub struct OtelTracer {
     pub tracer: BoxedTracer,
     pub http_request_span: BoxedSpan,
 }
 
-#[cfg(feature = "full")]
+#[cfg(feature = "tracing")]
 impl OtelTracer {
     #[inline]
     pub fn new_upstream_span(&self, name: &str) -> BoxedSpan {
@@ -201,10 +201,10 @@ pub struct Ctx {
     /// Number of cache writing operations
     pub cache_writing: Option<u32>,
     /// OpenTelemetry tracer (only with "full" feature)
-    #[cfg(feature = "full")]
+    #[cfg(feature = "tracing")]
     pub otel_tracer: Option<OtelTracer>,
     /// OpenTelemetry span for upstream requests (only with "full" feature)
-    #[cfg(feature = "full")]
+    #[cfg(feature = "tracing")]
     pub upstream_span: Option<BoxedSpan>,
     /// Custom variables map for request processing
     pub variables: Option<AHashMap<String, String>>,

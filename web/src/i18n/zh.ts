@@ -79,6 +79,7 @@ export default {
     user: "后台服务用户",
     group: "后台服务用户组",
     configHash: "应用配置哈希",
+    enabledTracing: "启用追踪",
     enabledFull: "启用所有特性",
     rustc: "Rust编译器版本",
     machineCpu: "机器CPU",

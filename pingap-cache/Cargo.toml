@@ -15,7 +15,7 @@ name = "pingap_cache"
 path = "src/lib.rs"
 
 [features]
-full = ["prometheus"]
+tracing = ["prometheus"]
 
 [dependencies]
 substring = { workspace = true }

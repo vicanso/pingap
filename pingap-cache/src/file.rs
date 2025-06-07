@@ -14,13 +14,13 @@
 
 use super::http_cache::{CacheObject, HttpCacheStats, HttpCacheStorage};
 use super::{Error, Result, LOG_CATEGORY, PAGE_SIZE};
-#[cfg(feature = "full")]
+#[cfg(feature = "tracing")]
 use super::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use async_trait::async_trait;
 use bytes::Bytes;
 use path_absolutize::*;
 use pingap_core::{convert_query_map, TinyUfo};
-#[cfg(feature = "full")]
+#[cfg(feature = "tracing")]
 use prometheus::Histogram;
 use scopeguard::defer;
 use std::path::Path;
@@ -40,14 +40,14 @@ pub struct FileCache {
     reading: AtomicU32,
     /// Maximum allowed concurrent read operations
     reading_max: u32,
-    #[cfg(feature = "full")]
+    #[cfg(feature = "tracing")]
     /// Histogram metric for tracking cache read operation times
     read_time: Box<Histogram>,
     /// Counter for current number of concurrent write operations
     writing: AtomicU32,
     /// Maximum allowed concurrent write operations
     writing_max: u32,
-    #[cfg(feature = "full")]
+    #[cfg(feature = "tracing")]
     /// Histogram metric for tracking cache write operation times
     write_time: Box<Histogram>,
     /// Optional in-memory TinyUfo cache for frequently accessed items
@@ -168,11 +168,11 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
         cache_file_max_weight: params.cache_file_max_weight as u16,
         reading: AtomicU32::new(0),
         reading_max: params.reading_max,
-        #[cfg(feature = "full")]
+        #[cfg(feature = "tracing")]
         read_time: CACHE_READING_TIME.clone(),
         writing: AtomicU32::new(0),
         writing_max: params.writing_max,
-        #[cfg(feature = "full")]
+        #[cfg(feature = "tracing")]
         write_time: CACHE_WRITING_TIME.clone(),
         cache,
     })
@@ -190,7 +190,7 @@ impl FileCache {
 }
 
 /// Returns the elapsed time in seconds (as f64) since the given SystemTime
-#[cfg(feature = "full")]
+#[cfg(feature = "tracing")]
 #[inline]
 fn elapsed_second(time: SystemTime) -> f64 {
     time.elapsed().unwrap_or_default().as_millis() as f64 / 1000.0
@@ -228,7 +228,7 @@ impl HttpCacheStorage for FileCache {
             }
         }
 
-        #[cfg(feature = "full")]
+        #[cfg(feature = "tracing")]
         let start = SystemTime::now();
         let file = self.get_file_path(key, namespace);
 
@@ -242,7 +242,7 @@ impl HttpCacheStorage for FileCache {
             });
         }
         let result = fs::read(file).await;
-        #[cfg(feature = "full")]
+        #[cfg(feature = "tracing")]
         self.read_time.observe(elapsed_second(start));
 
         let obj = match result {
@@ -293,7 +293,7 @@ impl HttpCacheStorage for FileCache {
                 c.put(key.to_string(), data.clone(), weight);
             }
         }
-        #[cfg(feature = "full")]
+        #[cfg(feature = "tracing")]
         let start = SystemTime::now();
         let buf: Bytes = data.into();
         let file = self.get_file_path(key, namespace);
@@ -307,7 +307,7 @@ impl HttpCacheStorage for FileCache {
             });
         }
         let result = fs::write(file, buf).await;
-        #[cfg(feature = "full")]
+        #[cfg(feature = "tracing")]
         self.write_time.observe(elapsed_second(start));
         let _ = result.map_err(|e| Error::Io { source: e })?;
         debug!(category = LOG_CATEGORY, key, namespace, "put cache to file");

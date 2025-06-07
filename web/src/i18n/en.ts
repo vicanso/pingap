@@ -79,6 +79,7 @@ export default {
     user: "Daemon User",
     group: "Daemon Group",
     configHash: "Config Hash",
+    enabledTracing: "Enable Tracing",
     enabledFull: "Enable Full Features",
     rustc: "Rustc",
     machineCpu: "Machine CPU",
