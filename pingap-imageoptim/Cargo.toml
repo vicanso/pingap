@@ -15,7 +15,6 @@ name = "pingap_imageoptim"
 path = "src/lib.rs"
 
 [dependencies]
-avif-decode = "1.0.1"
 ctor = "0.4.1"
 image = { version = "0.25.6", features = ["webp", "avif"] }
 imagequant = { version = "4.3.4", default-features = false }
