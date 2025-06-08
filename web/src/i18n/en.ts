@@ -473,7 +473,7 @@ export default {
     subFilterFiltersPlaceholder:
       "Input the filters for sub filter(e.g. subs_filter 'http://pingap.io' 'https://pingap.io/api' ig)",
     imageOptimOutputTypes: "Output Types",
-    imageOptimOutputTypesPlaceholder: "Input the output types(e.g. png, jpeg, avif, webp)",
+    imageOptimOutputTypesPlaceholder: "Input the output types(e.g. avif,webp), png and jpeg are always enabled",
     imageOptimPngQuality: "Png Quality",
     imageOptimPngQualityPlaceholder: "Input the png quality(e.g. 80)",
     imageOptimJpegQuality: "Jpeg Quality",

@@ -6,7 +6,7 @@ RUN apk update \
   && cd /pingap \
   && make build-web
 
-FROM rust:1.84.0 AS builder
+FROM rust:1.86.0 AS builder
 
 ARG BUILD_ARGS=""
 
