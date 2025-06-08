@@ -650,6 +650,34 @@ impl Server {
         }
         Ok(())
     }
+
+    #[inline]
+    pub fn handle_upstream_response_plugin(
+        &self,
+        step: PluginStep,
+        location: Arc<Location>,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        upstream_response: &mut ResponseHeader,
+    ) -> pingora::Result<()> {
+        if session.is_upgrade_req() {
+            return Ok(());
+        }
+        let Some(plugins) = location.plugins.as_ref() else {
+            return Ok(());
+        };
+        for name in plugins.iter() {
+            if let Some(plugin) = get_plugin(name) {
+                plugin.handle_upstream_response(
+                    step,
+                    session,
+                    ctx,
+                    upstream_response,
+                )?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[inline]
@@ -1267,12 +1295,21 @@ impl ProxyHttp for Server {
 
     fn upstream_response_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<()> {
         debug!(category = LOG_CATEGORY, "--> upstream response filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream response filter"););
+        if let Some(location) = get_location(&ctx.location) {
+            self.handle_upstream_response_plugin(
+                PluginStep::UpstreamResponse,
+                location.clone(),
+                session,
+                ctx,
+                upstream_response,
+            )?;
+        }
         #[cfg(feature = "full")]
         // open telemetry
         if let Some(tracer) = &ctx.otel_tracer {
@@ -1311,12 +1348,38 @@ impl ProxyHttp for Server {
     fn upstream_response_body_filter(
         &self,
         _session: &mut Session,
-        _body: &mut Option<bytes::Bytes>,
+        body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<()> {
         debug!(category = LOG_CATEGORY, "--> upstream response body filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream response body filter"););
+        // set modify response body
+        if let Some(modify) = &ctx.modify_upstream_response_body {
+            if let Some(ref mut buf) = ctx.response_body {
+                if let Some(b) = body {
+                    buf.extend(&b[..]);
+                    b.clear();
+                }
+            } else {
+                let mut buf = BytesMut::new();
+                if let Some(b) = body {
+                    buf.extend(&b[..]);
+                    b.clear();
+                }
+                ctx.response_body = Some(buf);
+            };
+
+            if end_of_stream {
+                if let Some(ref buf) = ctx.response_body {
+                    *body = Some(modify.handle(Bytes::from(buf.to_owned())));
+                }
+                ctx.response_body = None;
+                // if the body is empty, it will trigger response_body_filter again
+                // so set modify response body to None
+                ctx.modify_upstream_response_body = None;
+            }
+        }
         if end_of_stream {
             ctx.upstream_response_time =
                 pingap_util::get_latency(&ctx.upstream_response_time);

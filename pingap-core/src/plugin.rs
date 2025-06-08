@@ -27,6 +27,7 @@ pub enum PluginStep {
     #[default]
     Request,
     ProxyUpstream,
+    UpstreamResponse,
     Response,
 }
 
@@ -95,6 +96,15 @@ pub trait Plugin: Sync + Send {
         _upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<bool> {
         Ok(false)
+    }
+    fn handle_upstream_response(
+        &self,
+        _step: PluginStep,
+        _session: &mut Session,
+        _ctx: &mut Ctx,
+        _upstream_response: &mut ResponseHeader,
+    ) -> pingora::Result<()> {
+        Ok(())
     }
 }
 

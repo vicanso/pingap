@@ -122,7 +122,7 @@ impl TryFrom<&PluginConf> for ImageOptim {
             hash_value,
             support_types: vec!["jpeg".to_string(), "png".to_string()],
             output_types,
-            plugin_step: PluginStep::Response,
+            plugin_step: PluginStep::UpstreamResponse,
             png_quality,
             jpeg_quality,
             avif_quality,
@@ -143,35 +143,35 @@ impl Plugin for ImageOptim {
     fn hash_key(&self) -> String {
         self.hash_value.clone()
     }
-    async fn handle_response(
+    fn handle_upstream_response(
         &self,
         step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<bool> {
+    ) -> pingora::Result<()> {
         // Skip if not at the correct plugin step
         if self.plugin_step != step {
-            return Ok(false);
+            return Ok(());
         }
         let Some(content_type) =
             upstream_response.headers.get(http::header::CONTENT_TYPE)
         else {
-            return Ok(false);
+            return Ok(());
         };
         let Ok(content_type) = content_type.to_str() else {
-            return Ok(false);
+            return Ok(());
         };
         let Some((content_type, image_type)) = content_type.split_once("/")
         else {
-            return Ok(false);
+            return Ok(());
         };
         if content_type != "image" {
-            return Ok(false);
+            return Ok(());
         }
         let image_type = image_type.to_string();
         if !self.support_types.contains(&image_type) {
-            return Ok(false);
+            return Ok(());
         }
 
         let mut format_type = image_type.clone();
@@ -186,7 +186,7 @@ impl Plugin for ImageOptim {
             }
         }
         if format_type.is_empty() {
-            return Ok(false);
+            return Ok(());
         }
         // Remove content-length since we're modifying the body
         upstream_response.remove_header(&http::header::CONTENT_LENGTH);
@@ -200,7 +200,7 @@ impl Plugin for ImageOptim {
             format!("image/{}", format_type).as_str(),
         );
 
-        ctx.modify_response_body = Some(Box::new(ImageOptimizer {
+        ctx.modify_upstream_response_body = Some(Box::new(ImageOptimizer {
             image_type,
             png_quality: self.png_quality,
             jpeg_quality: self.jpeg_quality,
@@ -210,7 +210,7 @@ impl Plugin for ImageOptim {
             webp_quality: 100,
             format_type,
         }));
-        Ok(true)
+        Ok(())
     }
 }
 

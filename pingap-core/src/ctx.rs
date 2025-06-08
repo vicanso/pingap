@@ -194,6 +194,7 @@ pub struct Ctx {
     pub compression_stat: Option<CompressionStat>,
     /// Handler for modifying response body
     pub modify_response_body: Option<Box<dyn ModifyResponseBody>>,
+    pub modify_upstream_response_body: Option<Box<dyn ModifyResponseBody>>,
     /// Body buffer of modified response
     pub response_body: Option<BytesMut>,
     /// Number of cache reading operations

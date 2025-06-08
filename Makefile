@@ -21,7 +21,7 @@ bench:
 	cargo bench
 
 dev:
-	RUST_LOG=INFO bacon run -- -- -c=~/tmp/pingap?separation --admin=pingap:123123@127.0.0.1:3018 --autoreload
+	RUST_LOG=INFO bacon run --  --features=full -- -c=~/tmp/pingap?separation --admin=pingap:123123@127.0.0.1:3018 --autoreload
 
 devetcd:
 	RUST_LOG=INFO bacon run -- -- -c="etcd://127.0.0.1:2379/pingap?timeout=10s&connect_timeout=5s" --admin=127.0.0.1:3018 --autoreload
