@@ -24,6 +24,7 @@ jobs:
           - 2379:2379
     steps:
       - uses: actions/checkout@v4
+      - uses: ilammy/setup-nasm@v1
       - name: setup node
         uses: actions/setup-node@v4
       - name: build-web
