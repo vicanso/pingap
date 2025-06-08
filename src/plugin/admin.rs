@@ -569,26 +569,10 @@ async fn handle_request_admin(
     } else if path == "/basic" {
         let current_config = get_current_config();
         let info = get_process_system_info();
-        let mut features = vec![];
 
         let (processing, accepted) = get_processing_accepted();
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "tracing")] {
-                features.push("tracing".to_string());
-            }
-        }
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "full")] {
-                features.push("full".to_string());
-            }
-        }
-        cfg_if::cfg_if! {
-            if #[cfg(feature = "pyro")] {
-                features.push("pyroscope".to_string());
-            }
-        }
 
-        HttpResponse::try_from_json(&BasicInfo {
+        let mut basic_info = BasicInfo {
             start_time: get_start_time(),
             version: pingap_util::get_pkg_version().to_string(),
             rustc_version: pingap_util::get_rustc_version(),
@@ -607,14 +591,33 @@ async fn handle_request_admin(
             physical_cpus: info.physical_cpus,
             total_memory: info.total_memory,
             used_memory: info.used_memory,
-            features,
+            features: vec![],
             fd_count: info.fd_count,
             tcp_count: info.tcp_count,
             tcp6_count: info.tcp6_count,
             supported_plugins: get_plugin_factory().supported_plugins(),
             upstream_healthy_status: get_upstream_healthy_status(),
-        })
-        .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
+        };
+        basic_info.features.push("default".to_string());
+
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "tracing")] {
+                basic_info.features.push("tracing".to_string());
+            }
+        }
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "full")] {
+                basic_info.features.push("full".to_string());
+            }
+        }
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "pyro")] {
+                basic_info.features.push("pyroscope".to_string());
+            }
+        }
+
+        HttpResponse::try_from_json(&basic_info)
+            .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
     } else if path == "/restart" && method == Method::POST {
         if let Err(e) = restart_now().await {
             error!("Restart fail: {e}");
