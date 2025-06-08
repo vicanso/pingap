@@ -150,8 +150,7 @@ struct BasicInfo {
     physical_cpus: usize,
     total_memory: String,
     used_memory: String,
-    enabled_full: bool,
-    enabled_pyroscope: bool,
+    features: Vec<String>,
     fd_count: usize,
     tcp_count: usize,
     tcp6_count: usize,
@@ -570,20 +569,22 @@ async fn handle_request_admin(
     } else if path == "/basic" {
         let current_config = get_current_config();
         let info = get_process_system_info();
+        let mut features = vec![];
 
         let (processing, accepted) = get_processing_accepted();
         cfg_if::cfg_if! {
+            if #[cfg(feature = "tracing")] {
+                features.push("tracing".to_string());
+            }
+        }
+        cfg_if::cfg_if! {
             if #[cfg(feature = "full")] {
-                let enabled_full = true;
-            } else {
-                let enabled_full = false;
+                features.push("full".to_string());
             }
         }
         cfg_if::cfg_if! {
             if #[cfg(feature = "pyro")] {
-                let enabled_pyroscope = true;
-            } else {
-                let enabled_pyroscope = false;
+                features.push("pyroscope".to_string());
             }
         }
 
@@ -606,8 +607,7 @@ async fn handle_request_admin(
             physical_cpus: info.physical_cpus,
             total_memory: info.total_memory,
             used_memory: info.used_memory,
-            enabled_full,
-            enabled_pyroscope,
+            features,
             fd_count: info.fd_count,
             tcp_count: info.tcp_count,
             tcp6_count: info.tcp6_count,

@@ -230,7 +230,7 @@ export default function Servers() {
     },
   ];
 
-  if (basicInfo.enabled_full) {
+  if (basicInfo.features.includes("tracing")) {
     items.push(
       {
         name: "prometheus_metrics",

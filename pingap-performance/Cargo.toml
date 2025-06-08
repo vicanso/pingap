@@ -15,7 +15,7 @@ name = "pingap_performance"
 path = "src/lib.rs"
 
 [features]
-full = ["prometheus"]
+tracing = ["prometheus"]
 
 [dependencies]
 bytesize = { workspace = true }

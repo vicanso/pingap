@@ -34,6 +34,7 @@ export function getPluginSteps(category: string) {
   pluginSupportSteps[PluginCategory.SUB_FILTER] = [2];
   pluginSupportSteps[PluginCategory.CSRF] = [0];
   pluginSupportSteps[PluginCategory.CORS] = [0];
+  pluginSupportSteps[PluginCategory.IMAGE_OPTIM] = [2];
 
   const steps = pluginSupportSteps[category];
   if (steps) {
@@ -135,6 +136,7 @@ export enum PluginCategory {
   RESPONSE_HEADERS = "response_headers",
   SUB_FILTER = "sub_filter",
   REFERER_RESTRICTION = "referer_restriction",
+  IMAGE_OPTIM = "image_optim",
   CSRF = "csrf",
   CORS = "cors",
 }

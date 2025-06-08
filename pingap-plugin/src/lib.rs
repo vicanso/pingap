@@ -47,7 +47,7 @@ pub enum Error {
 }
 
 /// Helper functions for accessing plugin configuration values
-pub(crate) fn get_str_conf(value: &PluginConf, key: &str) -> String {
+pub fn get_str_conf(value: &PluginConf, key: &str) -> String {
     if let Some(value) = value.get(key) {
         value.as_str().unwrap_or_default().to_string()
     } else {
@@ -75,7 +75,7 @@ pub(crate) fn get_bool_conf(value: &PluginConf, key: &str) -> bool {
     }
 }
 
-pub(crate) fn get_int_conf(value: &PluginConf, key: &str) -> i64 {
+pub fn get_int_conf(value: &PluginConf, key: &str) -> i64 {
     if let Some(value) = value.get(key) {
         value.as_integer().unwrap_or_default()
     } else {
@@ -102,7 +102,7 @@ pub(crate) fn get_step_conf(
 ///
 /// # Returns
 /// A string containing the CRC32 hash of the sorted configuration key-value pairs
-pub(crate) fn get_hash_key(conf: &PluginConf) -> String {
+pub fn get_hash_key(conf: &PluginConf) -> String {
     let mut keys: Vec<String> =
         conf.keys().map(|item| item.to_string()).collect();
     keys.sort();

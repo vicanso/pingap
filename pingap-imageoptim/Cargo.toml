@@ -1,0 +1,33 @@
+[package]
+name = "pingap-imageoptim"
+version = "0.11.0"
+edition = "2021"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/pingap"
+repository = "https://github.com/vicanso/pingap"
+keywords = ["pingap", "imageoptim"]
+description = "ImageOptim for pingap"
+
+
+[lib]
+name = "pingap_imageoptim"
+path = "src/lib.rs"
+
+[dependencies]
+avif-decode = "1.0.1"
+ctor = "0.4.1"
+image = { version = "0.25.6", features = ["webp", "avif"] }
+imagequant = { version = "4.3.4", default-features = false }
+lodepng = "3.11.0"
+mozjpeg = "0.10.13"
+rgb = "0.8.50"
+async-trait = { workspace = true }
+tracing = { workspace = true }
+pingora = { workspace = true }
+http = { workspace = true }
+bytes = { workspace = true }
+snafu = { workspace = true }
+pingap-core = { version = "0.11.0", path = "../pingap-core" }
+pingap-config = { version = "0.11.0", path = "../pingap-config" }
+pingap-plugin = { version = "0.11.0", path = "../pingap-plugin" }

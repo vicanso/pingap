@@ -25,8 +25,7 @@ interface Basic {
   physical_cpus: number;
   used_memory: string;
   total_memory: string;
-  enabled_full: boolean;
-  enabled_pyroscope: boolean;
+  features: string[];
   fd_count: number;
   tcp_count: number;
   tcp6_count: number;
@@ -60,8 +59,7 @@ const useBasicState = create<ConfigState>()((set) => ({
     physical_cpus: 0,
     used_memory: "",
     total_memory: "",
-    enabled_full: false,
-    enabled_pyroscope: false,
+    features: [],
     fd_count: 0,
     tcp_count: 0,
     tcp6_count: 0,
