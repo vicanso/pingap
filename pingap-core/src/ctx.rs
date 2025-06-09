@@ -157,8 +157,8 @@ pub struct Ctx {
     pub request_id: Option<String>,
     /// Namespace for cache entries
     pub cache_namespace: Option<String>,
-    /// Prefix for cache keys
-    pub cache_prefix: Option<String>,
+    /// Cache keys
+    pub cache_keys: Option<Vec<String>>,
     /// Whether to check cache control headers
     pub check_cache_control: bool,
     /// Time spent looking up cache entries (in milliseconds)
@@ -581,8 +581,8 @@ impl Ctx {
 /// Returns: A CacheKey combining the namespace, prefix (if any), method and URI
 pub fn get_cache_key(ctx: &Ctx, method: &str, uri: &Uri) -> CacheKey {
     let namespace = ctx.cache_namespace.as_ref().map_or("", |v| v);
-    let key = if let Some(prefix) = &ctx.cache_prefix {
-        format!("{prefix}{method}:{uri}")
+    let key = if let Some(keys) = &ctx.cache_keys {
+        format!("{}:{method}:{uri}", keys.join(":"))
     } else {
         format!("{method}:{uri}")
     };
@@ -665,11 +665,11 @@ mod tests {
             r#"CacheKey { namespace: "test", primary: "GET:http://example.com/", primary_bin_override: None, variance: None, user_tag: "", extensions: Extensions }"#
         );
 
-        ctx.cache_prefix = Some("prefix_".to_string());
+        ctx.cache_keys = Some(vec!["prefix".to_string()]);
         let key = get_cache_key(&ctx, method, &uri);
         assert_eq!(
             format!("{key:?}"),
-            r#"CacheKey { namespace: "test", primary: "prefix_GET:http://example.com/", primary_bin_override: None, variance: None, user_tag: "", extensions: Extensions }"#
+            r#"CacheKey { namespace: "test", primary: "prefix:GET:http://example.com/", primary_bin_override: None, variance: None, user_tag: "", extensions: Extensions }"#
         );
     }
 

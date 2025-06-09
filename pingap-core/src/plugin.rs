@@ -103,8 +103,8 @@ pub trait Plugin: Sync + Send {
         _session: &mut Session,
         _ctx: &mut Ctx,
         _upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<()> {
-        Ok(())
+    ) -> pingora::Result<bool> {
+        Ok(false)
     }
 }
 

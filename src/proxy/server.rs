@@ -668,12 +668,25 @@ impl Server {
         };
         for name in plugins.iter() {
             if let Some(plugin) = get_plugin(name) {
-                plugin.handle_upstream_response(
+                let now = Instant::now();
+                let executed = plugin.handle_upstream_response(
                     step,
                     session,
                     ctx,
                     upstream_response,
                 )?;
+                if executed {
+                    let elapsed = now.elapsed().as_millis() as u32;
+                    debug!(
+                        category = LOG_CATEGORY,
+                        name,
+                        executed,
+                        elapsed,
+                        step = step.to_string(),
+                        "handle upstream response plugin"
+                    );
+                    ctx.add_plugin_processing_time(name, elapsed);
+                }
             }
         }
         Ok(())
@@ -1825,7 +1838,7 @@ value = 'proxy_set_headers = ["name:value"]'
             &session,
             &mut Ctx {
                 cache_namespace: Some("pingap".to_string()),
-                cache_prefix: Some("ss:".to_string()),
+                cache_keys: Some(vec!["ss".to_string()]),
                 ..Default::default()
             },
         );
@@ -1856,7 +1869,7 @@ value = 'proxy_set_headers = ["name:value"]'
                 &session,
                 &upstream_response,
                 &mut Ctx {
-                    cache_prefix: Some("ss:".to_string()),
+                    cache_keys: Some(vec!["ss".to_string()]),
                     ..Default::default()
                 },
             )
@@ -1873,7 +1886,7 @@ value = 'proxy_set_headers = ["name:value"]'
                 &session,
                 &upstream_response,
                 &mut Ctx {
-                    cache_prefix: Some("ss:".to_string()),
+                    cache_keys: Some(vec!["ss".to_string()]),
                     ..Default::default()
                 },
             )
@@ -1890,7 +1903,7 @@ value = 'proxy_set_headers = ["name:value"]'
                 &session,
                 &upstream_response,
                 &mut Ctx {
-                    cache_prefix: Some("ss:".to_string()),
+                    cache_keys: Some(vec!["ss".to_string()]),
                     ..Default::default()
                 },
             )
@@ -1907,7 +1920,7 @@ value = 'proxy_set_headers = ["name:value"]'
                 &session,
                 &upstream_response,
                 &mut Ctx {
-                    cache_prefix: Some("ss:".to_string()),
+                    cache_keys: Some(vec!["ss".to_string()]),
                     ..Default::default()
                 },
             )

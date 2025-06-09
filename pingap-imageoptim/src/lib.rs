@@ -19,6 +19,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use ctor::ctor;
 use pingap_config::PluginConf;
+use pingap_core::HttpResponse;
 use pingap_core::ModifyResponseBody;
 use pingap_core::HTTP_HEADER_TRANSFER_CHUNKED;
 use pingap_core::{Ctx, Plugin, PluginStep};
@@ -143,35 +144,65 @@ impl Plugin for ImageOptim {
     fn hash_key(&self) -> String {
         self.hash_value.clone()
     }
+    async fn handle_request(
+        &self,
+        step: PluginStep,
+        session: &mut Session,
+        ctx: &mut Ctx,
+    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+        if step != PluginStep::Request {
+            return Ok((false, None));
+        }
+        // set cache key with accept image type
+        let mut accept_images = Vec::with_capacity(2);
+        if let Some(accept) = session.get_header(http::header::ACCEPT) {
+            if let Ok(accept) = accept.to_str() {
+                for item in self.output_types.iter() {
+                    let key = format!("image/{}", item);
+                    if accept.contains(key.as_str()) {
+                        accept_images.push(key);
+                    }
+                }
+            }
+        }
+        if !accept_images.is_empty() {
+            if let Some(keys) = &mut ctx.cache_keys {
+                keys.extend(accept_images);
+            } else {
+                ctx.cache_keys = Some(accept_images);
+            }
+        }
+        Ok((false, None))
+    }
     fn handle_upstream_response(
         &self,
         step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<()> {
+    ) -> pingora::Result<bool> {
         // Skip if not at the correct plugin step
         if self.plugin_step != step {
-            return Ok(());
+            return Ok(false);
         }
         let Some(content_type) =
             upstream_response.headers.get(http::header::CONTENT_TYPE)
         else {
-            return Ok(());
+            return Ok(false);
         };
         let Ok(content_type) = content_type.to_str() else {
-            return Ok(());
+            return Ok(false);
         };
         let Some((content_type, image_type)) = content_type.split_once("/")
         else {
-            return Ok(());
+            return Ok(false);
         };
         if content_type != "image" {
-            return Ok(());
+            return Ok(false);
         }
         let image_type = image_type.to_string();
         if !self.support_types.contains(&image_type) {
-            return Ok(());
+            return Ok(false);
         }
 
         let mut format_type = image_type.clone();
@@ -186,7 +217,7 @@ impl Plugin for ImageOptim {
             }
         }
         if format_type.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
         // Remove content-length since we're modifying the body
         upstream_response.remove_header(&http::header::CONTENT_LENGTH);
@@ -210,7 +241,7 @@ impl Plugin for ImageOptim {
             webp_quality: 100,
             format_type,
         }));
-        Ok(())
+        Ok(true)
     }
 }
 

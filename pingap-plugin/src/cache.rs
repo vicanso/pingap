@@ -17,7 +17,8 @@ use super::{
     get_str_slice_conf, Error,
 };
 use async_trait::async_trait;
-use bytes::{BufMut, Bytes, BytesMut};
+use bstr::ByteSlice;
+use bytes::Bytes;
 use bytesize::ByteSize;
 use ctor::ctor;
 use fancy_regex::Regex;
@@ -375,22 +376,19 @@ impl Plugin for Cache {
         }
 
         // Build cache key components including configured headers
-        let mut keys = BytesMut::with_capacity(64);
+        let mut keys = Vec::with_capacity(4);
         ctx.cache_namespace = self.namespace.clone();
         if let Some(headers) = &self.headers {
             for key in headers.iter() {
-                let buf = session.get_header_bytes(key);
+                let buf = session.get_header_bytes(key).to_str_lossy();
                 if !buf.is_empty() {
-                    keys.put(buf);
-                    keys.put(&b":"[..]);
+                    keys.push(buf.to_string());
                 }
             }
         }
         if !keys.is_empty() {
-            let prefix =
-                std::str::from_utf8(&keys).unwrap_or_default().to_string();
-            debug!("Cache prefix: {prefix}");
-            ctx.cache_prefix = Some(prefix);
+            debug!("Cache keys: {keys:?}");
+            ctx.cache_keys = Some(keys);
         }
 
         // Handle PURGE requests with IP-based access control
@@ -531,7 +529,7 @@ max_ttl = "1m"
             .await
             .unwrap();
         assert_eq!("pingap", ctx.cache_namespace.unwrap());
-        assert_eq!("gzip:", ctx.cache_prefix.unwrap());
+        assert_eq!("gzip", ctx.cache_keys.unwrap().join(":"));
         assert_eq!(true, session.cache.enabled());
         assert_eq!(100 * 1000, cache.max_file_size);
 
