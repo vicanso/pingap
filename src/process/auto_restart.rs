@@ -129,6 +129,9 @@ async fn diff_and_update_config(
         }
 
         let format_message = |name: &str, list: Vec<String>| -> String {
+            if list.is_empty() {
+                return format!("{name} is removed",);
+            }
             if list.len() > 1 {
                 return format!("{name}s({}) are modified", list.join(","));
             }
