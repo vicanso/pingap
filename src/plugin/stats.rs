@@ -19,10 +19,13 @@ use bytes::Bytes;
 use ctor::ctor;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{get_hostname, Ctx, HttpResponse, PluginStep};
+use pingap_location::get_locations_stats;
 use pingap_performance::{get_process_system_info, get_processing_accepted};
 use pingap_plugin::{get_plugin_factory, Error};
+use pingap_upstream::{get_upstream_healthy_status, UpstreamHealthyStatus};
 use pingora::proxy::Session;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::debug;
@@ -69,6 +72,9 @@ struct ServerStats {
     // Network Connections
     tcp_count: usize,  // Number of active IPv4 TCP connections
     tcp6_count: usize, // Number of active IPv6 TCP connections
+
+    upstream_healthy_status: HashMap<String, UpstreamHealthyStatus>, // Upstream healthy status
+    locations_stats: HashMap<String, (i32, u64)>, // Locations stats
 }
 
 /// Stats plugin that exposes server metrics and statistics via an HTTP endpoint
@@ -186,6 +192,8 @@ impl Plugin for Stats {
             fd_count: info.fd_count,
             tcp_count: info.tcp_count,
             tcp6_count: info.tcp6_count,
+            upstream_healthy_status: get_upstream_healthy_status(),
+            locations_stats: get_locations_stats(),
         })
         .unwrap_or_else(|e| {
             HttpResponse::unknown_error(Bytes::from(e.to_string()))

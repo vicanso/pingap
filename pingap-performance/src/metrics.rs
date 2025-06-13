@@ -15,7 +15,7 @@
 use super::{get_process_system_info, get_processing_accepted, LOG_CATEGORY};
 use pingap_cache::{get_cache_backend, is_cache_backend_init};
 use pingap_core::SimpleServiceTaskFuture;
-use pingap_location::get_locations_processing;
+use pingap_location::get_locations_stats;
 use pingap_upstream::{
     get_upstream_healthy_status, get_upstreams_processing_connected,
 };
@@ -48,16 +48,18 @@ pub fn new_performance_metrics_log_service() -> (String, SimpleServiceTaskFuture
 
                 // Collect active location processing counts
                 // Format: "location1:count1, location2:count2, ..."
-                let locations_processing = get_locations_processing()
+                let locations_stats = get_locations_stats()
                     .into_iter()
-                    .filter(|(_, count)| *count != 0)
-                    .map(|(name, count)| format!("{name}:{count}"))
+                    .filter(|(_, (processing, _))| *processing != 0)
+                    .map(|(name, (processing, accepted))| {
+                        format!("{name}:{processing}/{accepted}")
+                    })
                     .collect::<Vec<String>>()
                     .join(", ");
-                let locations_processing = if locations_processing.is_empty() {
+                let locations_stats = if locations_stats.is_empty() {
                     None
                 } else {
-                    Some(locations_processing)
+                    Some(locations_stats)
                 };
 
                 // Collect upstream processing and connection counts
@@ -105,7 +107,7 @@ pub fn new_performance_metrics_log_service() -> (String, SimpleServiceTaskFuture
                 info!(
                     category = LOG_CATEGORY,
                     threads = system_info.threads, // Number of threads
-                    locations_processing,          // Active location requests
+                    locations_stats,               // Active location requests
                     upstreams_healthy_status,      // Upstream healthy status
                     upstreams_processing,          // Active upstream requests
                     upstreams_connected, // Active upstream connections

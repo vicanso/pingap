@@ -581,16 +581,22 @@ pub fn get_location(name: &str) -> Option<Arc<Location>> {
     LOCATION_MAP.load().get(name).cloned()
 }
 
-/// Gets a map of current request processing counts for all locations.
+/// Gets a map of current request processing and accepted counts for all locations.
 ///
 /// # Returns
-/// * `HashMap<String, i32>` - Map of location names to their current processing counts
-pub fn get_locations_processing() -> HashMap<String, i32> {
-    let mut processing = HashMap::new();
+/// * `HashMap<String, (i32, u64)>` - Map of location names to their current processing and accepted counts
+pub fn get_locations_stats() -> HashMap<String, (i32, u64)> {
+    let mut stats = HashMap::new();
     LOCATION_MAP.load().iter().for_each(|(k, v)| {
-        processing.insert(k.to_string(), v.processing.load(Ordering::Relaxed));
+        stats.insert(
+            k.to_string(),
+            (
+                v.processing.load(Ordering::Relaxed),
+                v.accepted.load(Ordering::Relaxed),
+            ),
+        );
     });
-    processing
+    stats
 }
 
 /// Initializes or updates the global location configurations
