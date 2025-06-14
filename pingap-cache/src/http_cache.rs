@@ -325,6 +325,10 @@ impl HandleHit for CompleteHit {
     fn as_any(&self) -> &(dyn Any + Send + Sync) {
         self
     }
+
+    fn as_any_mut(&mut self) -> &mut (dyn Any + Send + Sync) {
+        self
+    }
 }
 
 /// Handles cache misses by collecting and storing new content

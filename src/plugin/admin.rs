@@ -221,7 +221,7 @@ impl TryFrom<&PluginConf> for AdminServe {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct AesParmas {
+struct AesParams {
     category: String,
     key: String,
     data: String,
@@ -627,7 +627,7 @@ async fn handle_request_admin(
         }
     } else if path == "/aes" {
         let buf = get_request_body(session).await?;
-        let params: AesParmas = serde_json::from_slice(buf.as_ref())
+        let params: AesParams = serde_json::from_slice(buf.as_ref())
             .map_err(|e| pingap_core::new_internal_error(400, e.to_string()))?;
         let value = if params.category == "encrypt" {
             pingap_util::aes_encrypt(&params.key, &params.data)
