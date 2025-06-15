@@ -158,16 +158,17 @@ pub fn parse_from_conf(conf: pingap_config::PingapConf) -> Vec<ServerConf> {
         }
 
         // Configure TCP keepalive only if all required parameters are present
-        let tcp_keepalive = if item.tcp_idle.is_some()
+        let tcp_keepalive = if (item.tcp_idle.is_some()
             && item.tcp_probe_count.is_some()
-            && item.tcp_interval.is_some()
+            && item.tcp_interval.is_some())
+            || item.tcp_user_timeout.is_some()
         {
             Some(TcpKeepalive {
                 idle: item.tcp_idle.unwrap_or_default(),
                 count: item.tcp_probe_count.unwrap_or_default(),
                 interval: item.tcp_interval.unwrap_or_default(),
                 #[cfg(target_os = "linux")]
-                user_timeout: Duration::from_secs(0),
+                user_timeout: item.tcp_user_timeout.unwrap_or_default(),
             })
         } else {
             None

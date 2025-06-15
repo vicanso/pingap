@@ -425,16 +425,17 @@ impl Upstream {
             ALPN::H1
         };
 
-        let tcp_keepalive = if conf.tcp_idle.is_some()
+        let tcp_keepalive = if (conf.tcp_idle.is_some()
             && conf.tcp_probe_count.is_some()
-            && conf.tcp_interval.is_some()
+            && conf.tcp_interval.is_some())
+            || conf.tcp_user_timeout.is_some()
         {
             Some(TcpKeepalive {
                 idle: conf.tcp_idle.unwrap_or_default(),
                 count: conf.tcp_probe_count.unwrap_or_default(),
                 interval: conf.tcp_interval.unwrap_or_default(),
                 #[cfg(target_os = "linux")]
-                user_timeout: Duration::from_secs(0),
+                user_timeout: conf.tcp_user_timeout.unwrap_or_default(),
             })
         } else {
             None

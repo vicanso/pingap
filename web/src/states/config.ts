@@ -25,6 +25,7 @@ export interface Upstream {
   verify_cert?: boolean;
   tcp_idle?: string;
   tcp_interval?: string;
+  tcp_user_timeout?: string;
   tcp_probe_count?: number;
   tcp_recv_buf?: number;
   tcp_fast_open?: boolean;
@@ -98,6 +99,7 @@ export interface Server {
   tls_min_version?: string;
   tls_max_version?: string;
   tcp_idle?: string;
+  tcp_user_timeout?: string;
   tcp_interval?: string;
   tcp_probe_count?: number;
   tcp_fastopen?: number;

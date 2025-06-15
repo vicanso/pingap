@@ -278,6 +278,11 @@ pub struct UpstreamConf {
     #[serde(with = "humantime_serde")]
     pub tcp_interval: Option<Duration>,
 
+    /// TCP keepalive user timeout
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub tcp_user_timeout: Option<Duration>,
+
     /// Number of TCP keepalive probes before connection is dropped
     pub tcp_probe_count: Option<usize>,
 
@@ -622,6 +627,11 @@ pub struct ServerConf {
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub tcp_interval: Option<Duration>,
+
+    /// TCP keepalive user timeout
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub tcp_user_timeout: Option<Duration>,
 
     /// Number of TCP keepalive probes before connection is dropped
     pub tcp_probe_count: Option<usize>,

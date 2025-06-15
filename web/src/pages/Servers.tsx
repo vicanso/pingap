@@ -205,6 +205,14 @@ export default function Servers() {
       category: ExFormItemCategory.NUMBER,
     },
     {
+      name: "tcp_user_timeout",
+      label: serverI18n("tcpUserTimeout"),
+      placeholder: serverI18n("tcpUserTimeoutPlaceholder"),
+      defaultValue: serverConfig.tcp_user_timeout,
+      span: 3,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
       name: "tcp_idle",
       label: serverI18n("tcpIdle"),
       placeholder: serverI18n("tcpIdlePlaceholder"),

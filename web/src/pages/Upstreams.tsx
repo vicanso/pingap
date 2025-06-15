@@ -242,6 +242,14 @@ export default function Upstreams() {
       options: newBooleanOptions(),
     },
     {
+      name: "tcp_user_timeout",
+      label: upstreamI18n("tcpUserTimeout"),
+      placeholder: upstreamI18n("tcpUserTimeoutPlaceholder"),
+      defaultValue: upstreamConfig.tcp_user_timeout,
+      span: 2,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
       name: "tcp_recv_buf",
       label: upstreamI18n("tcpRecvBuf"),
       placeholder: upstreamI18n("tcpRecvBufPlaceholder"),
