@@ -15,8 +15,6 @@
 // use pingap_config::PingapConf;
 use pingora::protocols::l4::ext::TcpKeepalive;
 use std::fmt;
-#[cfg(target_os = "linux")]
-use std::time::Duration;
 
 static ERROR_TEMPLATE: &str = include_str!("../../error.html");
 
