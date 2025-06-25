@@ -47,9 +47,8 @@ use pingap_performance::{
 };
 use pingap_upstream::{get_upstream, Upstream};
 use pingora::apps::HttpServerOptions;
-use pingora::cache::cache_control::CacheControl;
 use pingora::cache::cache_control::DirectiveValue;
-use pingora::cache::cache_control::InterpretCacheControl;
+use pingora::cache::cache_control::{CacheControl, InterpretCacheControl};
 use pingora::cache::filters::resp_cacheable;
 use pingora::cache::{
     CacheKey, CacheMetaDefaults, NoCacheReason, RespCacheable,
@@ -74,7 +73,7 @@ use snafu::Snafu;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 use tracing::{debug, error, info};
 
 #[derive(Debug, Snafu)]
@@ -219,7 +218,7 @@ pub struct ServerServices {
 }
 
 const META_DEFAULTS: CacheMetaDefaults =
-    CacheMetaDefaults::new(|_| Some(1), 1, 1);
+    CacheMetaDefaults::new(|_| Some(Duration::from_secs(1)), 1, 1);
 
 static HTTP_500_RESPONSE: Lazy<ResponseHeader> =
     Lazy::new(|| error_resp::gen_error_response(500));
@@ -1209,7 +1208,7 @@ impl ProxyHttp for Server {
             }
             // adjust cache ttl
             if let Some(d) = ctx.cache_max_ttl {
-                if c.fresh_sec().unwrap_or_default() > d.as_secs() as u32 {
+                if c.fresh_duration().unwrap_or_default() > d {
                     // update cache-control s-maxage value
                     c.directives.insert(
                         "s-maxage".to_string(),

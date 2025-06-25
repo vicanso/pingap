@@ -14,10 +14,8 @@ target/
 
 
 # Added by cargo
-
-/target
 .vscode
-node_moudles
+node_modules
 dist
 dhat*.json
 default_*
