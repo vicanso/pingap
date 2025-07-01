@@ -192,7 +192,7 @@ impl TryFrom<&PluginConf> for SubFilter {
             .map(|s| {
                 parse_subs_filter(s).ok_or(Error::Invalid {
                     category: PluginCategory::SubFilter.to_string(),
-                    message: format!("invalid subs filter: {}", s),
+                    message: format!("invalid subs filter: {s}"),
                 })
             })
             .collect::<Result<Vec<_>>>()?;

@@ -58,13 +58,13 @@ pub fn new_simple_service_task(
 fn duration_to_string(duration: Duration) -> String {
     let secs = duration.as_secs_f64();
     if secs < 60.0 {
-        format!("{:.1}s", secs)
+        format!("{secs:.1}s")
     } else if secs < 3600.0 {
-        format!("{:.1}m", secs / 60.0)
+        format!("{secs:.1}m")
     } else if secs < 86400.0 {
-        format!("{:.1}h", secs / 3600.0)
+        format!("{secs:.1}h")
     } else {
-        format!("{:.1}d", secs / 86400.0)
+        format!("{secs:.1}d")
     }
 }
 

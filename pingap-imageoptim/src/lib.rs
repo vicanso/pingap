@@ -158,7 +158,7 @@ impl Plugin for ImageOptim {
         if let Some(accept) = session.get_header(http::header::ACCEPT) {
             if let Ok(accept) = accept.to_str() {
                 for item in self.output_types.iter() {
-                    let key = format!("image/{}", item);
+                    let key = format!("image/{item}");
                     if accept.contains(key.as_str()) {
                         accept_images.push(key);
                     }
@@ -209,7 +209,7 @@ impl Plugin for ImageOptim {
         if let Some(accept) = session.get_header(http::header::ACCEPT) {
             if let Ok(accept) = accept.to_str() {
                 for item in self.output_types.iter() {
-                    if accept.contains(format!("image/{}", item).as_str()) {
+                    if accept.contains(format!("image/{item}").as_str()) {
                         format_type = item.to_string();
                         break;
                     }
@@ -228,7 +228,7 @@ impl Plugin for ImageOptim {
         );
         let _ = upstream_response.insert_header(
             http::header::CONTENT_TYPE,
-            format!("image/{}", format_type).as_str(),
+            format!("image/{format_type}").as_str(),
         );
 
         ctx.modify_upstream_response_body = Some(Box::new(ImageOptimizer {

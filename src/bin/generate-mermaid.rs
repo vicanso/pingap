@@ -50,7 +50,7 @@ fn main() {
         }
         modules.sort();
         for module in modules.iter() {
-            arr.push(format!("    {} --> {}", name, module));
+            arr.push(format!("    {name} --> {module}"));
         }
         arr.push("".to_string());
     }

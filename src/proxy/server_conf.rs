@@ -103,16 +103,16 @@ impl fmt::Display for ServerConf {
         write!(f, "access_log: {:?}, ", self.access_log)?;
         write!(f, "locations: {:?}, ", self.locations)?;
         if let Some(ref ciphers) = self.tls_cipher_list {
-            write!(f, "tls_cipher_list: {}, ", ciphers)?;
+            write!(f, "tls_cipher_list: {ciphers}, ")?;
         }
         if let Some(ref suites) = self.tls_ciphersuites {
-            write!(f, "tls_ciphersuites: {}, ", suites)?;
+            write!(f, "tls_ciphersuites: {suites}, ")?;
         }
         if let Some(ref min_ver) = self.tls_min_version {
-            write!(f, "tls_min_version: {}, ", min_ver)?;
+            write!(f, "tls_min_version: {min_ver}, ")?;
         }
         if let Some(ref max_ver) = self.tls_max_version {
-            write!(f, "tls_max_version: {}, ", max_ver)?;
+            write!(f, "tls_max_version: {max_ver}, ")?;
         }
         write!(f, "threads: {:?}, ", self.threads)?;
         write!(f, "global_certificates: {}, ", self.global_certificates)?;
@@ -120,13 +120,13 @@ impl fmt::Display for ServerConf {
         write!(f, "tcp_keepalive: {:?}, ", self.tcp_keepalive)?;
         write!(f, "tcp_fastopen: {:?}, ", self.tcp_fastopen)?;
         if let Some(ref metrics) = self.prometheus_metrics {
-            write!(f, "prometheus_metrics: {}, ", metrics)?;
+            write!(f, "prometheus_metrics: {metrics}, ")?;
         }
         if let Some(ref exporter) = self.otlp_exporter {
-            write!(f, "otlp_exporter: {}, ", exporter)?;
+            write!(f, "otlp_exporter: {exporter}, ")?;
         }
         if let Some(ref modules) = self.modules {
-            write!(f, "modules: {:?}, ", modules)?;
+            write!(f, "modules: {modules:?}, ")?;
         }
         write!(f, "enable_server_timing: {}, ", self.enable_server_timing)?;
         write!(f, "error_template: {} }}", self.error_template)?;

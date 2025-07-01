@@ -230,7 +230,7 @@ fn get_cacheable_and_headers_from_meta(
             .unwrap_or_default()
             .as_secs();
         if value > 0 {
-            let etag = format!(r###"W/"{:x}-{:x}""###, size, value);
+            let etag = format!(r###"W/"{size:x}-{value:x}""###);
             headers.push((header::ETAG, HeaderValue::from_str(&etag).unwrap()));
         }
     }

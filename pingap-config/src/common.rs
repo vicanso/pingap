@@ -108,8 +108,7 @@ impl<'de> Deserialize<'de> for PluginCategory {
         let value: String = serde::Deserialize::deserialize(deserializer)?;
         PluginCategory::from_str(&value).map_err(|_| {
             serde::de::Error::custom(format!(
-                "invalid plugin category: {}",
-                value
+                "invalid plugin category: {value}"
             ))
         })
     }
@@ -150,7 +149,7 @@ fn validate_cert(value: &str) -> Result<()> {
     let certs = rustls_pemfile::certs(&mut cursor)
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|e| Error::Invalid {
-            message: format!("Failed to parse certificate: {}", e),
+            message: format!("Failed to parse certificate: {e}"),
         })?;
 
     // Ensure at least one valid certificate was found
@@ -1068,7 +1067,7 @@ impl PingapConf {
             lines.push(desc.data);
         }
         let hash = crc32fast::hash(lines.join("\n").as_bytes());
-        Ok(format!("{:X}", hash))
+        Ok(format!("{hash:X}"))
     }
     /// Remove the config by name.
     pub fn remove(&mut self, category: &str, name: &str) -> Result<()> {
@@ -1257,10 +1256,10 @@ impl PingapConf {
                 for diff in diff::lines(&item.data, &new_item.data) {
                     match diff {
                         diff::Result::Left(l) => {
-                            item_diff_result.push(format!("-{}", l))
+                            item_diff_result.push(format!("-{l}"))
                         },
                         diff::Result::Right(r) => {
-                            item_diff_result.push(format!("+{}", r))
+                            item_diff_result.push(format!("+{r}"))
                         },
                         _ => {},
                     };

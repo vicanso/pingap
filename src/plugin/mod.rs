@@ -133,7 +133,7 @@ pub(crate) fn get_hash_key(conf: &PluginConf) -> String {
         lines.push(format!("{key}:{value}"));
     }
     let hash = crc32fast::hash(lines.join("\n").as_bytes());
-    format!("{:X}", hash)
+    format!("{hash:X}")
 }
 
 /// Returns a list of built-in plugins with their default configurations.
@@ -250,7 +250,7 @@ pub fn parse_plugins(
             Err(e) => {
                 errors.push(Error::Invalid {
                     category,
-                    message: format!("create plugin {name} failed, {}", e),
+                    message: format!("create plugin {name} failed, {e}"),
                 });
             },
         }

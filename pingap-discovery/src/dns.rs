@@ -158,7 +158,7 @@ impl Dns {
                 let addr = if port.is_empty() {
                     ip.to_string()
                 } else {
-                    format!("{}:{port}", ip)
+                    format!("{ip}:{port}")
                 };
 
                 let socket_addrs =
@@ -213,8 +213,7 @@ impl ServiceDiscovery for Dns {
                                 category: "service_discover_fail".to_string(),
                                 level: NotificationLevel::Warn,
                                 message: format!(
-                                    "dns discovery resolve failed: {:?}",
-                                    failed_hosts
+                                    "dns discovery resolve failed: {failed_hosts:?}"
                                 ),
                                 ..Default::default()
                             })

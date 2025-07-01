@@ -522,17 +522,17 @@ impl Ctx {
         if let Some(time) = self.get_upstream_connect_time() {
             upstream_time += time;
             upstream_time_set = true;
-            timings.push(format!("upstream.connect;dur={}", time));
+            timings.push(format!("upstream.connect;dur={time}"));
         }
 
         if let Some(time) = self.get_upstream_processing_time() {
             upstream_time += time;
             upstream_time_set = true;
-            timings.push(format!("upstream.processing;dur={}", time));
+            timings.push(format!("upstream.processing;dur={time}"));
         }
 
         if upstream_time_set {
-            timings.push(format!("upstream;dur={}", upstream_time));
+            timings.push(format!("upstream;dur={upstream_time}"));
         }
 
         let mut cache_time = 0;
@@ -541,30 +541,30 @@ impl Ctx {
         if let Some(time) = self.cache_lookup_time {
             cache_time += time;
             cache_time_set = true;
-            timings.push(format!("cache.lookup;dur={}", time));
+            timings.push(format!("cache.lookup;dur={time}"));
         }
 
         if let Some(time) = self.cache_lock_time {
             cache_time += time;
             cache_time_set = true;
-            timings.push(format!("cache.lock;dur={}", time));
+            timings.push(format!("cache.lock;dur={time}"));
         }
         if cache_time_set {
-            timings.push(format!("cache;dur={}", cache_time));
+            timings.push(format!("cache;dur={cache_time}"));
         }
 
         if let Some(times) = self.plugin_processing_times.as_ref() {
             let mut plugin_time = 0;
             for (name, time) in times {
                 plugin_time += time;
-                timings.push(format!("plugin.{name};dur={}", time));
+                timings.push(format!("plugin.{name};dur={time}"));
             }
-            timings.push(format!("plugin;dur={}", plugin_time));
+            timings.push(format!("plugin;dur={plugin_time}"));
         }
 
         // Add total service time
         let service_time = now_ms() - self.created_at;
-        timings.push(format!("total;dur={}", service_time));
+        timings.push(format!("total;dur={service_time}"));
 
         timings.join(", ")
     }
