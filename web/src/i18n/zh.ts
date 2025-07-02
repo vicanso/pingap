@@ -157,7 +157,7 @@ export default {
     tlsCipherList: "tls密码套件列表",
     tlsCipherListPlaceholder: "输入tls密码套件列表，早于tls1.3版本认证使用",
     tlsCiphersuites: "tls密码套件列表",
-    tlsCiphersuitesPlaceholder: "输入tls密码套件列表，早于tls1.3版本认证使用",
+    tlsCiphersuitesPlaceholder: "输入tls密码套件列表，用于tls1.3版本认证使用",
     tlsMinVersion: "最低tls版本",
     tlsMaxVersion: "最高tls版本",
     tcpFastOpen: "tcp快速开启",
