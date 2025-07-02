@@ -236,7 +236,8 @@ pub fn new_lets_encrypt_service(
                             .unwrap_or_default(),
                         domains: domains
                             .split(',')
-                            .map(|item| item.to_string())
+                            .map(|item| item.trim().to_string())
+                            .filter(|item| !item.is_empty())
                             .collect(),
                     });
                 }
