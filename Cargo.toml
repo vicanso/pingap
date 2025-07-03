@@ -16,12 +16,12 @@ default-run = "pingap"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ahash = { version = "0.8.11", default-features = false }
+ahash = { version = "0.8.12", default-features = false }
 arc-swap = "1.7.1"
 async-trait = "0.1.88"
 bytes = "1.10.1"
-cfg-if = "1.0.0"
-clap = { version = "4.5.35", features = [
+cfg-if = "1.0.1"
+clap = { version = "4.5.40", features = [
     "derive",
     "std",
     "help",
@@ -29,7 +29,7 @@ clap = { version = "4.5.35", features = [
 ], default-features = false }
 crc32fast = "1.4.2"
 crossbeam-channel = "0.5.15"
-flate2 = "1.1.1"
+flate2 = "1.1.2"
 glob = "0.3.2"
 hex = "0.4.3"
 http = "1.3.1"
@@ -38,7 +38,7 @@ humantime-serde = "1.1.1"
 itoa = "1.0.15"
 nanoid = "0.4.0"
 nix = { version = "0.29.0", features = ["signal"] }
-num_cpus = "1.16.0"
+num_cpus = "1.17.0"
 once_cell = "1.21.3"
 pingora = { git = "https://github.com/cloudflare/pingora", rev = "13484892891eae7d4e9a49298e3683c3cab44d10", default-features = false, features = [
     # pingora = { version = "0.5.0", default-features = false, features = [
@@ -47,27 +47,27 @@ pingora = { git = "https://github.com/cloudflare/pingora", rev = "13484892891eae
     "cache",
 ] }
 regex = { version = "1.11.1", default-features = false }
-rust-embed = { version = "8.6.0", features = [
+rust-embed = { version = "8.7.2", features = [
     "mime-guess",
     "compression",
 ], default-features = false }
 scopeguard = "1.2.0"
 serde = "1.0.219"
 serde_json = "1.0.140"
-sha2 = { version = "0.10.8", default-features = false }
-snafu = { version = "0.8.5", features = ["std"], default-features = false }
+sha2 = { version = "0.10.9", default-features = false }
+snafu = { version = "0.8.6", features = ["std"], default-features = false }
 substring = "1.4.5"
-tokio = { version = "1.44.2", default-features = false, features = ["fs"] }
-toml = "0.8.20"
+tokio = { version = "1.45.1", default-features = false, features = ["fs"] }
+toml = "0.8.23"
 tracing = "0.1.41"
 url = "2.5.4"
 urlencoding = "2.1.3"
-uuid = { version = "1.16.0", features = [
+uuid = { version = "1.17.0", features = [
     "v7",
     "std",
     "fast-rng",
 ], default-features = false }
-ctor = "0.4.1"
+ctor = "0.4.2"
 pingap-core = { version = "0.11.0", path = "pingap-core" }
 pingap-util = { version = "0.11.0", path = "pingap-util" }
 pingap-webhook = { version = "0.11.0", path = "pingap-webhook" }
@@ -160,17 +160,17 @@ pingora = { git = "https://github.com/cloudflare/pingora", rev = "13484892891eae
     "cache",
 ] }
 regex = { version = "1.11.1", default-features = false }
-snafu = { version = "0.8.5", features = ["std"], default-features = false }
+snafu = { version = "0.8.6", features = ["std"], default-features = false }
 substring = "1.4.5"
 itoa = "1.0.15"
-toml = "0.8.20"
-tokio = { version = "1.44.2", default-features = false, features = ["fs"] }
+toml = "0.8.23"
+tokio = { version = "1.45.1", default-features = false, features = ["fs"] }
 tracing = "0.1.41"
 async-trait = "0.1.88"
 serde = "1.0.219"
 serde_json = "1.0.140"
 strum = { version = "0.27.1", features = ["derive"] }
-reqwest = { version = "0.12.15", default-features = false, features = [
+reqwest = { version = "0.12.22", default-features = false, features = [
     "json",
     "default-tls",
 ] }
@@ -185,7 +185,7 @@ humantime-serde = "1.1.1"
 memory-stats = { version = "1.2.0", features = ["always_use_statm"] }
 scopeguard = "1.2.0"
 walkdir = "2.5.0"
-ahash = { version = "0.8.11", default-features = false }
+ahash = { version = "0.8.12", default-features = false }
 derive_more = { version = "2.0.1", default-features = false, features = [
     "debug",
 ] }
@@ -194,13 +194,13 @@ time = { version = "0.3.41", features = ["local-offset"] }
 sysinfo = { version = "0.34.2", features = [
     "system",
 ], default-features = false }
-num_cpus = "1.16.0"
-cfg-if = "1.0.0"
-chrono = { version = "0.4.40", default-features = false, features = [
+num_cpus = "1.17.0"
+cfg-if = "1.0.1"
+chrono = { version = "0.4.41", default-features = false, features = [
     "std",
     "clock",
 ] }
-flate2 = "1.1.1"
+flate2 = "1.1.2"
 crc32fast = "1.4.2"
 hex = "0.4.3"
 cookie = "0.18.1"
