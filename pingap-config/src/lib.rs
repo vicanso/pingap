@@ -286,7 +286,7 @@ mod tests {
         assert_eq!(false, support_observer());
         assert_eq!(true, get_config_storage().is_some());
         let dir = TempDir::new().unwrap();
-        let file = dir.into_path().join("pingap.toml");
+        let file = dir.keep().join("pingap.toml");
         tokio::fs::write(&file, b"").await.unwrap();
         sync_to_path(file.to_string_lossy().as_ref()).await.unwrap();
     }

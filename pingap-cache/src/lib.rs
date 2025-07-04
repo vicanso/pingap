@@ -190,7 +190,7 @@ mod tests {
         let _ = new_tiny_ufo_cache("compact", 1024);
 
         let dir = TempDir::new().unwrap();
-        let result = new_file_cache(&dir.into_path().to_string_lossy());
+        let result = new_file_cache(&dir.keep().to_string_lossy());
         assert_eq!(true, result.is_ok());
     }
 }

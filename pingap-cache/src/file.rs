@@ -522,7 +522,7 @@ mod tests {
     #[test]
     fn test_stats() {
         let dir = TempDir::new().unwrap();
-        let dir = dir.into_path().to_string_lossy().to_string();
+        let dir = dir.keep().to_string_lossy().to_string();
         let cache = new_file_cache(&dir).unwrap();
         assert_eq!(0, cache.stats().unwrap().reading);
         assert_eq!(0, cache.stats().unwrap().writing);

@@ -15,7 +15,7 @@ name = "pingap_imageoptim"
 path = "src/lib.rs"
 
 [dependencies]
-ctor = "0.4.2"
+ctor = { workspace = true }
 image = { version = "0.25.6", features = ["webp", "avif"] }
 imagequant = { version = "4.3.4", default-features = false }
 lodepng = "3.11.0"

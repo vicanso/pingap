@@ -31,7 +31,7 @@ tracing-subscriber = { version = "0.3.19", features = [
     "ansi",
 ], default-features = false }
 tracing-appender = "0.2.3"
-zstd = "0.13.2"
+zstd = "0.13.3"
 pingap-util = { version = "0.11.0", path = "../pingap-util" }
 pingap-core = { version = "0.11.0", path = "../pingap-core" }
 

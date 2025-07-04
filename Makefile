@@ -1,8 +1,5 @@
 lint:
 	typos
-	cargo clippy --all-targets --all -- --deny=warnings
-lint-full:
-	typos
 	cargo clippy --features=full --all-targets --all -- --deny=warnings
 
 fmt:
