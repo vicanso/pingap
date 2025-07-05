@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.11.1](https://github.com/vicanso/pingap/compare/v0.11.0..v0.11.1) - 2025-07-05
+
+### ⛰️  Features
+
+- Add upstream healthy status and location stats - ([16c7341](https://github.com/vicanso/pingap/commit/16c73419fe3b7e2fb24fbb7b79dfcb9cbeec77f8))
+- Support restart pingap from web admin - ([c805488](https://github.com/vicanso/pingap/commit/c805488ae6c879cf15990a80a159a715c1aabee2))
+
+### 🐛 Bug Fixes
+
+- Fix duration to strimg - ([33ab4a7](https://github.com/vicanso/pingap/commit/33ab4a7650875d2b56173b6305f850cc7f564f70))
+- Fix tls cipher suites placeholder of zh, #129 - ([aae734c](https://github.com/vicanso/pingap/commit/aae734c45143b994b43fac864982e2f6c76f1570))
+- Fix clippy error - ([5f37185](https://github.com/vicanso/pingap/commit/5f3718525231fb76d1bb43cf248000533ed26a5d))
+- Fix clippy - ([764c1e4](https://github.com/vicanso/pingap/commit/764c1e438d3fcad2ee59ada7410ccae9b3a2da41))
+- Fix cargo clippy - ([e852e57](https://github.com/vicanso/pingap/commit/e852e57d95947563901bda845d8e06251746bd96))
+- Fix clippy error - ([251580d](https://github.com/vicanso/pingap/commit/251580d9168689e435718c9e1ca0b860a1754510))
+- Fix generate version change log, #116 - ([6d9431f](https://github.com/vicanso/pingap/commit/6d9431fc2b8c11b3000b343719eac182fa495e6e))
+
+### 🚜 Refactor
+
+- Trim and filter empty domain - ([5cd3860](https://github.com/vicanso/pingap/commit/5cd3860348d23fa47d096046681bed8bdbbb5061))
+- Adjust cache meta duration - ([e49e93c](https://github.com/vicanso/pingap/commit/e49e93ccdce45045f4e2c4998d5809bc4030e59b))
+- Support tcp user timeout for upstream and server - ([2daee50](https://github.com/vicanso/pingap/commit/2daee50703669cf8bac84472482a3e68c03312d3))
+- Update pingora - ([cbc2704](https://github.com/vicanso/pingap/commit/cbc2704efef4a32544a83f46eb3e5d45127d64da))
+- Adjust remove config notification content - ([85d9ed8](https://github.com/vicanso/pingap/commit/85d9ed85bcbcc3e5a6ed98fa469aad0c52b346f3))
+- Adjust key generate function for image cache - ([e8d86af](https://github.com/vicanso/pingap/commit/e8d86afb57484f0794ce982c2c8e1ce954f0baf4))
+- Adjust plugin for handle upstream response - ([4af69d0](https://github.com/vicanso/pingap/commit/4af69d0518a743bb48f8a99e0f4bc4fe7d3b0432))
+- Adjust vite build config - ([7ba3c40](https://github.com/vicanso/pingap/commit/7ba3c40f4ef4aed1da2449b382ccf4b793cdfa10))
+- Adjust webhook notification - ([dc53b94](https://github.com/vicanso/pingap/commit/dc53b9469df300a24bc4b0ac5c2e1debcc5d967b))
+
+### 📚 Documentation
+
+- Add description for pingap member - ([fe61f48](https://github.com/vicanso/pingap/commit/fe61f48e5993c285509d653f6cee026d6a274f30))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update dependencies - ([5ef8966](https://github.com/vicanso/pingap/commit/5ef8966049f8c326871dc673aa620f25b02efda4))
+- Update dependencies - ([01761af](https://github.com/vicanso/pingap/commit/01761af2817d758c40cbd578526803a0cd4d7bf1))
+- Update rust version of docker build - ([da79886](https://github.com/vicanso/pingap/commit/da798866da32657c00c68fd5ca377bfa58e65c7d))
+- Remove unused avif decode - ([0af7796](https://github.com/vicanso/pingap/commit/0af7796cd14d5cd321a516d89958b579fa5e5a8c))
+- Setup nasm for image optim plugin - ([cbad23b](https://github.com/vicanso/pingap/commit/cbad23bd5f5b6f00bb26295575d24f8b51de327b))
+- Adjust cargo msrv version - ([3a22c24](https://github.com/vicanso/pingap/commit/3a22c243f99faaa625a6daa6838f6aeca38d2f03))
+- Update publish script - ([5155801](https://github.com/vicanso/pingap/commit/5155801fa5e09858fef96ca72aa1e46659091142))
+
 ## [0.11.0](https://github.com/vicanso/pingap/compare/v0.10.7..0.11.0) - 2025-05-10
 
 ### 🐛 Bug Fixes
