@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use hickory_resolver::error::ResolveError;
+use hickory_resolver::ResolveError;
 use pingap_core::NotificationSender;
 use snafu::Snafu;
 use std::sync::Arc;
