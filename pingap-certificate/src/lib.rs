@@ -75,11 +75,8 @@ pub fn parse_leaf_chain_certificates(
             category: "certificate".to_string(),
             message: "invalid pem data".to_string(),
         })?;
-    let key_data_list = pingap_util::convert_certificate_bytes(Some(key))
-        .ok_or_else(|| Error::Invalid {
-            category: "certificate".to_string(),
-            message: "invalid pem data".to_string(),
-        })?;
+    let key_data_list =
+        pingap_util::convert_certificate_bytes(Some(key)).unwrap_or_default();
     let leaf_pem_data = &pem_data_list[0];
     let (_, p) =
         x509_parser::pem::parse_x509_pem(leaf_pem_data).map_err(|e| {

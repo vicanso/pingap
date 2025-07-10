@@ -141,6 +141,9 @@ pub fn convert_pem(value: &str) -> Result<Vec<Vec<u8>>> {
 /// Optional vector of bytes containing the certificate data
 pub fn convert_certificate_bytes(value: Option<&str>) -> Option<Vec<Vec<u8>>> {
     if let Some(value) = value {
+        if value.is_empty() {
+            return None;
+        }
         return convert_pem(value).ok();
     }
     None
