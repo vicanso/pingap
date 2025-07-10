@@ -3739,6 +3739,7 @@ dependencies = [
  "itoa",
  "once_cell",
  "path-absolutize",
+ "pem",
  "pretty_assertions",
  "rustc_version_runtime",
  "snafu",

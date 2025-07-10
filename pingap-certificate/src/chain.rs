@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::Certificate;
+use super::parse_leaf_chain_certificates;
 use once_cell::sync::Lazy;
 use pingora::tls::x509::X509;
 
@@ -39,8 +39,8 @@ fn parse_chain_certificate(data: &[u8]) -> Option<X509> {
 
     String::from_utf8(data.to_vec())
         .ok()
-        .and_then(|pem_str| Certificate::new(&pem_str, "").ok())
-        .filter(|cert| cert.not_after > expiration_threshold as i64)
+        .and_then(|pem_str| parse_leaf_chain_certificates(&pem_str, "").ok())
+        .filter(|(cert, _)| cert.not_after > expiration_threshold as i64)
         .and_then(|_| X509::from_pem(data).ok())
 }
 

@@ -18,7 +18,9 @@ use instant_acme::{
     OrderStatus,
 };
 use pingap_certificate::rcgen;
-use pingap_certificate::{try_update_certificates, Certificate};
+use pingap_certificate::{
+    parse_leaf_chain_certificates, try_update_certificates, Certificate,
+};
 use pingap_config::{
     get_current_config, set_current_config, ConfigStorage, LoadConfigOptions,
     PingapConf, CATEGORY_CERTIFICATE,
@@ -256,14 +258,15 @@ pub fn get_lets_encrypt_certificate(name: &str) -> Result<Certificate> {
             message: "cert not found".to_string(),
         });
     };
-    Certificate::new(
+    let (cert, _) = parse_leaf_chain_certificates(
         cert.tls_cert.clone().unwrap_or_default().as_str(),
         cert.tls_key.clone().unwrap_or_default().as_str(),
     )
     .map_err(|e| Error::Fail {
         category: "new_certificate".to_string(),
         message: e.to_string(),
-    })
+    })?;
+    Ok(cert)
 }
 
 /// Handles the HTTP-01 challenge verification for Let's Encrypt.

@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use pingora::tls::x509::X509;
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -64,6 +65,82 @@ fn parse_ip_addr(data: &[u8]) -> Result<IpAddr> {
     }
 }
 
+// parse leaf certificate and chain certificates from pem and key
+pub fn parse_leaf_chain_certificates(
+    pem: &str,
+    key: &str,
+) -> Result<(Certificate, Vec<X509>)> {
+    let pem_data_list = pingap_util::convert_certificate_bytes(Some(pem))
+        .ok_or_else(|| Error::Invalid {
+            category: "certificate".to_string(),
+            message: "invalid pem data".to_string(),
+        })?;
+    let key_data_list = pingap_util::convert_certificate_bytes(Some(key))
+        .ok_or_else(|| Error::Invalid {
+            category: "certificate".to_string(),
+            message: "invalid pem data".to_string(),
+        })?;
+    let leaf_pem_data = &pem_data_list[0];
+    let (_, p) =
+        x509_parser::pem::parse_x509_pem(leaf_pem_data).map_err(|e| {
+            Error::X509 {
+                category: "parse_x509_pem".to_string(),
+                message: e.to_string(),
+            }
+        })?;
+
+    let x509 = p.parse_x509().map_err(|e| Error::X509 {
+        category: "parse_x509".to_string(),
+        message: e.to_string(),
+    })?;
+    let mut dns_names = vec![];
+    if let Ok(Some(subject_alternative_name)) = x509.subject_alternative_name()
+    {
+        // get dns name and ip address of certificate
+        for item in subject_alternative_name.value.general_names.iter() {
+            match item {
+                x509_parser::prelude::GeneralName::DNSName(name) => {
+                    dns_names.push(name.to_string());
+                },
+                x509_parser::prelude::GeneralName::IPAddress(data) => {
+                    if let Ok(addr) = parse_ip_addr(data) {
+                        dns_names.push(addr.to_string());
+                    }
+                },
+                _ => {},
+            };
+        }
+    };
+    dns_names.sort();
+    let validity = x509.validity();
+
+    let mut x509_certificates = vec![];
+    for pem in pem_data_list.iter() {
+        let cert = X509::from_pem(pem).map_err(|e| Error::Invalid {
+            category: "x509_from_pem".to_string(),
+            message: e.to_string(),
+        })?;
+        x509_certificates.push(cert);
+    }
+    let key = if key_data_list.is_empty() {
+        vec![]
+    } else {
+        key_data_list[0].clone()
+    };
+
+    let leaf_certificate = Certificate {
+        domains: dns_names,
+        pem: leaf_pem_data.clone(),
+        key,
+        not_after: validity.not_after.timestamp(),
+        not_before: validity.not_before.timestamp(),
+        issuer: x509.issuer.to_string(),
+        ..Default::default()
+    };
+
+    Ok((leaf_certificate, x509_certificates))
+}
+
 /// Represents a X.509 certificate with associated metadata
 #[derive(Debug, Deserialize, Serialize, Default, Clone)]
 pub struct Certificate {
@@ -83,65 +160,6 @@ pub struct Certificate {
     pub issuer: String,
 }
 impl Certificate {
-    /// Creates a new Certificate instance from PEM-encoded certificate and private key
-    ///
-    /// # Arguments
-    /// * `pem` - PEM-encoded certificate string
-    /// * `key` - PEM-encoded private key string
-    ///
-    /// # Returns
-    /// * `Result<Certificate>` - The parsed certificate or an error if invalid
-    pub fn new(pem: &str, key: &str) -> Result<Certificate> {
-        let pem_data = pingap_util::convert_certificate_bytes(Some(pem))
-            .ok_or_else(|| Error::Invalid {
-                category: "certificate".to_string(),
-                message: "invalid pem data".to_string(),
-            })?;
-
-        let (_, p) =
-            x509_parser::pem::parse_x509_pem(&pem_data).map_err(|e| {
-                Error::X509 {
-                    category: "parse_x509_pem".to_string(),
-                    message: e.to_string(),
-                }
-            })?;
-
-        let x509 = p.parse_x509().map_err(|e| Error::X509 {
-            category: "parse_x509".to_string(),
-            message: e.to_string(),
-        })?;
-        let mut dns_names = vec![];
-        if let Ok(Some(subject_alternative_name)) =
-            x509.subject_alternative_name()
-        {
-            // get dns name and ip address of certificate
-            for item in subject_alternative_name.value.general_names.iter() {
-                match item {
-                    x509_parser::prelude::GeneralName::DNSName(name) => {
-                        dns_names.push(name.to_string());
-                    },
-                    x509_parser::prelude::GeneralName::IPAddress(data) => {
-                        if let Ok(addr) = parse_ip_addr(data) {
-                            dns_names.push(addr.to_string());
-                        }
-                    },
-                    _ => {},
-                };
-            }
-        };
-        dns_names.sort();
-        let validity = x509.validity();
-        Ok(Self {
-            domains: dns_names,
-            pem: pem_data,
-            key: pingap_util::convert_certificate_bytes(Some(key))
-                .unwrap_or_default(),
-            not_after: validity.not_after.timestamp(),
-            not_before: validity.not_before.timestamp(),
-            issuer: x509.issuer.to_string(),
-            ..Default::default()
-        })
-    }
     /// Extracts the Common Name (CN) from the certificate issuer field
     ///
     /// # Returns
@@ -198,8 +216,7 @@ pub use rcgen;
 
 #[cfg(test)]
 mod tests {
-    use super::parse_ip_addr;
-    use super::Certificate;
+    use super::{parse_ip_addr, parse_leaf_chain_certificates};
     use pretty_assertions::assert_eq;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -246,7 +263,7 @@ Ztdj1N0eTfn02pibVcXXfwESPUzcjERaMAGg1hoH1F4Gxg0mqmbySAuVRqNLnXp5
 CRVQZGgOQL6WDg3tUUDXYOs=
 -----END CERTIFICATE-----"###;
         // spellchecker:on
-        let cert = Certificate::new(pem, "").unwrap();
+        let (cert, _) = parse_leaf_chain_certificates(pem, "").unwrap();
 
         assert_eq!(
             "O=mkcert development CA, OU=vicanso@tree, CN=mkcert vicanso@tree",

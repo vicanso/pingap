@@ -179,7 +179,7 @@ fn ssl_certificate(
     ssl: &mut SslRef,
     cert: &X509,
     key: &PKey<Private>,
-    chain_certificate: &Option<X509>,
+    chain_certificates: &Option<Vec<X509>>,
 ) {
     // set tls certificate
     if let Err(e) = ext::ssl_use_certificate(ssl, cert) {
@@ -190,9 +190,11 @@ fn ssl_certificate(
         error!(category = LOG_CATEGORY, error = %e, "ssl use private key fail");
     }
     // set chain certificate
-    if let Some(chain) = chain_certificate {
-        if let Err(e) = ext::ssl_add_chain_cert(ssl, chain) {
-            error!(category = LOG_CATEGORY, error = %e, "ssl add chain cert fail");
+    if let Some(chain_certificates) = chain_certificates {
+        for chain in chain_certificates.iter() {
+            if let Err(e) = ext::ssl_add_chain_cert(ssl, chain) {
+                error!(category = LOG_CATEGORY, error = %e, "ssl add chain cert fail");
+            }
         }
     }
 }
@@ -335,7 +337,7 @@ impl pingora::listeners::TlsAccept for GlobalCertificate {
                         ssl,
                         &result.x509,
                         &result.key,
-                        &d.chain_certificate,
+                        &d.chain_certificates,
                     );
                 },
                 Err(err) => {
@@ -346,7 +348,7 @@ impl pingora::listeners::TlsAccept for GlobalCertificate {
         }
 
         if let Some((cert, key)) = &d.certificate {
-            ssl_certificate(ssl, cert, key, &d.chain_certificate);
+            ssl_certificate(ssl, cert, key, &d.chain_certificates);
         }
     }
 }

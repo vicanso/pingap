@@ -98,15 +98,6 @@ export default function Certificates() {
       nullAsEmpty: true,
     },
     {
-      name: "tls_chain",
-      label: certificateI18n("tlsChain"),
-      placeholder: certificateI18n("tlsChainPlaceholder"),
-      defaultValue: certificateConfig.tls_chain,
-      span: 6,
-      category: ExFormItemCategory.TEXTAREA,
-      nullAsEmpty: true,
-    },
-    {
       name: "domains",
       label: certificateI18n("domains"),
       placeholder: certificateI18n("domainsPlaceholder"),

@@ -17,12 +17,14 @@ use super::self_signed::{
     add_self_signed_certificate, get_self_signed_certificate,
     SelfSignedCertificate,
 };
-use super::{Certificate, Error, Result, LOG_CATEGORY};
+use super::{
+    parse_leaf_chain_certificates, Certificate, Error, Result, LOG_CATEGORY,
+};
 use pingap_config::CertificateConf;
 use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::x509::X509;
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::info;
 
 // Constants for categorizing different types of certificates and errors
 const LETS_ENCRYPT: &str = "lets_encrypt";
@@ -37,7 +39,7 @@ pub struct TlsCertificate {
     // Optional name identifier for the certificate
     pub name: Option<String>,
     // Optional chain certificate (intermediate CA)
-    pub chain_certificate: Option<X509>,
+    pub chain_certificates: Option<Vec<X509>>,
     // Optional tuple containing the certificate and its private key
     pub certificate: Option<(X509, PKey<Private>)>,
     // List of domain names this certificate is valid for
@@ -56,7 +58,7 @@ impl TryFrom<&CertificateConf> for TlsCertificate {
     type Error = Error;
     fn try_from(value: &CertificateConf) -> Result<Self, Self::Error> {
         // parse certificate
-        let info = Certificate::new(
+        let (info, x509_certificates) = parse_leaf_chain_certificates(
             value.tls_cert.clone().unwrap_or_default().as_str(),
             value.tls_key.clone().unwrap_or_default().as_str(),
         )
@@ -70,34 +72,23 @@ impl TryFrom<&CertificateConf> for TlsCertificate {
             ""
         };
         let hash_key = value.hash_key();
-
-        let tls_chain =
-            pingap_util::convert_certificate_bytes(value.tls_chain.as_deref());
-        let chain_certificate = if let Some(value) = &tls_chain {
-            // ignore chain error
-            X509::from_pem(value)
-                .map_err(|e| {
-                    error!(
-                        category = LOG_CATEGORY,
-                        issuer = info.get_issuer_common_name(),
-                        error = %e,
-                        "parse chain certificate error"
-                    );
-                    e
-                })
-                .ok()
+        if x509_certificates.is_empty() {
+            return Err(Error::Invalid {
+                message: "x509 certificates is empty".to_string(),
+                category: ERROR_CERTIFICATE.to_string(),
+            });
+        }
+        let cert = x509_certificates[0].clone();
+        let mut chain_certificates = None;
+        if x509_certificates.len() > 1 {
+            chain_certificates = Some(x509_certificates[1..].to_vec());
         } else if category == LETS_ENCRYPT {
-            get_lets_encrypt_chain_certificate(
+            if let Some(chain_certificate) = get_lets_encrypt_chain_certificate(
                 info.get_issuer_common_name().as_str(),
-            )
-        } else {
-            None
-        };
-        let cert =
-            X509::from_pem(&info.get_cert()).map_err(|e| Error::Invalid {
-                category: ERROR_X509.to_string(),
-                message: e.to_string(),
-            })?;
+            ) {
+                chain_certificates = Some(vec![chain_certificate]);
+            }
+        }
 
         let key = PKey::private_key_from_pem(&info.get_key()).map_err(|e| {
             Error::Invalid {
@@ -107,7 +98,7 @@ impl TryFrom<&CertificateConf> for TlsCertificate {
         })?;
         Ok(TlsCertificate {
             hash_key,
-            chain_certificate,
+            chain_certificates,
             domains: info.domains.clone(),
             certificate: Some((cert, key)),
             info: Some(info),
@@ -349,7 +340,6 @@ kknq2XUsBMCyIW1BqgLVEyeNxg==
         let cert = TlsCertificate::try_from(&CertificateConf {
             tls_cert: Some(pem.to_string()),
             tls_key: Some(key.to_string()),
-            tls_chain: Some(include_str!("../assets/e5.pem").to_string()),
             ..Default::default()
         })
         .unwrap();

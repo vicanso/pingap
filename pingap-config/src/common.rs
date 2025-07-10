@@ -123,8 +123,6 @@ pub struct CertificateConf {
     pub tls_cert: Option<String>,
     /// Private key in PEM format or base64 encoded
     pub tls_key: Option<String>,
-    /// Certificate chain in PEM format or base64 encoded
-    pub tls_chain: Option<String>,
     /// Whether this is the default certificate for the server
     pub is_default: Option<bool>,
     /// Whether this certificate is a Certificate Authority (CA)
@@ -140,23 +138,25 @@ pub struct CertificateConf {
 /// Validates a certificate in PEM format or base64 encoded
 fn validate_cert(value: &str) -> Result<()> {
     // Convert from PEM/base64 to binary
-    let buf = pingap_util::convert_pem(value).map_err(|e| Error::Invalid {
-        message: e.to_string(),
-    })?;
-    let mut cursor = Cursor::new(&buf);
-
-    // Parse all certificates in the buffer
-    let certs = rustls_pemfile::certs(&mut cursor)
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(|e| Error::Invalid {
-            message: format!("Failed to parse certificate: {e}"),
+    let buf_list =
+        pingap_util::convert_pem(value).map_err(|e| Error::Invalid {
+            message: e.to_string(),
         })?;
+    for buf in buf_list {
+        let mut cursor = Cursor::new(buf);
+        // Parse all certificates in the buffer
+        let certs = rustls_pemfile::certs(&mut cursor)
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|e| Error::Invalid {
+                message: format!("Failed to parse certificate: {e}"),
+            })?;
 
-    // Ensure at least one valid certificate was found
-    if certs.is_empty() {
-        return Err(Error::Invalid {
-            message: "No valid certificates found in input".to_string(),
-        });
+        // Ensure at least one valid certificate was found
+        if certs.is_empty() {
+            return Err(Error::Invalid {
+                message: "No valid certificates found in input".to_string(),
+            });
+        }
     }
 
     Ok(())
@@ -179,12 +179,12 @@ impl CertificateConf {
         // Validate private key
         let tls_key = self.tls_key.clone().unwrap_or_default();
         if !tls_key.is_empty() {
-            let buf = pingap_util::convert_pem(&tls_key).map_err(|e| {
+            let buf_list = pingap_util::convert_pem(&tls_key).map_err(|e| {
                 Error::Invalid {
                     message: e.to_string(),
                 }
             })?;
-            let mut key = Cursor::new(buf);
+            let mut key = Cursor::new(buf_list[0].clone());
             let _ = rustls_pemfile::private_key(&mut key).map_err(|e| {
                 Error::Invalid {
                     message: e.to_string(),
@@ -198,11 +198,6 @@ impl CertificateConf {
             validate_cert(&tls_cert)?;
         }
 
-        // Validate certificate chain
-        let tls_chain = self.tls_chain.clone().unwrap_or_default();
-        if !tls_chain.is_empty() {
-            validate_cert(&tls_chain)?;
-        }
         Ok(())
     }
 }

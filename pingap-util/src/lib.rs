@@ -104,7 +104,7 @@ pub fn is_pem(value: &str) -> bool {
 ///
 /// # Returns
 /// Result containing the certificate/key bytes or an error
-pub fn convert_pem(value: &str) -> Result<Vec<u8>> {
+pub fn convert_pem(value: &str) -> Result<Vec<Vec<u8>>> {
     let buf = if is_pem(value) {
         value.as_bytes().to_vec()
     } else if Path::new(&resolve_path(value)).is_file() {
@@ -115,7 +115,20 @@ pub fn convert_pem(value: &str) -> Result<Vec<u8>> {
     } else {
         base64_decode(value).map_err(|e| Error::Base64Decode { source: e })?
     };
-    Ok(buf)
+    let pems = pem::parse_many(&buf).map_err(|e| Error::Invalid {
+        message: e.to_string(),
+    })?;
+    if pems.is_empty() {
+        return Err(Error::Invalid {
+            message: "pem data is empty".to_string(),
+        });
+    }
+    let mut data = vec![];
+    for pem in pems {
+        data.push(pem::encode(&pem).as_bytes().to_vec());
+    }
+
+    Ok(data)
 }
 
 /// Converts an optional certificate string into bytes.
@@ -126,7 +139,7 @@ pub fn convert_pem(value: &str) -> Result<Vec<u8>> {
 ///
 /// # Returns
 /// Optional vector of bytes containing the certificate data
-pub fn convert_certificate_bytes(value: Option<&str>) -> Option<Vec<u8>> {
+pub fn convert_certificate_bytes(value: Option<&str>) -> Option<Vec<Vec<u8>>> {
     if let Some(value) = value {
         return convert_pem(value).ok();
     }

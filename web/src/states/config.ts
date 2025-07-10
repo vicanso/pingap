@@ -114,7 +114,6 @@ export interface Certificate {
   domains?: string;
   tls_cert?: string;
   tls_key?: string;
-  tls_chain?: string;
   certificate_file?: string;
   acme?: string;
   is_default?: boolean;
