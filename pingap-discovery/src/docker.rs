@@ -15,7 +15,7 @@
 use super::{Discovery, DOCKER_DISCOVERY, LOG_CATEGORY};
 use super::{Error, Result};
 use async_trait::async_trait;
-use bollard::query_parameters::ListContainersOptions;
+use bollard::container::ListContainersOptions;
 use bollard::secret::ContainerSummary;
 use http::Extensions;
 use pingap_core::{NotificationData, NotificationLevel, NotificationSender};
@@ -177,7 +177,7 @@ impl Docker {
         filters.insert("label".to_string(), vec![label.to_string()]);
         self.docker
             .list_containers(Some(ListContainersOptions {
-                filters: Some(filters),
+                filters,
                 ..Default::default()
             }))
             .await

@@ -21,7 +21,7 @@ use hickory_resolver::config::{
 use hickory_resolver::lookup_ip::LookupIp;
 use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_resolver::system_conf::read_system_conf;
-use hickory_resolver::Resolver;
+use hickory_resolver::AsyncResolver;
 use http::Extensions;
 use pingap_core::NotificationSender;
 use pingap_core::{NotificationData, NotificationLevel};
@@ -103,9 +103,7 @@ impl Dns {
     async fn tokio_lookup_ip(&self) -> Result<(Vec<LookupIp>, Vec<String>)> {
         let provider = TokioConnectionProvider::default();
         let (config, options) = self.read_system_conf()?;
-        let mut builder = Resolver::builder_with_config(config, provider);
-        *builder.options_mut() = options;
-        let resolver = builder.build();
+        let resolver = AsyncResolver::new(config, options, provider);
 
         let mut lookup_ips = Vec::new();
         let mut failed_hosts = Vec::new();
