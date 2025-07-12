@@ -361,11 +361,15 @@ export default function Home() {
     },
     {
       name: "enabledTracing",
-      value: basicInfo.features.includes("tracing") ? homeI18n("yes") : homeI18n("no"),
+      value: basicInfo.features.includes("tracing")
+        ? homeI18n("yes")
+        : homeI18n("no"),
     },
     {
       name: "enabledFull",
-      value: basicInfo.features.includes("full") ? homeI18n("yes") : homeI18n("no"),
+      value: basicInfo.features.includes("full")
+        ? homeI18n("yes")
+        : homeI18n("no"),
     },
     {
       name: "rustc",

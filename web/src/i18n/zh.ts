@@ -447,7 +447,8 @@ export default {
     subFilterFiltersPlaceholder:
       "输入子过滤器的规则(如 subs_filter 'http://pingap.io' 'https://pingap.io/api' ig)",
     imageOptimOutputTypes: "输出类型",
-    imageOptimOutputTypesPlaceholder: "输入输出类型(如 avif,webp), png和jpeg总是启用",
+    imageOptimOutputTypesPlaceholder:
+      "输入输出类型(如 avif,webp), png和jpeg总是启用",
     imageOptimPngQuality: "Png质量",
     imageOptimPngQualityPlaceholder: "输入png质量(如 90)",
     imageOptimJpegQuality: "Jpeg质量",

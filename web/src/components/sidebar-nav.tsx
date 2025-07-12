@@ -190,17 +190,29 @@ export function MainSidebar({
     if (!items || items.length == 0) {
       return <></>;
     }
+
+    // get name from url
+    const urlParams = new URLSearchParams(location.search);
+    const currentName = urlParams.get("name");
     return (
       <SidebarMenuSub>
-        {items.map((item) => (
-          <SidebarMenuSubItem key={item.title}>
-            <SidebarMenuSubButton className="h-9!" asChild>
-              <Link to={item.path}>
-                <span>{item.title}</span>
-              </Link>
-            </SidebarMenuSubButton>
-          </SidebarMenuSubItem>
-        ))}
+        {items.map((item) => {
+          // check if the item is selected
+          const isSelected = currentName === item.title;
+          return (
+            <SidebarMenuSubItem key={item.title}>
+              <SidebarMenuSubButton
+                className="h-9!"
+                isActive={isSelected}
+                asChild
+              >
+                <Link to={item.path}>
+                  <span>{item.title}</span>
+                </Link>
+              </SidebarMenuSubButton>
+            </SidebarMenuSubItem>
+          );
+        })}
       </SidebarMenuSub>
     );
   };

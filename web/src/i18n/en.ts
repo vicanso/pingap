@@ -4,7 +4,8 @@ export default {
   themeLight: "Light Theme",
   restart: "Restart",
   restartTitle: "Confirm Restart",
-  restartDescription: "The service will be restarted, please confirm whether to continue",
+  restartDescription:
+    "The service will be restarted, please confirm whether to continue",
   restartSuccess: "Restart Success, the program will be restarted in 1 minute",
   save: "Save",
   remove: "Remove",
@@ -170,7 +171,8 @@ export default {
     tcpFastOpen: "Tcp Fast Open",
     tcpFastOpenPlaceholder: "Input the backlog size of tcp fast open(e.g. 10)",
     tcpUserTimeout: "Tcp User Timeout",
-    tcpUserTimeoutPlaceholder: "Input the user timeout for tcp(e.g. 30s), only for linux",
+    tcpUserTimeoutPlaceholder:
+      "Input the user timeout for tcp(e.g. 30s), only for linux",
     tcpIdle: "Tcp Keepalive Idle",
     tcpIdlePlaceholder: "Input tcp keepalive idle duration(e.g. 2m)",
     tcpInterval: "Tcp Keepalive Interval",
@@ -259,7 +261,8 @@ export default {
     tcpRecvBuf: "Tcp Recv Buf",
     tcpRecvBufPlaceholder: "Input the tcp receive buffer limit size",
     tcpUserTimeout: "Tcp User Timeout",
-    tcpUserTimeoutPlaceholder: "Input the user timeout for tcp(e.g. 30s), only for linux",
+    tcpUserTimeoutPlaceholder:
+      "Input the user timeout for tcp(e.g. 30s), only for linux",
     tcpIdle: "Tcp Idle",
     tcpIdlePlaceholder: "Input the idle timeout for tcp connection",
     tcpInterval: "Tcp Keepalive Probe Interval",
@@ -477,7 +480,8 @@ export default {
     subFilterFiltersPlaceholder:
       "Input the filters for sub filter(e.g. subs_filter 'http://pingap.io' 'https://pingap.io/api' ig)",
     imageOptimOutputTypes: "Output Types",
-    imageOptimOutputTypesPlaceholder: "Input the output types(e.g. avif,webp), png and jpeg are always enabled",
+    imageOptimOutputTypesPlaceholder:
+      "Input the output types(e.g. avif,webp), png and jpeg are always enabled",
     imageOptimPngQuality: "Png Quality",
     imageOptimPngQualityPlaceholder: "Input the png quality(e.g. 80)",
     imageOptimJpegQuality: "Jpeg Quality",
