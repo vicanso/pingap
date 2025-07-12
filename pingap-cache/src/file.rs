@@ -215,7 +215,7 @@ impl HttpCacheStorage for FileCache {
     async fn get(
         &self,
         key: &str,
-        namespace: &str,
+        namespace: &[u8],
     ) -> Result<Option<CacheObject>> {
         // Early return if found in cache
         if let Some(cache) = &self.cache {
@@ -230,7 +230,10 @@ impl HttpCacheStorage for FileCache {
 
         #[cfg(feature = "tracing")]
         let start = SystemTime::now();
-        let file = self.get_file_path(key, namespace);
+        let file = self.get_file_path(
+            key,
+            std::string::String::from_utf8_lossy(namespace).as_ref(),
+        );
 
         // add reading count
         let count = self.reading.fetch_add(1, Ordering::Relaxed);
@@ -280,7 +283,7 @@ impl HttpCacheStorage for FileCache {
     async fn put(
         &self,
         key: &str,
-        namespace: &str,
+        namespace: &[u8],
         data: CacheObject,
     ) -> Result<()> {
         if let Some(c) = &self.cache {
@@ -296,7 +299,10 @@ impl HttpCacheStorage for FileCache {
         #[cfg(feature = "tracing")]
         let start = SystemTime::now();
         let buf: Bytes = data.into();
-        let file = self.get_file_path(key, namespace);
+        let file = self.get_file_path(
+            key,
+            std::string::String::from_utf8_lossy(namespace).as_ref(),
+        );
         // add writing count
         let count = self.writing.fetch_add(1, Ordering::Relaxed);
         defer!(self.writing.fetch_sub(1, Ordering::Relaxed););
@@ -325,7 +331,7 @@ impl HttpCacheStorage for FileCache {
     async fn remove(
         &self,
         key: &str,
-        namespace: &str,
+        namespace: &[u8],
     ) -> Result<Option<CacheObject>> {
         if let Some(c) = &self.cache {
             debug!(
@@ -334,7 +340,10 @@ impl HttpCacheStorage for FileCache {
             );
             c.remove(&key.to_string());
         }
-        let file = self.get_file_path(key, namespace);
+        let file = self.get_file_path(
+            key,
+            std::string::String::from_utf8_lossy(namespace).as_ref(),
+        );
         fs::remove_file(file)
             .await
             .map_err(|e| Error::Io { source: e })?;
@@ -428,8 +437,12 @@ mod tests {
     #[tokio::test]
     async fn test_file_cache() {
         let dir = TempDir::new().unwrap();
-        let namespace = "pingap";
-        std::fs::create_dir(dir.path().join(namespace)).unwrap();
+        let namespace = b"pingap";
+        std::fs::create_dir(
+            dir.path()
+                .join(std::string::String::from_utf8_lossy(namespace).as_ref()),
+        )
+        .unwrap();
         let dir = format!("{}?cache_max=100", dir.path().to_string_lossy());
         let cache = new_file_cache(&dir).unwrap();
 

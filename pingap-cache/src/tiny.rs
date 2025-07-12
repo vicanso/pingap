@@ -85,7 +85,7 @@ impl HttpCacheStorage for TinyUfoCache {
     async fn get(
         &self,
         key: &str,
-        namespace: &str,
+        namespace: &[u8],
     ) -> Result<Option<CacheObject>> {
         debug!(
             category = LOG_CATEGORY,
@@ -108,7 +108,7 @@ impl HttpCacheStorage for TinyUfoCache {
     async fn put(
         &self,
         key: &str,
-        namespace: &str,
+        namespace: &[u8],
         data: CacheObject,
     ) -> Result<()> {
         let weight = data.get_weight();
@@ -136,7 +136,7 @@ impl HttpCacheStorage for TinyUfoCache {
     async fn remove(
         &self,
         key: &str,
-        namespace: &str,
+        namespace: &[u8],
     ) -> Result<Option<CacheObject>> {
         debug!(
             category = LOG_CATEGORY,
@@ -159,14 +159,14 @@ mod tests {
             meta: (b"Hello".to_vec(), b"World".to_vec()),
             body: Bytes::from_static(b"Hello World!"),
         };
-        let result = cache.get(key, "").await.unwrap();
+        let result = cache.get(key, b"").await.unwrap();
         assert_eq!(true, result.is_none());
-        cache.put(key, "", obj.clone()).await.unwrap();
-        let result = cache.get(key, "").await.unwrap().unwrap();
+        cache.put(key, b"", obj.clone()).await.unwrap();
+        let result = cache.get(key, b"").await.unwrap().unwrap();
         assert_eq!(obj, result);
 
-        cache.remove(key, "").await.unwrap().unwrap();
-        let result = cache.get(key, "").await.unwrap();
+        cache.remove(key, b"").await.unwrap().unwrap();
+        let result = cache.get(key, b"").await.unwrap();
         assert_eq!(true, result.is_none());
     }
 }

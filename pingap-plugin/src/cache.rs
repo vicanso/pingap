@@ -52,30 +52,15 @@ static EVICTION_MANAGER: OnceCell<Manager> = OnceCell::new();
 // CacheLock: Prevents multiple requests from generating the same cache entry simultaneously
 static CACHE_LOCK_ONE_SECOND: Lazy<
     Box<(dyn CacheKeyLock + std::marker::Send + Sync + 'static)>,
-> = Lazy::new(|| {
-    CacheLock::new_boxed(
-        std::time::Duration::from_secs(1),
-        std::time::Duration::from_millis(300),
-    )
-});
+> = Lazy::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(1)));
 
 static CACHE_LOCK_TWO_SECONDS: Lazy<
     Box<(dyn CacheKeyLock + std::marker::Send + Sync + 'static)>,
-> = Lazy::new(|| {
-    CacheLock::new_boxed(
-        std::time::Duration::from_secs(2),
-        std::time::Duration::from_millis(600),
-    )
-});
+> = Lazy::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(2)));
 
 static CACHE_LOCK_THREE_SECONDS: Lazy<
     Box<(dyn CacheKeyLock + std::marker::Send + Sync + 'static)>,
-> = Lazy::new(|| {
-    CacheLock::new_boxed(
-        std::time::Duration::from_secs(3),
-        std::time::Duration::from_millis(900),
-    )
-});
+> = Lazy::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(3)));
 
 pub struct Cache {
     // Determines when this plugin runs in the request/response lifecycle
@@ -455,6 +440,8 @@ impl Plugin for Cache {
             self.eviction,
             self.predictor,
             self.lock,
+            // TODO: add cache option overrides
+            None,
         );
 
         // Set maximum cached file size if configured

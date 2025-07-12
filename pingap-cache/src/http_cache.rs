@@ -126,14 +126,14 @@ pub trait HttpCacheStorage: Sync + Send {
     async fn get(
         &self,
         key: &str,
-        namespace: &str,
+        namespace: &[u8],
     ) -> Result<Option<CacheObject>>;
 
     /// Stores a cache object with the given key and namespace
     async fn put(
         &self,
         key: &str,
-        namespace: &str,
+        namespace: &[u8],
         data: CacheObject,
     ) -> Result<()>;
 
@@ -148,7 +148,7 @@ pub trait HttpCacheStorage: Sync + Send {
     async fn remove(
         &self,
         _key: &str,
-        _namespace: &str,
+        _namespace: &[u8],
     ) -> Result<Option<CacheObject>> {
         Ok(None)
     }
@@ -340,7 +340,7 @@ pub struct ObjectMissHandler {
     /// Cache key for storing the final object
     key: String,
     /// Namespace for storing the final object
-    namespace: String,
+    namespace: Vec<u8>,
     /// Reference to the storage backend
     cache: Arc<dyn HttpCacheStorage>,
 }
@@ -422,7 +422,7 @@ impl Storage for HttpCache {
         let miss_handler = ObjectMissHandler {
             meta,
             key: hash,
-            namespace: key.namespace().to_string(),
+            namespace: key.namespace().to_vec(),
             cache: self.cache.clone(),
             body: BytesMut::with_capacity(size),
         };
@@ -440,7 +440,7 @@ impl Storage for HttpCache {
         let hash = key.combined();
         // TODO get namespace of cache key
         let cache_removed =
-            if let Ok(result) = self.cache.remove(&hash, "").await {
+            if let Ok(result) = self.cache.remove(&hash, b"").await {
                 result.is_some()
             } else {
                 false
@@ -516,7 +516,7 @@ mod tests {
             meta: (b"Hello".to_vec(), b"World".to_vec()),
             body: BytesMut::new(),
             key: key.to_string(),
-            namespace: "".to_string(),
+            namespace: b"".to_vec(),
             cache: cache.clone(),
         };
         let mut handle: MissHandler = Box::new(obj);
@@ -527,7 +527,7 @@ mod tests {
             .unwrap();
         handle.finish().await.unwrap();
 
-        let data = cache.get(key, "").await.unwrap().unwrap();
+        let data = cache.get(key, b"").await.unwrap().unwrap();
         assert_eq!("Hello World!", std::str::from_utf8(&data.body).unwrap());
     }
 
