@@ -265,7 +265,6 @@ impl GlobalCertificate {
             error!(category = LOG_CATEGORY, error = %e, name, "set tls max proto version fail");
         }
 
-        // tls_settings.set_min_proto_version(version)
         if let Some(min_version) = tls_settings.min_proto_version() {
             info!(
                 category = LOG_CATEGORY,

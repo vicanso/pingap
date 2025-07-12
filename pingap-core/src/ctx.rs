@@ -660,17 +660,16 @@ mod tests {
         let method = "GET";
         let uri = Uri::from_static("http://example.com/");
         let key = get_cache_key(&ctx, method, &uri);
-        assert_eq!(
-            format!("{key:?}"),
-            r#"CacheKey { namespace: "test", primary: "GET:http://example.com/", primary_bin_override: None, variance: None, user_tag: "", extensions: Extensions }"#
-        );
+        assert_eq!(key.primary_key_str(), Some("GET:http://example.com/"));
+        assert_eq!(key.namespace_str(), Some("test"));
 
         ctx.cache_keys = Some(vec!["prefix".to_string()]);
         let key = get_cache_key(&ctx, method, &uri);
         assert_eq!(
-            format!("{key:?}"),
-            r#"CacheKey { namespace: "test", primary: "prefix:GET:http://example.com/", primary_bin_override: None, variance: None, user_tag: "", extensions: Extensions }"#
+            key.primary_key_str(),
+            Some("prefix:GET:http://example.com/")
         );
+        assert_eq!(key.namespace_str(), Some("test"));
     }
 
     #[test]

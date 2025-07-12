@@ -1833,16 +1833,23 @@ value = 'proxy_set_headers = ["name:value"]'
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let key = server.cache_key_callback(
-            &session,
-            &mut Ctx {
-                cache_namespace: Some("pingap".to_string()),
-                cache_keys: Some(vec!["ss".to_string()]),
-                ..Default::default()
-            },
-        );
+        let key = server
+            .cache_key_callback(
+                &session,
+                &mut Ctx {
+                    cache_namespace: Some("pingap".to_string()),
+                    cache_keys: Some(vec!["ss".to_string()]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         assert_eq!(
-            r#"Ok(CacheKey { namespace: "pingap", primary: "ss:GET:/vicanso/pingap?size=1", primary_bin_override: None, variance: None, user_tag: "", extensions: Extensions })"#,
+            key.primary_key_str(),
+            Some("ss:GET:/vicanso/pingap?size=1")
+        );
+        assert_eq!(key.namespace_str(), Some("pingap"));
+        assert_eq!(
+            r#"CacheKey { namespace: [112, 105, 110, 103, 97, 112], primary: [115, 115, 58, 71, 69, 84, 58, 47, 118, 105, 99, 97, 110, 115, 111, 47, 112, 105, 110, 103, 97, 112, 63, 115, 105, 122, 101, 61, 49], primary_bin_override: None, variance: None, user_tag: "", extensions: Extensions }"#,
             format!("{key:?}")
         );
     }
