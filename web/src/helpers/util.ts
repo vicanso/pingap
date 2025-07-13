@@ -1,6 +1,7 @@
 import { z } from "zod";
 import sha256hash from "crypto-js/sha256";
 import hex from "crypto-js/enc-hex";
+import { isString } from "radash";
 
 import HTTPError from "./http-error";
 export function isError(err: Error | HTTPError | unknown, category: string) {
@@ -25,10 +26,13 @@ export function newZodDuration() {
   return z.string().regex(reg);
 }
 
-export function omitEmptyArray(data: Record<string, unknown>) {
+export function omitEmptyArrayString(data: Record<string, unknown>) {
   Object.keys(data).forEach((key) => {
     const value = data[key];
     if (Array.isArray(value) && (value as []).length === 0) {
+      delete data[key];
+    }
+    if (isString(value) && !value) {
       delete data[key];
     }
   });

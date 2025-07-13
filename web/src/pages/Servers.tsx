@@ -10,7 +10,7 @@ import {
   newStringOptions,
   newBooleanOptions,
 } from "@/constants";
-import { newZodDuration, omitEmptyArray } from "@/helpers/util";
+import { newZodDuration, omitEmptyArrayString } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -336,7 +336,7 @@ export default function Servers() {
           if (name === newServer) {
             name = value["name"] as string;
           }
-          omitEmptyArray(value);
+          omitEmptyArrayString(value);
           await update("server", name, value);
           handleSelectServer(name);
         }}

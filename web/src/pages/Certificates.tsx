@@ -9,6 +9,7 @@ import {
   newStringOptions,
   newBooleanOptions,
 } from "@/constants";
+import { omitEmptyArrayString } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -208,6 +209,7 @@ export default function Certificates() {
           if (name === newCertificate) {
             name = value["name"] as string;
           }
+          omitEmptyArrayString(value);
           await update("certificate", name, value);
           handleSelectCertificate(name);
         }}

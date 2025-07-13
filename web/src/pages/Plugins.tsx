@@ -15,6 +15,7 @@ import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
 import useBasicState from "@/states/basic";
+import { omitEmptyArrayString } from "@/helpers/util";
 import {
   Select,
   SelectContent,
@@ -1098,6 +1099,7 @@ export default function Plugins() {
             name = value["_name_"] as string;
           }
           delete value["_name_"];
+          omitEmptyArrayString(value);
           await update("plugin", name, value);
           handleSelectPlugin(name);
         }}

@@ -10,7 +10,7 @@ import {
   newBooleanOptions,
   newStringOptions,
 } from "@/constants";
-import { newZodBytes, omitEmptyArray } from "@/helpers/util";
+import { newZodBytes, omitEmptyArrayString } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -284,7 +284,7 @@ export default function Locations() {
           if (name === newLocation) {
             name = value["name"] as string;
           }
-          omitEmptyArray(value);
+          omitEmptyArrayString(value);
           await update("location", name, value);
           handleSelectLocation(name);
         }}

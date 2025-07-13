@@ -9,7 +9,11 @@ import {
   newStringOptions,
   newBooleanOptions,
 } from "@/constants";
-import { newZodBytes, newZodDuration, omitEmptyArray } from "@/helpers/util";
+import {
+  newZodBytes,
+  newZodDuration,
+  omitEmptyArrayString,
+} from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -375,7 +379,7 @@ export default function Upstreams() {
           if (name === newUpstream) {
             name = value["name"] as string;
           }
-          omitEmptyArray(value);
+          omitEmptyArrayString(value);
           await update("upstream", name, value);
           handleSelectUpstream(name);
         }}
