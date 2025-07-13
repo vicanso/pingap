@@ -103,7 +103,7 @@ mod tests {
             tls: false,
             ipv4_only: false,
             sender: None,
-            name_server: None,
+            dns_server: None,
         })
         .unwrap();
 
