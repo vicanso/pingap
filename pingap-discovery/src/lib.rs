@@ -96,6 +96,7 @@ pub struct Discovery {
     addr: Vec<String>,
     tls: bool,
     ipv4_only: bool,
+    dns_server: Option<String>,
     sender: Option<Arc<NotificationSender>>,
 }
 
@@ -106,6 +107,7 @@ impl Discovery {
             tls: false,
             ipv4_only: false,
             sender: None,
+            dns_server: None,
         }
     }
     pub fn with_sender(
@@ -121,6 +123,14 @@ impl Discovery {
     }
     pub fn with_ipv4_only(mut self, ipv4_only: bool) -> Self {
         self.ipv4_only = ipv4_only;
+        self
+    }
+    pub fn with_dns_server(mut self, dns_server: String) -> Self {
+        if dns_server.is_empty() {
+            self.dns_server = None;
+        } else {
+            self.dns_server = Some(dns_server);
+        }
         self
     }
 }

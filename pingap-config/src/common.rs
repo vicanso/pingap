@@ -211,6 +211,9 @@ pub struct UpstreamConf {
     /// Service discovery mechanism to use (e.g. "dns", "static")
     pub discovery: Option<String>,
 
+    /// DNS server for DNS discovery
+    pub dns_server: Option<String>,
+
     /// How frequently to update the upstream server list
     #[serde(default)]
     #[serde(with = "humantime_serde")]

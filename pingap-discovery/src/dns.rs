@@ -16,7 +16,7 @@ use super::{format_addrs, Addr, Error, Result};
 use super::{Discovery, DNS_DISCOVERY, LOG_CATEGORY};
 use async_trait::async_trait;
 use hickory_resolver::config::{
-    LookupIpStrategy, ResolverConfig, ResolverOpts,
+    LookupIpStrategy, NameServerConfigGroup, ResolverConfig, ResolverOpts,
 };
 use hickory_resolver::lookup_ip::LookupIp;
 use hickory_resolver::name_server::TokioConnectionProvider;
@@ -29,16 +29,18 @@ use pingora::lb::discovery::ServiceDiscovery;
 use pingora::lb::{Backend, Backends};
 use pingora::protocols::l4::socket::SocketAddr;
 use std::collections::{BTreeSet, HashMap};
-use std::net::ToSocketAddrs;
+use std::net::{IpAddr, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::SystemTime;
 use tracing::{debug, error, info};
 
 /// DNS service discovery implementation
+#[derive(Default)]
 struct Dns {
     ipv4_only: bool,
     hosts: Vec<Addr>,
     sender: Option<Arc<NotificationSender>>,
+    name_server: Option<String>,
 }
 
 /// Checks if the discovery type is DNS
@@ -62,7 +64,22 @@ impl Dns {
             hosts,
             ipv4_only,
             sender: None,
+            ..Default::default()
         })
+    }
+    /// Sets the name server
+    ///
+    /// # Arguments
+    /// * `name_server` - The name server
+    ///
+    /// # Returns
+    /// * `Self` - The DNS discovery instance
+    pub fn with_name_server(mut self, name_server: String) -> Self {
+        if name_server.is_empty() {
+            return self;
+        }
+        self.name_server = Some(name_server);
+        self
     }
     /// Sets the notification sender
     ///
@@ -84,8 +101,27 @@ impl Dns {
     /// # Returns
     /// * `Result<(ResolverConfig, ResolverOpts)>` - Resolver configuration and options
     fn read_system_conf(&self) -> Result<(ResolverConfig, ResolverOpts)> {
-        let (config, mut options) =
+        let (mut config, mut options) =
             read_system_conf().map_err(|e| Error::Resolve { source: e })?;
+
+        if let Some(name_server) = &self.name_server {
+            let mut ips = vec![];
+            for item in name_server.split(",") {
+                let ip = item.trim().parse::<IpAddr>().map_err(|e| {
+                    Error::Invalid {
+                        message: e.to_string(),
+                    }
+                })?;
+                ips.push(ip);
+            }
+            let name_servers =
+                NameServerConfigGroup::from_ips_clear(&ips, 53, true);
+            config = ResolverConfig::from_parts(
+                config.domain().cloned(),
+                config.search().to_vec(),
+                name_servers,
+            );
+        }
 
         options.ip_strategy = if self.ipv4_only {
             LookupIpStrategy::Ipv4Only
@@ -262,7 +298,11 @@ impl ServiceDiscovery for Dns {
 /// # Returns
 /// * `Result<Backends>` - Configured service discovery backend
 pub fn new_dns_discover_backends(discovery: &Discovery) -> Result<Backends> {
-    let dns = Dns::new(&discovery.addr, discovery.tls, discovery.ipv4_only)?;
+    let mut dns =
+        Dns::new(&discovery.addr, discovery.tls, discovery.ipv4_only)?;
+    if let Some(dns_server) = &discovery.dns_server {
+        dns = dns.with_name_server(dns_server.clone());
+    }
     let backends =
         Backends::new(Box::new(dns.with_sender(discovery.sender.clone())));
     Ok(backends)

@@ -349,10 +349,13 @@ fn new_load_balancer(
         .unwrap_or_default();
 
     // Create backend servers using the configured addresses and discovery method
-    let discovery = Discovery::new(conf.addrs.clone())
+    let mut discovery = Discovery::new(conf.addrs.clone())
         .with_ipv4_only(conf.ipv4_only.unwrap_or_default())
         .with_tls(tls)
         .with_sender(sender.clone());
+    if let Some(dns_server) = &conf.dns_server {
+        discovery = discovery.with_dns_server(dns_server.clone());
+    }
     let backends = new_backends(&discovery_category, &discovery)?;
 
     // Parse the load balancing algorithm configuration

@@ -103,6 +103,14 @@ export default function Upstreams() {
       category: ExFormItemCategory.TEXT,
     },
     {
+      name: "dns_server",
+      label: upstreamI18n("dnsServer"),
+      placeholder: upstreamI18n("dnsServerPlaceholder"),
+      defaultValue: upstreamConfig.dns_server,
+      span: 6,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
       name: "includes",
       label: i18n("includes"),
       placeholder: i18n("includesPlaceholder"),

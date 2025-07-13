@@ -233,6 +233,9 @@ export default {
     updateFrequency: "Discovery Update Frequency",
     updateFrequencyPlaceholder:
       "Input the update frequency of discovery(e.g. 30s)",
+    dnsServer: "Dns Server",
+    dnsServerPlaceholder:
+      "Input the dns server for dns discovery(e.g. 8.8.8.8,1.1.1.1)",
     algo: "Load Balancer Algorithm",
     algoPlaceholder: "Input algorithm for load balance(e.g. hash:ip)",
     healthCheck: "Health Check",

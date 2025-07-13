@@ -11,6 +11,7 @@ export interface Upstream {
   addrs: string[];
   discovery?: string;
   update_frequency?: string;
+  dns_server?: string;
   algo?: string;
   sni?: string;
   alpn?: string;
