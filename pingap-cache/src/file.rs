@@ -18,6 +18,7 @@ use super::{Error, Result, LOG_CATEGORY, PAGE_SIZE};
 use super::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use async_trait::async_trait;
 use bytes::Bytes;
+use humantime::parse_duration;
 use path_absolutize::*;
 use pingap_core::{convert_query_map, TinyUfo};
 #[cfg(feature = "tracing")]
@@ -25,7 +26,7 @@ use prometheus::Histogram;
 use scopeguard::defer;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use substring::Substring;
 use tokio::fs;
 use tracing::{debug, error, info};
@@ -55,6 +56,8 @@ pub struct FileCache {
     cache: Option<TinyUfo<String, CacheObject>>,
     /// Max tinyufo cache weight
     cache_file_max_weight: u16,
+    /// Inactive duration when cache file will be removed regardless of their freshness.
+    cache_inactive: Duration,
 }
 
 /// File cache parameters
@@ -62,6 +65,8 @@ pub struct FileCache {
 struct FileCacheParams {
     /// Cache directory
     directory: String,
+    /// Inactive duration when cache file will be removed regardless of their freshness.
+    inactive: Duration,
     /// Max reading count
     reading_max: u32,
     /// Max writing count
@@ -80,6 +85,7 @@ impl Default for FileCacheParams {
             writing_max: 1_000,
             cache_max: 0,
             cache_file_max_weight: 1024 * 1024 / PAGE_SIZE,
+            inactive: Duration::from_secs(24 * 3600),
         }
     }
 }
@@ -135,6 +141,10 @@ fn parse_params(dir: &str) -> FileCacheParams {
             .get("cache_file_max_size")
             .and_then(|v| v.parse::<usize>().map(|v| v / PAGE_SIZE).ok())
             .unwrap_or(params.cache_file_max_weight);
+        params.inactive = m
+            .get("inactive")
+            .and_then(|v| parse_duration(v).ok())
+            .unwrap_or(params.inactive);
     }
     params
 }
@@ -175,6 +185,7 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
         #[cfg(feature = "tracing")]
         write_time: CACHE_WRITING_TIME.clone(),
         cache,
+        cache_inactive: params.inactive,
     })
 }
 
@@ -411,8 +422,8 @@ impl HttpCacheStorage for FileCache {
         }
         Ok((success, fail))
     }
-    fn support_clear(&self) -> bool {
-        true
+    fn inactive(&self) -> Option<Duration> {
+        Some(self.cache_inactive)
     }
 }
 

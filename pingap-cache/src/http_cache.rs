@@ -175,14 +175,12 @@ pub trait HttpCacheStorage: Sync + Send {
         None
     }
 
-    /// Returns whether this storage implementation supports the clear operation
+    /// Returns the inactive duration for the cache storage.
     ///
     /// # Returns
-    /// * `bool` - Default implementation returns false, indicating no clear support
-    /// Implementations should override this to return true if they
-    /// support the clear operation
-    fn support_clear(&self) -> bool {
-        false
+    /// * `Option<Duration>` - The inactive duration for the cache storage
+    fn inactive(&self) -> Option<Duration> {
+        None
     }
 }
 
@@ -196,8 +194,11 @@ async fn do_file_storage_clear(
         return Ok(false);
     }
 
-    let Some(access_before) =
-        SystemTime::now().checked_sub(Duration::from_secs(24 * 3600))
+    let Some(inactive_duration) = cache.inactive() else {
+        return Ok(false);
+    };
+
+    let Some(access_before) = SystemTime::now().checked_sub(inactive_duration)
     else {
         return Ok(false);
     };
@@ -226,9 +227,7 @@ pub fn new_storage_clear_service() -> Option<(String, SimpleServiceTaskFuture)>
     let Ok(backend) = get_cache_backend(None) else {
         return None;
     };
-    if !backend.cache.support_clear() {
-        return None;
-    }
+    backend.cache.inactive()?;
     let task: SimpleServiceTaskFuture = Box::new(move |count: u32| {
         Box::pin({
             let value = backend.cache.clone();

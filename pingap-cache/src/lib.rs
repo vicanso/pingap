@@ -147,7 +147,7 @@ pub fn get_cache_backend(
             size = ByteSize::b(size as u64).to_string(),
             cache_type,
             cache_mode,
-            support_clear = cache.cache.support_clear(),
+            inactive = cache.cache.inactive().map(|v| v.as_secs()),
             "init cache backend success"
         );
         Ok(cache)
