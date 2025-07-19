@@ -85,7 +85,7 @@ impl Default for FileCacheParams {
             writing_max: 1_000,
             cache_max: 0,
             cache_file_max_weight: 1024 * 1024 / PAGE_SIZE,
-            inactive: Duration::from_secs(24 * 3600),
+            inactive: Duration::from_secs(48 * 3600),
         }
     }
 }
