@@ -22,3 +22,4 @@ default_*
 report.*
 .shuttle*
 Secrets*.toml
+Cargo.lock

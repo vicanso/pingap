@@ -30,6 +30,7 @@ use std::time::{Duration, SystemTime};
 use substring::Substring;
 use tokio::fs;
 use tracing::{debug, error, info};
+use urlencoding::decode;
 use walkdir::WalkDir;
 
 /// A file-based cache implementation that combines disk storage with in-memory caching
@@ -58,6 +59,8 @@ pub struct FileCache {
     cache_file_max_weight: u16,
     /// Inactive duration when cache file will be removed regardless of their freshness.
     cache_inactive: Duration,
+    /// Cache file path levels
+    levels: Vec<u32>,
 }
 
 /// File cache parameters
@@ -75,6 +78,8 @@ struct FileCacheParams {
     cache_max: usize,
     /// Max tinyufo cache weight
     cache_file_max_weight: usize,
+    // Cache file path levels
+    levels: Vec<u32>,
 }
 
 impl Default for FileCacheParams {
@@ -86,6 +91,7 @@ impl Default for FileCacheParams {
             cache_max: 0,
             cache_file_max_weight: 1024 * 1024 / PAGE_SIZE,
             inactive: Duration::from_secs(48 * 3600),
+            levels: vec![],
         }
     }
 }
@@ -145,6 +151,31 @@ fn parse_params(dir: &str) -> FileCacheParams {
             .get("inactive")
             .and_then(|v| parse_duration(v).ok())
             .unwrap_or(params.inactive);
+        params.levels = m
+            .get("levels")
+            .and_then(|v| {
+                let mut valid = true;
+                let mut levels = vec![];
+                for item in decode(v.as_str()).unwrap_or_default().split(':') {
+                    let Ok(value) = item.parse::<u32>() else {
+                        valid = false;
+                        break;
+                    };
+                    if value > 3 {
+                        valid = false;
+                        break;
+                    }
+                    levels.push(value);
+                }
+                if levels.len() > 2 {
+                    return None;
+                }
+                if valid {
+                    return Some(levels);
+                }
+                None
+            })
+            .unwrap_or(params.levels);
     }
     params
 }
@@ -161,6 +192,12 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
     info!(
         category = LOG_CATEGORY,
         dir = params.directory,
+        levels = params
+            .levels
+            .iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<String>>()
+            .join(":"),
         reading_max = params.reading_max,
         writing_max = params.writing_max,
         cache_max = params.cache_max,
@@ -186,17 +223,28 @@ pub fn new_file_cache(dir: &str) -> Result<FileCache> {
         write_time: CACHE_WRITING_TIME.clone(),
         cache,
         cache_inactive: params.inactive,
+        levels: params.levels,
     })
 }
 
 impl FileCache {
     #[inline]
     fn get_file_path(&self, key: &str, namespace: &str) -> std::path::PathBuf {
-        if namespace.is_empty() {
-            Path::new(&self.directory).join(key)
-        } else {
-            Path::new(&self.directory).join(format!("{namespace}/{key}"))
+        let mut path = Path::new(&self.directory).to_path_buf();
+        if !namespace.is_empty() {
+            path = path.join(namespace);
+        };
+        if self.levels.is_empty() {
+            return path.join(key);
         }
+        let mut index = key.len() - 1;
+        for level in self.levels.iter() {
+            let level = *level as usize;
+            let hex = key.substring(index - level, index);
+            path = path.join(hex);
+            index -= level;
+        }
+        path.join(key)
     }
 }
 
@@ -322,6 +370,11 @@ impl HttpCacheStorage for FileCache {
                 max: self.writing_max,
                 message: "too many writing".to_string(),
             });
+        }
+        if let Some(parent) = file.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .map_err(|e| Error::Io { source: e })?;
         }
         let result = fs::write(file, buf).await;
         #[cfg(feature = "tracing")]
