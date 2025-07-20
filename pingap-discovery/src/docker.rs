@@ -227,8 +227,8 @@ impl Docker {
 
         upstreams.extend(backends);
         // no readiness
-        let health = HashMap::new();
-        Ok((upstreams, health))
+        let enablement = HashMap::new();
+        Ok((upstreams, enablement))
     }
 }
 

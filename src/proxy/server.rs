@@ -1610,8 +1610,11 @@ impl ProxyHttp for Server {
             session.downstream_modules_ctx.get::<ResponseCompression>()
         {
             if c.is_enabled() {
-                if let Some((_, in_bytes, out_bytes, took)) = c.get_info() {
+                if let Some((algorithm, in_bytes, out_bytes, took)) =
+                    c.get_info()
+                {
                     ctx.compression_stat = Some(CompressionStat {
+                        algorithm: algorithm.to_string(),
                         in_bytes,
                         out_bytes,
                         duration: took,

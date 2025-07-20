@@ -228,7 +228,7 @@ impl ServiceDiscovery for Dns {
         let hosts: Vec<String> =
             self.hosts.iter().map(|item| item.0.clone()).collect();
         match self.run_discover().await {
-            Ok((upstreams, healthy, failed_hosts)) => {
+            Ok((upstreams, enablement, failed_hosts)) => {
                 let addrs: Vec<String> = upstreams
                     .iter()
                     .map(|item| item.addr.to_string())
@@ -258,7 +258,7 @@ impl ServiceDiscovery for Dns {
                             .await;
                     }
                 }
-                return Ok((upstreams, healthy));
+                return Ok((upstreams, enablement));
             },
             Err(e) => {
                 error!(

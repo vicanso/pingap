@@ -72,6 +72,8 @@ pub trait ModifyResponseBody: Sync + Send {
 
 /// Statistics about response compression operations
 pub struct CompressionStat {
+    /// Algorithm used for compression
+    pub algorithm: String,
     /// Size of the data before compression in bytes
     pub in_bytes: usize,
     /// Size of the data after compression in bytes

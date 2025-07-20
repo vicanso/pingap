@@ -761,6 +761,7 @@ pub async fn try_update_upstreams(
         if !updated_upstreams.contains(name) {
             continue;
         }
+        // run health check before switch to new upstream
         if let Err(e) = run_health_check(up).await {
             error!(
                 category = LOG_CATEGORY,

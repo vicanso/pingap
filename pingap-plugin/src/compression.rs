@@ -167,17 +167,20 @@ impl Plugin for Compression {
 
         // Select compression algorithm based on priority and client support
         // Priority: zstd > br > gzip
-        let level = if self.zstd_level > 0 && accept_encoding.contains(ZSTD) {
-            self.zstd_level
+        let mut zstd_level = 0;
+        let mut br_level = 0;
+        let mut gzip_level = 0;
+        if self.zstd_level > 0 && accept_encoding.contains(ZSTD) {
+            zstd_level = self.zstd_level;
         } else if self.br_level > 0 && accept_encoding.contains(BR) {
-            self.br_level
+            br_level = self.br_level;
         } else if self.gzip_level > 0 && accept_encoding.contains(GZIP) {
-            self.gzip_level
-        } else {
-            0
-        };
-        debug!(level, "compression level");
-        if level == 0 {
+            gzip_level = self.gzip_level;
+        }
+
+        debug!(zstd_level, br_level, gzip_level, "compression level");
+
+        if zstd_level == 0 && br_level == 0 && gzip_level == 0 {
             return Ok((false, None));
         }
 
@@ -195,14 +198,14 @@ impl Plugin for Compression {
         }
 
         // Configure compression levels for each supported algorithm
-        if self.zstd_level > 0 {
-            c.adjust_algorithm_level(Algorithm::Zstd, self.zstd_level);
+        if zstd_level > 0 {
+            c.adjust_algorithm_level(Algorithm::Zstd, zstd_level);
         }
-        if self.br_level > 0 {
-            c.adjust_algorithm_level(Algorithm::Brotli, self.br_level);
+        if br_level > 0 {
+            c.adjust_algorithm_level(Algorithm::Brotli, br_level);
         }
-        if self.gzip_level > 0 {
-            c.adjust_algorithm_level(Algorithm::Gzip, self.gzip_level);
+        if gzip_level > 0 {
+            c.adjust_algorithm_level(Algorithm::Gzip, gzip_level);
         }
 
         Ok((true, None))

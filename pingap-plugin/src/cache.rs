@@ -27,7 +27,9 @@ use humantime::parse_duration;
 use once_cell::sync::{Lazy, OnceCell};
 use pingap_cache::{get_cache_backend, CacheBackendOption, HttpCache};
 use pingap_config::{get_current_config, PluginCategory, PluginConf};
-use pingap_core::{get_cache_key, Ctx, HttpResponse, Plugin, PluginStep};
+use pingap_core::{
+    get_cache_key, get_client_ip, Ctx, HttpResponse, Plugin, PluginStep,
+};
 use pingora::cache::eviction::simple_lru::Manager;
 use pingora::cache::eviction::EvictionManager;
 use pingora::cache::key::CacheHashKey;
@@ -395,7 +397,7 @@ impl Plugin for Cache {
         if method == METHOD_PURGE.to_owned() {
             let found = match self
                 .purge_ip_rules
-                .is_match(&pingap_core::get_client_ip(session))
+                .is_match(&get_client_ip(session))
             {
                 Ok(matched) => matched,
                 Err(e) => {
