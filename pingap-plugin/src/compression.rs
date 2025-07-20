@@ -172,9 +172,11 @@ impl Plugin for Compression {
         let mut gzip_level = 0;
         if self.zstd_level > 0 && accept_encoding.contains(ZSTD) {
             zstd_level = self.zstd_level;
-        } else if self.br_level > 0 && accept_encoding.contains(BR) {
+        }
+        if self.br_level > 0 && accept_encoding.contains(BR) {
             br_level = self.br_level;
-        } else if self.gzip_level > 0 && accept_encoding.contains(GZIP) {
+        }
+        if self.gzip_level > 0 && accept_encoding.contains(GZIP) {
             gzip_level = self.gzip_level;
         }
 
