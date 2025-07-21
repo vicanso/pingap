@@ -301,6 +301,7 @@ fn bench_logger_format(c: &mut Criterion) {
                 in_bytes: 50 * 1024,
                 out_bytes: 12 * 1024,
                 duration: Duration::from_millis(8),
+                ..Default::default()
             }),
             cache_lookup_time: Some(3),
             cache_lock_time: Some(8),

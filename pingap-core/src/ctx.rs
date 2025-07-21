@@ -67,9 +67,10 @@ fn format_duration(mut buf: BytesMut, ms: u64) -> BytesMut {
 
 /// Trait for modifying the response body
 pub trait ModifyResponseBody: Sync + Send {
-    fn handle(&self, data: Bytes) -> Bytes;
+    fn handle(&self, data: Bytes) -> pingora::Result<Bytes>;
 }
 
+#[derive(Default)]
 /// Statistics about response compression operations
 pub struct CompressionStat {
     /// Algorithm used for compression
@@ -570,6 +571,22 @@ impl Ctx {
 
         timings.join(", ")
     }
+    #[inline]
+    pub fn push_cache_key(&mut self, key: String) {
+        if let Some(cache_keys) = &mut self.cache_keys {
+            cache_keys.push(key.to_string());
+        } else {
+            self.cache_keys = Some(vec![key.to_string()]);
+        }
+    }
+    #[inline]
+    pub fn extend_cache_keys(&mut self, keys: Vec<String>) {
+        if let Some(cache_keys) = &mut self.cache_keys {
+            cache_keys.extend(keys);
+        } else {
+            self.cache_keys = Some(keys);
+        }
+    }
 }
 
 /// Generates a cache key from the request method, URI and state context.
@@ -853,6 +870,7 @@ mod tests {
             in_bytes: 1024,
             out_bytes: 500,
             duration: Duration::from_millis(5),
+            ..Default::default()
         });
         assert_eq!(
             b"5",

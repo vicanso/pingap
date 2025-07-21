@@ -346,6 +346,7 @@ export default {
     compressionZstdLevel: "Zstd压缩级别",
     compressionZstdLevelPlaceholder: "输入zstd压缩级别(1-22)",
     compressionDecompression: "是否支持解压缩",
+    compressionMode: "模式",
     acceptEncodingList: "支持的压缩编码",
     acceptEncodingListPlaceholder: "输入请求支持的压缩编码(如 zstd, br)",
     acceptEncodingOnlyOne: "仅支持单个压缩编码",

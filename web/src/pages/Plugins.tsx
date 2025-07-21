@@ -485,9 +485,18 @@ export default function Plugins() {
           label: pluginI18n("compressionDecompression"),
           placeholder: "",
           defaultValue: pluginConfig.decompression as boolean,
-          span: 6,
+          span: 2,
           category: ExFormItemCategory.RADIOS,
           options: newBooleanOptions(),
+        },
+        {
+          name: "mode",
+          label: pluginI18n("compressionMode"),
+          placeholder: "",
+          defaultValue: pluginConfig.mode as string,
+          span: 2,
+          category: ExFormItemCategory.RADIOS,
+          options: newStringOptions(["pipe", "full"], false),
         },
       );
       break;

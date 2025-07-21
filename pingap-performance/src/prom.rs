@@ -849,6 +849,7 @@ mod tests {
                     in_bytes: 1024,
                     out_bytes: 512,
                     duration: Duration::from_millis(20),
+                    ..Default::default()
                 }),
                 location: "lo".to_string(),
                 upstream: "upstream".to_string(),

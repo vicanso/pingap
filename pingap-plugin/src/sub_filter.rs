@@ -138,7 +138,7 @@ impl ModifyResponseBody for SubFilterReplacer {
     ///
     /// # Returns
     /// * `Bytes` - The modified response body
-    fn handle(&self, data: Bytes) -> Bytes {
+    fn handle(&self, data: Bytes) -> pingora::Result<Bytes> {
         let mut data = data.to_vec();
         for item in self.filters.iter() {
             if let Some(regex_pattern) = &item.regex_pattern {
@@ -165,7 +165,7 @@ impl ModifyResponseBody for SubFilterReplacer {
                 }
             }
         }
-        data.into()
+        Ok(data.into())
     }
 }
 
@@ -304,7 +304,7 @@ mod tests {
             .unwrap()],
         };
         let data = b"http://pingap.io http://PinGap.io";
-        let result = replacer.handle(Bytes::from_static(data));
+        let result = replacer.handle(Bytes::from_static(data)).unwrap();
         assert_eq!(
             result,
             Bytes::from_static(b"https://pingap.io/api https://pingap.io/api")
@@ -318,7 +318,7 @@ mod tests {
             .unwrap()],
         };
         let data = b"http://pingap.io http://PinGap.io";
-        let result = replacer.handle(Bytes::from_static(data));
+        let result = replacer.handle(Bytes::from_static(data)).unwrap();
         assert_eq!(
             result,
             Bytes::from_static(b"https://pingap.io/api http://PinGap.io")
@@ -332,7 +332,7 @@ mod tests {
             .unwrap()],
         };
         let data = b"http://pingap.io http://PinGap.io http://pingap.io";
-        let result = replacer.handle(Bytes::from_static(data));
+        let result = replacer.handle(Bytes::from_static(data)).unwrap();
         assert_eq!(
             result,
             Bytes::from_static(
@@ -348,7 +348,7 @@ mod tests {
             .unwrap()],
         };
         let data = b"http://pingap.io http://PinGap.io http://pingap.io";
-        let result = replacer.handle(Bytes::from_static(data));
+        let result = replacer.handle(Bytes::from_static(data)).unwrap();
         assert_eq!(
             result,
             Bytes::from_static(
@@ -364,7 +364,7 @@ mod tests {
             .unwrap()],
         };
         let data = b"http://pingap.io http://PinGap.io http://pingap.io";
-        let result = replacer.handle(Bytes::from_static(data));
+        let result = replacer.handle(Bytes::from_static(data)).unwrap();
         assert_eq!(
             result,
             Bytes::from_static(

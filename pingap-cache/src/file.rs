@@ -324,7 +324,10 @@ impl HttpCacheStorage for FileCache {
         }
         debug!(
             category = LOG_CATEGORY,
-            key, namespace, "get cache from file"
+            key,
+            namespace =
+                std::string::String::from_utf8_lossy(namespace).to_string(),
+            "get cache from file"
         );
         Ok(obj)
     }
@@ -380,7 +383,13 @@ impl HttpCacheStorage for FileCache {
         #[cfg(feature = "tracing")]
         self.write_time.observe(elapsed_second(start));
         let _ = result.map_err(|e| Error::Io { source: e })?;
-        debug!(category = LOG_CATEGORY, key, namespace, "put cache to file");
+        debug!(
+            category = LOG_CATEGORY,
+            key,
+            namespace =
+                std::string::String::from_utf8_lossy(namespace).to_string(),
+            "put cache to file"
+        );
         Ok(())
     }
     /// Removes a cache entry from both TinyUfo and disk storage.

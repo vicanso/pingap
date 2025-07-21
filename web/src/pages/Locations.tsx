@@ -3,7 +3,6 @@ import { useI18n } from "@/i18n";
 import useConfigState, { Location } from "@/states/config";
 import React from "react";
 import { ExForm, ExFormItem } from "@/components/ex-form";
-import { pascal } from "radash";
 import { z } from "zod";
 import {
   ExFormItemCategory,
@@ -90,7 +89,7 @@ export default function Locations() {
     .forEach((name) => {
       const item = currentPlugins[name];
       plugins.push({
-        label: pascal(`${name}(${item.category || ""})`),
+        label: `${name}(${item.category || ""})`,
         option: name,
         value: name,
       });

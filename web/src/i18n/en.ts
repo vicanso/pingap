@@ -376,6 +376,7 @@ export default {
     compressionZstdLevel: "Zstd Level",
     compressionZstdLevelPlaceholder: "Input the zstd level(1-22)",
     compressionDecompression: "Support Decompression",
+    compressionMode: "Mode",
     acceptEncodingList: "Accept Encoding",
     acceptEncodingListPlaceholder:
       "Input the request accept encoding(e.g. zstd, br)",

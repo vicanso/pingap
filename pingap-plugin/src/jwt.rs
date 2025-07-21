@@ -357,7 +357,7 @@ impl ModifyResponseBody for Sign {
     ///
     /// # Returns
     /// * `Bytes` - JSON response containing the signed JWT token
-    fn handle(&self, data: Bytes) -> Bytes {
+    fn handle(&self, data: Bytes) -> pingora::Result<Bytes> {
         let is_hs512 = self.algorithm == "HS512";
         let alg = if is_hs512 { "HS512" } else { "HS256" };
         // spellchecker:off
@@ -375,7 +375,7 @@ impl ModifyResponseBody for Sign {
             URL_SAFE_NO_PAD.encode(hash)
         };
         let token = format!("{content}.{sign}");
-        Bytes::from(r#"{"token": "{}"}"#.replace("{}", &token))
+        Ok(Bytes::from(r#"{"token": "{}"}"#.replace("{}", &token)))
     }
 }
 
@@ -653,7 +653,7 @@ auth_path = "/login"
         );
         assert_eq!(true, ctx.modify_response_body.is_some());
         if let Some(modify) = ctx.modify_response_body {
-            let data = modify.handle(Bytes::from_static(b"Pingap"));
+            let data = modify.handle(Bytes::from_static(b"Pingap")).unwrap();
             assert_eq!(
                 r#"{"token": "eyJhbGciOiAiSFMyNTYiLCJ0eXAiOiAiSldUIn0.UGluZ2Fw.wRLT2HhM1R-J4rVz3XCWADNIrmeInLtRGQzfJZaz-qI"}"#,
                 std::string::String::from_utf8_lossy(&data)

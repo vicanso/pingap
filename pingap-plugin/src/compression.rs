@@ -13,15 +13,22 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_hash_key, get_int_conf, get_plugin_factory, Error,
+    get_bool_conf, get_hash_key, get_int_conf, get_plugin_factory,
+    get_str_conf, Error,
 };
 use async_trait::async_trait;
+use bytes::Bytes;
 use ctor::ctor;
+use http::HeaderValue;
 use pingap_config::PluginConf;
+use pingap_core::HTTP_HEADER_TRANSFER_CHUNKED;
+use pingap_core::{new_internal_error, ModifyResponseBody};
 use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep};
+use pingora::http::ResponseHeader;
 use pingora::modules::http::compression::ResponseCompression;
 use pingora::protocols::http::compression::Algorithm;
 use pingora::proxy::Session;
+use std::str::FromStr;
 use std::sync::Arc;
 use tracing::debug;
 
@@ -31,6 +38,32 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 const ZSTD: &str = "zstd"; // Zstandard compression
 const BR: &str = "br"; // Brotli compression
 const GZIP: &str = "gzip"; // Gzip compression
+
+const FULL_BODY_COMPRESS_MODE: &str = "full";
+
+struct Compressor {
+    algorithm: Algorithm,
+    level: u32,
+}
+
+impl ModifyResponseBody for Compressor {
+    fn handle(&self, data: Bytes) -> pingora::Result<Bytes> {
+        let compressor = self.algorithm.compressor(self.level);
+        if let Some(mut compressor) = compressor {
+            let data = compressor
+                .encode(data.as_ref(), true)
+                .map_err(|e| new_internal_error(500, e.to_string()))?;
+            return Ok(data);
+        }
+        Err(new_internal_error(
+            500,
+            format!(
+                "Compress algorithm {} is not supported",
+                self.algorithm.as_str()
+            ),
+        ))
+    }
+}
 
 /// Plugin for handling HTTP response compression
 /// Supports multiple compression algorithms with configurable compression levels
@@ -45,6 +78,8 @@ pub struct Compression {
     decompression: Option<bool>,
     // Defines when this plugin runs in the request processing pipeline
     plugin_step: PluginStep,
+    // Pipe mode or full body mode
+    mode: String,
     // Unique identifier for caching and tracking plugin instances
     hash_value: String,
 }
@@ -80,6 +115,7 @@ impl TryFrom<&PluginConf> for Compression {
         let gzip_level = get_int_conf(value, "gzip_level") as u32;
         let br_level = get_int_conf(value, "br_level") as u32;
         let zstd_level = get_int_conf(value, "zstd_level") as u32;
+        let mode = get_str_conf(value, "mode");
 
         // Enable compression if any algorithm has a non-zero level
         let support_compression = gzip_level + br_level + zstd_level > 0;
@@ -91,6 +127,7 @@ impl TryFrom<&PluginConf> for Compression {
             zstd_level,
             decompression,
             support_compression,
+            mode,
             // Plugin runs during early request phase
             plugin_step: PluginStep::EarlyRequest,
         };
@@ -110,6 +147,35 @@ impl Compression {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new compression plugin");
         Self::try_from(params)
+    }
+    fn get_compress_level(&self, session: &Session) -> (u32, u32, u32) {
+        // Extract and validate Accept-Encoding header
+        let header = session.req_header();
+        let Some(accept_encoding) =
+            header.headers.get(http::header::ACCEPT_ENCODING)
+        else {
+            return (0, 0, 0);
+        };
+        let accept_encoding = accept_encoding.to_str().unwrap_or_default();
+        if accept_encoding.is_empty() {
+            return (0, 0, 0);
+        }
+
+        // Select compression algorithm based on priority and client support
+        // Priority: zstd > br > gzip
+        let mut zstd_level = 0;
+        let mut br_level = 0;
+        let mut gzip_level = 0;
+        if self.zstd_level > 0 && accept_encoding.contains(ZSTD) {
+            zstd_level = self.zstd_level;
+        }
+        if self.br_level > 0 && accept_encoding.contains(BR) {
+            br_level = self.br_level;
+        }
+        if self.gzip_level > 0 && accept_encoding.contains(GZIP) {
+            gzip_level = self.gzip_level;
+        }
+        (zstd_level, br_level, gzip_level)
     }
 }
 
@@ -143,8 +209,26 @@ impl Plugin for Compression {
         &self,
         step: PluginStep,
         session: &mut Session,
-        _ctx: &mut Ctx,
+        ctx: &mut Ctx,
     ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+        if step == PluginStep::EarlyRequest
+            && self.mode == FULL_BODY_COMPRESS_MODE
+        {
+            let (zstd_level, br_level, gzip_level) =
+                self.get_compress_level(session);
+            let key = if zstd_level > 0 {
+                ZSTD
+            } else if br_level > 0 {
+                BR
+            } else if gzip_level > 0 {
+                GZIP
+            } else {
+                ""
+            };
+            if !key.is_empty() {
+                ctx.push_cache_key(key.to_string());
+            }
+        }
         // Early return conditions
         if step != self.plugin_step {
             return Ok((false, None));
@@ -152,35 +236,13 @@ impl Plugin for Compression {
         if !self.support_compression {
             return Ok((false, None));
         }
-
-        // Extract and validate Accept-Encoding header
-        let header = session.req_header_mut();
-        let Some(accept_encoding) =
-            header.headers.get(http::header::ACCEPT_ENCODING)
-        else {
-            return Ok((false, None));
-        };
-        let accept_encoding = accept_encoding.to_str().unwrap_or_default();
-        if accept_encoding.is_empty() {
+        if self.mode == FULL_BODY_COMPRESS_MODE {
             return Ok((false, None));
         }
+        let (zstd_level, br_level, gzip_level) =
+            self.get_compress_level(session);
 
-        // Select compression algorithm based on priority and client support
-        // Priority: zstd > br > gzip
-        let mut zstd_level = 0;
-        let mut br_level = 0;
-        let mut gzip_level = 0;
-        if self.zstd_level > 0 && accept_encoding.contains(ZSTD) {
-            zstd_level = self.zstd_level;
-        }
-        if self.br_level > 0 && accept_encoding.contains(BR) {
-            br_level = self.br_level;
-        }
-        if self.gzip_level > 0 && accept_encoding.contains(GZIP) {
-            gzip_level = self.gzip_level;
-        }
-
-        debug!(zstd_level, br_level, gzip_level, "compression level");
+        debug!(zstd_level, br_level, gzip_level, "pipe compression level");
 
         if zstd_level == 0 && br_level == 0 && gzip_level == 0 {
             return Ok((false, None));
@@ -211,6 +273,80 @@ impl Plugin for Compression {
         }
 
         Ok((true, None))
+    }
+    fn handle_upstream_response(
+        &self,
+        step: PluginStep,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        upstream_response: &mut ResponseHeader,
+    ) -> pingora::Result<bool> {
+        if step != PluginStep::UpstreamResponse
+            || !self.support_compression
+            || self.mode != FULL_BODY_COMPRESS_MODE
+        {
+            return Ok(false);
+        }
+        let Some(content_type) =
+            upstream_response.headers.get(http::header::CONTENT_TYPE)
+        else {
+            return Ok(false);
+        };
+        if !is_compressible_content_type(content_type) {
+            return Ok(false);
+        }
+        let (zstd_level, br_level, gzip_level) =
+            self.get_compress_level(session);
+        if zstd_level == 0 && br_level == 0 && gzip_level == 0 {
+            return Ok(false);
+        }
+        debug!(
+            zstd_level,
+            br_level, gzip_level, "full body compression level"
+        );
+        // Remove content-length since we're modifying the body
+        upstream_response.remove_header(&http::header::CONTENT_LENGTH);
+        // Switch to chunked transfer encoding
+        let _ = upstream_response.insert_header(
+            http::header::TRANSFER_ENCODING,
+            HTTP_HEADER_TRANSFER_CHUNKED.1.clone(),
+        );
+        let encoding = if zstd_level > 0 {
+            ctx.modify_upstream_response_body = Some(Box::new(Compressor {
+                algorithm: Algorithm::Zstd,
+                level: zstd_level,
+            }));
+            ZSTD
+        } else if br_level > 0 {
+            ctx.modify_upstream_response_body = Some(Box::new(Compressor {
+                algorithm: Algorithm::Brotli,
+                level: br_level,
+            }));
+            BR
+        } else {
+            ctx.modify_upstream_response_body = Some(Box::new(Compressor {
+                algorithm: Algorithm::Gzip,
+                level: gzip_level,
+            }));
+            GZIP
+        };
+        let _ = upstream_response
+            .insert_header(http::header::CONTENT_ENCODING, encoding);
+
+        Ok(false)
+    }
+}
+
+fn is_compressible_content_type(content_type: &HeaderValue) -> bool {
+    let Ok(content_type) = content_type.to_str() else {
+        return false;
+    };
+    let Ok(mime) = mime_guess::Mime::from_str(content_type) else {
+        return false;
+    };
+    match mime.essence_str() {
+        "application/json" | "application/xml" | "text/html" => true,
+        _ => mime.type_() == "text",
     }
 }
 

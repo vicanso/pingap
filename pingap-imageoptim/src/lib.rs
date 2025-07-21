@@ -46,34 +46,34 @@ struct ImageOptimizer {
 }
 
 impl ModifyResponseBody for ImageOptimizer {
-    fn handle(&self, data: Bytes) -> Bytes {
+    fn handle(&self, data: Bytes) -> pingora::Result<Bytes> {
         if let Ok(info) = load_image(&data, &self.image_type) {
             match self.format_type.as_str() {
                 "jpeg" => {
                     if let Ok(data) = optimize_jpeg(&info, self.jpeg_quality) {
-                        return Bytes::from(data);
+                        return Ok(Bytes::from(data));
                     }
                 },
                 "avif" => {
                     if let Ok(data) =
                         optimize_avif(&info, self.avif_quality, self.avif_speed)
                     {
-                        return Bytes::from(data);
+                        return Ok(Bytes::from(data));
                     }
                 },
                 "webp" => {
                     if let Ok(data) = optimize_webp(&info, self.webp_quality) {
-                        return Bytes::from(data);
+                        return Ok(Bytes::from(data));
                     }
                 },
                 _ => {
                     if let Ok(data) = optimize_png(&info, self.png_quality) {
-                        return Bytes::from(data);
+                        return Ok(Bytes::from(data));
                     }
                 },
             }
         }
-        data
+        Ok(data)
     }
 }
 
@@ -163,14 +163,11 @@ impl Plugin for ImageOptim {
                         accept_images.push(key);
                     }
                 }
+                accept_images.sort();
             }
         }
         if !accept_images.is_empty() {
-            if let Some(keys) = &mut ctx.cache_keys {
-                keys.extend(accept_images);
-            } else {
-                ctx.cache_keys = Some(accept_images);
-            }
+            ctx.extend_cache_keys(accept_images);
         }
         Ok((false, None))
     }

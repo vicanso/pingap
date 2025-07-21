@@ -389,8 +389,8 @@ impl Plugin for Cache {
             }
         }
         if !keys.is_empty() {
-            debug!("Cache keys: {keys:?}");
-            ctx.cache_keys = Some(keys);
+            ctx.extend_cache_keys(keys);
+            debug!("Cache keys: {:?}", ctx.cache_keys);
         }
 
         // Handle PURGE requests with IP-based access control

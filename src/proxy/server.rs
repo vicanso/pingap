@@ -50,6 +50,7 @@ use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::DirectiveValue;
 use pingora::cache::cache_control::{CacheControl, InterpretCacheControl};
 use pingora::cache::filters::resp_cacheable;
+use pingora::cache::key::CacheHashKey;
 use pingora::cache::{
     CacheKey, CacheMetaDefaults, NoCacheReason, RespCacheable,
 };
@@ -1164,7 +1165,9 @@ impl ProxyHttp for Server {
         );
         debug!(
             category = LOG_CATEGORY,
-            key = format!("{key:?}"),
+            namespace = key.namespace_str(),
+            primary = key.primary_key_str(),
+            user_tag = key.user_tag(),
             "cache key callback"
         );
         Ok(key)
@@ -1384,7 +1387,7 @@ impl ProxyHttp for Server {
 
             if end_of_stream {
                 if let Some(ref buf) = ctx.response_body {
-                    *body = Some(modify.handle(Bytes::from(buf.to_owned())));
+                    *body = Some(modify.handle(Bytes::from(buf.to_owned()))?);
                 }
                 ctx.response_body = None;
                 // if the body is empty, it will trigger response_body_filter again
@@ -1455,7 +1458,7 @@ impl ProxyHttp for Server {
 
             if end_of_stream {
                 if let Some(ref buf) = ctx.response_body {
-                    *body = Some(modify.handle(Bytes::from(buf.to_owned())));
+                    *body = Some(modify.handle(Bytes::from(buf.to_owned()))?);
                 }
                 // if the body is empty, it will trigger response_body_filter again
                 // so set modify response body to None
