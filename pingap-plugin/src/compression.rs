@@ -19,6 +19,10 @@ use super::{
 use async_trait::async_trait;
 use bytes::Bytes;
 use ctor::ctor;
+use http::header::{
+    ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
+    TRANSFER_ENCODING,
+};
 use http::HeaderValue;
 use pingap_config::PluginConf;
 use pingap_core::HTTP_HEADER_TRANSFER_CHUNKED;
@@ -151,9 +155,7 @@ impl Compression {
     fn get_compress_level(&self, session: &Session) -> (u32, u32, u32) {
         // Extract and validate Accept-Encoding header
         let header = session.req_header();
-        let Some(accept_encoding) =
-            header.headers.get(http::header::ACCEPT_ENCODING)
-        else {
+        let Some(accept_encoding) = header.headers.get(ACCEPT_ENCODING) else {
             return (0, 0, 0);
         };
         let accept_encoding = accept_encoding.to_str().unwrap_or_default();
@@ -287,8 +289,10 @@ impl Plugin for Compression {
         {
             return Ok(false);
         }
-        let Some(content_type) =
-            upstream_response.headers.get(http::header::CONTENT_TYPE)
+        if upstream_response.headers.contains_key(CONTENT_ENCODING) {
+            return Ok(false);
+        }
+        let Some(content_type) = upstream_response.headers.get(CONTENT_TYPE)
         else {
             return Ok(false);
         };
@@ -305,10 +309,10 @@ impl Plugin for Compression {
             br_level, gzip_level, "full body compression level"
         );
         // Remove content-length since we're modifying the body
-        upstream_response.remove_header(&http::header::CONTENT_LENGTH);
+        upstream_response.remove_header(&CONTENT_LENGTH);
         // Switch to chunked transfer encoding
         let _ = upstream_response.insert_header(
-            http::header::TRANSFER_ENCODING,
+            TRANSFER_ENCODING,
             HTTP_HEADER_TRANSFER_CHUNKED.1.clone(),
         );
         let encoding = if zstd_level > 0 {
@@ -330,8 +334,7 @@ impl Plugin for Compression {
             }));
             GZIP
         };
-        let _ = upstream_response
-            .insert_header(http::header::CONTENT_ENCODING, encoding);
+        let _ = upstream_response.insert_header(CONTENT_ENCODING, encoding);
 
         Ok(false)
     }
