@@ -361,7 +361,7 @@ export default function Upstreams() {
             setSearchParams(searchParams);
           }}
         >
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-[180px] cursor-pointer">
             <SelectValue placeholder={upstreamI18n("upstreamPlaceholder")} />
           </SelectTrigger>
           <SelectContent>{selectItems}</SelectContent>

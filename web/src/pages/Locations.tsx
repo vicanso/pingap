@@ -265,7 +265,7 @@ export default function Locations() {
             setSearchParams(searchParams);
           }}
         >
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-[180px] cursor-pointer">
             <SelectValue placeholder={locationI18n("locationPlaceholder")} />
           </SelectTrigger>
           <SelectContent>{selectItems}</SelectContent>

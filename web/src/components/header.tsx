@@ -116,7 +116,7 @@ export function MainHeader({
   const tips = (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon">
+        <Button variant="ghost" size="icon" className="cursor-pointer">
           <Cog />
         </Button>
       </DropdownMenuTrigger>
@@ -364,7 +364,7 @@ export function MainHeader({
         <div className="flex flex-1 items-center space-x-2 justify-end mr-2">
           <Popover>
             <PopoverTrigger asChild>
-              <Button variant="ghost" size="icon">
+              <Button variant="ghost" size="icon" className="cursor-pointer">
                 <AudioWaveform />
               </Button>
             </PopoverTrigger>
@@ -382,6 +382,7 @@ export function MainHeader({
           <Button
             variant="ghost"
             size="icon"
+            className="cursor-pointer"
             onClick={(e) => {
               e.preventDefault();
               goToConfig();

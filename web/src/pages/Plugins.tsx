@@ -1084,7 +1084,7 @@ export default function Plugins() {
             setSearchParams(searchParams);
           }}
         >
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-[180px] cursor-pointer">
             <SelectValue placeholder={pluginI18n("pluginPlaceholder")} />
           </SelectTrigger>
           <SelectContent>{selectItems}</SelectContent>

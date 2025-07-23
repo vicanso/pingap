@@ -93,7 +93,7 @@ export type FormContextValue = {
 
 interface ExFormProps {
   category?: string;
-  schema: z.Schema;
+  schema: z.ZodSchema<Record<string, unknown>>;
   items: ExFormItem[];
   defaultShow?: number;
   onlyModified?: boolean;
@@ -168,8 +168,9 @@ export function ExForm({
       onValueChange(values);
     }
   };
-  const form = useForm<z.infer<typeof schema>>({
-    resolver: zodResolver(schema),
+  const form = useForm({
+    // @ts-expect-error - zodResolver has complex type constraints that are difficult to satisfy with dynamic schemas
+    resolver: zodResolver(schema as z.ZodSchema<Record<string, unknown>>),
     defaultValues,
   });
   // 2. Define a submit handler.
@@ -388,6 +389,7 @@ export function ExForm({
                         placeholder={item.placeholder}
                         readOnly={item.readOnly}
                         type="number"
+                        value={field.value as string}
                         onInput={(e) => {
                           const value =
                             (e.target as HTMLInputElement).value || "";
@@ -397,7 +399,10 @@ export function ExForm({
                             setUpdated(item.name, Number(value));
                           }
                         }}
-                        {...field}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                        name={field.name}
+                        ref={field.ref}
                       />
                     </FormControl>
                     <FormMessage />
@@ -500,6 +505,7 @@ export function ExForm({
                         type={item.category}
                         placeholder={item.placeholder}
                         readOnly={item.readOnly}
+                        value={field.value as string}
                         onInput={(e) => {
                           let value =
                             (e.target as HTMLInputElement).value || "";
@@ -508,7 +514,10 @@ export function ExForm({
                           }
                           setUpdated(item.name, value);
                         }}
-                        {...field}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                        name={field.name}
+                        ref={field.ref}
                       />
                     </FormControl>
                     <FormMessage />

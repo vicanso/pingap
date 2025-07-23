@@ -318,7 +318,7 @@ export default function Servers() {
             setSearchParams(searchParams);
           }}
         >
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-[180px] cursor-pointer">
             <SelectValue placeholder={serverI18n("serverPlaceholder")} />
           </SelectTrigger>
           <SelectContent>{selectItems}</SelectContent>
