@@ -15,7 +15,7 @@ name = "pingap_acme"
 path = "src/lib.rs"
 
 [dependencies]
-instant-acme = "0.7.2"
+instant-acme = "0.8.2"
 snafu = { workspace = true }
 pingora = { workspace = true }
 substring = { workspace = true }

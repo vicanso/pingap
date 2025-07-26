@@ -15,9 +15,8 @@
 use super::{get_token_path, Error, Result, LOG_CATEGORY};
 use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
-    OrderStatus,
+    OrderStatus, RetryPolicy,
 };
-use pingap_certificate::rcgen;
 use pingap_certificate::{
     parse_leaf_chain_certificates, try_update_certificates, Certificate,
 };
@@ -347,28 +346,33 @@ async fn new_lets_encrypt(
     } else {
         LetsEncrypt::Staging.url()
     };
-    let (account, _) = Account::create(
-        &NewAccount {
-            contact: &[],
-            terms_of_service_agreed: true,
-            only_return_existing: false,
-        },
-        url,
-        None,
-    )
-    .await
-    .map_err(|e| Error::Instant {
-        category: "create_account".to_string(),
-        source: e,
-    })?;
+    let (account, _) = Account::builder()
+        .map_err(|e| Error::Instant {
+            category: "create_account".to_string(),
+            source: e,
+        })?
+        .create(
+            &NewAccount {
+                contact: &[],
+                terms_of_service_agreed: true,
+                only_return_existing: false,
+            },
+            url.to_string(),
+            None,
+        )
+        .await
+        .map_err(|e| Error::Instant {
+            category: "create_account".to_string(),
+            source: e,
+        })?;
 
     let mut order = account
-        .new_order(&NewOrder {
-            identifiers: &domains
+        .new_order(&NewOrder::new(
+            &domains
                 .iter()
                 .map(|item| Identifier::Dns(item.to_owned()))
                 .collect::<Vec<Identifier>>(),
-        })
+        ))
         .await
         .map_err(|e| Error::Instant {
             category: "new_order".to_string(),
@@ -386,14 +390,13 @@ async fn new_lets_encrypt(
         });
     }
 
-    let authorizations =
-        order.authorizations().await.map_err(|e| Error::Instant {
+    let mut authorizations = order.authorizations();
+
+    while let Some(result) = authorizations.next().await {
+        let mut authz = result.map_err(|e| Error::Instant {
             category: "authorizations".to_string(),
             source: e,
         })?;
-    let mut challenges = Vec::with_capacity(authorizations.len());
-
-    for authz in &authorizations {
         info!(
             category = LOG_CATEGORY,
             status = format!("{:?}", authz.status),
@@ -405,17 +408,14 @@ async fn new_lets_encrypt(
             _ => todo!(),
         }
 
-        let challenge = authz
-            .challenges
-            .iter()
-            .find(|c| c.r#type == ChallengeType::Http01)
-            .ok_or_else(|| Error::NotFound {
-                message: "Http01 challenge not found".to_string(),
+        let mut challenge =
+            authz.challenge(ChallengeType::Http01).ok_or_else(|| {
+                Error::NotFound {
+                    message: "Http01 challenge not found".to_string(),
+                }
             })?;
 
-        let instant_acme::Identifier::Dns(identifier) = &authz.identifier;
-
-        let key_auth = order.key_authorization(challenge);
+        let key_auth = challenge.key_authorization();
         storage
             .save(
                 &get_token_path(&challenge.token),
@@ -432,109 +432,42 @@ async fn new_lets_encrypt(
             token = challenge.token,
             "let's encrypt well known path",
         );
-
-        challenges.push((identifier, &challenge.url));
-    }
-    // set challenge ready for verification
-    for (_, url) in &challenges {
-        order
-            .set_challenge_ready(url)
-            .await
-            .map_err(|e| Error::Instant {
-                category: "set_challenge_ready".to_string(),
-                source: e,
-            })?;
+        challenge.set_ready().await.map_err(|e| Error::Instant {
+            category: "set_challenge_ready".to_string(),
+            source: e,
+        })?;
     }
 
-    // get order state, retry later if fail
-    let mut tries = 1u8;
-    let mut delay = Duration::from_millis(250);
-    let detail_url = authorizations.first();
-    let state = loop {
-        let state = order.state();
-        info!(
-            category = LOG_CATEGORY,
-            status = format!("{:?}", state.status),
-            "get order status"
-        );
-        if let OrderStatus::Ready | OrderStatus::Invalid | OrderStatus::Valid =
-            state.status
-        {
-            break state;
-        }
-        order.refresh().await.map_err(|e| Error::Instant {
-            category: "refresh_order".to_string(),
+    let retry = RetryPolicy::default().timeout(Duration::from_secs(60));
+
+    let status =
+        order.poll_ready(&retry).await.map_err(|e| Error::Instant {
+            category: "poll_ready".to_string(),
             source: e,
         })?;
 
-        delay *= 2;
-        tries += 1;
-        match tries < 10 {
-            true => info!(
-                category = LOG_CATEGORY,
-                delay = format!("{delay:?}"),
-                "order is not ready, waiting"
-            ),
-            false => {
-                return Err(Error::Fail {
-                    category: "retry_too_many".to_string(),
-                    message: format!(
-                        "order is not ready, detail url: {detail_url:?}"
-                    ),
-                });
-            },
-        }
-        tokio::time::sleep(delay).await;
-    };
-    if state.status == OrderStatus::Invalid {
+    if status != OrderStatus::Ready {
         return Err(Error::Fail {
-            category: "order_invalid".to_string(),
-            message: format!("order is invalid, detail url: {detail_url:?}"),
+            category: "poll_ready".to_string(),
+            message: format!("unexpected order status: {status:?}"),
         });
     }
 
-    // generate certificate
-    let mut names = Vec::with_capacity(challenges.len());
-    for (identifier, _) in challenges {
-        names.push(identifier.to_owned());
-    }
-    let mut params =
-        rcgen::CertificateParams::new(names.clone()).map_err(|e| {
-            Error::Rcgen {
-                category: "new_params".to_string(),
-                source: e,
-            }
+    let private_key_pem =
+        order.finalize().await.map_err(|e| Error::Instant {
+            category: "finalize".to_string(),
+            source: e,
         })?;
-    params.distinguished_name = rcgen::DistinguishedName::new();
-    let private_key = rcgen::KeyPair::generate().map_err(|e| Error::Rcgen {
-        category: "generate_key_pair".to_string(),
-        source: e,
-    })?;
-    let csr =
-        params
-            .serialize_request(&private_key)
-            .map_err(|e| Error::Rcgen {
-                category: "serialize_request".to_string(),
+    let cert_chain_pem =
+        order
+            .poll_certificate(&retry)
+            .await
+            .map_err(|e| Error::Instant {
+                category: "poll_certificate".to_string(),
                 source: e,
             })?;
-    order
-        .finalize(csr.der())
-        .await
-        .map_err(|e| Error::Instant {
-            category: "order_finalize".to_string(),
-            source: e,
-        })?;
-    let cert_chain_pem = loop {
-        match order.certificate().await.map_err(|e| Error::Instant {
-            category: "order_certificate".to_string(),
-            source: e,
-        })? {
-            Some(cert_chain_pem) => break cert_chain_pem,
-            None => tokio::time::sleep(Duration::from_secs(1)).await,
-        }
-    };
 
-    Ok((cert_chain_pem, private_key.serialize_pem()))
+    Ok((cert_chain_pem, private_key_pem))
 }
 
 #[cfg(test)]
