@@ -178,6 +178,9 @@ impl Certificate {
     /// # Returns
     /// * `bool` - True if the certificate is valid, false otherwise
     pub fn valid(&self, buffer_days: u16) -> bool {
+        if self.not_after == 0 {
+            return false;
+        }
         let ts = pingap_util::now_sec() as i64;
         let mut days = buffer_days as i64;
         if days == 0 {

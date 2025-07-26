@@ -33,11 +33,21 @@ use pingap_core::{
 use pingora::http::StatusCode;
 use pingora::proxy::Session;
 use std::sync::Arc;
+use std::sync::Once;
 use std::time::Duration;
 use substring::Substring;
 use tracing::{error, info};
 
 static WELL_KNOWN_PATH_PREFIX: &str = "/.well-known/acme-challenge/";
+
+// Initialize crypto provider once
+static INIT: Once = Once::new();
+
+fn ensure_crypto_provider() {
+    INIT.call_once(|| {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    });
+}
 
 /// Updates the certificate for the given name and domains using Let's Encrypt.
 /// This function will:
@@ -109,7 +119,7 @@ async fn do_update_certificates(
         let name = &item.name;
         let domains = &item.domains;
         let should_renew = match get_lets_encrypt_certificate(name) {
-            Ok(certificate) => {
+            Ok(Some(certificate)) => {
                 // check if certificate is valid or domains changed
                 let needs_renewal = !certificate.valid(item.buffer_days);
                 let domains_changed = {
@@ -121,6 +131,7 @@ async fn do_update_certificates(
                 };
                 needs_renewal || domains_changed
             },
+            Ok(None) => true,
             Err(e) => {
                 error!(
                     category = LOG_CATEGORY,
@@ -250,13 +261,20 @@ pub fn new_lets_encrypt_service(
 }
 
 /// Get the cert from file and convert it to certificate struct.
-pub fn get_lets_encrypt_certificate(name: &str) -> Result<Certificate> {
+pub fn get_lets_encrypt_certificate(name: &str) -> Result<Option<Certificate>> {
     let binding = get_current_config();
     let Some(cert) = binding.certificates.get(name) else {
         return Err(Error::NotFound {
             message: "cert not found".to_string(),
         });
     };
+
+    let pem = cert.tls_cert.clone().unwrap_or_default();
+    let key = cert.tls_key.clone().unwrap_or_default();
+    if pem.is_empty() || key.is_empty() {
+        return Ok(None);
+    }
+
     let (cert, _) = parse_leaf_chain_certificates(
         cert.tls_cert.clone().unwrap_or_default().as_str(),
         cert.tls_key.clone().unwrap_or_default().as_str(),
@@ -265,7 +283,7 @@ pub fn get_lets_encrypt_certificate(name: &str) -> Result<Certificate> {
         category: "new_certificate".to_string(),
         message: e.to_string(),
     })?;
-    Ok(cert)
+    Ok(Some(cert))
 }
 
 /// Handles the HTTP-01 challenge verification for Let's Encrypt.
@@ -346,6 +364,8 @@ async fn new_lets_encrypt(
     } else {
         LetsEncrypt::Staging.url()
     };
+    ensure_crypto_provider();
+
     let (account, _) = Account::builder()
         .map_err(|e| Error::Instant {
             category: "create_account".to_string(),
