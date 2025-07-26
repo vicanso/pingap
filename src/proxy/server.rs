@@ -245,15 +245,18 @@ impl Server {
         if !access_log.is_empty() {
             p = Some(Parser::from(access_log.as_str()));
         }
-        let tcp_socket_options =
-            if conf.tcp_fastopen.is_some() || conf.tcp_keepalive.is_some() {
-                let mut opts = TcpSocketOptions::default();
-                opts.tcp_fastopen = conf.tcp_fastopen;
-                opts.tcp_keepalive.clone_from(&conf.tcp_keepalive);
-                Some(opts)
-            } else {
-                None
-            };
+        let tcp_socket_options = if conf.tcp_fastopen.is_some()
+            || conf.tcp_keepalive.is_some()
+            || conf.reuse_port.is_some()
+        {
+            let mut opts = TcpSocketOptions::default();
+            opts.tcp_fastopen = conf.tcp_fastopen;
+            opts.tcp_keepalive.clone_from(&conf.tcp_keepalive);
+            opts.so_reuseport = conf.reuse_port;
+            Some(opts)
+        } else {
+            None
+        };
         let prometheus_metrics =
             conf.prometheus_metrics.clone().unwrap_or_default();
         #[cfg(feature = "full")]

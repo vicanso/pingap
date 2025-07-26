@@ -156,6 +156,7 @@ export default {
     downstreamReadTimeoutPlaceholder: "输入客户端读超时(如30s)",
     downstreamWriteTimeout: "客户端写超时",
     downstreamWriteTimeoutPlaceholder: "输入客户端写超时(如10s)",
+    reusePort: "启用SO_REUSEPORT",
     modules: "Http模块",
     modulesPlaceholder: "选择要使用的http模块",
     tlsCipherList: "tls密码套件列表",

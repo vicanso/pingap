@@ -646,6 +646,11 @@ pub struct ServerConf {
     /// TCP Fast Open queue length (0 to disable)
     pub tcp_fastopen: Option<usize>,
 
+    /// Enable SO_REUSEPORT to allow multiple sockets to bind to the same address and port.
+    /// This is useful for load balancing across multiple worker processes.
+    /// See the [man page](https://man7.org/linux/man-pages/man7/socket.7.html) for more information.
+    pub reuse_port: Option<bool>,
+
     /// Path to expose Prometheus metrics on
     pub prometheus_metrics: Option<String>,
 

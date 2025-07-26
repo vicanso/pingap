@@ -161,6 +161,15 @@ export default function Servers() {
       category: ExFormItemCategory.TEXT,
     },
     {
+      name: "reuse_port",
+      label: serverI18n("reusePort"),
+      placeholder: "",
+      defaultValue: serverConfig.reuse_port,
+      span: 3,
+      category: ExFormItemCategory.RADIOS,
+      options: newBooleanOptions(),
+    },
+    {
       name: "modules",
       label: serverI18n("modules"),
       placeholder: serverI18n("modulesPlaceholder"),

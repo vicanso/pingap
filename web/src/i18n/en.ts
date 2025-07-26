@@ -165,6 +165,7 @@ export default {
     downstreamWriteTimeout: "Downstream Write Timeout",
     downstreamWriteTimeoutPlaceholder:
       "Input the write timeout for downstream(e.g. 10s)",
+    reusePort: "Enable SO_REUSEPORT",
     modules: "Http Modules",
     modulesPlaceholder: "Select http modules for server",
     tlsCipherList: "Tls Cipher List",

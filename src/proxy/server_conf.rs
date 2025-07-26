@@ -71,6 +71,11 @@ pub struct ServerConf {
     // None means TCP Fast Open is disabled
     pub tcp_fastopen: Option<usize>,
 
+    /// Enable SO_REUSEPORT to allow multiple sockets to bind to the same address and port.
+    /// This is useful for load balancing across multiple worker processes.
+    /// See the [man page](https://man7.org/linux/man-pages/man7/socket.7.html) for more information.
+    pub reuse_port: Option<bool>,
+
     // Whether to use globally configured TLS certificates
     // False means the server is using http protocol
     pub global_certificates: bool,
@@ -205,6 +210,7 @@ pub fn parse_from_conf(conf: pingap_config::PingapConf) -> Vec<ServerConf> {
             enabled_h2: item.enabled_h2.unwrap_or_default(),
             tcp_keepalive,
             tcp_fastopen: item.tcp_fastopen,
+            reuse_port: item.reuse_port,
             prometheus_metrics: item.prometheus_metrics,
             otlp_exporter: item.otlp_exporter.clone(),
             modules: item.modules.clone(),
