@@ -174,7 +174,7 @@ nanoid = "0.4.0"
 num_cpus = "1.17.0"
 once_cell = "1.21.3"
 path-absolutize = "3.1.1"
-pingora = { git = "https://github.com/cloudflare/pingora", rev = "b941d91b9509d1c3df80c4d7798dadf281c325f7", default-features = false, features = [
+pingora = { git = "https://github.com/cloudflare/pingora", rev = "4de912e5324eb2a8b9cb8adac91d19935e3cb91f", default-features = false, features = [
     # pingora = { version = "0.5.0", default-features = false, features = [
     "lb",
     "openssl",
