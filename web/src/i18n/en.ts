@@ -159,6 +159,12 @@ export default {
     accessLogPlaceholder: "Input the format layout for access",
     enabledH2: "Enable Http2(h2c)",
     enabledServerTiming: "Enable Server Timing",
+    downstreamReadTimeout: "Downstream Read Timeout",
+    downstreamReadTimeoutPlaceholder:
+      "Input the read timeout for downstream(e.g. 30s)",
+    downstreamWriteTimeout: "Downstream Write Timeout",
+    downstreamWriteTimeoutPlaceholder:
+      "Input the write timeout for downstream(e.g. 10s)",
     modules: "Http Modules",
     modulesPlaceholder: "Select http modules for server",
     tlsCipherList: "Tls Cipher List",

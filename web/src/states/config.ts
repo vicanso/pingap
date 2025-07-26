@@ -95,6 +95,8 @@ export interface Server {
   enabled_h2?: boolean;
   enable_server_timing?: boolean;
   global_certificates?: boolean;
+  downstream_read_timeout?: string;
+  downstream_write_timeout?: string;
   tls_cipher_list?: string;
   tls_ciphersuites?: string;
   tls_min_version?: string;

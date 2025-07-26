@@ -630,6 +630,16 @@ pub struct ServerConf {
     #[serde(with = "humantime_serde")]
     pub tcp_user_timeout: Option<Duration>,
 
+    // downstream read timeout
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub downstream_read_timeout: Option<Duration>,
+
+    // downstream write timeout
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub downstream_write_timeout: Option<Duration>,
+
     /// Number of TCP keepalive probes before connection is dropped
     pub tcp_probe_count: Option<usize>,
 

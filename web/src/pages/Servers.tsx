@@ -145,6 +145,22 @@ export default function Servers() {
       options: newBooleanOptions(),
     },
     {
+      name: "downstream_read_timeout",
+      label: serverI18n("downstreamReadTimeout"),
+      placeholder: serverI18n("downstreamReadTimeoutPlaceholder"),
+      defaultValue: serverConfig.downstream_read_timeout,
+      span: 3,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
+      name: "downstream_write_timeout",
+      label: serverI18n("downstreamWriteTimeout"),
+      placeholder: serverI18n("downstreamWriteTimeoutPlaceholder"),
+      defaultValue: serverConfig.downstream_write_timeout,
+      span: 3,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
       name: "modules",
       label: serverI18n("modules"),
       placeholder: serverI18n("modulesPlaceholder"),

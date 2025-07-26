@@ -212,6 +212,9 @@ pub struct Server {
 
     /// Whether to enable server-timing header
     enable_server_timing: bool,
+
+    downstream_read_timeout: Option<Duration>,
+    downstream_write_timeout: Option<Duration>,
 }
 
 pub struct ServerServices {
@@ -289,6 +292,8 @@ impl Server {
             prometheus,
             enable_server_timing: conf.enable_server_timing,
             modules: conf.modules.clone(),
+            downstream_read_timeout: conf.downstream_read_timeout,
+            downstream_write_timeout: conf.downstream_write_timeout,
         };
         Ok(s)
     }
@@ -748,6 +753,9 @@ impl ProxyHttp for Server {
     {
         debug!(category = LOG_CATEGORY, "--> early request filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- early request filter"););
+
+        session.set_read_timeout(self.downstream_read_timeout);
+        session.set_write_timeout(self.downstream_write_timeout);
 
         if let Some(stream) = session.stream() {
             ctx.connection_id = stream.id() as usize;

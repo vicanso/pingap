@@ -15,6 +15,7 @@
 // use pingap_config::PingapConf;
 use pingora::protocols::l4::ext::TcpKeepalive;
 use std::fmt;
+use std::time::Duration;
 
 static ERROR_TEMPLATE: &str = include_str!("../../error.html");
 
@@ -92,6 +93,12 @@ pub struct ServerConf {
 
     // Whether to enable server-timing header
     pub enable_server_timing: bool,
+
+    // downstream read timeout
+    pub downstream_read_timeout: Option<Duration>,
+
+    // downstream write timeout
+    pub downstream_write_timeout: Option<Duration>,
 }
 
 impl fmt::Display for ServerConf {
@@ -119,6 +126,16 @@ impl fmt::Display for ServerConf {
         write!(f, "enabled_h2: {}, ", self.enabled_h2)?;
         write!(f, "tcp_keepalive: {:?}, ", self.tcp_keepalive)?;
         write!(f, "tcp_fastopen: {:?}, ", self.tcp_fastopen)?;
+        write!(
+            f,
+            "downstream_read_timeout: {:?}, ",
+            self.downstream_read_timeout
+        )?;
+        write!(
+            f,
+            "downstream_write_timeout: {:?}, ",
+            self.downstream_write_timeout
+        )?;
         if let Some(ref metrics) = self.prometheus_metrics {
             write!(f, "prometheus_metrics: {metrics}, ")?;
         }
@@ -193,6 +210,8 @@ pub fn parse_from_conf(conf: pingap_config::PingapConf) -> Vec<ServerConf> {
             modules: item.modules.clone(),
             enable_server_timing: item.enable_server_timing.unwrap_or_default(),
             error_template,
+            downstream_read_timeout: item.downstream_read_timeout,
+            downstream_write_timeout: item.downstream_write_timeout,
         });
     }
 
@@ -235,7 +254,7 @@ mod tests {
         );
         #[cfg(not(target_os = "linux"))]
         assert_eq!(
-            r#"ServerConf { name: pingap, admin: false, addr: 127.0.0.1:3000,127.0.0.1:3001, access_log: Some("combined"), locations: ["charts-location"], threads: Some(4), global_certificates: false, enabled_h2: true, tcp_keepalive: Some(TcpKeepalive { idle: 10s, interval: 5s, count: 10 }), tcp_fastopen: Some(10), enable_server_timing: false, error_template: <html></html> }"#,
+            r#"ServerConf { name: pingap, admin: false, addr: 127.0.0.1:3000,127.0.0.1:3001, access_log: Some("combined"), locations: ["charts-location"], threads: Some(4), global_certificates: false, enabled_h2: true, tcp_keepalive: Some(TcpKeepalive { idle: 10s, interval: 5s, count: 10 }), tcp_fastopen: Some(10), downstream_read_timeout: None, downstream_write_timeout: None, enable_server_timing: false, error_template: <html></html> }"#,
             conf.to_string()
         );
     }
