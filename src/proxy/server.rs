@@ -252,10 +252,7 @@ impl Server {
             let mut opts = TcpSocketOptions::default();
             opts.tcp_fastopen = conf.tcp_fastopen;
             opts.tcp_keepalive.clone_from(&conf.tcp_keepalive);
-            #[cfg(target_os = "linux")]
-            {
-                opts.so_reuseport = conf.reuse_port;
-            }
+            opts.so_reuseport = conf.reuse_port;
             Some(opts)
         } else {
             None
