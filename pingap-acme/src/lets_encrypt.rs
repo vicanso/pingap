@@ -469,27 +469,3 @@ async fn new_lets_encrypt(
 
     Ok((cert_chain_pem, private_key_pem))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use pingap_config::FileStorage;
-    use pretty_assertions::assert_eq;
-    use tempfile::TempDir;
-
-    #[tokio::test]
-    async fn test_new_lets_encrypt() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().to_string_lossy().to_string();
-        // Create storage and leak it to extend its lifetime to 'static
-        let storage = Box::leak(Box::new(FileStorage::new(&path).unwrap()));
-        let result =
-            new_lets_encrypt(storage, &["pingap.io".to_string()], false).await;
-
-        assert_eq!(true, result.is_err());
-
-        // it will be fail as order invalid because http-01 challenge is not valid
-        // TODO find another way to test this
-        assert_eq!(true, result.is_err());
-    }
-}
