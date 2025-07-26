@@ -20,7 +20,6 @@ snafu = { workspace = true }
 pingora = { workspace = true }
 substring = { workspace = true }
 tracing = { workspace = true }
-tokio = { workspace = true }
 pingap-certificate = { version = "0.11.0", path = "../pingap-certificate" }
 pingap-config = { version = "0.11.0", path = "../pingap-config" }
 pingap-core = { version = "0.11.0", path = "../pingap-core" }
