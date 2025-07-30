@@ -48,32 +48,22 @@ struct ImageOptimizer {
 impl ModifyResponseBody for ImageOptimizer {
     fn handle(&self, data: Bytes) -> pingora::Result<Bytes> {
         if let Ok(info) = load_image(&data, &self.image_type) {
-            match self.format_type.as_str() {
-                "jpeg" => {
-                    if let Ok(data) = optimize_jpeg(&info, self.jpeg_quality) {
-                        return Ok(Bytes::from(data));
-                    }
-                },
+            let result = match self.format_type.as_str() {
+                "jpeg" => optimize_jpeg(&info, self.jpeg_quality),
                 "avif" => {
-                    if let Ok(data) =
-                        optimize_avif(&info, self.avif_quality, self.avif_speed)
-                    {
-                        return Ok(Bytes::from(data));
-                    }
+                    optimize_avif(&info, self.avif_quality, self.avif_speed)
                 },
-                "webp" => {
-                    if let Ok(data) = optimize_webp(&info, self.webp_quality) {
-                        return Ok(Bytes::from(data));
-                    }
-                },
-                _ => {
-                    if let Ok(data) = optimize_png(&info, self.png_quality) {
-                        return Ok(Bytes::from(data));
-                    }
-                },
+                "webp" => optimize_webp(&info, self.webp_quality),
+                _ => optimize_png(&info, self.png_quality),
+            };
+            if let Ok(data) = result {
+                return Ok(Bytes::from(data));
             }
         }
         Ok(data)
+    }
+    fn name(&self) -> String {
+        "image_optimization".to_string()
     }
 }
 

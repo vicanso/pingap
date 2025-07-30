@@ -67,6 +67,9 @@ impl ModifyResponseBody for Compressor {
             ),
         ))
     }
+    fn name(&self) -> String {
+        "compression".to_string()
+    }
 }
 
 /// Plugin for handling HTTP response compression

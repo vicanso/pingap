@@ -1398,7 +1398,19 @@ impl ProxyHttp for Server {
 
             if end_of_stream {
                 if let Some(ref buf) = ctx.response_body {
+                    let name = modify.name();
+                    let now = Instant::now();
                     *body = Some(modify.handle(Bytes::from(buf.to_owned()))?);
+                    let elapsed = now.elapsed().as_millis() as u32;
+                    debug!(
+                        category = LOG_CATEGORY,
+                        name, elapsed, "modify upstream response body"
+                    );
+                    #[cfg(feature = "full")]
+                    if let Some(ref mut span) = ctx.upstream_span.as_mut() {
+                        let key = format!("upstream.modified_body.{name}_time");
+                        span.set_attribute(KeyValue::new(key, elapsed as i64));
+                    }
                 }
                 ctx.response_body = None;
                 // if the body is empty, it will trigger response_body_filter again
@@ -1469,7 +1481,19 @@ impl ProxyHttp for Server {
 
             if end_of_stream {
                 if let Some(ref buf) = ctx.response_body {
+                    let name = modify.name();
+                    let now = Instant::now();
                     *body = Some(modify.handle(Bytes::from(buf.to_owned()))?);
+                    let elapsed = now.elapsed().as_millis() as u32;
+                    debug!(
+                        category = LOG_CATEGORY,
+                        name, elapsed, "modify response body"
+                    );
+                    #[cfg(feature = "full")]
+                    if let Some(ref mut span) = ctx.upstream_span.as_mut() {
+                        let key = format!("response.modified_body.{name}_time");
+                        span.set_attribute(KeyValue::new(key, elapsed as i64));
+                    }
                 }
                 // if the body is empty, it will trigger response_body_filter again
                 // so set modify response body to None

@@ -68,6 +68,9 @@ fn format_duration(mut buf: BytesMut, ms: u64) -> BytesMut {
 /// Trait for modifying the response body
 pub trait ModifyResponseBody: Sync + Send {
     fn handle(&self, data: Bytes) -> pingora::Result<Bytes>;
+    fn name(&self) -> String {
+        "unknown".to_string()
+    }
 }
 
 #[derive(Default)]

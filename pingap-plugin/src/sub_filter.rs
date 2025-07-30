@@ -167,6 +167,9 @@ impl ModifyResponseBody for SubFilterReplacer {
         }
         Ok(data.into())
     }
+    fn name(&self) -> String {
+        "sub_filter".to_string()
+    }
 }
 
 impl TryFrom<&PluginConf> for SubFilter {

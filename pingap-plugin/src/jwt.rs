@@ -377,6 +377,9 @@ impl ModifyResponseBody for Sign {
         let token = format!("{content}.{sign}");
         Ok(Bytes::from(r#"{"token": "{}"}"#.replace("{}", &token)))
     }
+    fn name(&self) -> String {
+        "jwt_sign".to_string()
+    }
 }
 
 #[ctor]
