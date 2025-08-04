@@ -18,25 +18,25 @@ path = "src/lib.rs"
 tracing = ["prometheus"]
 
 [dependencies]
-substring = { workspace = true }
-dirs = { workspace = true }
-path-absolutize = { workspace = true }
-bytesize = { workspace = true }
-memory-stats = { workspace = true }
-once_cell = { workspace = true }
-snafu = { workspace = true }
-scopeguard = { workspace = true }
-pingora = { workspace = true }
 async-trait = { workspace = true }
 bytes = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
-walkdir = { workspace = true }
+bytesize = { workspace = true }
+dirs = { workspace = true }
 http = { workspace = true }
 humantime = { workspace = true }
-urlencoding = { workspace = true }
-prometheus = { version = "0.13.4", default-features = false, optional = true }
+memory-stats = { workspace = true }
+once_cell = { workspace = true }
+path-absolutize = { workspace = true }
 pingap-core = { version = "0.11.0", path = "../pingap-core" }
+pingora = { workspace = true }
+prometheus = { version = "0.13.4", default-features = false, optional = true }
+scopeguard = { workspace = true }
+snafu = { workspace = true }
+substring = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+urlencoding = { workspace = true }
+walkdir = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"

@@ -15,15 +15,15 @@ path = "src/lib.rs"
 
 
 [dependencies]
-pingora = { workspace = true }
-http = { workspace = true }
-tracing = { workspace = true }
 async-trait = { workspace = true }
-hickory-resolver = "0.25.1"
 bollard = "0.19.1"
+hickory-resolver = "0.25.1"
+http = { workspace = true }
+pingap-core = { version = "0.11.0", path = "../pingap-core" }
+pingora = { workspace = true }
 snafu = { workspace = true }
 tokio = { workspace = true }
-pingap-core = { version = "0.11.0", path = "../pingap-core" }
+tracing = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"

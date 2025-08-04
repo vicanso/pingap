@@ -16,14 +16,14 @@ path = "src/lib.rs"
 
 [dependencies]
 instant-acme = "0.8.2"
-snafu = { workspace = true }
-pingora = { workspace = true }
-substring = { workspace = true }
-tracing = { workspace = true }
 pingap-certificate = { version = "0.11.0", path = "../pingap-certificate" }
 pingap-config = { version = "0.11.0", path = "../pingap-config" }
 pingap-core = { version = "0.11.0", path = "../pingap-core" }
+pingora = { workspace = true }
 rustls = "0.23.29"
+snafu = { workspace = true }
+substring = { workspace = true }
+tracing = { workspace = true }
 
 
 [dev-dependencies]

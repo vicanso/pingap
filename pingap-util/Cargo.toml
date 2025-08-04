@@ -20,17 +20,17 @@ aes-gcm-siv = { version = "0.11.1", default-features = false, features = [
     "aes",
     "alloc",
 ] }
-ipnet = "2.11.0"
 base64 = "0.22.1"
+bytes = { workspace = true }
+dirs = { workspace = true }
+ipnet = "2.11.0"
+itoa = { workspace = true }
+once_cell = { workspace = true }
+path-absolutize = { workspace = true }
 pem = "3.0.5"
 rustc_version_runtime = "0.3.0"
-path-absolutize = { workspace = true }
-dirs = { workspace = true }
-once_cell = { workspace = true }
-bytes = { workspace = true }
 snafu = { workspace = true }
 substring = { workspace = true }
-itoa = { workspace = true }
 toml = { workspace = true }
 
 

@@ -14,10 +14,15 @@ name = "pingap_otel"
 path = "src/lib.rs"
 
 [dependencies]
+ahash = { workspace = true }
+arc-swap = { workspace = true }
 async-trait = { workspace = true }
+humantime = { workspace = true }
+once_cell = { workspace = true }
 opentelemetry = { version = "0.28.0", default-features = false, features = [
     "trace",
 ] }
+opentelemetry-http = { version = "0.28.0", default-features = false }
 opentelemetry-jaeger-propagator = { version = "0.28.0" }
 opentelemetry-otlp = { version = "0.28.0", default-features = false, features = [
     "grpc-tonic",
@@ -26,11 +31,6 @@ opentelemetry-otlp = { version = "0.28.0", default-features = false, features = 
 opentelemetry_sdk = { version = "0.28.0", features = [
     "rt-tokio",
 ], default-features = false }
-opentelemetry-http = { version = "0.28.0", default-features = false }
 pingora = { workspace = true }
-humantime = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
-ahash = { workspace = true }
-once_cell = { workspace = true }
-arc-swap = { workspace = true }

@@ -19,26 +19,26 @@ tracing = ["prometheus"]
 
 [dependencies]
 bytesize = { workspace = true }
-memory-stats = { workspace = true }
-once_cell = { workspace = true }
-serde = { workspace = true }
-sysinfo = { workspace = true }
-num_cpus = { workspace = true }
-tracing = { workspace = true }
 cfg-if = { workspace = true }
 humantime = { workspace = true }
-prometheus = { version = "0.13.4", default-features = false, optional = true }
-pingora = { workspace = true }
-url = { workspace = true }
-reqwest = { workspace = true }
 http = { workspace = true }
-snafu = { workspace = true }
-tokio = { workspace = true }
+memory-stats = { workspace = true }
+num_cpus = { workspace = true }
+once_cell = { workspace = true }
+pingap-cache = { version = "0.11.0", path = "../pingap-cache" }
 pingap-config = { version = "0.11.0", path = "../pingap-config" }
+pingap-core = { version = "0.11.0", path = "../pingap-core" }
 pingap-location = { version = "0.11.0", path = "../pingap-location" }
 pingap-upstream = { version = "0.11.0", path = "../pingap-upstream" }
-pingap-cache = { version = "0.11.0", path = "../pingap-cache" }
-pingap-core = { version = "0.11.0", path = "../pingap-core" }
+pingora = { workspace = true }
+prometheus = { version = "0.13.4", default-features = false, optional = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+snafu = { workspace = true }
+sysinfo = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 procfs = { version = "0.17.0", default-features = false }

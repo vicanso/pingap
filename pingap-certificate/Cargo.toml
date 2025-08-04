@@ -14,22 +14,22 @@ name = "pingap_certificate"
 path = "src/lib.rs"
 
 [dependencies]
-rcgen = { version = "0.13.2", features = ["pem", "x509-parser"] }
-x509-parser = "0.17.0"
-async-trait = { workspace = true }
-pingora = { workspace = true }
-once_cell = { workspace = true }
-serde = { workspace = true }
-snafu = { workspace = true }
-regex = { workspace = true }
 ahash = { workspace = true }
 arc-swap = { workspace = true }
-tracing = { workspace = true }
-time = { workspace = true }
-tokio = { workspace = true }
-pingap-util = { version = "0.11.0", path = "../pingap-util" }
+async-trait = { workspace = true }
+once_cell = { workspace = true }
 pingap-config = { version = "0.11.0", path = "../pingap-config" }
 pingap-core = { version = "0.11.0", path = "../pingap-core" }
+pingap-util = { version = "0.11.0", path = "../pingap-util" }
+pingora = { workspace = true }
+rcgen = { version = "0.13.2", features = ["pem", "x509-parser"] }
+regex = { workspace = true }
+serde = { workspace = true }
+snafu = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+x509-parser = "0.17.0"
 
 
 [dev-dependencies]

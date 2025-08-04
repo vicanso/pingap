@@ -15,45 +15,46 @@ name = "pingap_plugin"
 path = "src/lib.rs"
 
 [dependencies]
-smallvec = "1.13.2"
-dashmap = "6.1.0"
+ahash = { workspace = true }
+async-trait = { workspace = true }
+base64 = { workspace = true }
+bstr = "1.11.3"
+bytes = { workspace = true }
+bytesize = { workspace = true }
+chrono = { workspace = true }
+cookie = { workspace = true }
 ctor = { workspace = true }
-sha2 = { version = "0.10.8", default-features = false }
+crc32fast = { workspace = true }
+dashmap = "6.1.0"
+fancy-regex = "0.14.0"
+glob = { workspace = true }
+hex = { workspace = true }
+http = { workspace = true }
 hmac-sha256 = "1.1.12"
 hmac-sha512 = { version = "1.1.7", default-features = false }
-uuid = { workspace = true }
-bstr = "1.11.3"
-fancy-regex = "0.14.0"
-url = { workspace = true }
-urlencoding = { workspace = true }
-bytesize = { workspace = true }
-glob = { workspace = true }
-async-trait = { workspace = true }
-bytes = { workspace = true }
-base64 = { workspace = true }
 humantime = { workspace = true }
-pingora = { workspace = true }
-snafu = { workspace = true }
-ahash = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-cookie = { workspace = true }
-substring = { workspace = true }
 mime_guess = { workspace = true }
 nanoid = { workspace = true }
-regex = { workspace = true }
-hex = { workspace = true }
-chrono = { workspace = true }
 once_cell = { workspace = true }
-crc32fast = { workspace = true }
-toml = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
-http = { workspace = true }
-pingap-config = { version = "0.11.0", path = "../pingap-config" }
-pingap-util = { version = "0.11.0", path = "../pingap-util" }
 pingap-cache = { version = "0.11.0", path = "../pingap-cache" }
+pingap-config = { version = "0.11.0", path = "../pingap-config" }
 pingap-core = { version = "0.11.0", path = "../pingap-core" }
+pingap-util = { version = "0.11.0", path = "../pingap-util" }
+pingora = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { version = "0.10.8", default-features = false }
+smallvec = "1.13.2"
+snafu = { workspace = true }
+substring = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+urlencoding = { workspace = true }
+uuid = { workspace = true }
 
 
 [dev-dependencies]

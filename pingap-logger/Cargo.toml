@@ -10,30 +10,30 @@ keywords = ["pingap", "logger"]
 description = "Logger for pingap"
 
 [dependencies]
+bytes = { workspace = true }
 bytesize = { workspace = true }
 chrono = { workspace = true }
 flate2 = { workspace = true }
-snafu = { workspace = true }
-tracing = { workspace = true }
-walkdir = { workspace = true }
-time = { workspace = true }
-bytes = { workspace = true }
+http = { workspace = true }
+itoa = { workspace = true }
+pingap-core = { version = "0.11.0", path = "../pingap-core" }
+pingap-util = { version = "0.11.0", path = "../pingap-util" }
 pingora = { workspace = true }
 regex = { workspace = true }
+snafu = { workspace = true }
 substring = { workspace = true }
-itoa = { workspace = true }
+time = { workspace = true }
 tokio = { workspace = true }
-http = { workspace = true }
+tracing = { workspace = true }
+tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.19", features = [
     "local-time",
     "json",
     "fmt",
     "ansi",
 ], default-features = false }
-tracing-appender = "0.2.3"
+walkdir = { workspace = true }
 zstd = "0.13.3"
-pingap-util = { version = "0.11.0", path = "../pingap-util" }
-pingap-core = { version = "0.11.0", path = "../pingap-core" }
 
 [target.'cfg(unix)'.dependencies]
 syslog = "7.0.0"

@@ -14,24 +14,24 @@ name = "pingap_upstream"
 path = "src/lib.rs"
 
 [dependencies]
-pingora = { workspace = true }
 ahash = { workspace = true }
 arc-swap = { workspace = true }
 async-trait = { workspace = true }
+bytesize = { workspace = true }
 derive_more = { workspace = true }
+futures = { workspace = true }
 futures-util = { workspace = true }
 once_cell = { workspace = true }
-snafu = { workspace = true }
-tracing = { workspace = true }
-bytesize = { workspace = true }
-tokio = { workspace = true }
-pingora-runtime = { workspace = true }
-futures = { workspace = true }
-serde = { workspace = true }
 pingap-config = { version = "0.11.0", path = "../pingap-config" }
+pingap-core = { version = "0.11.0", path = "../pingap-core" }
 pingap-discovery = { version = "0.11.0", path = "../pingap-discovery" }
 pingap-health = { version = "0.11.0", path = "../pingap-health" }
-pingap-core = { version = "0.11.0", path = "../pingap-core" }
+pingora = { workspace = true }
+pingora-runtime = { workspace = true }
+serde = { workspace = true }
+snafu = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
 
 
 [dev-dependencies]

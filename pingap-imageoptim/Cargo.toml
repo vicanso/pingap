@@ -15,18 +15,18 @@ name = "pingap_imageoptim"
 path = "src/lib.rs"
 
 [dependencies]
+async-trait = { workspace = true }
+bytes = { workspace = true }
 ctor = { workspace = true }
+http = { workspace = true }
 image = { version = "0.25.6", features = ["webp", "avif"] }
 imagequant = { version = "4.3.4", default-features = false }
 lodepng = "3.11.0"
 mozjpeg = "0.10.13"
-rgb = "0.8.50"
-async-trait = { workspace = true }
-tracing = { workspace = true }
-pingora = { workspace = true }
-http = { workspace = true }
-bytes = { workspace = true }
-snafu = { workspace = true }
-pingap-core = { version = "0.11.0", path = "../pingap-core" }
 pingap-config = { version = "0.11.0", path = "../pingap-config" }
+pingap-core = { version = "0.11.0", path = "../pingap-core" }
 pingap-plugin = { version = "0.11.0", path = "../pingap-plugin" }
+pingora = { workspace = true }
+rgb = "0.8.50"
+snafu = { workspace = true }
+tracing = { workspace = true }
