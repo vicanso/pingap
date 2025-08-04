@@ -21,6 +21,7 @@ use hickory_resolver::config::{
 use hickory_resolver::lookup_ip::LookupIp;
 use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_resolver::system_conf::read_system_conf;
+use hickory_resolver::Name;
 use hickory_resolver::Resolver;
 use http::Extensions;
 use pingap_core::NotificationSender;
@@ -30,6 +31,7 @@ use pingora::lb::{Backend, Backends};
 use pingora::protocols::l4::socket::SocketAddr;
 use std::collections::{BTreeSet, HashMap};
 use std::net::{IpAddr, ToSocketAddrs};
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tracing::{debug, error, info};
@@ -41,6 +43,8 @@ struct Dns {
     hosts: Vec<Addr>,
     sender: Option<Arc<NotificationSender>>,
     name_server: Option<String>,
+    domain: Option<String>,
+    search: Option<String>,
 }
 
 /// Checks if the discovery type is DNS
@@ -81,6 +85,31 @@ impl Dns {
         self.name_server = Some(name_server);
         self
     }
+
+    /// Sets the domain
+    ///
+    /// # Arguments
+    /// * `domain` - The domain
+    ///
+    /// # Returns
+    /// * `Self` - The DNS discovery instance
+    pub fn with_domain(mut self, domain: String) -> Self {
+        self.domain = Some(domain);
+        self
+    }
+
+    /// Sets the search
+    ///
+    /// # Arguments
+    /// * `search` - The search
+    ///
+    /// # Returns
+    /// * `Self` - The DNS discovery instance
+    pub fn with_search(mut self, search: String) -> Self {
+        self.search = Some(search);
+        self
+    }
+
     /// Sets the notification sender
     ///
     /// # Arguments
@@ -103,6 +132,20 @@ impl Dns {
     fn read_system_conf(&self) -> Result<(ResolverConfig, ResolverOpts)> {
         let (mut config, mut options) =
             read_system_conf().map_err(|e| Error::Resolve { source: e })?;
+
+        if let Some(domain) = &self.domain {
+            if let Ok(name) = Name::from_str(domain) {
+                config.set_domain(name);
+            }
+        }
+
+        if let Some(search) = &self.search {
+            for item in search.split(",") {
+                if let Ok(name) = Name::from_str(item) {
+                    config.add_search(name);
+                }
+            }
+        }
 
         if let Some(name_server) = &self.name_server {
             let mut ips = vec![];
@@ -302,6 +345,12 @@ pub fn new_dns_discover_backends(discovery: &Discovery) -> Result<Backends> {
         Dns::new(&discovery.addr, discovery.tls, discovery.ipv4_only)?;
     if let Some(dns_server) = &discovery.dns_server {
         dns = dns.with_name_server(dns_server.clone());
+    }
+    if let Some(domain) = &discovery.dns_domain {
+        dns = dns.with_domain(domain.clone());
+    }
+    if let Some(search) = &discovery.dns_search {
+        dns = dns.with_search(search.clone());
     }
     let backends =
         Backends::new(Box::new(dns.with_sender(discovery.sender.clone())));

@@ -115,6 +115,22 @@ export default function Upstreams() {
       category: ExFormItemCategory.TEXT,
     },
     {
+      name: "dns_domain",
+      label: upstreamI18n("dnsDomain"),
+      placeholder: upstreamI18n("dnsDomainPlaceholder"),
+      defaultValue: upstreamConfig.dns_domain,
+      span: 6,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
+      name: "dns_search",
+      label: upstreamI18n("dnsSearch"),
+      placeholder: upstreamI18n("dnsSearchPlaceholder"),
+      defaultValue: upstreamConfig.dns_search,
+      span: 6,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
       name: "includes",
       label: i18n("includes"),
       placeholder: i18n("includesPlaceholder"),

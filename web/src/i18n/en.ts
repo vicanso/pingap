@@ -243,6 +243,11 @@ export default {
     dnsServer: "Dns Server",
     dnsServerPlaceholder:
       "Input the dns server for dns discovery(e.g. 8.8.8.8,1.1.1.1)",
+    dnsDomain: "Dns Domain",
+    dnsDomainPlaceholder: "Input the dns domain for dns discovery",
+    dnsSearch: "Dns Search",
+    dnsSearchPlaceholder:
+      "Input the dns search for dns discovery, separated by comma",
     algo: "Load Balancer Algorithm",
     algoPlaceholder: "Input algorithm for load balance(e.g. hash:ip)",
     healthCheck: "Health Check",

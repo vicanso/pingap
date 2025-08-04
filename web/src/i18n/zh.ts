@@ -222,6 +222,11 @@ export default {
     updateFrequencyPlaceholder: "输入服务发现更新间隔(如30s)",
     dnsServer: "DNS解析服务器",
     dnsServerPlaceholder: "输入服务发现使用的dns解析服务器(如8.8.8.8,1.1.1.1)",
+    dnsDomain: "Dns域",
+    dnsDomainPlaceholder: "输入服务发现使用的dns域",
+    dnsSearch: "Dns搜索",
+    dnsSearchPlaceholder:
+      "输入服务发现使用的dns搜索, 多个域名以`,`分隔",
     algo: "负载均衡算法",
     algoPlaceholder: "输入负载均衡算法(如hash:ip)",
     healthCheck: "健康检查",

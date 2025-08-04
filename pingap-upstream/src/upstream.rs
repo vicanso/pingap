@@ -356,6 +356,12 @@ fn new_load_balancer(
     if let Some(dns_server) = &conf.dns_server {
         discovery = discovery.with_dns_server(dns_server.clone());
     }
+    if let Some(dns_domain) = &conf.dns_domain {
+        discovery = discovery.with_domain(dns_domain.clone());
+    }
+    if let Some(dns_search) = &conf.dns_search {
+        discovery = discovery.with_search(dns_search.clone());
+    }
     let backends = new_backends(&discovery_category, &discovery)?;
 
     // Parse the load balancing algorithm configuration

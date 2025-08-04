@@ -214,6 +214,12 @@ pub struct UpstreamConf {
     /// DNS server for DNS discovery
     pub dns_server: Option<String>,
 
+    /// DNS domain for DNS discovery
+    pub dns_domain: Option<String>,
+
+    /// DNS search for DNS discovery
+    pub dns_search: Option<String>,
+
     /// How frequently to update the upstream server list
     #[serde(default)]
     #[serde(with = "humantime_serde")]

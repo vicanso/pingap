@@ -97,6 +97,8 @@ pub struct Discovery {
     tls: bool,
     ipv4_only: bool,
     dns_server: Option<String>,
+    dns_domain: Option<String>,
+    dns_search: Option<String>,
     sender: Option<Arc<NotificationSender>>,
 }
 
@@ -106,8 +108,10 @@ impl Discovery {
             addr,
             tls: false,
             ipv4_only: false,
-            sender: None,
             dns_server: None,
+            dns_domain: None,
+            dns_search: None,
+            sender: None,
         }
     }
     pub fn with_sender(
@@ -131,6 +135,14 @@ impl Discovery {
         } else {
             self.dns_server = Some(dns_server);
         }
+        self
+    }
+    pub fn with_domain(mut self, domain: String) -> Self {
+        self.dns_domain = Some(domain);
+        self
+    }
+    pub fn with_search(mut self, search: String) -> Self {
+        self.dns_search = Some(search);
         self
     }
 }

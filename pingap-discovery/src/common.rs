@@ -104,6 +104,8 @@ mod tests {
             ipv4_only: false,
             sender: None,
             dns_server: None,
+            dns_domain: None,
+            dns_search: None,
         })
         .unwrap();
 
