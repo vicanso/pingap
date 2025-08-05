@@ -3814,7 +3814,6 @@ dependencies = [
  "smallvec",
  "snafu",
  "substring",
- "time",
  "tokio",
  "tokio-test",
  "toml",
