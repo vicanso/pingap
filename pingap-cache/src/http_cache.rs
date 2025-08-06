@@ -338,6 +338,8 @@ pub struct ObjectMissHandler {
     body: BytesMut,
     /// Cache key for storing the final object
     key: String,
+    /// Primary key for storing the final object
+    primary_key: String,
     /// Namespace for storing the final object
     namespace: Vec<u8>,
     /// Reference to the storage backend
@@ -357,6 +359,13 @@ impl HandleMiss for ObjectMissHandler {
 
     async fn finish(self: Box<Self>) -> pingora::Result<MissFinishType> {
         let size = self.body.len(); // FIXME: this just body size, also track meta size
+        info!(
+            category = LOG_CATEGORY,
+            primary_key = self.primary_key,
+            namespace = std::str::from_utf8(&self.namespace).ok(),
+            size,
+            "put data to cache"
+        );
         let _ = self
             .cache
             .put(
@@ -421,6 +430,7 @@ impl Storage for HttpCache {
         let miss_handler = ObjectMissHandler {
             meta,
             key: hash,
+            primary_key: key.primary_key_str().unwrap_or_default().to_string(),
             namespace: key.namespace().to_vec(),
             cache: self.cache.clone(),
             body: BytesMut::with_capacity(size),
@@ -515,6 +525,7 @@ mod tests {
             meta: (b"Hello".to_vec(), b"World".to_vec()),
             body: BytesMut::new(),
             key: key.to_string(),
+            primary_key: "".to_string(),
             namespace: b"".to_vec(),
             cache: cache.clone(),
         };
