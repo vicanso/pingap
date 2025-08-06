@@ -361,6 +361,7 @@ impl HandleMiss for ObjectMissHandler {
         let size = self.body.len(); // FIXME: this just body size, also track meta size
         info!(
             category = LOG_CATEGORY,
+            key = self.key,
             primary_key = self.primary_key,
             namespace = std::str::from_utf8(&self.namespace).ok(),
             size,
