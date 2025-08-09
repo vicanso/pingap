@@ -192,13 +192,16 @@ jobs:
           platforms: ${{ matrix.platform.arch }}
           build-args: |
             BUILD_ARGS=${{ steps.build_args.outputs.BUILD_ARGS }}
-          tags: ${{ env.IMAGE_NAME }}:${{ matrix.platform.tag }}
+          tags: ${{ env.IMAGE_NAME }}:${{ matrix.platform.tag }}-${{ matrix.features }}
           push: true
       - name: Image digest
         run: |
           echo ${{ steps.docker_build.outputs.digest }}
   merge:
     runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        features: ['latest', 'full']
     needs: [build] # 等待所有架构构建完成
     steps:
       - name: Set up Docker Buildx
@@ -211,6 +214,6 @@ jobs:
       - name: Create and push multi-arch manifest
         run: |
           docker buildx imagetools create \
-            -t ${{ env.IMAGE_NAME }}:latest \
-            ${{ env.IMAGE_NAME }}:amd64 \
-            ${{ env.IMAGE_NAME }}:arm64
+            -t ${{ env.IMAGE_NAME }}:${{ matrix.features }} \
+            ${{ env.IMAGE_NAME }}:amd64-${{ matrix.features }} \
+            ${{ env.IMAGE_NAME }}:arm64-${{ matrix.features }}
