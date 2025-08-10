@@ -111,9 +111,14 @@ jobs:
           ./.github/workflows/upload_asset.sh ./pingap-linux-musl-aarch64.tar.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./pingap-linux-musl-aarch64-full.tar.gz $GITHUB_TOKEN
 
-  linux-gnu-x86:
-    runs-on: ubuntu-22.04
+  linux-gnu:
     timeout-minutes: 3600
+    runs-on: ${{ matrix.platform.runs-on }}
+    strategy:
+      matrix:
+        platform:
+          - { tag: "x86", runs-on: "ubuntu-22.04" }
+          - { tag: "aarch64", runs-on: "ubuntu-22.04-arm" }
     steps:
       - uses: actions/checkout@v4
       - name: setup node
@@ -132,132 +137,17 @@ jobs:
         run: |
           make release-all
           ldd target/release/pingap
-          mv target/release/pingap ./pingap-linux-gnu-x86
-          mv target/release/pingap-full ./pingap-linux-gnu-x86-full
+          mv target/release/pingap ./pingap-linux-gnu-${{ matrix.platform.tag }}
+          mv target/release/pingap-full ./pingap-linux-gnu-${{ matrix.platform.tag }}-full
       - name: Upload Assets
         run: |
-          tar -czvf pingap-linux-gnu-x86.tar.gz ./pingap-linux-gnu-x86
-          tar -czvf pingap-linux-gnu-x86-full.tar.gz ./pingap-linux-gnu-x86-full
+          tar -czvf pingap-linux-gnu-${{ matrix.platform.tag }}.tar.gz ./pingap-linux-gnu-${{ matrix.platform.tag }}
+          tar -czvf pingap-linux-gnu-${{ matrix.platform.tag }}-full.tar.gz ./pingap-linux-gnu-${{ matrix.platform.tag }}-full
 
           ls -lh pingap*.gz
 
-          ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-x86.tar.gz $GITHUB_TOKEN
-          ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-x86-full.tar.gz $GITHUB_TOKEN
-
-  # aarch64 full feature
-  linux-gnu-aarch64-full:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 3600
-    steps:
-      - name: Change Swap Space
-        run: |
-          swapon --show=NAME | tail -n 1
-          df -lh
-          du -sh /usr/local/lib/android
-          sudo rm -rf /usr/local/lib/android
-          export SWAP_FILE=$(swapon --show=NAME | tail -n 1)
-          sudo swapoff $SWAP_FILE
-          sudo rm $SWAP_FILE
-          export SWAP_FILE=/swapfile
-          sudo fallocate -l 16G $SWAP_FILE
-          sudo chmod 600 $SWAP_FILE
-          sudo mkswap $SWAP_FILE
-          sudo swapon $SWAP_FILE
-      - name: Swap space report after modification
-        shell: bash
-        run: |
-          echo "Memory and swap:"
-          free -h
-          echo
-          swapon --show
-          df -lh
-          echo
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v4
-        with:
-          images: |
-            vicanso/pingap
-          tags: |
-            type=raw,value=latest
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Build and export
-        uses: docker/build-push-action@v6
-        with:
-          platforms: linux/arm64
-          build-args: |
-            BUILD_ARGS=--features=full
-          outputs: type=local,dest=/tmp/pingap
-      - name: Upload Assets
-        run: |
-          cp /tmp/pingap/usr/local/bin/pingap ./pingap-linux-gnu-aarch64-full
-          tar -czvf pingap-linux-gnu-aarch64-full.tar.gz ./pingap-linux-gnu-aarch64-full
-
-          ls -lh pingap*.gz
-
-          ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-aarch64-full.tar.gz $GITHUB_TOKEN
-
-  linux-gnu-aarch64:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 3600
-    steps:
-      - name: Change Swap Space
-        run: |
-          swapon --show=NAME | tail -n 1
-          df -lh
-          du -sh /usr/local/lib/android
-          sudo rm -rf /usr/local/lib/android
-          export SWAP_FILE=$(swapon --show=NAME | tail -n 1)
-          sudo swapoff $SWAP_FILE
-          sudo rm $SWAP_FILE
-          export SWAP_FILE=/swapfile
-          sudo fallocate -l 16G $SWAP_FILE
-          sudo chmod 600 $SWAP_FILE
-          sudo mkswap $SWAP_FILE
-          sudo swapon $SWAP_FILE
-      - name: Swap space report after modification
-        shell: bash
-        run: |
-          echo "Memory and swap:"
-          free -h
-          echo
-          swapon --show
-          df -lh
-          echo
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v4
-        with:
-          images: |
-            vicanso/pingap
-          tags: |
-            type=raw,value=latest
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Build and export
-        uses: docker/build-push-action@v6
-        with:
-          platforms: linux/arm64
-          outputs: type=local,dest=/tmp/pingap
-      - name: Upload Assets
-        run: |
-          cp /tmp/pingap/usr/local/bin/pingap ./pingap-linux-gnu-aarch64
-          tar -czvf pingap-linux-gnu-aarch64.tar.gz ./pingap-linux-gnu-aarch64
-
-          ls -lh pingap*.gz
-
-          ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-aarch64.tar.gz $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-${{ matrix.platform.tag }}.tar.gz $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-${{ matrix.platform.tag }}-full.tar.gz $GITHUB_TOKEN
 
   windows:
     runs-on: windows-latest
@@ -322,80 +212,4 @@ jobs:
         shell: bash
         run: |
           ./.github/workflows/upload_asset.sh ./pingap-windows.exe.zip $GITHUB_TOKEN
-  docker:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 3600
-    strategy:
-      matrix:
-        features: ['', 'full']
-    steps:
-      - name: Change Swap Space
-        run: |
-          swapon --show=NAME | tail -n 1
-          df -lh
-          du -sh /usr/local/lib/android
-          sudo rm -rf /usr/local/lib/android
-          export SWAP_FILE=$(swapon --show=NAME | tail -n 1)
-          sudo swapoff $SWAP_FILE
-          sudo rm $SWAP_FILE
-          export SWAP_FILE=/swapfile
-          sudo fallocate -l 16G $SWAP_FILE
-          sudo chmod 600 $SWAP_FILE
-          sudo mkswap $SWAP_FILE
-          sudo swapon $SWAP_FILE
-      - name: Swap space report after modification
-        shell: bash
-        run: |
-          echo "Memory and swap:"
-          free -h
-          echo
-          swapon --show
-          df -lh
-          echo
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Docker suffix
-        id: image_suffix
-        run: |
-          if [ "${{ matrix.features }}" != "" ]; then
-            echo "IMAGE_SUFFIX=-full" >> $GITHUB_OUTPUT
-          fi
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v4
-        with:
-          images: |
-            vicanso/pingap
-          tags: |
-            type=semver,pattern={{version}},suffix=${{ steps.image_suffix.outputs.IMAGE_SUFFIX }}
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Available platforms
-        run: echo ${{ steps.buildx.outputs.platforms }}
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_HUB_USERNAME }}
-          password: ${{ secrets.DOCKER_HUB_ACCESS_TOKEN }}
-      - name: Set build args
-        shell: bash
-        id: build_args
-        run: |
-          if [ "${{ matrix.features }}" != "" ]; then
-            echo "BUILD_ARGS=--features=${{ matrix.features }}" >> $GITHUB_OUTPUT
-          fi
-      - name: Build and push
-        id: docker_build
-        uses: docker/build-push-action@v6
-        with:
-          platforms: linux/amd64, linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          build-args: |
-            BUILD_ARGS=${{ steps.build_args.outputs.BUILD_ARGS }}
-      - name: Image digest
-        run: |
-          echo ${{ steps.docker_build.outputs.digest }}
+
