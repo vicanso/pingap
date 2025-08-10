@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.11.2](https://github.com/vicanso/pingap/compare/v0.11.1..v0.11.2) - 2025-08-10
+
+### ⛰️  Features
+
+- Support domain and search for dns discovery - ([19c37cb](https://github.com/vicanso/pingap/commit/19c37cb65bc92cceb914997390f155451c0fc563))
+- Add config option for so_reuseport - ([15d746e](https://github.com/vicanso/pingap/commit/15d746e2a4cff3164ef3069c31fd38ba53f52551))
+- Support setting read and write timeout for downstream - ([c348739](https://github.com/vicanso/pingap/commit/c3487399636e4b153c6e2536954e113f240ab723))
+- Support full body compress mode - ([27f8912](https://github.com/vicanso/pingap/commit/27f8912930b17ec5ab98b74c4c5c26c9ebc9e13d))
+- Support setting path levels for dish cache - ([cd742d2](https://github.com/vicanso/pingap/commit/cd742d2f52daa2aa70ea6d7e842f5f9f98b6e919))
+- Support setting inactive for dish cache - ([9592c45](https://github.com/vicanso/pingap/commit/9592c45299140455c3fa8739b210d50615dadfab))
+- Support setting dns server for dns discovery - ([e164861](https://github.com/vicanso/pingap/commit/e16486174284b8191d5d6dc3dbd8e1de2178a686))
+- Support multiple certificates in PEM format, including the certificate chain - ([eee476b](https://github.com/vicanso/pingap/commit/eee476b8d18275a0dd37ae3349e58693ca631197))
+
+### 🐛 Bug Fixes
+
+- Fix acme error - ([52c33d5](https://github.com/vicanso/pingap/commit/52c33d5b853fceb68c99065508584f3bcdd9095c))
+- Fix reuse port error of windows - ([bf6e97e](https://github.com/vicanso/pingap/commit/bf6e97ec64aae8017c845dda987a18f2aad8c5c5))
+- Fix test error - ([beadb31](https://github.com/vicanso/pingap/commit/beadb3118a94edf1ff3a2a8a70d63688dfee7fd0))
+- Fix clippy - ([ce9af97](https://github.com/vicanso/pingap/commit/ce9af97fc67d2fbb4bb9c900621e0575723983cf))
+- Fix test for cache key - ([28f5aef](https://github.com/vicanso/pingap/commit/28f5aefe18ee9b4b6c06c0b00e54215abd98448d))
+- Fix parse pem certificate - ([f5ded46](https://github.com/vicanso/pingap/commit/f5ded46c6d14983682282ea6cd9d2d63cd9a3304))
+
+### 🚜 Refactor
+
+- Add key field of writing cache log - ([1572e8d](https://github.com/vicanso/pingap/commit/1572e8d1cfdcced629e1b9e9784af9bd50f07c3b))
+- Support writing cache log - ([0fcb360](https://github.com/vicanso/pingap/commit/0fcb360ebeaed17afcfbdee61bc6bb46d027aa3b))
+- Add modified body time to trace span - ([0965569](https://github.com/vicanso/pingap/commit/09655694b99505848cf2ed30622eb1c947fcf853))
+- Remove unused dependency - ([cf2e985](https://github.com/vicanso/pingap/commit/cf2e985da100f217819be38bdf358d1756c7a66c))
+- Adjust acme handle function for new instant acme - ([760b829](https://github.com/vicanso/pingap/commit/760b829744f37c4dd6cafaff4867857c033390fa))
+- Update dependencies - ([2324ac9](https://github.com/vicanso/pingap/commit/2324ac9fbc378c86f504a25dcf66cb4b619d5dae))
+- Skip compress when response header encoding exists - ([17471a1](https://github.com/vicanso/pingap/commit/17471a1b3acf3a141cff2903d71d56a7ef255277))
+- Adjust compression level - ([c3e50d7](https://github.com/vicanso/pingap/commit/c3e50d7e6122a27205f3b62d83d2f007e00ecc81))
+- Adjust algorithm level handle of compression plugin - ([27fbeed](https://github.com/vicanso/pingap/commit/27fbeeddb63a33d628673ec3aa7334f7c3048ca0))
+- Adjust default inactive time for file cache - ([e85c80f](https://github.com/vicanso/pingap/commit/e85c80f46215091317cc81f395f0e5b1b9a2a983))
+- Remove empty string and array of config - ([249e9cb](https://github.com/vicanso/pingap/commit/249e9cb46aaa8d55fa3f66852048f882a6dff0b4))
+- Set sub menu active background color - ([954046b](https://github.com/vicanso/pingap/commit/954046b00f79869876a8e9e2d4ae6984a1f59230))
+- Update pingora and adjust cache storage - ([8ae85d4](https://github.com/vicanso/pingap/commit/8ae85d4cc2199e76d786dc4866b1d9c7ed32d5c8))
+- Update hickory resolver and bollard for discovery - ([493bb43](https://github.com/vicanso/pingap/commit/493bb4357e92a49c33c4dda4fde02567839bef42))
+
+### 🧪 Testing
+
+- Remove test of let's encrypt - ([0dd916f](https://github.com/vicanso/pingap/commit/0dd916f87bd511cd70b6019e9c89f7b253773905))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update github action - ([0892573](https://github.com/vicanso/pingap/commit/0892573f823699c99e4db040dc201e6a909dc735))
+- Update github action - ([387a294](https://github.com/vicanso/pingap/commit/387a29465fda4ec0cf5698ba180f3a024862a85a))
+- Update github action - ([5aab5dd](https://github.com/vicanso/pingap/commit/5aab5dd703deadd47268ada2769e27f78713cf65))
+- Remove unused module - ([446cd29](https://github.com/vicanso/pingap/commit/446cd29f6c0104203882a9238b3c1e28ca39a16c))
+- Sort dependencies of cargo - ([e8014fe](https://github.com/vicanso/pingap/commit/e8014fefe66fee6d96eabfcd68b3f41160f3c377))
+- Update pingora - ([9a84fb9](https://github.com/vicanso/pingap/commit/9a84fb9256f0418a86480a5140eefb12af257b03))
+
 ## [0.11.1](https://github.com/vicanso/pingap/compare/v0.11.0..v0.11.1) - 2025-07-05
 
 ### ⛰️  Features
