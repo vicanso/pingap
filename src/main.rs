@@ -536,10 +536,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         simple_tasks.push(compression_task);
     }
 
-    let enabled_lets_encrypt = certificates.iter().any(|(_, certificate)| {
+    let enabled_http_challenge = certificates.iter().any(|(_, certificate)| {
         let acme = certificate.acme.clone().unwrap_or_default();
         let domains = certificate.domains.clone().unwrap_or_default();
-        !acme.is_empty() && !domains.is_empty()
+        let dns_challenge = certificate.dns_challenge.unwrap_or_default();
+        !acme.is_empty() && !domains.is_empty() && !dns_challenge
     });
 
     if std::env::var("PINGAP_DISABLE_ACME")
@@ -567,7 +568,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     // no server listen 80 and lets encrypt domains is not empty
-    if !exits_80_server && enabled_lets_encrypt {
+    if !exits_80_server && enabled_http_challenge {
         server_conf_list.push(ServerConf {
             name: "lets encrypt".to_string(),
             addr: "0.0.0.0:80".to_string(),
@@ -578,7 +579,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     for server_conf in server_conf_list.iter() {
         let listen_80_port = server_conf.addr.ends_with(":80");
         let mut ps = Server::new(server_conf)?;
-        if enabled_lets_encrypt && listen_80_port {
+        if enabled_http_challenge && listen_80_port {
             ps.enable_lets_encrypt();
         }
         if let Some(service) = ps.get_prometheus_push_service() {
