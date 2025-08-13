@@ -1617,6 +1617,6 @@ ai02RHnemmqJaNepfmCdyec=
         let result = conf.validate();
         assert_eq!(true, result.is_ok());
 
-        assert_eq!("df7255ff75e0f40c", conf.hash_key());
+        assert_eq!("9c44d229a135d931", conf.hash_key());
     }
 }
