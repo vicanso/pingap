@@ -125,6 +125,15 @@ export default function Certificates() {
       options: newBooleanOptions(),
     },
     {
+      name: "dns_challenge",
+      label: certificateI18n("dnsChallenge"),
+      placeholder: "",
+      defaultValue: certificateConfig.dns_challenge,
+      span: 3,
+      category: ExFormItemCategory.RADIOS,
+      options: newBooleanOptions(),
+    },
+    {
       name: "is_ca",
       label: certificateI18n("isCa"),
       placeholder: "",

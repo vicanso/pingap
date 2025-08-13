@@ -13,6 +13,10 @@
 // limitations under the License.
 
 use super::{get_token_path, Error, Result, LOG_CATEGORY};
+use hickory_resolver::config::ResolverConfig;
+use hickory_resolver::name_server::TokioConnectionProvider;
+use hickory_resolver::proto::rr::RecordType;
+use hickory_resolver::Resolver;
 use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
     OrderStatus, RetryPolicy,
@@ -56,11 +60,10 @@ fn ensure_crypto_provider() {
 /// 3. Save the updated configuration
 async fn update_certificate_lets_encrypt(
     storage: &'static (dyn ConfigStorage + Sync + Send),
-    name: &str,
-    domains: &[String],
+    params: UpdateCertificateParams,
 ) -> Result<PingapConf> {
     // get new certificate from lets encrypt
-    let (pem, key) = new_lets_encrypt(storage, domains, true).await?;
+    let (pem, key) = new_lets_encrypt(storage, true, params.clone()).await?;
     let mut conf = storage
         .load_config(LoadConfigOptions {
             ..Default::default()
@@ -71,12 +74,12 @@ async fn update_certificate_lets_encrypt(
             message: e.to_string(),
         })?;
 
-    if let Some(cert) = conf.certificates.get_mut(name) {
+    if let Some(cert) = conf.certificates.get_mut(&params.name) {
         cert.tls_cert = Some(pem);
         cert.tls_key = Some(key);
     }
     storage
-        .save_config(&conf, CATEGORY_CERTIFICATE, Some(name))
+        .save_config(&conf, CATEGORY_CERTIFICATE, Some(&params.name))
         .await
         .map_err(|e| Error::Fail {
             category: "save_config".to_string(),
@@ -92,6 +95,7 @@ struct UpdateCertificateParams {
     name: String,
     domains: Vec<String>,
     buffer_days: u16,
+    dns_challenge: bool,
 }
 
 /// Periodically checks and updates certificates that need renewal.
@@ -114,10 +118,10 @@ async fn do_update_certificates(
     if count % UPDATE_INTERVAL != 0 {
         return Ok(false);
     }
-
     for item in params.iter() {
         let name = &item.name;
         let domains = &item.domains;
+
         let should_renew = match get_lets_encrypt_certificate(name) {
             Ok(Some(certificate)) => {
                 // check if certificate is valid or domains changed
@@ -152,9 +156,14 @@ async fn do_update_certificates(
             );
             continue;
         }
+        // dns challenge skip renewal if not first time
+        // because it should be manually update dns txt record
+        if item.dns_challenge && count > 0 {
+            continue;
+        }
 
         if let Err(e) =
-            renew_certificate(storage, name, domains, sender.clone()).await
+            renew_certificate(storage, item.clone(), sender.clone()).await
         {
             error!(
                 category = LOG_CATEGORY,
@@ -170,13 +179,12 @@ async fn do_update_certificates(
 
 async fn renew_certificate(
     storage: &'static (dyn ConfigStorage + Sync + Send),
-    name: &str,
-    domains: &[String],
+    params: UpdateCertificateParams,
     sender: Option<Arc<NotificationSender>>,
 ) -> Result<()> {
-    let conf = update_certificate_lets_encrypt(storage, name, domains).await?;
+    let conf = update_certificate_lets_encrypt(storage, params.clone()).await?;
     set_current_config(&conf);
-    handle_successful_renewal(domains, &conf, sender).await;
+    handle_successful_renewal(&params.domains, &conf, sender).await;
     Ok(())
 }
 
@@ -251,6 +259,9 @@ pub fn new_lets_encrypt_service(
                             .map(|item| item.trim().to_string())
                             .filter(|item| !item.is_empty())
                             .collect(),
+                        dns_challenge: certificate
+                            .dns_challenge
+                            .unwrap_or_default(),
                     });
                 }
                 do_update_certificates(count, storage, &params, sender).await
@@ -348,10 +359,10 @@ pub async fn handle_lets_encrypt(
 /// Returns a tuple of (certificate_chain_pem, private_key_pem)
 async fn new_lets_encrypt(
     storage: &'static (dyn ConfigStorage + Sync + Send),
-    domains: &[String],
     production: bool,
+    params: UpdateCertificateParams,
 ) -> Result<(String, String)> {
-    let mut domains: Vec<String> = domains.to_vec();
+    let mut domains: Vec<String> = params.domains.to_vec();
     // sort domain for comparing later
     domains.sort();
     info!(
@@ -428,30 +439,77 @@ async fn new_lets_encrypt(
             _ => todo!(),
         }
 
-        let mut challenge =
-            authz.challenge(ChallengeType::Http01).ok_or_else(|| {
-                Error::NotFound {
-                    message: "Http01 challenge not found".to_string(),
-                }
-            })?;
-
-        let key_auth = challenge.key_authorization();
-        storage
-            .save(
-                &get_token_path(&challenge.token),
-                key_auth.as_str().as_bytes(),
+        let mut challenge = if params.dns_challenge {
+            let challenge =
+                authz.challenge(ChallengeType::Dns01).ok_or_else(|| {
+                    Error::NotFound {
+                        message: "Dns01 challenge not found".to_string(),
+                    }
+                })?;
+            let mut identifier = challenge.identifier().to_string();
+            if identifier.starts_with("*.") {
+                identifier =
+                    identifier.substring(2, identifier.len()).to_string();
+            }
+            let dns_txt_value = challenge.key_authorization().dns_value();
+            let acme_dns_name = format!("_acme-challenge.{identifier}");
+            info!("set the DNS record {acme_dns_name} IN TXT {dns_txt_value}",);
+            let resolver = Resolver::builder_with_config(
+                ResolverConfig::default(),
+                TokioConnectionProvider::default(),
             )
-            .await
-            .map_err(|e| Error::Fail {
-                category: "save_token".to_string(),
-                message: e.to_string(),
-            })?;
+            .build();
+            // dns txt record may take a while to propagate, so we need to retry
+            for i in 0..10 {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                info!("lookup dns txt record of {acme_dns_name}, times:{i}");
+                if let Ok(response) =
+                    resolver.lookup(&acme_dns_name, RecordType::TXT).await
+                {
+                    let txt_records: Vec<String> = response
+                        .record_iter()
+                        .filter_map(|record| {
+                            record.data().as_txt().map(|data| data.to_string())
+                        })
+                        .collect();
+                    let matched = txt_records.contains(&dns_txt_value);
+                    info!(
+                        "get dns txt records: {:?}, matched: {matched}",
+                        txt_records
+                    );
+                    if matched {
+                        break;
+                    }
+                }
+            }
+            challenge
+        } else {
+            let challenge =
+                authz.challenge(ChallengeType::Http01).ok_or_else(|| {
+                    Error::NotFound {
+                        message: "Http01 challenge not found".to_string(),
+                    }
+                })?;
 
-        info!(
-            category = LOG_CATEGORY,
-            token = challenge.token,
-            "let's encrypt well known path",
-        );
+            let key_auth = challenge.key_authorization();
+            storage
+                .save(
+                    &get_token_path(&challenge.token),
+                    key_auth.as_str().as_bytes(),
+                )
+                .await
+                .map_err(|e| Error::Fail {
+                    category: "save_token".to_string(),
+                    message: e.to_string(),
+                })?;
+
+            info!(
+                category = LOG_CATEGORY,
+                token = challenge.token,
+                "let's encrypt well known path",
+            );
+            challenge
+        };
         challenge.set_ready().await.map_err(|e| Error::Instant {
             category: "set_challenge_ready".to_string(),
             source: e,

@@ -302,6 +302,7 @@ export default {
       "Input the domains of acme, multiple domains separated by comma",
     acme: "Acme",
     isDefault: "Default Certificate",
+    dnsChallenge: "Dns 01 Challenge",
     isCa: "Certificate Authority",
     bufferDays: "Buffer Days",
     bufferDaysPlaceholder: "Input the buffer days for certificate",

@@ -17,7 +17,7 @@ path = "src/lib.rs"
 [dependencies]
 async-trait = { workspace = true }
 bollard = "0.19.1"
-hickory-resolver = "0.25.1"
+hickory-resolver = { workspace = true }
 http = { workspace = true }
 pingap-core = { version = "0.11.0", path = "../pingap-core" }
 pingora = { workspace = true }

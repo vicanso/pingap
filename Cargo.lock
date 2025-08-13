@@ -3486,6 +3486,7 @@ dependencies = [
 name = "pingap-acme"
 version = "0.11.0"
 dependencies = [
+ "hickory-resolver",
  "instant-acme",
  "pingap-certificate",
  "pingap-config",
@@ -3496,6 +3497,7 @@ dependencies = [
  "snafu",
  "substring",
  "tempfile",
+ "tokio",
  "tokio-test",
  "tracing",
 ]

@@ -129,6 +129,8 @@ pub struct CertificateConf {
     pub is_ca: Option<bool>,
     /// ACME configuration for automated certificate management
     pub acme: Option<String>,
+    /// Whether to use DNS challenge for ACME certificate management
+    pub dns_challenge: Option<bool>,
     /// Buffer days for certificate renewal
     pub buffer_days: Option<u16>,
     /// Optional description/notes about this certificate

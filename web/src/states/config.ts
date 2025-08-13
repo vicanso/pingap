@@ -123,6 +123,7 @@ export interface Certificate {
   certificate_file?: string;
   acme?: string;
   is_default?: boolean;
+  dns_challenge?: boolean;
   is_ca?: boolean;
   buffer_days?: number;
   remark?: string;

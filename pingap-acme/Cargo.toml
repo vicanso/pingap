@@ -15,6 +15,7 @@ name = "pingap_acme"
 path = "src/lib.rs"
 
 [dependencies]
+hickory-resolver = { workspace = true }
 instant-acme = "0.8.2"
 pingap-certificate = { version = "0.11.0", path = "../pingap-certificate" }
 pingap-config = { version = "0.11.0", path = "../pingap-config" }
@@ -23,6 +24,7 @@ pingora = { workspace = true }
 rustls = "0.23.29"
 snafu = { workspace = true }
 substring = { workspace = true }
+tokio = { workspace = true }
 tracing = { workspace = true }
 
 
