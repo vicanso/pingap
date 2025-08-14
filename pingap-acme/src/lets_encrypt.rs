@@ -453,7 +453,10 @@ async fn new_lets_encrypt(
             }
             let dns_txt_value = challenge.key_authorization().dns_value();
             let acme_dns_name = format!("_acme-challenge.{identifier}");
-            info!("set the DNS record {acme_dns_name} IN TXT {dns_txt_value}",);
+            info!(
+                category = LOG_CATEGORY,
+                "set the DNS record {acme_dns_name} IN TXT {dns_txt_value}",
+            );
             let resolver = Resolver::builder_with_config(
                 ResolverConfig::default(),
                 TokioConnectionProvider::default(),
@@ -462,7 +465,10 @@ async fn new_lets_encrypt(
             // dns txt record may take a while to propagate, so we need to retry
             for i in 0..10 {
                 tokio::time::sleep(Duration::from_secs(10)).await;
-                info!("lookup dns txt record of {acme_dns_name}, times:{i}");
+                info!(
+                    category = LOG_CATEGORY,
+                    "lookup dns txt record of {acme_dns_name}, times:{i}"
+                );
                 if let Ok(response) =
                     resolver.lookup(&acme_dns_name, RecordType::TXT).await
                 {
@@ -474,6 +480,7 @@ async fn new_lets_encrypt(
                         .collect();
                     let matched = txt_records.contains(&dns_txt_value);
                     info!(
+                        category = LOG_CATEGORY,
                         "get dns txt records: {:?}, matched: {matched}",
                         txt_records
                     );
