@@ -42,6 +42,10 @@ pub(crate) fn new_http_health_check(
     check.consecutive_failure = conf.consecutive_failure;
     check.reuse_connection = conf.reuse_connection;
     check.health_changed_callback = health_changed_callback;
+    let upstream_name = name.to_string();
+    check.backend_summary_callback = Some(Box::new(move |backend| {
+        format!("{upstream_name}: {}", backend.addr)
+    }));
     // create http get request
     match RequestHeader::build("GET", conf.path.as_bytes(), None) {
         Ok(mut req) => {
