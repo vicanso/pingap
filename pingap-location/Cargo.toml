@@ -1,6 +1,6 @@
 [package]
 name = "pingap-location"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2021"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -17,8 +17,8 @@ ahash = { workspace = true }
 arc-swap = { workspace = true }
 http = { workspace = true }
 once_cell = { workspace = true }
-pingap-config = { version = "0.11.0", path = "../pingap-config" }
-pingap-core = { version = "0.11.0", path = "../pingap-core" }
+pingap-config = { version = "0.12.0", path = "../pingap-config" }
+pingap-core = { version = "0.12.0", path = "../pingap-core" }
 pingora = { workspace = true }
 regex = { workspace = true }
 snafu = { workspace = true }

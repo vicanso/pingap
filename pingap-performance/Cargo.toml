@@ -1,6 +1,6 @@
 [package]
 name = "pingap-performance"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2021"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -25,11 +25,11 @@ http = { workspace = true }
 memory-stats = { workspace = true }
 num_cpus = { workspace = true }
 once_cell = { workspace = true }
-pingap-cache = { version = "0.11.0", path = "../pingap-cache" }
-pingap-config = { version = "0.11.0", path = "../pingap-config" }
-pingap-core = { version = "0.11.0", path = "../pingap-core" }
-pingap-location = { version = "0.11.0", path = "../pingap-location" }
-pingap-upstream = { version = "0.11.0", path = "../pingap-upstream" }
+pingap-cache = { version = "0.12.0", path = "../pingap-cache" }
+pingap-config = { version = "0.12.0", path = "../pingap-config" }
+pingap-core = { version = "0.12.0", path = "../pingap-core" }
+pingap-location = { version = "0.12.0", path = "../pingap-location" }
+pingap-upstream = { version = "0.12.0", path = "../pingap-upstream" }
 pingora = { workspace = true }
 prometheus = { version = "0.13.4", default-features = false, optional = true }
 reqwest = { workspace = true }

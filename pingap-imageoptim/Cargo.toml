@@ -1,6 +1,6 @@
 [package]
 name = "pingap-imageoptim"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2021"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -23,9 +23,9 @@ image = { version = "0.25.6", features = ["webp", "avif"] }
 imagequant = { version = "4.3.4", default-features = false }
 lodepng = "3.11.0"
 mozjpeg = "0.10.13"
-pingap-config = { version = "0.11.0", path = "../pingap-config" }
-pingap-core = { version = "0.11.0", path = "../pingap-core" }
-pingap-plugin = { version = "0.11.0", path = "../pingap-plugin" }
+pingap-config = { version = "0.12.0", path = "../pingap-config" }
+pingap-core = { version = "0.12.0", path = "../pingap-core" }
+pingap-plugin = { version = "0.12.0", path = "../pingap-plugin" }
 pingora = { workspace = true }
 rgb = "0.8.50"
 snafu = { workspace = true }
