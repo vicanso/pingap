@@ -22,12 +22,12 @@ opentelemetry = { version = "0.28.0", default-features = false, features = [
     "trace",
 ], optional = true }
 pingora = { workspace = true }
-pingora-limits = "0.5.0"
+pingora-limits = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 snafu = { workspace = true }
 strum = { workspace = true }
-TinyUFO = "0.5.0"
+TinyUFO = "0.6.0"
 tokio = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
