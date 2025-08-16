@@ -119,8 +119,8 @@ jobs:
         shell: bash
         run: |
           cargo --version
-          # cargo build --release --features=full
-          # ls -lh target/release
+          cargo build --release --features=full
+          ls -lh target/release
   build:
     timeout-minutes: 3600
     runs-on: ${{ matrix.platform.runs-on }}
