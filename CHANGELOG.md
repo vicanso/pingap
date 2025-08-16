@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.12.0](https://github.com/vicanso/pingap/compare/v0.11.2..v0.12.0) - 2025-08-16
+
+### ⛰️  Features
+
+- Support DNS-01 challenge - ([1ea6cf6](https://github.com/vicanso/pingap/commit/1ea6cf6ae8e177b3d3ca74a8c286704994f33869))
+
+### 🐛 Bug Fixes
+
+- Fix lint - ([d53020d](https://github.com/vicanso/pingap/commit/d53020db52ff88003752bc496911dd0d14e4cf29))
+
+### 🚜 Refactor
+
+- Adjust acme log - ([ea75b0a](https://github.com/vicanso/pingap/commit/ea75b0af32e77f8209f13458e8c42dc6dff6707c))
+- Adjust enable http challenge - ([a50b22b](https://github.com/vicanso/pingap/commit/a50b22b431bb1e6c1e93b9bcda0f804f65937af6))
+
+### ⚙️ Miscellaneous Tasks
+
+- Version 0.12.0 - ([8e7b1e4](https://github.com/vicanso/pingap/commit/8e7b1e4514ad36741a411eafa6088ac210dc7dc0))
+- Use rust 1.88.0 - ([9dc502d](https://github.com/vicanso/pingap/commit/9dc502d292dce1854f504e0b6558d604cbb71601))
+- Update github workflow - ([cd42c7d](https://github.com/vicanso/pingap/commit/cd42c7d6928b1a7a5435c168479181579af0cf9b))
+- Update pingora to 0.6.0 - ([9368b37](https://github.com/vicanso/pingap/commit/9368b3713acbef3bdc50721b5ba77dccaf32047b))
+- Update pingora - ([cd17afd](https://github.com/vicanso/pingap/commit/cd17afd6815b548255ae0786ce535ebe952b2dcd))
+
 ## [0.11.2](https://github.com/vicanso/pingap/compare/v0.11.1..v0.11.2) - 2025-08-10
 
 ### ⛰️  Features
