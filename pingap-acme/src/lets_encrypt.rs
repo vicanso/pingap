@@ -17,6 +17,7 @@ use super::{
     LOG_CATEGORY,
 };
 use crate::dns_ali::AliDnsTask;
+use crate::dns_cf::CfDnsTask;
 use crate::dns_manual::ManualDnsTask;
 use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
@@ -458,68 +459,70 @@ async fn new_lets_encrypt(
             _ => todo!(),
         }
 
-        let mut challenge =
-            if params.dns_challenge {
-                let challenge = authz
-                    .challenge(ChallengeType::Dns01)
-                    .ok_or_else(|| Error::NotFound {
+        let mut challenge = if params.dns_challenge {
+            let challenge =
+                authz.challenge(ChallengeType::Dns01).ok_or_else(|| {
+                    Error::NotFound {
                         message: "Dns01 challenge not found".to_string(),
-                    })?;
-                let mut identifier = challenge.identifier().to_string();
-                if identifier.starts_with("*.") {
-                    identifier =
-                        identifier.substring(2, identifier.len()).to_string();
-                }
-                let dns_txt_value = challenge.key_authorization().dns_value();
-                let acme_dns_name = format!("_acme-challenge.{identifier}");
-                let task: Box<dyn AcmeDnsTask> =
-                    match params.dns_provider.as_str() {
-                        "ali" => Box::new(AliDnsTask::new(
-                            &params.dns_access_key_id,
-                            &params.dns_access_key_secret,
-                        )),
-                        _ => Box::new(ManualDnsTask::new()),
-                    };
-
-                info!(
-                    category = LOG_CATEGORY,
-                    dns_provider = params.dns_provider,
-                    "start add dns txt record for {acme_dns_name}"
-                );
-                task.add_txt_record(&acme_dns_name, &dns_txt_value).await?;
-                info!(
-                    category = LOG_CATEGORY,
-                    dns_provider = params.dns_provider,
-                    "add dns txt record success for {acme_dns_name}"
-                );
-                dns_tasks.push(task);
-                challenge
-            } else {
-                let challenge = authz
-                    .challenge(ChallengeType::Http01)
-                    .ok_or_else(|| Error::NotFound {
-                        message: "Http01 challenge not found".to_string(),
-                    })?;
-
-                let key_auth = challenge.key_authorization();
-                storage
-                    .save(
-                        &get_token_path(&challenge.token),
-                        key_auth.as_str().as_bytes(),
-                    )
-                    .await
-                    .map_err(|e| Error::Fail {
-                        category: "save_token".to_string(),
-                        message: e.to_string(),
-                    })?;
-
-                info!(
-                    category = LOG_CATEGORY,
-                    token = challenge.token,
-                    "let's encrypt well known path",
-                );
-                challenge
+                    }
+                })?;
+            let mut identifier = challenge.identifier().to_string();
+            if identifier.starts_with("*.") {
+                identifier =
+                    identifier.substring(2, identifier.len()).to_string();
+            }
+            let dns_txt_value = challenge.key_authorization().dns_value();
+            let acme_dns_name = format!("_acme-challenge.{identifier}");
+            let task: Box<dyn AcmeDnsTask> = match params.dns_provider.as_str()
+            {
+                "ali" => Box::new(AliDnsTask::new(
+                    &params.dns_access_key_id,
+                    &params.dns_access_key_secret,
+                )),
+                "cf" => Box::new(CfDnsTask::new(&params.dns_access_key_id)),
+                _ => Box::new(ManualDnsTask::new()),
             };
+
+            info!(
+                category = LOG_CATEGORY,
+                dns_provider = params.dns_provider,
+                "start add dns txt record for {acme_dns_name}"
+            );
+            task.add_txt_record(&acme_dns_name, &dns_txt_value).await?;
+            info!(
+                category = LOG_CATEGORY,
+                dns_provider = params.dns_provider,
+                "add dns txt record success for {acme_dns_name}"
+            );
+            dns_tasks.push(task);
+            challenge
+        } else {
+            let challenge =
+                authz.challenge(ChallengeType::Http01).ok_or_else(|| {
+                    Error::NotFound {
+                        message: "Http01 challenge not found".to_string(),
+                    }
+                })?;
+
+            let key_auth = challenge.key_authorization();
+            storage
+                .save(
+                    &get_token_path(&challenge.token),
+                    key_auth.as_str().as_bytes(),
+                )
+                .await
+                .map_err(|e| Error::Fail {
+                    category: "save_token".to_string(),
+                    message: e.to_string(),
+                })?;
+
+            info!(
+                category = LOG_CATEGORY,
+                token = challenge.token,
+                "let's encrypt well known path",
+            );
+            challenge
+        };
         challenge.set_ready().await.map_err(|e| Error::Instant {
             category: "set_challenge_ready".to_string(),
             source: e,

@@ -140,7 +140,7 @@ export default function Certificates() {
       defaultValue: certificateConfig.dns_provider || "manual",
       span: 3,
       category: ExFormItemCategory.RADIOS,
-      options: newStringOptions(["manual", "ali"], true, true),
+      options: newStringOptions(["manual", "ali", "cf"], true, true),
     },
     {
       name: "dns_access_key_id",

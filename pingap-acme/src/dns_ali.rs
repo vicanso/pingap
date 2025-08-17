@@ -147,7 +147,7 @@ async fn add_ali_dns_record(
     Ok(response)
 }
 
-async fn delete_record_by_id(
+async fn delete_ali_dns_record(
     access_key_id: &str,
     access_key_secret: &str,
     record_id: &str,
@@ -193,7 +193,7 @@ impl AcmeDnsTask for AliDnsTask {
     async fn done(&self) -> Result<()> {
         let mut records = self.records.lock().await;
         for record in records.iter() {
-            delete_record_by_id(
+            delete_ali_dns_record(
                 &self.access_key_id,
                 &self.access_key_secret,
                 record,
