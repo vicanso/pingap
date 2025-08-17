@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_token_path, Error, Result, LOG_CATEGORY};
-use hickory_resolver::config::ResolverConfig;
-use hickory_resolver::name_server::TokioConnectionProvider;
-use hickory_resolver::proto::rr::RecordType;
-use hickory_resolver::Resolver;
+use super::{
+    get_token_path, get_value_from_env, AcmeDnsTask, Error, Result,
+    LOG_CATEGORY,
+};
+use crate::dns_ali::AliDnsTask;
+use crate::dns_manual::ManualDnsTask;
 use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
     OrderStatus, RetryPolicy,
@@ -96,6 +97,9 @@ struct UpdateCertificateParams {
     domains: Vec<String>,
     buffer_days: u16,
     dns_challenge: bool,
+    dns_provider: String,
+    dns_access_key_id: String,
+    dns_access_key_secret: String,
 }
 
 /// Periodically checks and updates certificates that need renewal.
@@ -154,11 +158,6 @@ async fn do_update_certificates(
                 name,
                 "certificate still valid"
             );
-            continue;
-        }
-        // dns challenge skip renewal if not first time
-        // because it should be manually update dns txt record
-        if item.dns_challenge && count > 0 {
             continue;
         }
 
@@ -249,6 +248,18 @@ pub fn new_lets_encrypt_service(
                     if acme.is_empty() || domains.is_empty() {
                         continue;
                     }
+                    let dns_access_key_id = get_value_from_env(
+                        &certificate
+                            .dns_access_key_id
+                            .clone()
+                            .unwrap_or_default(),
+                    );
+                    let dns_access_key_secret = get_value_from_env(
+                        &certificate
+                            .dns_access_key_secret
+                            .clone()
+                            .unwrap_or_default(),
+                    );
                     params.push(UpdateCertificateParams {
                         name: name.to_string(),
                         buffer_days: certificate
@@ -262,6 +273,12 @@ pub fn new_lets_encrypt_service(
                         dns_challenge: certificate
                             .dns_challenge
                             .unwrap_or_default(),
+                        dns_provider: certificate
+                            .dns_provider
+                            .clone()
+                            .unwrap_or_default(),
+                        dns_access_key_id,
+                        dns_access_key_secret,
                     });
                 }
                 do_update_certificates(count, storage, &params, sender).await
@@ -423,6 +440,8 @@ async fn new_lets_encrypt(
 
     let mut authorizations = order.authorizations();
 
+    let mut dns_tasks = vec![];
+
     while let Some(result) = authorizations.next().await {
         let mut authz = result.map_err(|e| Error::Instant {
             category: "authorizations".to_string(),
@@ -439,84 +458,68 @@ async fn new_lets_encrypt(
             _ => todo!(),
         }
 
-        let mut challenge = if params.dns_challenge {
-            let challenge =
-                authz.challenge(ChallengeType::Dns01).ok_or_else(|| {
-                    Error::NotFound {
+        let mut challenge =
+            if params.dns_challenge {
+                let challenge = authz
+                    .challenge(ChallengeType::Dns01)
+                    .ok_or_else(|| Error::NotFound {
                         message: "Dns01 challenge not found".to_string(),
-                    }
-                })?;
-            let mut identifier = challenge.identifier().to_string();
-            if identifier.starts_with("*.") {
-                identifier =
-                    identifier.substring(2, identifier.len()).to_string();
-            }
-            let dns_txt_value = challenge.key_authorization().dns_value();
-            let acme_dns_name = format!("_acme-challenge.{identifier}");
-            info!(
-                category = LOG_CATEGORY,
-                "set the DNS record {acme_dns_name} IN TXT {dns_txt_value}",
-            );
-            let resolver = Resolver::builder_with_config(
-                ResolverConfig::default(),
-                TokioConnectionProvider::default(),
-            )
-            .build();
-            // dns txt record may take a while to propagate, so we need to retry
-            for i in 0..10 {
-                tokio::time::sleep(Duration::from_secs(10)).await;
+                    })?;
+                let mut identifier = challenge.identifier().to_string();
+                if identifier.starts_with("*.") {
+                    identifier =
+                        identifier.substring(2, identifier.len()).to_string();
+                }
+                let dns_txt_value = challenge.key_authorization().dns_value();
+                let acme_dns_name = format!("_acme-challenge.{identifier}");
+                let task: Box<dyn AcmeDnsTask> =
+                    match params.dns_provider.as_str() {
+                        "ali" => Box::new(AliDnsTask::new(
+                            &params.dns_access_key_id,
+                            &params.dns_access_key_secret,
+                        )),
+                        _ => Box::new(ManualDnsTask::new()),
+                    };
+
                 info!(
                     category = LOG_CATEGORY,
-                    "lookup dns txt record of {acme_dns_name}, times:{i}"
+                    dns_provider = params.dns_provider,
+                    "start add dns txt record for {acme_dns_name}"
                 );
-                if let Ok(response) =
-                    resolver.lookup(&acme_dns_name, RecordType::TXT).await
-                {
-                    let txt_records: Vec<String> = response
-                        .record_iter()
-                        .filter_map(|record| {
-                            record.data().as_txt().map(|data| data.to_string())
-                        })
-                        .collect();
-                    let matched = txt_records.contains(&dns_txt_value);
-                    info!(
-                        category = LOG_CATEGORY,
-                        "get dns txt records: {:?}, matched: {matched}",
-                        txt_records
-                    );
-                    if matched {
-                        break;
-                    }
-                }
-            }
-            challenge
-        } else {
-            let challenge =
-                authz.challenge(ChallengeType::Http01).ok_or_else(|| {
-                    Error::NotFound {
+                task.add_txt_record(&acme_dns_name, &dns_txt_value).await?;
+                info!(
+                    category = LOG_CATEGORY,
+                    dns_provider = params.dns_provider,
+                    "add dns txt record success for {acme_dns_name}"
+                );
+                dns_tasks.push(task);
+                challenge
+            } else {
+                let challenge = authz
+                    .challenge(ChallengeType::Http01)
+                    .ok_or_else(|| Error::NotFound {
                         message: "Http01 challenge not found".to_string(),
-                    }
-                })?;
+                    })?;
 
-            let key_auth = challenge.key_authorization();
-            storage
-                .save(
-                    &get_token_path(&challenge.token),
-                    key_auth.as_str().as_bytes(),
-                )
-                .await
-                .map_err(|e| Error::Fail {
-                    category: "save_token".to_string(),
-                    message: e.to_string(),
-                })?;
+                let key_auth = challenge.key_authorization();
+                storage
+                    .save(
+                        &get_token_path(&challenge.token),
+                        key_auth.as_str().as_bytes(),
+                    )
+                    .await
+                    .map_err(|e| Error::Fail {
+                        category: "save_token".to_string(),
+                        message: e.to_string(),
+                    })?;
 
-            info!(
-                category = LOG_CATEGORY,
-                token = challenge.token,
-                "let's encrypt well known path",
-            );
-            challenge
-        };
+                info!(
+                    category = LOG_CATEGORY,
+                    token = challenge.token,
+                    "let's encrypt well known path",
+                );
+                challenge
+            };
         challenge.set_ready().await.map_err(|e| Error::Instant {
             category: "set_challenge_ready".to_string(),
             source: e,
@@ -536,6 +539,11 @@ async fn new_lets_encrypt(
             category: "poll_ready".to_string(),
             message: format!("unexpected order status: {status:?}"),
         });
+    }
+
+    for task in dns_tasks.iter() {
+        // ignore done error
+        let _ = task.done().await;
     }
 
     let private_key_pem =

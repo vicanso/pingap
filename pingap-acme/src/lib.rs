@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use snafu::Snafu;
-
+use async_trait::async_trait;
 use pingap_certificate::rcgen;
+use snafu::Snafu;
+use substring::Substring;
 
 /// Category name for ACME-related logging
 pub static LOG_CATEGORY: &str = "acme";
@@ -66,6 +67,30 @@ pub fn get_token_path(key: &str) -> String {
     format!("pingap-acme-tokens/{key}")
 }
 
+fn get_value_from_env(value: &str) -> String {
+    if value.is_empty() {
+        return value.to_string();
+    }
+    let key_prefix = "$ENV:";
+    if value.starts_with(key_prefix) {
+        std::env::var(value.substring(key_prefix.len(), value.len()))
+            .unwrap_or(value.to_string())
+    } else {
+        value.to_string()
+    }
+}
+
+/// Acme DNS task
+#[async_trait]
+pub trait AcmeDnsTask: Sync + Send {
+    /// Add a DNS TXT record
+    async fn add_txt_record(&self, domain: &str, value: &str) -> Result<()>;
+    /// Task done, it will clean up the added dns txt record
+    async fn done(&self) -> Result<()>;
+}
+
+mod dns_ali;
+mod dns_manual;
 mod lets_encrypt;
 
 pub use lets_encrypt::{handle_lets_encrypt, new_lets_encrypt_service};

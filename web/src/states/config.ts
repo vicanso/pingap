@@ -124,6 +124,9 @@ export interface Certificate {
   acme?: string;
   is_default?: boolean;
   dns_challenge?: boolean;
+  dns_provider?: string;
+  dns_access_key_id?: string;
+  dns_access_key_secret?: string;
   is_ca?: boolean;
   buffer_days?: number;
   remark?: string;

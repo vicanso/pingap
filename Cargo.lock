@@ -1828,6 +1828,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest",
+]
+
+[[package]]
 name = "hmac-sha256"
 version = "1.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3486,20 +3495,30 @@ dependencies = [
 name = "pingap-acme"
 version = "0.12.0"
 dependencies = [
+ "async-trait",
+ "base64",
+ "chrono",
  "hickory-resolver",
+ "hmac",
  "instant-acme",
  "pingap-certificate",
  "pingap-config",
  "pingap-core",
  "pingora",
  "pretty_assertions",
+ "reqwest",
  "rustls",
+ "serde",
+ "serde_json",
+ "sha1",
  "snafu",
  "substring",
  "tempfile",
  "tokio",
  "tokio-test",
  "tracing",
+ "url",
+ "uuid",
 ]
 
 [[package]]
@@ -5461,6 +5480,17 @@ dependencies = [
  "base64",
  "indexmap 2.10.0",
  "rust_decimal",
+]
+
+[[package]]
+name = "sha1"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
 ]
 
 [[package]]

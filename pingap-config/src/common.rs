@@ -131,6 +131,12 @@ pub struct CertificateConf {
     pub acme: Option<String>,
     /// Whether to use DNS challenge for ACME certificate management
     pub dns_challenge: Option<bool>,
+    /// DNS provider for ACME certificate management
+    pub dns_provider: Option<String>,
+    /// DNS access key id for ACME certificate management
+    pub dns_access_key_id: Option<String>,
+    /// DNS access key secret for ACME certificate management
+    pub dns_access_key_secret: Option<String>,
     /// Buffer days for certificate renewal
     pub buffer_days: Option<u16>,
     /// Optional description/notes about this certificate
