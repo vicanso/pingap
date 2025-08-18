@@ -92,6 +92,7 @@ pub trait AcmeDnsTask: Sync + Send {
 mod dns_ali;
 mod dns_cf;
 mod dns_manual;
+mod dns_tencent;
 mod lets_encrypt;
 
 pub use lets_encrypt::{handle_lets_encrypt, new_lets_encrypt_service};

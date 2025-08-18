@@ -25,6 +25,13 @@ use url::form_urlencoded::byte_serialize;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
+fn new_error(err: impl ToString) -> Error {
+    Error::Fail {
+        category: "ali".to_string(),
+        message: err.to_string(),
+    }
+}
+
 #[derive(Deserialize, Debug)]
 struct AddRecordResponse {
     #[serde(rename = "RecordId")]
@@ -73,12 +80,7 @@ async fn ali_api_request(
     let signing_key = format!("{access_key_secret}&");
     type HmacSha1 = Hmac<Sha1>;
     let mut mac =
-        HmacSha1::new_from_slice(signing_key.as_bytes()).map_err(|e| {
-            Error::Fail {
-                category: "aliyun".to_string(),
-                message: e.to_string(),
-            }
-        })?;
+        HmacSha1::new_from_slice(signing_key.as_bytes()).map_err(new_error)?;
     mac.update(string_to_sign.as_bytes());
     let signature = STANDARD.encode(mac.finalize().into_bytes());
 
@@ -91,31 +93,14 @@ async fn ali_api_request(
     );
 
     let client = reqwest::Client::new();
-    let response =
-        client
-            .get(&request_url)
-            .send()
-            .await
-            .map_err(|e| Error::Fail {
-                category: "aliyun".to_string(),
-                message: e.to_string(),
-            })?;
+    let response = client.get(&request_url).send().await.map_err(new_error)?;
 
     if response.status().is_success() {
-        Ok(response.text().await.map_err(|e| Error::Fail {
-            category: "aliyun".to_string(),
-            message: e.to_string(),
-        })?)
+        Ok(response.text().await.map_err(new_error)?)
     } else {
         let status = response.status();
-        let error_body = response.text().await.map_err(|e| Error::Fail {
-            category: "aliyun".to_string(),
-            message: e.to_string(),
-        })?;
-        Err(Error::Fail {
-            category: "aliyun".to_string(),
-            message: format!("API Error: {status} - {error_body}"),
-        })
+        let error_body = response.text().await.map_err(new_error)?;
+        Err(new_error(format!("API Error: {status} - {error_body}")))
     }
 }
 
@@ -127,10 +112,8 @@ async fn add_ali_dns_record(
     value: &str,
 ) -> Result<AddRecordResponse> {
     let mut params = BTreeMap::new();
-    let (rr, domain_name) = domain.split_once(".").ok_or(Error::Fail {
-        category: "aliyun".to_string(),
-        message: "invalid domain".to_string(),
-    })?;
+    let (rr, domain_name) =
+        domain.split_once(".").ok_or(new_error("invalid domain"))?;
     params.insert("Action", "AddDomainRecord".to_string());
     params.insert("DomainName", domain_name.to_string());
     params.insert("RR", rr.to_string());
@@ -139,11 +122,8 @@ async fn add_ali_dns_record(
 
     let response_body =
         ali_api_request(access_key_id, access_key_secret, &mut params).await?;
-    let response: AddRecordResponse = serde_json::from_str(&response_body)
-        .map_err(|e| Error::Fail {
-            category: "aliyun".to_string(),
-            message: e.to_string(),
-        })?;
+    let response: AddRecordResponse =
+        serde_json::from_str(&response_body).map_err(new_error)?;
     Ok(response)
 }
 
@@ -162,7 +142,7 @@ async fn delete_ali_dns_record(
 pub(crate) struct AliDnsTask {
     access_key_id: String,
     access_key_secret: String,
-    records: Mutex<Vec<String>>,
+    record: Mutex<String>,
 }
 
 impl AliDnsTask {
@@ -170,7 +150,7 @@ impl AliDnsTask {
         Self {
             access_key_id: access_key_id.to_string(),
             access_key_secret: access_key_secret.to_string(),
-            records: Mutex::new(vec![]),
+            record: Mutex::new(String::new()),
         }
     }
 }
@@ -185,22 +165,20 @@ impl AcmeDnsTask for AliDnsTask {
             value,
         )
         .await?;
-        let mut records = self.records.lock().await;
-        records.push(response.record_id);
+        let mut record = self.record.lock().await;
+        *record = response.record_id;
         Ok(())
     }
 
     async fn done(&self) -> Result<()> {
-        let mut records = self.records.lock().await;
-        for record in records.iter() {
-            delete_ali_dns_record(
-                &self.access_key_id,
-                &self.access_key_secret,
-                record,
-            )
-            .await?;
-        }
-        records.clear();
+        let mut record = self.record.lock().await;
+        delete_ali_dns_record(
+            &self.access_key_id,
+            &self.access_key_secret,
+            &record,
+        )
+        .await?;
+        *record = String::new();
         Ok(())
     }
 }

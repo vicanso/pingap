@@ -19,6 +19,7 @@ use super::{
 use crate::dns_ali::AliDnsTask;
 use crate::dns_cf::CfDnsTask;
 use crate::dns_manual::ManualDnsTask;
+use crate::dns_tencent::TencentDnsTask;
 use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
     OrderStatus, RetryPolicy,
@@ -480,6 +481,10 @@ async fn new_lets_encrypt(
                     &params.dns_access_key_secret,
                 )),
                 "cf" => Box::new(CfDnsTask::new(&params.dns_access_key_id)),
+                "tencent" => Box::new(TencentDnsTask::new(
+                    &params.dns_access_key_id,
+                    &params.dns_access_key_secret,
+                )),
                 _ => Box::new(ManualDnsTask::new()),
             };
 
@@ -546,7 +551,13 @@ async fn new_lets_encrypt(
 
     for task in dns_tasks.iter() {
         // ignore done error
-        let _ = task.done().await;
+        if let Err(err) = task.done().await {
+            error!(
+                category = LOG_CATEGORY,
+                error = err.to_string(),
+                "remove acme dns text record fail"
+            );
+        }
     }
 
     let private_key_pem =

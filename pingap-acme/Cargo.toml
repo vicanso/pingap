@@ -18,6 +18,7 @@ path = "src/lib.rs"
 async-trait = { workspace = true }
 base64 = { workspace = true }
 chrono = { workspace = true }
+hex = { workspace = true }
 hickory-resolver = { workspace = true }
 hmac = { workspace = true }
 instant-acme = "0.8.2"
@@ -30,6 +31,7 @@ rustls = "0.23.29"
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha1 = { workspace = true }
+sha2 = { workspace = true }
 snafu = { workspace = true }
 substring = { workspace = true }
 tokio = { workspace = true }

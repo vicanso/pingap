@@ -37,6 +37,13 @@ struct DnsRecord {
     id: String,
 }
 
+fn new_error(err: impl ToString) -> Error {
+    Error::Fail {
+        category: "cf".to_string(),
+        message: err.to_string(),
+    }
+}
+
 /// Get the zone id of the domain
 async fn get_zone_id(api_token: &str, domain_name: &str) -> Result<String> {
     let client = reqwest::Client::new();
@@ -48,34 +55,22 @@ async fn get_zone_id(api_token: &str, domain_name: &str) -> Result<String> {
         .bearer_auth(api_token)
         .send()
         .await
-        .map_err(|e| Error::Fail {
-            category: "cf".to_string(),
-            message: e.to_string(),
-        })?;
+        .map_err(new_error)?;
 
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.map_err(|e| Error::Fail {
-            category: "cf".to_string(),
-            message: e.to_string(),
-        })?;
-        return Err(Error::Fail {
-            category: "cf".to_string(),
-            message: format!("API Error: {status} - {body}"),
-        });
+        let body = response.text().await.map_err(new_error)?;
+        return Err(new_error(format!("API Error: {status} - {body}")));
     }
 
     let api_response: ApiResponse<Vec<Zone>> =
-        response.json().await.map_err(|e| Error::Fail {
-            category: "cf".to_string(),
-            message: e.to_string(),
-        })?;
+        response.json().await.map_err(new_error)?;
 
     if !api_response.success {
-        return Err(Error::Fail {
-            category: "cf".to_string(),
-            message: format!("API returned failure: {:?}", api_response.errors),
-        });
+        return Err(new_error(format!(
+            "API returned failure: {:?}",
+            api_response.errors
+        )));
     }
 
     // get the zone id of the domain
@@ -84,10 +79,9 @@ async fn get_zone_id(api_token: &str, domain_name: &str) -> Result<String> {
         .into_iter()
         .find(|zone| zone.name == domain_name)
         .map(|zone| zone.id)
-        .ok_or(Error::Fail {
-            category: "cf".to_string(),
-            message: format!("not found zone id for domain '{domain_name}'"),
-        })
+        .ok_or(new_error(format!(
+            "not found zone id for domain '{domain_name}'"
+        )))
 }
 
 async fn add_cf_dns_record(
@@ -113,34 +107,22 @@ async fn add_cf_dns_record(
         .json(&body)
         .send()
         .await
-        .map_err(|e| Error::Fail {
-            category: "cf".to_string(),
-            message: e.to_string(),
-        })?;
+        .map_err(new_error)?;
 
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.map_err(|e| Error::Fail {
-            category: "cf".to_string(),
-            message: e.to_string(),
-        })?;
-        return Err(Error::Fail {
-            category: "cf".to_string(),
-            message: format!("API Error: {status} - {body}"),
-        });
+        let body = response.text().await.map_err(new_error)?;
+        return Err(new_error(format!("API Error: {status} - {body}")));
     }
 
     let api_response: ApiResponse<DnsRecord> =
-        response.json().await.map_err(|e| Error::Fail {
-            category: "cf".to_string(),
-            message: e.to_string(),
-        })?;
+        response.json().await.map_err(new_error)?;
 
     if !api_response.success {
-        return Err(Error::Fail {
-            category: "cf".to_string(),
-            message: format!("API returned failure: {:?}", api_response.errors),
-        });
+        return Err(new_error(format!(
+            "API returned failure: {:?}",
+            api_response.errors
+        )));
     }
 
     Ok(api_response.result.id)
@@ -160,34 +142,22 @@ async fn delete_cf_dns_record(
         .bearer_auth(api_token)
         .send()
         .await
-        .map_err(|e| Error::Fail {
-            category: "cf".to_string(),
-            message: e.to_string(),
-        })?;
+        .map_err(new_error)?;
 
     if !response.status().is_success() {
         let status = response.status();
-        let body = response.text().await.map_err(|e| Error::Fail {
-            category: "cf".to_string(),
-            message: e.to_string(),
-        })?;
-        return Err(Error::Fail {
-            category: "cf".to_string(),
-            message: format!("API Error: {status} - {body}"),
-        });
+        let body = response.text().await.map_err(new_error)?;
+        return Err(new_error(format!("API Error: {status} - {body}")));
     }
 
     let api_response: ApiResponse<serde_json::Value> =
-        response.json().await.map_err(|e| Error::Fail {
-            category: "cf".to_string(),
-            message: e.to_string(),
-        })?;
+        response.json().await.map_err(new_error)?;
 
     if !api_response.success {
-        return Err(Error::Fail {
-            category: "cf".to_string(),
-            message: format!("API returned failure: {:?}", api_response.errors),
-        });
+        return Err(new_error(format!(
+            "API returned failure: {:?}",
+            api_response.errors
+        )));
     }
 
     Ok(())
@@ -212,10 +182,9 @@ impl CfDnsTask {
 #[async_trait]
 impl AcmeDnsTask for CfDnsTask {
     async fn add_txt_record(&self, domain: &str, value: &str) -> Result<()> {
-        let (_, domain_name) = domain.split_once(".").ok_or(Error::Fail {
-            category: "cf".to_string(),
-            message: format!("invalid domain '{domain}'"),
-        })?;
+        let (_, domain_name) = domain
+            .split_once(".")
+            .ok_or(new_error(format!("invalid domain '{domain}'")))?;
         let zone_id = get_zone_id(&self.api_token, domain_name).await?;
         let mut zone = self.zone.lock().await;
         *zone = zone_id.clone();
