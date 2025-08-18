@@ -18,6 +18,7 @@ use super::{
 };
 use crate::dns_ali::AliDnsTask;
 use crate::dns_cf::CfDnsTask;
+use crate::dns_huawei::HuaweiDnsTask;
 use crate::dns_manual::ManualDnsTask;
 use crate::dns_tencent::TencentDnsTask;
 use instant_acme::{
@@ -102,6 +103,7 @@ struct UpdateCertificateParams {
     dns_provider: String,
     dns_access_key_id: String,
     dns_access_key_secret: String,
+    dns_region: String,
 }
 
 /// Periodically checks and updates certificates that need renewal.
@@ -262,6 +264,8 @@ pub fn new_lets_encrypt_service(
                             .clone()
                             .unwrap_or_default(),
                     );
+                    let dns_region =
+                        certificate.dns_region.clone().unwrap_or_default();
                     params.push(UpdateCertificateParams {
                         name: name.to_string(),
                         buffer_days: certificate
@@ -281,6 +285,7 @@ pub fn new_lets_encrypt_service(
                             .unwrap_or_default(),
                         dns_access_key_id,
                         dns_access_key_secret,
+                        dns_region,
                     });
                 }
                 do_update_certificates(count, storage, &params, sender).await
@@ -484,6 +489,11 @@ async fn new_lets_encrypt(
                 "tencent" => Box::new(TencentDnsTask::new(
                     &params.dns_access_key_id,
                     &params.dns_access_key_secret,
+                )),
+                "huawei" => Box::new(HuaweiDnsTask::new(
+                    &params.dns_access_key_id,
+                    &params.dns_access_key_secret,
+                    &params.dns_region,
                 )),
                 _ => Box::new(ManualDnsTask::new()),
             };

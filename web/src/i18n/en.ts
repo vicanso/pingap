@@ -308,6 +308,8 @@ export default {
     dnsAccessKeyIdPlaceholder: "Input the access key id of dns",
     dnsAccessKeySecret: "Dns Access Key Secret",
     dnsAccessKeySecretPlaceholder: "Input the access key secret of dns",
+    dnsRegion: "Dns Region",
+    dnsRegionPlaceholder: "Input the region of dns(for huawei)",
     isCa: "Certificate Authority",
     bufferDays: "Buffer Days",
     bufferDaysPlaceholder: "Input the buffer days for certificate",

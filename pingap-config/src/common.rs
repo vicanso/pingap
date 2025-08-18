@@ -137,6 +137,8 @@ pub struct CertificateConf {
     pub dns_access_key_id: Option<String>,
     /// DNS access key secret for ACME certificate management
     pub dns_access_key_secret: Option<String>,
+    /// DNS region for ACME certificate management
+    pub dns_region: Option<String>,
     /// Buffer days for certificate renewal
     pub buffer_days: Option<u16>,
     /// Optional description/notes about this certificate

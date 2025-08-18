@@ -127,6 +127,7 @@ export interface Certificate {
   dns_provider?: string;
   dns_access_key_id?: string;
   dns_access_key_secret?: string;
+  dns_region?: string;
   is_ca?: boolean;
   buffer_days?: number;
   remark?: string;

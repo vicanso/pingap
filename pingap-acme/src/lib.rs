@@ -91,6 +91,7 @@ pub trait AcmeDnsTask: Sync + Send {
 
 mod dns_ali;
 mod dns_cf;
+mod dns_huawei;
 mod dns_manual;
 mod dns_tencent;
 mod lets_encrypt;

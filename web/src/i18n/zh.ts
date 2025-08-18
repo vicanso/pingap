@@ -279,6 +279,8 @@ export default {
     dnsAccessKeyIdPlaceholder: "输入dns认证ID",
     dnsAccessKeySecret: "Dns认证密钥",
     dnsAccessKeySecretPlaceholder: "输入dns认证密钥",
+    dnsRegion: "Dns区域",
+    dnsRegionPlaceholder: "输入dns区域(华为云)",
     isCa: "CA证书",
     bufferDays: "证书有效期校验、更新预留时长",
     bufferDaysPlaceholder: "输入证书有效期校验、更新预留时长",

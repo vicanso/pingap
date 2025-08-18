@@ -140,7 +140,7 @@ export default function Certificates() {
       defaultValue: certificateConfig.dns_provider || "manual",
       span: 3,
       category: ExFormItemCategory.RADIOS,
-      options: newStringOptions(["manual", "ali", "cf", "tencent"], true, true),
+      options: newStringOptions(["manual", "ali", "cf", "huawei", "tencent",], true, true),
     },
     {
       name: "dns_access_key_id",
@@ -155,6 +155,14 @@ export default function Certificates() {
       label: certificateI18n("dnsAccessKeySecret"),
       placeholder: certificateI18n("dnsAccessKeySecretPlaceholder"),
       defaultValue: certificateConfig.dns_access_key_secret,
+      span: 3,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
+      name: "dns_region",
+      label: certificateI18n("dnsRegion"),
+      placeholder: certificateI18n("dnsRegionPlaceholder"),
+      defaultValue: certificateConfig.dns_region,
       span: 3,
       category: ExFormItemCategory.TEXT,
     },
