@@ -107,6 +107,8 @@ jobs:
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
         with:
+          version: "23.x"
+          include-pre-releases: true
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set Perl environment variables
