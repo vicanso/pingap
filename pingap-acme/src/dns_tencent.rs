@@ -20,6 +20,7 @@ use reqwest::header::{CONTENT_TYPE, HOST};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
+use url::Url;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -51,7 +52,6 @@ struct CreateRecordResponse {
 }
 
 const SERVICE: &str = "dnspod";
-const HOST_URL: &str = "dnspod.tencentcloudapi.com";
 const API_VERSION: &str = "2021-03-23";
 
 fn sha256_hex(data: &[u8]) -> String {
@@ -74,6 +74,8 @@ fn new_error(err: impl ToString) -> Error {
 }
 
 async fn tencent_cloud_api_request(
+    host: &str,
+    endpoint: &str,
     secret_id: &str,
     secret_key: &str,
     action: &str,
@@ -88,9 +90,8 @@ async fn tencent_cloud_api_request(
     let canonical_query_string = "";
     let hashed_request_payload = sha256_hex(payload_str.as_bytes());
 
-    let canonical_headers = format!(
-        "content-type:application/json; charset=utf-8\nhost:{HOST_URL}\n",
-    );
+    let canonical_headers =
+        format!("content-type:application/json; charset=utf-8\nhost:{host}\n",);
     let signed_headers = "content-type;host";
 
     let canonical_request = format!(
@@ -118,11 +119,10 @@ async fn tencent_cloud_api_request(
     );
 
     let client = reqwest::Client::new();
-    let url = format!("https://{HOST_URL}");
 
     let response = client
-        .post(url)
-        .header(HOST, HOST_URL)
+        .post(endpoint)
+        .header(HOST, host)
         .header(CONTENT_TYPE, "application/json; charset=utf-8")
         .header("X-TC-Action", action)
         .header("X-TC-Version", API_VERSION)
@@ -153,6 +153,8 @@ async fn tencent_cloud_api_request(
 }
 
 async fn add_tencent_dns_record(
+    host: &str,
+    endpoint: &str,
     access_key_id: &str,
     access_key_secret: &str,
     domain: &str,
@@ -170,6 +172,8 @@ async fn add_tencent_dns_record(
         "TTL": 600
     });
     let body = tencent_cloud_api_request(
+        host,
+        endpoint,
         access_key_id,
         access_key_secret,
         "CreateRecord",
@@ -186,6 +190,8 @@ async fn add_tencent_dns_record(
 }
 
 async fn delete_tencent_dns_record(
+    host: &str,
+    endpoint: &str,
     access_key_id: &str,
     access_key_secret: &str,
     domain: &str,
@@ -198,6 +204,8 @@ async fn delete_tencent_dns_record(
         "RecordId": record_id
     });
     tencent_cloud_api_request(
+        host,
+        endpoint,
         access_key_id,
         access_key_secret,
         "DeleteRecord",
@@ -208,6 +216,8 @@ async fn delete_tencent_dns_record(
 }
 
 pub(crate) struct TencentDnsTask {
+    host: String,
+    endpoint: String,
     access_key_id: String,
     access_key_secret: String,
     domain: Mutex<String>,
@@ -215,13 +225,39 @@ pub(crate) struct TencentDnsTask {
 }
 
 impl TencentDnsTask {
-    pub fn new(access_key_id: &str, access_key_secret: &str) -> Self {
-        Self {
-            access_key_id: access_key_id.to_string(),
-            access_key_secret: access_key_secret.to_string(),
+    pub fn new(url: &str) -> Result<Self> {
+        let info = Url::parse(url).map_err(new_error)?;
+        let endpoint = info.origin().ascii_serialization();
+        let host = info
+            .host()
+            .map(|host| host.to_string())
+            .ok_or(new_error("host is required"))?;
+        let mut access_key_id = "".to_string();
+        let mut access_key_secret = "".to_string();
+        for (k, v) in info.query_pairs() {
+            match k.as_ref() {
+                "access_key_id" => {
+                    access_key_id = v.to_string();
+                },
+                "access_key_secret" => {
+                    access_key_secret = v.to_string();
+                },
+                _ => {},
+            }
+        }
+        if access_key_id.is_empty() || access_key_secret.is_empty() {
+            return Err(new_error(
+                "access_key_id and access_key_secret are required",
+            ));
+        }
+        Ok(Self {
+            host,
+            endpoint,
+            access_key_id,
+            access_key_secret,
             domain: Mutex::new(String::new()),
             record: Mutex::new(0),
-        }
+        })
     }
 }
 
@@ -229,6 +265,8 @@ impl TencentDnsTask {
 impl AcmeDnsTask for TencentDnsTask {
     async fn add_txt_record(&self, domain: &str, value: &str) -> Result<()> {
         let record_id = add_tencent_dns_record(
+            &self.host,
+            &self.endpoint,
             &self.access_key_id,
             &self.access_key_secret,
             domain,
@@ -245,6 +283,8 @@ impl AcmeDnsTask for TencentDnsTask {
         let mut domain = self.domain.lock().await;
         let mut record = self.record.lock().await;
         delete_tencent_dns_record(
+            &self.host,
+            &self.endpoint,
             &self.access_key_id,
             &self.access_key_secret,
             &domain,

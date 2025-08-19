@@ -23,6 +23,7 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::str::FromStr;
 use tokio::sync::Mutex;
+use url::Url;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -52,23 +53,30 @@ fn sha256_hex(data: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
+struct HuaweiAuthParams {
+    host: String,
+    endpoint: String,
+    access_key_id: String,
+    access_key_secret: String,
+}
+
 async fn huawei_cloud_api_request(
-    ak: &str,
-    sk: &str,
-    region: &str,
+    params: &HuaweiAuthParams,
     method: reqwest::Method,
     uri: &str,
     query: &str,
     payload_str: &str,
 ) -> Result<String> {
-    let host = format!("dns.{region}.myhuaweicloud.com");
-    let endpoint = format!("https://{host}");
+    let host = params.host.as_str();
+    let endpoint = params.endpoint.as_str();
+    let ak = params.access_key_id.as_str();
+    let sk = params.access_key_secret.as_str();
     let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
     let http_method = method.as_str();
     let canonical_uri = uri;
     let canonical_query_string = query;
     let mut headers_to_sign = BTreeMap::new();
-    headers_to_sign.insert("host", host.as_str());
+    headers_to_sign.insert("host", host);
     headers_to_sign.insert("x-sdk-date", &timestamp);
     let content_type_header = "application/json";
     if method == reqwest::Method::POST || method == reqwest::Method::PUT {
@@ -133,20 +141,20 @@ async fn huawei_cloud_api_request(
 }
 
 async fn get_huawei_zone_id(
-    ak: &str,
-    sk: &str,
-    region: &str,
+    params: &HuaweiAuthParams,
     root_domain: &str,
 ) -> Result<String> {
+    let host = params.host.as_str();
+    let endpoint = params.endpoint.as_str();
+    let ak = params.access_key_id.as_str();
+    let sk = params.access_key_secret.as_str();
     let query = format!("name={root_domain}");
     let uri_for_request = "/v2/zones";
     let uri_for_signature = "/v2/zones/";
-    let host = format!("dns.{region}.myhuaweicloud.com");
-    let endpoint = format!("https://{host}");
     let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
     let canonical_request_for_sig = {
         let mut headers_to_sign = BTreeMap::new();
-        headers_to_sign.insert("host", host.as_str());
+        headers_to_sign.insert("host", host);
         headers_to_sign.insert("x-sdk-date", &timestamp);
         let canonical_headers = headers_to_sign
             .iter()
@@ -203,13 +211,15 @@ async fn get_huawei_zone_id(
 }
 
 async fn add_huawei_dns_record(
-    access_key_id: &str,
-    access_key_secret: &str,
-    region: &str,
+    params: &HuaweiAuthParams,
     zone_id: &str,
     full_record_name: &str,
     value: &str,
 ) -> Result<String> {
+    let host = params.host.as_str();
+    let endpoint = params.endpoint.as_str();
+    let ak = params.access_key_id.as_str();
+    let sk = params.access_key_secret.as_str();
     // Apply the same contradictory URI logic as get_huawei_zone_id
     let uri_for_request = format!("/v2/zones/{zone_id}/recordsets");
     let uri_for_signature = format!("/v2/zones/{zone_id}/recordsets/");
@@ -224,13 +234,13 @@ async fn add_huawei_dns_record(
     let payload_str = payload.to_string();
 
     // Manually build the signature and request, just like in get_huawei_zone_id
-    let host = format!("dns.{region}.myhuaweicloud.com");
-    let endpoint = format!("https://{host}");
+    // let host = format!("dns.{region}.myhuaweicloud.com");
+    // let endpoint = format!("https://{host}");
     let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
 
     let canonical_request_for_sig = {
         let mut headers_to_sign = BTreeMap::new();
-        headers_to_sign.insert("host", host.as_str());
+        headers_to_sign.insert("host", host);
         headers_to_sign.insert("x-sdk-date", &timestamp);
         headers_to_sign.insert("content-type", "application/json");
         let canonical_headers = headers_to_sign
@@ -251,13 +261,13 @@ async fn add_huawei_dns_record(
         sha256_hex(canonical_request_for_sig.as_bytes());
     let string_to_sign =
         format!("{algorithm}\n{timestamp}\n{hashed_canonical_request}");
-    let mut mac = Hmac::<Sha256>::new_from_slice(access_key_secret.as_bytes())
-        .map_err(new_error)?;
+    let mut mac =
+        Hmac::<Sha256>::new_from_slice(sk.as_bytes()).map_err(new_error)?;
     mac.update(string_to_sign.as_bytes());
     let signature = hex::encode(mac.finalize().into_bytes());
 
     let authorization = format!(
-        "{algorithm} Access={access_key_id}, SignedHeaders=content-type;host;x-sdk-date, Signature={signature}"
+        "{algorithm} Access={ak}, SignedHeaders=content-type;host;x-sdk-date, Signature={signature}"
     );
 
     let mut headers = HeaderMap::new();
@@ -296,23 +306,13 @@ async fn add_huawei_dns_record(
 // The delete function acts on a specific resource ID, not a collection.
 // It should NOT have the trailing slash. The general request function is fine for this.
 async fn delete_huawei_dns_record(
-    access_key_id: &str,
-    access_key_secret: &str,
-    region: &str,
+    params: &HuaweiAuthParams,
     zone_id: &str,
     recordset_id: &str,
 ) -> Result<String> {
     let uri = format!("/v2/zones/{zone_id}/recordsets/{recordset_id}");
-    huawei_cloud_api_request(
-        access_key_id,
-        access_key_secret,
-        region,
-        reqwest::Method::DELETE,
-        &uri,
-        "",
-        "",
-    )
-    .await
+    huawei_cloud_api_request(params, reqwest::Method::DELETE, &uri, "", "")
+        .await
 }
 
 // [The rest of the file (extract_root_domain, HuaweiDnsTask struct and impl) is unchanged and correct.]
@@ -337,41 +337,54 @@ struct TxtRecordInfo {
     record_id: String,
 }
 pub(crate) struct HuaweiDnsTask {
-    access_key_id: String,
-    access_key_secret: String,
-    region: String,
+    params: HuaweiAuthParams,
     txt_record_info: Mutex<TxtRecordInfo>,
 }
 impl HuaweiDnsTask {
-    pub fn new(
-        access_key_id: &str,
-        access_key_secret: &str,
-        region: &str,
-    ) -> Self {
-        Self {
-            access_key_id: access_key_id.to_string(),
-            access_key_secret: access_key_secret.to_string(),
-            region: region.to_string(),
-            txt_record_info: Mutex::new(TxtRecordInfo::default()),
+    pub fn new(url: &str) -> Result<Self> {
+        let info = Url::parse(url).map_err(new_error)?;
+        let endpoint = info.origin().ascii_serialization();
+        let host = info
+            .host()
+            .map(|host| host.to_string())
+            .ok_or(new_error("host is required"))?;
+        let mut access_key_id = "".to_string();
+        let mut access_key_secret = "".to_string();
+        for (k, v) in info.query_pairs() {
+            match k.as_ref() {
+                "access_key_id" => {
+                    access_key_id = v.to_string();
+                },
+                "access_key_secret" => {
+                    access_key_secret = v.to_string();
+                },
+                _ => {},
+            }
         }
+        if access_key_id.is_empty() || access_key_secret.is_empty() {
+            return Err(new_error(
+                "access_key_id and access_key_secret are required",
+            ));
+        }
+        Ok(Self {
+            params: HuaweiAuthParams {
+                host,
+                endpoint,
+                access_key_id,
+                access_key_secret,
+            },
+            txt_record_info: Mutex::new(TxtRecordInfo::default()),
+        })
     }
 }
 #[async_trait]
 impl AcmeDnsTask for HuaweiDnsTask {
     async fn add_txt_record(&self, domain: &str, value: &str) -> Result<()> {
         let root_domain = extract_root_domain(domain)?;
-        let zone_id = get_huawei_zone_id(
-            &self.access_key_id,
-            &self.access_key_secret,
-            &self.region,
-            &root_domain,
-        )
-        .await?;
+        let zone_id = get_huawei_zone_id(&self.params, &root_domain).await?;
         let full_record_name = format!("{domain}.");
         let record_id = add_huawei_dns_record(
-            &self.access_key_id,
-            &self.access_key_secret,
-            &self.region,
+            &self.params,
             &zone_id,
             &full_record_name,
             value,
@@ -387,14 +400,8 @@ impl AcmeDnsTask for HuaweiDnsTask {
         if info.record_id.is_empty() {
             return Ok(());
         }
-        delete_huawei_dns_record(
-            &self.access_key_id,
-            &self.access_key_secret,
-            &self.region,
-            &info.zone_id,
-            &info.record_id,
-        )
-        .await?;
+        delete_huawei_dns_record(&self.params, &info.zone_id, &info.record_id)
+            .await?;
         info.zone_id.clear();
         info.record_id.clear();
         Ok(())

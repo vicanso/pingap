@@ -21,6 +21,10 @@ use crate::dns_cf::CfDnsTask;
 use crate::dns_huawei::HuaweiDnsTask;
 use crate::dns_manual::ManualDnsTask;
 use crate::dns_tencent::TencentDnsTask;
+use hickory_resolver::config::ResolverConfig;
+use hickory_resolver::name_server::TokioConnectionProvider;
+use hickory_resolver::proto::rr::RecordType;
+use hickory_resolver::Resolver;
 use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
     OrderStatus, RetryPolicy,
@@ -101,9 +105,7 @@ struct UpdateCertificateParams {
     buffer_days: u16,
     dns_challenge: bool,
     dns_provider: String,
-    dns_access_key_id: String,
-    dns_access_key_secret: String,
-    dns_region: String,
+    dns_service_url: String,
 }
 
 /// Periodically checks and updates certificates that need renewal.
@@ -129,6 +131,12 @@ async fn do_update_certificates(
     for item in params.iter() {
         let name = &item.name;
         let domains = &item.domains;
+        let is_manual =
+            item.dns_provider == "manual" || item.dns_provider.is_empty();
+        // manual dns challenge is only run once
+        if item.dns_challenge && is_manual && count > 0 {
+            continue;
+        }
 
         let should_renew = match get_lets_encrypt_certificate(name) {
             Ok(Some(certificate)) => {
@@ -252,20 +260,13 @@ pub fn new_lets_encrypt_service(
                     if acme.is_empty() || domains.is_empty() {
                         continue;
                     }
-                    let dns_access_key_id = get_value_from_env(
+                    let dns_service_url = get_value_from_env(
                         &certificate
-                            .dns_access_key_id
+                            .dns_service_url
                             .clone()
                             .unwrap_or_default(),
                     );
-                    let dns_access_key_secret = get_value_from_env(
-                        &certificate
-                            .dns_access_key_secret
-                            .clone()
-                            .unwrap_or_default(),
-                    );
-                    let dns_region =
-                        certificate.dns_region.clone().unwrap_or_default();
+
                     params.push(UpdateCertificateParams {
                         name: name.to_string(),
                         buffer_days: certificate
@@ -283,9 +284,7 @@ pub fn new_lets_encrypt_service(
                             .dns_provider
                             .clone()
                             .unwrap_or_default(),
-                        dns_access_key_id,
-                        dns_access_key_secret,
-                        dns_region,
+                        dns_service_url,
                     });
                 }
                 do_update_certificates(count, storage, &params, sender).await
@@ -481,21 +480,15 @@ async fn new_lets_encrypt(
             let acme_dns_name = format!("_acme-challenge.{identifier}");
             let task: Box<dyn AcmeDnsTask> = match params.dns_provider.as_str()
             {
-                "ali" => Box::new(AliDnsTask::new(
-                    &params.dns_access_key_id,
-                    &params.dns_access_key_secret,
-                )),
-                "cf" => Box::new(CfDnsTask::new(&params.dns_access_key_id)),
-                "tencent" => Box::new(TencentDnsTask::new(
-                    &params.dns_access_key_id,
-                    &params.dns_access_key_secret,
-                )),
-                "huawei" => Box::new(HuaweiDnsTask::new(
-                    &params.dns_access_key_id,
-                    &params.dns_access_key_secret,
-                    &params.dns_region,
-                )),
-                _ => Box::new(ManualDnsTask::new()),
+                "ali" => Box::new(AliDnsTask::new(&params.dns_service_url)?),
+                "cf" => Box::new(CfDnsTask::new(&params.dns_service_url)?),
+                "tencent" => {
+                    Box::new(TencentDnsTask::new(&params.dns_service_url)?)
+                },
+                "huawei" => {
+                    Box::new(HuaweiDnsTask::new(&params.dns_service_url)?)
+                },
+                _ => Box::new(ManualDnsTask::new(storage)),
             };
 
             info!(
@@ -509,6 +502,38 @@ async fn new_lets_encrypt(
                 dns_provider = params.dns_provider,
                 "add dns txt record success for {acme_dns_name}"
             );
+            let resolver = Resolver::builder_with_config(
+                ResolverConfig::default(),
+                TokioConnectionProvider::default(),
+            )
+            .build();
+            // dns txt record may take a while to propagate, so we need to retry
+            for i in 0..10 {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                info!(
+                    category = LOG_CATEGORY,
+                    "lookup dns txt record of {acme_dns_name}, times:{i}"
+                );
+                if let Ok(response) =
+                    resolver.lookup(&acme_dns_name, RecordType::TXT).await
+                {
+                    let txt_records: Vec<String> = response
+                        .record_iter()
+                        .filter_map(|record| {
+                            record.data().as_txt().map(|data| data.to_string())
+                        })
+                        .collect();
+                    let matched = txt_records.contains(&dns_txt_value);
+                    info!(
+                        category = LOG_CATEGORY,
+                        "get dns txt records: {:?}, matched: {matched}",
+                        txt_records
+                    );
+                    if matched {
+                        break;
+                    }
+                }
+            }
             dns_tasks.push(task);
             challenge
         } else {

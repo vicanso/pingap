@@ -203,7 +203,7 @@ sysinfo = { version = "0.34.2", features = [
 tempfile = "3.16.0"
 time = { version = "0.3.41", features = ["local-offset"] }
 tokio = { version = "1.46.0", default-features = false, features = ["fs"] }
-toml = "0.8.23"
+toml = "0.9.5"
 tracing = "0.1.41"
 url = "2.5.4"
 urlencoding = "2.1.3"

@@ -36,6 +36,10 @@ graph TD
 
     discovery --> core
 
+    imageoptim --> config
+    imageoptim --> core
+    imageoptim --> plugin
+
     location --> config
     location --> core
 

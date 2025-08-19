@@ -14,20 +14,20 @@
 
 use super::{AcmeDnsTask, Error, LOG_CATEGORY};
 use async_trait::async_trait;
-use hickory_resolver::config::ResolverConfig;
-use hickory_resolver::name_server::TokioConnectionProvider;
-use hickory_resolver::proto::rr::RecordType;
-use hickory_resolver::Resolver;
-use std::time::Duration;
-use tracing::info;
+use nanoid::nanoid;
+use pingap_config::ConfigStorage;
+use serde_json::json;
+use tracing::{error, info};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-pub(crate) struct ManualDnsTask {}
+pub(crate) struct ManualDnsTask {
+    storage: &'static (dyn ConfigStorage + Sync + Send),
+}
 
 impl ManualDnsTask {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(storage: &'static (dyn ConfigStorage + Sync + Send)) -> Self {
+        Self { storage }
     }
 }
 
@@ -38,37 +38,20 @@ impl AcmeDnsTask for ManualDnsTask {
             category = LOG_CATEGORY,
             "set the DNS record {domain} IN TXT {value}",
         );
-        let resolver = Resolver::builder_with_config(
-            ResolverConfig::default(),
-            TokioConnectionProvider::default(),
-        )
-        .build();
-        // dns txt record may take a while to propagate, so we need to retry
-        for i in 0..10 {
-            tokio::time::sleep(Duration::from_secs(10)).await;
-            info!(
-                category = LOG_CATEGORY,
-                "lookup dns txt record of {domain}, times:{i}"
-            );
-            if let Ok(response) = resolver.lookup(domain, RecordType::TXT).await
-            {
-                let txt_records: Vec<String> = response
-                    .record_iter()
-                    .filter_map(|record| {
-                        record.data().as_txt().map(|data| data.to_string())
-                    })
-                    .collect();
-                let matched = txt_records.contains(&value.to_string());
-                info!(
-                    category = LOG_CATEGORY,
-                    "get dns txt records: {:?}, matched: {matched}",
-                    txt_records
-                );
-                if matched {
-                    break;
-                }
-            }
-        }
+        let name = nanoid!(8);
+        let key = format!("storages/{name}.toml");
+        let Ok(mut data) = toml::to_string_pretty(&json!({
+            "category": "config",
+            "secret": "",
+            "value": value,
+            "remark": "dns text value for acme challenge, it will be removed later auto"
+        })) else {
+            return Ok(());
+        };
+        data = format!("[storages.{name}]\n{data}");
+        if let Err(e) = self.storage.save(&key, data.as_bytes()).await {
+            error!(error = e.to_string(), "save dns txt record fail");
+        };
         Ok(())
     }
 

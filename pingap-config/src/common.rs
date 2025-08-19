@@ -133,12 +133,8 @@ pub struct CertificateConf {
     pub dns_challenge: Option<bool>,
     /// DNS provider for ACME certificate management
     pub dns_provider: Option<String>,
-    /// DNS access key id for ACME certificate management
-    pub dns_access_key_id: Option<String>,
-    /// DNS access key secret for ACME certificate management
-    pub dns_access_key_secret: Option<String>,
-    /// DNS region for ACME certificate management
-    pub dns_region: Option<String>,
+    /// DNS service url for ACME certificate management
+    pub dns_service_url: Option<String>,
     /// Buffer days for certificate renewal
     pub buffer_days: Option<u16>,
     /// Optional description/notes about this certificate
@@ -1625,6 +1621,6 @@ ai02RHnemmqJaNepfmCdyec=
         let result = conf.validate();
         assert_eq!(true, result.is_ok());
 
-        assert_eq!("67dd6553b89adef", conf.hash_key());
+        assert_eq!("15ba921aee80abc3", conf.hash_key());
     }
 }

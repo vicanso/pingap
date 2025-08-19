@@ -22,6 +22,7 @@ use sha1::Sha1;
 use std::collections::BTreeMap;
 use tokio::sync::Mutex;
 use url::form_urlencoded::byte_serialize;
+use url::Url;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -38,13 +39,13 @@ struct AddRecordResponse {
     record_id: String,
 }
 
-const ALI_API_ENDPOINT: &str = "https://alidns.aliyuncs.com/";
 fn percent_encode(input: &str) -> String {
     byte_serialize(input.as_bytes()).collect()
 }
 
 /// Aliyun API request
 async fn ali_api_request(
+    endpoint: &str,
     access_key_id: &str,
     access_key_secret: &str,
     // btree is ordered map
@@ -86,9 +87,7 @@ async fn ali_api_request(
 
     // assemble final request url and send request
     let request_url = format!(
-        "{}?{}&Signature={}",
-        ALI_API_ENDPOINT,
-        canonicalized_query_string,
+        "{endpoint}?{canonicalized_query_string}&Signature={}",
         percent_encode(&signature)
     );
 
@@ -106,6 +105,7 @@ async fn ali_api_request(
 
 /// add a dns txt record
 async fn add_ali_dns_record(
+    endpoint: &str,
     access_key_id: &str,
     access_key_secret: &str,
     domain: &str,
@@ -120,14 +120,20 @@ async fn add_ali_dns_record(
     params.insert("Type", "TXT".to_string());
     params.insert("Value", value.to_string());
 
-    let response_body =
-        ali_api_request(access_key_id, access_key_secret, &mut params).await?;
+    let response_body = ali_api_request(
+        endpoint,
+        access_key_id,
+        access_key_secret,
+        &mut params,
+    )
+    .await?;
     let response: AddRecordResponse =
         serde_json::from_str(&response_body).map_err(new_error)?;
     Ok(response)
 }
 
 async fn delete_ali_dns_record(
+    endpoint: &str,
     access_key_id: &str,
     access_key_secret: &str,
     record_id: &str,
@@ -136,22 +142,46 @@ async fn delete_ali_dns_record(
     params.insert("Action", "DeleteDomainRecord".to_string());
     params.insert("RecordId", record_id.to_string());
 
-    ali_api_request(access_key_id, access_key_secret, &mut params).await
+    ali_api_request(endpoint, access_key_id, access_key_secret, &mut params)
+        .await
 }
 
 pub(crate) struct AliDnsTask {
     access_key_id: String,
     access_key_secret: String,
+    endpoint: String,
     record: Mutex<String>,
 }
 
 impl AliDnsTask {
-    pub fn new(access_key_id: &str, access_key_secret: &str) -> Self {
-        Self {
-            access_key_id: access_key_id.to_string(),
-            access_key_secret: access_key_secret.to_string(),
-            record: Mutex::new(String::new()),
+    pub fn new(url: &str) -> Result<Self> {
+        let info = Url::parse(url).map_err(new_error)?;
+        let endpoint = info.origin().ascii_serialization();
+        let mut access_key_id = "".to_string();
+        let mut access_key_secret = "".to_string();
+        for (k, v) in info.query_pairs() {
+            match k.as_ref() {
+                "access_key_id" => {
+                    access_key_id = v.to_string();
+                },
+                "access_key_secret" => {
+                    access_key_secret = v.to_string();
+                },
+                _ => {},
+            }
         }
+        if access_key_id.is_empty() || access_key_secret.is_empty() {
+            return Err(new_error(
+                "access_key_id or access_key_secret is required",
+            ));
+        }
+
+        Ok(Self {
+            access_key_id,
+            access_key_secret,
+            endpoint,
+            record: Mutex::new(String::new()),
+        })
     }
 }
 
@@ -159,6 +189,7 @@ impl AliDnsTask {
 impl AcmeDnsTask for AliDnsTask {
     async fn add_txt_record(&self, domain: &str, value: &str) -> Result<()> {
         let response = add_ali_dns_record(
+            &self.endpoint,
             &self.access_key_id,
             &self.access_key_secret,
             domain,
@@ -173,6 +204,7 @@ impl AcmeDnsTask for AliDnsTask {
     async fn done(&self) -> Result<()> {
         let mut record = self.record.lock().await;
         delete_ali_dns_record(
+            &self.endpoint,
             &self.access_key_id,
             &self.access_key_secret,
             &record,

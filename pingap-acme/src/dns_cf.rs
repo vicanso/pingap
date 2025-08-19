@@ -16,10 +16,9 @@ use super::{AcmeDnsTask, Error};
 use async_trait::async_trait;
 use serde::Deserialize;
 use tokio::sync::Mutex;
+use url::Url;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
-
-const CF_API_ENDPOINT: &str = "https://api.cloudflare.com/client/v4";
 
 #[derive(Deserialize, Debug)]
 struct ApiResponse<T> {
@@ -45,9 +44,13 @@ fn new_error(err: impl ToString) -> Error {
 }
 
 /// Get the zone id of the domain
-async fn get_zone_id(api_token: &str, domain_name: &str) -> Result<String> {
+async fn get_zone_id(
+    endpoint: &str,
+    api_token: &str,
+    domain_name: &str,
+) -> Result<String> {
     let client = reqwest::Client::new();
-    let url = format!("{CF_API_ENDPOINT}/zones");
+    let url = format!("{endpoint}/client/v4/zones");
 
     let response = client
         .get(url)
@@ -85,13 +88,14 @@ async fn get_zone_id(api_token: &str, domain_name: &str) -> Result<String> {
 }
 
 async fn add_cf_dns_record(
+    endpoint: &str,
     api_token: &str,
     zone_id: &str,
     record_name: &str,
     content: &str,
 ) -> Result<String> {
     let client = reqwest::Client::new();
-    let url = format!("{CF_API_ENDPOINT}/zones/{zone_id}/dns_records");
+    let url = format!("{endpoint}/client/v4/zones/{zone_id}/dns_records");
 
     // create a txt record
     let body = serde_json::json!({
@@ -129,13 +133,14 @@ async fn add_cf_dns_record(
 }
 
 async fn delete_cf_dns_record(
+    endpoint: &str,
     api_token: &str,
     zone_id: &str,
     record_id: &str,
 ) -> Result<()> {
     let client = reqwest::Client::new();
     let url =
-        format!("{CF_API_ENDPOINT}/zones/{zone_id}/dns_records/{record_id}");
+        format!("{endpoint}/client/v4/zones/{zone_id}/dns_records/{record_id}");
 
     let response = client
         .delete(url)
@@ -164,18 +169,31 @@ async fn delete_cf_dns_record(
 }
 
 pub(crate) struct CfDnsTask {
+    endpoint: String,
     api_token: String,
     zone: Mutex<String>,
     record: Mutex<String>,
 }
 
 impl CfDnsTask {
-    pub fn new(api_token: &str) -> Self {
-        Self {
-            api_token: api_token.to_string(),
+    pub fn new(url: &str) -> Result<Self> {
+        let info = Url::parse(url).map_err(new_error)?;
+        let endpoint = info.origin().ascii_serialization();
+        let mut token = "".to_string();
+        for (k, v) in info.query_pairs() {
+            if k == "token" {
+                token = v.to_string();
+            }
+        }
+        if token.is_empty() {
+            return Err(new_error("token is required"));
+        }
+        Ok(Self {
+            endpoint,
+            api_token: token,
             zone: Mutex::new(String::new()),
             record: Mutex::new(String::new()),
-        }
+        })
     }
 }
 
@@ -185,11 +203,18 @@ impl AcmeDnsTask for CfDnsTask {
         let (_, domain_name) = domain
             .split_once(".")
             .ok_or(new_error(format!("invalid domain '{domain}'")))?;
-        let zone_id = get_zone_id(&self.api_token, domain_name).await?;
+        let zone_id =
+            get_zone_id(&self.endpoint, &self.api_token, domain_name).await?;
         let mut zone = self.zone.lock().await;
         *zone = zone_id.clone();
-        let record_id =
-            add_cf_dns_record(&self.api_token, &zone_id, domain, value).await?;
+        let record_id = add_cf_dns_record(
+            &self.endpoint,
+            &self.api_token,
+            &zone_id,
+            domain,
+            value,
+        )
+        .await?;
         let mut record = self.record.lock().await;
         *record = record_id;
         Ok(())
@@ -197,7 +222,8 @@ impl AcmeDnsTask for CfDnsTask {
     async fn done(&self) -> Result<()> {
         let mut zone = self.zone.lock().await;
         let mut record = self.record.lock().await;
-        delete_cf_dns_record(&self.api_token, &zone, &record).await?;
+        delete_cf_dns_record(&self.endpoint, &self.api_token, &zone, &record)
+            .await?;
         *zone = String::new();
         *record = String::new();
         Ok(())
