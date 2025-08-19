@@ -1621,6 +1621,8 @@ ai02RHnemmqJaNepfmCdyec=
         let result = conf.validate();
         assert_eq!(true, result.is_ok());
 
+        // spellchecker:off
         assert_eq!("15ba921aee80abc3", conf.hash_key());
+        // spellchecker:on
     }
 }
