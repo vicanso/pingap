@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Import necessary modules and types from supervisors and external crates.
 use super::{get_hostname, Ctx};
 use bytes::BytesMut;
 use http::header;
@@ -19,17 +20,17 @@ use http::{HeaderName, HeaderValue};
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
 use snafu::{ResultExt, Snafu};
+use std::borrow::Cow;
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::str::FromStr;
-use url::Url;
-use urlencoding::encode;
 
-pub static HTTP_HEADER_X_FORWARDED_FOR: HeaderName =
-    HeaderName::from_static("x-forwarded-for");
+// Define string constants for commonly used HTTP header names.
+const HTTP_HEADER_X_FORWARDED_FOR: &str = "x-forwarded-for";
+const HTTP_HEADER_X_REAL_IP: &str = "x-real-ip";
 
-pub static HTTP_HEADER_X_REAL_IP: HeaderName =
-    HeaderName::from_static("x-real-ip");
-
+// Define byte slice constants for special variable tags used in header value processing.
+// These are matched against the raw bytes of a header value.
 pub const HOST_NAME_TAG: &[u8] = b"$hostname";
 const HOST_TAG: &[u8] = b"$host";
 const SCHEME_TAG: &[u8] = b"$scheme";
@@ -40,139 +41,137 @@ const SERVER_PORT_TAG: &[u8] = b"$server_port";
 const PROXY_ADD_FORWARDED_TAG: &[u8] = b"$proxy_add_x_forwarded_for";
 const UPSTREAM_ADDR_TAG: &[u8] = b"$upstream_addr";
 
+// Define static HeaderValues for HTTP and HTTPS schemes to avoid re-creation.
 static SCHEME_HTTPS: HeaderValue = HeaderValue::from_static("https");
 static SCHEME_HTTP: HeaderValue = HeaderValue::from_static("http");
 
+/// Defines the custom error types for this module using the snafu crate.
 #[derive(Debug, Snafu)]
 pub enum Error {
+    /// Error for when a string cannot be parsed into a valid HeaderValue.
     #[snafu(display("invalid header value: {value} - {source}"))]
     InvalidHeaderValue {
         value: String,
         source: header::InvalidHeaderValue,
     },
+    /// Error for when a string cannot be parsed into a valid HeaderName.
     #[snafu(display("invalid header name: {value} - {source}"))]
     InvalidHeaderName {
         value: String,
         source: header::InvalidHeaderName,
     },
 }
+/// A convenient type alias for `Result` with the module's `Error` type.
 type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// A type alias for a tuple representing an HTTP header.
 pub type HttpHeader = (HeaderName, HeaderValue);
 
-/// Get request host in this order of precedence:
-/// host name from the request line,
-/// or host name from the "Host" request header field
+/// Gets the request host by checking the URI first, then falling back to the "Host" header.
+///
+/// This function follows the common practice of prioritizing the host from the absolute URI
+/// (e.g., in `GET http://example.com/path HTTP/1.1`) over the `Host` header field.
 pub fn get_host(header: &RequestHeader) -> Option<&str> {
+    // First, try to get the host directly from the parsed URI.
     if let Some(host) = header.uri.host() {
         return Some(host);
     }
-    if let Some(host) = header.headers.get(http::header::HOST) {
-        if let Ok(value) = host.to_str().map(|host| host.split(':').next()) {
-            return value;
-        }
-    }
-    None
+    // If not in the URI, fall back to the "Host" header.
+    header
+        .headers
+        .get(http::header::HOST)
+        // Convert the header value to a string slice.
+        .and_then(|value| value.to_str().ok())
+        // The host header can include a port (e.g., "example.com:8080"), so we split and take the first part.
+        .and_then(|host| host.split(':').next())
 }
 
-/// Converts a string in "name: value" format into an HTTP header tuple.
-/// Returns None if the input string doesn't contain a colon separator.
+/// Converts a single string in "name: value" format into an `HttpHeader` tuple.
 ///
-/// # Arguments
-/// * `value` - A string in the format "header_name: header_value"
-///
-/// # Returns
-/// * `Result<Option<HttpHeader>>` - The parsed header tuple or None if invalid format
+/// This is a utility function for parsing header configurations. It trims whitespace
+/// from both the name and the value.
 pub fn convert_header(value: &str) -> Result<Option<HttpHeader>> {
+    // `split_once` is an efficient way to split the string into two parts at the first colon.
     value
         .split_once(':')
+        // If a colon exists, map the key and value parts.
         .map(|(k, v)| {
+            // Parse the trimmed key into a HeaderName, wrapping errors.
             let name = HeaderName::from_str(k.trim())
                 .context(InvalidHeaderNameSnafu { value: k })?;
+            // Parse the trimmed value into a HeaderValue, wrapping errors.
             let value = HeaderValue::from_str(v.trim())
                 .context(InvalidHeaderValueSnafu { value: v })?;
+            // If both parsing steps succeed, return the header tuple.
             Ok(Some((name, value)))
         })
+        // If `split_once` returns None (no colon), default to `Ok(None)`.
         .unwrap_or(Ok(None))
 }
 
-/// Converts a slice of strings into HTTP headers.
-/// Each string should be in "name: value" format.
+/// Converts a slice of strings into a `Vec` of `HttpHeader`s.
 ///
-/// # Arguments
-/// * `header_values` - Slice of strings representing headers
-///
-/// # Returns
-/// * `Result<Vec<HttpHeader>>` - Vector of parsed HTTP headers
+/// This function iterates over a list of header strings and uses `convert_header`
+/// on each, collecting the valid results into a vector.
 pub fn convert_headers(header_values: &[String]) -> Result<Vec<HttpHeader>> {
-    let mut arr = vec![];
-    for item in header_values {
-        if let Some(item) = convert_header(item)? {
-            arr.push(item);
-        }
-    }
-    Ok(arr)
+    header_values
+        .iter()
+        // `filter_map` is used to iterate, convert, and filter out `None` results elegantly.
+        // `transpose` flips `Option<Result<T>>` to `Result<Option<T>>`, which is what `filter_map` expects.
+        .filter_map(|item| convert_header(item).transpose())
+        // `collect` gathers the `Result<HttpHeader>` items. If any item is an `Err`, `collect` will return that `Err`.
+        .collect()
 }
 
+// Define common, pre-built HTTP headers as static constants for reuse and performance.
 pub static HTTP_HEADER_NO_STORE: HttpHeader = (
     header::CACHE_CONTROL,
     HeaderValue::from_static("private, no-store"),
 );
-
 pub static HTTP_HEADER_NO_CACHE: HttpHeader = (
     header::CACHE_CONTROL,
     HeaderValue::from_static("private, no-cache"),
 );
-
 pub static HTTP_HEADER_CONTENT_JSON: HttpHeader = (
     header::CONTENT_TYPE,
     HeaderValue::from_static("application/json; charset=utf-8"),
 );
-
 pub static HTTP_HEADER_CONTENT_HTML: HttpHeader = (
     header::CONTENT_TYPE,
     HeaderValue::from_static("text/html; charset=utf-8"),
 );
-
 pub static HTTP_HEADER_CONTENT_TEXT: HttpHeader = (
     header::CONTENT_TYPE,
     HeaderValue::from_static("text/plain; charset=utf-8"),
 );
-
 pub static HTTP_HEADER_TRANSFER_CHUNKED: HttpHeader = (
     header::TRANSFER_ENCODING,
     HeaderValue::from_static("chunked"),
 );
-
 pub static HTTP_HEADER_NAME_X_REQUEST_ID: HeaderName =
     HeaderName::from_static("x-request-id");
 
-/// Processes special header values that contain dynamic variables.
-/// Supports variables like $host, $scheme, $remote_addr etc.
-///
-/// # Arguments
-/// * `value` - The header value to process
-/// * `session` - The HTTP session context
-/// * `ctx` - The application state
-///
-/// # Returns
-/// * `Option<HeaderValue>` - The processed header value or None if no special handling needed
+/// Processes a `HeaderValue` that may contain a special dynamic variable (e.g., `$host`).
+/// It replaces the variable with its corresponding runtime value.
 #[inline]
 pub fn convert_header_value(
     value: &HeaderValue,
     session: &Session,
     ctx: &Ctx,
 ) -> Option<HeaderValue> {
+    // Work with the raw byte representation of the header value for efficient matching.
     let buf = value.as_bytes();
 
-    // Early return if not a special header (moved this check earlier)
+    // Perform a quick check for the special variable prefix ('$' or ':') to exit early
+    // for normal header values, which is the most common case.
     if buf.is_empty() || !(buf[0] == b'$' || buf[0] == b':') {
         return None;
     }
 
-    // Helper closure to convert string to HeaderValue
+    // A helper closure to reduce boilerplate when converting a string slice to a HeaderValue.
     let to_header_value = |s: &str| HeaderValue::from_str(s).ok();
 
+    // Match the entire byte slice against the predefined variable tags.
     match buf {
         HOST_TAG => get_host(session.req_header()).and_then(to_header_value),
         SCHEME_TAG => Some(if ctx.conn.tls_version.is_some() {
@@ -184,17 +183,18 @@ pub fn convert_header_value(
         REMOTE_ADDR_TAG => {
             ctx.conn.remote_addr.as_deref().and_then(to_header_value)
         },
-        REMOTE_PORT_TAG => ctx
-            .conn
-            .remote_port
-            .map(|p| p.to_string())
-            .and_then(|s| to_header_value(&s)),
+        REMOTE_PORT_TAG => ctx.conn.remote_port.and_then(|p| {
+            // Use `itoa` to format the integer directly into a valid header value
+            // without creating an intermediate `String`.
+            HeaderValue::from_str(itoa::Buffer::new().format(p)).ok()
+        }),
         SERVER_ADDR_TAG => {
             ctx.conn.server_addr.as_deref().and_then(to_header_value)
         },
         SERVER_PORT_TAG => ctx
             .conn
             .server_port
+            // This case still uses `.to_string()`, which could be optimized with `itoa` like `REMOTE_PORT_TAG`.
             .map(|p| p.to_string())
             .and_then(|s| to_header_value(&s)),
         UPSTREAM_ADDR_TAG => {
@@ -206,123 +206,107 @@ pub fn convert_header_value(
         },
         PROXY_ADD_FORWARDED_TAG => {
             ctx.conn.remote_addr.as_deref().and_then(|remote_addr| {
-                let value = match session
-                    .get_header(HTTP_HEADER_X_FORWARDED_FOR.clone())
+                // Build the new `x-forwarded-for` value efficiently using `BytesMut` to avoid `format!`.
+                let mut value_buf = BytesMut::new();
+                if let Some(existing) =
+                    session.get_header(HTTP_HEADER_X_FORWARDED_FOR)
                 {
-                    Some(existing) => format!(
-                        "{}, {}",
-                        existing.to_str().unwrap_or_default(),
-                        remote_addr
-                    ),
-                    None => remote_addr.to_string(),
-                };
-                to_header_value(&value)
+                    value_buf.extend_from_slice(existing.as_bytes());
+                    value_buf.extend_from_slice(b", ");
+                }
+                value_buf.extend_from_slice(remote_addr.as_bytes());
+                HeaderValue::from_bytes(&value_buf).ok()
             })
         },
+        // If no predefined tag matches, it might be a different type of variable (e.g., `$http_...`).
         _ => handle_special_headers(buf, session, ctx),
     }
 }
 
-const HTTP_HEADER_PREFIX: &[u8] = b"$http_";
-const HTTP_HEADER_PREFIX_LEN: usize = HTTP_HEADER_PREFIX.len();
-
+/// A helper function to handle more complex or less common special header variables.
+/// This function is called as a fallback from `convert_header_value`.
 #[inline]
 fn handle_special_headers(
     buf: &[u8],
     session: &Session,
     ctx: &Ctx,
 ) -> Option<HeaderValue> {
-    // Handle headers that reference other HTTP headers (e.g., $http_origin)
-    if buf.starts_with(HTTP_HEADER_PREFIX) {
-        return handle_http_header(buf, session);
+    // Handle variables that reference other request headers, like `$http_user_agent`.
+    if buf.starts_with(b"$http_") {
+        // Attempt to parse the header name from the slice after the prefix.
+        let key = std::str::from_utf8(&buf[6..]).ok()?;
+        // Get the corresponding header from the request and clone its value.
+        return session.get_header(key).cloned();
     }
-    // Handle environment variable references (e.g., $HOME)
+    // Handle variables that reference environment variables, like `$PATH`.
     if buf.starts_with(b"$") {
-        return handle_env_var(buf);
+        let var_name = std::str::from_utf8(&buf[1..]).ok()?;
+        // Look up the environment variable and convert its value to a HeaderValue.
+        return std::env::var(var_name)
+            .ok()
+            .and_then(|v| HeaderValue::from_str(&v).ok());
     }
-    // Handle context value references (e.g., :connection_id)
+    // Handle variables that reference fields in the `Ctx` struct, like `:connection_id`.
     if buf.starts_with(b":") {
-        return handle_context_value(buf, ctx);
+        let key = std::str::from_utf8(&buf[1..]).ok()?;
+        // Use `append_log_value` to get the string representation of the context field.
+        let value = ctx.append_log_value(BytesMut::with_capacity(20), key);
+        if !value.is_empty() {
+            // Convert the resulting bytes to a HeaderValue.
+            return HeaderValue::from_bytes(&value).ok();
+        }
     }
+    // If no pattern matches, return None.
     None
 }
 
-#[inline]
-fn handle_http_header(buf: &[u8], session: &Session) -> Option<HeaderValue> {
-    // Skip the "$http_" prefix (6 bytes) and convert remaining bytes to header key
-    let key = std::str::from_utf8(&buf[HTTP_HEADER_PREFIX_LEN..]).ok()?;
-    // Look up and clone the header value from the session
-    session.get_header(key).cloned()
-}
-
-#[inline]
-fn handle_env_var(buf: &[u8]) -> Option<HeaderValue> {
-    // Skip the "$" prefix and convert to environment variable name
-    let var_name = std::str::from_utf8(&buf[1..]).ok()?;
-    // Look up environment variable and convert to HeaderValue if found
-    std::env::var(var_name)
-        .ok()
-        .and_then(|v| HeaderValue::from_str(&v).ok())
-}
-
-#[inline]
-fn handle_context_value(buf: &[u8], ctx: &Ctx) -> Option<HeaderValue> {
-    // Skip the ":" prefix and convert to context key
-    let key = std::str::from_utf8(&buf[1..]).ok()?;
-    // Pre-allocate buffer for value
-    let mut value = BytesMut::with_capacity(20);
-    // Append context value to buffer
-    value = ctx.append_log_value(value, key);
-    // Convert to HeaderValue if buffer is not empty
-    if !value.is_empty() {
-        HeaderValue::from_bytes(&value).ok()
-    } else {
-        None
-    }
-}
-
-/// Get remote addr from session
+/// Gets the remote address (IP and port) from the session.
 pub fn get_remote_addr(session: &Session) -> Option<(String, u16)> {
     session
         .client_addr()
+        // Ensure the address is an IP address (v4 or v6).
         .and_then(|addr| addr.as_inet())
+        // Map it to a tuple of (String, u16).
         .map(|addr| (addr.ip().to_string(), addr.port()))
 }
 
-/// Gets client ip from X-Forwarded-For,
-/// If none, get from X-Real-Ip,
-/// If none, get remote addr.
+/// Gets the client's IP address by checking proxy headers first, then the direct connection address.
+///
+/// The lookup order is:
+/// 1. `X-Forwarded-For` (taking the first IP in the list)
+/// 2. `X-Real-IP`
+/// 3. The remote address of the direct TCP connection
 pub fn get_client_ip(session: &Session) -> String {
-    if let Some(value) = session.get_header(HTTP_HEADER_X_FORWARDED_FOR.clone())
-    {
-        let arr: Vec<&str> =
-            value.to_str().unwrap_or_default().split(',').collect();
-        if !arr.is_empty() {
-            return arr[0].trim().to_string();
+    // 1. Check `X-Forwarded-For`.
+    if let Some(value) = session.get_header(HTTP_HEADER_X_FORWARDED_FOR) {
+        // Efficiently take the first IP without creating an intermediate Vec.
+        if let Some(ip) = value.to_str().unwrap_or_default().split(',').next() {
+            let trimmed_ip = ip.trim();
+            if !trimmed_ip.is_empty() {
+                return trimmed_ip.to_string();
+            }
         }
     }
-    if let Some(value) = session.get_header(HTTP_HEADER_X_REAL_IP.clone()) {
+    // 2. Check `X-Real-IP`.
+    if let Some(value) = session.get_header(HTTP_HEADER_X_REAL_IP) {
         return value.to_str().unwrap_or_default().to_string();
     }
+    // 3. Fall back to the direct connection's remote address.
     if let Some((addr, _)) = get_remote_addr(session) {
         return addr;
     }
+    // If all checks fail, return an empty string.
     "".to_string()
 }
 
-/// Gets string value from req header.
-///
-/// # Arguments
-/// * `req_header` - The HTTP request header
-/// * `key` - The header key to look up
-///
-/// # Returns
-/// The header value as a string slice if found and valid UTF-8, None otherwise
+/// A convenient helper to get a header value as a `&str` from a `RequestHeader`.
 pub fn get_req_header_value<'a>(
     req_header: &'a RequestHeader,
     key: &str,
 ) -> Option<&'a str> {
+    // Get the header by its key.
     if let Some(value) = req_header.headers.get(key) {
+        // Try to convert it to a string slice. Fails if the value is not valid UTF-8.
         if let Ok(value) = value.to_str() {
             return Some(value);
         }
@@ -330,113 +314,123 @@ pub fn get_req_header_value<'a>(
     None
 }
 
-/// Gets cookie value from req header.
-///
-/// # Arguments
-/// * `req_header` - The HTTP request header
-/// * `cookie_name` - Name of the cookie to find
-///
-/// # Returns
-/// The cookie value as a string slice if found, None otherwise
+/// Parses the "Cookie" header to find the value of a specific cookie.
 pub fn get_cookie_value<'a>(
     req_header: &'a RequestHeader,
     cookie_name: &str,
 ) -> Option<&'a str> {
-    if let Some(cookie_value) = get_req_header_value(req_header, "Cookie") {
-        for item in cookie_value.split(';') {
-            if let Some((k, v)) = item.split_once('=') {
-                if k == cookie_name {
-                    return Some(v.trim());
-                }
-            }
-        }
-    }
-    None
+    // First, get the entire "Cookie" header string. The '?' operator will short-circuit if it's not present.
+    get_req_header_value(req_header, "cookie")?
+        // Split the string into individual cookies.
+        .split(';')
+        // `find_map` is an efficient way to find the first cookie that matches our criteria.
+        .find_map(|item| {
+            // This chained logic attempts to quickly find a match.
+            // It's more complex to handle cases like "key=value" vs "key=" correctly.
+            item.trim()
+                .strip_prefix(cookie_name)?
+                .strip_prefix('=')
+                .or_else(|| {
+                    // Fallback logic to ensure the cookie name is an exact match.
+                    let (k, v) = item.split_once('=')?;
+                    if k.trim() == cookie_name {
+                        Some(v.trim())
+                    } else {
+                        None
+                    }
+                })
+        })
 }
 
-/// Converts query string to key-value map.
+/// Converts a query string (or a full URL containing one) into a `HashMap`.
 ///
-/// # Arguments
-/// * `value` - Query string or http url to parse (without leading '?')
-///
-/// # Returns
-/// HashMap containing the parsed query parameters
+/// This function is robust and can handle both partial (`"a=1&b=2"`) and full
+/// (`"http://.../?a=1&b=2"`) inputs.
 pub fn convert_query_map(value: &str) -> HashMap<String, String> {
-    let mut m = HashMap::new();
-    let value = if !value.contains('?') {
-        format!("http://host?{value}")
-    } else {
-        value.to_string()
-    };
-    let Ok(value) = Url::parse(&value) else {
-        return m;
-    };
-    for item in value.query().unwrap_or_default().split('&') {
-        if let Some((key, value)) = item.split_once('=') {
-            m.insert(key.to_string(), encode(value).to_string());
-        } else {
-            m.insert(item.to_string(), "".to_string());
-        }
-    }
-    m
+    // Isolate the query part of the string.
+    let query_str = value.split('?').nth(1).unwrap_or(value);
+    // Use the `url` crate's dedicated parser, which is robust and handles URL decoding.
+    url::form_urlencoded::parse(query_str.as_bytes())
+        // Convert the borrowed key/value pairs into owned Strings for the HashMap.
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        // Collect the pairs into a HashMap.
+        .collect()
 }
 
-/// Gets query parameter value from request header.
-///
-/// # Arguments
-/// * `req_header` - The HTTP request header
-/// * `name` - Name of the query parameter to find
-///
-/// # Returns
-/// The parameter value as a string slice if found, None otherwise
+/// Gets the value of a specific query parameter from the request URI.
 pub fn get_query_value<'a>(
     req_header: &'a RequestHeader,
     name: &str,
 ) -> Option<&'a str> {
-    if let Some(query) = req_header.uri.query() {
-        for item in query.split('&') {
-            if let Some((k, v)) = item.split_once('=') {
-                if k == name {
-                    return Some(v.trim());
-                }
+    // Get the query string from the URI, exiting if it doesn't exist.
+    req_header
+        .uri
+        .query()?
+        // Split the query string into key-value pairs.
+        .split('&')
+        // `find_map` efficiently searches for the first pair where the key matches.
+        .find_map(|item| {
+            // Split the pair into key and value.
+            let (k, v) = item.split_once('=')?;
+            // If the key matches, return the value.
+            if k == name {
+                Some(v)
+            } else {
+                None
             }
-        }
-    }
-    None
+        })
 }
 
-/// Remove query parameter from request header URI
+/// Removes a specific query parameter from the request header's URI.
 ///
-/// # Arguments
-/// * `req_header` - The HTTP request header to modify
-/// * `name` - Name of the query parameter to remove
-///
-/// # Returns
-/// Result indicating success or failure of the URI modification
+/// This function modifies the `req_header` in place.
 pub fn remove_query_from_header(
     req_header: &mut RequestHeader,
     name: &str,
 ) -> Result<(), http::uri::InvalidUri> {
-    if let Some(query) = req_header.uri.query() {
-        let mut query_list = vec![];
-        for item in query.split('&') {
-            if let Some((k, v)) = item.split_once('=') {
-                if k != name {
-                    query_list.push(format!("{k}={v}"));
-                }
-            } else if item != name {
-                query_list.push(item.to_string());
+    // If there is no query string, there is nothing to do.
+    let Some(query_str) = req_header.uri.query() else {
+        return Ok(());
+    };
+
+    // Pre-allocate a String with enough capacity to hold the new query string,
+    // which is a performance optimization to avoid reallocations.
+    let mut new_query = String::with_capacity(query_str.len());
+
+    // Iterate over each key-value pair in the original query string.
+    for item in query_str.split('&') {
+        // Get the key part of the pair.
+        let key = item.split('=').next().unwrap_or(item);
+
+        // If the key is not the one we want to remove, keep the item.
+        if key != name {
+            // If the new query string is not empty, add a separator first.
+            if !new_query.is_empty() {
+                new_query.push('&');
             }
+            // Append the original "key=value" slice, which is allocation-free.
+            new_query.push_str(item);
         }
-        let query = query_list.join("&");
-        let mut new_path = req_header.uri.path().to_string();
-        if !query.is_empty() {
-            new_path = format!("{new_path}?{query}");
-        }
-        return new_path
-            .parse::<http::Uri>()
-            .map(|uri| req_header.set_uri(uri));
     }
+
+    // Reconstruct the URI from its path and the new query string.
+    let path = req_header.uri.path();
+    // Use `Cow` (Clone-on-Write) to avoid allocating a new String for the path if the query is empty.
+    let new_uri_str = if new_query.is_empty() {
+        // If the new query is empty, the new URI is just the path. Borrow it.
+        Cow::Borrowed(path)
+    } else {
+        // If the new query is not empty, build a new String. Own it.
+        let mut s = String::with_capacity(path.len() + 1 + new_query.len());
+        // `write!` is an efficient way to format into an existing String buffer.
+        let _ = write!(&mut s, "{}?{}", path, &new_query);
+        Cow::Owned(s)
+    };
+
+    // Parse the newly constructed string into a `http::Uri`.
+    let new_uri = http::Uri::from_str(&new_uri_str)?;
+    // Update the request header with the new URI.
+    req_header.set_uri(new_uri);
 
     Ok(())
 }

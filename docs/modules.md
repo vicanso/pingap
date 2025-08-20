@@ -17,6 +17,7 @@
 - `upstream`: Manages backend server connections and load balancing
 - `util`: Contains shared utility functions and helper methods
 - `webhook`: Supports several webhook protocols for sending notifications to external services
+- `imageoptim`: Image optimize, which supports png, jpeg, webp and avif
 
 ```mermaid
 graph TD
