@@ -342,12 +342,12 @@ impl Parser {
                     }
                 },
                 TagCategory::Remote => {
-                    if let Some(addr) = &ctx.remote_addr {
+                    if let Some(addr) = &ctx.conn.remote_addr {
                         buf.extend_from_slice(addr.as_bytes());
                     }
                 },
                 TagCategory::ClientIp => {
-                    if let Some(client_ip) = &ctx.client_ip {
+                    if let Some(client_ip) = &ctx.conn.client_ip {
                         buf.extend_from_slice(client_ip.as_bytes());
                     } else {
                         buf.extend_from_slice(
@@ -356,7 +356,7 @@ impl Parser {
                     }
                 },
                 TagCategory::Scheme => {
-                    if ctx.tls_version.is_some() {
+                    if ctx.conn.tls_version.is_some() {
                         buf.extend_from_slice(b"https");
                     } else {
                         buf.extend_from_slice(b"http");
@@ -405,7 +405,7 @@ impl Parser {
                     buf = format_byte_size(buf, session.body_bytes_sent());
                 },
                 TagCategory::Status => {
-                    if let Some(status) = ctx.status {
+                    if let Some(status) = &ctx.state.status {
                         buf.extend_from_slice(status.as_str().as_bytes());
                     } else {
                         buf.extend_from_slice(b"0");
@@ -413,7 +413,7 @@ impl Parser {
                 },
                 TagCategory::Latency => {
                     if let Some(now_ms) = now_ms {
-                        let ms = now_ms - ctx.created_at;
+                        let ms = now_ms - ctx.timing.created_at;
                         buf.extend_from_slice(
                             itoa::Buffer::new().format(ms).as_bytes(),
                         );
@@ -421,7 +421,7 @@ impl Parser {
                 },
                 TagCategory::LatencyHuman => {
                     if let Some(now_ms) = now_ms {
-                        let ms = now_ms - ctx.created_at;
+                        let ms = now_ms - ctx.timing.created_at;
                         buf = format_duration(buf, ms);
                     }
                 },
@@ -454,20 +454,22 @@ impl Parser {
                 },
                 TagCategory::PayloadSize => {
                     buf.extend_from_slice(
-                        itoa::Buffer::new().format(ctx.payload_size).as_bytes(),
+                        itoa::Buffer::new()
+                            .format(ctx.state.payload_size)
+                            .as_bytes(),
                     );
                 },
                 TagCategory::PayloadSizeHuman => {
-                    buf = format_byte_size(buf, ctx.payload_size);
+                    buf = format_byte_size(buf, ctx.state.payload_size);
                 },
                 TagCategory::RequestId => {
-                    if let Some(key) = &ctx.request_id {
+                    if let Some(key) = &ctx.state.request_id {
                         buf.extend_from_slice(key.as_bytes());
                     }
                 },
                 TagCategory::Context => {
                     if let Some(key) = &tag.data {
-                        buf = ctx.append_value(buf, key.as_str());
+                        buf = ctx.append_log_value(buf, key.as_str());
                     }
                 },
             };
@@ -481,7 +483,9 @@ impl Parser {
 mod tests {
     use super::{format_extra_tag, Parser, Tag, TagCategory};
     use http::Method;
-    use pingap_core::Ctx;
+    use pingap_core::{
+        ConnectionInfo, Ctx, RequestState, Timing, UpstreamInfo,
+    };
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -702,16 +706,28 @@ mod tests {
         assert_eq!(Method::GET, session.req_header().method);
 
         let ctx = Ctx {
-            upstream_reused: true,
-            upstream_address: "192.186.1.1:6188".to_string(),
-            remote_addr: Some("10.1.1.1".to_string()),
-            client_ip: Some("1.1.1.1".to_string()),
-            processing: 1,
-            upstream_connect_time: Some(100),
-            location: "test".to_string(),
-            connection_time: 300,
-            tls_version: Some("1.2".to_string()),
-            request_id: Some("nanoid".to_string()),
+            conn: ConnectionInfo {
+                remote_addr: Some("10.1.1.1".to_string()),
+                client_ip: Some("1.1.1.1".to_string()),
+                tls_version: Some("1.2".to_string()),
+                ..Default::default()
+            },
+            upstream: UpstreamInfo {
+                reused: true,
+                address: "192.186.1.1:6188".to_string(),
+                location: "test".to_string(),
+                ..Default::default()
+            },
+            timing: Timing {
+                connection_duration: 300,
+                upstream_connect: Some(100),
+                ..Default::default()
+            },
+            state: RequestState {
+                request_id: Some("nanoid".to_string()),
+                processing_count: 1,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let log = p.format(&session, &ctx);

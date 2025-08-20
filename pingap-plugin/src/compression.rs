@@ -318,23 +318,27 @@ impl Plugin for Compression {
             TRANSFER_ENCODING,
             HTTP_HEADER_TRANSFER_CHUNKED.1.clone(),
         );
+        let feature = ctx.features.get_or_insert_default();
         let encoding = if zstd_level > 0 {
-            ctx.modify_upstream_response_body = Some(Box::new(Compressor {
-                algorithm: Algorithm::Zstd,
-                level: zstd_level,
-            }));
+            feature.modify_upstream_response_body =
+                Some(Box::new(Compressor {
+                    algorithm: Algorithm::Zstd,
+                    level: zstd_level,
+                }));
             ZSTD
         } else if br_level > 0 {
-            ctx.modify_upstream_response_body = Some(Box::new(Compressor {
-                algorithm: Algorithm::Brotli,
-                level: br_level,
-            }));
+            feature.modify_upstream_response_body =
+                Some(Box::new(Compressor {
+                    algorithm: Algorithm::Brotli,
+                    level: br_level,
+                }));
             BR
         } else {
-            ctx.modify_upstream_response_body = Some(Box::new(Compressor {
-                algorithm: Algorithm::Gzip,
-                level: gzip_level,
-            }));
+            feature.modify_upstream_response_body =
+                Some(Box::new(Compressor {
+                    algorithm: Algorithm::Gzip,
+                    level: gzip_level,
+                }));
             GZIP
         };
         let _ = upstream_response.insert_header(CONTENT_ENCODING, encoding);

@@ -334,7 +334,8 @@ impl Plugin for JwtAuth {
             http::header::TRANSFER_ENCODING,
             HTTP_HEADER_TRANSFER_CHUNKED.1.clone(),
         );
-        ctx.modify_response_body = Some(Box::new(Sign {
+        let features = ctx.features.get_or_insert_default();
+        features.modify_response_body = Some(Box::new(Sign {
             algorithm: self.algorithm.clone(),
             secret: self.secret.clone(),
         }));
@@ -654,15 +655,18 @@ auth_path = "/login"
             r#"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"content-type": "application/json; charset=utf-8", "transfer-encoding": "chunked"} }, header_name_map: None, reason_phrase: None }"#,
             format!("{upstream_response:?}")
         );
-        assert_eq!(true, ctx.modify_response_body.is_some());
-        if let Some(modify) = ctx.modify_response_body {
-            let data = modify.handle(Bytes::from_static(b"Pingap")).unwrap();
-            assert_eq!(
-                r#"{"token": "eyJhbGciOiAiSFMyNTYiLCJ0eXAiOiAiSldUIn0.UGluZ2Fw.wRLT2HhM1R-J4rVz3XCWADNIrmeInLtRGQzfJZaz-qI"}"#,
-                std::string::String::from_utf8_lossy(&data)
-                    .to_string()
-                    .as_str()
-            );
+        if let Some(features) = &ctx.features {
+            assert_eq!(true, features.modify_response_body.is_some());
+            if let Some(modify) = features.modify_response_body.as_ref() {
+                let data =
+                    modify.handle(Bytes::from_static(b"Pingap")).unwrap();
+                assert_eq!(
+                    r#"{"token": "eyJhbGciOiAiSFMyNTYiLCJ0eXAiOiAiSldUIn0.UGluZ2Fw.wRLT2HhM1R-J4rVz3XCWADNIrmeInLtRGQzfJZaz-qI"}"#,
+                    std::string::String::from_utf8_lossy(&data)
+                        .to_string()
+                        .as_str()
+                );
+            }
         }
     }
 }

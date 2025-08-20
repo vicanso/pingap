@@ -261,7 +261,9 @@ impl Plugin for SubFilter {
                 HTTP_HEADER_TRANSFER_CHUNKED.1.clone(),
             );
             // Set up the response body modifier
-            ctx.modify_response_body = Some(Box::new(self.replacer.clone()));
+            let features = ctx.features.get_or_insert_default();
+            features.modify_response_body =
+                Some(Box::new(self.replacer.clone()));
         }
         Ok(true)
     }

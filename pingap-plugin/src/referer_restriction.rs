@@ -218,7 +218,7 @@ mod tests {
     use super::*;
     use http::StatusCode;
     use pingap_config::PluginConf;
-    use pingap_core::{Ctx, PluginStep};
+    use pingap_core::{ConnectionInfo, Ctx, PluginStep};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -307,7 +307,10 @@ type = "deny"
                 PluginStep::Request,
                 &mut session,
                 &mut Ctx {
-                    client_ip: Some("1.1.1.2".to_string()),
+                    conn: ConnectionInfo {
+                        client_ip: Some("1.1.1.2".to_string()),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
             )

@@ -139,11 +139,11 @@ impl Plugin for IpRestriction {
 
         // Get client IP address, using cached value if available
         // Otherwise extract from X-Forwarded-For or remote address
-        let ip = if let Some(ip) = &ctx.client_ip {
+        let ip = if let Some(ip) = &ctx.conn.client_ip {
             ip.to_string()
         } else {
             let ip = pingap_core::get_client_ip(session);
-            ctx.client_ip = Some(ip.clone()); // Cache for future use
+            ctx.conn.client_ip = Some(ip.clone()); // Cache for future use
             ip
         };
 
@@ -189,7 +189,7 @@ mod tests {
     use super::*;
     use http::StatusCode;
     use pingap_config::PluginConf;
-    use pingap_core::{Ctx, PluginStep};
+    use pingap_core::{ConnectionInfo, Ctx, PluginStep};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -294,7 +294,10 @@ ip_list = [
                 PluginStep::Request,
                 &mut session,
                 &mut Ctx {
-                    client_ip: Some("2.1.1.2".to_string()),
+                    conn: ConnectionInfo {
+                        client_ip: Some("2.1.1.2".to_string()),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
             )
@@ -308,7 +311,10 @@ ip_list = [
                 PluginStep::Request,
                 &mut session,
                 &mut Ctx {
-                    client_ip: Some("1.1.1.2".to_string()),
+                    conn: ConnectionInfo {
+                        client_ip: Some("1.1.1.2".to_string()),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
             )

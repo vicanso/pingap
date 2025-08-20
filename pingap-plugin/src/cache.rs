@@ -379,7 +379,10 @@ impl Plugin for Cache {
 
         // Build cache key components including configured headers
         let mut keys = Vec::with_capacity(4);
-        ctx.cache_namespace = self.namespace.clone();
+        {
+            let cache_info = ctx.cache.get_or_insert_default();
+            cache_info.namespace = self.namespace.clone();
+        }
         if let Some(headers) = &self.headers {
             for key in headers.iter() {
                 let buf = session.get_header_bytes(key).to_str_lossy();
@@ -390,7 +393,9 @@ impl Plugin for Cache {
         }
         if !keys.is_empty() {
             ctx.extend_cache_keys(keys);
-            debug!("Cache keys: {:?}", ctx.cache_keys);
+            if let Some(cache_info) = &ctx.cache {
+                debug!("Cache keys: {:?}", cache_info.keys);
+            }
         }
 
         // Handle PURGE requests with IP-based access control
@@ -433,8 +438,10 @@ impl Plugin for Cache {
         }
 
         // Configure cache settings for this request
-        ctx.cache_max_ttl = self.max_ttl;
-        ctx.check_cache_control = self.check_cache_control;
+        if let Some(cache_info) = &mut ctx.cache {
+            cache_info.max_ttl = self.max_ttl;
+            cache_info.check_cache_control = self.check_cache_control;
+        }
 
         // Enable caching for this session with configured components
         session.cache.enable(
@@ -453,8 +460,10 @@ impl Plugin for Cache {
 
         // Track cache statistics if available
         if let Some(stats) = self.http_cache.stats() {
-            ctx.cache_reading = Some(stats.reading);
-            ctx.cache_writing = Some(stats.writing);
+            if let Some(cache_info) = ctx.cache.as_mut() {
+                cache_info.reading_count = Some(stats.reading);
+                cache_info.writing_count = Some(stats.writing);
+            }
         }
 
         Ok((true, None))
@@ -532,8 +541,14 @@ max_ttl = "1m"
             .handle_request(PluginStep::Request, &mut session, &mut ctx)
             .await
             .unwrap();
-        assert_eq!("pingap", ctx.cache_namespace.unwrap());
-        assert_eq!("gzip", ctx.cache_keys.unwrap().join(":"));
+        assert_eq!(
+            "pingap",
+            ctx.cache.as_ref().unwrap().namespace.as_ref().unwrap()
+        );
+        assert_eq!(
+            "gzip",
+            ctx.cache.as_ref().unwrap().keys.as_ref().unwrap().join(":")
+        );
         assert_eq!(true, session.cache.enabled());
         assert_eq!(100 * 1000, cache.max_file_size);
 

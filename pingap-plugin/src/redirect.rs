@@ -132,7 +132,7 @@ impl Plugin for Redirect {
         // Check current request state:
         // - ctx.tls_version.is_some() indicates HTTPS
         // - Compare against desired http_to_https setting
-        let schema_match = ctx.tls_version.is_some() == self.http_to_https;
+        let schema_match = ctx.conn.tls_version.is_some() == self.http_to_https;
 
         // Skip redirect if:
         // 1. Schema already matches desired state (HTTP/HTTPS)

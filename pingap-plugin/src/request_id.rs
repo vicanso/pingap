@@ -188,7 +188,8 @@ impl Plugin for RequestId {
         // If it does, store it in context and continue processing
         // This preserves request IDs across service boundaries
         if let Some(id) = session.get_header(&key) {
-            ctx.request_id = Some(id.to_str().unwrap_or_default().to_string());
+            ctx.state.request_id =
+                Some(id.to_str().unwrap_or_default().to_string());
             return Ok((true, None));
         }
 
@@ -210,7 +211,7 @@ impl Plugin for RequestId {
         // Store the generated ID in both context and request headers
         // Context storage makes it available to other parts of the application
         // Header insertion ensures it's forwarded to upstream services
-        ctx.request_id = Some(id.clone());
+        ctx.state.request_id = Some(id.clone());
         let _ = session.req_header_mut().insert_header(key, &id);
         Ok((true, None))
     }
@@ -309,7 +310,7 @@ size = 10
             .unwrap();
         assert_eq!(true, executed);
         assert_eq!(true, result.is_none());
-        assert_eq!("123", state.request_id.unwrap_or_default());
+        assert_eq!("123", state.state.request_id.unwrap_or_default());
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
         let input_header =
@@ -325,6 +326,6 @@ size = 10
             .unwrap();
         assert_eq!(true, executed);
         assert_eq!(true, result.is_none());
-        assert_eq!(10, state.request_id.unwrap_or_default().len());
+        assert_eq!(10, state.state.request_id.unwrap_or_default().len());
     }
 }

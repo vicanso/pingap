@@ -218,16 +218,18 @@ impl Plugin for ImageOptim {
             format!("image/{format_type}").as_str(),
         );
 
-        ctx.modify_upstream_response_body = Some(Box::new(ImageOptimizer {
-            image_type,
-            png_quality: self.png_quality,
-            jpeg_quality: self.jpeg_quality,
-            avif_quality: self.avif_quality,
-            avif_speed: self.avif_speed,
-            // only support lossless
-            webp_quality: 100,
-            format_type,
-        }));
+        let feature = ctx.features.get_or_insert_default();
+        feature.modify_upstream_response_body =
+            Some(Box::new(ImageOptimizer {
+                image_type,
+                png_quality: self.png_quality,
+                jpeg_quality: self.jpeg_quality,
+                avif_quality: self.avif_quality,
+                avif_speed: self.avif_speed,
+                // only support lossless
+                webp_quality: 100,
+                format_type,
+            }));
         Ok(true)
     }
 }

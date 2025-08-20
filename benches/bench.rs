@@ -5,8 +5,10 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use http::{HeaderName, HeaderValue, StatusCode};
 use nanoid::nanoid;
 use pingap_config::LocationConf;
-use pingap_core::{convert_headers, HttpResponse};
-use pingap_core::{CompressionStat, Ctx};
+use pingap_core::{
+    convert_headers, CompressionStat, ConnectionInfo, Ctx, Features,
+    HttpResponse, RequestState, Timing, UpstreamInfo,
+};
 use pingap_location::Location;
 use pingap_logger::Parser;
 use pingap_util::get_super_ts;
@@ -283,28 +285,43 @@ fn bench_logger_format(c: &mut Criterion) {
 {~deviceId} {>accept} {:reused}"
                 .into();
         let ctx = Ctx {
-            payload_size: 512,
-            upstream_reused: true,
-            status: Some(StatusCode::OK),
-            created_at: pingap_util::now_ms(),
-            request_id: Some("AMwBhEil".to_string()),
-            upstream_address: "192.168.1.1:5000".to_string(),
-            upstream_connect_time: Some(30),
-            upstream_connected: Some(10),
-            upstream_processing_time: Some(50),
-            upstream_response_time: Some(5),
-            location: "".to_string(),
-            connection_time: 300,
-            tls_version: Some("tls1.2".to_string()),
-            processing: 10,
-            compression_stat: Some(CompressionStat {
-                in_bytes: 50 * 1024,
-                out_bytes: 12 * 1024,
-                duration: Duration::from_millis(8),
+            timing: Timing {
+                created_at: pingap_util::now_ms(),
+                connection_duration: 300,
+                upstream_connect: Some(30),
+                upstream_processing: Some(50),
+                upstream_response: Some(5),
+                cache_lookup: Some(3),
+                cache_lock: Some(8),
+                ..Default::default()
+            },
+            state: RequestState {
+                request_id: Some("AMwBhEil".to_string()),
+                status: Some(StatusCode::OK),
+                payload_size: 512,
+                processing_count: 10,
+                ..Default::default()
+            },
+            upstream: UpstreamInfo {
+                address: "192.168.1.1:5000".to_string(),
+                location: "".to_string(),
+                reused: true,
+                connected_count: Some(10),
+                ..Default::default()
+            },
+            conn: ConnectionInfo {
+                tls_version: Some("tls1.2".to_string()),
+                ..Default::default()
+            },
+            features: Some(Features{
+                compression_stat: Some(CompressionStat {
+                    in_bytes: 50 * 1024,
+                    out_bytes: 12 * 1024,
+                    duration: Duration::from_millis(8),
+                    ..Default::default()
+                }),
                 ..Default::default()
             }),
-            cache_lookup_time: Some(3),
-            cache_lock_time: Some(8),
             ..Default::default()
         };
         b.iter(|| {

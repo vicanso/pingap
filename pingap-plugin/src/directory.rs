@@ -512,7 +512,7 @@ impl Plugin for Directory {
                     }
                     resp.cache_private = self.cache_private;
                     resp.headers = Some(headers);
-                    ctx.status = Some(StatusCode::OK);
+                    ctx.state.status = Some(StatusCode::OK);
                     resp.send(session).await?;
                     // TODO better way to handle chunk response
                     IGNORE_RESPONSE.clone()

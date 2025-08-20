@@ -224,7 +224,7 @@ impl Limiter {
                 // Get client IP from X-Forwarded-For or connection
                 let client_ip = pingap_core::get_client_ip(session);
                 // Store client IP in context for potential later use
-                ctx.client_ip = Some(client_ip.clone());
+                ctx.conn.client_ip = Some(client_ip.clone());
                 client_ip
             },
         };
@@ -254,7 +254,7 @@ impl Limiter {
             // Increment counter
             // Store guard in context - when guard is dropped, counter auto-decrements
             let (guard, value) = inflight.incr(&key, 1);
-            ctx.guard = Some(guard);
+            ctx.state.guard = Some(guard);
             value
         } else {
             0
@@ -419,7 +419,7 @@ max = 10
         let session = new_session().await;
 
         limiter.incr(&session, &mut ctx).unwrap();
-        assert_eq!(true, ctx.guard.is_some());
+        assert_eq!(true, ctx.state.guard.is_some());
     }
     #[tokio::test]
     async fn test_new_req_header_limiter() {
@@ -442,7 +442,7 @@ max = 10
         let session = new_session().await;
 
         limiter.incr(&session, &mut ctx).unwrap();
-        assert_eq!(true, ctx.guard.is_some());
+        assert_eq!(true, ctx.state.guard.is_some());
     }
     #[tokio::test]
     async fn test_new_query_limiter() {
@@ -465,7 +465,7 @@ max = 10
         let session = new_session().await;
 
         limiter.incr(&session, &mut ctx).unwrap();
-        assert_eq!(true, ctx.guard.is_some());
+        assert_eq!(true, ctx.state.guard.is_some());
     }
     #[tokio::test]
     async fn test_new_ip_limiter() {
@@ -486,7 +486,7 @@ max = 10
         let session = new_session().await;
 
         limiter.incr(&session, &mut ctx).unwrap();
-        assert_eq!(true, ctx.guard.is_some());
+        assert_eq!(true, ctx.state.guard.is_some());
     }
     #[tokio::test]
     async fn test_inflight_limit() {

@@ -75,6 +75,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
+use substring::Substring;
 use tracing::{debug, error, info};
 
 #[derive(Debug, Snafu)]
@@ -440,7 +441,7 @@ impl Server {
                 .handle_request(PluginStep::Request, session, ctx)
                 .await?;
             if let Some(resp) = result {
-                ctx.status = Some(resp.status);
+                ctx.state.status = Some(resp.status);
                 resp.send(session).await?;
                 return Ok(true);
             }
@@ -540,7 +541,7 @@ impl Server {
         ctx: &Ctx,
         header: &mut RequestHeader,
     ) {
-        let Some(location) = get_location(&ctx.location) else {
+        let Some(location) = get_location(&ctx.upstream.location) else {
             return;
         };
         // Helper closure to avoid code duplication
@@ -610,7 +611,7 @@ impl Server {
                 if let Some(resp) = result {
                     // ignore http response status >= 900
                     if resp.status.as_u16() < 900 {
-                        ctx.status = Some(resp.status);
+                        ctx.state.status = Some(resp.status);
                         resp.send(session).await?;
                     }
                     return Ok(true);
@@ -707,7 +708,9 @@ fn get_upstream_with_variables(
     ctx: &Ctx,
 ) -> Option<Arc<Upstream>> {
     if upstream.starts_with("$") {
-        if let Some(value) = ctx.get_variable(upstream) {
+        if let Some(value) =
+            ctx.get_variable(upstream.substring(1, upstream.len()))
+        {
             get_upstream(value)
         } else {
             get_upstream(upstream)
@@ -761,41 +764,43 @@ impl ProxyHttp for Server {
         session.set_write_timeout(self.downstream_write_timeout);
 
         if let Some(stream) = session.stream() {
-            ctx.connection_id = stream.id() as usize;
+            ctx.conn.id = stream.id() as usize;
         }
         // get digest of timing and tls
         if let Some(digest) = session.digest() {
             let digest_detail = get_digest_detail(digest);
-            ctx.connection_time = digest_detail.connection_time;
-            ctx.connection_reused = digest_detail.connection_reused;
+            ctx.timing.connection_duration = digest_detail.connection_time;
+            ctx.conn.reused = digest_detail.connection_reused;
 
-            if !ctx.connection_reused
+            if !ctx.conn.reused
                 && digest_detail.tls_established
                     >= digest_detail.tcp_established
             {
-                ctx.tls_handshake_time = Some(
+                ctx.timing.tls_handshake = Some(
                     digest_detail.tls_established
                         - digest_detail.tcp_established,
                 );
             }
-            ctx.tls_cipher = digest_detail.tls_cipher;
-            ctx.tls_version = digest_detail.tls_version;
+            ctx.conn.tls_cipher = digest_detail.tls_cipher;
+            ctx.conn.tls_version = digest_detail.tls_version;
         };
         accept_request();
 
-        ctx.processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
-        ctx.accepted = self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
+        ctx.state.processing_count =
+            self.processing.fetch_add(1, Ordering::Relaxed) + 1;
+        ctx.state.accepted_count =
+            self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
         if let Some((remote_addr, remote_port)) =
             pingap_core::get_remote_addr(session)
         {
-            ctx.remote_addr = Some(remote_addr);
-            ctx.remote_port = Some(remote_port);
+            ctx.conn.remote_addr = Some(remote_addr);
+            ctx.conn.remote_port = Some(remote_port);
         }
         if let Some(addr) =
             session.server_addr().and_then(|addr| addr.as_inet())
         {
-            ctx.server_addr = Some(addr.ip().to_string());
-            ctx.server_port = Some(addr.port());
+            ctx.conn.server_addr = Some(addr.ip().to_string());
+            ctx.conn.server_port = Some(addr.port());
         }
 
         let header = session.req_header();
@@ -820,7 +825,8 @@ impl ProxyHttp for Server {
                     KeyValue::new("http.host", host.to_string()),
                 ]);
 
-                ctx.otel_tracer = Some(OtelTracer {
+                let features = ctx.features.get_or_insert_default();
+                features.otel_tracer = Some(OtelTracer {
                     tracer,
                     http_request_span: span,
                 });
@@ -841,7 +847,7 @@ impl ProxyHttp for Server {
             current_location = Some(location.clone());
             let (matched, variables) = location.match_host_path(host, path);
             if matched {
-                ctx.location = location.name.clone();
+                ctx.upstream.location = location.name.clone();
                 if let Some(variables) = variables {
                     for (key, value) in variables.iter() {
                         ctx.add_variable(key, value);
@@ -850,11 +856,15 @@ impl ProxyHttp for Server {
                 break;
             }
         }
-        debug!(category = LOG_CATEGORY, "variables: {:?}", ctx.variables);
+        debug!(
+            category = LOG_CATEGORY,
+            "variables: {:?}",
+            ctx.features.as_ref().map(|item| &item.variables)
+        );
         // set prometheus stats
         #[cfg(feature = "full")]
         if let Some(prom) = &self.prometheus {
-            prom.before(&ctx.location);
+            prom.before(&ctx.upstream.location);
         }
 
         if let Some(location) = &current_location {
@@ -866,8 +876,8 @@ impl ProxyHttp for Server {
             // it will return error with 429 status code
             match location.add_processing() {
                 Ok((accepted, processing)) => {
-                    ctx.location_accepted = accepted;
-                    ctx.location_processing = processing;
+                    ctx.state.location_accepted_count = accepted;
+                    ctx.state.location_processing_count = processing;
                 },
                 Err(e) => {
                     return Err(pingap_core::new_internal_error(
@@ -959,7 +969,7 @@ impl ProxyHttp for Server {
             return Ok(true);
         }
 
-        let Some(location) = get_location(&ctx.location) else {
+        let Some(location) = get_location(&ctx.upstream.location) else {
             let host = pingap_core::get_host(header).unwrap_or_default();
             HttpResponse::unknown_error(Bytes::from(format!(
                 "Location not found, host:{host} path:{}",
@@ -976,7 +986,9 @@ impl ProxyHttp for Server {
             location = location.name,
             "location is matched"
         );
-        location.rewrite(header, ctx.variables.as_ref());
+        if let Some(features) = &ctx.features {
+            location.rewrite(header, features.variables.as_ref());
+        }
 
         let done = self
             .handle_request_plugin(
@@ -1005,7 +1017,7 @@ impl ProxyHttp for Server {
     {
         debug!(category = LOG_CATEGORY, "--> proxy upstream filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- proxy upstream filter"););
-        if let Some(location) = get_location(&ctx.location) {
+        if let Some(location) = get_location(&ctx.upstream.location) {
             let done = self
                 .handle_request_plugin(
                     PluginStep::ProxyUpstream,
@@ -1032,27 +1044,33 @@ impl ProxyHttp for Server {
         debug!(category = LOG_CATEGORY, "--> upstream peer");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream peer"););
         let mut location_name = "unknown".to_string();
-        let peer = if let Some(location) = get_location(&ctx.location) {
+        let peer = if let Some(location) = get_location(&ctx.upstream.location)
+        {
             location_name.clone_from(&location.name);
             if let Some(up) =
                 get_upstream_with_variables(&location.upstream, ctx)
             {
-                ctx.upstream_connected = up.connected();
+                ctx.upstream.connected_count = up.connected();
                 #[cfg(feature = "full")]
-                if let Some(tracer) = &ctx.otel_tracer {
-                    let name = format!("upstream.{}", &location.upstream);
-                    let mut span = tracer.new_upstream_span(&name);
-                    span.set_attribute(KeyValue::new(
-                        "upstream.connected",
-                        ctx.upstream_connected.unwrap_or_default() as i64,
-                    ));
-                    ctx.upstream_span = Some(span);
+                if let Some(features) = &ctx.features {
+                    if let Some(tracer) = &features.otel_tracer {
+                        let name = format!("upstream.{}", &location.upstream);
+                        let mut span = tracer.new_upstream_span(&name);
+                        span.set_attribute(KeyValue::new(
+                            "upstream.connected",
+                            ctx.upstream.connected_count.unwrap_or_default()
+                                as i64,
+                        ));
+                        let features = ctx.features.get_or_insert_default();
+                        features.upstream_span = Some(span);
+                    }
                 }
-                let peer =
-                    up.new_http_peer(session, &ctx.client_ip).inspect(|peer| {
-                        ctx.upstream_address = peer.address().to_string();
+                let peer = up
+                    .new_http_peer(session, &ctx.conn.client_ip)
+                    .inspect(|peer| {
+                        ctx.upstream.address = peer.address().to_string();
                     });
-                ctx.upstream = up.name.clone();
+                ctx.upstream.name = up.name.clone();
                 peer
             } else {
                 None
@@ -1067,8 +1085,8 @@ impl ProxyHttp for Server {
             )
         })?;
 
-        ctx.upstream_connect_time =
-            pingap_util::get_latency(&ctx.upstream_connect_time);
+        ctx.timing.upstream_connect =
+            pingap_util::get_latency(&ctx.timing.upstream_connect);
 
         Ok(Box::new(peer))
     }
@@ -1093,26 +1111,27 @@ impl ProxyHttp for Server {
             let detail = get_digest_detail(digest);
             if !reused {
                 let upstream_connect_time =
-                    ctx.upstream_connect_time.unwrap_or_default();
+                    ctx.timing.upstream_connect.unwrap_or_default();
                 if upstream_connect_time > 0
                     && detail.tcp_established > upstream_connect_time
                 {
-                    ctx.upstream_tcp_connect_time =
+                    ctx.timing.upstream_tcp_connect =
                         Some(detail.tcp_established - upstream_connect_time);
                 }
                 if detail.tls_established > detail.tcp_established {
-                    ctx.upstream_tls_handshake_time =
+                    ctx.timing.upstream_tls_handshake =
                         Some(detail.tls_established - detail.tcp_established);
                 }
             }
-            ctx.upstream_connection_time = Some(detail.connection_time);
+            ctx.timing.upstream_connection_duration =
+                Some(detail.connection_time);
         }
 
-        ctx.upstream_reused = reused;
-        ctx.upstream_connect_time =
-            pingap_util::get_latency(&ctx.upstream_connect_time);
-        ctx.upstream_processing_time =
-            pingap_util::get_latency(&ctx.upstream_processing_time);
+        ctx.upstream.reused = reused;
+        ctx.timing.upstream_connect =
+            pingap_util::get_latency(&ctx.timing.upstream_connect);
+        ctx.timing.upstream_processing =
+            pingap_util::get_latency(&ctx.timing.upstream_processing);
 
         Ok(())
     }
@@ -1147,11 +1166,13 @@ impl ProxyHttp for Server {
         debug!(category = LOG_CATEGORY, "--> request body filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- request body filter"););
         if let Some(buf) = body {
-            ctx.payload_size += buf.len();
-            if let Some(location) = get_location(&ctx.location) {
-                location.client_body_size_limit(ctx.payload_size).map_err(
-                    |e| pingap_core::new_internal_error(413, e.to_string()),
-                )?;
+            ctx.state.payload_size += buf.len();
+            if let Some(location) = get_location(&ctx.upstream.location) {
+                location
+                    .client_body_size_limit(ctx.state.payload_size)
+                    .map_err(|e| {
+                        pingap_core::new_internal_error(413, e.to_string())
+                    })?;
             }
         }
         Ok(())
@@ -1198,9 +1219,13 @@ impl ProxyHttp for Server {
     ) -> pingora::Result<RespCacheable> {
         debug!(category = LOG_CATEGORY, "--> response cache filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- response cache filter"););
-        if ctx.check_cache_control
-            && resp.headers.get("Cache-Control").is_none()
-        {
+        let mut check_cache_control = false;
+        let mut max_ttl = None;
+        if let Some(cache_info) = &ctx.cache {
+            check_cache_control = cache_info.check_cache_control;
+            max_ttl = cache_info.max_ttl;
+        }
+        if check_cache_control && resp.headers.get("Cache-Control").is_none() {
             return Ok(RespCacheable::Uncacheable(
                 NoCacheReason::OriginNotCache,
             ));
@@ -1221,7 +1246,7 @@ impl ProxyHttp for Server {
                 }
             }
             // adjust cache ttl
-            if let Some(d) = ctx.cache_max_ttl {
+            if let Some(d) = max_ttl {
                 if c.fresh_duration().unwrap_or_default() > d {
                     // update cache-control s-maxage value
                     c.directives.insert(
@@ -1272,7 +1297,7 @@ impl ProxyHttp for Server {
                 let ms = d.as_millis() as u64;
                 let _ = upstream_response
                     .insert_header("X-Cache-Lookup", format!("{ms}ms"));
-                ctx.cache_lookup_time = Some(ms);
+                ctx.timing.cache_lookup = Some(ms);
             }
             #[cfg(feature = "full")]
             let mut lock_duration = "".to_string();
@@ -1285,22 +1310,24 @@ impl ProxyHttp for Server {
                 let ms = d.as_millis() as u64;
                 let _ = upstream_response
                     .insert_header("X-Cache-Lock", format!("{ms}ms"));
-                ctx.cache_lock_time = Some(ms);
+                ctx.timing.cache_lock = Some(ms);
             }
 
             #[cfg(feature = "full")]
             // open telemetry
-            if let Some(ref mut tracer) = ctx.otel_tracer.as_mut() {
-                let attrs = vec![
-                    KeyValue::new("cache.status", cache_status),
-                    KeyValue::new("cache.lookup", lookup_duration),
-                    KeyValue::new("cache.lookup", lock_duration),
-                ];
-                tracer.http_request_span.set_attributes(attrs);
+            if let Some(features) = ctx.features.as_mut() {
+                if let Some(ref mut tracer) = features.otel_tracer.as_mut() {
+                    let attrs = vec![
+                        KeyValue::new("cache.status", cache_status),
+                        KeyValue::new("cache.lookup", lookup_duration),
+                        KeyValue::new("cache.lookup", lock_duration),
+                    ];
+                    tracer.http_request_span.set_attributes(attrs);
+                }
             }
         }
 
-        if let Some(location) = get_location(&ctx.location) {
+        if let Some(location) = get_location(&ctx.upstream.location) {
             self.handle_response_plugin(
                 PluginStep::Response,
                 location.clone(),
@@ -1327,7 +1354,7 @@ impl ProxyHttp for Server {
     ) -> pingora::Result<()> {
         debug!(category = LOG_CATEGORY, "--> upstream response filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream response filter"););
-        if let Some(location) = get_location(&ctx.location) {
+        if let Some(location) = get_location(&ctx.upstream.location) {
             self.handle_upstream_response_plugin(
                 PluginStep::UpstreamResponse,
                 location.clone(),
@@ -1338,34 +1365,36 @@ impl ProxyHttp for Server {
         }
         #[cfg(feature = "full")]
         // open telemetry
-        if let Some(tracer) = &ctx.otel_tracer {
-            // Add trace context to response headers
-            let span_context = tracer.http_request_span.span_context();
-            if span_context.is_valid() {
-                // Add trace ID
-                let _ = upstream_response.insert_header(
-                    "X-Trace-Id",
-                    span_context.trace_id().to_string(),
-                );
-                // Add span ID
-                let _ = upstream_response.insert_header(
-                    "X-Span-Id",
-                    span_context.span_id().to_string(),
-                );
+        if let Some(features) = &ctx.features {
+            if let Some(tracer) = &features.otel_tracer {
+                // Add trace context to response headers
+                let span_context = tracer.http_request_span.span_context();
+                if span_context.is_valid() {
+                    // Add trace ID
+                    let _ = upstream_response.insert_header(
+                        "X-Trace-Id",
+                        span_context.trace_id().to_string(),
+                    );
+                    // Add span ID
+                    let _ = upstream_response.insert_header(
+                        "X-Span-Id",
+                        span_context.span_id().to_string(),
+                    );
+                }
             }
         }
 
-        if ctx.status.is_none() {
-            ctx.status = Some(upstream_response.status);
-            ctx.upstream_response_time =
-                pingap_util::get_latency(&ctx.upstream_response_time);
+        if ctx.state.status.is_none() {
+            ctx.state.status = Some(upstream_response.status);
+            ctx.timing.upstream_response =
+                pingap_util::get_latency(&ctx.timing.upstream_response);
         }
-        if let Some(id) = &ctx.request_id {
+        if let Some(id) = &ctx.state.request_id {
             let _ = upstream_response
                 .insert_header(HTTP_HEADER_NAME_X_REQUEST_ID.clone(), id);
         }
-        ctx.upstream_processing_time =
-            pingap_util::get_latency(&ctx.upstream_processing_time);
+        ctx.timing.upstream_processing =
+            pingap_util::get_latency(&ctx.timing.upstream_processing);
         Ok(())
     }
 
@@ -1381,69 +1410,85 @@ impl ProxyHttp for Server {
         debug!(category = LOG_CATEGORY, "--> upstream response body filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream response body filter"););
         // set modify response body
-        if let Some(modify) = &ctx.modify_upstream_response_body {
-            if let Some(ref mut buf) = ctx.response_body {
-                if let Some(b) = body {
-                    buf.extend(&b[..]);
-                    b.clear();
-                }
-            } else {
-                let mut buf = BytesMut::new();
-                if let Some(b) = body {
-                    buf.extend(&b[..]);
-                    b.clear();
-                }
-                ctx.response_body = Some(buf);
-            };
+        if let Some(features) = ctx.features.as_mut() {
+            if let Some(modify) = &features.modify_upstream_response_body {
+                if let Some(ref mut buf) = features.response_body_buffer {
+                    if let Some(b) = body {
+                        buf.extend(&b[..]);
+                        b.clear();
+                    }
+                } else {
+                    let mut buf = BytesMut::new();
+                    if let Some(b) = body {
+                        buf.extend(&b[..]);
+                        b.clear();
+                    }
+                    features.response_body_buffer = Some(buf);
+                };
 
-            if end_of_stream {
-                if let Some(ref buf) = ctx.response_body {
-                    let name = modify.name();
-                    let now = Instant::now();
-                    *body = Some(modify.handle(Bytes::from(buf.to_owned()))?);
-                    let elapsed = now.elapsed().as_millis() as u32;
-                    debug!(
-                        category = LOG_CATEGORY,
-                        name, elapsed, "modify upstream response body"
-                    );
-                    #[cfg(feature = "full")]
-                    if let Some(ref mut span) = ctx.upstream_span.as_mut() {
-                        let key = format!("upstream.modified_body.{name}_time");
-                        span.set_attribute(KeyValue::new(key, elapsed as i64));
+                if end_of_stream {
+                    if let Some(ref buf) = features.response_body_buffer {
+                        let name = modify.name();
+                        let now = Instant::now();
+                        *body =
+                            Some(modify.handle(Bytes::from(buf.to_owned()))?);
+                        let elapsed = now.elapsed().as_millis() as u32;
+                        debug!(
+                            category = LOG_CATEGORY,
+                            name, elapsed, "modify upstream response body"
+                        );
+                        #[cfg(feature = "full")]
+                        if let Some(ref mut span) =
+                            features.upstream_span.as_mut()
+                        {
+                            let key =
+                                format!("upstream.modified_body.{name}_time");
+                            span.set_attribute(KeyValue::new(
+                                key,
+                                elapsed as i64,
+                            ));
+                        }
+                    }
+                    features.response_body_buffer = None;
+                    // if the body is empty, it will trigger response_body_filter again
+                    // so set modify response body to None
+                    if let Some(features) = ctx.features.as_mut() {
+                        features.modify_upstream_response_body = None;
                     }
                 }
-                ctx.response_body = None;
-                // if the body is empty, it will trigger response_body_filter again
-                // so set modify response body to None
-                ctx.modify_upstream_response_body = None;
             }
         }
         if end_of_stream {
-            ctx.upstream_response_time =
-                pingap_util::get_latency(&ctx.upstream_response_time);
+            ctx.timing.upstream_response =
+                pingap_util::get_latency(&ctx.timing.upstream_response);
             #[cfg(feature = "full")]
-            if let Some(ref mut span) = ctx.upstream_span.as_mut() {
-                span.set_attributes([
-                    KeyValue::new(
-                        "upstream.addr",
-                        ctx.upstream_address.clone(),
-                    ),
-                    KeyValue::new("upstream.reused", ctx.upstream_reused),
-                    KeyValue::new(
-                        "upstream.connect_time",
-                        ctx.upstream_connect_time.unwrap_or_default() as i64,
-                    ),
-                    KeyValue::new(
-                        "upstream.processing_time",
-                        ctx.upstream_processing_time.unwrap_or_default() as i64,
-                    ),
-                    KeyValue::new(
-                        "upstream.response_time",
-                        ctx.upstream_response_time.unwrap_or_default() as i64,
-                    ),
-                ]);
-                span.end();
-                ctx.upstream_span = None;
+            if let Some(features) = ctx.features.as_mut() {
+                if let Some(ref mut span) = features.upstream_span.as_mut() {
+                    span.set_attributes([
+                        KeyValue::new(
+                            "upstream.addr",
+                            ctx.upstream.address.clone(),
+                        ),
+                        KeyValue::new("upstream.reused", ctx.upstream.reused),
+                        KeyValue::new(
+                            "upstream.connect_time",
+                            ctx.timing.upstream_connect.unwrap_or_default()
+                                as i64,
+                        ),
+                        KeyValue::new(
+                            "upstream.processing_time",
+                            ctx.timing.upstream_processing.unwrap_or_default()
+                                as i64,
+                        ),
+                        KeyValue::new(
+                            "upstream.response_time",
+                            ctx.timing.upstream_response.unwrap_or_default()
+                                as i64,
+                        ),
+                    ]);
+                    span.end();
+                    features.upstream_span = None;
+                }
             }
         }
         Ok(())
@@ -1463,41 +1508,50 @@ impl ProxyHttp for Server {
     {
         debug!(category = LOG_CATEGORY, "--> response body filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- response body filter"););
+        let Some(features) = ctx.features.as_mut() else {
+            return Ok(None);
+        };
+        let Some(modify) = &features.modify_response_body else {
+            return Ok(None);
+        };
         // set modify response body
-        if let Some(modify) = &ctx.modify_response_body {
-            if let Some(ref mut buf) = ctx.response_body {
-                if let Some(b) = body {
-                    buf.extend(&b[..]);
-                    b.clear();
-                }
-            } else {
-                let mut buf = BytesMut::new();
-                if let Some(b) = body {
-                    buf.extend(&b[..]);
-                    b.clear();
-                }
-                ctx.response_body = Some(buf);
-            };
+        if let Some(buf) = features.response_body_buffer.as_mut() {
+            if let Some(b) = body {
+                buf.extend(&b[..]);
+                b.clear();
+            }
+        } else {
+            let mut buf = BytesMut::new();
+            if let Some(b) = body {
+                buf.extend(&b[..]);
+                b.clear();
+            }
+            features.response_body_buffer = Some(buf);
+        };
 
-            if end_of_stream {
-                if let Some(ref buf) = ctx.response_body {
-                    let name = modify.name();
-                    let now = Instant::now();
-                    *body = Some(modify.handle(Bytes::from(buf.to_owned()))?);
-                    let elapsed = now.elapsed().as_millis() as u32;
-                    debug!(
-                        category = LOG_CATEGORY,
-                        name, elapsed, "modify response body"
-                    );
-                    #[cfg(feature = "full")]
-                    if let Some(ref mut span) = ctx.upstream_span.as_mut() {
+        if end_of_stream {
+            if let Some(ref buf) = features.response_body_buffer {
+                let name = modify.name();
+                let now = Instant::now();
+                *body = Some(modify.handle(Bytes::from(buf.to_owned()))?);
+                let elapsed = now.elapsed().as_millis() as u32;
+                debug!(
+                    category = LOG_CATEGORY,
+                    name, elapsed, "modify response body"
+                );
+                #[cfg(feature = "full")]
+                if let Some(features) = ctx.features.as_mut() {
+                    if let Some(ref mut span) = features.upstream_span.as_mut()
+                    {
                         let key = format!("response.modified_body.{name}_time");
                         span.set_attribute(KeyValue::new(key, elapsed as i64));
                     }
                 }
-                // if the body is empty, it will trigger response_body_filter again
-                // so set modify response body to None
-                ctx.modify_response_body = None;
+            }
+            // if the body is empty, it will trigger response_body_filter again
+            // so set modify response body to None
+            if let Some(features) = ctx.features.as_mut() {
+                features.modify_response_body = None;
             }
         }
 
@@ -1552,7 +1606,7 @@ impl ProxyHttp for Server {
             .replace("{{content}}", &e.to_string())
             .replace("{{error_type}}", error_type);
         let buf = Bytes::from(content);
-        ctx.status = Some(
+        ctx.state.status = Some(
             StatusCode::from_u16(code)
                 .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
         );
@@ -1573,8 +1627,8 @@ impl ProxyHttp for Server {
         error!(
             category = LOG_CATEGORY,
             error = %e,
-            remote_addr = ctx.remote_addr,
-            client_ip = ctx.client_ip,
+            remote_addr = ctx.conn.remote_addr,
+            client_ip = ctx.conn.client_ip,
             user_agent,
             error_type,
             path = server_session.req_header().uri.path(),
@@ -1625,23 +1679,26 @@ impl ProxyHttp for Server {
         defer!(debug!(category = LOG_CATEGORY, "<-- logging"););
         end_request();
         self.processing.fetch_sub(1, Ordering::Relaxed);
-        if let Some(location) = get_location(&ctx.location) {
+        if let Some(location) = get_location(&ctx.upstream.location) {
             location.sub_processing();
         }
         // get from cache does not connect to upstream
-        if let Some(upstream) = get_upstream_with_variables(&ctx.upstream, ctx)
+        if let Some(upstream) =
+            get_upstream_with_variables(&ctx.upstream.name, ctx)
         {
-            ctx.upstream_processing = Some(upstream.completed());
+            ctx.upstream.processing_count = Some(upstream.completed());
         }
-        if ctx.status.is_none() {
+        if ctx.state.status.is_none() {
             if let Some(header) = session.response_written() {
-                ctx.status = Some(header.status);
+                ctx.state.status = Some(header.status);
             }
         }
         #[cfg(feature = "full")]
         // enable open telemetry and proxy upstream fail
-        if let Some(ref mut span) = ctx.upstream_span.as_mut() {
-            span.end();
+        if let Some(features) = ctx.features.as_mut() {
+            if let Some(ref mut span) = features.upstream_span.as_mut() {
+                span.end();
+            }
         }
 
         if let Some(c) =
@@ -1651,7 +1708,8 @@ impl ProxyHttp for Server {
                 if let Some((algorithm, in_bytes, out_bytes, took)) =
                     c.get_info()
                 {
-                    ctx.compression_stat = Some(CompressionStat {
+                    let features = ctx.features.get_or_insert_default();
+                    features.compression_stat = Some(CompressionStat {
                         algorithm: algorithm.to_string(),
                         in_bytes,
                         out_bytes,
@@ -1667,32 +1725,36 @@ impl ProxyHttp for Server {
 
         #[cfg(feature = "full")]
         // open telemetry
-        if let Some(ref mut tracer) = ctx.otel_tracer.as_mut() {
-            let ip = if let Some(ip) = &ctx.client_ip {
-                ip.to_string()
-            } else {
-                let ip = pingap_core::get_client_ip(session);
-                ctx.client_ip = Some(ip.clone());
-                ip
-            };
-            let mut attrs = vec![
-                KeyValue::new("http.client_ip", ip),
-                KeyValue::new(
-                    "http.status_code",
-                    ctx.status.unwrap_or_default().as_u16() as i64,
-                ),
-                KeyValue::new(
-                    "http.response.body.size",
-                    session.body_bytes_sent() as i64,
-                ),
-            ];
-            if !ctx.location.is_empty() {
-                attrs
-                    .push(KeyValue::new("http.location", ctx.location.clone()));
-            }
+        if let Some(features) = ctx.features.as_mut() {
+            if let Some(ref mut tracer) = features.otel_tracer.as_mut() {
+                let ip = if let Some(ip) = &ctx.conn.client_ip {
+                    ip.to_string()
+                } else {
+                    let ip = pingap_core::get_client_ip(session);
+                    ctx.conn.client_ip = Some(ip.clone());
+                    ip
+                };
+                let mut attrs = vec![
+                    KeyValue::new("http.client_ip", ip),
+                    KeyValue::new(
+                        "http.status_code",
+                        ctx.state.status.unwrap_or_default().as_u16() as i64,
+                    ),
+                    KeyValue::new(
+                        "http.response.body.size",
+                        session.body_bytes_sent() as i64,
+                    ),
+                ];
+                if !ctx.upstream.location.is_empty() {
+                    attrs.push(KeyValue::new(
+                        "http.location",
+                        ctx.upstream.location.clone(),
+                    ));
+                }
 
-            tracer.http_request_span.set_attributes(attrs);
-            tracer.http_request_span.end()
+                tracer.http_request_span.set_attributes(attrs);
+                tracer.http_request_span.end()
+            }
         }
 
         if let Some(p) = &self.log_parser {
@@ -1708,7 +1770,7 @@ mod tests {
     use crate::proxy::server_conf::parse_from_conf;
     use crate::proxy::try_init_server_locations;
     use pingap_config::PingapConf;
-    use pingap_core::Ctx;
+    use pingap_core::{CacheInfo, Ctx, UpstreamInfo};
     use pingap_location::try_init_locations;
     use pingap_upstream::try_init_upstreams;
     use pingora::http::ResponseHeader;
@@ -1841,7 +1903,7 @@ value = 'proxy_set_headers = ["name:value"]'
             .early_request_filter(&mut session, &mut ctx)
             .await
             .unwrap();
-        assert_eq!("lo", ctx.location);
+        assert_eq!("lo", ctx.upstream.location);
     }
 
     #[tokio::test]
@@ -1856,7 +1918,10 @@ value = 'proxy_set_headers = ["name:value"]'
         session.read_request().await.unwrap();
 
         let mut ctx = Ctx {
-            location: "lo".to_string(),
+            upstream: UpstreamInfo {
+                location: "lo".to_string(),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let done = server.request_filter(&mut session, &mut ctx).await.unwrap();
@@ -1878,8 +1943,11 @@ value = 'proxy_set_headers = ["name:value"]'
             .cache_key_callback(
                 &session,
                 &mut Ctx {
-                    cache_namespace: Some("pingap".to_string()),
-                    cache_keys: Some(vec!["ss".to_string()]),
+                    cache: Some(CacheInfo {
+                        namespace: Some("pingap".to_string()),
+                        keys: Some(vec!["ss".to_string()]),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 },
             )
@@ -1916,7 +1984,10 @@ value = 'proxy_set_headers = ["name:value"]'
                 &session,
                 &upstream_response,
                 &mut Ctx {
-                    cache_keys: Some(vec!["ss".to_string()]),
+                    cache: Some(CacheInfo {
+                        keys: Some(vec!["ss".to_string()]),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 },
             )
@@ -1933,7 +2004,10 @@ value = 'proxy_set_headers = ["name:value"]'
                 &session,
                 &upstream_response,
                 &mut Ctx {
-                    cache_keys: Some(vec!["ss".to_string()]),
+                    cache: Some(CacheInfo {
+                        keys: Some(vec!["ss".to_string()]),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 },
             )
@@ -1950,7 +2024,10 @@ value = 'proxy_set_headers = ["name:value"]'
                 &session,
                 &upstream_response,
                 &mut Ctx {
-                    cache_keys: Some(vec!["ss".to_string()]),
+                    cache: Some(CacheInfo {
+                        keys: Some(vec!["ss".to_string()]),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 },
             )
@@ -1967,7 +2044,10 @@ value = 'proxy_set_headers = ["name:value"]'
                 &session,
                 &upstream_response,
                 &mut Ctx {
-                    cache_keys: Some(vec!["ss".to_string()]),
+                    cache: Some(CacheInfo {
+                        keys: Some(vec!["ss".to_string()]),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 },
             )

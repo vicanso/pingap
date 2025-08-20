@@ -174,8 +174,8 @@ impl Plugin for Stats {
         let resp = HttpResponse::try_from_json(&ServerStats {
             accepted,
             processing,
-            location_processing: ctx.location_processing,
-            location_accepted: ctx.location_accepted,
+            location_processing: ctx.state.location_processing_count,
+            location_accepted: ctx.state.location_accepted_count,
             hostname: get_hostname().to_string(),
             version: pingap_util::get_pkg_version().to_string(),
             rustc_version: pingap_util::get_rustc_version(),

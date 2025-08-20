@@ -16,7 +16,6 @@ use super::{get_hostname, Ctx};
 use bytes::BytesMut;
 use http::header;
 use http::{HeaderName, HeaderValue};
-use once_cell::sync::Lazy;
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
 use snafu::{ResultExt, Snafu};
@@ -25,11 +24,11 @@ use std::str::FromStr;
 use url::Url;
 use urlencoding::encode;
 
-pub static HTTP_HEADER_X_FORWARDED_FOR: Lazy<http::HeaderName> =
-    Lazy::new(|| HeaderName::from_str("X-Forwarded-For").unwrap());
+pub static HTTP_HEADER_X_FORWARDED_FOR: HeaderName =
+    HeaderName::from_static("x-forwarded-for");
 
-pub static HTTP_HEADER_X_REAL_IP: Lazy<http::HeaderName> =
-    Lazy::new(|| HeaderName::from_str("X-Real-Ip").unwrap());
+pub static HTTP_HEADER_X_REAL_IP: HeaderName =
+    HeaderName::from_static("x-real-ip");
 
 pub const HOST_NAME_TAG: &[u8] = b"$hostname";
 const HOST_TAG: &[u8] = b"$host";
@@ -46,12 +45,12 @@ static SCHEME_HTTP: HeaderValue = HeaderValue::from_static("http");
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Invalid header value: {value} - {source}"))]
+    #[snafu(display("invalid header value: {value} - {source}"))]
     InvalidHeaderValue {
         value: String,
         source: header::InvalidHeaderValue,
     },
-    #[snafu(display("Invalid header name: {value} - {source}"))]
+    #[snafu(display("invalid header name: {value} - {source}"))]
     InvalidHeaderName {
         value: String,
         source: header::InvalidHeaderName,
@@ -115,50 +114,38 @@ pub fn convert_headers(header_values: &[String]) -> Result<Vec<HttpHeader>> {
     Ok(arr)
 }
 
-pub static HTTP_HEADER_NO_STORE: Lazy<HttpHeader> = Lazy::new(|| {
-    (
-        header::CACHE_CONTROL,
-        HeaderValue::from_str("private, no-store").unwrap(),
-    )
-});
+pub static HTTP_HEADER_NO_STORE: HttpHeader = (
+    header::CACHE_CONTROL,
+    HeaderValue::from_static("private, no-store"),
+);
 
-pub static HTTP_HEADER_NO_CACHE: Lazy<HttpHeader> = Lazy::new(|| {
-    (
-        header::CACHE_CONTROL,
-        HeaderValue::from_str("private, no-cache").unwrap(),
-    )
-});
+pub static HTTP_HEADER_NO_CACHE: HttpHeader = (
+    header::CACHE_CONTROL,
+    HeaderValue::from_static("private, no-cache"),
+);
 
-pub static HTTP_HEADER_CONTENT_JSON: Lazy<HttpHeader> = Lazy::new(|| {
-    (
-        header::CONTENT_TYPE,
-        HeaderValue::from_str("application/json; charset=utf-8").unwrap(),
-    )
-});
+pub static HTTP_HEADER_CONTENT_JSON: HttpHeader = (
+    header::CONTENT_TYPE,
+    HeaderValue::from_static("application/json; charset=utf-8"),
+);
 
-pub static HTTP_HEADER_CONTENT_HTML: Lazy<HttpHeader> = Lazy::new(|| {
-    (
-        header::CONTENT_TYPE,
-        HeaderValue::from_str("text/html; charset=utf-8").unwrap(),
-    )
-});
+pub static HTTP_HEADER_CONTENT_HTML: HttpHeader = (
+    header::CONTENT_TYPE,
+    HeaderValue::from_static("text/html; charset=utf-8"),
+);
 
-pub static HTTP_HEADER_CONTENT_TEXT: Lazy<HttpHeader> = Lazy::new(|| {
-    (
-        header::CONTENT_TYPE,
-        HeaderValue::from_str("text/plain; charset=utf-8").unwrap(),
-    )
-});
+pub static HTTP_HEADER_CONTENT_TEXT: HttpHeader = (
+    header::CONTENT_TYPE,
+    HeaderValue::from_static("text/plain; charset=utf-8"),
+);
 
-pub static HTTP_HEADER_TRANSFER_CHUNKED: Lazy<HttpHeader> = Lazy::new(|| {
-    (
-        header::TRANSFER_ENCODING,
-        HeaderValue::from_str("chunked").unwrap(),
-    )
-});
+pub static HTTP_HEADER_TRANSFER_CHUNKED: HttpHeader = (
+    header::TRANSFER_ENCODING,
+    HeaderValue::from_static("chunked"),
+);
 
-pub static HTTP_HEADER_NAME_X_REQUEST_ID: Lazy<HeaderName> =
-    Lazy::new(|| HeaderName::from_str("X-Request-Id").unwrap());
+pub static HTTP_HEADER_NAME_X_REQUEST_ID: HeaderName =
+    HeaderName::from_static("x-request-id");
 
 /// Processes special header values that contain dynamic variables.
 /// Supports variables like $host, $scheme, $remote_addr etc.
@@ -188,31 +175,37 @@ pub fn convert_header_value(
 
     match buf {
         HOST_TAG => get_host(session.req_header()).and_then(to_header_value),
-        SCHEME_TAG => Some(if ctx.tls_version.is_some() {
+        SCHEME_TAG => Some(if ctx.conn.tls_version.is_some() {
             SCHEME_HTTPS.clone()
         } else {
             SCHEME_HTTP.clone()
         }),
         HOST_NAME_TAG => to_header_value(get_hostname()),
-        REMOTE_ADDR_TAG => ctx.remote_addr.as_deref().and_then(to_header_value),
+        REMOTE_ADDR_TAG => {
+            ctx.conn.remote_addr.as_deref().and_then(to_header_value)
+        },
         REMOTE_PORT_TAG => ctx
+            .conn
             .remote_port
             .map(|p| p.to_string())
             .and_then(|s| to_header_value(&s)),
-        SERVER_ADDR_TAG => ctx.server_addr.as_deref().and_then(to_header_value),
+        SERVER_ADDR_TAG => {
+            ctx.conn.server_addr.as_deref().and_then(to_header_value)
+        },
         SERVER_PORT_TAG => ctx
+            .conn
             .server_port
             .map(|p| p.to_string())
             .and_then(|s| to_header_value(&s)),
         UPSTREAM_ADDR_TAG => {
-            if !ctx.upstream_address.is_empty() {
-                to_header_value(&ctx.upstream_address)
+            if !ctx.upstream.address.is_empty() {
+                to_header_value(&ctx.upstream.address)
             } else {
                 None
             }
         },
         PROXY_ADD_FORWARDED_TAG => {
-            ctx.remote_addr.as_deref().and_then(|remote_addr| {
+            ctx.conn.remote_addr.as_deref().and_then(|remote_addr| {
                 let value = match session
                     .get_header(HTTP_HEADER_X_FORWARDED_FOR.clone())
                 {
@@ -279,7 +272,7 @@ fn handle_context_value(buf: &[u8], ctx: &Ctx) -> Option<HeaderValue> {
     // Pre-allocate buffer for value
     let mut value = BytesMut::with_capacity(20);
     // Append context value to buffer
-    value = ctx.append_value(value, key);
+    value = ctx.append_log_value(value, key);
     // Convert to HeaderValue if buffer is not empty
     if !value.is_empty() {
         HeaderValue::from_bytes(&value).ok()
@@ -451,6 +444,7 @@ pub fn remove_query_from_header(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{ConnectionInfo, UpstreamInfo};
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
 
@@ -542,13 +536,19 @@ mod tests {
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         let default_state = Ctx {
-            tls_version: Some("tls1.3".to_string()),
-            remote_addr: Some("10.1.1.1".to_string()),
-            remote_port: Some(6000),
-            server_addr: Some("10.1.1.2".to_string()),
-            server_port: Some(6001),
-            upstream_address: "10.1.1.3:4123".to_string(),
-            connection_id: 102,
+            upstream: UpstreamInfo {
+                address: "10.1.1.3:4123".to_string(),
+                ..Default::default()
+            },
+            conn: ConnectionInfo {
+                id: 102,
+                remote_addr: Some("10.1.1.1".to_string()),
+                remote_port: Some(6000),
+                server_addr: Some("10.1.1.2".to_string()),
+                server_port: Some(6001),
+                tls_version: Some("tls1.3".to_string()),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -637,7 +637,10 @@ mod tests {
             &HeaderValue::from_str("$proxy_add_x_forwarded_for").unwrap(),
             &session,
             &Ctx {
-                remote_addr: Some("10.1.1.1".to_string()),
+                conn: ConnectionInfo {
+                    remote_addr: Some("10.1.1.1".to_string()),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
         );
@@ -657,7 +660,10 @@ mod tests {
             &HeaderValue::from_str("$proxy_add_x_forwarded_for").unwrap(),
             &session,
             &Ctx {
-                remote_addr: Some("10.1.1.1".to_string()),
+                conn: ConnectionInfo {
+                    remote_addr: Some("10.1.1.1".to_string()),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
         );
@@ -674,7 +680,10 @@ mod tests {
             &HeaderValue::from_str("$upstream_addr").unwrap(),
             &session,
             &Ctx {
-                upstream_address: "10.1.1.1:8001".to_string(),
+                upstream: UpstreamInfo {
+                    address: "10.1.1.1:8001".to_string(),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
         );

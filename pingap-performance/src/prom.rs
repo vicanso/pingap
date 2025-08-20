@@ -186,13 +186,14 @@ impl Prometheus {
     /// This method performs multiple metric updates but uses efficient
     /// atomic operations to minimize overhead.
     pub fn after(&self, session: &Session, ctx: &Ctx) {
-        let location = &ctx.location;
-        let upstream = &ctx.upstream;
-        let response_time = ((now_ms()) - ctx.created_at) as f64 / SECOND;
+        let location = &ctx.upstream.location;
+        let upstream = &ctx.upstream.name;
+        let response_time =
+            ((now_ms()) - ctx.timing.created_at) as f64 / SECOND;
         // payload size(kb)
-        let payload_size = ctx.payload_size as f64 / 1024.0;
+        let payload_size = ctx.state.payload_size as f64 / 1024.0;
         let mut code = 0;
-        if let Some(status) = &ctx.status {
+        if let Some(status) = &ctx.state.status {
             code = status.as_u16();
         }
         let sent_bytes = session.body_bytes_sent() as u64;
@@ -219,7 +220,7 @@ impl Prometheus {
                 .observe(payload_size);
             self.http_received_bytes
                 .with_label_values(labels)
-                .inc_by(ctx.payload_size as u64);
+                .inc_by(ctx.state.payload_size as u64);
 
             // response time x second
             self.http_response_time
@@ -246,11 +247,11 @@ impl Prometheus {
         }
 
         // reused connection
-        if ctx.connection_reused {
+        if ctx.conn.reused {
             self.connection_reuses.inc();
         }
 
-        if let Some(tls_handshake_time) = ctx.tls_handshake_time {
+        if let Some(tls_handshake_time) = ctx.timing.tls_handshake {
             self.tls_handshake_time
                 .observe(tls_handshake_time as f64 / SECOND);
         }
@@ -258,43 +259,44 @@ impl Prometheus {
         // upstream
         if !upstream.is_empty() {
             let upstream_labels = &[upstream.as_str()];
-            if let Some(count) = ctx.upstream_connected {
+            if let Some(count) = ctx.upstream.connected_count {
                 self.upstream_connections
                     .with_label_values(upstream_labels)
                     .set(count as i64);
             }
-            if let Some(count) = ctx.upstream_processing {
+            if let Some(count) = ctx.upstream.processing_count {
                 self.upstream_connections_current
                     .with_label_values(upstream_labels)
                     .set(count as i64);
             }
             // upstream stats
             if let Some(upstream_tcp_connect_time) =
-                ctx.upstream_tcp_connect_time
+                ctx.timing.upstream_tcp_connect
             {
                 self.upstream_tcp_connect_time
                     .with_label_values(upstream_labels)
                     .observe(upstream_tcp_connect_time as f64 / SECOND);
             }
             if let Some(upstream_tls_handshake_time) =
-                ctx.upstream_tls_handshake_time
+                ctx.timing.upstream_tls_handshake
             {
                 self.upstream_tls_handshake_time
                     .with_label_values(upstream_labels)
                     .observe(upstream_tls_handshake_time as f64 / SECOND);
             }
-            if ctx.upstream_reused {
+            if ctx.upstream.reused {
                 self.upstream_reuses
                     .with_label_values(upstream_labels)
                     .inc();
             }
-            if let Some(upstream_processing_time) = ctx.upstream_processing_time
+            if let Some(upstream_processing_time) =
+                ctx.timing.upstream_processing
             {
                 self.upstream_processing_time
                     .with_label_values(upstream_labels)
                     .observe(upstream_processing_time as f64 / SECOND);
             }
-            if let Some(upstream_response_time) = ctx.upstream_response_time {
+            if let Some(upstream_response_time) = ctx.timing.upstream_response {
                 self.upstream_response_time
                     .with_label_values(upstream_labels)
                     .observe(upstream_response_time as f64 / SECOND);
@@ -302,24 +304,28 @@ impl Prometheus {
         }
 
         // cache stats
-        if let Some(cache_lookup_time) = ctx.cache_lookup_time {
+        if let Some(cache_lookup_time) = ctx.timing.cache_lookup {
             self.cache_lookup_time
                 .observe(cache_lookup_time as f64 / SECOND);
         }
-        if let Some(cache_lock_time) = ctx.cache_lock_time {
+        if let Some(cache_lock_time) = ctx.timing.cache_lock {
             self.cache_lock_time
                 .observe(cache_lock_time as f64 / SECOND);
         }
-        if let Some(cache_reading) = ctx.cache_reading {
-            self.cache_reading.set(cache_reading as i64);
-        }
-        if let Some(cache_writing) = ctx.cache_writing {
-            self.cache_writing.set(cache_writing as i64);
+        if let Some(cache_info) = &ctx.cache {
+            if let Some(cache_reading) = cache_info.reading_count {
+                self.cache_reading.set(cache_reading as i64);
+            }
+            if let Some(cache_writing) = cache_info.writing_count {
+                self.cache_writing.set(cache_writing as i64);
+            }
         }
 
         // compression stats
-        if let Some(compression_stat) = &ctx.compression_stat {
-            self.compression_ratio.observe(compression_stat.ratio());
+        if let Some(features) = &ctx.features {
+            if let Some(compression_stat) = &features.compression_stat {
+                self.compression_ratio.observe(compression_stat.ratio());
+            }
         }
     }
 
@@ -803,7 +809,9 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
 mod tests {
     use super::*;
     use http::StatusCode;
-    use pingap_core::{CompressionStat, Ctx};
+    use pingap_core::{
+        CompressionStat, ConnectionInfo, Ctx, Features, RequestState, Timing,
+    };
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use std::time::Duration;
@@ -833,26 +841,41 @@ mod tests {
         p.after(
             &session,
             &Ctx {
-                created_at: now_ms() - 10,
-                status: Some(StatusCode::from_u16(200).unwrap()),
-                connection_reused: true,
-                tls_handshake_time: Some(1),
-                payload_size: 1024,
-                upstream_tcp_connect_time: Some(2),
-                upstream_tls_handshake_time: Some(3),
-                upstream_reused: true,
-                upstream_processing_time: Some(10),
-                upstream_response_time: Some(5),
-                cache_lookup_time: Some(11),
-                cache_lock_time: Some(12),
-                compression_stat: Some(CompressionStat {
-                    in_bytes: 1024,
-                    out_bytes: 512,
-                    duration: Duration::from_millis(20),
+                timing: Timing {
+                    created_at: now_ms() - 10,
+                    tls_handshake: Some(1),
+                    upstream_tcp_connect: Some(2),
+                    upstream_tls_handshake: Some(3),
+                    upstream_processing: Some(10),
+                    upstream_response: Some(5),
+                    cache_lookup: Some(11),
+                    cache_lock: Some(12),
+                    ..Default::default()
+                },
+                state: RequestState {
+                    status: Some(StatusCode::from_u16(200).unwrap()),
+                    payload_size: 1024,
+                    ..Default::default()
+                },
+                conn: ConnectionInfo {
+                    reused: true,
+                    ..Default::default()
+                },
+                features: Some(Features {
+                    compression_stat: Some(CompressionStat {
+                        in_bytes: 1024,
+                        out_bytes: 512,
+                        duration: Duration::from_millis(20),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 }),
-                location: "lo".to_string(),
-                upstream: "upstream".to_string(),
+                upstream: pingap_core::UpstreamInfo {
+                    name: "upstream".to_string(),
+                    location: "lo".to_string(),
+                    reused: true,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
         );
