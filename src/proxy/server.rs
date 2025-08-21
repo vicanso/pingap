@@ -1000,8 +1000,11 @@ impl ProxyHttp for Server {
             location = location.name,
             "location is matched"
         );
+
         if let Some(features) = &ctx.features {
             location.rewrite(header, features.variables.as_ref());
+        } else {
+            location.rewrite(header, None);
         }
 
         let done = self
