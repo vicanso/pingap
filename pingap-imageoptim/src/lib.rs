@@ -19,15 +19,15 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use ctor::ctor;
 use pingap_config::PluginConf;
-use pingap_core::HttpResponse;
 use pingap_core::ModifyResponseBody;
 use pingap_core::HTTP_HEADER_TRANSFER_CHUNKED;
-use pingap_core::{Ctx, Plugin, PluginStep};
+use pingap_core::{Ctx, Plugin, PluginStep, RequestPluginResult};
 use pingap_plugin::{
     get_hash_key, get_int_conf, get_plugin_factory, get_str_conf, Error,
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
+use std::borrow::Cow;
 use std::sync::Arc;
 use tracing::debug;
 
@@ -131,17 +131,17 @@ impl ImageOptim {
 #[async_trait]
 impl Plugin for ImageOptim {
     /// Returns a unique identifier for this plugin instance
-    fn hash_key(&self) -> String {
-        self.hash_value.clone()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
     }
     async fn handle_request(
         &self,
         step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
-    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+    ) -> pingora::Result<RequestPluginResult> {
         if step != PluginStep::Request {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
         // set cache key with accept image type
         let mut accept_images = Vec::with_capacity(2);
@@ -159,7 +159,7 @@ impl Plugin for ImageOptim {
         if !accept_images.is_empty() {
             ctx.extend_cache_keys(accept_images);
         }
-        Ok((false, None))
+        Ok(RequestPluginResult::Continue)
     }
     fn handle_upstream_response(
         &self,

@@ -21,8 +21,11 @@ use ctor::ctor;
 use http::StatusCode;
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
-use pingap_core::{Ctx, HttpResponse, Inflight, Plugin, PluginStep, Rate};
+use pingap_core::{
+    Ctx, HttpResponse, Inflight, Plugin, PluginStep, Rate, RequestPluginResult,
+};
 use pingora::proxy::Session;
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::debug;
@@ -276,8 +279,8 @@ impl Limiter {
 impl Plugin for Limiter {
     /// Returns unique identifier for this limiter instance
     #[inline]
-    fn hash_key(&self) -> String {
-        self.hash_value.clone()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
     }
 
     /// Handles incoming HTTP requests by applying configured limits
@@ -300,27 +303,24 @@ impl Plugin for Limiter {
         step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
-    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+    ) -> pingora::Result<RequestPluginResult> {
         // Only run at configured plugin step
         if step != self.plugin_step {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
 
         // Try to increment counter
         if let Err(e) = self.incr(session, ctx) {
             // If limit exceeded, return 429 Too Many Requests
-            return Ok((
-                true,
-                Some(HttpResponse {
-                    status: StatusCode::TOO_MANY_REQUESTS,
-                    body: e.to_string().into(),
-                    ..Default::default()
-                }),
-            ));
+            return Ok(RequestPluginResult::Respond(HttpResponse {
+                status: StatusCode::TOO_MANY_REQUESTS,
+                body: e.to_string().into(),
+                ..Default::default()
+            }));
         }
 
         // Continue normal request processing if within limits
-        Ok((true, None))
+        Ok(RequestPluginResult::Continue)
     }
 }
 
@@ -507,7 +507,7 @@ max = 0
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let (executed, result) = limiter
+        let result = limiter
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -516,9 +516,10 @@ max = 0
             .await
             .unwrap();
 
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_some());
-        assert_eq!(StatusCode::TOO_MANY_REQUESTS, result.unwrap().status);
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
+        assert_eq!(StatusCode::TOO_MANY_REQUESTS, resp.status);
 
         let limiter = Limiter::new(
             &toml::from_str::<PluginConf>(
@@ -530,7 +531,7 @@ max = 1
             .unwrap(),
         )
         .unwrap();
-        let (executed, result) = limiter
+        let result = limiter
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -539,8 +540,7 @@ max = 1
             .await
             .unwrap();
 
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_none());
+        assert_eq!(true, result == RequestPluginResult::Continue);
     }
 
     #[tokio::test]
@@ -563,7 +563,7 @@ interval = "1s"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let (executed, result) = limiter
+        let result = limiter
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -572,8 +572,7 @@ interval = "1s"
             .await
             .unwrap();
 
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_none());
+        assert_eq!(true, result == RequestPluginResult::Continue);
 
         let _ = limiter
             .handle_request(
@@ -586,7 +585,7 @@ interval = "1s"
 
         // wait for the next loop
         tokio::time::sleep(Duration::from_secs(1)).await;
-        let (executed, result) = limiter
+        let result = limiter
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -594,13 +593,14 @@ interval = "1s"
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_some());
-        assert_eq!(StatusCode::TOO_MANY_REQUESTS, result.unwrap().status);
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
+        assert_eq!(StatusCode::TOO_MANY_REQUESTS, resp.status);
 
         // wait for rate limiter to reset
         tokio::time::sleep(Duration::from_secs(1)).await;
-        let (executed, result) = limiter
+        let result = limiter
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -608,7 +608,6 @@ interval = "1s"
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_none());
+        assert_eq!(true, result == RequestPluginResult::Continue);
     }
 }

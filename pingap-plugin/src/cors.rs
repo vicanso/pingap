@@ -22,10 +22,12 @@ use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     convert_header_value, Ctx, HttpHeader, HttpResponse, Plugin, PluginStep,
+    RequestPluginResult,
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::Regex;
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::debug;
@@ -219,8 +221,8 @@ impl Cors {
 impl Plugin for Cors {
     /// Returns the unique identifier for this plugin instance
     #[inline]
-    fn hash_key(&self) -> String {
-        self.hash_value.clone()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
     }
 
     /// Handles incoming requests, particularly CORS preflight (OPTIONS) requests
@@ -238,16 +240,16 @@ impl Plugin for Cors {
         step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
-    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+    ) -> pingora::Result<RequestPluginResult> {
         // Early return if not in request phase
         if step != self.plugin_step {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
 
         // Check if request path matches CORS rules
         if let Some(reg) = &self.path {
             if !reg.is_match(session.req_header().uri.path()) {
-                return Ok((false, None));
+                return Ok(RequestPluginResult::Skipped);
             }
         }
 
@@ -260,9 +262,9 @@ impl Plugin for Cors {
             // Return 204 No Content with CORS headers for preflight
             let mut resp = HttpResponse::no_content();
             resp.headers = Some(headers);
-            return Ok((true, Some(resp)));
+            return Ok(RequestPluginResult::Respond(resp));
         }
-        Ok((true, None))
+        Ok(RequestPluginResult::Continue)
     }
 
     /// Modifies responses to add appropriate CORS headers for actual (non-preflight) requests
@@ -322,7 +324,7 @@ mod tests {
     /// Tests CORS plugin configuration parsing
     use super::*;
     use pingap_config::PluginConf;
-    use pingap_core::{Ctx, PluginStep};
+    use pingap_core::{Ctx, PluginStep, RequestPluginResult};
     use pingora::{http::ResponseHeader, proxy::Session};
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -378,7 +380,7 @@ max_age = "60m"
         )
         .unwrap();
 
-        let (executed, result) = cors
+        let result = cors
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -386,10 +388,14 @@ max_age = "60m"
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_some());
-        let resp = result.unwrap();
-        assert_eq!(204, resp.status.as_u16());
+        assert_eq!(
+            true,
+            result == RequestPluginResult::Respond(HttpResponse::no_content())
+        );
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
+
         assert_eq!(
             r#"[("access-control-allow-methods", "GET"), ("access-control-allow-headers", "Content-Type, X-User-Id"), ("access-control-max-age", "3600"), ("access-control-allow-credentials", "true"), ("access-control-expose-headers", "Content-Encoding, Kuma-Revision"), ("access-control-allow-origin", "https://pingap.io")]"#,
             format!("{:?}", resp.headers.unwrap())

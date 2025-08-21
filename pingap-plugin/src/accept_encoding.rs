@@ -18,9 +18,10 @@ use super::{
 use async_trait::async_trait;
 use ctor::ctor;
 use pingap_config::PluginConf;
-use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep};
+use pingap_core::{Ctx, Plugin, PluginStep, RequestPluginResult};
 use pingora::proxy::Session;
 use smallvec::SmallVec;
+use std::borrow::Cow;
 use std::sync::Arc;
 use tracing::debug;
 
@@ -90,8 +91,8 @@ impl AcceptEncoding {
 impl Plugin for AcceptEncoding {
     /// Returns the unique hash key for this plugin instance
     #[inline]
-    fn hash_key(&self) -> String {
-        self.hash_value.clone()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
     }
 
     /// Processes the HTTP request by filtering the Accept-Encoding header.
@@ -110,10 +111,10 @@ impl Plugin for AcceptEncoding {
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut Ctx,
-    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+    ) -> pingora::Result<RequestPluginResult> {
         // Skip if not in the correct plugin step
         if step != self.plugin_step {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
         let header = session.req_header_mut();
 
@@ -121,7 +122,7 @@ impl Plugin for AcceptEncoding {
         let Some(accept_encoding) =
             header.headers.get(http::header::ACCEPT_ENCODING)
         else {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         };
         let accept_encoding = accept_encoding.to_str().unwrap_or_default();
 
@@ -151,7 +152,7 @@ impl Plugin for AcceptEncoding {
                 new_accept_encodings.join(", "),
             );
         }
-        Ok((true, None))
+        Ok(RequestPluginResult::Continue)
     }
 }
 

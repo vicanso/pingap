@@ -26,9 +26,11 @@ use once_cell::sync::Lazy;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     convert_headers, HttpChunkResponse, HttpHeader, HttpResponse,
+    RequestPluginResult,
 };
 use pingap_core::{Ctx, Plugin, PluginStep};
 use pingora::proxy::Session;
+use std::borrow::Cow;
 use std::fs::Metadata;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -419,8 +421,8 @@ fn get_autoindex_html(path: &Path) -> Result<String, String> {
 impl Plugin for Directory {
     /// Returns unique identifier for this plugin instance
     #[inline]
-    fn hash_key(&self) -> String {
-        self.hash_value.clone()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
     }
 
     /// Handles incoming HTTP requests by serving static files
@@ -444,9 +446,9 @@ impl Plugin for Directory {
         step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
-    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+    ) -> pingora::Result<RequestPluginResult> {
         if step != self.plugin_step {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
         let mut filename = session.req_header().uri.path().to_string();
         if !self.autoindex && filename.len() <= 1 {
@@ -460,10 +462,10 @@ impl Plugin for Directory {
         debug!(file = format!("{file:?}"), "static file serve");
         if self.autoindex && file.is_dir() {
             let resp = match get_autoindex_html(&file) {
-                Ok(html) => HttpResponse::html(html.into()),
-                Err(e) => HttpResponse::bad_request(e.to_string().into()),
+                Ok(html) => HttpResponse::html(html),
+                Err(e) => HttpResponse::bad_request(e.to_string()),
             };
-            return Ok((true, Some(resp)));
+            return Ok(RequestPluginResult::Respond(resp));
         }
 
         // Content-Disposition: attachment; filename="example.pdf"
@@ -501,7 +503,7 @@ impl Plugin for Directory {
                         },
                         Err(e) => {
                             error!(error = e.to_string(), "read data fail");
-                            HttpResponse::bad_request(e.to_string().into())
+                            HttpResponse::bad_request(e.to_string())
                         },
                     }
                 } else {
@@ -520,14 +522,14 @@ impl Plugin for Directory {
             },
             Err(err) => {
                 if err.kind() == std::io::ErrorKind::NotFound {
-                    HttpResponse::not_found("Not Found".into())
+                    HttpResponse::not_found("Not Found")
                 } else {
-                    HttpResponse::unknown_error("Get file data fail".into())
+                    HttpResponse::unknown_error("Get file data fail")
                 }
             },
         };
 
-        Ok((true, Some(resp)))
+        Ok(RequestPluginResult::Respond(resp))
     }
 }
 
@@ -541,7 +543,7 @@ fn init() {
 mod tests {
     use super::*;
     use pingap_config::PluginConf;
-    use pingap_core::{Ctx, PluginStep};
+    use pingap_core::{Ctx, PluginStep, RequestPluginResult};
     use pingora::proxy::Session;
     use pretty_assertions::{assert_eq, assert_ne};
     #[cfg(unix)]
@@ -628,7 +630,7 @@ download = true
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let (executed, result) = dir
+        let result = dir
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -636,9 +638,9 @@ download = true
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_some());
-        let resp = result.unwrap();
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
         assert_eq!(200, resp.status.as_u16());
         let headers = resp.headers.unwrap();
         assert_eq!(
@@ -656,7 +658,7 @@ download = true
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let (executed, result) = dir
+        let result = dir
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -664,9 +666,9 @@ download = true
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_some());
-        let resp = result.unwrap();
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
         assert_eq!(200, resp.status.as_u16());
         assert_eq!(
             r#"("content-type", "text/html; charset=utf-8")"#,

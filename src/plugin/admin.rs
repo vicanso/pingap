@@ -35,7 +35,9 @@ use pingap_config::{
     PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
     CATEGORY_UPSTREAM,
 };
-use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep, TtlLruLimit};
+use pingap_core::{
+    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult, TtlLruLimit,
+};
 use pingap_performance::get_process_system_info;
 use pingap_performance::get_processing_accepted;
 use pingap_plugin::{get_plugin_factory, Error};
@@ -48,6 +50,7 @@ use rust_embed::EmbeddedFile;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::Arc;
@@ -67,7 +70,7 @@ pub struct EmbeddedStaticFile(pub Option<EmbeddedFile>, pub Duration);
 impl From<EmbeddedStaticFile> for HttpResponse {
     fn from(value: EmbeddedStaticFile) -> Self {
         let Some(file) = value.0 else {
-            return HttpResponse::not_found("Not Found".into());
+            return HttpResponse::not_found("Not Found");
         };
         // generate content hash
         let str = &encode(file.metadata.sha256_hash())[0..8];
@@ -564,7 +567,7 @@ async fn handle_request_admin(
                 },
                 StatusCode::INTERNAL_SERVER_ERROR,
             )
-            .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
+            .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
         })
     } else if path == "/basic" {
         let current_config = get_current_config();
@@ -617,11 +620,11 @@ async fn handle_request_admin(
         }
 
         HttpResponse::try_from_json(&basic_info)
-            .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
+            .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
     } else if path == "/restart" && method == Method::POST {
         if let Err(e) = restart_now().await {
             error!("Restart fail: {e}");
-            HttpResponse::bad_request(e.to_string().into())
+            HttpResponse::bad_request(e.to_string())
         } else {
             HttpResponse::no_content()
         }
@@ -636,14 +639,14 @@ async fn handle_request_admin(
         }
         .map_err(|e| pingap_core::new_internal_error(400, e.to_string()))?;
         HttpResponse::try_from_json(&AesResp { value })
-            .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
+            .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
     } else if path == "/certificates" {
         let mut infos = HashMap::new();
         for (name, info) in get_certificate_info_list() {
             infos.insert(name, info);
         }
         HttpResponse::try_from_json(&infos)
-            .unwrap_or(HttpResponse::unknown_error("Json serde fail".into()))
+            .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
     } else {
         let mut file = path.substring(1, path.len());
         if file.is_empty() {
@@ -661,23 +664,26 @@ async fn handle_request_admin(
 #[async_trait]
 impl Plugin for AdminServe {
     #[inline]
-    fn hash_key(&self) -> String {
-        self.hash_value.clone()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
     }
     async fn handle_request(
         &self,
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut Ctx,
-    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+    ) -> pingora::Result<RequestPluginResult> {
         if self.plugin_step != step {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
         if !session.req_header().uri.path().starts_with(&self.path) {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
         let resp = handle_request_admin(self, session, _ctx).await?;
-        Ok((true, resp))
+        if let Some(resp) = resp {
+            return Ok(RequestPluginResult::Respond(resp));
+        }
+        Ok(RequestPluginResult::Continue)
     }
 }
 

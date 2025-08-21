@@ -20,8 +20,9 @@ use bytes::Bytes;
 use ctor::ctor;
 use http::StatusCode;
 use pingap_config::PluginConf;
-use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep};
+use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult};
 use pingora::proxy::Session;
+use std::borrow::Cow;
 use std::sync::Arc;
 use substring::Substring;
 use tracing::debug;
@@ -145,8 +146,8 @@ impl Plugin for RefererRestriction {
     /// Returns a unique hash key for this plugin instance
     ///
     /// This is used for plugin caching and identification purposes
-    fn hash_key(&self) -> String {
-        self.hash_value.clone()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
     }
 
     /// Handles incoming HTTP requests by checking the Referer header against allowed/denied lists
@@ -173,9 +174,9 @@ impl Plugin for RefererRestriction {
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut Ctx,
-    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+    ) -> pingora::Result<RequestPluginResult> {
         if step != self.plugin_step {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
         let mut found = false;
         if let Some(value) = session.get_header(http::header::REFERER) {
@@ -200,9 +201,11 @@ impl Plugin for RefererRestriction {
             found
         };
         if !allow {
-            return Ok((true, Some(self.forbidden_resp.clone())));
+            return Ok(RequestPluginResult::Respond(
+                self.forbidden_resp.clone(),
+            ));
         }
-        Ok((true, None))
+        Ok(RequestPluginResult::Continue)
     }
 }
 
@@ -266,7 +269,7 @@ type = "deny"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let (executed, result) = deny
+        let result = deny
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -274,8 +277,7 @@ type = "deny"
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_none());
+        assert_eq!(true, result == RequestPluginResult::Continue);
 
         let headers = ["Referer: https://github.com/"].join("\r\n");
         let input_header =
@@ -284,7 +286,7 @@ type = "deny"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let (executed, result) = deny
+        let result = deny
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -292,9 +294,10 @@ type = "deny"
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_some());
-        assert_eq!(StatusCode::FORBIDDEN, result.unwrap().status);
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
+        assert_eq!(StatusCode::FORBIDDEN, resp.status);
 
         let headers = ["Referer: https://test.bing.cn/"].join("\r\n");
         let input_header =
@@ -302,7 +305,7 @@ type = "deny"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let (executed, result) = deny
+        let result = deny
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -316,8 +319,9 @@ type = "deny"
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_some());
-        assert_eq!(StatusCode::FORBIDDEN, result.unwrap().status);
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
+        assert_eq!(StatusCode::FORBIDDEN, resp.status);
     }
 }

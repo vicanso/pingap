@@ -20,8 +20,9 @@ use bytes::Bytes;
 use ctor::ctor;
 use http::StatusCode;
 use pingap_config::PluginConf;
-use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep};
+use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult};
 use pingora::proxy::Session;
+use std::borrow::Cow;
 use std::sync::Arc;
 use tracing::debug;
 
@@ -104,8 +105,8 @@ impl Plugin for IpRestriction {
     /// Returns the unique hash key for this plugin instance.
     /// Used for caching and identifying plugin instances.
     #[inline]
-    fn hash_key(&self) -> String {
-        self.hash_value.clone()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
     }
 
     /// Handles incoming HTTP requests by checking client IP against configured rules.
@@ -131,10 +132,10 @@ impl Plugin for IpRestriction {
         step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
-    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+    ) -> pingora::Result<RequestPluginResult> {
         // Skip processing if not in correct plugin step
         if step != self.plugin_step {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
 
         // Get client IP address, using cached value if available
@@ -152,9 +153,8 @@ impl Plugin for IpRestriction {
         let found = match self.ip_rules.is_match(&ip) {
             Ok(matched) => matched,
             Err(e) => {
-                return Ok((
-                    true,
-                    Some(HttpResponse::bad_request(e.to_string().into())),
+                return Ok(RequestPluginResult::Respond(
+                    HttpResponse::bad_request(e.to_string()),
                 ));
             },
         };
@@ -170,10 +170,12 @@ impl Plugin for IpRestriction {
 
         if !allow {
             // Return forbidden response with custom message if configured
-            return Ok((true, Some(self.forbidden_resp.clone())));
+            return Ok(RequestPluginResult::Respond(
+                self.forbidden_resp.clone(),
+            ));
         }
         // Allow request to proceed
-        Ok((true, None))
+        Ok(RequestPluginResult::Continue)
     }
 }
 
@@ -253,7 +255,7 @@ ip_list = [
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let (executed, result) = deny
+        let result = deny
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -261,8 +263,7 @@ ip_list = [
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_none());
+        assert_eq!(true, result == RequestPluginResult::Continue);
 
         let headers = ["X-Forwarded-For: 192.168.1.1"].join("\r\n");
         let input_header =
@@ -271,7 +272,7 @@ ip_list = [
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let (executed, result) = deny
+        let result = deny
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -279,8 +280,10 @@ ip_list = [
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_some());
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
+        assert_eq!(403, resp.status.as_u16());
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
         let input_header =
@@ -289,7 +292,7 @@ ip_list = [
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let (executed, result) = deny
+        let result = deny
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -303,10 +306,9 @@ ip_list = [
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_none());
+        assert_eq!(true, result == RequestPluginResult::Continue);
 
-        let (executed, result) = deny
+        let result = deny
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -320,9 +322,9 @@ ip_list = [
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_some());
-        let resp = result.unwrap();
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
         assert_eq!(StatusCode::FORBIDDEN, resp.status);
 
         let allow = IpRestriction::new(
@@ -345,7 +347,7 @@ ip_list = [
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let (executed, result) = allow
+        let result = allow
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -353,7 +355,6 @@ ip_list = [
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_none());
+        assert_eq!(true, result == RequestPluginResult::Continue);
     }
 }

@@ -22,8 +22,9 @@ use ctor::ctor;
 use http::{HeaderName, StatusCode};
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
-use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep};
+use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult};
 use pingora::proxy::Session;
+use std::borrow::Cow;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -195,8 +196,8 @@ fn init() {
 impl Plugin for KeyAuth {
     /// Returns the unique hash key for this plugin instance.
     #[inline]
-    fn hash_key(&self) -> String {
-        self.hash_value.clone()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
     }
 
     /// Handles authentication for incoming requests.
@@ -227,11 +228,11 @@ impl Plugin for KeyAuth {
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut Ctx,
-    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+    ) -> pingora::Result<RequestPluginResult> {
         // Plugin steps are configurable to support different authentication points
         // Common steps: request (early auth) or proxy_upstream (pre-forwarding)
         if step != self.plugin_step {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
 
         // Authentication value extraction logic:
@@ -252,7 +253,9 @@ impl Plugin for KeyAuth {
         // Early return with 401 if no authentication provided
         // This helps distinguish between missing and invalid credentials
         if value.is_empty() {
-            return Ok((true, Some(self.miss_authorization_resp.clone())));
+            return Ok(RequestPluginResult::Respond(
+                self.miss_authorization_resp.clone(),
+            ));
         }
 
         // Key validation:
@@ -263,7 +266,9 @@ impl Plugin for KeyAuth {
             if let Some(d) = self.delay {
                 sleep(d).await;
             }
-            return Ok((true, Some(self.unauthorized_resp.clone())));
+            return Ok(RequestPluginResult::Respond(
+                self.unauthorized_resp.clone(),
+            ));
         }
 
         // Credential hiding (optional security feature):
@@ -284,7 +289,7 @@ impl Plugin for KeyAuth {
             }
         }
         // Return None to allow the request to proceed
-        Ok((true, None))
+        Ok(RequestPluginResult::Continue)
     }
 }
 
@@ -382,7 +387,7 @@ hide_credentials = true
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         assert_eq!(false, session.get_header_bytes("X-User").is_empty());
-        let (executed, result) = auth
+        let result = auth
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -390,8 +395,7 @@ hide_credentials = true
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_none());
+        assert_eq!(true, result == RequestPluginResult::Continue);
         assert_eq!(true, session.get_header_bytes("X-User").is_empty());
 
         let headers = ["X-User: 12"].join("\r\n");
@@ -400,7 +404,7 @@ hide_credentials = true
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let (executed, result) = auth
+        let result = auth
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -408,8 +412,9 @@ hide_credentials = true
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        let resp = result.unwrap();
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
         assert_eq!(401, resp.status.as_u16());
         assert_eq!(
             "Key auth fail",
@@ -422,7 +427,7 @@ hide_credentials = true
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let (executed, result) = auth
+        let result = auth
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -430,9 +435,9 @@ hide_credentials = true
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_some());
-        let resp = result.unwrap();
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
         assert_eq!(401, resp.status.as_u16());
         assert_eq!(
             "Key missing",
@@ -464,7 +469,7 @@ hide_credentials = true
             "/vicanso/pingap?user=123&type=1",
             session.req_header().uri.to_string()
         );
-        let (executed, result) = auth
+        let result = auth
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -472,8 +477,7 @@ hide_credentials = true
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_none());
+        assert_eq!(true, result == RequestPluginResult::Continue);
         assert_eq!(
             "/vicanso/pingap?type=1",
             session.req_header().uri.to_string()

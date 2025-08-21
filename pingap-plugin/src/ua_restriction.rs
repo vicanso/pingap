@@ -20,9 +20,10 @@ use bytes::Bytes;
 use ctor::ctor;
 use http::StatusCode;
 use pingap_config::PluginConf;
-use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep};
+use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult};
 use pingora::proxy::Session;
 use regex::Regex;
+use std::borrow::Cow;
 use std::sync::Arc;
 use tracing::debug;
 
@@ -145,8 +146,8 @@ impl UaRestriction {
 impl Plugin for UaRestriction {
     /// Returns the unique hash key for this plugin instance
     #[inline]
-    fn hash_key(&self) -> String {
-        self.hash_value.clone()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
     }
 
     /// Handles incoming HTTP requests by checking the User-Agent against configured patterns.
@@ -171,10 +172,10 @@ impl Plugin for UaRestriction {
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut Ctx,
-    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+    ) -> pingora::Result<RequestPluginResult> {
         // Skip processing if not in request phase
         if step != self.plugin_step {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
 
         let mut found = false;
@@ -200,9 +201,11 @@ impl Plugin for UaRestriction {
 
         // Return forbidden response if request is not allowed
         if !allow {
-            return Ok((true, Some(self.forbidden_resp.clone())));
+            return Ok(RequestPluginResult::Respond(
+                self.forbidden_resp.clone(),
+            ));
         }
-        Ok((true, None)) // Request allowed - continue normal processing
+        Ok(RequestPluginResult::Continue) // Request allowed - continue normal processing
     }
 }
 
@@ -284,7 +287,7 @@ type = "deny"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let (executed, result) = deny
+        let result = deny
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -292,8 +295,7 @@ type = "deny"
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_none());
+        assert_eq!(true, result == RequestPluginResult::Continue);
 
         let headers = ["User-Agent: go-http-client/1.1"].join("\r\n");
         let input_header =
@@ -302,7 +304,7 @@ type = "deny"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let (executed, result) = deny
+        let result = deny
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -310,9 +312,10 @@ type = "deny"
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_some());
-        assert_eq!(StatusCode::FORBIDDEN, result.unwrap().status);
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
+        assert_eq!(StatusCode::FORBIDDEN, resp.status);
 
         let headers = ["User-Agent: Twitterspider/1.1"].join("\r\n");
         let input_header =
@@ -320,7 +323,7 @@ type = "deny"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let (executed, result) = deny
+        let result = deny
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -334,8 +337,9 @@ type = "deny"
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_some());
-        assert_eq!(StatusCode::FORBIDDEN, result.unwrap().status);
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
+        assert_eq!(StatusCode::FORBIDDEN, resp.status);
     }
 }

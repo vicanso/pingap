@@ -18,13 +18,16 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use ctor::ctor;
 use pingap_config::{PluginCategory, PluginConf};
-use pingap_core::{get_hostname, Ctx, HttpResponse, PluginStep};
+use pingap_core::{
+    get_hostname, Ctx, HttpResponse, PluginStep, RequestPluginResult,
+};
 use pingap_location::get_locations_stats;
 use pingap_performance::{get_process_system_info, get_processing_accepted};
 use pingap_plugin::{get_plugin_factory, Error};
 use pingap_upstream::{get_upstream_healthy_status, UpstreamHealthyStatus};
 use pingora::proxy::Session;
 use serde::Serialize;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -138,8 +141,8 @@ impl Stats {
 #[async_trait]
 impl Plugin for Stats {
     #[inline]
-    fn hash_key(&self) -> String {
-        self.hash_value.clone()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
     }
     /// Handles incoming HTTP requests for the Stats plugin
     ///
@@ -159,12 +162,12 @@ impl Plugin for Stats {
         step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
-    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+    ) -> pingora::Result<RequestPluginResult> {
         if step != self.plugin_step {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
         if session.req_header().uri.path() != self.path {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
         let uptime: humantime::Duration =
             Duration::from_secs(pingap_util::now_sec() - get_start_time())
@@ -198,7 +201,7 @@ impl Plugin for Stats {
         .unwrap_or_else(|e| {
             HttpResponse::unknown_error(Bytes::from(e.to_string()))
         });
-        Ok((true, Some(resp)))
+        Ok(RequestPluginResult::Respond(resp))
     }
 }
 
@@ -212,7 +215,7 @@ fn init() {
 mod tests {
     use super::Stats;
     use pingap_config::PluginConf;
-    use pingap_core::{Ctx, Plugin, PluginStep};
+    use pingap_core::{Ctx, Plugin, PluginStep, RequestPluginResult};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
@@ -266,7 +269,7 @@ mod tests {
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let (executed, result) = stats
+        let result = stats
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -274,8 +277,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(false, executed);
-        assert_eq!(true, result.is_none());
+        assert_eq!(true, result == RequestPluginResult::Skipped);
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
         let input_header = format!("GET /stats HTTP/1.1\r\n{headers}\r\n\r\n");
@@ -284,7 +286,7 @@ mod tests {
         session.read_request().await.unwrap();
 
         // pass
-        let (executed, result) = stats
+        let result = stats
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -292,7 +294,9 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_some());
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
+        assert_eq!(200, resp.status.as_u16());
     }
 }

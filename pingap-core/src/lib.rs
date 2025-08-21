@@ -18,9 +18,9 @@ pub static LOG_CATEGORY: &str = "core";
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Invalid error: {message}"))]
+    #[snafu(display("invalid error, {message}"))]
     Invalid { message: String },
-    #[snafu(display("Plugin {category} not found"))]
+    #[snafu(display("plugin {category} not found"))]
     NotFound { category: String },
 }
 

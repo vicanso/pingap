@@ -28,7 +28,9 @@ use pingap_config::get_config_storage;
 use pingap_core::OtelTracer;
 use pingap_core::SimpleServiceTaskFuture;
 use pingap_core::{convert_header_value, convert_headers, HttpHeader};
-use pingap_core::{get_cache_key, CompressionStat, Ctx, PluginStep};
+use pingap_core::{
+    get_cache_key, CompressionStat, Ctx, PluginStep, RequestPluginResult,
+};
 use pingap_core::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use pingap_location::{get_location, Location};
 use pingap_logger::Parser;
@@ -437,10 +439,10 @@ impl Server {
         ctx: &mut Ctx,
     ) -> pingora::Result<bool> {
         if let Some(plugin) = get_plugin(ADMIN_SERVER_PLUGIN.as_str()) {
-            let (_, result) = plugin
+            let result = plugin
                 .handle_request(PluginStep::Request, session, ctx)
                 .await?;
-            if let Some(resp) = result {
+            if let RequestPluginResult::Respond(resp) = result {
                 ctx.state.status = Some(resp.status);
                 resp.send(session).await?;
                 return Ok(true);
@@ -594,28 +596,40 @@ impl Server {
         for name in plugins.iter() {
             if let Some(plugin) = get_plugin(name) {
                 let now = Instant::now();
-                let (executed, result) =
-                    plugin.handle_request(step, session, ctx).await?;
-                if executed {
-                    let elapsed = now.elapsed().as_millis() as u32;
-                    debug!(
-                        category = LOG_CATEGORY,
-                        name,
-                        executed,
-                        elapsed,
-                        step = step.to_string(),
-                        "handle request plugin"
-                    );
-                    ctx.add_plugin_processing_time(name, elapsed);
-                }
-                if let Some(resp) = result {
-                    // ignore http response status >= 900
-                    if resp.status.as_u16() < 900 {
-                        ctx.state.status = Some(resp.status);
-                        resp.send(session).await?;
-                    }
-                    return Ok(true);
-                }
+                match plugin.handle_request(step, session, ctx).await? {
+                    RequestPluginResult::Continue => {
+                        continue;
+                    },
+                    RequestPluginResult::Skipped => {
+                        let elapsed = now.elapsed().as_millis() as u32;
+                        debug!(
+                            category = LOG_CATEGORY,
+                            name,
+                            elapsed,
+                            step = step.to_string(),
+                            "handle request plugin"
+                        );
+                        ctx.add_plugin_processing_time(name, elapsed);
+                        continue;
+                    },
+                    RequestPluginResult::Respond(resp) => {
+                        let elapsed = now.elapsed().as_millis() as u32;
+                        debug!(
+                            category = LOG_CATEGORY,
+                            name,
+                            elapsed,
+                            step = step.to_string(),
+                            "handle request plugin"
+                        );
+                        ctx.add_plugin_processing_time(name, elapsed);
+                        // ignore http response status >= 900
+                        if resp.status.as_u16() < 900 {
+                            ctx.state.status = Some(resp.status);
+                            resp.send(session).await?;
+                        }
+                        return Ok(true);
+                    },
+                };
             }
         }
         Ok(false)
@@ -965,7 +979,7 @@ impl ProxyHttp for Server {
                 .map_err(|e| {
                     pingap_core::new_internal_error(500, e.to_string())
                 })?;
-            HttpResponse::text(body.into()).send(session).await?;
+            HttpResponse::text(body).send(session).await?;
             return Ok(true);
         }
 

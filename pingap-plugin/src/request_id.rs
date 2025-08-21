@@ -22,9 +22,10 @@ use http::HeaderName;
 use nanoid::nanoid;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
-    Ctx, HttpResponse, Plugin, PluginStep, HTTP_HEADER_NAME_X_REQUEST_ID,
+    Ctx, Plugin, PluginStep, RequestPluginResult, HTTP_HEADER_NAME_X_REQUEST_ID,
 };
 use pingora::proxy::Session;
+use std::borrow::Cow;
 use std::str::FromStr;
 use std::sync::Arc;
 use tracing::debug;
@@ -143,8 +144,8 @@ impl Plugin for RequestId {
     /// Returns the unique hash key identifying this plugin instance.
     /// Used for caching and plugin identification purposes.
     #[inline]
-    fn hash_key(&self) -> String {
-        self.hash_value.clone()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
     }
 
     /// Handles incoming requests by managing request IDs.
@@ -170,10 +171,10 @@ impl Plugin for RequestId {
         step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
-    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+    ) -> pingora::Result<RequestPluginResult> {
         // Early return if we're not at the configured execution step
         if step != self.plugin_step {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
 
         // Determine which header name to use for the request ID
@@ -190,7 +191,7 @@ impl Plugin for RequestId {
         if let Some(id) = session.get_header(&key) {
             ctx.state.request_id =
                 Some(id.to_str().unwrap_or_default().to_string());
-            return Ok((true, None));
+            return Ok(RequestPluginResult::Continue);
         }
 
         // Generate new request ID based on configured algorithm
@@ -213,7 +214,7 @@ impl Plugin for RequestId {
         // Header insertion ensures it's forwarded to upstream services
         ctx.state.request_id = Some(id.clone());
         let _ = session.req_header_mut().insert_header(key, &id);
-        Ok((true, None))
+        Ok(RequestPluginResult::Continue)
     }
 }
 
@@ -304,12 +305,11 @@ size = 10
         session.read_request().await.unwrap();
 
         let mut state = Ctx::default();
-        let (executed, result) = id
+        let result = id
             .handle_request(PluginStep::Request, &mut session, &mut state)
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_none());
+        assert_eq!(true, result == RequestPluginResult::Continue);
         assert_eq!("123", state.state.request_id.unwrap_or_default());
 
         let headers = ["Accept-Encoding: gzip"].join("\r\n");
@@ -320,12 +320,11 @@ size = 10
         session.read_request().await.unwrap();
 
         let mut state = Ctx::default();
-        let (executed, result) = id
+        let result = id
             .handle_request(PluginStep::Request, &mut session, &mut state)
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_none());
+        assert_eq!(true, result == RequestPluginResult::Continue);
         assert_eq!(10, state.state.request_id.unwrap_or_default().len());
     }
 }

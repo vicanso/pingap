@@ -27,11 +27,12 @@ use http::HeaderValue;
 use pingap_config::PluginConf;
 use pingap_core::HTTP_HEADER_TRANSFER_CHUNKED;
 use pingap_core::{new_internal_error, ModifyResponseBody};
-use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep};
+use pingap_core::{Ctx, Plugin, PluginStep, RequestPluginResult};
 use pingora::http::ResponseHeader;
 use pingora::modules::http::compression::ResponseCompression;
 use pingora::protocols::http::compression::Algorithm;
 use pingora::proxy::Session;
+use std::borrow::Cow;
 use std::str::FromStr;
 use std::sync::Arc;
 use tracing::debug;
@@ -189,8 +190,8 @@ impl Plugin for Compression {
     /// Returns the unique hash key for this plugin instance
     /// Used for caching and identifying plugin configurations
     #[inline]
-    fn hash_key(&self) -> String {
-        self.hash_value.clone()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
     }
 
     /// Processes incoming HTTP requests to configure response compression
@@ -215,7 +216,7 @@ impl Plugin for Compression {
         step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
-    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+    ) -> pingora::Result<RequestPluginResult> {
         if step == PluginStep::EarlyRequest
             && self.mode == FULL_BODY_COMPRESS_MODE
         {
@@ -236,13 +237,13 @@ impl Plugin for Compression {
         }
         // Early return conditions
         if step != self.plugin_step {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
         if !self.support_compression {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
         if self.mode == FULL_BODY_COMPRESS_MODE {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
         let (zstd_level, br_level, gzip_level) =
             self.get_compress_level(session);
@@ -250,7 +251,7 @@ impl Plugin for Compression {
         debug!(zstd_level, br_level, gzip_level, "pipe compression level");
 
         if zstd_level == 0 && br_level == 0 && gzip_level == 0 {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
 
         // Get compression context from session
@@ -258,7 +259,7 @@ impl Plugin for Compression {
             .downstream_modules_ctx
             .get_mut::<ResponseCompression>()
         else {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         };
 
         // Configure decompression if specified
@@ -277,7 +278,7 @@ impl Plugin for Compression {
             c.adjust_algorithm_level(Algorithm::Gzip, gzip_level);
         }
 
-        Ok((true, None))
+        Ok(RequestPluginResult::Continue)
     }
     fn handle_upstream_response(
         &self,
@@ -371,7 +372,7 @@ fn init() {
 mod tests {
     use super::*;
     use pingap_config::PluginConf;
-    use pingap_core::{Ctx, PluginStep};
+    use pingap_core::{Ctx, PluginStep, RequestPluginResult};
     use pingora::modules::http::compression::{
         ResponseCompression, ResponseCompressionBuilder,
     };
@@ -425,7 +426,7 @@ zstd_level = 7
         let mut session =
             Session::new_h1_with_modules(Box::new(mock_io), &modules);
         session.read_request().await.unwrap();
-        let (executed, result) = compression
+        let result = compression
             .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
@@ -433,8 +434,7 @@ zstd_level = 7
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_none());
+        assert_eq!(true, result == RequestPluginResult::Continue);
         assert_eq!(
             true,
             session
@@ -454,7 +454,7 @@ zstd_level = 7
         let mut session =
             Session::new_h1_with_modules(Box::new(mock_io), &modules);
         session.read_request().await.unwrap();
-        let (executed, result) = compression
+        let result = compression
             .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
@@ -462,8 +462,7 @@ zstd_level = 7
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_none());
+        assert_eq!(true, result == RequestPluginResult::Continue);
         assert_eq!(
             true,
             session
@@ -483,7 +482,7 @@ zstd_level = 7
         let mut session =
             Session::new_h1_with_modules(Box::new(mock_io), &modules);
         session.read_request().await.unwrap();
-        let (executed, result) = compression
+        let result = compression
             .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
@@ -491,8 +490,7 @@ zstd_level = 7
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_none());
+        assert_eq!(true, result == RequestPluginResult::Continue);
         assert_eq!(
             true,
             session
@@ -512,7 +510,7 @@ zstd_level = 7
         let mut session =
             Session::new_h1_with_modules(Box::new(mock_io), &modules);
         session.read_request().await.unwrap();
-        let (executed, result) = compression
+        let result = compression
             .handle_request(
                 PluginStep::EarlyRequest,
                 &mut session,
@@ -520,8 +518,7 @@ zstd_level = 7
             )
             .await
             .unwrap();
-        assert_eq!(false, executed);
-        assert_eq!(true, result.is_none());
+        assert_eq!(true, result == RequestPluginResult::Skipped);
         assert_eq!(
             false,
             session

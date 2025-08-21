@@ -21,6 +21,7 @@ use pingap_core::{
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
+use std::borrow::Cow;
 use std::str::FromStr;
 use std::sync::Arc;
 use tracing::debug;
@@ -192,8 +193,8 @@ impl ResponseHeaders {
 impl Plugin for ResponseHeaders {
     /// Returns the unique hash key for this plugin instance.
     #[inline]
-    fn hash_key(&self) -> String {
-        self.hash_value.clone()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
     }
 
     /// Handles response header modifications during the response phase.

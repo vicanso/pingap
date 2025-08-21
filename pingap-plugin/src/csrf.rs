@@ -22,11 +22,13 @@ use humantime::parse_duration;
 use nanoid::nanoid;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
-    Ctx, HttpResponse, Plugin, PluginStep, HTTP_HEADER_NO_STORE,
+    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
+    HTTP_HEADER_NO_STORE,
 };
 use pingap_util::base64_encode;
 use pingora::proxy::Session;
 use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::sync::Arc;
 use tracing::debug;
 
@@ -209,8 +211,8 @@ fn validate_token(key: &str, ttl: u64, value: &str) -> bool {
 impl Plugin for Csrf {
     /// Returns the unique hash key for this plugin instance
     #[inline]
-    fn hash_key(&self) -> String {
-        self.hash_value.clone()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
     }
 
     /// Handles incoming HTTP requests for CSRF protection
@@ -237,10 +239,10 @@ impl Plugin for Csrf {
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut Ctx,
-    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+    ) -> pingora::Result<RequestPluginResult> {
         // Only run during request phase
         if step != self.plugin_step {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
 
         // Handle token generation requests
@@ -272,7 +274,7 @@ impl Plugin for Csrf {
                 ..Default::default()
             };
 
-            return Ok((true, Some(resp)));
+            return Ok(RequestPluginResult::Respond(resp));
         }
 
         // Skip CSRF checks for safe HTTP methods
@@ -280,14 +282,16 @@ impl Plugin for Csrf {
         if [Method::GET, Method::HEAD, Method::OPTIONS]
             .contains(&session.req_header().method)
         {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
 
         // For unsafe methods:
         // 1. Check token exists in header
         let value = session.get_header_bytes(&self.name);
         if value.is_empty() {
-            return Ok((true, Some(self.unauthorized_resp.clone())));
+            return Ok(RequestPluginResult::Respond(
+                self.unauthorized_resp.clone(),
+            ));
         }
 
         let value = std::string::String::from_utf8_lossy(value);
@@ -301,11 +305,13 @@ impl Plugin for Csrf {
                 .unwrap_or_default()
             || !validate_token(&self.key, self.ttl, &value)
         {
-            return Ok((true, Some(self.unauthorized_resp.clone())));
+            return Ok(RequestPluginResult::Respond(
+                self.unauthorized_resp.clone(),
+            ));
         }
 
         // Token is valid - allow request to proceed
-        Ok((true, None))
+        Ok(RequestPluginResult::Continue)
     }
 }
 
@@ -414,7 +420,7 @@ ttl = "1h"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let (executed, result) = csrf
+        let result = csrf
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -422,9 +428,9 @@ ttl = "1h"
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_some());
-        let resp = result.unwrap();
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
         let binding = resp.headers.unwrap();
         let cookie = binding[1].1.to_str().unwrap();
         let c = Cookie::from_str(cookie).unwrap();
@@ -438,7 +444,7 @@ ttl = "1h"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let (executed, result) = csrf
+        let result = csrf
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -446,9 +452,9 @@ ttl = "1h"
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_some());
-        let resp = result.unwrap();
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
         assert_eq!(401, resp.status.as_u16());
 
         // validate success
@@ -461,7 +467,7 @@ ttl = "1h"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let (executed, result) = csrf
+        let result = csrf
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -469,7 +475,6 @@ ttl = "1h"
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_none());
+        assert_eq!(true, result == RequestPluginResult::Continue);
     }
 }

@@ -21,8 +21,11 @@ use ctor::ctor;
 use http::StatusCode;
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
-use pingap_core::{convert_headers, Ctx, HttpResponse, Plugin, PluginStep};
+use pingap_core::{
+    convert_headers, Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
+};
 use pingora::proxy::Session;
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -141,8 +144,8 @@ impl MockResponse {
 impl Plugin for MockResponse {
     /// Returns the unique identifier for this plugin instance
     #[inline]
-    fn hash_key(&self) -> String {
-        self.hash_value.clone()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
     }
 
     /// Handles incoming requests and returns mock responses when appropriate.
@@ -161,16 +164,16 @@ impl Plugin for MockResponse {
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut Ctx,
-    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+    ) -> pingora::Result<RequestPluginResult> {
         // Only process if we're in the correct execution phase
         if step != self.plugin_step {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
 
         // Check if request path matches our configured path (if any)
         if !self.path.is_empty() && session.req_header().uri.path() != self.path
         {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
 
         // Implement artificial delay if configured
@@ -179,7 +182,7 @@ impl Plugin for MockResponse {
         }
 
         // Return our pre-configured mock response
-        Ok((true, Some(self.resp.clone())))
+        Ok(RequestPluginResult::Respond(self.resp.clone()))
     }
 }
 
@@ -244,7 +247,7 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let (executed, result) = mock
+        let result = mock
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -253,10 +256,9 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
             .await
             .unwrap();
 
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_some());
-
-        let resp = result.unwrap();
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
         assert_eq!(StatusCode::INTERNAL_SERVER_ERROR, resp.status);
         assert_eq!(
             r###"Some([("content-type", "application/json")])"###,
@@ -275,7 +277,7 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
-        let (executed, result) = mock
+        let result = mock
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -283,7 +285,6 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
             )
             .await
             .unwrap();
-        assert_eq!(false, executed);
-        assert_eq!(true, result.is_none());
+        assert_eq!(true, result == RequestPluginResult::Continue);
     }
 }

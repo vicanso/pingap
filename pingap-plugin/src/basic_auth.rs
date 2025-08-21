@@ -23,9 +23,10 @@ use http::HeaderValue;
 use http::StatusCode;
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
-use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep};
+use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult};
 use pingap_util::base64_decode;
 use pingora::proxy::Session;
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -175,8 +176,8 @@ impl BasicAuth {
 #[async_trait]
 impl Plugin for BasicAuth {
     #[inline]
-    fn hash_key(&self) -> String {
-        self.hash_value.clone()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
     }
 
     #[inline]
@@ -185,17 +186,19 @@ impl Plugin for BasicAuth {
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut Ctx,
-    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+    ) -> pingora::Result<RequestPluginResult> {
         // Verify we're in the request phase - authentication must happen before processing
         if step != self.plugin_step {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
 
         // Extract and validate Authorization header
         // An empty value means the header is missing entirely
         let value = session.get_header_bytes(http::header::AUTHORIZATION);
         if value.is_empty() {
-            return Ok((true, Some(self.miss_authorization_resp.clone())));
+            return Ok(RequestPluginResult::Respond(
+                self.miss_authorization_resp.clone(),
+            ));
         }
 
         // Validate credentials against our authorized list
@@ -206,7 +209,9 @@ impl Plugin for BasicAuth {
             if let Some(d) = self.delay {
                 sleep(d).await;
             }
-            return Ok((true, Some(self.unauthorized_resp.clone())));
+            return Ok(RequestPluginResult::Respond(
+                self.unauthorized_resp.clone(),
+            ));
         }
 
         // On successful authentication, optionally remove credentials
@@ -218,7 +223,7 @@ impl Plugin for BasicAuth {
         }
 
         // Authentication successful - continue request processing
-        return Ok((true, None));
+        return Ok(RequestPluginResult::Continue);
     }
 }
 
@@ -232,9 +237,8 @@ fn init() {
 #[cfg(test)]
 mod tests {
     use super::{BasicAuth, Plugin};
-    use http::StatusCode;
     use pingap_config::PluginConf;
-    use pingap_core::{Ctx, PluginStep};
+    use pingap_core::{Ctx, PluginStep, RequestPluginResult};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use std::time::Duration;
@@ -306,7 +310,7 @@ hide_credentials = true
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let (executed, result) = auth
+        let result = auth
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -314,8 +318,7 @@ hide_credentials = true
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_none());
+        assert_eq!(true, result == RequestPluginResult::Continue);
         assert_eq!(
             false,
             session.req_header().headers.contains_key("Authorization")
@@ -328,7 +331,7 @@ hide_credentials = true
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let (executed, result) = auth
+        let result = auth
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -336,8 +339,10 @@ hide_credentials = true
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_some());
-        assert_eq!(StatusCode::UNAUTHORIZED, result.unwrap().status);
+        assert_eq!(
+            true,
+            result
+                == RequestPluginResult::Respond(auth.unauthorized_resp.clone())
+        );
     }
 }

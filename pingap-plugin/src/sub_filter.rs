@@ -28,6 +28,7 @@ use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::bytes::RegexBuilder;
 use regex::Regex;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -226,8 +227,8 @@ impl SubFilter {
 #[async_trait]
 impl Plugin for SubFilter {
     /// Returns a unique identifier for this plugin instance
-    fn hash_key(&self) -> String {
-        self.hash_value.clone()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
     }
 
     /// Handles the response phase of the HTTP request/response lifecycle

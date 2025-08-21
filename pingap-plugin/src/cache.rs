@@ -29,6 +29,7 @@ use pingap_cache::{get_cache_backend, CacheBackendOption, HttpCache};
 use pingap_config::{get_current_config, PluginCategory, PluginConf};
 use pingap_core::{
     get_cache_key, get_client_ip, Ctx, HttpResponse, Plugin, PluginStep,
+    RequestPluginResult,
 };
 use pingora::cache::eviction::simple_lru::Manager;
 use pingora::cache::eviction::EvictionManager;
@@ -36,6 +37,7 @@ use pingora::cache::key::CacheHashKey;
 use pingora::cache::lock::{CacheKeyLock, CacheLock};
 use pingora::cache::predictor::{CacheablePredictor, Predictor};
 use pingora::proxy::Session;
+use std::borrow::Cow;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -324,8 +326,8 @@ impl Plugin for Cache {
     /// Returns the unique hash key for this cache configuration.
     /// Used to identify different cache configurations in the system.
     #[inline]
-    fn hash_key(&self) -> String {
-        self.hash_value.clone()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
     }
 
     /// Handles incoming HTTP requests for caching operations.
@@ -353,10 +355,10 @@ impl Plugin for Cache {
         step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
-    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+    ) -> pingora::Result<RequestPluginResult> {
         // Only process if we're in the correct plugin step
         if step != self.plugin_step {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
 
         // Cache operations only support GET/HEAD for retrieval and PURGE for invalidation
@@ -365,14 +367,14 @@ impl Plugin for Cache {
         if ![Method::GET, Method::HEAD, METHOD_PURGE.to_owned()]
             .contains(method)
         {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
 
         // Check if request matches skip pattern (if configured)
         if let Some(skip) = &self.skip {
             if let Some(value) = req_header.uri.path_and_query() {
                 if skip.is_match(value.as_str()).unwrap_or_default() {
-                    return Ok((false, None));
+                    return Ok(RequestPluginResult::Skipped);
                 }
             }
         }
@@ -400,29 +402,21 @@ impl Plugin for Cache {
 
         // Handle PURGE requests with IP-based access control
         if method == METHOD_PURGE.to_owned() {
-            let found = match self
-                .purge_ip_rules
-                .is_match(&get_client_ip(session))
-            {
-                Ok(matched) => matched,
-                Err(e) => {
-                    return Ok((
-                        true,
-                        Some(HttpResponse::bad_request(e.to_string().into())),
-                    ));
-                },
-            };
+            let found =
+                match self.purge_ip_rules.is_match(&get_client_ip(session)) {
+                    Ok(matched) => matched,
+                    Err(e) => {
+                        return Ok(RequestPluginResult::Respond(
+                            HttpResponse::bad_request(e.to_string()),
+                        ));
+                    },
+                };
             if !found {
-                return Ok((
-                    true,
-                    Some(HttpResponse {
-                        status: StatusCode::FORBIDDEN,
-                        body: Bytes::from_static(
-                            b"Forbidden, ip is not allowed",
-                        ),
-                        ..Default::default()
-                    }),
-                ));
+                return Ok(RequestPluginResult::Respond(HttpResponse {
+                    status: StatusCode::FORBIDDEN,
+                    body: Bytes::from_static(b"Forbidden, ip is not allowed"),
+                    ..Default::default()
+                }));
             }
 
             let key = get_cache_key(
@@ -434,7 +428,9 @@ impl Plugin for Cache {
                 .cache
                 .remove(&key.combined(), key.namespace())
                 .await?;
-            return Ok((true, Some(HttpResponse::no_content())));
+            return Ok(
+                RequestPluginResult::Respond(HttpResponse::no_content()),
+            );
         }
 
         // Configure cache settings for this request
@@ -466,7 +462,7 @@ impl Plugin for Cache {
             }
         }
 
-        Ok((true, None))
+        Ok(RequestPluginResult::Continue)
     }
 }
 

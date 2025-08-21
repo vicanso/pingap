@@ -19,8 +19,11 @@ use async_trait::async_trait;
 use ctor::ctor;
 use http::StatusCode;
 use pingap_config::PluginConf;
-use pingap_core::{convert_headers, Ctx, HttpResponse, Plugin, PluginStep};
+use pingap_core::{
+    convert_headers, Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
+};
 use pingora::proxy::Session;
+use std::borrow::Cow;
 use std::sync::Arc;
 use tracing::debug;
 
@@ -95,9 +98,9 @@ impl Plugin for Redirect {
     /// The hash key is used for plugin identification and caching purposes.
     /// It's generated from the plugin's configuration parameters.
     #[inline]
-    fn hash_key(&self) -> String {
+    fn hash_key(&self) -> Cow<'_, str> {
         // Return unique identifier for this plugin instance
-        self.hash_value.clone()
+        Cow::Borrowed(&self.hash_value)
     }
 
     /// Handles incoming HTTP requests and performs redirects as needed.
@@ -123,10 +126,10 @@ impl Plugin for Redirect {
         step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
-    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+    ) -> pingora::Result<RequestPluginResult> {
         // Early return if not in request phase
         if step != self.plugin_step {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
 
         // Check current request state:
@@ -140,7 +143,7 @@ impl Plugin for Redirect {
         if schema_match
             && session.req_header().uri.path().starts_with(&self.prefix)
         {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
 
         // Extract host from request headers
@@ -166,14 +169,11 @@ impl Plugin for Redirect {
         // Return 307 Temporary Redirect
         // Using 307 instead of 301/302 to preserve HTTP method
         // This is important for POST/PUT/DELETE requests
-        Ok((
-            true,
-            Some(HttpResponse {
-                status: StatusCode::TEMPORARY_REDIRECT,
-                headers: Some(convert_headers(&[location]).unwrap_or_default()),
-                ..Default::default()
-            }),
-        ))
+        Ok(RequestPluginResult::Respond(HttpResponse {
+            status: StatusCode::TEMPORARY_REDIRECT,
+            headers: Some(convert_headers(&[location]).unwrap_or_default()),
+            ..Default::default()
+        }))
     }
 }
 
@@ -219,7 +219,7 @@ prefix = "/api"
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let (executed, result) = redirect
+        let result = redirect
             .handle_request(
                 PluginStep::Request,
                 &mut session,
@@ -227,9 +227,9 @@ prefix = "/api"
             )
             .await
             .unwrap();
-        assert_eq!(true, executed);
-        assert_eq!(true, result.is_some());
-        let resp = result.unwrap();
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
         assert_eq!(StatusCode::TEMPORARY_REDIRECT, resp.status);
         assert_eq!(
             r###"Some([("location", "https://github.com/api/vicanso/pingap?size=1")])"###,

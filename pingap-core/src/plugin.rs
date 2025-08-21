@@ -16,6 +16,7 @@ use super::{Ctx, HttpResponse};
 use async_trait::async_trait;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
+use std::borrow::Cow;
 use strum::EnumString;
 
 #[derive(
@@ -29,6 +30,37 @@ pub enum PluginStep {
     ProxyUpstream,
     UpstreamResponse,
     Response,
+}
+
+/// A more expressive return type for `handle_request`.
+/// It clearly states the plugin's decision.
+pub enum RequestPluginResult {
+    /// The plugin did not run or took no action.
+    Skipped,
+    /// The plugin ran and modified the request; processing should continue.
+    Continue,
+    /// The plugin has decided to terminate the request and send an immediate response.
+    Respond(HttpResponse),
+}
+
+// Manually implement the PartialEq trait for RequestPluginResult
+impl PartialEq for RequestPluginResult {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            // Two Skipped variants are always equal.
+            (RequestPluginResult::Skipped, RequestPluginResult::Skipped) => {
+                true
+            },
+
+            // Two Continue variants are always equal.
+            (RequestPluginResult::Continue, RequestPluginResult::Continue) => {
+                true
+            },
+
+            // Any other combination is not equal.
+            _ => false,
+        }
+    }
 }
 
 /// Core trait that defines the interface all plugins must implement.
@@ -46,8 +78,8 @@ pub trait Plugin: Sync + Send {
     ///
     /// # Default
     /// Returns an empty string by default, which means no specific instance identification.
-    fn hash_key(&self) -> String {
-        "".to_string()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed("")
     }
 
     /// Processes an HTTP request at a specified lifecycle step.
@@ -71,8 +103,8 @@ pub trait Plugin: Sync + Send {
         _step: PluginStep,
         _session: &mut Session,
         _ctx: &mut Ctx,
-    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
-        Ok((false, None))
+    ) -> pingora::Result<RequestPluginResult> {
+        Ok(RequestPluginResult::Skipped)
     }
 
     /// Processes an HTTP response at a specified lifecycle step.

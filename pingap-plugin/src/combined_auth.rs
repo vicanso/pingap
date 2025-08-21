@@ -24,10 +24,12 @@ use hex::ToHex;
 use http::StatusCode;
 use pingap_config::PluginConf;
 use pingap_core::{
-    Ctx, HttpResponse, Plugin, PluginStep, HTTP_HEADER_NO_STORE,
+    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
+    HTTP_HEADER_NO_STORE,
 };
 use pingora::proxy::Session;
 use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::sync::Arc;
 use tracing::debug;
 
@@ -253,8 +255,8 @@ impl CombinedAuth {
 impl Plugin for CombinedAuth {
     /// Returns the unique hash key for this plugin instance
     #[inline]
-    fn hash_key(&self) -> String {
-        self.hash_value.clone()
+    fn hash_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
     }
 
     /// Handles incoming HTTP requests by performing authentication checks
@@ -273,23 +275,20 @@ impl Plugin for CombinedAuth {
         step: PluginStep,
         session: &mut Session,
         _ctx: &mut Ctx,
-    ) -> pingora::Result<(bool, Option<HttpResponse>)> {
+    ) -> pingora::Result<RequestPluginResult> {
         if step != self.plugin_step {
-            return Ok((false, None));
+            return Ok(RequestPluginResult::Skipped);
         }
         if let Err(e) = self.validate(session) {
-            return Ok((
-                true,
-                Some(HttpResponse {
-                    status: StatusCode::UNAUTHORIZED,
-                    headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
-                    body: Bytes::from(e.to_string()),
-                    ..Default::default()
-                }),
-            ));
+            return Ok(RequestPluginResult::Respond(HttpResponse {
+                status: StatusCode::UNAUTHORIZED,
+                headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
+                body: Bytes::from(e.to_string()),
+                ..Default::default()
+            }));
         }
 
-        Ok((true, None))
+        Ok(RequestPluginResult::Continue)
     }
 }
 

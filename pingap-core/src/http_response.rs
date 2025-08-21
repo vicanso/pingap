@@ -17,9 +17,10 @@ use super::{
     HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_CONTENT_TEXT, HTTP_HEADER_NO_CACHE,
     HTTP_HEADER_NO_STORE, HTTP_HEADER_TRANSFER_CHUNKED, LOG_CATEGORY,
 };
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use http::header;
 use http::StatusCode;
+use http::{HeaderName, HeaderValue};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use serde::Serialize;
@@ -27,144 +28,210 @@ use std::pin::Pin;
 use tokio::io::AsyncReadExt;
 use tracing::error;
 
-/// Helper function to generate cache control headers
-/// Returns a cache control header based on max age and privacy settings.
-/// - If max_age is 0: returns "private, no-cache"
-/// - If max_age is set: returns "private/public, max-age=X"
-/// - Otherwise: returns "private, no-cache"
+/// A helper function to generate a `Cache-Control` header.
+///
+/// It determines the appropriate `Cache-Control` value based on the provided
+/// `max_age` and `cache_private` settings. This is a performance-sensitive
+/// function, so it's optimized to avoid allocations where possible.
+///
+/// # Arguments
+/// * `max_age`: An `Option<u32>` specifying the max-age in seconds. If `Some(0)` or `None`,
+///   a "no-cache" header is returned.
+/// * `cache_private`: An `Option<bool>` indicating if the cache is private. Defaults to public.
+///
+/// # Returns
+/// An `HttpHeader` tuple `(HeaderName, HeaderValue)` for the `Cache-Control` header.
 fn new_cache_control_header(
     max_age: Option<u32>,
     cache_private: Option<bool>,
 ) -> HttpHeader {
-    if let Some(max_age) = max_age {
-        if max_age == 0 {
-            return HTTP_HEADER_NO_CACHE.clone();
-        }
-        let category = if cache_private.unwrap_or_default() {
-            "private"
-        } else {
-            "public"
-        };
-        if let Ok(value) = header::HeaderValue::from_str(&format!(
-            "{category}, max-age={max_age}"
-        )) {
-            return (header::CACHE_CONTROL, value);
-        }
+    // Determine the max_age value. If it's 0 or not provided, return the static no-cache header immediately.
+    let max_age = match max_age {
+        Some(0) | None => return HTTP_HEADER_NO_CACHE.clone(),
+        Some(age) => age,
+    };
+
+    // Determine the cache visibility ("private" or "public").
+    let category = if cache_private.unwrap_or_default() {
+        "private"
+    } else {
+        "public"
+    };
+
+    // Use a pre-allocated buffer (`BytesMut`) and the `itoa` crate to efficiently build the
+    // header value without creating an intermediate `String` via `format!`.
+    // The capacity is estimated to prevent reallocations.
+    let mut buf = BytesMut::with_capacity(category.len() + 9 + 10); // e.g., "public, max-age=" + up to 10 digits for a u32
+    buf.extend_from_slice(category.as_bytes());
+    buf.extend_from_slice(b", max-age=");
+    buf.extend_from_slice(itoa::Buffer::new().format(max_age).as_bytes());
+
+    // Try to create a `HeaderValue` from the constructed bytes.
+    if let Ok(value) = HeaderValue::from_bytes(&buf) {
+        return (header::CACHE_CONTROL, value);
     }
+    // If creation fails for any reason, fall back to the safe "no-cache" header.
     HTTP_HEADER_NO_CACHE.clone()
 }
 
-/// Main HTTP response struct for handling complete responses
+/// A builder for creating `HttpResponse` instances fluently using the builder pattern.
+///
+/// This allows for chaining method calls to configure a response, improving readability.
+#[derive(Default, Debug)]
+pub struct HttpResponseBuilder {
+    /// The `HttpResponse` instance being built.
+    response: HttpResponse,
+}
+
+impl HttpResponseBuilder {
+    /// Creates a new builder with a given status code.
+    pub fn new(status: StatusCode) -> Self {
+        Self {
+            response: HttpResponse {
+                status,
+                ..Default::default()
+            },
+        }
+    }
+
+    /// Sets the response body.
+    ///
+    /// This method is generic over `impl Into<Bytes>`, allowing various types like
+    /// `Vec<u8>`, `String`, or `&'static str` to be passed as the body.
+    pub fn body(mut self, body: impl Into<Bytes>) -> Self {
+        self.response.body = body.into();
+        self
+    }
+
+    /// Adds a single HTTP header to the response.
+    ///
+    /// If the headers vector doesn't exist yet, it will be created.
+    pub fn header(mut self, header: HttpHeader) -> Self {
+        self.response
+            .headers
+            .get_or_insert_with(Vec::new)
+            .push(header);
+        self
+    }
+
+    /// Appends multiple HTTP headers to the response.
+    pub fn headers(mut self, headers: Vec<HttpHeader>) -> Self {
+        self.response
+            .headers
+            .get_or_insert_with(Vec::new)
+            .extend(headers);
+        self
+    }
+
+    /// Sets the `Cache-Control` max-age and privacy directive.
+    pub fn max_age(mut self, seconds: u32, is_private: bool) -> Self {
+        self.response.max_age = Some(seconds);
+        self.response.cache_private = Some(is_private);
+        self
+    }
+
+    /// A convenience method to add a "no-store" `Cache-Control` header.
+    pub fn no_store(self) -> Self {
+        self.header(HTTP_HEADER_NO_STORE.clone())
+    }
+
+    /// Consumes the builder and returns the final `HttpResponse` instance.
+    pub fn finish(self) -> HttpResponse {
+        self.response
+    }
+}
+
+/// Represents a complete HTTP response, including status, headers, and a body.
+/// This struct is used for responses where the entire body is known upfront.
 #[derive(Default, Clone, Debug)]
 pub struct HttpResponse {
-    /// HTTP status code (200 OK, 404 Not Found, etc)
+    /// The HTTP status code (e.g., 200 OK, 404 Not Found).
     pub status: StatusCode,
-    /// Response body as bytes
+    /// The response body, stored as a `Bytes` object for efficiency.
     pub body: Bytes,
-    /// Cache control max-age value in seconds
+    /// The `max-age` directive for the `Cache-Control` header, in seconds.
     pub max_age: Option<u32>,
-    /// Timestamp when response was created
+    /// The UNIX timestamp when the response content was created, used for the `Age` header.
     pub created_at: Option<u32>,
-    /// Whether cache should be private (true) or public (false)
+    /// A flag to indicate if the `Cache-Control` should be "private" (true) or "public" (false).
     pub cache_private: Option<bool>,
-    /// Additional HTTP headers
+    /// A list of additional HTTP headers to include in the response.
     pub headers: Option<Vec<HttpHeader>>,
 }
 
 impl HttpResponse {
-    /// Creates a new HTTP response with 204 No Content status and no-store cache control
+    /// Returns a new `HttpResponseBuilder` to start building a response.
+    pub fn builder(status: StatusCode) -> HttpResponseBuilder {
+        HttpResponseBuilder::new(status)
+    }
+
+    /// A convenience constructor for a 204 No Content response.
     pub fn no_content() -> Self {
-        Self {
-            status: StatusCode::NO_CONTENT,
-            headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
-            ..Default::default()
-        }
+        Self::builder(StatusCode::NO_CONTENT).no_store().finish()
     }
-    /// Creates a new HTTP response with 400 Bad Request status and the given body
-    pub fn bad_request(body: Bytes) -> Self {
-        Self {
-            status: StatusCode::BAD_REQUEST,
-            headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
-            body,
-            ..Default::default()
-        }
+
+    /// A convenience constructor for a 400 Bad Request response.
+    pub fn bad_request(body: impl Into<Bytes>) -> Self {
+        Self::builder(StatusCode::BAD_REQUEST)
+            .body(body)
+            .no_store()
+            .finish()
     }
-    /// Creates a new HTTP response with 404 Not Found status and the given body
-    pub fn not_found(body: Bytes) -> Self {
-        Self {
-            status: StatusCode::NOT_FOUND,
-            headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
-            body,
-            ..Default::default()
-        }
+
+    /// A convenience constructor for a 404 Not Found response.
+    pub fn not_found(body: impl Into<Bytes>) -> Self {
+        Self::builder(StatusCode::NOT_FOUND)
+            .body(body)
+            .no_store()
+            .finish()
     }
-    /// Creates a new HTTP response with 500 Internal Server Error status and the given body
-    pub fn unknown_error(body: Bytes) -> Self {
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
-            body,
-            ..Default::default()
-        }
+
+    /// A convenience constructor for a 500 Internal Server Error response.
+    pub fn unknown_error(body: impl Into<Bytes>) -> Self {
+        Self::builder(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(body)
+            .no_store()
+            .finish()
     }
-    /// Creates a new HTTP response with 200 OK status, HTML content type, and the given body
-    pub fn html(body: Bytes) -> Self {
-        Self {
-            status: StatusCode::OK,
-            headers: Some(vec![
-                HTTP_HEADER_CONTENT_HTML.clone(),
-                HTTP_HEADER_NO_CACHE.clone(),
-            ]),
-            body,
-            ..Default::default()
-        }
+
+    /// A convenience constructor for a 200 OK HTML response.
+    pub fn html(body: impl Into<Bytes>) -> Self {
+        Self::builder(StatusCode::OK)
+            .body(body)
+            .header(HTTP_HEADER_CONTENT_HTML.clone())
+            .header(HTTP_HEADER_NO_CACHE.clone())
+            .finish()
     }
-    /// Creates a new HTTP response with 302 Temporary Redirect status to the given location
+
+    /// A convenience constructor for a 302 Temporary Redirect response.
     pub fn redirect(location: &str) -> pingora::Result<Self> {
-        let value = http::HeaderValue::from_str(location).map_err(|e| {
+        // Attempt to parse the location string into a valid HeaderValue.
+        let value = HeaderValue::from_str(location).map_err(|e| {
             error!(error = e.to_string(), "to header value fail");
             new_internal_error(500, e.to_string())
         })?;
-        Ok(Self {
-            status: StatusCode::TEMPORARY_REDIRECT,
-            headers: Some(vec![
-                (http::header::LOCATION.clone(), value),
-                HTTP_HEADER_NO_CACHE.clone(),
-            ]),
-            ..Default::default()
-        })
+        // Build the redirect response.
+        Ok(Self::builder(StatusCode::TEMPORARY_REDIRECT)
+            .header((header::LOCATION, value))
+            .header(HTTP_HEADER_NO_CACHE.clone())
+            .finish())
     }
 
-    /// Creates a new HTTP response with 200 OK status, text/plain content type, and the given body
-    pub fn text(body: Bytes) -> Self {
-        Self {
-            status: StatusCode::OK,
-            headers: Some(vec![
-                HTTP_HEADER_CONTENT_TEXT.clone(),
-                HTTP_HEADER_NO_CACHE.clone(),
-            ]),
-            body,
-            ..Default::default()
-        }
-    }
-    /// Creates a new HTTP response from a serializable value with the specified status code
-    pub fn try_from_json_status<T>(
-        value: &T,
-        status: StatusCode,
-    ) -> pingora::Result<Self>
-    where
-        T: ?Sized + Serialize,
-    {
-        let mut resp = Self::try_from_json(value)?;
-        resp.status = status;
-        Ok(resp)
+    /// A convenience constructor for a 200 OK plain text response.
+    pub fn text(body: impl Into<Bytes>) -> Self {
+        Self::builder(StatusCode::OK)
+            .body(body)
+            .header(HTTP_HEADER_CONTENT_TEXT.clone())
+            .header(HTTP_HEADER_NO_CACHE.clone())
+            .finish()
     }
 
-    /// Creates a new HTTP response from a serializable value with 200 OK status
+    /// Creates a 200 OK JSON response by serializing the given value.
     pub fn try_from_json<T>(value: &T) -> pingora::Result<Self>
     where
         T: ?Sized + Serialize,
     {
+        // Serialize the value to a JSON byte vector.
         let buf = serde_json::to_vec(value).map_err(|e| {
             error!(
                 category = LOG_CATEGORY,
@@ -173,79 +240,108 @@ impl HttpResponse {
             );
             new_internal_error(400, e.to_string())
         })?;
-        Ok(Self {
-            status: StatusCode::OK,
-            body: buf.into(),
-            headers: Some(vec![HTTP_HEADER_CONTENT_JSON.clone()]),
-            ..Default::default()
-        })
+        // Build the JSON response.
+        Ok(Self::builder(StatusCode::OK)
+            .body(buf)
+            .header(HTTP_HEADER_CONTENT_JSON.clone())
+            .finish())
     }
-    /// Builds and returns the HTTP response headers based on the response configuration
+
+    /// Creates a JSON response with a specified status code by serializing the given value.
+    pub fn try_from_json_status<T>(
+        value: &T,
+        status: StatusCode,
+    ) -> pingora::Result<Self>
+    where
+        T: ?Sized + Serialize,
+    {
+        // First, create a standard 200 OK JSON response.
+        let mut resp = Self::try_from_json(value)?;
+        // Then, simply overwrite the status code.
+        resp.status = status;
+        Ok(resp)
+    }
+
+    /// Builds a `pingora::http::ResponseHeader` from the `HttpResponse`'s properties.
     pub fn new_response_header(&self) -> pingora::Result<ResponseHeader> {
-        let fix_size = 3;
-        let size = self
-            .headers
-            .as_ref()
-            .map_or_else(|| fix_size, |headers| headers.len() + fix_size);
-        let mut resp = ResponseHeader::build(self.status, Some(size))?;
-        resp.insert_header(
-            header::CONTENT_LENGTH,
-            self.body.len().to_string(),
+        // Build the response header with the status code.
+        let mut resp = ResponseHeader::build(self.status, None)?;
+
+        // A local helper closure to simplify adding headers and handling potential errors.
+        let mut add_header =
+            |name: &HeaderName, value: &HeaderValue| -> pingora::Result<()> {
+                resp.insert_header(name, value)?;
+                Ok(())
+            };
+
+        // Add the Content-Length header based on the body size.
+        add_header(
+            &header::CONTENT_LENGTH,
+            &HeaderValue::from(self.body.len()),
         )?;
 
-        // set cache control
-        let cache_control =
+        // Generate and add the Cache-Control header.
+        let (name, value) =
             new_cache_control_header(self.max_age, self.cache_private);
-        resp.insert_header(cache_control.0, cache_control.1)?;
+        add_header(&name, &value)?;
 
+        // If a creation timestamp is provided, calculate and add the Age header.
         if let Some(created_at) = self.created_at {
-            let secs = get_super_ts() - created_at;
-            if let Ok(value) = header::HeaderValue::from_str(&secs.to_string())
-            {
-                resp.insert_header(header::AGE, value)?;
-            }
+            let secs = get_super_ts().saturating_sub(created_at);
+            add_header(&header::AGE, &HeaderValue::from(secs))?;
         }
 
+        // Add all custom headers from the `headers` field.
         if let Some(headers) = &self.headers {
             for (name, value) in headers {
-                resp.insert_header(name.to_owned(), value)?;
+                add_header(name, value)?;
             }
         }
         Ok(resp)
     }
-    /// Sends the HTTP response to the client and returns the number of bytes sent
+
+    /// Sends the entire HTTP response (header and body) to the client via the session.
     pub async fn send(self, session: &mut Session) -> pingora::Result<usize> {
+        // First, build the response header.
         let header = self.new_response_header()?;
         let size = self.body.len();
+        // Write the header to the session.
         session
             .write_response_header(Box::new(header), false)
             .await?;
+        // Write the body to the session. `end_stream` is true because this is the final body part.
         session.write_response_body(Some(self.body), true).await?;
+        // Finalize the response stream.
         session.finish_body().await?;
         Ok(size)
     }
 }
 
-/// Chunked response handler for streaming large responses
+/// Represents a chunked HTTP response for streaming large bodies of data.
+///
+/// This is used when the response body is too large to fit in memory or is generated on-the-fly.
 pub struct HttpChunkResponse<'r, R> {
-    /// Pinned reader for streaming data
+    /// A pinned, mutable reference to an async reader that provides the body data.
     pub reader: Pin<&'r mut R>,
-    /// Size of each chunk in bytes
+    /// The suggested size for each data chunk. Defaults to `DEFAULT_BUF_SIZE`.
     pub chunk_size: usize,
-    /// Cache control settings
+    /// Cache control `max-age` setting for the response.
     pub max_age: Option<u32>,
+    /// Cache control privacy setting for the response.
     pub cache_private: Option<bool>,
+    /// Additional headers to include in the response.
     pub headers: Option<Vec<HttpHeader>>,
 }
 
-// Default chunk size of 8KB for streaming responses
+/// The default buffer size (8KB) for chunked responses.
 const DEFAULT_BUF_SIZE: usize = 8 * 1024;
 
 impl<'r, R> HttpChunkResponse<'r, R>
 where
+    // The reader must implement `AsyncRead` and be `Unpin`.
     R: tokio::io::AsyncRead + std::marker::Unpin,
 {
-    /// Creates a new chunked HTTP response with the given reader
+    /// Creates a new `HttpChunkResponse` with a given reader and default settings.
     pub fn new(r: &'r mut R) -> Self {
         Self {
             reader: Pin::new(r),
@@ -255,59 +351,78 @@ where
             cache_private: None,
         }
     }
-    /// Builds and returns the HTTP response headers for chunked transfer
+
+    /// Builds the `ResponseHeader` for the chunked response.
+    ///
+    /// This will include a `Transfer-Encoding: chunked` header.
     pub fn get_response_header(&self) -> pingora::Result<ResponseHeader> {
+        // Start building a 200 OK response header.
         let mut resp = ResponseHeader::build(StatusCode::OK, Some(4))?;
+        // Add any custom headers.
         if let Some(headers) = &self.headers {
             for (name, value) in headers {
                 resp.insert_header(name.to_owned(), value)?;
             }
         }
 
+        // Add the mandatory `Transfer-Encoding: chunked` header.
         let chunked = HTTP_HEADER_TRANSFER_CHUNKED.clone();
         resp.insert_header(chunked.0, chunked.1)?;
 
+        // Add the `Cache-Control` header.
         let cache_control =
             new_cache_control_header(self.max_age, self.cache_private);
         resp.insert_header(cache_control.0, cache_control.1)?;
         Ok(resp)
     }
-    /// Sends the chunked response data to the client and returns total bytes sent
+
+    /// Streams the data from the reader to the client as a chunked response.
+    ///
+    /// Reads data from the `reader` in chunks and sends each chunk to the client until
+    /// the reader is exhausted.
     pub async fn send(
         mut self,
         session: &mut Session,
     ) -> pingora::Result<usize> {
+        // First, build and send the response headers. `end_stream` is false because a body will follow.
         let header = self.get_response_header()?;
         session
             .write_response_header(Box::new(header), false)
             .await?;
 
         let mut sent = 0;
+        // Ensure the chunk size is not too small.
         let chunk_size = self.chunk_size.max(512);
+        // Create a reusable buffer for reading data into.
         let mut buffer = vec![0; chunk_size];
         loop {
+            // Read a chunk of data from the source reader.
             let size = self.reader.read(&mut buffer).await.map_err(|e| {
                 error!(error = e.to_string(), "read data fail");
                 new_internal_error(400, e.to_string())
             })?;
+            // Determine if this is the final chunk.
             let end = size < chunk_size;
+            // Write the chunk to the response body.
             session
                 .write_response_body(
+                    // `copy_from_slice` is necessary because `write_response_body` takes an `Option<Bytes>`.
                     Some(Bytes::copy_from_slice(&buffer[..size])),
                     end,
                 )
                 .await?;
             sent += size;
+            // If it was the last chunk, exit the loop.
             if end {
                 break;
             }
         }
+        // Finalize the response stream.
         session.finish_body().await?;
 
         Ok(sent)
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,24 +462,21 @@ mod tests {
         );
         assert_eq!(
             r###"HttpResponse { status: 404, body: b"Not Found", max_age: None, created_at: None, cache_private: None, headers: Some([("cache-control", "private, no-store")]) }"###,
-            format!("{:?}", HttpResponse::not_found("Not Found".into()))
+            format!("{:?}", HttpResponse::not_found("Not Found"))
         );
         assert_eq!(
             r###"HttpResponse { status: 500, body: b"Unknown Error", max_age: None, created_at: None, cache_private: None, headers: Some([("cache-control", "private, no-store")]) }"###,
-            format!(
-                "{:?}",
-                HttpResponse::unknown_error("Unknown Error".into())
-            )
+            format!("{:?}", HttpResponse::unknown_error("Unknown Error"))
         );
 
         assert_eq!(
             r###"HttpResponse { status: 400, body: b"Bad Request", max_age: None, created_at: None, cache_private: None, headers: Some([("cache-control", "private, no-store")]) }"###,
-            format!("{:?}", HttpResponse::bad_request("Bad Request".into()))
+            format!("{:?}", HttpResponse::bad_request("Bad Request"))
         );
 
         assert_eq!(
             r###"HttpResponse { status: 200, body: b"<p>Pingap</p>", max_age: None, created_at: None, cache_private: None, headers: Some([("content-type", "text/html; charset=utf-8"), ("cache-control", "private, no-cache")]) }"###,
-            format!("{:?}", HttpResponse::html("<p>Pingap</p>".into()))
+            format!("{:?}", HttpResponse::html("<p>Pingap</p>"))
         );
 
         assert_eq!(
@@ -377,7 +489,7 @@ mod tests {
 
         assert_eq!(
             r###"HttpResponse { status: 200, body: b"Hello World!", max_age: None, created_at: None, cache_private: None, headers: Some([("content-type", "text/plain; charset=utf-8"), ("cache-control", "private, no-cache")]) }"###,
-            format!("{:?}", HttpResponse::text("Hello World!".into()))
+            format!("{:?}", HttpResponse::text("Hello World!"))
         );
 
         #[derive(Serialize)]
