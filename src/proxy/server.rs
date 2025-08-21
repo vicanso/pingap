@@ -1001,11 +1001,12 @@ impl ProxyHttp for Server {
             "location is matched"
         );
 
-        if let Some(features) = &ctx.features {
-            location.rewrite(header, features.variables.as_ref());
-        } else {
-            location.rewrite(header, None);
-        }
+        location.rewrite(
+            header,
+            ctx.features
+                .as_ref()
+                .and_then(|features| features.variables.as_ref()),
+        );
 
         let done = self
             .handle_request_plugin(

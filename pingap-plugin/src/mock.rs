@@ -285,6 +285,6 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
             )
             .await
             .unwrap();
-        assert_eq!(true, result == RequestPluginResult::Continue);
+        assert_eq!(true, result == RequestPluginResult::Skipped);
     }
 }

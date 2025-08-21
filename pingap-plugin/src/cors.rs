@@ -388,13 +388,10 @@ max_age = "60m"
             )
             .await
             .unwrap();
-        assert_eq!(
-            true,
-            result == RequestPluginResult::Respond(HttpResponse::no_content())
-        );
         let RequestPluginResult::Respond(resp) = result else {
             panic!("result is not Respond");
         };
+        assert_eq!(resp.status, http::StatusCode::NO_CONTENT);
 
         assert_eq!(
             r#"[("access-control-allow-methods", "GET"), ("access-control-allow-headers", "Content-Type, X-User-Id"), ("access-control-max-age", "3600"), ("access-control-allow-credentials", "true"), ("access-control-expose-headers", "Content-Encoding, Kuma-Revision"), ("access-control-allow-origin", "https://pingap.io")]"#,

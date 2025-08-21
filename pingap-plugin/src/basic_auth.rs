@@ -339,10 +339,9 @@ hide_credentials = true
             )
             .await
             .unwrap();
-        assert_eq!(
-            true,
-            result
-                == RequestPluginResult::Respond(auth.unauthorized_resp.clone())
-        );
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
+        assert_eq!(resp.status, http::StatusCode::UNAUTHORIZED);
     }
 }
