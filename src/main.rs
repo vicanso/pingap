@@ -22,7 +22,7 @@ use pingap_certificate::{
 };
 use pingap_config::{get_config_storage, ETCD_PROTOCOL};
 use pingap_config::{LoadConfigOptions, PingapConf};
-use pingap_core::new_simple_service_task;
+use pingap_core::BackgroundTaskService;
 #[cfg(feature = "imageoptim")]
 #[allow(unused_imports)]
 use pingap_imageoptim::ImageOptim;
@@ -339,6 +339,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         return run_admin_node(args);
     }
 
+    pingap_core::init_time_cache();
+
     // Initialize configuration
     pingap_config::try_init_config_storage(&args.conf)?;
     let (s, r) = crossbeam_channel::bounded(0);
@@ -524,16 +526,30 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    let mut simple_tasks = vec![
-        new_certificate_validity_service(webhook::get_webhook_sender()),
-        new_self_signed_certificate_validity_service(),
-        new_performance_metrics_log_service(),
-    ];
+    let mut simple_background_service = BackgroundTaskService::new(
+        "simple_background_service",
+        Duration::from_secs(60),
+        vec![
+            (
+                "validity_checker".to_string(),
+                new_certificate_validity_service(webhook::get_webhook_sender()),
+            ),
+            (
+                "self_signed_certificate_stale".to_string(),
+                new_self_signed_certificate_validity_service(),
+            ),
+            (
+                "performance_metrics".to_string(),
+                new_performance_metrics_log_service(),
+            ),
+        ],
+    );
+
     if let Some(task) = new_storage_clear_service() {
-        simple_tasks.push(task);
+        simple_background_service.add_task("storage_clear", task);
     }
     if let Some(compression_task) = compression_task {
-        simple_tasks.push(compression_task);
+        simple_background_service.add_task("log_compress", compression_task);
     }
 
     let enabled_http_challenge = certificates.iter().any(|(_, certificate)| {
@@ -548,10 +564,13 @@ fn run() -> Result<(), Box<dyn Error>> {
         .is_empty()
     {
         if let Some(storage) = get_config_storage() {
-            simple_tasks.push(new_lets_encrypt_service(
-                storage,
-                webhook::get_webhook_sender(),
-            ));
+            simple_background_service.add_task(
+                "lets_encrypt",
+                new_lets_encrypt_service(
+                    storage,
+                    webhook::get_webhook_sender(),
+                ),
+            );
         }
     }
 
@@ -583,7 +602,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             ps.enable_lets_encrypt();
         }
         if let Some(service) = ps.get_prometheus_push_service() {
-            simple_tasks.push(service);
+            simple_background_service.add_task("prometheus_push", service);
         }
         let services = ps.run(&my_server.configuration)?;
         my_server.add_service(services.lb);
@@ -600,31 +619,29 @@ fn run() -> Result<(), Box<dyn Error>> {
                 ),
             ));
         } else {
+            let auto_restart_task = new_auto_restart_service(
+                auto_restart_check_interval,
+                only_hot_reload,
+            );
             my_server.add_service(background_service(
-                "auto_restart",
-                new_auto_restart_service(
-                    auto_restart_check_interval,
-                    only_hot_reload,
-                ),
+                &auto_restart_task.name(),
+                auto_restart_task,
             ));
         }
     }
 
     my_server.add_service(background_service(
-        "simple_task",
-        new_simple_service_task(
-            "simple_task",
-            Duration::from_secs(60),
-            simple_tasks,
-        ),
+        &simple_background_service.name(),
+        simple_background_service,
     ));
 
+    let upstream_health_check_task = new_upstream_health_check_task(
+        Duration::from_secs(10),
+        webhook::get_webhook_sender(),
+    );
     my_server.add_service(background_service(
-        "upstream_hc",
-        new_upstream_health_check_task(
-            Duration::from_secs(10),
-            webhook::get_webhook_sender(),
-        ),
+        &upstream_health_check_task.name(),
+        upstream_health_check_task,
     ));
 
     info!(

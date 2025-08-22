@@ -746,12 +746,6 @@ mod tests {
     }
 
     #[test]
-    fn test_now_ms() {
-        let now = now_ms();
-        assert!(now > 0);
-    }
-
-    #[test]
     fn test_get_cache_key() {
         let mut ctx = Ctx::new();
         ctx.cache = Some(CacheInfo {
@@ -1019,13 +1013,6 @@ mod tests {
             ctx.append_log_value(BytesMut::new(), "cache_lock_time_human")
                 .as_ref()
         );
-
-        ctx.timing.created_at = now_ms() - 1;
-        assert_eq!(
-            true,
-            ctx.append_log_value(BytesMut::new(), "service_time_human")
-                .ends_with(b"ms")
-        );
     }
 
     #[test]
@@ -1049,7 +1036,6 @@ mod tests {
         ctx.timing.upstream_processing = Some(2);
         ctx.timing.cache_lookup = Some(6);
         ctx.timing.cache_lock = Some(7);
-        ctx.timing.created_at = now_ms() - 1;
         ctx.add_plugin_processing_time("plugin1", 100);
         ctx.add_plugin_processing_time("plugin2", 200);
 

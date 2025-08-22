@@ -214,7 +214,7 @@ impl CombinedAuth {
             category: category.to_string(),
             message: e.to_string(),
         })?;
-        let now = pingap_util::now_sec() as i64;
+        let now = pingap_core::now_sec() as i64;
         if (now - value).abs() > auth_param.deviation {
             return Err(Error::Invalid {
                 category: category.to_string(),
@@ -407,7 +407,7 @@ mod tests {
 
         // digest is empty
         let headers = ["X-Forwarded-For: 192.168.1.10"].join("\r\n");
-        let ts = pingap_util::now_sec() as i64;
+        let ts = pingap_core::now_sec() as i64;
         let input_header = format!(
             "GET /vicanso/pingap?app_id=pingap&ts={ts} HTTP/1.1\r\n{headers}\r\n\r\n"
         );
@@ -423,7 +423,7 @@ mod tests {
 
         // digest is invalid
         let headers = ["X-Forwarded-For: 192.168.1.10"].join("\r\n");
-        let ts = pingap_util::now_sec() as i64;
+        let ts = pingap_core::now_sec() as i64;
         let input_header = format!(
             "GET /vicanso/pingap?app_id=pingap&ts={ts}&digest=abc HTTP/1.1\r\n{headers}\r\n\r\n"
         );
@@ -438,7 +438,7 @@ mod tests {
         );
 
         let headers = ["X-Forwarded-For: 192.168.1.10"].join("\r\n");
-        let ts = pingap_util::now_sec() as i64;
+        let ts = pingap_core::now_sec() as i64;
         let mut hasher = Sha256::new();
         hasher.update(format!("{secret}:{ts}",).as_bytes());
         let hash256 = hasher.finalize();

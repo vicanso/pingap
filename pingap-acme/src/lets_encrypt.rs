@@ -21,6 +21,7 @@ use crate::dns_cf::CfDnsTask;
 use crate::dns_huawei::HuaweiDnsTask;
 use crate::dns_manual::ManualDnsTask;
 use crate::dns_tencent::TencentDnsTask;
+use async_trait::async_trait;
 use hickory_resolver::config::ResolverConfig;
 use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_resolver::proto::rr::RecordType;
@@ -36,9 +37,9 @@ use pingap_config::{
     get_current_config, set_current_config, ConfigStorage, LoadConfigOptions,
     PingapConf, CATEGORY_CERTIFICATE,
 };
+use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
 use pingap_core::HttpResponse;
-use pingap_core::SimpleServiceTaskFuture;
 use pingap_core::{
     Ctx, NotificationData, NotificationLevel, NotificationSender,
 };
@@ -240,58 +241,59 @@ async fn handle_successful_renewal(
     }
 }
 
+struct LetsEncryptTask {
+    storage: &'static (dyn ConfigStorage + Sync + Send),
+    sender: Option<Arc<NotificationSender>>,
+}
+
+#[async_trait]
+impl BackgroundTask for LetsEncryptTask {
+    async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
+        let mut params = vec![];
+        for (name, certificate) in get_current_config().certificates.iter() {
+            let acme = certificate.acme.clone().unwrap_or_default();
+            let domains = certificate.domains.clone().unwrap_or_default();
+            if acme.is_empty() || domains.is_empty() {
+                continue;
+            }
+            let dns_service_url = get_value_from_env(
+                &certificate.dns_service_url.clone().unwrap_or_default(),
+            );
+
+            params.push(UpdateCertificateParams {
+                name: name.to_string(),
+                buffer_days: certificate.buffer_days.unwrap_or_default(),
+                domains: domains
+                    .split(',')
+                    .map(|item| item.trim().to_string())
+                    .filter(|item| !item.is_empty())
+                    .collect(),
+                dns_challenge: certificate.dns_challenge.unwrap_or_default(),
+                dns_provider: certificate
+                    .dns_provider
+                    .clone()
+                    .unwrap_or_default(),
+                dns_service_url,
+            });
+        }
+        do_update_certificates(
+            count,
+            self.storage,
+            &params,
+            self.sender.clone(),
+        )
+        .await?;
+        Ok(true)
+    }
+}
+
 /// Create a Let's Encrypt service to generate the certificate,
 /// and regenerate if the certificate is invalid or will be expired.
 pub fn new_lets_encrypt_service(
     storage: &'static (dyn ConfigStorage + Sync + Send),
     sender: Option<Arc<NotificationSender>>,
-) -> (String, SimpleServiceTaskFuture) {
-    let task: SimpleServiceTaskFuture = Box::new(move |count: u32| {
-        let sender = sender.clone();
-        Box::pin({
-            async move {
-                let mut params = vec![];
-                for (name, certificate) in
-                    get_current_config().certificates.iter()
-                {
-                    let acme = certificate.acme.clone().unwrap_or_default();
-                    let domains =
-                        certificate.domains.clone().unwrap_or_default();
-                    if acme.is_empty() || domains.is_empty() {
-                        continue;
-                    }
-                    let dns_service_url = get_value_from_env(
-                        &certificate
-                            .dns_service_url
-                            .clone()
-                            .unwrap_or_default(),
-                    );
-
-                    params.push(UpdateCertificateParams {
-                        name: name.to_string(),
-                        buffer_days: certificate
-                            .buffer_days
-                            .unwrap_or_default(),
-                        domains: domains
-                            .split(',')
-                            .map(|item| item.trim().to_string())
-                            .filter(|item| !item.is_empty())
-                            .collect(),
-                        dns_challenge: certificate
-                            .dns_challenge
-                            .unwrap_or_default(),
-                        dns_provider: certificate
-                            .dns_provider
-                            .clone()
-                            .unwrap_or_default(),
-                        dns_service_url,
-                    });
-                }
-                do_update_certificates(count, storage, &params, sender).await
-            }
-        })
-    });
-    ("lets_encrypt".to_string(), task)
+) -> Box<dyn BackgroundTask> {
+    Box::new(LetsEncryptTask { storage, sender })
 }
 
 /// Get the cert from file and convert it to certificate struct.

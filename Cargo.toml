@@ -27,6 +27,7 @@ clap = { version = "4.5.40", features = [
     "help",
     "usage",
 ], default-features = false }
+coarsetime = { workspace = true }
 ctor = { workspace = true }
 crc32fast = { workspace = true }
 crossbeam-channel = "0.5.15"
@@ -152,6 +153,7 @@ chrono = { version = "0.4.41", default-features = false, features = [
     "std",
     "clock",
 ] }
+coarsetime = "0.1.36"
 cookie = "0.18.1"
 crc32fast = "1.4.2"
 ctor = "0.4.2"

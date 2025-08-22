@@ -286,7 +286,6 @@ fn bench_logger_format(c: &mut Criterion) {
                 .into();
         let ctx = Ctx {
             timing: Timing {
-                created_at: pingap_util::now_ms(),
                 connection_duration: 300,
                 upstream_connect: Some(30),
                 upstream_processing: Some(50),

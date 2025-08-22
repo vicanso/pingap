@@ -16,8 +16,8 @@ use super::{get_cache_backend, is_cache_backend_init, LOG_CATEGORY};
 use super::{Error, Result, PAGE_SIZE};
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
-use pingap_core::SimpleServiceTaskFuture;
 use pingora::cache::key::{CacheHashKey, CompactCacheKey};
 use pingora::cache::storage::MissFinishType;
 use pingora::cache::storage::{HandleHit, HandleMiss};
@@ -216,8 +216,19 @@ async fn do_file_storage_clear(
     Ok(true)
 }
 
-pub fn new_storage_clear_service() -> Option<(String, SimpleServiceTaskFuture)>
-{
+struct StorageClearTask {
+    cache: Arc<dyn HttpCacheStorage>,
+}
+
+#[async_trait]
+impl BackgroundTask for StorageClearTask {
+    async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
+        do_file_storage_clear(count, self.cache.clone()).await?;
+        Ok(true)
+    }
+}
+
+pub fn new_storage_clear_service() -> Option<Box<dyn BackgroundTask>> {
     // if cache backend not initialized, do not create storage clear service
     if !is_cache_backend_init() {
         return None;
@@ -228,16 +239,9 @@ pub fn new_storage_clear_service() -> Option<(String, SimpleServiceTaskFuture)>
         return None;
     };
     backend.cache.inactive()?;
-    let task: SimpleServiceTaskFuture = Box::new(move |count: u32| {
-        Box::pin({
-            let value = backend.cache.clone();
-            async move {
-                let value = value.clone();
-                do_file_storage_clear(count, value).await
-            }
-        })
-    });
-    Some(("cache_storage_clear".to_string(), task))
+    Some(Box::new(StorageClearTask {
+        cache: backend.cache.clone(),
+    }))
 }
 
 pub struct HttpCache {

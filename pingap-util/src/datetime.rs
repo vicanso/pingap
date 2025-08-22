@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use once_cell::sync::Lazy;
+use pingap_core::now_ms;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // 2022-05-07: 1651852800
@@ -31,26 +32,6 @@ pub fn get_super_ts() -> u32 {
     } else {
         0
     }
-}
-
-/// Returns the duration since UNIX epoch (1970-01-01 00:00:00 UTC)
-#[inline]
-pub fn now() -> Duration {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-}
-
-/// Returns the current timestamp in milliseconds since UNIX epoch
-#[inline]
-pub fn now_ms() -> u64 {
-    now().as_millis() as u64
-}
-
-/// Returns the current timestamp in seconds since UNIX epoch
-#[inline]
-pub fn now_sec() -> u64 {
-    now().as_secs()
 }
 
 /// Calculates latency between a previous timestamp and now
@@ -81,6 +62,7 @@ pub fn elapsed_second(time: SystemTime) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pingap_core::{now_ms, now_sec};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -90,6 +72,7 @@ mod tests {
 
     #[test]
     fn test_now() {
+        pingap_core::init_time_cache();
         assert_eq!(10, now_sec().to_string().len());
         assert_eq!(13, now_ms().to_string().len());
     }

@@ -520,7 +520,7 @@ mod tests {
             status: StatusCode::OK,
             body: Bytes::from("Hello world!"),
             max_age: Some(3600),
-            created_at: Some(get_super_ts() - 10),
+            created_at: Some(0),
             cache_private: Some(true),
             headers: Some(
                 convert_headers(&[

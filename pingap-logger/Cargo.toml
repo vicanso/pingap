@@ -10,6 +10,7 @@ keywords = ["pingap", "logger"]
 description = "Logger for pingap"
 
 [dependencies]
+async-trait = { workspace = true }
 bytes = { workspace = true }
 bytesize = { workspace = true }
 chrono = { workspace = true }

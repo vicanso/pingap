@@ -35,7 +35,7 @@ const SECONDS_PER_DAY: u64 = 24 * 3600;
 /// - The PEM data is invalid UTF-8
 fn parse_chain_certificate(data: &[u8]) -> Option<X509> {
     let expiration_threshold =
-        pingap_util::now_sec() + EXPIRATION_BUFFER_DAYS * SECONDS_PER_DAY;
+        pingap_core::now_sec() + EXPIRATION_BUFFER_DAYS * SECONDS_PER_DAY;
 
     String::from_utf8(data.to_vec())
         .ok()

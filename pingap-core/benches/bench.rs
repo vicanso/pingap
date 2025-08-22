@@ -1,6 +1,8 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use http::HeaderValue;
-use pingap_core::{convert_header, get_host, remove_query_from_header};
+use pingap_core::{
+    convert_header, get_host, get_super_ts, remove_query_from_header,
+};
 use pingora::http::RequestHeader;
 
 fn bench_remove_query_from_header(c: &mut Criterion) {
@@ -40,10 +42,20 @@ fn bench_convert_header_value(c: &mut Criterion) {
     });
 }
 
+fn bench_get_super_ts(c: &mut Criterion) {
+    pingap_core::init_time_cache();
+    c.bench_function("get super ts", |b| {
+        b.iter(|| {
+            let _ = get_super_ts();
+        });
+    });
+}
+
 criterion_group!(
     benches,
     bench_remove_query_from_header,
     bench_get_host,
-    bench_convert_header_value
+    bench_convert_header_value,
+    bench_get_super_ts,
 );
 criterion_main!(benches);

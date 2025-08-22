@@ -25,7 +25,8 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
 use tracing::{error, info};
 
-static START_TIME: Lazy<Duration> = Lazy::new(pingap_util::now);
+static START_TIME: Lazy<Duration> =
+    Lazy::new(|| Duration::from_secs(pingap_core::now_sec()));
 
 static ADMIN_ADDR: OnceCell<String> = OnceCell::new();
 

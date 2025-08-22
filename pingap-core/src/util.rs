@@ -12,32 +12,40 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use coarsetime::{Clock, Updater};
 use once_cell::sync::Lazy;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+static COARSE_CLOCK_UPDATER: Lazy<Updater> =
+    Lazy::new(|| Updater::new(100).start().unwrap());
+
+/// Initialize the time cache
+pub fn init_time_cache() {
+    Lazy::force(&COARSE_CLOCK_UPDATER);
+}
 
 // 2022-05-07: 1651852800
-// const SUPER_TIMESTAMP: u64 = 1651852800;
-static SUPER_TIMESTAMP: Lazy<SystemTime> = Lazy::new(|| {
-    UNIX_EPOCH
-        .checked_add(Duration::from_secs(1651852800))
-        .unwrap_or(SystemTime::now())
-});
+const SUPER_TIMESTAMP: u64 = 1651852800;
+
+/// Returns the number of seconds since the epoch
+#[inline]
+pub fn now_sec() -> u64 {
+    Clock::recent_since_epoch().as_secs()
+}
 
 /// Returns the number of seconds elapsed since SUPER_TIMESTAMP
 /// Returns 0 if the current time is before SUPER_TIMESTAMP
 #[inline]
 pub fn get_super_ts() -> u32 {
-    match SystemTime::now().duration_since(*SUPER_TIMESTAMP) {
-        Ok(duration) => duration.as_secs() as u32,
-        Err(_) => 0,
-    }
+    let super_ts_secs = SUPER_TIMESTAMP;
+    now_sec().saturating_sub(super_ts_secs) as u32
 }
 
 static HOST_NAME: Lazy<String> = Lazy::new(|| {
     hostname::get()
-        .unwrap_or_default()
-        .to_str()
-        .unwrap_or_default()
+        .ok()
+        .as_deref()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or("")
         .to_string()
 });
 
@@ -49,10 +57,26 @@ pub fn get_hostname() -> &'static str {
     HOST_NAME.as_str()
 }
 
+/// Returns the number of milliseconds since the epoch
 #[inline]
-pub(crate) fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+pub fn now_ms() -> u64 {
+    Clock::recent_since_epoch().as_millis()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{get_super_ts, init_time_cache, now_ms};
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_super_ts() {
+        init_time_cache();
+        assert_eq!(true, get_super_ts() > 104017048);
+    }
+
+    #[test]
+    fn test_now_ms() {
+        init_time_cache();
+        assert_eq!(true, now_ms() > 1755870295813);
+    }
 }

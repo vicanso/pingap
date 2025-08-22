@@ -22,7 +22,8 @@ use pingap_config::{
     CATEGORY_PLUGIN, CATEGORY_UPSTREAM,
 };
 use pingap_core::{
-    CommonServiceTask, NotificationData, NotificationLevel, ServiceTask,
+    BackgroundTask, BackgroundTaskService, Error as ServiceError,
+    NotificationData, NotificationLevel,
 };
 use pingap_location::try_init_locations;
 use pingap_upstream::try_update_upstreams;
@@ -363,30 +364,26 @@ struct AutoRestart {
     only_hot_reload: bool,
     /// Tracks if currently performing a hot reload
     running_hot_reload: AtomicBool,
-    /// Counter for tracking intervals
-    count: AtomicU32,
 }
 
 /// Creates a new auto-restart service that checks for config changes periodically
 pub fn new_auto_restart_service(
     interval: Duration,
     only_hot_reload: bool,
-) -> CommonServiceTask {
+) -> BackgroundTaskService {
     let mut restart_unit = 1_u32;
     let unit = Duration::from_secs(10);
     if interval > unit {
         restart_unit = (interval.as_secs() / unit.as_secs()) as u32;
     }
 
-    CommonServiceTask::new(
-        interval.min(unit),
-        AutoRestart {
-            running_hot_reload: AtomicBool::new(false),
-            only_hot_reload,
-            restart_unit,
-            count: AtomicU32::new(0),
-        },
-    )
+    let task = Box::new(AutoRestart {
+        running_hot_reload: AtomicBool::new(false),
+        only_hot_reload,
+        restart_unit,
+    });
+    let name = "auto_restart";
+    BackgroundTaskService::new_single(name, interval.min(unit), name, task)
 }
 
 /// ConfigObserverService provides real-time config file monitoring
@@ -508,13 +505,12 @@ async fn run_diff_and_update_config(hot_reload_only: bool) {
 }
 
 #[async_trait]
-impl ServiceTask for AutoRestart {
-    async fn run(&self) -> Option<bool> {
+impl BackgroundTask for AutoRestart {
+    async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
         // Calculate if this iteration should be hot reload only
         // Uses modulo arithmetic with restart_unit to create a pattern like:
         // [hot reload, hot reload, full restart, hot reload, hot reload, full restart]
         // This helps spread out potentially disruptive full restarts
-        let count = self.count.fetch_add(1, Ordering::Relaxed);
         let hot_reload_only = if self.only_hot_reload {
             true
         } else if count > 0 && self.restart_unit > 1 {
@@ -525,13 +521,6 @@ impl ServiceTask for AutoRestart {
         self.running_hot_reload
             .store(hot_reload_only, Ordering::Relaxed);
         run_diff_and_update_config(hot_reload_only).await;
-        None
-    }
-    fn description(&self) -> String {
-        if self.running_hot_reload.load(Ordering::Relaxed) {
-            "hot reload detector".to_string()
-        } else {
-            "restart detector".to_string()
-        }
+        Ok(true)
     }
 }

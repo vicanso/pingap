@@ -15,13 +15,14 @@
 #[cfg(unix)]
 use super::syslog::new_syslog_writer;
 use super::{Error, LOG_CATEGORY};
+use async_trait::async_trait;
 use bytesize::ByteSize;
 use chrono::Timelike;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use pingap_core::convert_query_map;
+use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
-use pingap_core::SimpleServiceTaskFuture;
 use std::fs;
 use std::io;
 #[cfg(unix)]
@@ -154,7 +155,7 @@ impl Default for LogCompressParams {
 /// Boolean indicating if compression was performed
 async fn do_compress(
     count: u32,
-    params: LogCompressParams,
+    params: &LogCompressParams,
 ) -> Result<bool, ServiceError> {
     const OFFSET: u32 = 60;
     if count % OFFSET != 0
@@ -230,6 +231,18 @@ async fn do_compress(
     Ok(true)
 }
 
+struct LogCompressTask {
+    params: LogCompressParams,
+}
+
+#[async_trait]
+impl BackgroundTask for LogCompressTask {
+    async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
+        do_compress(count, &self.params).await?;
+        Ok(true)
+    }
+}
+
 /// Creates a new log compression service task
 ///
 /// # Arguments
@@ -239,17 +252,8 @@ async fn do_compress(
 /// Optional tuple containing service name and task future
 fn new_log_compress_service(
     params: LogCompressParams,
-) -> Option<(String, SimpleServiceTaskFuture)> {
-    let task: SimpleServiceTaskFuture = Box::new(move |count: u32| {
-        Box::pin({
-            let value = params.clone();
-            async move {
-                let value = value.clone();
-                do_compress(count, value).await
-            }
-        })
-    });
-    Some(("log_compress".to_string(), task))
+) -> Box<dyn BackgroundTask> {
+    Box::new(LogCompressTask { params })
 }
 
 /// Parameters for logger configuration
@@ -263,7 +267,7 @@ pub struct LoggerParams {
 
 fn new_file_writer(
     params: &LoggerParams,
-) -> Result<(BoxMakeWriter, Option<(String, SimpleServiceTaskFuture)>)> {
+) -> Result<(BoxMakeWriter, Option<Box<dyn BackgroundTask>>)> {
     let mut file = pingap_util::resolve_path(&params.log);
     let mut rolling_type = "".to_string();
     let mut compression = "".to_string();
@@ -301,13 +305,13 @@ fn new_file_writer(
     };
     fs::create_dir_all(dir).map_err(|e| Error::Io { source: e })?;
     if !compression.is_empty() {
-        task = new_log_compress_service(LogCompressParams {
+        task = Some(new_log_compress_service(LogCompressParams {
             compression,
             path: dir.to_path_buf(),
             days_ago,
             level,
             time_point_hour,
-        });
+        }));
     }
 
     let filename = if filepath.is_dir() {
@@ -350,7 +354,7 @@ fn new_file_writer(
 /// Optional tuple containing compression service name and task future if compression is enabled
 pub fn logger_try_init(
     params: LoggerParams,
-) -> Result<Option<(String, SimpleServiceTaskFuture)>> {
+) -> Result<Option<Box<dyn BackgroundTask>>> {
     let level = if params.level.is_empty() {
         std::env::var("RUST_LOG").unwrap_or("INFO".to_string())
     } else {

@@ -24,9 +24,9 @@ use once_cell::sync::Lazy;
 use pingap_acme::handle_lets_encrypt;
 use pingap_certificate::{GlobalCertificate, TlsSettingParams};
 use pingap_config::get_config_storage;
+use pingap_core::BackgroundTask;
 #[cfg(feature = "full")]
 use pingap_core::OtelTracer;
-use pingap_core::SimpleServiceTaskFuture;
 use pingap_core::{convert_header_value, convert_headers, HttpHeader};
 use pingap_core::{
     get_cache_key, CompressionStat, Ctx, PluginStep, RequestPluginResult,
@@ -312,7 +312,7 @@ impl Server {
     /// Returns a tuple of (metrics endpoint, service future) if push mode is configured.
     pub fn get_prometheus_push_service(
         &self,
-    ) -> Option<(String, SimpleServiceTaskFuture)> {
+    ) -> Option<Box<dyn BackgroundTask>> {
         if !self.prometheus_push_mode {
             return None;
         }
@@ -491,7 +491,7 @@ fn get_digest_detail(digest: &Digest) -> DigestDetail {
     let tcp_established = get_established(digest.timing_digest.first());
     let mut connection_time = 0;
     if tcp_established > 0 {
-        connection_time = pingap_util::now_ms() - tcp_established;
+        connection_time = pingap_core::now_ms() - tcp_established;
     }
     let connection_reused = connection_time > 100;
 
@@ -1804,6 +1804,7 @@ mod tests {
 
     #[test]
     fn test_get_digest_detail() {
+        pingap_core::init_time_cache();
         let digest = Digest {
             timing_digest: vec![Some(TimingDigest {
                 established_ts: SystemTime::UNIX_EPOCH

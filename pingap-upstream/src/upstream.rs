@@ -19,7 +19,9 @@ use derive_more::Debug;
 use futures_util::FutureExt;
 use once_cell::sync::Lazy;
 use pingap_config::UpstreamConf;
-use pingap_core::{CommonServiceTask, ServiceTask};
+use pingap_core::{
+    BackgroundTask, BackgroundTaskService, Error as ServiceError,
+};
 use pingap_core::{NotificationData, NotificationLevel, NotificationSender};
 use pingap_discovery::{
     is_dns_discovery, is_docker_discovery, is_static_discovery,
@@ -40,7 +42,7 @@ use pingora::upstreams::peer::{HttpPeer, Tracer, Tracing};
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tracing::{debug, error, info};
@@ -782,9 +784,8 @@ pub async fn try_update_upstreams(
 }
 
 #[async_trait]
-impl ServiceTask for HealthCheckTask {
-    async fn run(&self) -> Option<bool> {
-        let check_count = self.count.fetch_add(1, Ordering::Relaxed);
+impl BackgroundTask for HealthCheckTask {
+    async fn execute(&self, check_count: u32) -> Result<bool, ServiceError> {
         // get upstream names
         let upstreams = {
             let mut upstreams = vec![];
@@ -933,17 +934,12 @@ impl ServiceTask for HealthCheckTask {
                 }
             }
         }
-        None
-    }
-    fn description(&self) -> String {
-        let count = UPSTREAM_MAP.load().len();
-        format!("upstream health check, upstream count: {count}")
+        Ok(true)
     }
 }
 
 struct HealthCheckTask {
     interval: Duration,
-    count: AtomicU32,
     sender: Option<Arc<NotificationSender>>,
     unhealthy_upstreams: ArcSwap<Vec<String>>,
 }
@@ -951,17 +947,17 @@ struct HealthCheckTask {
 pub fn new_upstream_health_check_task(
     interval: Duration,
     sender: Option<Arc<NotificationSender>>,
-) -> CommonServiceTask {
-    let interval = interval.max(Duration::from_secs(10));
-    CommonServiceTask::new(
+) -> BackgroundTaskService {
+    let task = Box::new(HealthCheckTask {
         interval,
-        HealthCheckTask {
-            interval,
-            count: AtomicU32::new(0),
-            sender,
-            unhealthy_upstreams: ArcSwap::new(Arc::new(vec![])),
-        },
-    )
+        sender,
+        unhealthy_upstreams: ArcSwap::new(Arc::new(vec![])),
+    });
+    let name = "upstream_health_check";
+    let mut service =
+        BackgroundTaskService::new_single(name, interval, name, task);
+    service.set_immediately(true);
+    service
 }
 
 #[cfg(test)]

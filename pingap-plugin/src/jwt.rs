@@ -294,7 +294,7 @@ impl Plugin for JwtAuth {
         )
         .unwrap_or_default();
         if let Some(exp) = value.get("exp") {
-            if exp.as_u64().unwrap_or_default() < pingap_util::now_sec() {
+            if exp.as_u64().unwrap_or_default() < pingap_core::now_sec() {
                 let mut resp = self.unauthorized_resp.clone();
                 resp.body = Bytes::from_static(b"Jwt authorization is expired");
                 return Ok(RequestPluginResult::Respond(resp));
@@ -482,6 +482,7 @@ auth_path = "/login"
     /// Tests JWT token validation functionality
     #[tokio::test]
     async fn test_jwt_auth() {
+        pingap_core::init_time_cache();
         let auth = JwtAuth::new(
             &toml::from_str::<PluginConf>(
                 r###"

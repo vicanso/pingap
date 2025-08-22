@@ -14,50 +14,16 @@
 
 use super::{Error, LOG_CATEGORY};
 use async_trait::async_trait;
-use futures::future::BoxFuture;
+use futures::future::join_all;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant};
 use tokio::time::interval;
 use tracing::{error, info};
 
-// Type alias for a boxed future that represents a background task
-// Takes a u32 counter and returns Result<bool, Error>
-pub type SimpleServiceTaskFuture =
-    Box<dyn Fn(u32) -> BoxFuture<'static, Result<bool, Error>> + Sync + Send>;
-
-// Represents a collection of background tasks that run periodically
-pub struct SimpleServiceTask {
-    name: String,     // Name identifier for the service
-    count: AtomicU32, // Counter for tracking task executions
-    tasks: Vec<(String, SimpleServiceTaskFuture)>, // List of named tasks to execute
-    interval: Duration, // Time between task executions
-}
-
-/// Creates a new SimpleServiceTask with the specified name, interval, and collection of tasks.
-/// This service manages multiple background tasks that run concurrently at fixed intervals.
-///
-/// # Arguments
-/// * `name` - Identifier for this service instance, used in logging
-/// * `interval` - Duration between task executions (e.g., Duration::from_secs(60) for minute intervals)
-/// * `tasks` - Vector of named tasks to execute periodically, where each task is a tuple of (name, task_function)
-pub fn new_simple_service_task(
-    name: &str,
-    interval: Duration,
-    tasks: Vec<(String, SimpleServiceTaskFuture)>,
-) -> SimpleServiceTask {
-    SimpleServiceTask {
-        name: name.to_string(),
-        count: AtomicU32::new(0),
-        tasks,
-        interval,
-    }
-}
-
 fn duration_to_string(duration: Duration) -> String {
     let secs = duration.as_secs_f64();
-
     if secs < 60.0 {
         format!("{secs:.1}s")
     } else if secs < 3600.0 {
@@ -69,195 +35,153 @@ fn duration_to_string(duration: Duration) -> String {
     }
 }
 
+/// A unified trait for any task that can be run in the background.
 #[async_trait]
-impl BackgroundService for SimpleServiceTask {
-    /// Starts the background service, executing all tasks at the specified interval
-    /// until shutdown is signaled or tasks complete. Each task execution is logged
-    /// with timing information and success/failure status.
+pub trait BackgroundTask: Sync + Send {
+    /// Executes a single iteration of the task.
     ///
     /// # Arguments
-    /// * `shutdown` - Watch channel for shutdown coordination
+    /// * `count` - The current execution cycle number.
     ///
-    /// # Task Execution
-    /// - Tasks are executed sequentially in the order they were added
-    /// - Each task receives a counter value that increments with each interval
-    /// - Failed tasks are logged with error details but don't stop the service
-    /// - Task execution times are logged for monitoring purposes
-    ///
-    /// # Shutdown Behavior
-    /// - Service stops gracefully when shutdown signal is received
-    /// - Current task iteration completes before shutdown
+    /// # Returns
+    /// * `Ok(true)` if the task performed meaningful work and should be logged as "success".
+    /// * `Ok(false)` if the task was skipped or did no work.
+    /// * `Err(Error)` if the task failed.
+    async fn execute(&self, count: u32) -> Result<bool, Error>;
+}
+
+/// A unified background service runner that can handle one or more named tasks.
+pub struct BackgroundTaskService {
+    name: String,
+    count: AtomicU32,
+    tasks: Vec<(String, Box<dyn BackgroundTask>)>, // Holds named tasks
+    interval: Duration,
+    immediately: bool,
+}
+
+impl BackgroundTaskService {
+    /// Creates a new service to run multiple background tasks.
+    pub fn new(
+        name: &str,
+        interval: Duration,
+        tasks: Vec<(String, Box<dyn BackgroundTask>)>,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            count: AtomicU32::new(0),
+            tasks,
+            interval,
+            immediately: false,
+        }
+    }
+    /// A convenience constructor for creating a service with a single task.
+    pub fn new_single(
+        name: &str,
+        interval: Duration,
+        task_name: &str,
+        task: Box<dyn BackgroundTask>,
+    ) -> Self {
+        Self::new(name, interval, vec![(task_name.to_string(), task)])
+    }
+    /// Set whether the service should run immediately or wait for the interval
+    pub fn set_immediately(&mut self, immediately: bool) {
+        self.immediately = immediately;
+    }
+    /// Add a task to the service
+    /// This is useful for adding tasks to the service after it has been created
+    pub fn add_task(&mut self, task_name: &str, task: Box<dyn BackgroundTask>) {
+        self.tasks.push((task_name.to_string(), task));
+    }
+    pub fn name(&self) -> String {
+        self.name.clone()
+    }
+}
+
+#[async_trait]
+impl BackgroundService for BackgroundTaskService {
     async fn start(&self, mut shutdown: ShutdownWatch) {
-        let period_human = duration_to_string(self.interval);
-        let task_names: Vec<String> =
-            self.tasks.iter().map(|item| item.0.clone()).collect();
+        let task_names: Vec<_> =
+            self.tasks.iter().map(|(name, _)| name.as_str()).collect();
         info!(
             category = LOG_CATEGORY,
             name = self.name,
-            tasks = task_names.join(","),
-            interval = period_human.to_string(),
+            tasks = task_names.join(", "),
+            interval = duration_to_string(self.interval),
             "background service is running",
         );
 
         let mut period = interval(self.interval);
-        loop {
-            tokio::select! {
-                // Handle shutdown signal
-                _ = shutdown.changed() => {
-                    break;
-                }
-                // Execute tasks on each interval tick
-                _ = period.tick() => {
-                    let now = SystemTime::now();
-                    let count = self.count.fetch_add(1, Ordering::Relaxed);
-                    let mut success_tasks = vec![];
-                    let mut fail_tasks = vec![];
-                    // Execute each task and track results
-                    for (task_name, task) in self.tasks.iter() {
-                        let task_start = SystemTime::now();
-                        match task(count).await {
-                           Err(e)  => {
-                               fail_tasks.push(task_name.to_string());
-                               error!(
-                                   category = LOG_CATEGORY,
-                                   name = self.name,
-                                   task = task_name,
-                                   error = %e,
-                               );
-                           }
-                           Ok(executed) => {
-                               if executed {
-                                   success_tasks.push(task_name.to_string());
-                                   info!(
-                                       category = LOG_CATEGORY,
-                                       name = self.name,
-                                       task = task_name,
-                                       elapsed = format!(
-                                           "{}ms",
-                                           task_start.elapsed().unwrap_or_default().as_millis()
-                                       ),
-                                   );
-                               }
-                           }
-                        };
-                    }
-                    if !success_tasks.is_empty() || !fail_tasks.is_empty() {
-                        info!(
-                            category = LOG_CATEGORY,
-                            name = self.name,
-                            success_tasks = success_tasks.join(","),
-                            fails = fail_tasks.len(),
-                            fail_tasks = fail_tasks.join(","),
-                            elapsed = format!(
-                                "{}ms",
-                                now.elapsed().unwrap_or_default().as_millis()
-                            ),
-                        );
-                    }
-                }
-            }
+        // The first tick fires immediately, which is often not desired. We skip it.
+        if !self.immediately {
+            period.tick().await;
         }
-    }
-}
 
-// Trait defining interface for individual service tasks
-#[async_trait]
-pub trait ServiceTask: Sync + Send {
-    /// Executes a single iteration of the task. This method is called repeatedly
-    /// at the specified interval until shutdown or task completion.
-    ///
-    /// # Returns
-    /// * `None` or `Some(false)` - Task completed normally, continue running the service
-    /// * `Some(true)` - Task completed and requests service shutdown
-    async fn run(&self) -> Option<bool>;
-
-    /// Returns a human-readable description of the task for logging and monitoring.
-    /// Implementations should provide meaningful descriptions of their purpose.
-    ///
-    /// # Returns
-    /// * String describing the task's purpose, default is "unknown"
-    fn description(&self) -> String {
-        "unknown".to_string()
-    }
-}
-
-// Wrapper for individual ServiceTask implementations
-pub struct CommonServiceTask {
-    task: Box<dyn ServiceTask>, // The actual task to execute
-    interval: Duration,         // Time between executions
-}
-
-impl CommonServiceTask {
-    /// Creates a new CommonServiceTask that wraps a single task implementation.
-    /// This is useful for simpler cases where only one recurring task is needed.
-    ///
-    /// # Arguments
-    /// * `interval` - Duration between task executions
-    /// * `task` - Implementation of ServiceTask to execute
-    ///
-    /// # Special Cases
-    /// - If interval is less than 1 second, task runs only once
-    /// - Task can signal completion via return value to stop service
-    pub fn new(interval: Duration, task: impl ServiceTask + 'static) -> Self {
-        Self {
-            task: Box::new(task),
-            interval,
-        }
-    }
-}
-
-#[async_trait]
-impl BackgroundService for CommonServiceTask {
-    /// Starts the background service, executing the wrapped task at the specified interval.
-    /// The service runs until one of the following conditions is met:
-    /// - Shutdown signal is received
-    /// - Task returns Some(true) indicating completion
-    /// - Interval is less than 1 second (runs once and stops)
-    ///
-    /// # Arguments
-    /// * `shutdown` - Watch channel for shutdown coordination
-    ///
-    /// # Logging
-    /// - Service start is logged with task description and interval
-    /// - Each task execution is logged with elapsed time
-    /// - Task completion status is logged
-    ///
-    /// # Performance Considerations
-    /// - Task execution time is measured and logged
-    /// - Long-running tasks may delay the next interval
-    async fn start(&self, mut shutdown: ShutdownWatch) {
-        let period_human = duration_to_string(self.interval);
-        // if interval is less than 1s
-        // the task should only run once
-        let once = self.interval.as_millis() < 1000;
-
-        info!(
-            category = LOG_CATEGORY,
-            description = self.task.description(),
-            interval = period_human.to_string(),
-            "background service is running",
-        );
-
-        let mut period = interval(self.interval);
         loop {
             tokio::select! {
                 _ = shutdown.changed() => {
-                    break;
-                }
-                _ = period.tick() => {
-                    let now = SystemTime::now();
-                    let done = self.task.run().await.unwrap_or_default();
                     info!(
                         category = LOG_CATEGORY,
-                        done,
-                        elapsed = format!(
-                            "{}ms",
-                            now.elapsed().unwrap_or_default().as_millis()
-                        ),
-                        description = self.task.description(),
+                        name = self.name,
+                        "background service is shutting down"
                     );
-                    if once || done {
-                        break;
+                    break;
+                }
+                _ = period.tick() => {
+                    let cycle_start = Instant::now();
+                    let count = self.count.fetch_add(1, Ordering::Relaxed);
+
+                    // Create a collection of futures to run all tasks concurrently.
+                    let futures = self.tasks.iter().map(|(task_name, task)| async move {
+                        let task_start = Instant::now();
+                        let result = task.execute(count).await;
+                        (task_name, result, task_start.elapsed())
+                    });
+
+                    // Await all tasks to complete in parallel.
+                    let results = join_all(futures).await;
+
+                    let mut success_tasks = Vec::new();
+                    let mut failed_tasks = Vec::new();
+
+                    // Process results for logging.
+                    for (task_name, result, elapsed) in results {
+                        match result {
+                            Ok(true) => {
+                                success_tasks.push(task_name.as_str());
+                                info!(
+                                    category = LOG_CATEGORY,
+                                    name = self.name,
+                                    task = task_name,
+                                    elapsed = duration_to_string(elapsed),
+                                    "background task executed successfully"
+                                );
+                            }
+                            Ok(false) => {
+                                // Task was skipped, do nothing.
+                            }
+                            Err(e) => {
+                                failed_tasks.push(task_name.as_str());
+                                error!(
+                                    category = LOG_CATEGORY,
+                                    name = self.name,
+                                    task = task_name,
+                                    error = %e,
+                                    "background task failed"
+                                );
+                            }
+                        }
+                    }
+
+                    if !success_tasks.is_empty() || !failed_tasks.is_empty() {
+                         info!(
+                            category = LOG_CATEGORY,
+                            name = self.name,
+                            cycle = count,
+                            success_count = success_tasks.len(),
+                            failed_count = failed_tasks.len(),
+                            total_elapsed = duration_to_string(cycle_start.elapsed()),
+                            "background service cycle completed",
+                        );
                     }
                 }
             }
@@ -269,16 +193,6 @@ impl BackgroundService for CommonServiceTask {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
-
-    #[test]
-    fn test_simple_service_task() {
-        let task =
-            new_simple_service_task("test", Duration::from_secs(1), vec![]);
-
-        assert_eq!(task.name, "test");
-        assert_eq!(task.interval, Duration::from_secs(1));
-        assert_eq!(task.tasks.len(), 0);
-    }
 
     #[test]
     fn test_duration_to_string() {

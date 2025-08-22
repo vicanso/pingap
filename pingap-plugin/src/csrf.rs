@@ -149,7 +149,7 @@ fn generate_token(key: &str) -> String {
     // Generate random ID using nanoid (URL-safe, 12 chars)
     let id = nanoid!(12);
     // Add current timestamp in hex format
-    let prefix = format!("{id}.{:x}", pingap_util::now_sec());
+    let prefix = format!("{id}.{:x}", pingap_core::now_sec());
 
     // Create cryptographic signature:
     // - Uses SHA-256 for hashing
@@ -187,7 +187,7 @@ fn validate_token(key: &str, ttl: u64, value: &str) -> bool {
 
     // Check expiration if TTL is configured
     if ttl > 0 {
-        let now = pingap_util::now_sec();
+        let now = pingap_core::now_sec();
         // Parse timestamp from hex and compare with current time
         if now - u64::from_str_radix(arr[1], 16).unwrap_or_default() > ttl {
             return false;
@@ -401,6 +401,7 @@ token_path = "/csrf-token"
 
     #[tokio::test]
     async fn test_csrf() {
+        pingap_core::init_time_cache();
         let csrf = Csrf::new(
             &toml::from_str::<PluginConf>(
                 r###"

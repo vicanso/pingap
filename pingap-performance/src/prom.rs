@@ -13,10 +13,11 @@
 // limitations under the License.
 
 use super::{get_process_system_info, Error, Result, LOG_CATEGORY};
+use async_trait::async_trait;
 use humantime::parse_duration;
 use pingap_cache::{CACHE_READING_TIME, CACHE_WRITING_TIME};
+use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
-use pingap_core::SimpleServiceTaskFuture;
 use pingap_core::{get_hostname, Ctx};
 use pingora::proxy::Session;
 use prometheus::core::Collector;
@@ -391,7 +392,7 @@ struct PrometheusPushParams {
 async fn do_push(
     count: u32,
     offset: u32,
-    params: PrometheusPushParams,
+    params: &PrometheusPushParams,
 ) -> Result<bool, ServiceError> {
     if count % offset != 0 {
         return Ok(false);
@@ -436,12 +437,25 @@ async fn do_push(
     Ok(true)
 }
 
+struct PrometheusPushTask {
+    offset: u32,
+    params: PrometheusPushParams,
+}
+
+#[async_trait]
+impl BackgroundTask for PrometheusPushTask {
+    async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
+        do_push(count, self.offset, &self.params).await?;
+        Ok(true)
+    }
+}
+
 /// Create a new prometheus push service
 pub fn new_prometheus_push_service(
     name: &str,
     url: &str,
     p: Arc<Prometheus>,
-) -> Result<(String, SimpleServiceTaskFuture)> {
+) -> Result<Box<dyn BackgroundTask>> {
     let mut info = Url::parse(url).map_err(|e| Error::Url { source: e })?;
 
     let username = info.username().to_string();
@@ -471,16 +485,8 @@ pub fn new_prometheus_push_service(
     };
     let offset = ((interval.as_secs() / 60) as u32).max(1);
 
-    let task: SimpleServiceTaskFuture = Box::new(move |count: u32| {
-        Box::pin({
-            let value = params.clone();
-            async move {
-                let value = value.clone();
-                do_push(count, offset, value).await
-            }
-        })
-    });
-    Ok(("prometheusPush".to_string(), task))
+    let task = Box::new(PrometheusPushTask { offset, params });
+    Ok(task)
 }
 
 fn new_int_counter(server: &str, name: &str, help: &str) -> Result<IntCounter> {

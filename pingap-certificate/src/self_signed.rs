@@ -14,9 +14,10 @@
 
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
+use async_trait::async_trait;
 use once_cell::sync::Lazy;
+use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
-use pingap_core::SimpleServiceTaskFuture;
 use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::x509::X509;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -69,7 +70,7 @@ async fn do_self_signed_certificate_validity(
         return Ok(false);
     }
     let mut m = AHashMap::new();
-    let expired = (pingap_util::now_sec()
+    let expired = (pingap_core::now_sec()
         - CERTIFICATE_EXPIRY_DAYS * SECONDS_PER_DAY) as i64;
 
     m.extend(
@@ -99,6 +100,16 @@ async fn do_self_signed_certificate_validity(
     Ok(true)
 }
 
+struct SelfSignedCertificateValidityTask {}
+
+#[async_trait]
+impl BackgroundTask for SelfSignedCertificateValidityTask {
+    async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
+        do_self_signed_certificate_validity(count).await?;
+        Ok(true)
+    }
+}
+
 /// Creates a new service task for certificate validity checking.
 ///
 /// # Returns
@@ -109,13 +120,9 @@ async fn do_self_signed_certificate_validity(
 ///
 /// This service is responsible for maintaining the health of the certificate pool
 /// by regularly checking and cleaning up expired or unused certificates.
-pub fn new_self_signed_certificate_validity_service(
-) -> (String, SimpleServiceTaskFuture) {
-    let task: SimpleServiceTaskFuture = Box::new(|count: u32| {
-        Box::pin(do_self_signed_certificate_validity(count))
-    });
-
-    ("self_signed_certificate_stale".to_string(), task)
+pub fn new_self_signed_certificate_validity_service() -> Box<dyn BackgroundTask>
+{
+    Box::new(SelfSignedCertificateValidityTask {})
 }
 
 /// Retrieves a self-signed certificate from the global certificate map.
@@ -186,6 +193,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_self_signed_certificate() {
+        pingap_core::init_time_cache();
         // spellchecker:off
         let pem = r#"-----BEGIN CERTIFICATE-----
 MIIENzCCAp+gAwIBAgIRALESVNFwfk4BBxPnZLHdLaMwDQYJKoZIhvcNAQELBQAw
@@ -250,7 +258,7 @@ kknq2XUsBMCyIW1BqgLVEyeNxg==
             name.clone(),
             cert,
             key,
-            (pingap_util::now_sec() + 1000000000) as i64,
+            (pingap_core::now_sec() + 1000000000) as i64,
         );
 
         let cert = get_self_signed_certificate(&name).unwrap();

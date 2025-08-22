@@ -18,6 +18,7 @@ path = "src/lib.rs"
 tracing = ["prometheus"]
 
 [dependencies]
+async-trait = { workspace = true }
 bytesize = { workspace = true }
 cfg-if = { workspace = true }
 humantime = { workspace = true }

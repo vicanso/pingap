@@ -901,6 +901,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "coarsetime"
+version = "0.1.36"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91849686042de1b41cd81490edc83afbcb0abe5a9b6f2c4114f23ce8cca1bcf4"
+dependencies = [
+ "libc",
+ "wasix",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "color_quant"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3442,6 +3453,7 @@ dependencies = [
  "bytes",
  "cfg-if",
  "clap 4.5.45",
+ "coarsetime",
  "crc32fast",
  "criterion",
  "crossbeam-channel",
@@ -3626,6 +3638,7 @@ dependencies = [
  "ahash",
  "async-trait",
  "bytes",
+ "coarsetime",
  "criterion",
  "futures",
  "hostname 0.4.1",
@@ -3730,6 +3743,7 @@ dependencies = [
 name = "pingap-logger"
 version = "0.12.0"
 dependencies = [
+ "async-trait",
  "bytes",
  "bytesize",
  "chrono",
@@ -3777,6 +3791,7 @@ dependencies = [
 name = "pingap-performance"
 version = "0.12.0"
 dependencies = [
+ "async-trait",
  "bytesize",
  "cfg-if",
  "http",
@@ -3910,6 +3925,7 @@ dependencies = [
  "once_cell",
  "path-absolutize",
  "pem",
+ "pingap-core",
  "pretty_assertions",
  "rustc_version_runtime",
  "snafu",
@@ -6583,6 +6599,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9683f9a5a998d873c0d21fcbe3c083009670149a8fab228644b8bd36b2c48cb3"
 dependencies = [
  "wit-bindgen-rt",
+]
+
+[[package]]
+name = "wasix"
+version = "0.12.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1fbb4ef9bbca0c1170e0b00dd28abc9e3b68669821600cad1caaed606583c6d"
+dependencies = [
+ "wasi 0.11.1+wasi-snapshot-preview1",
 ]
 
 [[package]]

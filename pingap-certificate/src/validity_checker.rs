@@ -13,10 +13,10 @@
 // limitations under the License.
 
 use super::{list_certificates, LOG_CATEGORY};
+use async_trait::async_trait;
 use pingap_core::Error as ServiceError;
 use pingap_core::{
-    NotificationData, NotificationLevel, NotificationSender,
-    SimpleServiceTaskFuture,
+    BackgroundTask, NotificationData, NotificationLevel, NotificationSender,
 };
 use std::sync::Arc;
 use tracing::error;
@@ -47,7 +47,7 @@ async fn do_validity_check(
         return Ok(false);
     }
 
-    let now = pingap_util::now_sec() as i64;
+    let now = pingap_core::now_sec() as i64;
     let mut name_list = vec![];
     for (name, cert) in list_certificates().iter() {
         let Some(info) = &cert.info else {
@@ -103,6 +103,18 @@ async fn do_validity_check(
     Ok(true)
 }
 
+struct CertificateValidityTask {
+    sender: Option<Arc<NotificationSender>>,
+}
+
+#[async_trait]
+impl BackgroundTask for CertificateValidityTask {
+    async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
+        do_validity_check(count, self.sender.clone()).await?;
+        Ok(true)
+    }
+}
+
 /// Creates a new background service for certificate validity checking
 ///
 /// # Returns
@@ -112,9 +124,6 @@ async fn do_validity_check(
 /// * Service task future for executing validity checks
 pub fn new_certificate_validity_service(
     sender: Option<Arc<NotificationSender>>,
-) -> (String, SimpleServiceTaskFuture) {
-    let task: SimpleServiceTaskFuture = Box::new(move |count: u32| {
-        Box::pin(do_validity_check(count, sender.clone()))
-    });
-    ("validity_checker".to_string(), task)
+) -> Box<dyn BackgroundTask> {
+    Box::new(CertificateValidityTask { sender })
 }

@@ -13,6 +13,7 @@ description = "Core for pingap"
 ahash = { workspace = true }
 async-trait = { workspace = true }
 bytes = { workspace = true }
+coarsetime = { workspace = true }
 futures = { workspace = true }
 hostname = "0.4.1"
 http = { workspace = true }

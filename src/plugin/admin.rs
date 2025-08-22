@@ -269,7 +269,7 @@ impl AdminServe {
         let Some((token, ts)) = value.split_once(':') else {
             return false;
         };
-        let offset = pingap_util::now_sec() as i64
+        let offset = pingap_core::now_sec() as i64
             - ts.parse::<i64>().unwrap_or_default();
         if offset.abs() > self.max_age.as_secs() as i64 {
             return false;
@@ -492,7 +492,7 @@ async fn handle_request_admin(
     _ctx: &mut Ctx,
 ) -> pingora::Result<Option<HttpResponse>> {
     let ip = pingap_core::get_client_ip(session);
-    if !plugin.ip_fail_limit.validate(&ip) {
+    if !plugin.ip_fail_limit.check_and_inc(&ip) {
         return Ok(Some(HttpResponse {
             status: StatusCode::FORBIDDEN,
             body: Bytes::from_static(b"Forbidden, too many failures"),
@@ -520,7 +520,6 @@ async fn handle_request_admin(
         header.set_uri(uri);
     }
     if !plugin.auth_validate(header) {
-        plugin.ip_fail_limit.inc(&ip);
         return Ok(Some(HttpResponse {
             status: StatusCode::UNAUTHORIZED,
             ..Default::default()

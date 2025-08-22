@@ -170,7 +170,7 @@ impl Plugin for Stats {
             return Ok(RequestPluginResult::Skipped);
         }
         let uptime: humantime::Duration =
-            Duration::from_secs(pingap_util::now_sec() - get_start_time())
+            Duration::from_secs(pingap_core::now_sec() - get_start_time())
                 .into();
         let (processing, accepted) = get_processing_accepted();
         let info = get_process_system_info();
