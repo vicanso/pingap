@@ -20,7 +20,8 @@ static COARSE_CLOCK_UPDATER: Lazy<Updater> = Lazy::new(|| {
         .unwrap_or("10".to_string())
         .parse::<u64>()
         .unwrap_or(10)
-        .max(1);
+        .max(1)
+        .min(500);
     Updater::new(interval).start().unwrap()
 });
 
