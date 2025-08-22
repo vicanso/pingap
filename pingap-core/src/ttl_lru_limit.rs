@@ -146,6 +146,7 @@ mod test {
         limit.inc(key);
         assert_eq!(false, limit.validate(key));
         std::thread::sleep(Duration::from_millis(600));
+        coarsetime::Clock::update();
         assert_eq!(true, limit.validate(key));
     }
 }
