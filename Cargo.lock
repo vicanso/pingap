@@ -3453,7 +3453,6 @@ dependencies = [
  "bytes",
  "cfg-if",
  "clap 4.5.45",
- "coarsetime",
  "crc32fast",
  "criterion",
  "crossbeam-channel",

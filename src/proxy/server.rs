@@ -490,8 +490,9 @@ fn get_digest_detail(digest: &Digest) -> DigestDetail {
 
     let tcp_established = get_established(digest.timing_digest.first());
     let mut connection_time = 0;
-    if tcp_established > 0 {
-        connection_time = pingap_core::now_ms() - tcp_established;
+    let now = pingap_core::now_ms();
+    if tcp_established > 0 && tcp_established < now {
+        connection_time = now - tcp_established;
     }
     let connection_reused = connection_time > 100;
 

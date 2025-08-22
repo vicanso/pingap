@@ -27,7 +27,6 @@ clap = { version = "4.5.40", features = [
     "help",
     "usage",
 ], default-features = false }
-coarsetime = { workspace = true }
 ctor = { workspace = true }
 crc32fast = { workspace = true }
 crossbeam-channel = "0.5.15"
