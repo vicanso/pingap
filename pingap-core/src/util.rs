@@ -15,8 +15,14 @@
 use coarsetime::{Clock, Updater};
 use once_cell::sync::Lazy;
 
-static COARSE_CLOCK_UPDATER: Lazy<Updater> =
-    Lazy::new(|| Updater::new(100).start().unwrap());
+static COARSE_CLOCK_UPDATER: Lazy<Updater> = Lazy::new(|| {
+    let interval = std::env::var("PINGAP_COARSE_CLOCK_INTERVAL")
+        .unwrap_or("10".to_string())
+        .parse::<u64>()
+        .unwrap_or(10)
+        .max(1);
+    Updater::new(interval).start().unwrap()
+});
 
 /// Initialize the time cache
 pub fn init_time_cache() {
