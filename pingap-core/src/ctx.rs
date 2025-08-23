@@ -777,9 +777,11 @@ mod tests {
         );
 
         // Test service_time calculation
-        std::thread::sleep(Duration::from_millis(10));
+        coarsetime::Clock::update();
+        std::thread::sleep(Duration::from_millis(11));
         let service_time_str =
             ctx.append_log_value(BytesMut::new(), "service_time");
+        coarsetime::Clock::update();
         let service_time: u64 = std::str::from_utf8(&service_time_str)
             .unwrap()
             .parse()
