@@ -14,7 +14,7 @@
 
 use bytes::BytesMut;
 use chrono::{Local, Utc};
-use pingap_core::{get_hostname, Ctx, HOST_NAME_TAG};
+use pingap_core::{get_hostname, now_instant, Ctx, HOST_NAME_TAG};
 use pingap_util::{format_byte_size, format_duration};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
@@ -299,9 +299,9 @@ impl Parser {
         let req_header = session.req_header();
 
         // Then only calculate if needed
-        let (now, now_ms) = if self.needs_timestamp {
+        let (now, instant) = if self.needs_timestamp {
             let n = Utc::now();
-            (Some(n), Some(n.timestamp_millis() as u64))
+            (Some(n), Some(now_instant()))
         } else {
             (None, None)
         };
@@ -388,9 +388,11 @@ impl Parser {
                     }
                 },
                 TagCategory::WhenUnix => {
-                    if let Some(now_ms) = now_ms {
+                    if let Some(now) = &now {
                         buf.extend_from_slice(
-                            itoa::Buffer::new().format(now_ms).as_bytes(),
+                            itoa::Buffer::new()
+                                .format(now.timestamp_millis())
+                                .as_bytes(),
                         );
                     }
                 },
@@ -412,16 +414,16 @@ impl Parser {
                     }
                 },
                 TagCategory::Latency => {
-                    if let Some(now_ms) = now_ms {
-                        let ms = now_ms - ctx.timing.created_at;
+                    if let Some(instant) = instant {
+                        let ms = (instant - ctx.timing.created_at).as_millis();
                         buf.extend_from_slice(
                             itoa::Buffer::new().format(ms).as_bytes(),
                         );
                     }
                 },
                 TagCategory::LatencyHuman => {
-                    if let Some(now_ms) = now_ms {
-                        let ms = now_ms - ctx.timing.created_at;
+                    if let Some(instant) = instant {
+                        let ms = (instant - ctx.timing.created_at).as_millis();
                         buf = format_duration(buf, ms);
                     }
                 },

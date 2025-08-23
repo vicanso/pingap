@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use coarsetime::{Clock, Updater};
+use coarsetime::{Clock, Instant, Updater};
 use once_cell::sync::Lazy;
 
 static COARSE_CLOCK_UPDATER: Lazy<Updater> = Lazy::new(|| {
@@ -23,6 +23,12 @@ static COARSE_CLOCK_UPDATER: Lazy<Updater> = Lazy::new(|| {
         .clamp(1, 500);
     Updater::new(interval).start().unwrap()
 });
+
+/// Returns the current instant
+#[inline]
+pub fn now_instant() -> Instant {
+    Instant::now()
+}
 
 /// Initialize the time cache
 pub fn init_time_cache() {

@@ -180,8 +180,7 @@ impl Prometheus {
     pub fn after(&self, session: &Session, ctx: &Ctx) {
         let location = &ctx.upstream.location;
         let upstream = &ctx.upstream.name;
-        let elapsed =
-            pingap_core::real_now_ms().saturating_sub(ctx.timing.created_at);
+        let elapsed = ctx.timing.created_at.elapsed().as_millis();
         let response_time = elapsed as f64 / SECOND;
         // payload size(kb)
         let payload_size = ctx.state.payload_size as f64 / 1024.0;
@@ -840,7 +839,7 @@ mod tests {
             &session,
             &Ctx {
                 timing: Timing {
-                    created_at: pingap_core::real_now_ms().saturating_sub(10),
+                    created_at: pingap_core::now_instant(),
                     tls_handshake: Some(1),
                     upstream_tcp_connect: Some(2),
                     upstream_tls_handshake: Some(3),
