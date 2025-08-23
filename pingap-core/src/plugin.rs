@@ -129,6 +129,19 @@ pub trait Plugin: Sync + Send {
     ) -> pingora::Result<bool> {
         Ok(false)
     }
+    /// Processes an upstream response at a specified lifecycle step.
+    ///
+    /// # Parameters
+    /// * `_step` - Current processing step in the upstream response lifecycle
+    /// * `_session` - Mutable reference to the HTTP session
+    /// * `_ctx` - Mutable reference to the request context
+    /// * `_upstream_response` - Mutable reference to the upstream response header
+    ///
+    /// # Returns
+    /// * `Ok(modified)` - Boolean flag:
+    ///   - `true`: Plugin modified the response in some way
+    ///   - `false`: Plugin did not modify the response
+    /// * `Err` - Returns error if plugin processing failed
     fn handle_upstream_response(
         &self,
         _step: PluginStep,

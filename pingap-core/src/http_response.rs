@@ -52,17 +52,17 @@ fn new_cache_control_header(
     };
 
     // Determine the cache visibility ("private" or "public").
-    let category = if cache_private.unwrap_or_default() {
-        "private"
+    let category: &[u8] = if cache_private.unwrap_or_default() {
+        b"private"
     } else {
-        "public"
+        b"public"
     };
 
     // Use a pre-allocated buffer (`BytesMut`) and the `itoa` crate to efficiently build the
     // header value without creating an intermediate `String` via `format!`.
     // The capacity is estimated to prevent reallocations.
     let mut buf = BytesMut::with_capacity(category.len() + 9 + 10); // e.g., "public, max-age=" + up to 10 digits for a u32
-    buf.extend_from_slice(category.as_bytes());
+    buf.extend_from_slice(category);
     buf.extend_from_slice(b", max-age=");
     buf.extend_from_slice(itoa::Buffer::new().format(max_age).as_bytes());
 

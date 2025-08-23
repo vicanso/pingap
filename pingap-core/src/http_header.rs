@@ -191,12 +191,9 @@ pub fn convert_header_value(
         SERVER_ADDR_TAG => {
             ctx.conn.server_addr.as_deref().and_then(to_header_value)
         },
-        SERVER_PORT_TAG => ctx
-            .conn
-            .server_port
-            // This case still uses `.to_string()`, which could be optimized with `itoa` like `REMOTE_PORT_TAG`.
-            .map(|p| p.to_string())
-            .and_then(|s| to_header_value(&s)),
+        SERVER_PORT_TAG => ctx.conn.server_port.and_then(|p| {
+            HeaderValue::from_str(itoa::Buffer::new().format(p)).ok()
+        }),
         UPSTREAM_ADDR_TAG => {
             if !ctx.upstream.address.is_empty() {
                 to_header_value(&ctx.upstream.address)
@@ -280,10 +277,12 @@ pub fn get_client_ip(session: &Session) -> String {
     // 1. Check `X-Forwarded-For`.
     if let Some(value) = session.get_header(HTTP_HEADER_X_FORWARDED_FOR) {
         // Efficiently take the first IP without creating an intermediate Vec.
-        if let Some(ip) = value.to_str().unwrap_or_default().split(',').next() {
-            let trimmed_ip = ip.trim();
-            if !trimmed_ip.is_empty() {
-                return trimmed_ip.to_string();
+        if let Ok(s) = value.to_str() {
+            if let Some(ip) = s.split(',').next() {
+                let trimmed_ip = ip.trim();
+                if !trimmed_ip.is_empty() {
+                    return trimmed_ip.to_string();
+                }
             }
         }
     }
