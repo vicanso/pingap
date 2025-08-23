@@ -20,8 +20,7 @@ static COARSE_CLOCK_UPDATER: Lazy<Updater> = Lazy::new(|| {
         .unwrap_or("10".to_string())
         .parse::<u64>()
         .unwrap_or(10)
-        .max(1)
-        .min(500);
+        .clamp(1, 500);
     Updater::new(interval).start().unwrap()
 });
 
@@ -70,9 +69,16 @@ pub fn now_ms() -> u64 {
     Clock::recent_since_epoch().as_millis()
 }
 
+/// Returns the number of milliseconds since the epoch
+/// This is the real time, not the coarse time
+#[inline]
+pub fn real_now_ms() -> u64 {
+    Clock::now_since_epoch().as_millis()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{get_super_ts, init_time_cache, now_ms};
+    use super::{get_super_ts, init_time_cache, now_ms, real_now_ms};
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -85,5 +91,11 @@ mod tests {
     fn test_now_ms() {
         init_time_cache();
         assert_eq!(true, now_ms() > 1755870295813);
+    }
+
+    #[test]
+    fn test_real_now_ms() {
+        init_time_cache();
+        assert_eq!(true, real_now_ms() > 1755870295813);
     }
 }

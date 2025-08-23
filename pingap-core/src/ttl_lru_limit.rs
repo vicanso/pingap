@@ -79,7 +79,7 @@ impl TtlLruLimit {
                 "ttl lru limit"
             );
             // validate expired first
-            if now_ms() - value.created_at > self.ttl {
+            if now_ms().saturating_sub(value.created_at) > self.ttl {
                 valid = true;
                 should_reset = true;
             } else if value.count < self.max {

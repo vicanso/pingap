@@ -29,21 +29,12 @@ use prometheus::{
 };
 use std::sync::Arc;
 use std::time::Duration;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::error;
 use url::Url;
 
 /// Tag used to dynamically replace with actual hostname in prometheus push URLs.
 /// This allows for dynamic host identification in distributed deployments.
 static HOST_NAME_TAG: &str = "$HOSTNAME";
-
-#[inline]
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-}
 
 /// Comprehensive metrics collector for HTTP server monitoring.
 ///
@@ -189,8 +180,9 @@ impl Prometheus {
     pub fn after(&self, session: &Session, ctx: &Ctx) {
         let location = &ctx.upstream.location;
         let upstream = &ctx.upstream.name;
-        let response_time =
-            ((now_ms()) - ctx.timing.created_at) as f64 / SECOND;
+        let elapsed =
+            pingap_core::real_now_ms().saturating_sub(ctx.timing.created_at);
+        let response_time = elapsed as f64 / SECOND;
         // payload size(kb)
         let payload_size = ctx.state.payload_size as f64 / 1024.0;
         let mut code = 0;
@@ -848,7 +840,7 @@ mod tests {
             &session,
             &Ctx {
                 timing: Timing {
-                    created_at: now_ms() - 10,
+                    created_at: pingap_core::now_ms() - 10,
                     tls_handshake: Some(1),
                     upstream_tcp_connect: Some(2),
                     upstream_tls_handshake: Some(3),

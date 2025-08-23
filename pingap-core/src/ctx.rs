@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::now_ms;
+use super::real_now_ms;
 use ahash::AHashMap;
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
@@ -290,7 +290,7 @@ impl Ctx {
     pub fn new() -> Self {
         Self {
             timing: Timing {
-                created_at: now_ms(),
+                created_at: real_now_ms(),
                 ..Default::default()
             },
             ..Default::default()
@@ -533,10 +533,15 @@ impl Ctx {
                 append_time!(self.timing.cache_lock, human)
             },
             "service_time" => {
-                append_time!(Some(now_ms() - self.timing.created_at))
+                append_time!(Some(
+                    real_now_ms().saturating_sub(self.timing.created_at)
+                ))
             },
             "service_time_human" => {
-                append_time!(Some(now_ms() - self.timing.created_at), human)
+                append_time!(
+                    Some(real_now_ms().saturating_sub(self.timing.created_at)),
+                    human
+                )
             },
             // Ignore unknown keys.
             _ => {},
@@ -614,7 +619,7 @@ impl Ctx {
         }
 
         // Add the total service time, which is always present.
-        let service_time = now_ms() - self.timing.created_at;
+        let service_time = real_now_ms().saturating_sub(self.timing.created_at);
         // Add a separator if other timings were already added.
         if !first {
             timing_str.push_str(", ");
