@@ -73,6 +73,7 @@ pub type HttpHeader = (HeaderName, HeaderValue);
 /// (e.g., in `GET http://example.com/path HTTP/1.1`) over the `Host` header field.
 pub fn get_host(header: &RequestHeader) -> Option<&str> {
     // First, try to get the host directly from the parsed URI.
+    // http2 will always have a host in the uri
     if let Some(host) = header.uri.host() {
         return Some(host);
     }
@@ -833,5 +834,102 @@ mod tests {
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         assert_eq!(get_query_value(session.req_header(), "size"), Some("1"));
+    }
+
+    /// Tests `convert_header` with edge cases like empty strings,
+    /// strings without colons, and invalid header names/values.
+    #[test]
+    fn test_convert_header_edge_cases() {
+        // Empty string should result in Ok(None).
+        assert!(convert_header("").unwrap().is_none());
+        // String without a colon should result in Ok(None).
+        assert!(convert_header("no-colon").unwrap().is_none());
+        // Invalid header name should result in an error.
+        assert!(convert_header("Invalid Name: value").is_err());
+        // Invalid header value (with newline) should result in an error.
+        assert!(convert_header("Valid-Name: invalid\r\nvalue").is_err());
+    }
+
+    /// Tests `get_host` logic with different request formats.
+    #[test]
+    fn test_get_host_variants() {
+        // Case 1: Host is in the URI authority.
+        let uri_string = "http://user:pass@authority.com/path";
+
+        // 使用 .parse() 或 from_str 来创建 Uri
+        let uri = http::Uri::from_str(uri_string).unwrap();
+        let mut req_with_authority =
+            RequestHeader::build("GET", b"/path", None).unwrap();
+        req_with_authority.set_uri(uri);
+        assert_eq!(get_host(&req_with_authority), Some("authority.com"));
+
+        // Case 2: Host is in the "Host" header.
+        let mut req_with_host_header =
+            RequestHeader::build("GET", b"/path", None).unwrap();
+        req_with_host_header
+            .insert_header("Host", "header-host.com:8080")
+            .unwrap();
+        assert_eq!(get_host(&req_with_host_header), Some("header-host.com"));
+
+        // Case 3: No host information available.
+        let req_no_host = RequestHeader::build("GET", b"/path", None).unwrap();
+        assert_eq!(get_host(&req_no_host), None);
+    }
+
+    /// Tests `get_cookie_value` with multiple cookies and edge cases.
+    #[test]
+    fn test_get_cookie_value_advanced() {
+        let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+        req.insert_header("Cookie", "id=123; session=abc; theme=dark")
+            .unwrap();
+
+        assert_eq!(get_cookie_value(&req, "session"), Some("abc"));
+        assert_eq!(get_cookie_value(&req, "id"), Some("123"));
+        assert_eq!(get_cookie_value(&req, "theme"), Some("dark"));
+        // Test for a non-existent cookie.
+        assert_eq!(get_cookie_value(&req, "lang"), None);
+        // Test for a cookie name that is a prefix of another.
+        assert_eq!(get_cookie_value(&req, "the"), None);
+    }
+
+    #[test]
+    fn test_remove_query_from_header_variants() {
+        // Case 1: Remove the only query param.
+        let mut req =
+            RequestHeader::build("GET", b"/path?key=val", None).unwrap();
+        remove_query_from_header(&mut req, "key").unwrap();
+        assert_eq!(req.uri.to_string(), "/path");
+
+        // Case 2: Remove the first of multiple params.
+        let mut req =
+            RequestHeader::build("GET", b"/path?key1=val1&key2=val2", None)
+                .unwrap();
+        remove_query_from_header(&mut req, "key1").unwrap();
+        assert_eq!(req.uri.to_string(), "/path?key2=val2");
+
+        // Case 3: Remove the last of multiple params.
+        let mut req =
+            RequestHeader::build("GET", b"/path?key1=val1&key2=val2", None)
+                .unwrap();
+        remove_query_from_header(&mut req, "key2").unwrap();
+        assert_eq!(req.uri.to_string(), "/path?key1=val1");
+
+        // Case 4: Remove a middle param.
+        let mut req =
+            RequestHeader::build("GET", b"/path?key1=v1&key2=v2&key3=v3", None)
+                .unwrap();
+        remove_query_from_header(&mut req, "key2").unwrap();
+        assert_eq!(req.uri.to_string(), "/path?key1=v1&key3=v3");
+
+        // Case 5: Param to remove is not present.
+        let mut req =
+            RequestHeader::build("GET", b"/path?key=val", None).unwrap();
+        remove_query_from_header(&mut req, "nonexistent").unwrap();
+        assert_eq!(req.uri.to_string(), "/path?key=val");
+
+        // Case 6: No query string to begin with.
+        let mut req = RequestHeader::build("GET", b"/path", None).unwrap();
+        remove_query_from_header(&mut req, "key").unwrap();
+        assert_eq!(req.uri.to_string(), "/path");
     }
 }

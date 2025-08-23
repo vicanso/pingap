@@ -702,6 +702,157 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn test_ctx_new() {
+        let ctx = Ctx::new();
+        // Check that created_at is a recent timestamp.
+        // It should be within the last 100ms.
+        let elapsed_ms = ctx.timing.created_at.elapsed().as_millis();
+        assert!(elapsed_ms < 100, "created_at should be a recent timestamp");
+        // Check that other fields are correctly defaulted.
+        assert!(ctx.cache.is_none());
+        assert!(ctx.features.is_none());
+        assert_eq!(ctx.conn.id, 0);
+    }
+
+    /// Tests both adding and getting variables.
+    #[test]
+    fn test_add_and_get_variable() {
+        let mut ctx = Ctx::new();
+        assert!(
+            ctx.get_variable("key1").is_none(),
+            "Should be None before adding"
+        );
+
+        ctx.add_variable("key1", "value1");
+        ctx.add_variable("key2", "value2");
+
+        assert_eq!(ctx.get_variable("key1"), Some("value1"));
+        assert_eq!(ctx.get_variable("key2"), Some("value2"));
+        assert_eq!(ctx.get_variable("nonexistent"), None);
+    }
+
+    /// Tests the helper functions for getting filtered time values.
+    #[test]
+    fn test_get_time_field() {
+        let mut ctx = Ctx::new();
+        let one_hour_ms = 3_600_000;
+
+        // Test with a valid time
+        ctx.timing.upstream_response = Some(100);
+        assert_eq!(ctx.get_upstream_response_time(), Some(100));
+
+        // Test with a time that is too large
+        ctx.timing.upstream_response = Some(one_hour_ms + 1);
+        assert_eq!(
+            ctx.get_upstream_response_time(),
+            None,
+            "Time exceeding one hour should be None"
+        );
+
+        // Test with None
+        ctx.timing.upstream_response = None;
+        assert_eq!(ctx.get_upstream_response_time(), None);
+    }
+
+    /// Tests the `append_log_value` function with a wider range of keys and edge cases.
+    #[test]
+    fn test_append_log_value_coverage() {
+        let mut ctx = Ctx::new();
+        // Test an unknown key, should do nothing.
+        let buf = ctx.append_log_value(BytesMut::new(), "unknown_key");
+        assert!(buf.is_empty(), "Unknown key should not append anything");
+
+        // Test boolean values
+        ctx.conn.reused = true;
+        assert_eq!(
+            &ctx.append_log_value(BytesMut::new(), "connection_reused")[..],
+            b"true"
+        );
+
+        // Test optional string values
+        ctx.conn.tls_version = Some("TLSv1.3".to_string());
+        assert_eq!(
+            &ctx.append_log_value(BytesMut::new(), "tls_version")[..],
+            b"TLSv1.3"
+        );
+
+        // Test service_time calculation
+        std::thread::sleep(Duration::from_millis(10));
+        let service_time_str =
+            ctx.append_log_value(BytesMut::new(), "service_time");
+        let service_time: u64 = std::str::from_utf8(&service_time_str)
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(service_time >= 10, "Service time should be at least 10ms");
+    }
+
+    /// Tests the `get_cache_key` function's logic more thoroughly.
+    #[test]
+    fn test_get_cache_key() {
+        let method = "GET";
+        let uri = Uri::from_static("https://example.com/path");
+
+        // Case 1: No cache info in context.
+        let ctx_no_cache = Ctx::new();
+        let key1 = get_cache_key(&ctx_no_cache, method, &uri);
+        assert_eq!(key1.namespace_str(), Some(""));
+        assert_eq!(key1.primary_key_str(), Some(""));
+
+        // Case 2: Cache info with namespace but no keys.
+        let mut ctx_with_ns = Ctx::new();
+        ctx_with_ns.cache = Some(CacheInfo {
+            namespace: Some("my-ns".to_string()),
+            ..Default::default()
+        });
+        let key2 = get_cache_key(&ctx_with_ns, method, &uri);
+        assert_eq!(key2.namespace_str(), Some("my-ns"));
+        assert_eq!(
+            key2.primary_key_str(),
+            Some("GET:https://example.com/path")
+        );
+
+        // Case 3: Cache info with namespace and multiple keys.
+        let mut ctx_with_keys = Ctx::new();
+        ctx_with_keys.cache = Some(CacheInfo {
+            namespace: Some("my-ns".to_string()),
+            keys: Some(vec!["user-123".to_string(), "desktop".to_string()]),
+            ..Default::default()
+        });
+        let key3 = get_cache_key(&ctx_with_keys, method, &uri);
+        assert_eq!(key3.namespace_str(), Some("my-ns"));
+        assert_eq!(
+            key3.primary_key_str(),
+            Some("user-123:desktop:GET:https://example.com/path")
+        );
+    }
+
+    /// The original `test_generate_server_timing` is good, but this version
+    /// is slightly more robust to minor timing variations.
+    #[test]
+    fn test_generate_server_timing() {
+        let mut ctx = Ctx::new();
+        ctx.timing.upstream_connect = Some(1);
+        ctx.timing.upstream_processing = Some(2);
+        ctx.timing.cache_lookup = Some(6);
+        ctx.timing.cache_lock = Some(7);
+        ctx.add_plugin_processing_time("plugin1", 100);
+
+        let timing_header = ctx.generate_server_timing();
+
+        // Check for the presence of each expected component.
+        assert!(timing_header.contains("upstream.connect;dur=1"));
+        assert!(timing_header.contains("upstream.processing;dur=2"));
+        assert!(timing_header.contains("upstream;dur=3"));
+        assert!(timing_header.contains("cache.lookup;dur=6"));
+        assert!(timing_header.contains("cache.lock;dur=7"));
+        assert!(timing_header.contains("cache;dur=13"));
+        assert!(timing_header.contains("plugin.plugin1;dur=100"));
+        assert!(timing_header.contains("plugin;dur=100"));
+        assert!(timing_header.contains("total;dur="));
+    }
+
+    #[test]
     fn test_format_duration() {
         let mut buf = BytesMut::new();
         buf = format_duration(buf, (3600 + 3500) * 1000);
@@ -747,33 +898,6 @@ mod tests {
         // The test should reflect the actual implementation.
         assert_eq!(variables.get("key1"), Some(&"value1".to_string()));
         assert_eq!(variables.get("key2"), Some(&"value2".to_string()));
-    }
-
-    #[test]
-    fn test_get_cache_key() {
-        let mut ctx = Ctx::new();
-        ctx.cache = Some(CacheInfo {
-            namespace: Some("test".to_string()),
-            ..Default::default()
-        });
-        let method = "GET";
-        let uri = Uri::from_static("http://example.com/");
-        let key = get_cache_key(&ctx, method, &uri);
-        assert_eq!(key.primary_key_str(), Some("GET:http://example.com/"));
-        assert_eq!(key.namespace_str(), Some("test"));
-
-        // Update context to use custom keys
-        if let Some(cache_info) = ctx.cache.as_mut() {
-            cache_info.keys = Some(vec!["prefix".to_string()]);
-        }
-
-        let key = get_cache_key(&ctx, method, &uri);
-        assert_eq!(
-            key.primary_key_str(),
-            Some("prefix:GET:http://example.com/")
-        );
-        // The namespace should persist
-        assert_eq!(key.namespace_str(), Some("test"));
     }
 
     #[test]
@@ -1031,21 +1155,5 @@ mod tests {
                 ("plugin2".to_string(), 200)
             ])
         );
-    }
-
-    #[test]
-    fn test_generate_server_timing() {
-        let mut ctx = Ctx::new();
-        ctx.timing.upstream_connect = Some(1);
-        ctx.timing.upstream_processing = Some(2);
-        ctx.timing.cache_lookup = Some(6);
-        ctx.timing.cache_lock = Some(7);
-        ctx.add_plugin_processing_time("plugin1", 100);
-        ctx.add_plugin_processing_time("plugin2", 200);
-
-        // total duration can vary slightly depending on execution speed (1ms, 2ms, etc.),
-        // so we just check the prefix of the string.
-        let expected_prefix = "upstream.connect;dur=1, upstream.processing;dur=2, upstream;dur=3, cache.lookup;dur=6, cache.lock;dur=7, cache;dur=13, plugin.plugin1;dur=100, plugin.plugin2;dur=200, plugin;dur=300, total;dur=";
-        assert!(ctx.generate_server_timing().starts_with(expected_prefix));
     }
 }

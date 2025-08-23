@@ -559,4 +559,123 @@ mod tests {
             format!("{header:?}")
         );
     }
+
+    #[test]
+    fn test_new_cache_control_header_logic() {
+        // Test max_age > 0 case
+        let (name, value) = new_cache_control_header(Some(3600), Some(true));
+        assert_eq!(name, header::CACHE_CONTROL);
+        assert_eq!(value.to_str().unwrap(), "private, max-age=3600");
+
+        let (name, value) = new_cache_control_header(Some(3600), Some(false));
+        assert_eq!(name, header::CACHE_CONTROL);
+        assert_eq!(value.to_str().unwrap(), "public, max-age=3600");
+
+        // Test None is equivalent to public
+        let (name, value) = new_cache_control_header(Some(3600), None);
+        assert_eq!(name, header::CACHE_CONTROL);
+        assert_eq!(value.to_str().unwrap(), "public, max-age=3600");
+
+        // Test max_age = 0, should return no-cache
+        let (name, value) = new_cache_control_header(Some(0), Some(true));
+        assert_eq!(name, header::CACHE_CONTROL);
+        assert_eq!(value, HTTP_HEADER_NO_CACHE.clone().1);
+
+        // Test max_age = None, should return no-cache
+        let (name, value) = new_cache_control_header(None, Some(false));
+        assert_eq!(name, header::CACHE_CONTROL);
+        assert_eq!(value, HTTP_HEADER_NO_CACHE.clone().1);
+    }
+
+    #[test]
+    fn test_http_response_builder_pattern() {
+        // Create a custom Header
+        let etag_header = (header::ETAG, HeaderValue::from_static("\"12345\""));
+        let server_header =
+            (header::SERVER, HeaderValue::from_static("MyTestServer"));
+
+        let response = HttpResponse::builder(StatusCode::OK)
+            .body("Test Body")
+            .header(etag_header.clone())
+            .headers(vec![server_header.clone()])
+            .max_age(60, true) // 60 seconds, private
+            .finish();
+
+        assert_eq!(response.status, StatusCode::OK);
+        assert_eq!(response.body, Bytes::from("Test Body"));
+        assert_eq!(response.max_age, Some(60));
+        assert_eq!(response.cache_private, Some(true));
+
+        // Verify headers are correctly added
+        let headers = response.headers.unwrap();
+        assert_eq!(headers.len(), 2);
+        assert!(headers.contains(&etag_header));
+        assert!(headers.contains(&server_header));
+
+        // Test no_store in the chain call
+        let no_store_response = HttpResponse::builder(StatusCode::ACCEPTED)
+            .no_store()
+            .finish();
+
+        assert_eq!(no_store_response.status, StatusCode::ACCEPTED);
+        assert!(no_store_response
+            .headers
+            .unwrap()
+            .contains(&HTTP_HEADER_NO_STORE.clone()));
+    }
+
+    #[test]
+    fn test_http_response_error_cases() {
+        // Test redirect error cases (invalid location)
+        // String containing \0 characters is invalid HeaderValue
+        let invalid_location = "http://example.com/\0";
+        let result = HttpResponse::redirect(invalid_location);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_new_response_header_generation() {
+        let resp = HttpResponse {
+            status: StatusCode::OK,
+            body: Bytes::from("Hello world!"),
+            max_age: Some(3600),
+            created_at: Some(get_super_ts().saturating_sub(10)), // 模拟10秒前创建
+            cache_private: Some(true),
+            headers: Some(vec![(
+                header::CONTENT_ENCODING,
+                HeaderValue::from_static("gzip"),
+            )]),
+        };
+
+        let header = resp.new_response_header().unwrap();
+        let headers_map: std::collections::HashMap<_, _> =
+            header.headers.iter().collect();
+
+        // 验证基本 headers
+        assert_eq!(header.status, StatusCode::OK);
+        assert_eq!(
+            headers_map
+                .get(&header::CONTENT_LENGTH)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "12"
+        );
+        assert_eq!(
+            headers_map
+                .get(&header::CACHE_CONTROL)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "private, max-age=3600"
+        );
+        assert_eq!(
+            headers_map
+                .get(&header::CONTENT_ENCODING)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "gzip"
+        );
+    }
 }
