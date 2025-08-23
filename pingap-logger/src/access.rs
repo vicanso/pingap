@@ -14,11 +14,12 @@
 
 use bytes::BytesMut;
 use chrono::{Local, Utc};
-use pingap_core::{get_hostname, now_instant, Ctx, HOST_NAME_TAG};
+use pingap_core::{get_hostname, Ctx, HOST_NAME_TAG};
 use pingap_util::{format_byte_size, format_duration};
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::Regex;
+use std::time::Instant;
 use substring::Substring;
 
 // Enum representing different types of log tags that can be used in the logging format
@@ -301,7 +302,7 @@ impl Parser {
         // Then only calculate if needed
         let (now, instant) = if self.needs_timestamp {
             let n = Utc::now();
-            (Some(n), Some(now_instant()))
+            (Some(n), Some(Instant::now()))
         } else {
             (None, None)
         };
@@ -404,7 +405,7 @@ impl Parser {
                     );
                 },
                 TagCategory::SizeHuman => {
-                    buf = format_byte_size(buf, session.body_bytes_sent());
+                    format_byte_size(&mut buf, session.body_bytes_sent());
                 },
                 TagCategory::Status => {
                     if let Some(status) = &ctx.state.status {
@@ -424,7 +425,7 @@ impl Parser {
                 TagCategory::LatencyHuman => {
                     if let Some(instant) = instant {
                         let ms = (instant - ctx.timing.created_at).as_millis();
-                        buf = format_duration(buf, ms);
+                        format_duration(&mut buf, ms as u64);
                     }
                 },
                 TagCategory::Cookie => {
@@ -462,7 +463,7 @@ impl Parser {
                     );
                 },
                 TagCategory::PayloadSizeHuman => {
-                    buf = format_byte_size(buf, ctx.state.payload_size);
+                    format_byte_size(&mut buf, ctx.state.payload_size);
                 },
                 TagCategory::RequestId => {
                     if let Some(key) = &ctx.state.request_id {

@@ -31,6 +31,7 @@ use std::os::unix::fs::MetadataExt;
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Instant;
 use std::time::{Duration, SystemTime};
 use tracing::{error, info, Level};
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
@@ -197,7 +198,7 @@ async fn do_compress(
         if accessed > access_before {
             continue;
         }
-        let start = SystemTime::now();
+        let start = Instant::now();
         let result = if params.compression == "gzip" {
             gzip_compress(entry.path(), params.level)
         } else {
@@ -214,7 +215,7 @@ async fn do_compress(
                 );
             },
             Ok((size, original_size)) => {
-                let elapsed = format!("{}ms", pingap_util::elapsed_ms(start));
+                let elapsed = format!("{}ms", start.elapsed().as_millis());
                 info!(
                     category = LOG_CATEGORY,
                     file,

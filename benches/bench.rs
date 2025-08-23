@@ -6,12 +6,11 @@ use http::{HeaderName, HeaderValue, StatusCode};
 use nanoid::nanoid;
 use pingap_config::LocationConf;
 use pingap_core::{
-    convert_headers, CompressionStat, ConnectionInfo, Ctx, Features,
-    HttpResponse, RequestState, Timing, UpstreamInfo,
+    convert_headers, get_super_ts, CompressionStat, ConnectionInfo, Ctx,
+    Features, HttpResponse, RequestState, Timing, UpstreamInfo,
 };
 use pingap_location::Location;
 use pingap_logger::Parser;
-use pingap_util::get_super_ts;
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::proxy::Session;
 use std::collections::HashMap;
@@ -82,7 +81,7 @@ fn bench_new_response_header(c: &mut Criterion) {
             status: StatusCode::OK,
             body: Bytes::from("Hello world!"),
             max_age: Some(3600),
-            created_at: Some(get_super_ts() - 10),
+            created_at: Some(0),
             cache_private: Some(true),
             headers: Some(
                 convert_headers(&[

@@ -12,10 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::now_instant;
 use ahash::AHashMap;
 use bytes::{Bytes, BytesMut};
-use coarsetime::Instant;
 use http::StatusCode;
 use http::Uri;
 #[cfg(feature = "tracing")]
@@ -28,6 +26,7 @@ use pingora::cache::CacheKey;
 use pingora_limits::inflight::Guard;
 use std::fmt::Write;
 use std::time::Duration;
+use std::time::Instant;
 
 // Constants for time conversions in milliseconds.
 const SECOND: u64 = 1_000;
@@ -110,7 +109,7 @@ pub struct ConnectionInfo {
 }
 
 /// All timing-related metrics for the request lifecycle.
-#[derive(Default)]
+// #[derive(Default)]
 pub struct Timing {
     /// Timestamp in milliseconds when the request was created.
     pub created_at: Instant,
@@ -135,6 +134,24 @@ pub struct Timing {
     pub cache_lookup: Option<u64>,
     /// The duration spent waiting for a cache lock in milliseconds.
     pub cache_lock: Option<u64>,
+}
+
+impl Default for Timing {
+    fn default() -> Self {
+        Self {
+            created_at: Instant::now(),
+            connection_duration: 0,
+            tls_handshake: None,
+            upstream_connect: None,
+            upstream_tcp_connect: None,
+            upstream_tls_handshake: None,
+            upstream_processing: None,
+            upstream_response: None,
+            upstream_connection_duration: None,
+            cache_lookup: None,
+            cache_lock: None,
+        }
+    }
 }
 
 /// Information about the upstream (backend) server.
@@ -290,10 +307,6 @@ impl Ctx {
     /// set to their default values.
     pub fn new() -> Self {
         Self {
-            timing: Timing {
-                created_at: now_instant(),
-                ..Default::default()
-            },
             ..Default::default()
         }
     }
@@ -397,7 +410,7 @@ impl Ctx {
             // Append human-readable formatted time.
             ($val:expr, human) => {
                 if let Some(ms) = $val {
-                    buf = format_duration(buf, ms);
+                    buf = format_duration(buf, ms as u64);
                 }
             };
         }

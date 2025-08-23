@@ -1,7 +1,8 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use http::HeaderValue;
 use pingap_core::{
-    convert_header, get_host, get_super_ts, remove_query_from_header,
+    convert_header, get_host, get_super_ts, now_ms, real_now_ms,
+    remove_query_from_header,
 };
 use pingora::http::RequestHeader;
 
@@ -45,7 +46,23 @@ fn bench_convert_header_value(c: &mut Criterion) {
 fn bench_get_super_ts(c: &mut Criterion) {
     c.bench_function("get super ts", |b| {
         b.iter(|| {
-            let _ = get_super_ts();
+            black_box(get_super_ts());
+        });
+    });
+}
+
+fn bench_now_ms(c: &mut Criterion) {
+    c.bench_function("now_ms", |b| {
+        b.iter(|| {
+            black_box(now_ms());
+        });
+    });
+}
+
+fn bench_real_now_ms(c: &mut Criterion) {
+    c.bench_function("real_now_ms", |b| {
+        b.iter(|| {
+            let _ = real_now_ms();
         });
     });
 }
@@ -56,5 +73,7 @@ criterion_group!(
     bench_get_host,
     bench_convert_header_value,
     bench_get_super_ts,
+    bench_now_ms,
+    bench_real_now_ms,
 );
 criterion_main!(benches);

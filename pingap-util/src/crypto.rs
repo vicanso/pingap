@@ -98,9 +98,10 @@ pub fn aes_decrypt(key: &str, data: &str) -> Result<String> {
             message: e.to_string(),
         })?;
 
-    Ok(std::str::from_utf8(&plaintext)
-        .unwrap_or_default()
-        .to_string())
+    let data = std::str::from_utf8(&plaintext).map_err(|e| Error::Invalid {
+        message: e.to_string(),
+    })?;
+    Ok(data.to_string())
 }
 
 #[cfg(test)]

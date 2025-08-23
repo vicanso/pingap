@@ -317,7 +317,7 @@ mod tests {
         auths.insert(
             "pingap".to_string(),
             AuthParam {
-                ip_rules: Some(pingap_util::IpRules::new(&vec![
+                ip_rules: Some(pingap_util::IpRules::new(&[
                     "127.0.0.1".to_string(),
                     "192.168.1.0/24".to_string(),
                 ])),

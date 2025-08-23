@@ -811,7 +811,7 @@ mod tests {
     };
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
     use tokio_test::io::Builder;
 
     #[tokio::test]
@@ -839,7 +839,7 @@ mod tests {
             &session,
             &Ctx {
                 timing: Timing {
-                    created_at: pingap_core::now_instant(),
+                    created_at: Instant::now(),
                     tls_handshake: Some(1),
                     upstream_tcp_connect: Some(2),
                     upstream_tls_handshake: Some(3),

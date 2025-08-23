@@ -31,7 +31,7 @@ use pingap_core::{convert_header_value, convert_headers, HttpHeader};
 use pingap_core::{
     get_cache_key, CompressionStat, Ctx, PluginStep, RequestPluginResult,
 };
-use pingap_core::{HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
+use pingap_core::{real_now_ms, HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use pingap_location::{get_location, Location};
 use pingap_logger::Parser;
 #[cfg(feature = "full")]
@@ -142,6 +142,16 @@ pub fn try_init_server_locations(
 #[inline]
 fn get_server_locations(name: &str) -> Option<Arc<Vec<String>>> {
     SERVER_LOCATIONS_MAP.load().get(name).cloned()
+}
+
+#[inline]
+pub fn get_latency(value: &Option<u64>) -> Option<u64> {
+    let current = real_now_ms();
+    if let Some(value) = value {
+        Some(current - value)
+    } else {
+        Some(current)
+    }
 }
 
 /// Core HTTP proxy server implementation that handles request processing, caching, and monitoring.
@@ -490,7 +500,7 @@ fn get_digest_detail(digest: &Digest) -> DigestDetail {
 
     let tcp_established = get_established(digest.timing_digest.first());
     let mut connection_time = 0;
-    let now = pingap_core::now_ms();
+    let now = real_now_ms();
     if tcp_established > 0 && tcp_established < now {
         connection_time = now - tcp_established;
     }
@@ -1104,8 +1114,7 @@ impl ProxyHttp for Server {
             )
         })?;
 
-        ctx.timing.upstream_connect =
-            pingap_util::get_latency(&ctx.timing.upstream_connect);
+        ctx.timing.upstream_connect = get_latency(&ctx.timing.upstream_connect);
 
         Ok(Box::new(peer))
     }
@@ -1147,10 +1156,9 @@ impl ProxyHttp for Server {
         }
 
         ctx.upstream.reused = reused;
-        ctx.timing.upstream_connect =
-            pingap_util::get_latency(&ctx.timing.upstream_connect);
+        ctx.timing.upstream_connect = get_latency(&ctx.timing.upstream_connect);
         ctx.timing.upstream_processing =
-            pingap_util::get_latency(&ctx.timing.upstream_processing);
+            get_latency(&ctx.timing.upstream_processing);
 
         Ok(())
     }
@@ -1406,14 +1414,14 @@ impl ProxyHttp for Server {
         if ctx.state.status.is_none() {
             ctx.state.status = Some(upstream_response.status);
             ctx.timing.upstream_response =
-                pingap_util::get_latency(&ctx.timing.upstream_response);
+                get_latency(&ctx.timing.upstream_response);
         }
         if let Some(id) = &ctx.state.request_id {
             let _ = upstream_response
                 .insert_header(HTTP_HEADER_NAME_X_REQUEST_ID.clone(), id);
         }
         ctx.timing.upstream_processing =
-            pingap_util::get_latency(&ctx.timing.upstream_processing);
+            get_latency(&ctx.timing.upstream_processing);
         Ok(())
     }
 
@@ -1479,7 +1487,7 @@ impl ProxyHttp for Server {
         }
         if end_of_stream {
             ctx.timing.upstream_response =
-                pingap_util::get_latency(&ctx.timing.upstream_response);
+                get_latency(&ctx.timing.upstream_response);
             #[cfg(feature = "full")]
             if let Some(features) = ctx.features.as_mut() {
                 if let Some(ref mut span) = features.upstream_span.as_mut() {
