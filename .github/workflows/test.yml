@@ -47,6 +47,7 @@ jobs:
           cargo install typos-cli
           make lint
       - name: Run cargo machete
+        if: matrix.toolchain == 'stable'
         run: |
           cargo install cargo-machete@0.9.1
           cargo machete
