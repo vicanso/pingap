@@ -72,7 +72,6 @@ mod tests {
 
     #[test]
     fn test_now() {
-        pingap_core::init_time_cache();
         assert_eq!(10, now_sec().to_string().len());
         assert_eq!(13, now_ms().to_string().len());
     }

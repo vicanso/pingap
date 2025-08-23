@@ -131,13 +131,12 @@ impl TtlLruLimit {
 #[cfg(test)]
 mod test {
     use super::TtlLruLimit;
-    use crate::init_time_cache;
     use pretty_assertions::assert_eq;
     use std::time::Duration;
 
     #[test]
     fn test_ttl_lru_limit() {
-        init_time_cache();
+        coarsetime::Clock::update();
         let limit = TtlLruLimit::new(5, Duration::from_millis(500), 3);
         let key = "abc";
         assert_eq!(true, limit.validate(key));

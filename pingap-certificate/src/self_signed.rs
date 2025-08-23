@@ -193,7 +193,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_self_signed_certificate() {
-        pingap_core::init_time_cache();
         // spellchecker:off
         let pem = r#"-----BEGIN CERTIFICATE-----
 MIIENzCCAp+gAwIBAgIRALESVNFwfk4BBxPnZLHdLaMwDQYJKoZIhvcNAQELBQAw

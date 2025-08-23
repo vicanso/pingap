@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use coarsetime::{Clock, Instant, Updater};
+use ctor::ctor;
 use once_cell::sync::Lazy;
 
 static COARSE_CLOCK_UPDATER: Lazy<Updater> = Lazy::new(|| {
@@ -31,7 +32,7 @@ pub fn now_instant() -> Instant {
 }
 
 /// Initialize the time cache
-pub fn init_time_cache() {
+fn init_time_cache() {
     Lazy::force(&COARSE_CLOCK_UPDATER);
 }
 
@@ -80,6 +81,11 @@ pub fn now_ms() -> u64 {
 #[inline]
 pub fn real_now_ms() -> u64 {
     Clock::now_since_epoch().as_millis()
+}
+
+#[ctor]
+fn init() {
+    init_time_cache();
 }
 
 #[cfg(test)]

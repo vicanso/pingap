@@ -401,7 +401,6 @@ token_path = "/csrf-token"
 
     #[tokio::test]
     async fn test_csrf() {
-        pingap_core::init_time_cache();
         let csrf = Csrf::new(
             &toml::from_str::<PluginConf>(
                 r###"

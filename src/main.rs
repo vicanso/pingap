@@ -339,8 +339,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         return run_admin_node(args);
     }
 
-    pingap_core::init_time_cache();
-
     // Initialize configuration
     pingap_config::try_init_config_storage(&args.conf)?;
     let (s, r) = crossbeam_channel::bounded(0);

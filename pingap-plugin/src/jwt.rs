@@ -482,7 +482,6 @@ auth_path = "/login"
     /// Tests JWT token validation functionality
     #[tokio::test]
     async fn test_jwt_auth() {
-        pingap_core::init_time_cache();
         let auth = JwtAuth::new(
             &toml::from_str::<PluginConf>(
                 r###"

@@ -1805,7 +1805,6 @@ mod tests {
 
     #[test]
     fn test_get_digest_detail() {
-        pingap_core::init_time_cache();
         let digest = Digest {
             timing_digest: vec![Some(TimingDigest {
                 established_ts: SystemTime::UNIX_EPOCH

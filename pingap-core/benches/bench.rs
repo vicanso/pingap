@@ -43,7 +43,6 @@ fn bench_convert_header_value(c: &mut Criterion) {
 }
 
 fn bench_get_super_ts(c: &mut Criterion) {
-    pingap_core::init_time_cache();
     c.bench_function("get super ts", |b| {
         b.iter(|| {
             let _ = get_super_ts();
