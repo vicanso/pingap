@@ -15,6 +15,7 @@
 use super::{format_addrs, Addr, Error, Result};
 use super::{Discovery, DNS_DISCOVERY, LOG_CATEGORY};
 use async_trait::async_trait;
+use futures::future::join_all;
 use hickory_resolver::config::{
     LookupIpStrategy, NameServerConfigGroup, ResolverConfig, ResolverOpts,
 };
@@ -33,7 +34,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::net::{IpAddr, ToSocketAddrs};
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::Instant;
 use tracing::{debug, error, info};
 
 /// DNS service discovery implementation
@@ -140,23 +141,17 @@ impl Dns {
         }
 
         if let Some(search) = &self.search {
-            for item in search.split(",") {
-                if let Ok(name) = Name::from_str(item) {
-                    config.add_search(name);
-                }
-            }
+            search
+                .split(',')
+                .filter_map(|s| Name::from_str(s).ok())
+                .for_each(|item| config.add_search(item));
         }
 
         if let Some(name_server) = &self.name_server {
-            let mut ips = vec![];
-            for item in name_server.split(",") {
-                let ip = item.trim().parse::<IpAddr>().map_err(|e| {
-                    Error::Invalid {
-                        message: e.to_string(),
-                    }
-                })?;
-                ips.push(ip);
-            }
+            let ips = name_server
+                .split(',')
+                .filter_map(|s| s.trim().parse::<IpAddr>().ok())
+                .collect::<Vec<_>>();
             let name_servers =
                 NameServerConfigGroup::from_ips_clear(&ips, 53, true);
             config = ResolverConfig::from_parts(
@@ -189,19 +184,31 @@ impl Dns {
         let mut lookup_ips = Vec::new();
         let mut failed_hosts = Vec::new();
 
-        for (host, _, _) in self.hosts.iter() {
-            match resolver.lookup_ip(host).await {
+        let lookup_futures = self
+            .hosts
+            .iter()
+            .map(|(host, _, _)| resolver.lookup_ip(host.as_str()));
+
+        let results = join_all(lookup_futures).await;
+
+        for (index, result) in results.iter().enumerate() {
+            match result {
                 Ok(lookup) => {
-                    lookup_ips.push(lookup);
+                    lookup_ips.push(lookup.clone());
                 },
                 Err(e) => {
+                    let host = self
+                        .hosts
+                        .get(index)
+                        .map(|item| item.0.clone())
+                        .unwrap_or_default();
                     error!(
                         category = LOG_CATEGORY,
                         error = %e,
                         host,
                         "dns lookup failed"
                     );
-                    failed_hosts.push(host.clone());
+                    failed_hosts.push(host);
                 },
             }
         }
@@ -267,7 +274,7 @@ impl ServiceDiscovery for Dns {
     async fn discover(
         &self,
     ) -> pingora::Result<(BTreeSet<Backend>, HashMap<u64, bool>)> {
-        let now = SystemTime::now();
+        let start_time = Instant::now();
         let hosts: Vec<String> =
             self.hosts.iter().map(|item| item.0.clone()).collect();
         match self.run_discover().await {
@@ -281,10 +288,7 @@ impl ServiceDiscovery for Dns {
                     category = LOG_CATEGORY,
                     hosts = hosts.join(","),
                     addrs = addrs.join(","),
-                    elapsed = format!(
-                        "{}ms",
-                        now.elapsed().unwrap_or_default().as_millis()
-                    ),
+                    elapsed = format!("{}ms", start_time.elapsed().as_millis()),
                     "dns discover success"
                 );
                 if !failed_hosts.is_empty() {
@@ -310,7 +314,7 @@ impl ServiceDiscovery for Dns {
                     hosts = hosts.join(","),
                     elapsed = format!(
                         "{}ms",
-                        now.elapsed().unwrap_or_default().as_millis()
+                        start_time.elapsed().as_millis()
                     ),
                     "dns discover fail"
                 );
