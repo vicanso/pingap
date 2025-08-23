@@ -840,7 +840,7 @@ mod tests {
             &session,
             &Ctx {
                 timing: Timing {
-                    created_at: pingap_core::now_ms() - 10,
+                    created_at: pingap_core::real_now_ms().saturating_sub(10),
                     tls_handshake: Some(1),
                     upstream_tcp_connect: Some(2),
                     upstream_tls_handshake: Some(3),
