@@ -16,6 +16,7 @@ build-web:
 
 bench-core:
 	cargo bench -p pingap-core
+	cargo bench -p pingap-logger
 
 bench:
 	cargo bench

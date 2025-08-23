@@ -14,6 +14,7 @@
 
 use bytes::BytesMut;
 use chrono::{Local, Utc};
+use once_cell::sync::Lazy;
 use pingap_core::{get_hostname, Ctx, HOST_NAME_TAG};
 use pingap_util::{format_byte_size, format_duration};
 use pingora::http::ResponseHeader;
@@ -261,7 +262,11 @@ impl From<&str> for Parser {
                     | TagCategory::LatencyHuman
             )
         });
-        let capacity = Parser::estimate_capacity(&tags);
+        let capacity = if *LOG_CAPACITY > 0 {
+            *LOG_CAPACITY
+        } else {
+            Parser::estimate_capacity(&tags)
+        };
         Parser {
             capacity,
             tags,
@@ -276,6 +281,13 @@ fn get_resp_header_value<'a>(
 ) -> Option<&'a [u8]> {
     resp_header.headers.get(key).map(|v| v.as_bytes())
 }
+
+static LOG_CAPACITY: Lazy<usize> = Lazy::new(|| {
+    std::env::var("PINGAP_ACCESS_LOG_CAPACITY")
+        .unwrap_or_default()
+        .parse::<usize>()
+        .unwrap_or_default()
+});
 
 impl Parser {
     // Add a method to estimate capacity based on tag types
