@@ -84,7 +84,9 @@ pub fn real_now_ms() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_hostname, get_super_ts, init_time_cache, now_ms, real_now_ms};
+    use super::{
+        get_hostname, get_super_ts, init_time_cache, now_ms, real_now_ms,
+    };
     use pretty_assertions::assert_eq;
 
     #[test]
