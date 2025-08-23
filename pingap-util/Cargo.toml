@@ -21,14 +21,11 @@ aes-gcm-siv = { version = "0.11.1", default-features = false, features = [
     "alloc",
 ] }
 base64 = "0.22.1"
-bytes = { workspace = true }
 dirs = { workspace = true }
 ipnet = "2.11.0"
-itoa = { workspace = true }
 once_cell = { workspace = true }
 path-absolutize = { workspace = true }
 pem = "3.0.5"
-pingap-core = { version = "0.12.0", path = "../pingap-core" }
 rustc_version_runtime = "0.3.0"
 snafu = { workspace = true }
 substring = { workspace = true }

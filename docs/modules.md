@@ -63,7 +63,5 @@ graph TD
     upstream --> discovery
     upstream --> health
 
-    util --> core
-
     webhook --> core
 ```

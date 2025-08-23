@@ -48,7 +48,7 @@ jobs:
           make lint
       - name: Run cargo machete
         run: |
-          cargo install cargo-machete@0.7.0
+          cargo install cargo-machete@0.9.1
           cargo machete
       - name: Run cargo test
         run: make test
