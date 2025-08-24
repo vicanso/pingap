@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::hash_strategy::HashStrategy;
+use crate::peer_tracer::UpstreamPeerTracer;
+use crate::LOG_CATEGORY;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -38,7 +41,7 @@ use pingora::lb::{Backends, LoadBalancer};
 use pingora::protocols::l4::ext::TcpKeepalive;
 use pingora::protocols::ALPN;
 use pingora::proxy::Session;
-use pingora::upstreams::peer::{HttpPeer, Tracer, Tracing};
+use pingora::upstreams::peer::{HttpPeer, Tracer};
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
 use std::collections::HashMap;
@@ -46,8 +49,6 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tracing::{debug, error, info};
-
-const LOG_CATEGORY: &str = "upstream";
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -102,47 +103,14 @@ fn new_observe(
 // - Consistent: Uses consistent hashing to map requests to backends
 // - Transparent: Passes requests through without load balancing
 enum SelectionLb {
-    RoundRobin(Arc<LoadBalancer<RoundRobin>>),
-    Consistent(Arc<LoadBalancer<Consistent>>),
+    // Instead of storing Arc<LoadBalancer<S>>, we store Arc<dyn LoadBalancerTrait>.
+    // This avoids the need for `as_round_robin`, `as_consistent`, etc.
+    RoundRobin(LoadBalancer<RoundRobin>),
+    Consistent {
+        lb: LoadBalancer<Consistent>,
+        hash: HashStrategy,
+    },
     Transparent,
-}
-
-// UpstreamPeerTracer tracks active connections to upstream servers
-#[derive(Clone, Debug)]
-struct UpstreamPeerTracer {
-    name: String,
-    connected: Arc<AtomicI32>, // Number of active connections
-}
-
-impl UpstreamPeerTracer {
-    fn new(name: &str) -> Self {
-        Self {
-            name: name.to_string(),
-            connected: Arc::new(AtomicI32::new(0)),
-        }
-    }
-}
-
-impl Tracing for UpstreamPeerTracer {
-    fn on_connected(&self) {
-        debug!(
-            category = LOG_CATEGORY,
-            name = self.name,
-            "upstream peer connected"
-        );
-        self.connected.fetch_add(1, Ordering::Relaxed);
-    }
-    fn on_disconnected(&self) {
-        debug!(
-            category = LOG_CATEGORY,
-            name = self.name,
-            "upstream peer disconnected"
-        );
-        self.connected.fetch_sub(1, Ordering::Relaxed);
-    }
-    fn boxed_clone(&self) -> Box<dyn Tracing> {
-        Box::new(self.clone())
-    }
 }
 
 #[derive(Debug)]
@@ -153,20 +121,6 @@ pub struct Upstream {
 
     /// Hash key used to detect configuration changes
     pub key: String,
-
-    /// Load balancing hash strategy:
-    /// - "url": Hash based on request URL
-    /// - "ip": Hash based on client IP
-    /// - "header": Hash based on specific header value
-    /// - "cookie": Hash based on specific cookie value
-    /// - "query": Hash based on specific query parameter
-    hash: String,
-
-    /// Key to use with the hash strategy:
-    /// - For "header": Header name to use
-    /// - For "cookie": Cookie name to use
-    /// - For "query": Query parameter name to use
-    hash_key: String,
 
     /// Whether to use TLS for connections to backend servers
     tls: bool,
@@ -242,42 +196,6 @@ fn new_backends(
     })
 }
 
-// Gets the value to use for consistent hashing based on the hash strategy
-fn get_hash_value(
-    hash: &str,        // Hash strategy (url/ip/header/cookie/query)
-    hash_key: &str,    // Key to use for hash lookups
-    session: &Session, // Current request session
-    client_ip: &Option<String>, // Request context
-) -> String {
-    match hash {
-        "url" => session.req_header().uri.to_string(),
-        "ip" => {
-            if let Some(client_ip) = client_ip {
-                client_ip.to_string()
-            } else {
-                pingap_core::get_client_ip(session)
-            }
-        },
-        "header" => {
-            if let Some(value) = session.get_header(hash_key) {
-                value.to_str().unwrap_or_default().to_string()
-            } else {
-                "".to_string()
-            }
-        },
-        "cookie" => {
-            pingap_core::get_cookie_value(session.req_header(), hash_key)
-                .unwrap_or_default()
-                .to_string()
-        },
-        "query" => pingap_core::get_query_value(session.req_header(), hash_key)
-            .unwrap_or_default()
-            .to_string(),
-        // default: path
-        _ => session.req_header().uri.path().to_string(),
-    }
-}
-
 fn update_health_check_params<S>(
     mut lb: LoadBalancer<S>,
     name: &str,
@@ -321,12 +239,12 @@ where
 /// * `conf` - Configuration for the upstream service
 ///
 /// # Returns
-/// * `Result<(SelectionLb, String, String)>` - Returns the load balancer, hash strategy, and hash key
+/// * `Result<SelectionLb>` - Returns the load balancer
 fn new_load_balancer(
     name: &str,
     conf: &UpstreamConf,
     sender: Option<Arc<NotificationSender>>,
-) -> Result<(SelectionLb, String, String)> {
+) -> Result<SelectionLb> {
     // Validate that addresses are provided
     if conf.addrs.is_empty() {
         return Err(Error::Common {
@@ -339,10 +257,9 @@ fn new_load_balancer(
     let discovery_category = conf.guess_discovery();
     // For transparent discovery, return early with no load balancing
     if discovery_category == TRANSPARENT_DISCOVERY {
-        return Ok((SelectionLb::Transparent, "".to_string(), "".to_string()));
+        return Ok(SelectionLb::Transparent);
     }
 
-    let mut hash = "".to_string();
     // Determine if TLS should be enabled based on SNI configuration
     let tls = conf
         .sni
@@ -368,43 +285,33 @@ fn new_load_balancer(
 
     // Parse the load balancing algorithm configuration
     // Format: "algo:hash_type:hash_key" (e.g. "hash:cookie:session_id")
-    let algo_method = conf.algo.clone().unwrap_or_default();
-    let algo_params: Vec<&str> = algo_method.split(':').collect();
-    let mut hash_key = "".to_string();
+    // let algo_method = conf.algo.clone().unwrap_or_default();
+    let algo_method = conf.algo.as_deref().unwrap_or("round_robin");
 
-    // Create the appropriate load balancer based on the algorithm
-    let lb = match algo_params[0] {
-        // Consistent hashing load balancer
-        "hash" => {
-            // Parse hash type and key if provided
-            if algo_params.len() > 1 {
-                hash = algo_params[1].to_string();
-                if algo_params.len() > 2 {
-                    hash_key = algo_params[2].to_string();
-                }
-            }
+    match algo_method.split(':').collect::<Vec<_>>().as_slice() {
+        ["hash", hash_type, hash_key] => {
             let lb = update_health_check_params(
                 LoadBalancer::<Consistent>::from_backends(backends),
                 name,
                 conf,
                 sender,
             )?;
-
-            SelectionLb::Consistent(Arc::new(lb))
+            Ok(SelectionLb::Consistent {
+                lb,
+                hash: HashStrategy::from((*hash_type, *hash_key)),
+            })
         },
-        // Round robin load balancer (default)
         _ => {
+            // Default to RoundRobin
             let lb = update_health_check_params(
                 LoadBalancer::<RoundRobin>::from_backends(backends),
                 name,
                 conf,
                 sender,
             )?;
-
-            SelectionLb::RoundRobin(Arc::new(lb))
+            Ok(SelectionLb::RoundRobin(lb))
         },
-    };
-    Ok((lb, hash, hash_key))
+    }
 }
 
 impl Upstream {
@@ -421,7 +328,7 @@ impl Upstream {
         conf: &UpstreamConf,
         sender: Option<Arc<NotificationSender>>,
     ) -> Result<Self> {
-        let (lb, hash, hash_key) = new_load_balancer(name, conf, sender)?;
+        let lb = new_load_balancer(name, conf, sender)?;
         let key = conf.hash_key();
         let sni = conf.sni.clone().unwrap_or_default();
         let tls = !sni.is_empty();
@@ -465,8 +372,6 @@ impl Upstream {
             key,
             tls,
             sni,
-            hash,
-            hash_key,
             lb,
             alpn,
             connection_timeout: conf.connection_timeout,
@@ -514,13 +419,8 @@ impl Upstream {
             // For round-robin, use empty key since selection is sequential
             SelectionLb::RoundRobin(lb) => lb.select(b"", 256),
             // For consistent hashing, generate hash value from request details
-            SelectionLb::Consistent(lb) => {
-                let value = get_hash_value(
-                    &self.hash,
-                    &self.hash_key,
-                    session,
-                    client_ip,
-                );
+            SelectionLb::Consistent { lb, hash } => {
+                let value = hash.get_value(session, client_ip);
                 lb.select(value.as_bytes(), 256)
             },
             // For transparent mode, no backend selection needed
@@ -582,9 +482,7 @@ impl Upstream {
     /// * `Option<i32>` - Number of active connections if tracking is enabled, None otherwise
     #[inline]
     pub fn connected(&self) -> Option<i32> {
-        self.peer_tracer
-            .as_ref()
-            .map(|tracer| tracer.connected.load(Ordering::Relaxed))
+        self.peer_tracer.as_ref().map(|tracer| tracer.connected())
     }
 
     /// Returns the round-robin load balancer if configured
@@ -592,9 +490,9 @@ impl Upstream {
     /// # Returns
     /// * `Option<Arc<LoadBalancer<RoundRobin>>>` - Round-robin load balancer if used, None otherwise
     #[inline]
-    pub fn as_round_robin(&self) -> Option<Arc<LoadBalancer<RoundRobin>>> {
+    pub fn as_round_robin(&self) -> Option<&LoadBalancer<RoundRobin>> {
         match &self.lb {
-            SelectionLb::RoundRobin(lb) => Some(lb.clone()),
+            SelectionLb::RoundRobin(lb) => Some(lb),
             _ => None,
         }
     }
@@ -604,9 +502,9 @@ impl Upstream {
     /// # Returns
     /// * `Option<Arc<LoadBalancer<Consistent>>>` - Consistent hash load balancer if used, None otherwise
     #[inline]
-    pub fn as_consistent(&self) -> Option<Arc<LoadBalancer<Consistent>>> {
+    pub fn as_consistent(&self) -> Option<&LoadBalancer<Consistent>> {
         match &self.lb {
-            SelectionLb::Consistent(lb) => Some(lb.clone()),
+            SelectionLb::Consistent { lb, .. } => Some(lb),
             _ => None,
         }
     }
@@ -962,16 +860,11 @@ pub fn new_upstream_health_check_task(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        get_hash_value, new_backends, Upstream, UpstreamConf,
-        UpstreamPeerTracer,
-    };
+    use super::{new_backends, Upstream, UpstreamConf};
     use pingap_discovery::Discovery;
     use pingora::protocols::ALPN;
     use pingora::proxy::Session;
-    use pingora::upstreams::peer::Tracing;
     use pretty_assertions::assert_eq;
-    use std::sync::atomic::Ordering;
     use std::time::Duration;
     use tokio_test::io::Builder;
 
@@ -1036,8 +929,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!("cookie", up.hash);
-        assert_eq!("user-id", up.hash_key);
         assert_eq!(ALPN::H2.to_string(), up.alpn.to_string());
         assert_eq!("Some(5s)", format!("{:?}", up.connection_timeout));
         assert_eq!("Some(10s)", format!("{:?}", up.total_connection_timeout));
@@ -1056,51 +947,7 @@ mod tests {
         );
         assert_eq!("Some(1024)", format!("{:?}", up.tcp_recv_buf));
     }
-    #[tokio::test]
-    async fn test_get_hash_key_value() {
-        let headers = [
-            "Host: github.com",
-            "Referer: https://github.com/",
-            "User-Agent: pingap/0.1.1",
-            "Cookie: deviceId=abc",
-            "Accept: application/json",
-            "X-Forwarded-For: 1.1.1.1",
-        ]
-        .join("\r\n");
-        let input_header = format!(
-            "GET /vicanso/pingap?id=1234 HTTP/1.1\r\n{headers}\r\n\r\n"
-        );
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
 
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
-
-        assert_eq!(
-            "/vicanso/pingap?id=1234",
-            get_hash_value("url", "", &session, &None)
-        );
-
-        assert_eq!("1.1.1.1", get_hash_value("ip", "", &session, &None));
-        assert_eq!(
-            "2.2.2.2",
-            get_hash_value("ip", "", &session, &Some("2.2.2.2".to_string()))
-        );
-
-        assert_eq!(
-            "pingap/0.1.1",
-            get_hash_value("header", "User-Agent", &session, &None)
-        );
-
-        assert_eq!(
-            "abc",
-            get_hash_value("cookie", "deviceId", &session, &None)
-        );
-        assert_eq!("1234", get_hash_value("query", "id", &session, &None));
-        assert_eq!(
-            "/vicanso/pingap",
-            get_hash_value("path", "", &session, &None)
-        );
-    }
     #[tokio::test]
     async fn test_upstream() {
         let headers = [
@@ -1128,13 +975,5 @@ mod tests {
         .unwrap();
         assert_eq!(true, up.new_http_peer(&session, &None,).is_some());
         assert_eq!(true, up.as_round_robin().is_some());
-    }
-    #[test]
-    fn test_upstream_peer_tracer() {
-        let tracer = UpstreamPeerTracer::new("upstreamname");
-        tracer.on_connected();
-        assert_eq!(1, tracer.connected.load(Ordering::Relaxed));
-        tracer.on_disconnected();
-        assert_eq!(0, tracer.connected.load(Ordering::Relaxed));
     }
 }

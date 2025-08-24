@@ -12,6 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod hash_strategy;
+mod peer_tracer;
 mod upstream;
+
+pub(crate) const LOG_CATEGORY: &str = "upstream";
 
 pub use upstream::*;
