@@ -43,26 +43,22 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 /// # Returns
 /// * `Result<IpAddr>` - The parsed IP address or an error if invalid
 fn parse_ip_addr(data: &[u8]) -> Result<IpAddr> {
-    match data.len() {
-        4 => data
-            .try_into()
-            .map(|arr: [u8; 4]| IpAddr::V4(Ipv4Addr::from(arr)))
-            .map_err(|_| Error::Invalid {
+    Ok(match data.len() {
+        4 => IpAddr::V4(Ipv4Addr::from(
+            // Should not fail due to len check
+            TryInto::<[u8; 4]>::try_into(data).unwrap(),
+        )),
+        16 => IpAddr::V6(Ipv6Addr::from(
+            // Should not fail due to len check
+            TryInto::<[u8; 16]>::try_into(data).unwrap(),
+        )),
+        len => {
+            return Err(Error::Invalid {
                 category: "ip_parse".to_string(),
-                message: "invalid ipv4 address".to_string(),
-            }),
-        16 => data
-            .try_into()
-            .map(|arr: [u8; 16]| IpAddr::V6(Ipv6Addr::from(arr)))
-            .map_err(|_| Error::Invalid {
-                category: "ip_parse".to_string(),
-                message: "invalid ipv6 address".to_string(),
-            }),
-        len => Err(Error::Invalid {
-            category: "ip_parse".to_string(),
-            message: format!("invalid ip address length: {len}"),
-        }),
-    }
+                message: format!("invalid ip address length: {len}"),
+            })
+        },
+    })
 }
 
 // parse leaf certificate and chain certificates from pem and key

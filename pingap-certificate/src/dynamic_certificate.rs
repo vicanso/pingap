@@ -24,8 +24,8 @@ use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::ssl::SslVersion;
 use pingora::tls::ssl::{NameType, SslRef};
 use pingora::tls::x509::X509;
+use std::borrow::Cow;
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::sync::Arc;
 use tracing::{debug, error, info};
 
@@ -57,32 +57,47 @@ fn parse_certificates(
 ) -> (DynamicCertificates, Vec<(String, String)>) {
     let mut dynamic_certs = AHashMap::new();
     let mut errors = vec![];
-    for (name, certificate) in certificate_configs.iter() {
-        if certificate.tls_cert.is_none() || certificate.tls_key.is_none() {
+
+    // Use a temporary map to avoid cloning the Arc<TlsCertificate> for each domain.
+    let mut cert_cache: AHashMap<String, Arc<TlsCertificate>> = AHashMap::new();
+
+    for (name, conf) in certificate_configs.iter() {
+        if conf.tls_cert.is_none() || conf.tls_key.is_none() {
             continue;
         }
-        let result: Result<TlsCertificate, Error> = certificate.try_into();
-        match result {
-            Ok(mut dynamic_cert) => {
-                dynamic_cert.name = Some(name.clone());
-                let mut domains = dynamic_cert.domains.clone();
-                let cert = Arc::new(dynamic_cert);
-                if let Some(value) = &certificate.domains {
-                    domains =
-                        value.split(',').map(|item| item.to_string()).collect();
-                }
-                for domain in domains.iter() {
-                    dynamic_certs.insert(domain.to_string(), cert.clone());
-                }
-                if certificate.is_default.unwrap_or_default() {
-                    dynamic_certs
-                        .insert(DEFAULT_SERVER_NAME.to_string(), cert.clone());
-                }
-            },
-            Err(e) => {
-                errors.push((name.to_string(), e.to_string()));
+
+        let cert_arc = match cert_cache.get(name) {
+            Some(cert) => cert.clone(),
+            None => match TlsCertificate::try_from(conf) {
+                Ok(mut cert) => {
+                    cert.name = Some(name.clone());
+                    let arc_cert = Arc::new(cert);
+                    cert_cache.insert(name.clone(), arc_cert.clone());
+                    arc_cert
+                },
+                Err(e) => {
+                    errors.push((name.clone(), e.to_string()));
+                    continue;
+                },
             },
         };
+
+        // Determine which domains this certificate should be served for.
+        let domains_to_serve: Cow<[String]> = if let Some(value) = &conf.domains
+        {
+            Cow::Owned(value.split(',').map(|s| s.trim().to_string()).collect())
+        } else {
+            Cow::Borrowed(&cert_arc.domains)
+        };
+
+        for domain in domains_to_serve.iter() {
+            dynamic_certs.insert(domain.to_string(), cert_arc.clone());
+        }
+
+        if conf.is_default.unwrap_or_default() {
+            dynamic_certs
+                .insert(DEFAULT_SERVER_NAME.to_string(), cert_arc.clone());
+        }
     }
     (dynamic_certs, errors)
 }
@@ -101,23 +116,25 @@ fn parse_certificates(
 pub fn try_update_certificates(
     certificate_configs: &HashMap<String, CertificateConf>,
 ) -> (Vec<String>, String) {
-    let (dynamic_certs, errors) = parse_certificates(certificate_configs);
-    let certs = DYNAMIC_CERTIFICATE_MAP.load();
-    let mut updated_certificates = vec![];
-    for (name, cert) in dynamic_certs.iter() {
-        if let Some(value) = certs.get(name) {
-            if value.hash_key == cert.hash_key {
-                break;
-            }
-        }
-        updated_certificates.push(name.clone());
-    }
-    let msg_list: Vec<String> = errors
+    let (new_certs, errors) = parse_certificates(certificate_configs);
+    let old_certs = DYNAMIC_CERTIFICATE_MAP.load();
+    let updated_certificates: Vec<String> = new_certs
         .iter()
-        .map(|item| format!("{}({})", item.1, item.0))
+        .filter(|(name, cert)| {
+            old_certs
+                .get(*name)
+                .is_none_or(|old_cert| old_cert.hash_key != cert.hash_key)
+        })
+        .map(|(name, _)| name.clone())
         .collect();
-    DYNAMIC_CERTIFICATE_MAP.store(Arc::new(dynamic_certs));
-    (updated_certificates, msg_list.join(";"))
+
+    let error_messages: Vec<String> = errors
+        .into_iter()
+        .map(|(name, msg)| format!("{}({})", msg, name))
+        .collect();
+
+    DYNAMIC_CERTIFICATE_MAP.store(Arc::new(new_certs));
+    (updated_certificates, error_messages.join(";"))
 }
 
 /// Retrieves a list of all certificates and their associated information
@@ -307,16 +324,20 @@ impl pingora::listeners::TlsAccept for GlobalCertificate {
             server_name = sni
         );
 
-        let mut dynamic_certificate = None;
         let certs = DYNAMIC_CERTIFICATE_MAP.load();
-        let wildcard_sni =
-            &format!("*.{}", sni.split_once('.').unwrap_or_default().1);
-        for item in [sni, wildcard_sni, DEFAULT_SERVER_NAME] {
-            dynamic_certificate = certs.get(item);
-            if dynamic_certificate.is_some() {
-                break;
-            }
-        }
+
+        // Optimized lookup sequence.
+        let dynamic_certificate = certs
+            .get(sni)
+            .or_else(|| {
+                // If exact match fails, try wildcard match without new string allocation.
+                sni.split_once('.')
+                    .and_then(|(_, domain)| certs.get(&format!("*.{}", domain)))
+            })
+            .or_else(|| {
+                // Fallback to the default certificate.
+                certs.get(DEFAULT_SERVER_NAME)
+            });
 
         let Some(d) = dynamic_certificate else {
             error!(

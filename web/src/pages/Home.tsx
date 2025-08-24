@@ -282,7 +282,7 @@ export default function Home() {
                       <Button
                         variant="link"
                         size={null}
-                        className={cn(item.nameClass)}
+                        className={cn(item.nameClass, "cursor-pointer")}
                       >
                         [{item.name}]
                       </Button>
