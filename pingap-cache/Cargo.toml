@@ -39,6 +39,12 @@ urlencoding = { workspace = true }
 walkdir = { workspace = true }
 
 [dev-dependencies]
+filetime = "0.2.26"
 pretty_assertions = "1.4.0"
 tempfile = "3.16.0"
 tokio-test = "0.4.4"
+criterion = { version = "0.5.1", features = ["html_reports"] }
+
+[[bench]]
+name = "bench"
+harness = false

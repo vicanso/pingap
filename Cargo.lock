@@ -1458,6 +1458,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "filetime"
+version = "0.2.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc0505cd1b6fa6580283f6bdf70a73fcf4aba1184038c90902b92b3dd0df63ed"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "libredox",
+ "windows-sys 0.60.2",
+]
+
+[[package]]
 name = "findshlibs"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2586,6 +2598,7 @@ checksum = "391290121bad3d37fbddad76d8f5d1c1c314cfc646d143d7e07a3086ddff0ce3"
 dependencies = [
  "bitflags 2.9.2",
  "libc",
+ "redox_syscall",
 ]
 
 [[package]]
@@ -3545,7 +3558,9 @@ dependencies = [
  "async-trait",
  "bytes",
  "bytesize",
+ "criterion",
  "dirs",
+ "filetime",
  "http",
  "humantime",
  "memory-stats",

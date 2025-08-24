@@ -494,17 +494,160 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use pretty_assertions::assert_eq;
+    use std::fs::File;
     use std::time::{Duration, SystemTime};
-    use tempfile::TempDir;
+    use tempfile::{tempdir, TempDir};
 
+    /// Tests the `parse_params` function with various query string configurations.
     #[test]
     fn test_parse_params() {
         let params = parse_params(
-            "~/pingap?reading_max=1000&writing_max=500&cache_max=100",
+              "~/pingap?reading_max=1000&writing_max=500&cache_max=100&inactive=10m&levels=1:2",
+          );
+        assert_eq!(params.reading_max, 1000);
+        assert_eq!(params.writing_max, 500);
+        assert_eq!(params.cache_max, 100);
+        assert_eq!(params.inactive, Duration::from_secs(600));
+        assert_eq!(params.levels, vec![1, 2]);
+        assert!(params
+            .directory
+            .starts_with(dirs::home_dir().unwrap().to_str().unwrap()));
+    }
+
+    /// Tests `parse_params` with invalid and default values.
+    #[test]
+    fn test_parse_params_defaults_and_invalid() {
+        let params = parse_params("/tmp/cache?reading_max=abc&levels=1:a:2");
+        // Should fall back to default for invalid integer.
+        assert_eq!(params.reading_max, 10_000);
+        // Should return empty for invalid level format.
+        assert!(params.levels.is_empty());
+    }
+
+    /// A comprehensive test for the FileCache functionality.
+    #[tokio::test]
+    async fn test_file_cache_integration() {
+        let dir = tempdir().unwrap();
+        let dir_path_str = dir.path().to_str().unwrap();
+        let namespace = b"my-namespace";
+
+        let cache_config =
+            format!("{}?cache_max=100&cache_file_max_size=1024", dir_path_str);
+        let cache = new_file_cache(&cache_config).unwrap();
+
+        let key = "my-test-key";
+        let obj = CacheObject {
+            meta: (b"Meta-Key".to_vec(), b"Meta-Value".to_vec()),
+            body: Bytes::from_static(b"Hello World!"),
+        };
+
+        // 1. Initial GET should be a cache miss.
+        assert!(
+            cache.get(key, namespace).await.unwrap().is_none(),
+            "Initial get should be a miss"
         );
-        assert_eq!(1000, params.reading_max);
-        assert_eq!(500, params.writing_max);
-        assert_eq!(100, params.cache_max);
+
+        // 2. PUT an object into the cache.
+        cache.put(key, namespace, obj.clone()).await.unwrap();
+
+        // 3. GET should now be a cache hit from the in-memory cache.
+        let cached_obj = cache.get(key, namespace).await.unwrap().unwrap();
+        assert_eq!(obj, cached_obj);
+
+        // Verify it exists in the TinyUfo cache.
+        assert!(cache
+            .cache
+            .as_ref()
+            .unwrap()
+            .get(&key.to_string())
+            .is_some());
+
+        // --- Test fallback from file ---
+        // Create a new cache instance to simulate a fresh start with no in-memory cache.
+        let fresh_cache = new_file_cache(&cache_config).unwrap();
+
+        // 4. GET from the new instance should be a hit from the file.
+        let file_obj = fresh_cache.get(key, namespace).await.unwrap().unwrap();
+        assert_eq!(obj, file_obj);
+
+        // 5. After reading from the file, it should now be populated in the new instance's in-memory cache.
+        assert!(fresh_cache
+            .cache
+            .as_ref()
+            .unwrap()
+            .get(&key.to_string())
+            .is_some());
+
+        // 6. Test REMOVE.
+        fresh_cache.remove(key, namespace).await.unwrap();
+
+        // Verify it's gone from both in-memory and file caches.
+        assert!(fresh_cache
+            .cache
+            .as_ref()
+            .unwrap()
+            .get(&key.to_string())
+            .is_none());
+        assert!(
+            fresh_cache.get(key, namespace).await.unwrap().is_none(),
+            "Get after remove should be a miss"
+        );
+    }
+
+    /// Tests the `clear` functionality for removing old files.
+    #[tokio::test]
+    async fn test_cache_clear() {
+        let dir = tempdir().unwrap();
+        let cache = new_file_cache(dir.path().to_str().unwrap()).unwrap();
+
+        // Create a file and set its access time to be in the past.
+        let old_file_path = cache.get_file_path("old_key", "ns");
+        fs::create_dir_all(old_file_path.parent().unwrap())
+            .await
+            .unwrap();
+        File::create(&old_file_path).unwrap();
+        let old_time = SystemTime::now() - Duration::from_secs(3600);
+        filetime::set_file_atime(
+            &old_file_path,
+            filetime::FileTime::from_system_time(old_time),
+        )
+        .unwrap();
+
+        // Create a new file with a recent access time.
+        let new_file_path = cache.get_file_path("new_key", "ns");
+        File::create(&new_file_path).unwrap();
+
+        // Clear files accessed more than 10 minutes ago.
+        let access_before = SystemTime::now() - Duration::from_secs(600);
+        let (success, fail) = cache.clear(access_before).await.unwrap();
+
+        assert_eq!(success, 1);
+        assert_eq!(fail, 0);
+
+        // Verify that the old file was deleted and the new one remains.
+        assert!(!old_file_path.exists());
+        assert!(new_file_path.exists());
+    }
+
+    /// Tests the `get_file_path` with and without path levels.
+    #[test]
+    fn test_get_file_path() {
+        let dir = tempdir().unwrap();
+
+        // Case 1: No levels.
+        let cache_no_levels =
+            new_file_cache(dir.path().to_str().unwrap()).unwrap();
+        let path1 = cache_no_levels.get_file_path("mykey", "namespace");
+        assert!(path1.to_string_lossy().ends_with("/namespace/mykey"));
+
+        // Case 2: With levels. Key must be long enough.
+        let cache_with_levels_config =
+            format!("{}?levels=1:2", dir.path().to_str().unwrap());
+        let cache_with_levels =
+            new_file_cache(&cache_with_levels_config).unwrap();
+        let key = "abcdef123456";
+        let path2 = cache_with_levels.get_file_path(key, "ns");
+        assert!(path2.to_string_lossy().ends_with("/ns/5/34/abcdef123456"));
     }
 
     #[tokio::test]
@@ -581,28 +724,6 @@ mod tests {
             )
             .await
             .unwrap();
-    }
-
-    #[test]
-    fn test_get_file_path() {
-        let dir = TempDir::new().unwrap();
-        let cache =
-            new_file_cache(dir.path().to_string_lossy().as_ref()).unwrap();
-        assert_eq!(
-            true,
-            cache
-                .get_file_path("key", "namespace")
-                .to_string_lossy()
-                .ends_with("/namespace/key")
-        );
-
-        assert_eq!(
-            true,
-            cache
-                .get_file_path("key", "")
-                .to_string_lossy()
-                .ends_with("/key")
-        );
     }
 
     #[test]
