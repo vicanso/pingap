@@ -324,6 +324,17 @@ impl Ctx {
         variables.insert(key.to_string(), value.to_string());
     }
 
+    /// Extends the variables map with the given key-value pairs.
+    ///
+    /// # Arguments
+    /// * `values` - A HashMap containing the key-value pairs to add.
+    #[inline]
+    pub fn extend_variables(&mut self, values: AHashMap<String, String>) {
+        let features = self.features.get_or_insert_default();
+        let variables = features.variables.get_or_insert_with(AHashMap::new);
+        variables.extend(values);
+    }
+
     /// Returns the value of a variable by key.
     ///
     /// # Arguments

@@ -14,9 +14,10 @@ build-web:
 # update-shadcn:
 # 	for file in src/components/ui/*.tsx; do npx shadcn@latest add -y -o $(basename "$file" .tsx); done
 
-bench-core:
+bench-all:
 	cargo bench -p pingap-core
 	cargo bench -p pingap-logger
+	cargo bench -p pingap-location
 
 bench:
 	cargo bench

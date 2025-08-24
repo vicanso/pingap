@@ -24,7 +24,6 @@ use snafu::{ResultExt, Snafu};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
-use substring::Substring;
 use tracing::{debug, error};
 
 const LOG_CATEGORY: &str = "location";
@@ -43,130 +42,111 @@ pub enum Error {
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-#[derive(Debug)]
-struct RegexPath {
-    value: RegexCapture,
-}
-
-#[derive(Debug)]
-struct PrefixPath {
-    value: String,
-}
-
-#[derive(Debug)]
-struct EqualPath {
-    value: String,
-}
-
 // PathSelector enum represents different ways to match request paths:
-// - RegexPath: Uses regex pattern matching
-// - PrefixPath: Matches if path starts with prefix
-// - EqualPath: Matches exact path
-// - Empty: Matches all paths
+// - Regex: Uses regex pattern matching
+// - Prefix: Matches if path starts with prefix
+// - Equal: Matches exact path
+// - Any: Matches all paths
 #[derive(Debug)]
 enum PathSelector {
-    RegexPath(RegexPath),
-    PrefixPath(PrefixPath),
-    EqualPath(EqualPath),
-    Empty,
+    Regex(RegexCapture),
+    Prefix(String),
+    Equal(String),
+    Any,
 }
-/// Creates a new path selector based on the input path string.
-///
-/// # Arguments
-/// * `path` - The path pattern string to parse
-///
-/// # Returns
-/// * `Result<PathSelector>` - The parsed path selector or error
-///
-/// # Path Format
-/// - Empty string: Matches all paths
-/// - Starting with "~": Regex pattern matching
-/// - Starting with "=": Exact path matching  
-/// - Otherwise: Prefix path matching
-fn new_path_selector(path: &str) -> Result<PathSelector> {
-    let path = path.trim();
-    if path.is_empty() {
-        return Ok(PathSelector::Empty);
-    }
-    let first = path.chars().next().unwrap_or_default();
-    let last = path.substring(1, path.len()).trim();
-    let se = match first {
-        '~' => {
-            let re = RegexCapture::new(last).context(RegexSnafu {
-                value: last.to_string(),
+impl PathSelector {
+    /// Creates a new path selector based on the input path string.
+    ///
+    /// # Arguments
+    /// * `path` - The path pattern string to parse
+    ///
+    /// # Returns
+    /// * `Result<PathSelector>` - The parsed path selector or error
+    ///
+    /// # Path Format
+    /// - Empty string: Matches all paths
+    /// - Starting with "~": Regex pattern matching
+    /// - Starting with "=": Exact path matching  
+    /// - Otherwise: Prefix path matching
+    fn new(path: &str) -> Result<Self> {
+        let path = path.trim();
+        if path.is_empty() {
+            return Ok(PathSelector::Any);
+        }
+
+        if let Some(re_path) = path.strip_prefix('~') {
+            let re = RegexCapture::new(re_path.trim()).context(RegexSnafu {
+                value: re_path.trim(),
             })?;
-            PathSelector::RegexPath(RegexPath { value: re })
-        },
-        '=' => PathSelector::EqualPath(EqualPath {
-            value: last.to_string(),
-        }),
-        _ => {
-            // trim
-            PathSelector::PrefixPath(PrefixPath {
-                value: path.to_string(),
-            })
-        },
-    };
-
-    Ok(se)
-}
-
-#[derive(Debug)]
-struct RegexHost {
-    value: RegexCapture,
-}
-
-#[derive(Debug)]
-struct EqualHost {
-    value: String,
+            Ok(PathSelector::Regex(re))
+        } else if let Some(eq_path) = path.strip_prefix('=') {
+            Ok(PathSelector::Equal(eq_path.trim().to_string()))
+        } else {
+            Ok(PathSelector::Prefix(path.to_string()))
+        }
+    }
+    #[inline]
+    fn is_match(
+        &self,
+        path: &str,
+        captures: &mut AHashMap<String, String>,
+    ) -> bool {
+        match self {
+            // For exact path matching, compare path strings directly
+            PathSelector::Equal(value) => value == path,
+            // For regex path matching, use regex is_match
+            PathSelector::Regex(value) => value.captures(path, captures),
+            // For prefix path matching, check if path starts with prefix
+            PathSelector::Prefix(value) => path.starts_with(value),
+            // Empty path selector matches everything
+            PathSelector::Any => true,
+        }
+    }
 }
 
 // HostSelector enum represents ways to match request hosts:
-// - RegexHost: Uses regex pattern matching with capture groups
-// - EqualHost: Matches exact hostname
+// - Regex: Uses regex pattern matching with capture groups
+// - Equal: Matches exact hostname
 #[derive(Debug)]
 enum HostSelector {
-    RegexHost(RegexHost),
-    EqualHost(EqualHost),
+    Regex(RegexCapture),
+    Equal(String),
 }
-
-/// Creates a new host selector based on the input host string.
-///
-/// # Arguments
-/// * `host` - The host pattern string to parse
-///
-/// # Returns
-/// * `Result<HostSelector>` - The parsed host selector or error
-///
-/// # Host Format
-/// - Empty string: Matches empty host
-/// - Starting with "~": Regex pattern matching with capture groups
-/// - Otherwise: Exact hostname matching
-fn new_host_selector(host: &str) -> Result<HostSelector> {
-    let host = host.trim();
-    if host.is_empty() {
-        return Ok(HostSelector::EqualHost(EqualHost {
-            value: host.to_string(),
-        }));
-    }
-    let first = host.chars().next().unwrap_or_default();
-    let last = host.substring(1, host.len()).trim();
-    let se = match first {
-        '~' => {
-            let re = RegexCapture::new(last).context(RegexSnafu {
-                value: last.to_string(),
+impl HostSelector {
+    /// Creates a new host selector based on the input host string.
+    ///
+    /// # Arguments
+    /// * `host` - The host pattern string to parse
+    ///
+    /// # Returns
+    /// * `Result<HostSelector>` - The parsed host selector or error
+    ///
+    /// # Host Format
+    /// - Empty string: Matches empty host
+    /// - Starting with "~": Regex pattern matching with capture groups
+    /// - Otherwise: Exact hostname matching
+    fn new(host: &str) -> Result<Self> {
+        let host = host.trim();
+        if let Some(re_host) = host.strip_prefix('~') {
+            let re = RegexCapture::new(re_host.trim()).context(RegexSnafu {
+                value: re_host.trim(),
             })?;
-            HostSelector::RegexHost(RegexHost { value: re })
-        },
-        _ => {
-            // trim
-            HostSelector::EqualHost(EqualHost {
-                value: host.to_string(),
-            })
-        },
-    };
-
-    Ok(se)
+            Ok(HostSelector::Regex(re))
+        } else {
+            Ok(HostSelector::Equal(host.to_string()))
+        }
+    }
+    #[inline]
+    fn is_match(
+        &self,
+        host: &str,
+        captures: &mut AHashMap<String, String>,
+    ) -> bool {
+        match self {
+            HostSelector::Equal(value) => value == host,
+            HostSelector::Regex(value) => value.captures(host, captures),
+        }
+    }
 }
 
 /// Location represents a routing configuration for handling HTTP requests.
@@ -294,21 +274,23 @@ impl Location {
                 reg_rewrite = Some((re, value.to_string()));
             }
         }
-        let mut hosts = vec![];
-        for item in conf.host.clone().unwrap_or_default().split(',') {
-            let host = item.trim().to_string();
-            if host.is_empty() {
-                continue;
-            }
-            hosts.push(new_host_selector(&host)?);
-        }
+
+        let hosts = conf
+            .host
+            .as_deref()
+            .unwrap_or("")
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(HostSelector::new)
+            .collect::<Result<Vec<_>>>()?;
 
         let path = conf.path.clone().unwrap_or_default();
 
         let location = Location {
             name: name.to_string(),
             key,
-            path_selector: new_path_selector(&path)?,
+            path_selector: PathSelector::new(&path)?,
             path,
             hosts,
             upstream,
@@ -435,68 +417,33 @@ impl Location {
         &self,
         host: &str,
         path: &str,
-    ) -> (bool, Option<Vec<(String, String)>>) {
+        captures: &mut AHashMap<String, String>,
+    ) -> bool {
         // Check host matching against configured host patterns
-        let mut variables: Vec<(String, String)> = vec![];
+        // let mut variables: Vec<(String, String)> = vec![];
 
         // First check path matching if a path pattern is configured
         if !self.path.is_empty() {
-            let matched = match &self.path_selector {
-                // For exact path matching, compare path strings directly
-                PathSelector::EqualPath(EqualPath { value }) => value == path,
-                // For regex path matching, use regex is_match
-                PathSelector::RegexPath(RegexPath { value }) => {
-                    let (matched, value) = value.captures(path);
-                    if let (true, Some(vars)) = (matched, value) {
-                        variables.extend(vars);
-                    }
-                    matched
-                },
-                // For prefix path matching, check if path starts with prefix
-                PathSelector::PrefixPath(PrefixPath { value }) => {
-                    path.starts_with(value)
-                },
-                // Empty path selector matches everything
-                PathSelector::Empty => true,
-            };
-            // If path doesn't match, return false early
+            let matched = self.path_selector.is_match(path, captures);
             if !matched {
-                return (false, None);
+                return false;
             }
         }
 
         // If no host patterns configured, path match is sufficient
         if self.hosts.is_empty() {
-            return (true, None);
+            return true;
         }
 
-        let matched = self.hosts.iter().any(|item| match item {
-            // For regex host matching:
-            // - Attempt to capture variables from host string
-            // - Store captures in variables if match successful
-            HostSelector::RegexHost(RegexHost { value }) => {
-                let (matched, value) = value.captures(host);
-                if let (true, Some(vars)) = (matched, value) {
-                    variables.extend(vars);
-                }
-                matched
-            },
-            // For exact host matching:
-            // - Empty host pattern matches everything
-            // - Otherwise compare host strings directly
-            HostSelector::EqualHost(EqualHost { value }) => {
-                if value.is_empty() {
-                    return true;
-                }
-                value == host
-            },
+        let matched = self.hosts.iter().any(|host_selector| {
+            let matched = host_selector.is_match(host, captures);
+            if matched {
+                return true;
+            }
+            false
         });
-        if variables.is_empty() {
-            return (matched, None);
-        }
 
-        // Return whether both path and host matched, along with any captured variables
-        (matched, Some(variables))
+        matched
     }
 
     /// Applies URL rewriting rules if configured for this location.
@@ -644,17 +591,17 @@ mod tests {
     }
     #[test]
     fn test_new_path_selector() {
-        let selector = new_path_selector("").unwrap();
-        assert_eq!(true, matches!(selector, PathSelector::Empty));
+        let selector = PathSelector::new("").unwrap();
+        assert_eq!(true, matches!(selector, PathSelector::Any));
 
-        let selector = new_path_selector("~/api").unwrap();
-        assert_eq!(true, matches!(selector, PathSelector::RegexPath(_)));
+        let selector = PathSelector::new("~/api").unwrap();
+        assert_eq!(true, matches!(selector, PathSelector::Regex(_)));
 
-        let selector = new_path_selector("=/api").unwrap();
-        assert_eq!(true, matches!(selector, PathSelector::EqualPath(_)));
+        let selector = PathSelector::new("=/api").unwrap();
+        assert_eq!(true, matches!(selector, PathSelector::Equal(_)));
 
-        let selector = new_path_selector("/api").unwrap();
-        assert_eq!(true, matches!(selector, PathSelector::PrefixPath(_)));
+        let selector = PathSelector::new("/api").unwrap();
+        assert_eq!(true, matches!(selector, PathSelector::Prefix(_)));
     }
     #[test]
     fn test_path_host_select_location() {
@@ -669,8 +616,11 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(true, lo.match_host_path("pingap", "/api").0);
-        assert_eq!(true, lo.match_host_path("", "").0);
+        assert_eq!(
+            true,
+            lo.match_host_path("pingap", "/api", &mut AHashMap::new())
+        );
+        assert_eq!(true, lo.match_host_path("", "", &mut AHashMap::new()));
 
         // host
         let lo = Location::new(
@@ -682,9 +632,15 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(true, lo.match_host_path("pingap", "/api").0);
-        assert_eq!(true, lo.match_host_path("pingap", "").0);
-        assert_eq!(false, lo.match_host_path("", "/api").0);
+        assert_eq!(
+            true,
+            lo.match_host_path("pingap", "/api", &mut AHashMap::new())
+        );
+        assert_eq!(
+            true,
+            lo.match_host_path("pingap", "", &mut AHashMap::new())
+        );
+        assert_eq!(false, lo.match_host_path("", "/api", &mut AHashMap::new()));
 
         // regex
         let lo = Location::new(
@@ -696,9 +652,15 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(true, lo.match_host_path("", "/api/users").0);
-        assert_eq!(true, lo.match_host_path("", "/users").0);
-        assert_eq!(false, lo.match_host_path("", "/api").0);
+        assert_eq!(
+            true,
+            lo.match_host_path("", "/api/users", &mut AHashMap::new())
+        );
+        assert_eq!(
+            true,
+            lo.match_host_path("", "/users", &mut AHashMap::new())
+        );
+        assert_eq!(false, lo.match_host_path("", "/api", &mut AHashMap::new()));
 
         // regex ^/api
         let lo = Location::new(
@@ -710,9 +672,15 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(true, lo.match_host_path("", "/api/users").0);
-        assert_eq!(false, lo.match_host_path("", "/users").0);
-        assert_eq!(true, lo.match_host_path("", "/api").0);
+        assert_eq!(
+            true,
+            lo.match_host_path("", "/api/users", &mut AHashMap::new())
+        );
+        assert_eq!(
+            false,
+            lo.match_host_path("", "/users", &mut AHashMap::new())
+        );
+        assert_eq!(true, lo.match_host_path("", "/api", &mut AHashMap::new()));
 
         // prefix
         let lo = Location::new(
@@ -724,9 +692,15 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(true, lo.match_host_path("", "/api/users").0);
-        assert_eq!(false, lo.match_host_path("", "/users").0);
-        assert_eq!(true, lo.match_host_path("", "/api").0);
+        assert_eq!(
+            true,
+            lo.match_host_path("", "/api/users", &mut AHashMap::new())
+        );
+        assert_eq!(
+            false,
+            lo.match_host_path("", "/users", &mut AHashMap::new())
+        );
+        assert_eq!(true, lo.match_host_path("", "/api", &mut AHashMap::new()));
 
         // equal
         let lo = Location::new(
@@ -738,9 +712,15 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(false, lo.match_host_path("", "/api/users").0);
-        assert_eq!(false, lo.match_host_path("", "/users").0);
-        assert_eq!(true, lo.match_host_path("", "/api").0);
+        assert_eq!(
+            false,
+            lo.match_host_path("", "/api/users", &mut AHashMap::new())
+        );
+        assert_eq!(
+            false,
+            lo.match_host_path("", "/users", &mut AHashMap::new())
+        );
+        assert_eq!(true, lo.match_host_path("", "/api", &mut AHashMap::new()));
     }
 
     #[test]
@@ -755,16 +735,15 @@ mod tests {
             },
         )
         .unwrap();
-        let (matched, variables) =
-            lo.match_host_path("charts.npmtrend.com", "/users/123");
-        assert_eq!(true, matched);
-        assert_eq!(
-            Some(vec![
-                ("route".to_string(), "users".to_string()),
-                ("name".to_string(), "charts".to_string()),
-            ]),
-            variables
+        let mut variables = AHashMap::new();
+        let matched = lo.match_host_path(
+            "charts.npmtrend.com",
+            "/users/123",
+            &mut variables,
         );
+        assert_eq!(true, matched);
+        assert_eq!("users", variables.get("route").unwrap());
+        assert_eq!("charts", variables.get("name").unwrap());
     }
 
     #[test]

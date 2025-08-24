@@ -30,3 +30,8 @@ tracing = { workspace = true }
 pretty_assertions = "1.4.0"
 tokio-test = "0.4.4"
 bytesize = { workspace = true }
+criterion = { version = "0.5.1", features = ["html_reports"] }
+
+[[bench]]
+name = "bench"
+harness = false

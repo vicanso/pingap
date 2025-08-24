@@ -3726,6 +3726,7 @@ dependencies = [
  "ahash",
  "arc-swap",
  "bytesize",
+ "criterion",
  "http",
  "once_cell",
  "pingap-config",

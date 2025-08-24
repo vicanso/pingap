@@ -870,13 +870,12 @@ impl ProxyHttp for Server {
                 continue;
             };
             current_location = Some(location.clone());
-            let (matched, variables) = location.match_host_path(host, path);
+            let mut captures = AHashMap::with_capacity(4);
+            let matched = location.match_host_path(host, path, &mut captures);
             if matched {
                 ctx.upstream.location = location.name.clone();
-                if let Some(variables) = variables {
-                    for (key, value) in variables.iter() {
-                        ctx.add_variable(key, value);
-                    }
+                if !captures.is_empty() {
+                    ctx.extend_variables(captures);
                 };
                 break;
             }
