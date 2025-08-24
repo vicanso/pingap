@@ -3735,7 +3735,6 @@ dependencies = [
  "pretty_assertions",
  "regex",
  "snafu",
- "substring",
  "tokio",
  "tokio-test",
  "tracing",

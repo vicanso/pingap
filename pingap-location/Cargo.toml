@@ -22,7 +22,6 @@ pingap-core = { version = "0.12.0", path = "../pingap-core" }
 pingora = { workspace = true }
 regex = { workspace = true }
 snafu = { workspace = true }
-substring = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 
