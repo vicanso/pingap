@@ -3718,6 +3718,7 @@ name = "pingap-imageoptim"
 version = "0.12.0"
 dependencies = [
  "async-trait",
+ "bytemuck",
  "bytes",
  "ctor",
  "http",

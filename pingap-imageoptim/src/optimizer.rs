@@ -76,16 +76,8 @@ impl From<RgbaImage> for ImageInfo {
     fn from(img: RgbaImage) -> Self {
         let width = img.width() as usize;
         let height = img.height() as usize;
-        let mut buffer = Vec::with_capacity(width * height);
-
-        for ele in img.chunks(4) {
-            buffer.push(RGBA8 {
-                r: ele[0],
-                g: ele[1],
-                b: ele[2],
-                a: ele[3],
-            })
-        }
+        let raw_buffer: Vec<u8> = img.into_raw();
+        let buffer: Vec<RGBA8> = bytemuck::cast_vec(raw_buffer);
 
         ImageInfo {
             buffer,
@@ -148,9 +140,17 @@ pub(crate) fn optimize_jpeg(info: &ImageInfo, quality: u8) -> Result<Vec<u8>> {
     let mut comp = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_RGB);
     comp.set_size(info.width, info.height);
     comp.set_quality(quality as f32);
-    let mut comp = comp.start_compress(Vec::new()).context(IoSnafu {})?;
-    comp.write_scanlines(info.buffer.as_bytes())
+    let mut comp = comp
+        .start_compress(Vec::with_capacity(info.buffer.len() * 3 / 4))
         .context(IoSnafu {})?;
+
+    let rgb_buffer: Vec<u8> = info
+        .buffer
+        .iter()
+        .flat_map(|rgba| [rgba.r, rgba.g, rgba.b])
+        .collect();
+    comp.write_scanlines(&rgb_buffer).context(IoSnafu {})?;
+
     let data = comp.finish().context(IoSnafu {})?;
     Ok(data)
 }

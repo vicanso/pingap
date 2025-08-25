@@ -30,6 +30,7 @@ use pingap_plugin::{
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::debug;
 
@@ -73,9 +74,9 @@ pub struct ImageOptim {
     /// A unique identifier for this plugin instance.
     /// Used for internal tracking and debugging purposes.
     hash_value: String,
-    support_types: Vec<String>,
+    support_types: HashSet<String>,
     plugin_step: PluginStep,
-    output_types: Vec<String>,
+    output_mimes: Vec<String>,
     png_quality: u8,
     jpeg_quality: u8,
     avif_quality: u8,
@@ -87,14 +88,27 @@ impl TryFrom<&PluginConf> for ImageOptim {
     fn try_from(value: &PluginConf) -> Result<Self> {
         debug!(params = value.to_string(), "new image optimizer plugin");
         let hash_value = get_hash_key(value);
-        let mut output_types = vec![];
-        for item in get_str_conf(value, "output_types").split(",") {
-            let item = item.trim();
-            if item.is_empty() {
-                continue;
-            }
-            output_types.push(item.to_string());
-        }
+
+        let output_types: Vec<String> = get_str_conf(value, "output_types")
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect();
+
+        let output_mimes = output_types
+            .iter()
+            .map(|format| format!("image/{}", format))
+            .collect();
+
+        // let mut output_types = vec![];
+        // for item in get_str_conf(value, "output_types").split(",") {
+        //     let item = item.trim();
+        //     if item.is_empty() {
+        //         continue;
+        //     }
+        //     output_types.push(item.to_string());
+        // }
         let mut png_quality = get_int_conf(value, "png_quality") as u8;
         if png_quality == 0 || png_quality > 100 {
             png_quality = 90;
@@ -113,8 +127,11 @@ impl TryFrom<&PluginConf> for ImageOptim {
         }
         Ok(Self {
             hash_value,
-            support_types: vec!["jpeg".to_string(), "png".to_string()],
-            output_types,
+            support_types: HashSet::from([
+                "jpeg".to_string(),
+                "png".to_string(),
+            ]),
+            output_mimes,
             plugin_step: PluginStep::UpstreamResponse,
             png_quality,
             jpeg_quality,
@@ -145,21 +162,21 @@ impl Plugin for ImageOptim {
         if step != PluginStep::Request {
             return Ok(RequestPluginResult::Skipped);
         }
-        // set cache key with accept image type
-        let mut accept_images = Vec::with_capacity(2);
+
         if let Some(accept) = session.get_header(http::header::ACCEPT) {
-            if let Ok(accept) = accept.to_str() {
-                for item in self.output_types.iter() {
-                    let key = format!("image/{item}");
-                    if accept.contains(key.as_str()) {
-                        accept_images.push(key);
-                    }
+            if let Ok(accept_str) = accept.to_str() {
+                let mut accept_images: Vec<_> = self
+                    .output_mimes
+                    .iter()
+                    .filter(|mime| accept_str.contains(*mime))
+                    .cloned()
+                    .collect();
+
+                if !accept_images.is_empty() {
+                    accept_images.sort();
+                    ctx.extend_cache_keys(accept_images);
                 }
-                accept_images.sort();
             }
-        }
-        if !accept_images.is_empty() {
-            ctx.extend_cache_keys(accept_images);
         }
         Ok(RequestPluginResult::Continue)
     }
@@ -174,40 +191,39 @@ impl Plugin for ImageOptim {
         if self.plugin_step != step {
             return Ok(ResponsePluginResult::Unchanged);
         }
-        let Some(content_type) =
+
+        let content_type = if let Some(value) =
             upstream_response.headers.get(http::header::CONTENT_TYPE)
-        else {
+        {
+            value.to_str().unwrap_or_default()
+        } else {
             return Ok(ResponsePluginResult::Unchanged);
         };
-        let Ok(content_type) = content_type.to_str() else {
+
+        let Some(image_type) = content_type.strip_prefix("image/") else {
             return Ok(ResponsePluginResult::Unchanged);
         };
-        let Some((content_type, image_type)) = content_type.split_once("/")
-        else {
-            return Ok(ResponsePluginResult::Unchanged);
-        };
-        if content_type != "image" {
-            return Ok(ResponsePluginResult::Unchanged);
-        }
-        let image_type = image_type.to_string();
-        if !self.support_types.contains(&image_type) {
+
+        if !self.support_types.contains(image_type) {
             return Ok(ResponsePluginResult::Unchanged);
         }
 
+        let Some(accept) = session.get_header(http::header::ACCEPT) else {
+            return Ok(ResponsePluginResult::Unchanged);
+        };
+        let Ok(accept_str) = accept.to_str() else {
+            return Ok(ResponsePluginResult::Unchanged);
+        };
+
+        let image_type = image_type.to_string();
         let mut format_type = image_type.clone();
-        if let Some(accept) = session.get_header(http::header::ACCEPT) {
-            if let Ok(accept) = accept.to_str() {
-                for item in self.output_types.iter() {
-                    if accept.contains(format!("image/{item}").as_str()) {
-                        format_type = item.to_string();
-                        break;
-                    }
-                }
+        for item in self.output_mimes.iter() {
+            if accept_str.contains(item.as_str()) {
+                format_type = item.clone();
+                break;
             }
         }
-        if format_type.is_empty() {
-            return Ok(ResponsePluginResult::Unchanged);
-        }
+        // if the image is not changed, it will be optimized again, so we need to remove the content-length
         // Remove content-length since we're modifying the body
         upstream_response.remove_header(&http::header::CONTENT_LENGTH);
         // Switch to chunked transfer encoding
