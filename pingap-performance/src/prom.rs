@@ -27,6 +27,7 @@ use prometheus::{
 use prometheus::{
     Histogram, HistogramOpts, IntCounter, IntCounterVec, IntGauge, IntGaugeVec,
 };
+use smallvec::SmallVec;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::error;
@@ -200,7 +201,8 @@ impl Prometheus {
             500..=599 => "5xx",
             _ => "unknown",
         };
-        let mut labels_list = Vec::with_capacity(2);
+        let mut labels_list: SmallVec<[[&str; 1]; 2]> = SmallVec::new();
+
         labels_list.push([""]);
         if !location.is_empty() {
             labels_list.push([location]);
@@ -571,200 +573,236 @@ fn new_histogram_vec(
     Ok(histogram)
 }
 
+macro_rules! register_metric {
+    ($r:expr, $constructor:ident, $($args:expr),*) => {{
+        // call the constructor to create the metric
+        let metric = $constructor($($args),*)?;
+        $r.register(Box::new(metric.clone())).map_err(|e| Error::Prometheus {
+            message: e.to_string(),
+        })?;
+        // return the boxed original metric
+        Ok(Box::new(metric))
+    }};
+}
+
 /// Create a prometheus metrics for server
 pub fn new_prometheus(server: &str) -> Result<Prometheus> {
     let r = Registry::new();
-    let http_requests_total = Box::new(new_int_counter_vec(
+    let http_requests_total = register_metric!(
+        r,
+        new_int_counter_vec,
         server,
         "pingap_http_requests_total",
         "pingap total http requests",
-        &["location"],
-    )?);
-    let http_requests_current = Box::new(new_int_gauge_vec(
+        &["location"]
+    )?;
+
+    let http_requests_current = register_metric!(
+        r,
+        new_int_gauge_vec,
         server,
         "pingap_http_requests_current",
         "pingap current http requests",
-        &["location"],
-    )?);
-    let http_received = Box::new(new_histogram_vec(
+        &["location"]
+    )?;
+
+    let http_received = register_metric!(
+        r,
+        new_histogram_vec,
         server,
         "pingap_http_received",
         "pingap http received from clients(KB)",
         &["location"],
-        &[1.0, 5.0, 10.0, 50.0, 100.0, 1000.0],
-    )?);
-    let http_received_bytes = Box::new(new_int_counter_vec(
+        &[1.0, 5.0, 10.0, 50.0, 100.0, 1000.0]
+    )?;
+    let http_received_bytes = register_metric!(
+        r,
+        new_int_counter_vec,
         server,
         "pingap_http_received_bytes",
         "pingap http received from clients(bytes)",
-        &["location"],
-    )?);
-    let http_responses_codes = Box::new(new_int_counter_vec(
+        &["location"]
+    )?;
+    let http_responses_codes = register_metric!(
+        r,
+        new_int_counter_vec,
         server,
         "pingap_http_responses_codes",
         "pingap total responses sent to clients by code",
-        &["location", "code"],
-    )?);
-    let http_response_time = Box::new(new_histogram_vec(
+        &["location", "code"]
+    )?;
+    let http_response_time = register_metric!(
+        r,
+        new_histogram_vec,
         server,
         "pingap_http_response_time",
         "pingap http response time(second)",
         &["location"],
-        &[
-            0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
-        ],
-    )?);
-    let http_sent = Box::new(new_histogram_vec(
+        &[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+    )?;
+    let http_sent = register_metric!(
+        r,
+        new_histogram_vec,
         server,
         "pingap_http_sent",
         "pingap http sent to clients(KB)",
         &["location"],
-        &[1.0, 5.0, 10.0, 50.0, 100.0, 1000.0, 10000.0],
-    )?);
-    let http_sent_bytes = Box::new(new_int_counter_vec(
+        &[1.0, 5.0, 10.0, 50.0, 100.0, 1000.0, 10000.0]
+    )?;
+    let http_sent_bytes = register_metric!(
+        r,
+        new_int_counter_vec,
         server,
         "pingap_http_sent_bytes",
         "pingap http sent to clients(bytes)",
-        &["location"],
-    )?);
-    let connection_reuses = Box::new(new_int_counter(
+        &["location"]
+    )?;
+    let connection_reuses = register_metric!(
+        r,
+        new_int_counter,
         server,
         "pingap_connection_reuses",
-        "pingap connection reuses during tcp connect",
-    )?);
-    let tls_handshake_time = Box::new(new_histogram(
+        "pingap connection reuses during tcp connect"
+    )?;
+    let tls_handshake_time = register_metric!(
+        r,
+        new_histogram,
         server,
         "pingap_tls_handshake_time",
         "pingap tls handshake time(second)",
-        &[0.01, 0.05, 0.1, 0.5, 1.0],
-    )?);
+        &[0.01, 0.05, 0.1, 0.5, 1.0]
+    )?;
 
-    let upstream_connections = Box::new(new_int_gauge_vec(
+    let upstream_connections = register_metric!(
+        r,
+        new_int_gauge_vec,
         server,
         "pingap_upstream_connections",
         "pingap connected connections of upstream",
-        &["upstream"],
-    )?);
-    let upstream_connections_current = Box::new(new_int_gauge_vec(
+        &["upstream"]
+    )?;
+    let upstream_connections_current = register_metric!(
+        r,
+        new_int_gauge_vec,
         server,
         "pingap_upstream_connections_current",
         "pingap current connections of upstream",
-        &["upstream"],
-    )?);
-    let upstream_tcp_connect_time = Box::new(new_histogram_vec(
+        &["upstream"]
+    )?;
+    let upstream_tcp_connect_time = register_metric!(
+        r,
+        new_histogram_vec,
         server,
         "pingap_upstream_tcp_connect_time",
         "pingap upstream tcp connect time(second)",
         &["upstream"],
-        &[0.005, 0.01, 0.05, 0.1, 0.5, 1.0],
-    )?);
-    let upstream_tls_handshake_time = Box::new(new_histogram_vec(
+        &[0.005, 0.01, 0.05, 0.1, 0.5, 1.0]
+    )?;
+    let upstream_tls_handshake_time = register_metric!(
+        r,
+        new_histogram_vec,
         server,
         "pingap_upstream_tls_handshake_time",
         "pingap upstream tsl handshake time(second)",
         &["upstream"],
-        &[0.01, 0.05, 0.1, 0.5, 1.0],
-    )?);
-    let upstream_reuses = Box::new(new_int_counter_vec(
+        &[0.01, 0.05, 0.1, 0.5, 1.0]
+    )?;
+    let upstream_reuses = register_metric!(
+        r,
+        new_int_counter_vec,
         server,
         "pingap_upstream_reuses",
         "pingap connection reuse during connect to upstream",
-        &["upstream"],
-    )?);
-    let upstream_processing_time = Box::new(new_histogram_vec(
+        &["upstream"]
+    )?;
+    let upstream_processing_time = register_metric!(
+        r,
+        new_histogram_vec,
         server,
         "pingap_upstream_processing_time",
         "pingap upstream processing time(second)",
         &["upstream"],
-        &[0.01, 0.02, 0.1, 0.5, 1.0, 5.0, 10.0],
-    )?);
-    let upstream_response_time = Box::new(new_histogram_vec(
+        &[0.01, 0.02, 0.1, 0.5, 1.0, 5.0, 10.0]
+    )?;
+    let upstream_response_time = register_metric!(
+        r,
+        new_histogram_vec,
         server,
         "pingap_upstream_response_time",
         "pingap upstream response time(second)",
         &["upstream"],
-        &[0.005, 0.01, 0.05, 0.1, 0.5, 1.0],
-    )?);
-    let cache_lookup_time = Box::new(new_histogram(
+        &[0.005, 0.01, 0.05, 0.1, 0.5, 1.0]
+    )?;
+    let cache_lookup_time = register_metric!(
+        r,
+        new_histogram,
         server,
         "pingap_cache_lookup_time",
         "pingap cache lookup time(second)",
-        &[0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0],
-    )?);
-    let cache_lock_time = Box::new(new_histogram(
+        &[0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
+    )?;
+    let cache_lock_time = register_metric!(
+        r,
+        new_histogram,
         server,
         "pingap_cache_lock_time",
         "pingap cache lock time(second)",
-        &[0.01, 0.05, 0.1, 1.0, 3.0],
-    )?);
-    let cache_reading = Box::new(new_int_gauge(
+        &[0.01, 0.05, 0.1, 1.0, 3.0]
+    )?;
+    let cache_reading = register_metric!(
+        r,
+        new_int_gauge,
         server,
         "pingap_cache_reading",
-        "pingap cache reading count",
-    )?);
-    let cache_writing = Box::new(new_int_gauge(
+        "pingap cache reading count"
+    )?;
+    let cache_writing = register_metric!(
+        r,
+        new_int_gauge,
         server,
         "pingap_cache_writing",
-        "pingap cache writing count",
-    )?);
-    let compression_ratio = Box::new(new_histogram(
+        "pingap cache writing count"
+    )?;
+    let compression_ratio = register_metric!(
+        r,
+        new_histogram,
         server,
         "pingap_compression_ratio",
         "pingap response compression ratio",
-        &[1.0, 2.0, 3.0, 5.0, 10.0],
-    )?);
+        &[1.0, 2.0, 3.0, 5.0, 10.0]
+    )?;
 
-    let memory = Box::new(new_int_gauge(
+    let memory = register_metric!(
+        r,
+        new_int_gauge,
         server,
         "pingap_memory",
-        "pingap memory size(mb)",
-    )?);
-    let fd_count = Box::new(new_int_gauge(
+        "pingap memory size(mb)"
+    )?;
+    let fd_count = register_metric!(
+        r,
+        new_int_gauge,
         server,
         "pingap_fd_count",
-        "pingap open file count",
-    )?);
-    let tcp_count = Box::new(new_int_gauge(
+        "pingap open file count"
+    )?;
+    let tcp_count = register_metric!(
+        r,
+        new_int_gauge,
         server,
         "pingap_tcp_count",
-        "pingap tcp connections",
-    )?);
-    let tcp6_count = Box::new(new_int_gauge(
+        "pingap tcp connections"
+    )?;
+    let tcp6_count = register_metric!(
+        r,
+        new_int_gauge,
         server,
         "pingap_tcp6_count",
-        "pingap tcp6 connections",
-    )?);
+        "pingap tcp6 connections"
+    )?;
 
-    let collectors: Vec<Box<dyn Collector>> = vec![
-        http_requests_total.clone(),
-        http_requests_current.clone(),
-        http_received.clone(),
-        http_received_bytes.clone(),
-        http_responses_codes.clone(),
-        http_response_time.clone(),
-        http_sent.clone(),
-        http_sent_bytes.clone(),
-        connection_reuses.clone(),
-        tls_handshake_time.clone(),
-        upstream_connections.clone(),
-        upstream_connections_current.clone(),
-        upstream_tcp_connect_time.clone(),
-        upstream_tls_handshake_time.clone(),
-        upstream_reuses.clone(),
-        upstream_processing_time.clone(),
-        upstream_response_time.clone(),
-        cache_lookup_time.clone(),
-        cache_lock_time.clone(),
-        cache_reading.clone(),
-        cache_writing.clone(),
-        CACHE_READING_TIME.clone(),
-        CACHE_WRITING_TIME.clone(),
-        compression_ratio.clone(),
-        memory.clone(),
-        fd_count.clone(),
-        tcp_count.clone(),
-        tcp6_count.clone(),
-    ];
+    let collectors: Vec<Box<dyn Collector>> =
+        vec![CACHE_READING_TIME.clone(), CACHE_WRITING_TIME.clone()];
     for c in collectors {
         r.register(c).map_err(|e| Error::Prometheus {
             message: e.to_string(),

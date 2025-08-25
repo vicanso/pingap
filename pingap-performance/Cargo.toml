@@ -35,6 +35,7 @@ pingora = { workspace = true }
 prometheus = { version = "0.13.4", default-features = false, optional = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
+smallvec = { workspace = true }
 snafu = { workspace = true }
 sysinfo = { workspace = true }
 tokio = { workspace = true }

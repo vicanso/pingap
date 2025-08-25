@@ -95,35 +95,41 @@ pub fn get_process_system_info() -> ProcessSystemInfo {
 
     cfg_if::cfg_if! {
         if #[cfg(target_os = "linux")] {
-            let mut fd_count = 0;
-            let mut tcp_count = 0;
-            let mut tcp6_count =0;
-            if let Ok(p) = procfs::process::Process::new(pid as i32) {
-                fd_count = p.fd_count().unwrap_or_default();
-                tcp_count = p.tcp().unwrap_or_default().len();
-                tcp6_count = p.tcp6().unwrap_or_default().len();
-            }
+            let (fd_count, tcp_count, tcp6_count) = if let Ok(p) = procfs::process::Process::new(pid as i32) {
+                (
+                    p.fd_count().unwrap_or_default(),
+                    p.tcp().unwrap_or_default().len(),
+                    p.tcp6().unwrap_or_default().len(),
+                )
+            } else {
+                (0, 0, 0)
+            };
         } else {
-            let fd_count = 0;
-            let tcp_count = 0;
-            let tcp6_count =0;
+            let (fd_count, tcp_count, tcp6_count) = (0, 0, 0);
         }
     }
 
-    let mut threads = 0;
     let cpu_count = num_cpus::get();
-    let mut default_threads = current_config.basic.threads.unwrap_or(1);
-    if default_threads == 0 {
-        default_threads = cpu_count;
-    }
-    for (_, server) in current_config.servers.iter() {
-        let count = server.threads.unwrap_or(1);
-        if count == 0 {
-            threads += default_threads;
-        } else {
-            threads += count;
-        }
-    }
+    let default_threads = current_config.basic.threads.unwrap_or(1);
+    let default_threads = if default_threads == 0 {
+        cpu_count
+    } else {
+        default_threads
+    };
+
+    let threads: usize = current_config
+        .servers
+        // values of current_config.servers
+        .values()
+        .map(|server| {
+            match server.threads {
+                // default threads if threads is 0
+                Some(0) => default_threads,
+                Some(n) => n,
+                None => default_threads,
+            }
+        })
+        .sum();
 
     let mut memory = "".to_string();
     let mut memory_mb = 0;

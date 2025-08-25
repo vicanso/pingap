@@ -24,67 +24,61 @@ use tracing::info;
 
 struct PerformanceMetricsLogTask {}
 
+/// Joins a vector of strings into a single string separated by ", ".
+/// Returns `None` if the input vector is empty.
+fn join_non_empty(items: Vec<String>) -> Option<String> {
+    if items.is_empty() {
+        None
+    } else {
+        Some(items.join(", "))
+    }
+}
+
 #[async_trait]
 impl BackgroundTask for PerformanceMetricsLogTask {
     async fn execute(&self, _count: u32) -> Result<bool, Error> {
         // Get cache statistics (reading/writing counts)
-        let mut cache_reading: i64 = -1;
-        let mut cache_writing: i64 = -1;
-        // if cache backend not initialized, do not get cache statistics
-        if is_cache_backend_init() {
-            // the cache backend is initialized once,
-            // we can use the default option
-            if let Ok(cache) = get_cache_backend(None) {
-                if let Some(stats) = cache.stats() {
-                    cache_reading = stats.reading as i64;
-                    cache_writing = stats.writing as i64;
-                }
-            }
-        }
+        let (cache_reading, cache_writing) = if is_cache_backend_init() {
+            // 使用 and_then 链式处理 Option，避免嵌套
+            get_cache_backend(None)
+                .ok() // Result<T, E> -> Option<T>
+                .and_then(|cache| cache.stats())
+                .map_or((-1, -1), |stats| {
+                    (stats.reading as i64, stats.writing as i64)
+                })
+        } else {
+            (-1, -1)
+        };
 
         // Collect active location processing counts
         // Format: "location1:count1, location2:count2, ..."
-        let locations_stats = get_locations_stats()
+        let locations_stats_vec = get_locations_stats()
             .into_iter()
             .filter(|(_, (processing, _))| *processing != 0)
             .map(|(name, (processing, accepted))| {
                 format!("{name}:{processing}/{accepted}")
             })
-            .collect::<Vec<String>>()
-            .join(", ");
-        let locations_stats = if locations_stats.is_empty() {
-            None
-        } else {
-            Some(locations_stats)
-        };
+            .collect::<Vec<_>>();
+        let locations_stats = join_non_empty(locations_stats_vec);
 
         // Collect upstream processing and connection counts
-        let mut upstreams_processing = vec![];
-        let mut upstreams_connected = vec![];
-        for (name, (processing, connected)) in
-            get_upstreams_processing_connected()
-        {
-            // Track non-zero processing counts
-            if processing != 0 {
-                upstreams_processing.push(format!("{name}:{processing}"));
-            }
-            // Track non-zero connection counts
-            if let Some(connected) = connected {
-                if connected != 0 {
-                    upstreams_connected.push(format!("{name}:{connected}"));
-                }
-            }
-        }
-        let upstreams_processing = if upstreams_processing.is_empty() {
-            None
-        } else {
-            Some(upstreams_processing.join(", "))
-        };
-        let upstreams_connected = if upstreams_connected.is_empty() {
-            None
-        } else {
-            Some(upstreams_connected.join(", "))
-        };
+
+        let (processing_vec, connected_vec) =
+            get_upstreams_processing_connected().into_iter().fold(
+                (Vec::new(), Vec::new()), // 初始值：一个包含两个空 Vec 的元组
+                |mut acc, (name, (processing, connected))| {
+                    if processing != 0 {
+                        acc.0.push(format!("{name}:{processing}"));
+                    }
+                    if let Some(conn) = connected.filter(|&c| c != 0) {
+                        acc.1.push(format!("{name}:{conn}"));
+                    }
+                    acc
+                },
+            );
+
+        let upstreams_processing = join_non_empty(processing_vec);
+        let upstreams_connected = join_non_empty(connected_vec);
 
         // Get system metrics and request processing stats
         let system_info = get_process_system_info();

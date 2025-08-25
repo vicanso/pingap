@@ -3829,6 +3829,7 @@ dependencies = [
  "prometheus",
  "reqwest",
  "serde",
+ "smallvec",
  "snafu",
  "sysinfo",
  "tokio",
