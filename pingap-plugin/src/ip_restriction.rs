@@ -105,7 +105,7 @@ impl Plugin for IpRestriction {
     /// Returns the unique hash key for this plugin instance.
     /// Used for caching and identifying plugin instances.
     #[inline]
-    fn hash_key(&self) -> Cow<'_, str> {
+    fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.hash_value)
     }
 

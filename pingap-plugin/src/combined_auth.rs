@@ -255,7 +255,7 @@ impl CombinedAuth {
 impl Plugin for CombinedAuth {
     /// Returns the unique hash key for this plugin instance
     #[inline]
-    fn hash_key(&self) -> Cow<'_, str> {
+    fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.hash_value)
     }
 

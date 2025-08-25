@@ -326,7 +326,7 @@ impl Plugin for Cache {
     /// Returns the unique hash key for this cache configuration.
     /// Used to identify different cache configurations in the system.
     #[inline]
-    fn hash_key(&self) -> Cow<'_, str> {
+    fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.hash_value)
     }
 

@@ -144,7 +144,7 @@ impl MockResponse {
 impl Plugin for MockResponse {
     /// Returns the unique identifier for this plugin instance
     #[inline]
-    fn hash_key(&self) -> Cow<'_, str> {
+    fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.hash_value)
     }
 

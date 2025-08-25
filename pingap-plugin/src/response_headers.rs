@@ -18,6 +18,7 @@ use http::header::HeaderName;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     convert_header, convert_header_value, Ctx, HttpHeader, Plugin, PluginStep,
+    ResponsePluginResult,
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
@@ -193,7 +194,7 @@ impl ResponseHeaders {
 impl Plugin for ResponseHeaders {
     /// Returns the unique hash key for this plugin instance.
     #[inline]
-    fn hash_key(&self) -> Cow<'_, str> {
+    fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.hash_value)
     }
 
@@ -224,10 +225,10 @@ impl Plugin for ResponseHeaders {
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<bool> {
+    ) -> pingora::Result<ResponsePluginResult> {
         // Skip if not in response phase
         if step != self.plugin_step {
-            return Ok(false);
+            return Ok(ResponsePluginResult::Unchanged);
         }
 
         // Headers are processed in a specific order to ensure predictable behavior:
@@ -286,7 +287,7 @@ impl Plugin for ResponseHeaders {
                 let _ = upstream_response.append_header(new_name, value);
             }
         }
-        Ok(true)
+        Ok(ResponsePluginResult::Modified)
     }
 }
 

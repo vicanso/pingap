@@ -30,6 +30,7 @@ use pingap_core::OtelTracer;
 use pingap_core::{convert_header_value, convert_headers, HttpHeader};
 use pingap_core::{
     get_cache_key, CompressionStat, Ctx, PluginStep, RequestPluginResult,
+    ResponsePluginResult,
 };
 use pingap_core::{real_now_ms, HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use pingap_location::{get_location, Location};
@@ -665,21 +666,20 @@ impl Server {
         for name in plugins.iter() {
             if let Some(plugin) = get_plugin(name) {
                 let now = Instant::now();
-                let executed = plugin
+                if let ResponsePluginResult::Modified = plugin
                     .handle_response(step, session, ctx, upstream_response)
-                    .await?;
-                if executed {
+                    .await?
+                {
                     let elapsed = now.elapsed().as_millis() as u32;
                     debug!(
                         category = LOG_CATEGORY,
                         name,
-                        executed,
                         elapsed,
                         step = step.to_string(),
                         "handle response plugin"
                     );
                     ctx.add_plugin_processing_time(name, elapsed);
-                }
+                };
             }
         }
         Ok(())
@@ -703,24 +703,24 @@ impl Server {
         for name in plugins.iter() {
             if let Some(plugin) = get_plugin(name) {
                 let now = Instant::now();
-                let executed = plugin.handle_upstream_response(
-                    step,
-                    session,
-                    ctx,
-                    upstream_response,
-                )?;
-                if executed {
+                if let ResponsePluginResult::Modified = plugin
+                    .handle_upstream_response(
+                        step,
+                        session,
+                        ctx,
+                        upstream_response,
+                    )?
+                {
                     let elapsed = now.elapsed().as_millis() as u32;
                     debug!(
                         category = LOG_CATEGORY,
                         name,
-                        executed,
                         elapsed,
                         step = step.to_string(),
                         "handle upstream response plugin"
                     );
                     ctx.add_plugin_processing_time(name, elapsed);
-                }
+                };
             }
         }
         Ok(())

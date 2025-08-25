@@ -43,6 +43,16 @@ pub enum RequestPluginResult {
     Respond(HttpResponse),
 }
 
+/// Represents the action a plugin takes on a response.
+pub enum ResponsePluginResult {
+    /// The plugin did not change the response.
+    Unchanged,
+    /// The plugin modified the response (e.g., headers or body).
+    Modified,
+    // TODO
+    // FullyReplaced(HttpResponse),
+}
+
 // Manually implement the PartialEq trait for RequestPluginResult
 impl PartialEq for RequestPluginResult {
     fn eq(&self, other: &Self) -> bool {
@@ -78,7 +88,7 @@ pub trait Plugin: Sync + Send {
     ///
     /// # Default
     /// Returns an empty string by default, which means no specific instance identification.
-    fn hash_key(&self) -> Cow<'_, str> {
+    fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed("")
     }
 
@@ -126,8 +136,8 @@ pub trait Plugin: Sync + Send {
         _session: &mut Session,
         _ctx: &mut Ctx,
         _upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<bool> {
-        Ok(false)
+    ) -> pingora::Result<ResponsePluginResult> {
+        Ok(ResponsePluginResult::Unchanged)
     }
     /// Processes an upstream response at a specified lifecycle step.
     ///
@@ -148,8 +158,8 @@ pub trait Plugin: Sync + Send {
         _session: &mut Session,
         _ctx: &mut Ctx,
         _upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<bool> {
-        Ok(false)
+    ) -> pingora::Result<ResponsePluginResult> {
+        Ok(ResponsePluginResult::Unchanged)
     }
 }
 

@@ -211,7 +211,7 @@ fn validate_token(key: &str, ttl: u64, value: &str) -> bool {
 impl Plugin for Csrf {
     /// Returns the unique hash key for this plugin instance
     #[inline]
-    fn hash_key(&self) -> Cow<'_, str> {
+    fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.hash_value)
     }
 

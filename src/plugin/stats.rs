@@ -141,7 +141,7 @@ impl Stats {
 #[async_trait]
 impl Plugin for Stats {
     #[inline]
-    fn hash_key(&self) -> Cow<'_, str> {
+    fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.hash_value)
     }
     /// Handles incoming HTTP requests for the Stats plugin

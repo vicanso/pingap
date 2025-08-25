@@ -312,7 +312,7 @@ pub fn try_init_plugins(
             if let Some(plugin) = get_plugin(name) {
                 exists = true;
                 // exists plugin with same config
-                if plugin.hash_key() == conf_hash_key {
+                if plugin.config_key() == conf_hash_key {
                     plugins.insert(name.to_string(), plugin);
                     return false;
                 }

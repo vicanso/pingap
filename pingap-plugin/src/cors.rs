@@ -22,7 +22,7 @@ use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     convert_header_value, Ctx, HttpHeader, HttpResponse, Plugin, PluginStep,
-    RequestPluginResult,
+    RequestPluginResult, ResponsePluginResult,
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
@@ -221,7 +221,7 @@ impl Cors {
 impl Plugin for Cors {
     /// Returns the unique identifier for this plugin instance
     #[inline]
-    fn hash_key(&self) -> Cow<'_, str> {
+    fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.hash_value)
     }
 
@@ -283,23 +283,23 @@ impl Plugin for Cors {
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<bool> {
+    ) -> pingora::Result<ResponsePluginResult> {
         // Only process during response phase
         if step != PluginStep::Response {
-            return Ok(false);
+            return Ok(ResponsePluginResult::Unchanged);
         }
 
         // Skip if path doesn't match CORS rules
         if let Some(reg) = &self.path {
             if !reg.is_match(session.req_header().uri.path()) {
-                return Ok(false);
+                return Ok(ResponsePluginResult::Unchanged);
             }
         }
 
         // Only add CORS headers if request has Origin header
         // (indicates it's a CORS request)
         if session.get_header(header::ORIGIN).is_none() {
-            return Ok(false);
+            return Ok(ResponsePluginResult::Unchanged);
         }
 
         // Add all configured CORS headers to the response
@@ -309,7 +309,7 @@ impl Plugin for Cors {
         for (name, value) in &headers {
             let _ = upstream_response.insert_header(name, value);
         }
-        Ok(true)
+        Ok(ResponsePluginResult::Modified)
     }
 }
 

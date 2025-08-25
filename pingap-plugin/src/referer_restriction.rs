@@ -146,7 +146,7 @@ impl Plugin for RefererRestriction {
     /// Returns a unique hash key for this plugin instance
     ///
     /// This is used for plugin caching and identification purposes
-    fn hash_key(&self) -> Cow<'_, str> {
+    fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.hash_value)
     }
 

@@ -22,6 +22,7 @@ use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, ModifyResponseBody, Plugin, PluginStep, RequestPluginResult,
+    ResponsePluginResult,
 };
 use pingap_core::{
     HttpResponse, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_TRANSFER_CHUNKED,
@@ -210,7 +211,7 @@ struct JwtHeader {
 impl Plugin for JwtAuth {
     /// Returns unique identifier for this plugin instance
     #[inline]
-    fn hash_key(&self) -> Cow<'_, str> {
+    fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.hash_value)
     }
 
@@ -321,12 +322,12 @@ impl Plugin for JwtAuth {
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<bool> {
+    ) -> pingora::Result<ResponsePluginResult> {
         if step != PluginStep::Response || self.auth_path.is_empty() {
-            return Ok(false);
+            return Ok(ResponsePluginResult::Unchanged);
         }
         if session.req_header().uri.path() != self.auth_path {
-            return Ok(false);
+            return Ok(ResponsePluginResult::Unchanged);
         }
         upstream_response.remove_header(&http::header::CONTENT_LENGTH);
         let json = HTTP_HEADER_CONTENT_JSON.clone();
@@ -343,7 +344,7 @@ impl Plugin for JwtAuth {
             secret: self.secret.clone(),
         }));
 
-        Ok(true)
+        Ok(ResponsePluginResult::Modified)
     }
 }
 

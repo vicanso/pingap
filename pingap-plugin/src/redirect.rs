@@ -98,7 +98,7 @@ impl Plugin for Redirect {
     /// The hash key is used for plugin identification and caching purposes.
     /// It's generated from the plugin's configuration parameters.
     #[inline]
-    fn hash_key(&self) -> Cow<'_, str> {
+    fn config_key(&self) -> Cow<'_, str> {
         // Return unique identifier for this plugin instance
         Cow::Borrowed(&self.hash_value)
     }

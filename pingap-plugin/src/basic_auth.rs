@@ -176,7 +176,7 @@ impl BasicAuth {
 #[async_trait]
 impl Plugin for BasicAuth {
     #[inline]
-    fn hash_key(&self) -> Cow<'_, str> {
+    fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.hash_value)
     }
 
@@ -270,7 +270,7 @@ delay = "10s"
                 .join(","),
         );
         assert_eq!(Duration::from_secs(10), params.delay.unwrap());
-        assert_eq!("AC7E9E03", params.hash_key());
+        assert_eq!("AC7E9E03", params.config_key());
 
         let result = BasicAuth::try_from(
             &toml::from_str::<PluginConf>(

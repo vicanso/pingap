@@ -27,7 +27,9 @@ use http::HeaderValue;
 use pingap_config::PluginConf;
 use pingap_core::HTTP_HEADER_TRANSFER_CHUNKED;
 use pingap_core::{new_internal_error, ModifyResponseBody};
-use pingap_core::{Ctx, Plugin, PluginStep, RequestPluginResult};
+use pingap_core::{
+    Ctx, Plugin, PluginStep, RequestPluginResult, ResponsePluginResult,
+};
 use pingora::http::ResponseHeader;
 use pingora::modules::http::compression::ResponseCompression;
 use pingora::protocols::http::compression::Algorithm;
@@ -190,7 +192,7 @@ impl Plugin for Compression {
     /// Returns the unique hash key for this plugin instance
     /// Used for caching and identifying plugin configurations
     #[inline]
-    fn hash_key(&self) -> Cow<'_, str> {
+    fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.hash_value)
     }
 
@@ -286,27 +288,27 @@ impl Plugin for Compression {
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<bool> {
+    ) -> pingora::Result<ResponsePluginResult> {
         if step != PluginStep::UpstreamResponse
             || !self.support_compression
             || self.mode != FULL_BODY_COMPRESS_MODE
         {
-            return Ok(false);
+            return Ok(ResponsePluginResult::Unchanged);
         }
         if upstream_response.headers.contains_key(CONTENT_ENCODING) {
-            return Ok(false);
+            return Ok(ResponsePluginResult::Unchanged);
         }
         let Some(content_type) = upstream_response.headers.get(CONTENT_TYPE)
         else {
-            return Ok(false);
+            return Ok(ResponsePluginResult::Unchanged);
         };
         if !is_compressible_content_type(content_type) {
-            return Ok(false);
+            return Ok(ResponsePluginResult::Unchanged);
         }
         let (zstd_level, br_level, gzip_level) =
             self.get_compress_level(session);
         if zstd_level == 0 && br_level == 0 && gzip_level == 0 {
-            return Ok(false);
+            return Ok(ResponsePluginResult::Unchanged);
         }
         debug!(
             zstd_level,
@@ -344,7 +346,7 @@ impl Plugin for Compression {
         };
         let _ = upstream_response.insert_header(CONTENT_ENCODING, encoding);
 
-        Ok(false)
+        Ok(ResponsePluginResult::Modified)
     }
 }
 

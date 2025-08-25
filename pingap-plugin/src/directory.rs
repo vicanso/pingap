@@ -421,7 +421,7 @@ fn get_autoindex_html(path: &Path) -> Result<String, String> {
 impl Plugin for Directory {
     /// Returns unique identifier for this plugin instance
     #[inline]
-    fn hash_key(&self) -> Cow<'_, str> {
+    fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.hash_value)
     }
 

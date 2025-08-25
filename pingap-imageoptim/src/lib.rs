@@ -21,7 +21,9 @@ use ctor::ctor;
 use pingap_config::PluginConf;
 use pingap_core::ModifyResponseBody;
 use pingap_core::HTTP_HEADER_TRANSFER_CHUNKED;
-use pingap_core::{Ctx, Plugin, PluginStep, RequestPluginResult};
+use pingap_core::{
+    Ctx, Plugin, PluginStep, RequestPluginResult, ResponsePluginResult,
+};
 use pingap_plugin::{
     get_hash_key, get_int_conf, get_plugin_factory, get_str_conf, Error,
 };
@@ -131,7 +133,7 @@ impl ImageOptim {
 #[async_trait]
 impl Plugin for ImageOptim {
     /// Returns a unique identifier for this plugin instance
-    fn hash_key(&self) -> Cow<'_, str> {
+    fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.hash_value)
     }
     async fn handle_request(
@@ -167,29 +169,29 @@ impl Plugin for ImageOptim {
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<bool> {
+    ) -> pingora::Result<ResponsePluginResult> {
         // Skip if not at the correct plugin step
         if self.plugin_step != step {
-            return Ok(false);
+            return Ok(ResponsePluginResult::Unchanged);
         }
         let Some(content_type) =
             upstream_response.headers.get(http::header::CONTENT_TYPE)
         else {
-            return Ok(false);
+            return Ok(ResponsePluginResult::Unchanged);
         };
         let Ok(content_type) = content_type.to_str() else {
-            return Ok(false);
+            return Ok(ResponsePluginResult::Unchanged);
         };
         let Some((content_type, image_type)) = content_type.split_once("/")
         else {
-            return Ok(false);
+            return Ok(ResponsePluginResult::Unchanged);
         };
         if content_type != "image" {
-            return Ok(false);
+            return Ok(ResponsePluginResult::Unchanged);
         }
         let image_type = image_type.to_string();
         if !self.support_types.contains(&image_type) {
-            return Ok(false);
+            return Ok(ResponsePluginResult::Unchanged);
         }
 
         let mut format_type = image_type.clone();
@@ -204,7 +206,7 @@ impl Plugin for ImageOptim {
             }
         }
         if format_type.is_empty() {
-            return Ok(false);
+            return Ok(ResponsePluginResult::Unchanged);
         }
         // Remove content-length since we're modifying the body
         upstream_response.remove_header(&http::header::CONTENT_LENGTH);
@@ -230,7 +232,7 @@ impl Plugin for ImageOptim {
                 webp_quality: 100,
                 format_type,
             }));
-        Ok(true)
+        Ok(ResponsePluginResult::Modified)
     }
 }
 

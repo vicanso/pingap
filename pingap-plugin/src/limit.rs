@@ -279,7 +279,7 @@ impl Limiter {
 impl Plugin for Limiter {
     /// Returns unique identifier for this limiter instance
     #[inline]
-    fn hash_key(&self) -> Cow<'_, str> {
+    fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.hash_value)
     }
 

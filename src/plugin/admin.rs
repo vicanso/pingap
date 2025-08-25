@@ -663,7 +663,7 @@ async fn handle_request_admin(
 #[async_trait]
 impl Plugin for AdminServe {
     #[inline]
-    fn hash_key(&self) -> Cow<'_, str> {
+    fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.hash_value)
     }
     async fn handle_request(

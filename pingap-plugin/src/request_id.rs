@@ -144,7 +144,7 @@ impl Plugin for RequestId {
     /// Returns the unique hash key identifying this plugin instance.
     /// Used for caching and plugin identification purposes.
     #[inline]
-    fn hash_key(&self) -> Cow<'_, str> {
+    fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.hash_value)
     }
 

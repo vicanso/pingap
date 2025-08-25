@@ -22,7 +22,8 @@ use ctor::ctor;
 use once_cell::sync::Lazy;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
-    Ctx, ModifyResponseBody, Plugin, PluginStep, HTTP_HEADER_TRANSFER_CHUNKED,
+    Ctx, ModifyResponseBody, Plugin, PluginStep, ResponsePluginResult,
+    HTTP_HEADER_TRANSFER_CHUNKED,
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
@@ -227,7 +228,7 @@ impl SubFilter {
 #[async_trait]
 impl Plugin for SubFilter {
     /// Returns a unique identifier for this plugin instance
-    fn hash_key(&self) -> Cow<'_, str> {
+    fn config_key(&self) -> Cow<'_, str> {
         Cow::Borrowed(&self.hash_value)
     }
 
@@ -247,10 +248,10 @@ impl Plugin for SubFilter {
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<bool> {
+    ) -> pingora::Result<ResponsePluginResult> {
         // Skip if not at the correct plugin step
         if self.plugin_step != step {
-            return Ok(false);
+            return Ok(ResponsePluginResult::Unchanged);
         }
         // If request path matches, modify the response
         if self.path.is_match(session.req_header().uri.path()) {
@@ -266,7 +267,7 @@ impl Plugin for SubFilter {
             features.modify_response_body =
                 Some(Box::new(self.replacer.clone()));
         }
-        Ok(true)
+        Ok(ResponsePluginResult::Modified)
     }
 }
 
