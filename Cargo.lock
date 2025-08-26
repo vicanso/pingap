@@ -3771,7 +3771,6 @@ dependencies = [
  "bytesize",
  "chrono",
  "criterion",
- "crossbeam-channel",
  "flate2",
  "http",
  "itoa",

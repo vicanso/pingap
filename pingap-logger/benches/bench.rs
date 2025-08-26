@@ -6,10 +6,12 @@ use pingap_core::{
 };
 use pingap_logger::Parser;
 use pingora::proxy::Session;
+use std::sync::mpsc;
 use std::time::Duration;
 use tokio_test::io::Builder;
 
-fn get_logger_session(s: crossbeam_channel::Sender<Option<Session>>) {
+fn get_logger_session() -> mpsc::Receiver<Option<Session>> {
+    let (tx, rx) = mpsc::sync_channel(0);
     std::thread::spawn(move || {
         match tokio::runtime::Runtime::new() {
             Ok(rt) => {
@@ -29,21 +31,20 @@ fn get_logger_session(s: crossbeam_channel::Sender<Option<Session>>) {
 
                     let mut session = Session::new_h1(Box::new(mock_io));
                     session.read_request().await.unwrap();
-                    let _ = s.send(Some(session));
+                    let _ = tx.send(Some(session));
                 };
                 rt.block_on(send);
             },
             Err(_e) => {
-                let _ = s.send(None);
+                let _ = tx.send(None);
             },
         };
     });
+    rx
 }
 
 fn bench_logger_format(c: &mut Criterion) {
-    let (s, r) = crossbeam_channel::bounded(0);
-    get_logger_session(s);
-    let session = r.recv().unwrap().unwrap();
+    let session = get_logger_session().recv().unwrap().unwrap();
     c.bench_function("logger format", |b| {
         let p: Parser =
             "{host} {method} {path} {proto} {query} {remote} {client_ip} \

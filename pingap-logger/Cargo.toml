@@ -44,7 +44,6 @@ syslog = "7.0.0"
 pretty_assertions = "1.4.0"
 tokio-test = "0.4.4"
 criterion = { version = "0.5.1", features = ["html_reports"] }
-crossbeam-channel = "0.5.15"
 
 [[bench]]
 name = "bench"
