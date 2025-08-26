@@ -3720,6 +3720,7 @@ dependencies = [
  "async-trait",
  "bytemuck",
  "bytes",
+ "criterion",
  "ctor",
  "http",
  "image",
@@ -3730,8 +3731,13 @@ dependencies = [
  "pingap-core",
  "pingap-plugin",
  "pingora",
+ "pretty_assertions",
  "rgb",
  "snafu",
+ "tempfile",
+ "tokio",
+ "tokio-test",
+ "toml 0.9.5",
  "tracing",
 ]
 

@@ -101,14 +101,6 @@ impl TryFrom<&PluginConf> for ImageOptim {
             .map(|format| format!("image/{}", format))
             .collect();
 
-        // let mut output_types = vec![];
-        // for item in get_str_conf(value, "output_types").split(",") {
-        //     let item = item.trim();
-        //     if item.is_empty() {
-        //         continue;
-        //     }
-        //     output_types.push(item.to_string());
-        // }
         let mut png_quality = get_int_conf(value, "png_quality") as u8;
         if png_quality == 0 || png_quality > 100 {
             png_quality = 90;
@@ -231,10 +223,8 @@ impl Plugin for ImageOptim {
             http::header::TRANSFER_ENCODING,
             HTTP_HEADER_TRANSFER_CHUNKED.1.clone(),
         );
-        let _ = upstream_response.insert_header(
-            http::header::CONTENT_TYPE,
-            format!("image/{format_type}").as_str(),
-        );
+        let _ = upstream_response
+            .insert_header(http::header::CONTENT_TYPE, &format_type);
 
         let feature = ctx.features.get_or_insert_default();
         feature.modify_upstream_response_body =
@@ -257,4 +247,217 @@ fn init() {
     get_plugin_factory().register("image_optim", |params| {
         Ok(Arc::new(ImageOptim::new(params)?))
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pingap_config::PluginConf;
+    use pingap_core::{Ctx, Plugin};
+    use pingora::modules::http::HttpModules;
+    use pretty_assertions::assert_eq;
+    use tokio_test::io::Builder;
+
+    #[test]
+    fn test_new_image_optimize() {
+        let optim = ImageOptim::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+avif_quality = 75
+avif_speed = 3
+category = "image_optim"
+jpeg_quality = 80
+output_types = "avif,webp"
+png_quality = 90
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            HashSet::from(["jpeg".to_string(), "png".to_string(),]),
+            optim.support_types
+        );
+        assert_eq!(
+            vec!["image/avif".to_string(), "image/webp".to_string()],
+            optim.output_mimes
+        );
+        assert_eq!(90, optim.png_quality);
+        assert_eq!(80, optim.jpeg_quality);
+        assert_eq!(75, optim.avif_quality);
+        assert_eq!(3, optim.avif_speed);
+    }
+
+    #[tokio::test]
+    async fn test_image_optimize_handle_request() {
+        let optim = ImageOptim::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+avif_quality = 75
+avif_speed = 3
+category = "image_optim"
+jpeg_quality = 80
+output_types = "avif,webp"
+png_quality = 90
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        // not accept value
+        {
+            let headers = [""].join("\r\n");
+            let input_header = format!(
+                "GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n"
+            );
+            let mock_io = Builder::new().read(input_header.as_bytes()).build();
+            let mut session = Session::new_h1_with_modules(
+                Box::new(mock_io),
+                &HttpModules::new(),
+            );
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+
+            let result = optim
+                .handle_request(PluginStep::Request, &mut session, &mut ctx)
+                .await
+                .unwrap();
+
+            assert_eq!(true, RequestPluginResult::Continue == result);
+            assert_eq!(true, ctx.cache.is_none());
+        }
+
+        // accept avif
+        {
+            let headers = ["Accept: image/avif"].join("\r\n");
+            let input_header = format!(
+                "GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n"
+            );
+            let mock_io = Builder::new().read(input_header.as_bytes()).build();
+            let mut session = Session::new_h1_with_modules(
+                Box::new(mock_io),
+                &HttpModules::new(),
+            );
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+
+            let result = optim
+                .handle_request(PluginStep::Request, &mut session, &mut ctx)
+                .await
+                .unwrap();
+
+            assert_eq!(true, RequestPluginResult::Continue == result);
+            assert_eq!(
+                vec!["image/avif".to_string()],
+                ctx.cache.unwrap().keys.unwrap()
+            );
+        }
+
+        // accept avif, webp
+        {
+            let headers = ["Accept: image/webp, image/avif"].join("\r\n");
+            let input_header = format!(
+                "GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n"
+            );
+            let mock_io = Builder::new().read(input_header.as_bytes()).build();
+            let mut session = Session::new_h1_with_modules(
+                Box::new(mock_io),
+                &HttpModules::new(),
+            );
+            session.read_request().await.unwrap();
+            let mut ctx = Ctx::default();
+
+            let result = optim
+                .handle_request(PluginStep::Request, &mut session, &mut ctx)
+                .await
+                .unwrap();
+
+            assert_eq!(true, RequestPluginResult::Continue == result);
+            assert_eq!(
+                vec!["image/avif".to_string(), "image/webp".to_string()],
+                ctx.cache.unwrap().keys.unwrap()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_image_optimize_handle_upstream_response() {
+        let optim = ImageOptim::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+avif_quality = 75
+avif_speed = 3
+category = "image_optim"
+jpeg_quality = 80
+output_types = "avif,webp"
+png_quality = 90
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let headers = ["Accept: image/webp, image/avif"].join("\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1_with_modules(
+            Box::new(mock_io),
+            &HttpModules::new(),
+        );
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::default();
+        let mut upstream_response = ResponseHeader::build(200, None).unwrap();
+
+        // no content type
+        let result = optim
+            .handle_upstream_response(
+                PluginStep::UpstreamResponse,
+                &mut session,
+                &mut ctx,
+                &mut upstream_response,
+            )
+            .unwrap();
+        assert_eq!(true, ResponsePluginResult::Unchanged == result);
+
+        // content type is not image
+        upstream_response
+            .append_header("content-type", "application/json")
+            .unwrap();
+        let result = optim
+            .handle_upstream_response(
+                PluginStep::UpstreamResponse,
+                &mut session,
+                &mut ctx,
+                &mut upstream_response,
+            )
+            .unwrap();
+        assert_eq!(true, ResponsePluginResult::Unchanged == result);
+
+        // response image png
+        upstream_response
+            .insert_header("content-type", "image/png")
+            .unwrap();
+        let result = optim
+            .handle_upstream_response(
+                PluginStep::UpstreamResponse,
+                &mut session,
+                &mut ctx,
+                &mut upstream_response,
+            )
+            .unwrap();
+        assert_eq!(
+            "chunked",
+            upstream_response.headers.get("transfer-encoding").unwrap()
+        );
+        assert_eq!(true, ResponsePluginResult::Modified == result);
+        assert_eq!(
+            true,
+            ctx.features
+                .unwrap()
+                .modify_upstream_response_body
+                .is_some()
+        );
+    }
 }

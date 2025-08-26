@@ -31,3 +31,11 @@ pingora = { workspace = true }
 rgb = { version = "0.8.52", features = ["bytemuck"] }
 snafu = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+pretty_assertions = "1.4.0"
+tempfile = "3.16.0"
+tokio-test = "0.4.4"
+criterion = { version = "0.5.1", features = ["html_reports"] }
+toml = { workspace = true }

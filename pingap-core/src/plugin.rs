@@ -44,6 +44,7 @@ pub enum RequestPluginResult {
 }
 
 /// Represents the action a plugin takes on a response.
+#[derive(Debug, PartialEq, Eq)]
 pub enum ResponsePluginResult {
     /// The plugin did not change the response.
     Unchanged,
