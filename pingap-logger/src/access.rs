@@ -319,6 +319,8 @@ impl Parser {
             (None, None)
         };
 
+        const EMPTY_FIELD: &[u8] = b"-";
+
         // Process each tag in the format string
         for tag in self.tags.iter() {
             match tag.category {
@@ -330,17 +332,28 @@ impl Parser {
                 },
                 TagCategory::Host => {
                     // Add the host from request headers
-                    if let Some(host) = pingap_core::get_host(req_header) {
-                        buf.extend_from_slice(host.as_bytes());
+                    match pingap_core::get_host(req_header) {
+                        Some(host) if !host.is_empty() => {
+                            buf.extend_from_slice(host.as_bytes())
+                        },
+                        _ => buf.extend_from_slice(EMPTY_FIELD),
                     }
                 },
                 TagCategory::Method => {
-                    buf.extend_from_slice(
-                        req_header.method.as_str().as_bytes(),
-                    );
+                    let method = req_header.method.as_str();
+                    if method.is_empty() {
+                        buf.extend_from_slice(EMPTY_FIELD);
+                    } else {
+                        buf.extend_from_slice(method.as_bytes());
+                    }
                 },
                 TagCategory::Path => {
-                    buf.extend_from_slice(req_header.uri.path().as_bytes());
+                    let path = req_header.uri.path();
+                    if path.is_empty() {
+                        buf.extend_from_slice(EMPTY_FIELD);
+                    } else {
+                        buf.extend_from_slice(path.as_bytes());
+                    }
                 },
                 TagCategory::Proto => {
                     if session.is_http2() {
@@ -349,23 +362,32 @@ impl Parser {
                         buf.extend_from_slice(b"HTTP/1.1");
                     }
                 },
-                TagCategory::Query => {
-                    if let Some(query) = req_header.uri.query() {
-                        buf.extend_from_slice(query.as_bytes());
-                    }
+                TagCategory::Query => match req_header.uri.query() {
+                    Some(query) if !query.is_empty() => {
+                        buf.extend_from_slice(query.as_bytes())
+                    },
+                    _ => buf.extend_from_slice(EMPTY_FIELD),
                 },
-                TagCategory::Remote => {
-                    if let Some(addr) = &ctx.conn.remote_addr {
-                        buf.extend_from_slice(addr.as_bytes());
-                    }
+                TagCategory::Remote => match &ctx.conn.remote_addr {
+                    Some(addr) if !addr.is_empty() => {
+                        buf.extend_from_slice(addr.as_bytes())
+                    },
+                    _ => buf.extend_from_slice(EMPTY_FIELD),
                 },
                 TagCategory::ClientIp => {
                     if let Some(client_ip) = &ctx.conn.client_ip {
-                        buf.extend_from_slice(client_ip.as_bytes());
+                        if client_ip.is_empty() {
+                            buf.extend_from_slice(EMPTY_FIELD);
+                        } else {
+                            buf.extend_from_slice(client_ip.as_bytes());
+                        }
                     } else {
-                        buf.extend_from_slice(
-                            pingap_core::get_client_ip(session).as_bytes(),
-                        );
+                        let client_ip = pingap_core::get_client_ip(session);
+                        if client_ip.is_empty() {
+                            buf.extend_from_slice(EMPTY_FIELD);
+                        } else {
+                            buf.extend_from_slice(client_ip.as_bytes());
+                        }
                     }
                 },
                 TagCategory::Scheme => {
@@ -375,29 +397,42 @@ impl Parser {
                         buf.extend_from_slice(b"http");
                     }
                 },
-                TagCategory::Uri => {
-                    if let Some(value) = req_header.uri.path_and_query() {
-                        buf.extend_from_slice(value.as_str().as_bytes());
-                    }
+                TagCategory::Uri => match req_header.uri.path_and_query() {
+                    Some(value) if !value.as_str().is_empty() => {
+                        buf.extend_from_slice(value.as_str().as_bytes())
+                    },
+                    _ => buf.extend_from_slice(EMPTY_FIELD),
                 },
                 TagCategory::Referrer => {
                     let value = session.get_header_bytes("Referer");
-                    buf.extend_from_slice(value);
+                    if value.is_empty() {
+                        buf.extend_from_slice(EMPTY_FIELD);
+                    } else {
+                        buf.extend_from_slice(value);
+                    }
                 },
                 TagCategory::UserAgent => {
                     let value = session.get_header_bytes("User-Agent");
-                    buf.extend_from_slice(value);
+                    if value.is_empty() {
+                        buf.extend_from_slice(EMPTY_FIELD);
+                    } else {
+                        buf.extend_from_slice(value);
+                    }
                 },
                 TagCategory::When => {
                     if let Some(now) = &now {
                         buf.extend_from_slice(
                             now.with_timezone(&Local).to_rfc3339().as_bytes(),
                         );
+                    } else {
+                        buf.extend_from_slice(EMPTY_FIELD);
                     }
                 },
                 TagCategory::WhenUtcIso => {
                     if let Some(now) = &now {
                         buf.extend_from_slice(now.to_rfc3339().as_bytes());
+                    } else {
+                        buf.extend_from_slice(EMPTY_FIELD);
                     }
                 },
                 TagCategory::WhenUnix => {
@@ -407,6 +442,8 @@ impl Parser {
                                 .format(now.timestamp_millis())
                                 .as_bytes(),
                         );
+                    } else {
+                        buf.extend_from_slice(EMPTY_FIELD);
                     }
                 },
                 TagCategory::Size => {
@@ -432,12 +469,16 @@ impl Parser {
                         buf.extend_from_slice(
                             itoa::Buffer::new().format(ms).as_bytes(),
                         );
+                    } else {
+                        buf.extend_from_slice(EMPTY_FIELD);
                     }
                 },
                 TagCategory::LatencyHuman => {
                     if let Some(instant) = instant {
                         let ms = (instant - ctx.timing.created_at).as_millis();
                         format_duration(&mut buf, ms as u64);
+                    } else {
+                        buf.extend_from_slice(EMPTY_FIELD);
                     }
                 },
                 TagCategory::Cookie => {
@@ -447,24 +488,36 @@ impl Parser {
                         {
                             buf.extend_from_slice(value.as_bytes());
                         }
+                    } else {
+                        buf.extend_from_slice(EMPTY_FIELD);
                     }
                 },
                 TagCategory::RequestHeader => {
                     if let Some(key) = &tag.data {
-                        if let Some(value) = req_header.headers.get(key) {
-                            buf.extend_from_slice(value.as_bytes());
+                        match req_header.headers.get(key) {
+                            Some(value) if !value.is_empty() => {
+                                buf.extend_from_slice(value.as_bytes())
+                            },
+                            _ => buf.extend_from_slice(EMPTY_FIELD),
                         }
+                    } else {
+                        buf.extend_from_slice(EMPTY_FIELD);
                     }
                 },
                 TagCategory::ResponseHeader => {
                     if let Some(resp_header) = session.response_written() {
                         if let Some(key) = &tag.data {
-                            if let Some(value) =
-                                get_resp_header_value(resp_header, key)
-                            {
-                                buf.extend_from_slice(value);
+                            match get_resp_header_value(resp_header, key) {
+                                Some(value) if !value.is_empty() => {
+                                    buf.extend_from_slice(value)
+                                },
+                                _ => buf.extend_from_slice(EMPTY_FIELD),
                             }
+                        } else {
+                            buf.extend_from_slice(EMPTY_FIELD);
                         }
+                    } else {
+                        buf.extend_from_slice(EMPTY_FIELD);
                     }
                 },
                 TagCategory::PayloadSize => {
@@ -480,11 +533,15 @@ impl Parser {
                 TagCategory::RequestId => {
                     if let Some(key) = &ctx.state.request_id {
                         buf.extend_from_slice(key.as_bytes());
+                    } else {
+                        buf.extend_from_slice(EMPTY_FIELD);
                     }
                 },
                 TagCategory::Context => {
                     if let Some(key) = &tag.data {
                         buf = ctx.append_log_value(buf, key.as_str());
+                    } else {
+                        buf.extend_from_slice(EMPTY_FIELD);
                     }
                 },
             };
@@ -706,7 +763,6 @@ mod tests {
                 .into();
         let headers = [
             "Host: github.com",
-            "Referer: https://github.com/",
             "User-Agent: pingap/0.1.1",
             "Cookie: deviceId=abc",
             "Accept: application/json",
@@ -747,7 +803,7 @@ mod tests {
         };
         let log = p.format(&session, &ctx);
         assert_eq!(
-            "github.com GET /vicanso/pingap HTTP/1.1 size=1 10.1.1.1 1.1.1.1 https /vicanso/pingap?size=1 https://github.com/ pingap/0.1.1 0 0B 0 0 0B abc application/json true 192.186.1.1:6188 1 100ms test 300ms 1.2 nanoid",
+            "github.com GET /vicanso/pingap HTTP/1.1 size=1 10.1.1.1 1.1.1.1 https /vicanso/pingap?size=1 - pingap/0.1.1 0 0B 0 0 0B abc application/json true 192.186.1.1:6188 1 100ms test 300ms 1.2 nanoid",
             log
         );
 
