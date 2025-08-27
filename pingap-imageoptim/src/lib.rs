@@ -75,7 +75,6 @@ pub struct ImageOptim {
     /// Used for internal tracking and debugging purposes.
     hash_value: String,
     support_types: HashSet<String>,
-    plugin_step: PluginStep,
     output_mimes: Vec<String>,
     png_quality: u8,
     jpeg_quality: u8,
@@ -124,7 +123,6 @@ impl TryFrom<&PluginConf> for ImageOptim {
                 "png".to_string(),
             ]),
             output_mimes,
-            plugin_step: PluginStep::UpstreamResponse,
             png_quality,
             jpeg_quality,
             avif_quality,
@@ -174,16 +172,10 @@ impl Plugin for ImageOptim {
     }
     fn handle_upstream_response(
         &self,
-        step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<ResponsePluginResult> {
-        // Skip if not at the correct plugin step
-        if self.plugin_step != step {
-            return Ok(ResponsePluginResult::Unchanged);
-        }
-
         let content_type = if let Some(value) =
             upstream_response.headers.get(http::header::CONTENT_TYPE)
         {
@@ -413,7 +405,6 @@ png_quality = 90
         // no content type
         let result = optim
             .handle_upstream_response(
-                PluginStep::UpstreamResponse,
                 &mut session,
                 &mut ctx,
                 &mut upstream_response,
@@ -427,7 +418,6 @@ png_quality = 90
             .unwrap();
         let result = optim
             .handle_upstream_response(
-                PluginStep::UpstreamResponse,
                 &mut session,
                 &mut ctx,
                 &mut upstream_response,
@@ -441,7 +431,6 @@ png_quality = 90
             .unwrap();
         let result = optim
             .handle_upstream_response(
-                PluginStep::UpstreamResponse,
                 &mut session,
                 &mut ctx,
                 &mut upstream_response,

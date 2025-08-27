@@ -284,15 +284,11 @@ impl Plugin for Compression {
     }
     fn handle_upstream_response(
         &self,
-        step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<ResponsePluginResult> {
-        if step != PluginStep::UpstreamResponse
-            || !self.support_compression
-            || self.mode != FULL_BODY_COMPRESS_MODE
-        {
+        if !self.support_compression || self.mode != FULL_BODY_COMPRESS_MODE {
             return Ok(ResponsePluginResult::Unchanged);
         }
         if upstream_response.headers.contains_key(CONTENT_ENCODING) {

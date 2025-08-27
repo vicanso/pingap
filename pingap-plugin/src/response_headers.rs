@@ -17,7 +17,7 @@ use ctor::ctor;
 use http::header::HeaderName;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
-    convert_header, convert_header_value, Ctx, HttpHeader, Plugin, PluginStep,
+    convert_header, convert_header_value, Ctx, HttpHeader, Plugin,
     ResponsePluginResult,
 };
 use pingora::http::ResponseHeader;
@@ -33,10 +33,6 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 /// It provides functionality to add, remove, set, and rename response headers
 /// based on configuration provided in TOML format.
 pub struct ResponseHeaders {
-    /// The plugin execution step (must be "response")
-    /// Used to ensure header modifications only occur during response processing
-    plugin_step: PluginStep,
-
     /// Headers to be appended to the response
     /// - Allows multiple values for the same header name
     /// - Preserves any existing header values
@@ -163,7 +159,6 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
 
         let params = Self {
             hash_value,
-            plugin_step: PluginStep::Response,
             add_headers,
             set_headers,
             remove_headers,
@@ -201,7 +196,6 @@ impl Plugin for ResponseHeaders {
     /// Handles response header modifications during the response phase.
     ///
     /// # Arguments
-    /// * `step` - Current plugin execution step
     /// * `session` - Current HTTP session
     /// * `ctx` - Plugin state context
     /// * `upstream_response` - Response headers to modify
@@ -221,16 +215,10 @@ impl Plugin for ResponseHeaders {
     #[inline]
     async fn handle_response(
         &self,
-        step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<ResponsePluginResult> {
-        // Skip if not in response phase
-        if step != self.plugin_step {
-            return Ok(ResponsePluginResult::Unchanged);
-        }
-
         // Headers are processed in a specific order to ensure predictable behavior:
         // 1. Add new headers (allows multiple values)
         //    - Uses append_header which preserves existing values
@@ -302,7 +290,7 @@ fn init() {
 mod tests {
     use super::*;
     use pingap_config::PluginConf;
-    use pingap_core::{Ctx, PluginStep};
+    use pingap_core::Ctx;
     use pingora::http::ResponseHeader;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
@@ -335,7 +323,6 @@ remove_headers = [
             .unwrap(),
         )
         .unwrap();
-        assert_eq!("response", params.plugin_step.to_string());
         assert_eq!(
             r#"[("x-service", "1"), ("x-service", "2")]"#,
             format!("{:?}", params.add_headers)
@@ -399,7 +386,6 @@ set_headers_not_exists = [
 
         response_headers
             .handle_response(
-                PluginStep::Response,
                 &mut session,
                 &mut Ctx::default(),
                 &mut upstream_response,

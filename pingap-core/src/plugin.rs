@@ -132,7 +132,6 @@ pub trait Plugin: Sync + Send {
     /// Processes an HTTP response at a specified lifecycle step.
     ///
     /// # Parameters
-    /// * `_step` - Current processing step in the response lifecycle
     /// * `_session` - Mutable reference to the HTTP session
     /// * `_ctx` - Mutable reference to the request context
     /// * `_upstream_response` - Mutable reference to the upstream response header
@@ -145,7 +144,6 @@ pub trait Plugin: Sync + Send {
     #[inline]
     async fn handle_response(
         &self,
-        _step: PluginStep,
         _session: &mut Session,
         _ctx: &mut Ctx,
         _upstream_response: &mut ResponseHeader,
@@ -173,7 +171,6 @@ pub trait Plugin: Sync + Send {
     #[inline]
     fn handle_response_body(
         &self,
-        _step: PluginStep,
         _session: &mut Session,
         _ctx: &mut Ctx,
         _body: &mut Option<bytes::Bytes>,
@@ -198,7 +195,6 @@ pub trait Plugin: Sync + Send {
     #[inline]
     fn handle_upstream_response(
         &self,
-        _step: PluginStep,
         _session: &mut Session,
         _ctx: &mut Ctx,
         _upstream_response: &mut ResponseHeader,
@@ -226,7 +222,6 @@ pub trait Plugin: Sync + Send {
     #[inline]
     fn handle_upstream_response_body(
         &self,
-        _step: PluginStep,
         _session: &mut Session,
         _ctx: &mut Ctx,
         _body: &mut Option<bytes::Bytes>,

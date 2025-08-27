@@ -308,7 +308,6 @@ impl Plugin for JwtAuth {
     /// Handles responses for the token generation endpoint
     ///
     /// # Arguments
-    /// * `step` - Current plugin execution step
     /// * `session` - Current HTTP session
     /// * `ctx` - Plugin state context
     /// * `upstream_response` - Response headers from upstream
@@ -318,14 +317,10 @@ impl Plugin for JwtAuth {
     #[inline]
     async fn handle_response(
         &self,
-        step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<ResponsePluginResult> {
-        if step != PluginStep::Response || self.auth_path.is_empty() {
-            return Ok(ResponsePluginResult::Unchanged);
-        }
         if session.req_header().uri.path() != self.auth_path {
             return Ok(ResponsePluginResult::Unchanged);
         }
@@ -644,14 +639,9 @@ auth_path = "/login"
         let mut ctx = Ctx::default();
         let mut upstream_response =
             ResponseHeader::build_no_case(200, None).unwrap();
-        auth.handle_response(
-            PluginStep::Response,
-            &mut session,
-            &mut ctx,
-            &mut upstream_response,
-        )
-        .await
-        .unwrap();
+        auth.handle_response(&mut session, &mut ctx, &mut upstream_response)
+            .await
+            .unwrap();
 
         assert_eq!(
             r#"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"content-type": "application/json; charset=utf-8", "transfer-encoding": "chunked"} }, header_name_map: None, reason_phrase: None }"#,

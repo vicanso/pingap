@@ -22,7 +22,7 @@ use ctor::ctor;
 use once_cell::sync::Lazy;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
-    Ctx, ModifyResponseBody, Plugin, PluginStep, ResponsePluginResult,
+    Ctx, ModifyResponseBody, Plugin, ResponsePluginResult,
     HTTP_HEADER_TRANSFER_CHUNKED,
 };
 use pingora::http::ResponseHeader;
@@ -46,10 +46,6 @@ pub struct SubFilter {
     /// The content replacement engine that handles both regex and literal replacements
     /// Contains a collection of filter rules that will be applied in sequence
     replacer: SubFilterReplacer,
-
-    /// Determines at which point in the request/response lifecycle this plugin executes
-    /// Common steps include request processing, response processing, etc.
-    plugin_step: PluginStep,
 
     /// Unique identifier for this plugin instance
     /// Used for tracking and managing multiple instances of the plugin
@@ -206,7 +202,6 @@ impl TryFrom<&PluginConf> for SubFilter {
         Ok(Self {
             path,
             replacer: SubFilterReplacer { filters },
-            plugin_step: PluginStep::Response,
             hash_value,
         })
     }
@@ -235,7 +230,6 @@ impl Plugin for SubFilter {
     /// Handles the response phase of the HTTP request/response lifecycle
     ///
     /// # Arguments
-    /// * `step` - Current plugin execution step
     /// * `session` - HTTP session information
     /// * `ctx` - Plugin state context
     /// * `upstream_response` - Response headers from upstream server
@@ -244,15 +238,10 @@ impl Plugin for SubFilter {
     /// * `pingora::Result<()>` - Success or error status
     async fn handle_response(
         &self,
-        step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<ResponsePluginResult> {
-        // Skip if not at the correct plugin step
-        if self.plugin_step != step {
-            return Ok(ResponsePluginResult::Unchanged);
-        }
         // If request path matches, modify the response
         if self.path.is_match(session.req_header().uri.path()) {
             // Remove content-length since we're modifying the body

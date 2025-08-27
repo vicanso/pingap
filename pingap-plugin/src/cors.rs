@@ -270,7 +270,6 @@ impl Plugin for Cors {
     /// Modifies responses to add appropriate CORS headers for actual (non-preflight) requests
     ///
     /// # Arguments
-    /// * `step` - Current plugin execution step
     /// * `session` - Current HTTP session
     /// * `ctx` - Plugin state context
     /// * `upstream_response` - Response headers to modify
@@ -279,16 +278,10 @@ impl Plugin for Cors {
     /// * `pingora::Result<()>` - Success or error
     async fn handle_response(
         &self,
-        step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<ResponsePluginResult> {
-        // Only process during response phase
-        if step != PluginStep::Response {
-            return Ok(ResponsePluginResult::Unchanged);
-        }
-
         // Skip if path doesn't match CORS rules
         if let Some(reg) = &self.path {
             if !reg.is_match(session.req_header().uri.path()) {
@@ -400,14 +393,9 @@ max_age = "60m"
 
         let mut header = ResponseHeader::build(200, None).unwrap();
 
-        cors.handle_response(
-            PluginStep::Response,
-            &mut session,
-            &mut Ctx::default(),
-            &mut header,
-        )
-        .await
-        .unwrap();
+        cors.handle_response(&mut session, &mut Ctx::default(), &mut header)
+            .await
+            .unwrap();
 
         assert_eq!(
             r#"{"access-control-allow-methods": "GET", "access-control-allow-headers": "Content-Type, X-User-Id", "access-control-max-age": "3600", "access-control-allow-credentials": "true", "access-control-expose-headers": "Content-Encoding, Kuma-Revision", "access-control-allow-origin": "https://pingap.io"}"#,

@@ -671,7 +671,6 @@ impl Server {
     #[inline]
     pub async fn handle_response_plugin(
         &self,
-        step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
@@ -682,16 +681,13 @@ impl Server {
         for (name, plugin) in plugins.iter() {
             let now = Instant::now();
             if let ResponsePluginResult::Modified = plugin
-                .handle_response(step, session, ctx, upstream_response)
+                .handle_response(session, ctx, upstream_response)
                 .await?
             {
                 let elapsed = now.elapsed().as_millis() as u32;
                 debug!(
                     category = LOG_CATEGORY,
-                    name,
-                    elapsed,
-                    step = step.to_string(),
-                    "handle response plugin"
+                    name, elapsed, "handle response plugin"
                 );
                 ctx.add_plugin_processing_time(name, elapsed);
             };
@@ -702,7 +698,6 @@ impl Server {
     #[inline]
     pub fn handle_upstream_response_plugin(
         &self,
-        step: PluginStep,
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
@@ -713,20 +708,12 @@ impl Server {
         for (name, plugin) in plugins.iter() {
             let now = Instant::now();
             if let ResponsePluginResult::Modified = plugin
-                .handle_upstream_response(
-                    step,
-                    session,
-                    ctx,
-                    upstream_response,
-                )?
+                .handle_upstream_response(session, ctx, upstream_response)?
             {
                 let elapsed = now.elapsed().as_millis() as u32;
                 debug!(
                     category = LOG_CATEGORY,
-                    name,
-                    elapsed,
-                    step = step.to_string(),
-                    "handle upstream response plugin"
+                    name, elapsed, "handle upstream response plugin"
                 );
                 ctx.add_plugin_processing_time(name, elapsed);
             };
@@ -1339,13 +1326,8 @@ impl ProxyHttp for Server {
             }
         }
 
-        self.handle_response_plugin(
-            PluginStep::Response,
-            session,
-            ctx,
-            upstream_response,
-        )
-        .await?;
+        self.handle_response_plugin(session, ctx, upstream_response)
+            .await?;
 
         if self.enable_server_timing {
             let _ = upstream_response
@@ -1363,12 +1345,7 @@ impl ProxyHttp for Server {
     ) -> pingora::Result<()> {
         debug!(category = LOG_CATEGORY, "--> upstream response filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream response filter"););
-        self.handle_upstream_response_plugin(
-            PluginStep::UpstreamResponse,
-            session,
-            ctx,
-            upstream_response,
-        )?;
+        self.handle_upstream_response_plugin(session, ctx, upstream_response)?;
         #[cfg(feature = "full")]
         // open telemetry
         if let Some(features) = &ctx.features {
