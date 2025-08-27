@@ -607,7 +607,7 @@ impl Server {
                 location_plugins.push((name.clone(), plugin));
             }
         }
-        if !location_plugins.is_empty() {
+        if location_plugins.is_empty() {
             None
         } else {
             Some(location_plugins)
