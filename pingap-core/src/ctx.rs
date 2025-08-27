@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::Plugin;
 use ahash::AHashMap;
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
@@ -25,6 +26,7 @@ use opentelemetry::{
 use pingora::cache::CacheKey;
 use pingora_limits::inflight::Guard;
 use std::fmt::Write;
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -298,6 +300,8 @@ pub struct Ctx {
     pub cache: Option<CacheInfo>,
     /// Optional features. Wrapped in Option to save memory when not in use.
     pub features: Option<Features>,
+    /// Plugins for the current location
+    pub plugins: Option<Vec<(String, Arc<dyn Plugin>)>>,
 }
 
 impl Ctx {
@@ -918,12 +922,36 @@ mod tests {
         let mut ctx = Ctx::new();
         ctx.add_variable("key1", "value1");
         ctx.add_variable("key2", "value2");
+        ctx.extend_variables(AHashMap::from([
+            ("key3".to_string(), "value3".to_string()),
+            ("key4".to_string(), "value4".to_string()),
+        ]));
         let variables =
             ctx.features.as_ref().unwrap().variables.as_ref().unwrap();
         // NOTE: The current implementation in the main code doesn't add the '$' prefix automatically.
         // The test should reflect the actual implementation.
         assert_eq!(variables.get("key1"), Some(&"value1".to_string()));
         assert_eq!(variables.get("key2"), Some(&"value2".to_string()));
+        assert_eq!(variables.get("key3"), Some(&"value3".to_string()));
+        assert_eq!(variables.get("key4"), Some(&"value4".to_string()));
+    }
+
+    #[test]
+    fn test_cache_key() {
+        let mut ctx = Ctx::new();
+        ctx.push_cache_key("key1".to_string());
+        ctx.extend_cache_keys(vec!["key2".to_string(), "key3".to_string()]);
+        assert_eq!(
+            vec!["key1".to_string(), "key2".to_string(), "key3".to_string()],
+            ctx.cache.unwrap().keys.unwrap()
+        );
+        // let key = get_cache_key(
+        //     &ctx,
+        //     "GET",
+        //     &Uri::from_static("https://example.com/path"),
+        // );
+        // assert_eq!(key.namespace_str(), Some(""));
+        // assert_eq!(key.primary_key_str(), Some("GET:https://example.com/path"));
     }
 
     #[test]

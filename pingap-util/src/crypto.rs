@@ -111,13 +111,18 @@ mod tests {
 
     #[test]
     fn test_aes_encrypt() {
-        let key = "12345678901234567890123456789012";
-        let data = "hello";
-        let result = aes_encrypt(key, data);
-        assert_eq!(result.is_ok(), true);
+        for key in [
+            "12345678901234567890123456789012",
+            "12345678901234567890123456789012ABC",
+            "1234567890123456789012345678901",
+        ] {
+            let data = "hello";
+            let result = aes_encrypt(key, data);
+            assert_eq!(result.is_ok(), true);
 
-        let result = aes_decrypt(key, &result.unwrap());
-        assert_eq!(result.is_ok(), true);
-        assert_eq!(result.unwrap(), data);
+            let result = aes_decrypt(key, &result.unwrap());
+            assert_eq!(result.is_ok(), true);
+            assert_eq!(result.unwrap(), data);
+        }
     }
 }

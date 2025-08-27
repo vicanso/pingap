@@ -192,6 +192,7 @@ impl BackgroundService for BackgroundTaskService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -200,5 +201,43 @@ mod tests {
         assert_eq!(duration_to_string(Duration::from_secs(60)), "1.0m");
         assert_eq!(duration_to_string(Duration::from_secs(3600)), "1.0h");
         assert_eq!(duration_to_string(Duration::from_secs(86400)), "1.0d");
+    }
+
+    #[test]
+    fn new_background_task_service() {
+        struct TestTask {}
+        #[async_trait]
+        impl BackgroundTask for TestTask {
+            async fn execute(&self, _count: u32) -> Result<bool, Error> {
+                Ok(true)
+            }
+        }
+        let mut service = BackgroundTaskService::new(
+            "test",
+            Duration::from_secs(1),
+            vec![
+                ("task1".to_string(), Box::new(TestTask {})),
+                ("task2".to_string(), Box::new(TestTask {})),
+            ],
+        );
+        service.add_task("task3", Box::new(TestTask {}));
+
+        assert_eq!(service.name(), "test");
+        assert_eq!(service.tasks.len(), 3);
+        assert_eq!(service.tasks[0].0, "task1");
+        assert_eq!(service.tasks[1].0, "task2");
+        assert_eq!(service.tasks[2].0, "task3");
+        assert_eq!(false, service.immediately);
+
+        let mut service = BackgroundTaskService::new_single(
+            "test",
+            Duration::from_secs(1),
+            "task1",
+            Box::new(TestTask {}),
+        );
+        service.set_immediately(true);
+        assert_eq!(service.name(), "test");
+        assert_eq!(service.tasks.len(), 1);
+        assert_eq!(true, service.immediately);
     }
 }

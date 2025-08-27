@@ -27,7 +27,10 @@ use pingap_config::get_config_storage;
 use pingap_core::BackgroundTask;
 #[cfg(feature = "full")]
 use pingap_core::OtelTracer;
-use pingap_core::{convert_header_value, convert_headers, HttpHeader};
+use pingap_core::{
+    convert_header_value, convert_headers, new_internal_error, HttpHeader,
+    Plugin,
+};
 use pingap_core::{
     get_cache_key, CompressionStat, Ctx, PluginStep, RequestPluginResult,
     ResponsePluginResult,
@@ -588,61 +591,78 @@ impl Server {
         }
     }
 
+    #[inline]
+    fn get_context_plugins(
+        &self,
+        location: Arc<Location>,
+        session: &Session,
+    ) -> Option<Vec<(String, Arc<dyn Plugin>)>> {
+        if session.is_upgrade_req() {
+            return None;
+        }
+        let plugins = location.plugins.as_ref()?;
+        let mut location_plugins = Vec::with_capacity(plugins.len());
+        for name in plugins.iter() {
+            if let Some(plugin) = get_plugin(name) {
+                location_plugins.push((name.clone(), plugin));
+            }
+        }
+        if !location_plugins.is_empty() {
+            None
+        } else {
+            Some(location_plugins)
+        }
+    }
+
     /// Executes request plugins in the configured chain
     /// Returns true if a plugin handled the request completely
     #[inline]
     pub async fn handle_request_plugin(
         &self,
         step: PluginStep,
-        location: Arc<Location>,
         session: &mut Session,
         ctx: &mut Ctx,
     ) -> pingora::Result<bool> {
-        if session.is_upgrade_req() {
-            return Ok(false);
-        }
-        let Some(plugins) = location.plugins.as_ref() else {
+        let Some(plugins) = ctx.plugins.clone() else {
             return Ok(false);
         };
 
-        for name in plugins.iter() {
-            if let Some(plugin) = get_plugin(name) {
-                let now = Instant::now();
-                match plugin.handle_request(step, session, ctx).await? {
-                    RequestPluginResult::Continue => {
-                        continue;
-                    },
-                    RequestPluginResult::Skipped => {
-                        let elapsed = now.elapsed().as_millis() as u32;
-                        debug!(
-                            category = LOG_CATEGORY,
-                            name,
-                            elapsed,
-                            step = step.to_string(),
-                            "handle request plugin"
-                        );
-                        ctx.add_plugin_processing_time(name, elapsed);
-                        continue;
-                    },
-                    RequestPluginResult::Respond(resp) => {
-                        let elapsed = now.elapsed().as_millis() as u32;
-                        debug!(
-                            category = LOG_CATEGORY,
-                            name,
-                            elapsed,
-                            step = step.to_string(),
-                            "handle request plugin"
-                        );
-                        ctx.add_plugin_processing_time(name, elapsed);
-                        // ignore http response status >= 900
-                        if resp.status.as_u16() < 900 {
-                            ctx.state.status = Some(resp.status);
-                            resp.send(session).await?;
-                        }
-                        return Ok(true);
-                    },
-                };
-            }
+        for (name, plugin) in plugins.iter() {
+            let now = Instant::now();
+            match plugin.handle_request(step, session, ctx).await? {
+                RequestPluginResult::Continue => {
+                    continue;
+                },
+                RequestPluginResult::Skipped => {
+                    let elapsed = now.elapsed().as_millis() as u32;
+                    debug!(
+                        category = LOG_CATEGORY,
+                        name,
+                        elapsed,
+                        step = step.to_string(),
+                        "handle request plugin"
+                    );
+                    ctx.add_plugin_processing_time(name, elapsed);
+                    continue;
+                },
+                RequestPluginResult::Respond(resp) => {
+                    let elapsed = now.elapsed().as_millis() as u32;
+                    debug!(
+                        category = LOG_CATEGORY,
+                        name,
+                        elapsed,
+                        step = step.to_string(),
+                        "handle request plugin"
+                    );
+                    ctx.add_plugin_processing_time(name, elapsed);
+                    // ignore http response status >= 900
+                    if resp.status.as_u16() < 900 {
+                        ctx.state.status = Some(resp.status);
+                        resp.send(session).await?;
+                    }
+                    return Ok(true);
+                },
+            };
         }
         Ok(false)
     }
@@ -652,35 +672,29 @@ impl Server {
     pub async fn handle_response_plugin(
         &self,
         step: PluginStep,
-        location: Arc<Location>,
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<()> {
-        if session.is_upgrade_req() {
-            return Ok(());
-        }
-        let Some(plugins) = location.plugins.as_ref() else {
+        let Some(plugins) = ctx.plugins.clone() else {
             return Ok(());
         };
-        for name in plugins.iter() {
-            if let Some(plugin) = get_plugin(name) {
-                let now = Instant::now();
-                if let ResponsePluginResult::Modified = plugin
-                    .handle_response(step, session, ctx, upstream_response)
-                    .await?
-                {
-                    let elapsed = now.elapsed().as_millis() as u32;
-                    debug!(
-                        category = LOG_CATEGORY,
-                        name,
-                        elapsed,
-                        step = step.to_string(),
-                        "handle response plugin"
-                    );
-                    ctx.add_plugin_processing_time(name, elapsed);
-                };
-            }
+        for (name, plugin) in plugins.iter() {
+            let now = Instant::now();
+            if let ResponsePluginResult::Modified = plugin
+                .handle_response(step, session, ctx, upstream_response)
+                .await?
+            {
+                let elapsed = now.elapsed().as_millis() as u32;
+                debug!(
+                    category = LOG_CATEGORY,
+                    name,
+                    elapsed,
+                    step = step.to_string(),
+                    "handle response plugin"
+                );
+                ctx.add_plugin_processing_time(name, elapsed);
+            };
         }
         Ok(())
     }
@@ -689,39 +703,33 @@ impl Server {
     pub fn handle_upstream_response_plugin(
         &self,
         step: PluginStep,
-        location: Arc<Location>,
         session: &mut Session,
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<()> {
-        if session.is_upgrade_req() {
-            return Ok(());
-        }
-        let Some(plugins) = location.plugins.as_ref() else {
+        let Some(plugins) = ctx.plugins.clone() else {
             return Ok(());
         };
-        for name in plugins.iter() {
-            if let Some(plugin) = get_plugin(name) {
-                let now = Instant::now();
-                if let ResponsePluginResult::Modified = plugin
-                    .handle_upstream_response(
-                        step,
-                        session,
-                        ctx,
-                        upstream_response,
-                    )?
-                {
-                    let elapsed = now.elapsed().as_millis() as u32;
-                    debug!(
-                        category = LOG_CATEGORY,
-                        name,
-                        elapsed,
-                        step = step.to_string(),
-                        "handle upstream response plugin"
-                    );
-                    ctx.add_plugin_processing_time(name, elapsed);
-                };
-            }
+        for (name, plugin) in plugins.iter() {
+            let now = Instant::now();
+            if let ResponsePluginResult::Modified = plugin
+                .handle_upstream_response(
+                    step,
+                    session,
+                    ctx,
+                    upstream_response,
+                )?
+            {
+                let elapsed = now.elapsed().as_millis() as u32;
+                debug!(
+                    category = LOG_CATEGORY,
+                    name,
+                    elapsed,
+                    step = step.to_string(),
+                    "handle upstream response plugin"
+                );
+                ctx.add_plugin_processing_time(name, elapsed);
+            };
         }
         Ok(())
     }
@@ -892,9 +900,9 @@ impl ProxyHttp for Server {
         }
 
         if let Some(location) = &current_location {
-            location.validate_content_length(header).map_err(|e| {
-                pingap_core::new_internal_error(413, e.to_string())
-            })?;
+            location
+                .validate_content_length(header)
+                .map_err(|e| new_internal_error(413, e.to_string()))?;
 
             // add processing, if processing is max than limit,
             // it will return error with 429 status code
@@ -904,10 +912,7 @@ impl ProxyHttp for Server {
                     ctx.state.location_processing_count = processing;
                 },
                 Err(e) => {
-                    return Err(pingap_core::new_internal_error(
-                        429,
-                        e.to_string(),
-                    ));
+                    return Err(new_internal_error(429, e.to_string()));
                 },
             };
             if location.support_grpc_web() {
@@ -916,7 +921,7 @@ impl ProxyHttp for Server {
                     .downstream_modules_ctx
                     .get_mut::<GrpcWebBridge>()
                     .ok_or_else(|| {
-                        pingap_core::new_internal_error(
+                        new_internal_error(
                             500,
                             "grpc web bridge module should be added"
                                 .to_string(),
@@ -925,13 +930,10 @@ impl ProxyHttp for Server {
                 grpc_web.init();
             }
 
+            ctx.plugins = self.get_context_plugins(location.clone(), session);
+
             let _ = self
-                .handle_request_plugin(
-                    PluginStep::EarlyRequest,
-                    location.clone(),
-                    session,
-                    ctx,
-                )
+                .handle_request_plugin(PluginStep::EarlyRequest, session, ctx)
                 .await?;
         }
         Ok(())
@@ -959,7 +961,7 @@ impl ProxyHttp for Server {
         // only enable for http 80
         if self.lets_encrypt_enabled {
             let Some(storage) = get_config_storage() else {
-                return Err(pingap_core::new_internal_error(
+                return Err(new_internal_error(
                     500,
                     "get config storage fail".to_string(),
                 ));
@@ -981,14 +983,12 @@ impl ProxyHttp for Server {
             let body = self
                 .prometheus
                 .as_ref()
-                .ok_or(pingap_core::new_internal_error(
+                .ok_or(new_internal_error(
                     500,
                     "get prometheus fail".to_string(),
                 ))?
                 .metrics()
-                .map_err(|e| {
-                    pingap_core::new_internal_error(500, e.to_string())
-                })?;
+                .map_err(|e| new_internal_error(500, e.to_string()))?;
             HttpResponse::text(body).send(session).await?;
             return Ok(true);
         }
@@ -1019,12 +1019,7 @@ impl ProxyHttp for Server {
         );
 
         let done = self
-            .handle_request_plugin(
-                PluginStep::Request,
-                location.clone(),
-                session,
-                ctx,
-            )
+            .handle_request_plugin(PluginStep::Request, session, ctx)
             .await?;
         if done {
             return Ok(true);
@@ -1045,19 +1040,12 @@ impl ProxyHttp for Server {
     {
         debug!(category = LOG_CATEGORY, "--> proxy upstream filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- proxy upstream filter"););
-        if let Some(location) = get_location(&ctx.upstream.location) {
-            let done = self
-                .handle_request_plugin(
-                    PluginStep::ProxyUpstream,
-                    location.clone(),
-                    session,
-                    ctx,
-                )
-                .await?;
+        let done = self
+            .handle_request_plugin(PluginStep::ProxyUpstream, session, ctx)
+            .await?;
 
-            if done {
-                return Ok(false);
-            }
+        if done {
+            return Ok(false);
         }
         Ok(true)
     }
@@ -1107,7 +1095,7 @@ impl ProxyHttp for Server {
             None
         }
         .ok_or_else(|| {
-            pingap_core::new_internal_error(
+            new_internal_error(
                 503,
                 format!("No available upstream for {location_name}"),
             )
@@ -1196,9 +1184,7 @@ impl ProxyHttp for Server {
             if let Some(location) = get_location(&ctx.upstream.location) {
                 location
                     .client_body_size_limit(ctx.state.payload_size)
-                    .map_err(|e| {
-                        pingap_core::new_internal_error(413, e.to_string())
-                    })?;
+                    .map_err(|e| new_internal_error(413, e.to_string()))?;
             }
         }
         Ok(())
@@ -1353,16 +1339,13 @@ impl ProxyHttp for Server {
             }
         }
 
-        if let Some(location) = get_location(&ctx.upstream.location) {
-            self.handle_response_plugin(
-                PluginStep::Response,
-                location.clone(),
-                session,
-                ctx,
-                upstream_response,
-            )
-            .await?;
-        }
+        self.handle_response_plugin(
+            PluginStep::Response,
+            session,
+            ctx,
+            upstream_response,
+        )
+        .await?;
 
         if self.enable_server_timing {
             let _ = upstream_response
@@ -1380,15 +1363,12 @@ impl ProxyHttp for Server {
     ) -> pingora::Result<()> {
         debug!(category = LOG_CATEGORY, "--> upstream response filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream response filter"););
-        if let Some(location) = get_location(&ctx.upstream.location) {
-            self.handle_upstream_response_plugin(
-                PluginStep::UpstreamResponse,
-                location.clone(),
-                session,
-                ctx,
-                upstream_response,
-            )?;
-        }
+        self.handle_upstream_response_plugin(
+            PluginStep::UpstreamResponse,
+            session,
+            ctx,
+            upstream_response,
+        )?;
         #[cfg(feature = "full")]
         // open telemetry
         if let Some(features) = &ctx.features {

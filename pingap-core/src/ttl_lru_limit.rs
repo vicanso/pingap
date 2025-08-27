@@ -136,19 +136,23 @@ mod test {
 
     #[test]
     fn test_ttl_lru_limit() {
-        coarsetime::Clock::update();
-        let limit = TtlLruLimit::new(5, Duration::from_millis(500), 3);
-        let key = "abc";
-        assert_eq!(true, limit.validate(key));
-        limit.inc(key);
-        limit.inc(key);
-        coarsetime::Clock::update();
-        assert_eq!(true, limit.validate(key));
-        limit.inc(key);
-        coarsetime::Clock::update();
-        assert_eq!(false, limit.validate(key));
-        std::thread::sleep(Duration::from_millis(600));
-        coarsetime::Clock::update();
-        assert_eq!(true, limit.validate(key));
+        for limit in [
+            TtlLruLimit::new(5, Duration::from_millis(500), 3),
+            TtlLruLimit::new_compact(5, Duration::from_millis(500), 3),
+        ] {
+            coarsetime::Clock::update();
+            let key = "abc";
+            assert_eq!(true, limit.validate(key));
+            limit.inc(key);
+            limit.inc(key);
+            coarsetime::Clock::update();
+            assert_eq!(true, limit.validate(key));
+            limit.inc(key);
+            coarsetime::Clock::update();
+            assert_eq!(false, limit.validate(key));
+            std::thread::sleep(Duration::from_millis(600));
+            coarsetime::Clock::update();
+            assert_eq!(true, limit.validate(key));
+        }
     }
 }
