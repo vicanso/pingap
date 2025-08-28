@@ -37,6 +37,8 @@ use tracing::debug;
 
 mod optimizer;
 
+const PLUGIN_ID: &str = "__image_optimize_plugin__";
+
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 struct ImageOptimizer {
@@ -221,6 +223,7 @@ impl Plugin for ImageOptim {
                 break;
             }
         }
+        ctx.add_variable(PLUGIN_ID, "");
         // if the image is not changed, it will be optimized again, so we need to remove the content-length
         // Remove content-length since we're modifying the body
         upstream_response.remove_header(&http::header::CONTENT_LENGTH);
@@ -254,6 +257,9 @@ impl Plugin for ImageOptim {
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
     ) -> pingora::Result<ResponseBodyPluginResult> {
+        if ctx.get_variable(PLUGIN_ID).is_none() {
+            return Ok(ResponseBodyPluginResult::Unchanged);
+        }
         let Some(features) = ctx.features.as_mut() else {
             return Ok(ResponseBodyPluginResult::Unchanged);
         };

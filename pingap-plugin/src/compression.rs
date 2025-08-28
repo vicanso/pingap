@@ -47,6 +47,8 @@ const GZIP: &str = "gzip"; // Gzip compression
 
 const FULL_BODY_COMPRESS_MODE: &str = "full";
 
+const PLUGIN_ID: &str = "__compress_plugin__";
+
 struct Compressor {
     compressor: Box<dyn Encode + Send + Sync>,
 }
@@ -80,6 +82,10 @@ impl ModifyUpstreamResponseBody for Compressor {
                 .encode(data.as_ref(), end_of_stream)
                 .map_err(|e| new_internal_error(500, e.to_string()))?;
             *body = Some(data);
+        } else if end_of_stream {
+            self.compressor
+                .encode(&[], true)
+                .map_err(|e| new_internal_error(500, e.to_string()))?;
         }
         Ok(())
     }
@@ -344,6 +350,7 @@ impl Plugin for Compression {
                 Some(Box::new(Compressor::new(Algorithm::Gzip, gzip_level)?));
             GZIP
         };
+        ctx.add_variable(PLUGIN_ID, "");
         let _ = upstream_response.insert_header(CONTENT_ENCODING, encoding);
 
         Ok(ResponsePluginResult::Modified)
@@ -356,6 +363,9 @@ impl Plugin for Compression {
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
     ) -> pingora::Result<ResponseBodyPluginResult> {
+        if ctx.get_variable(PLUGIN_ID).is_none() {
+            return Ok(ResponseBodyPluginResult::Unchanged);
+        }
         let Some(features) = ctx.features.as_mut() else {
             return Ok(ResponseBodyPluginResult::Unchanged);
         };
