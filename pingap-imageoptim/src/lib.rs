@@ -16,14 +16,14 @@ use crate::optimizer::{
     load_image, optimize_avif, optimize_jpeg, optimize_png, optimize_webp,
 };
 use async_trait::async_trait;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use ctor::ctor;
 use pingap_config::PluginConf;
-use pingap_core::ModifyResponseBody;
 use pingap_core::HTTP_HEADER_TRANSFER_CHUNKED;
 use pingap_core::{
     Ctx, Plugin, PluginStep, RequestPluginResult, ResponsePluginResult,
 };
+use pingap_core::{ModifyUpstreamResponseBody, ResponseBodyPluginResult};
 use pingap_plugin::{
     get_hash_key, get_int_conf, get_plugin_factory, get_str_conf, Error,
 };
@@ -31,6 +31,7 @@ use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::collections::HashSet;
+use std::convert::TryFrom;
 use std::sync::Arc;
 use tracing::debug;
 
@@ -46,11 +47,24 @@ struct ImageOptimizer {
     avif_speed: u8,
     webp_quality: u8,
     format_type: String,
+    buffer: BytesMut,
 }
 
-impl ModifyResponseBody for ImageOptimizer {
-    fn handle(&self, data: Bytes) -> pingora::Result<Bytes> {
-        if let Ok(info) = load_image(&data, &self.image_type) {
+impl ModifyUpstreamResponseBody for ImageOptimizer {
+    fn handle(
+        &mut self,
+        _session: &Session,
+        body: &mut Option<bytes::Bytes>,
+        end_of_stream: bool,
+    ) -> pingora::Result<()> {
+        if let Some(data) = body {
+            self.buffer.extend(&data[..]);
+            data.clear();
+        }
+        if !end_of_stream {
+            return Ok(());
+        }
+        if let Ok(info) = load_image(&self.buffer, &self.image_type) {
             let result = match self.format_type.as_str() {
                 "jpeg" => optimize_jpeg(&info, self.jpeg_quality),
                 "avif" => {
@@ -60,10 +74,10 @@ impl ModifyResponseBody for ImageOptimizer {
                 _ => optimize_png(&info, self.png_quality),
             };
             if let Ok(data) = result {
-                return Ok(Bytes::from(data));
+                *body = Some(Bytes::from(data));
             }
         }
-        Ok(data)
+        Ok(())
     }
     fn name(&self) -> String {
         "image_optimization".to_string()
@@ -229,8 +243,30 @@ impl Plugin for ImageOptim {
                 // only support lossless
                 webp_quality: 100,
                 format_type,
+                buffer: BytesMut::new(),
             }));
         Ok(ResponsePluginResult::Modified)
+    }
+    fn handle_upstream_response_body(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        body: &mut Option<bytes::Bytes>,
+        end_of_stream: bool,
+    ) -> pingora::Result<ResponseBodyPluginResult> {
+        let Some(features) = ctx.features.as_mut() else {
+            return Ok(ResponseBodyPluginResult::Unchanged);
+        };
+        let Some(modifier) = features.modify_upstream_response_body.as_mut()
+        else {
+            return Ok(ResponseBodyPluginResult::Unchanged);
+        };
+        modifier.handle(session, body, end_of_stream)?;
+        if end_of_stream {
+            Ok(ResponseBodyPluginResult::FullyReplaced)
+        } else {
+            Ok(ResponseBodyPluginResult::PartialReplaced)
+        }
     }
 }
 

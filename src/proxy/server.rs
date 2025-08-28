@@ -33,7 +33,7 @@ use pingap_core::{
 };
 use pingap_core::{
     get_cache_key, CompressionStat, Ctx, PluginStep, RequestPluginResult,
-    ResponsePluginResult,
+    ResponseBodyPluginResult, ResponsePluginResult,
 };
 use pingap_core::{real_now_ms, HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
 use pingap_location::{get_location, Location};
@@ -640,7 +640,7 @@ impl Server {
                         name,
                         elapsed,
                         step = step.to_string(),
-                        "handle request plugin"
+                        "skip request plugin"
                     );
                     ctx.add_plugin_processing_time(name, elapsed);
                     continue;
@@ -652,7 +652,7 @@ impl Server {
                         name,
                         elapsed,
                         step = step.to_string(),
-                        "handle request plugin"
+                        "request plugin create new response"
                     );
                     ctx.add_plugin_processing_time(name, elapsed);
                     // ignore http response status >= 900
@@ -687,7 +687,7 @@ impl Server {
                 let elapsed = now.elapsed().as_millis() as u32;
                 debug!(
                     category = LOG_CATEGORY,
-                    name, elapsed, "handle response plugin"
+                    name, elapsed, "response plugin modify headers"
                 );
                 ctx.add_plugin_processing_time(name, elapsed);
             };
@@ -713,10 +713,49 @@ impl Server {
                 let elapsed = now.elapsed().as_millis() as u32;
                 debug!(
                     category = LOG_CATEGORY,
-                    name, elapsed, "handle upstream response plugin"
+                    name, elapsed, "upstream response plugin modify headers"
                 );
                 ctx.add_plugin_processing_time(name, elapsed);
             };
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub fn handle_upstream_response_body_plugin(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        body: &mut Option<bytes::Bytes>,
+        end_of_stream: bool,
+    ) -> pingora::Result<()> {
+        let Some(plugins) = ctx.plugins.clone() else {
+            return Ok(());
+        };
+        for (name, plugin) in plugins.iter() {
+            let now = Instant::now();
+            match plugin.handle_upstream_response_body(
+                session,
+                ctx,
+                body,
+                end_of_stream,
+            )? {
+                ResponseBodyPluginResult::PartialReplaced => {
+                    let elapsed = now.elapsed().as_millis() as u32;
+                    debug!(
+                        category = LOG_CATEGORY,
+                        name, elapsed, "response body plugin modify body"
+                    );
+                },
+                ResponseBodyPluginResult::FullyReplaced => {
+                    let elapsed = now.elapsed().as_millis() as u32;
+                    debug!(
+                        category = LOG_CATEGORY,
+                        name, elapsed, "response body plugin replace body"
+                    );
+                },
+                _ => {},
+            }
         }
         Ok(())
     }
@@ -1385,62 +1424,21 @@ impl ProxyHttp for Server {
     /// Records timing metrics and finalizes spans.
     fn upstream_response_body_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<()> {
         debug!(category = LOG_CATEGORY, "--> upstream response body filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream response body filter"););
-        // set modify response body
-        if let Some(features) = ctx.features.as_mut() {
-            if let Some(modify) = &features.modify_upstream_response_body {
-                if let Some(ref mut buf) = features.response_body_buffer {
-                    if let Some(b) = body {
-                        buf.extend(&b[..]);
-                        b.clear();
-                    }
-                } else {
-                    let mut buf = BytesMut::new();
-                    if let Some(b) = body {
-                        buf.extend(&b[..]);
-                        b.clear();
-                    }
-                    features.response_body_buffer = Some(buf);
-                };
 
-                if end_of_stream {
-                    if let Some(ref buf) = features.response_body_buffer {
-                        let name = modify.name();
-                        let now = Instant::now();
-                        *body =
-                            Some(modify.handle(Bytes::from(buf.to_owned()))?);
-                        let elapsed = now.elapsed().as_millis() as u32;
-                        debug!(
-                            category = LOG_CATEGORY,
-                            name, elapsed, "modify upstream response body"
-                        );
-                        #[cfg(feature = "full")]
-                        if let Some(ref mut span) =
-                            features.upstream_span.as_mut()
-                        {
-                            let key =
-                                format!("upstream.modified_body.{name}_time");
-                            span.set_attribute(KeyValue::new(
-                                key,
-                                elapsed as i64,
-                            ));
-                        }
-                    }
-                    features.response_body_buffer = None;
-                    // if the body is empty, it will trigger response_body_filter again
-                    // so set modify response body to None
-                    if let Some(features) = ctx.features.as_mut() {
-                        features.modify_upstream_response_body = None;
-                    }
-                }
-            }
-        }
+        self.handle_upstream_response_body_plugin(
+            session,
+            ctx,
+            body,
+            end_of_stream,
+        )?;
+
         if end_of_stream {
             ctx.timing.upstream_response =
                 get_latency(&ctx.timing.upstream_response);

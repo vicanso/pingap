@@ -17,7 +17,6 @@ use super::{
     get_str_conf, Error,
 };
 use async_trait::async_trait;
-use bytes::Bytes;
 use ctor::ctor;
 use http::header::{
     ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
@@ -26,13 +25,13 @@ use http::header::{
 use http::HeaderValue;
 use pingap_config::PluginConf;
 use pingap_core::HTTP_HEADER_TRANSFER_CHUNKED;
-use pingap_core::{new_internal_error, ModifyResponseBody};
 use pingap_core::{
-    Ctx, Plugin, PluginStep, RequestPluginResult, ResponsePluginResult,
+    new_internal_error, Ctx, ModifyUpstreamResponseBody, Plugin, PluginStep,
+    RequestPluginResult, ResponseBodyPluginResult, ResponsePluginResult,
 };
 use pingora::http::ResponseHeader;
 use pingora::modules::http::compression::ResponseCompression;
-use pingora::protocols::http::compression::Algorithm;
+use pingora::protocols::http::compression::{Algorithm, Encode};
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::str::FromStr;
@@ -49,26 +48,40 @@ const GZIP: &str = "gzip"; // Gzip compression
 const FULL_BODY_COMPRESS_MODE: &str = "full";
 
 struct Compressor {
-    algorithm: Algorithm,
-    level: u32,
+    compressor: Box<dyn Encode + Send + Sync>,
 }
 
-impl ModifyResponseBody for Compressor {
-    fn handle(&self, data: Bytes) -> pingora::Result<Bytes> {
-        let compressor = self.algorithm.compressor(self.level);
-        if let Some(mut compressor) = compressor {
-            let data = compressor
-                .encode(data.as_ref(), true)
+impl Compressor {
+    fn new(algorithm: Algorithm, level: u32) -> pingora::Result<Self> {
+        let compressor = algorithm.compressor(level).ok_or_else(|| {
+            new_internal_error(
+                500,
+                format!(
+                    "Compress algorithm {} is not supported",
+                    algorithm.as_str()
+                ),
+            )
+        })?;
+        Ok(Self { compressor })
+    }
+}
+
+impl ModifyUpstreamResponseBody for Compressor {
+    fn handle(
+        &mut self,
+        _session: &Session,
+        body: &mut Option<bytes::Bytes>,
+        end_of_stream: bool,
+    ) -> pingora::Result<()> {
+        if let Some(data) = body {
+            let data = self
+                .compressor
+                .as_mut()
+                .encode(data.as_ref(), end_of_stream)
                 .map_err(|e| new_internal_error(500, e.to_string()))?;
-            return Ok(data);
+            *body = Some(data);
         }
-        Err(new_internal_error(
-            500,
-            format!(
-                "Compress algorithm {} is not supported",
-                self.algorithm.as_str()
-            ),
-        ))
+        Ok(())
     }
     fn name(&self) -> String {
         "compression".to_string()
@@ -320,29 +333,42 @@ impl Plugin for Compression {
         let feature = ctx.features.get_or_insert_default();
         let encoding = if zstd_level > 0 {
             feature.modify_upstream_response_body =
-                Some(Box::new(Compressor {
-                    algorithm: Algorithm::Zstd,
-                    level: zstd_level,
-                }));
+                Some(Box::new(Compressor::new(Algorithm::Zstd, zstd_level)?));
             ZSTD
         } else if br_level > 0 {
             feature.modify_upstream_response_body =
-                Some(Box::new(Compressor {
-                    algorithm: Algorithm::Brotli,
-                    level: br_level,
-                }));
+                Some(Box::new(Compressor::new(Algorithm::Brotli, br_level)?));
             BR
         } else {
             feature.modify_upstream_response_body =
-                Some(Box::new(Compressor {
-                    algorithm: Algorithm::Gzip,
-                    level: gzip_level,
-                }));
+                Some(Box::new(Compressor::new(Algorithm::Gzip, gzip_level)?));
             GZIP
         };
         let _ = upstream_response.insert_header(CONTENT_ENCODING, encoding);
 
         Ok(ResponsePluginResult::Modified)
+    }
+
+    fn handle_upstream_response_body(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        body: &mut Option<bytes::Bytes>,
+        end_of_stream: bool,
+    ) -> pingora::Result<ResponseBodyPluginResult> {
+        let Some(features) = ctx.features.as_mut() else {
+            return Ok(ResponseBodyPluginResult::Unchanged);
+        };
+        let Some(modifier) = features.modify_upstream_response_body.as_mut()
+        else {
+            return Ok(ResponseBodyPluginResult::Unchanged);
+        };
+        modifier.handle(session, body, end_of_stream)?;
+        if end_of_stream {
+            Ok(ResponseBodyPluginResult::FullyReplaced)
+        } else {
+            Ok(ResponseBodyPluginResult::PartialReplaced)
+        }
     }
 }
 

@@ -24,6 +24,7 @@ use opentelemetry::{
     Context,
 };
 use pingora::cache::CacheKey;
+use pingora::proxy::Session;
 use pingora_limits::inflight::Guard;
 use std::fmt::Write;
 use std::sync::Arc;
@@ -82,6 +83,18 @@ pub trait ModifyResponseBody: Sync + Send {
     /// Handles the modification of response body data.
     fn handle(&self, data: Bytes) -> pingora::Result<Bytes>;
     /// Returns the name of the modifier.
+    fn name(&self) -> String {
+        "unknown".to_string()
+    }
+}
+
+pub trait ModifyUpstreamResponseBody: Sync + Send {
+    fn handle(
+        &mut self,
+        session: &Session,
+        body: &mut Option<bytes::Bytes>,
+        end_of_stream: bool,
+    ) -> pingora::Result<()>;
     fn name(&self) -> String {
         "unknown".to_string()
     }
@@ -222,8 +235,9 @@ pub struct Features {
     pub compression_stat: Option<CompressionStat>,
     /// A handler for modifying the final response body.
     pub modify_response_body: Option<Box<dyn ModifyResponseBody>>,
-    /// A handler for modifying the upstream response body before caching or further processing.
-    pub modify_upstream_response_body: Option<Box<dyn ModifyResponseBody>>,
+    /// A handler for modifying the upstream response body.
+    pub modify_upstream_response_body:
+        Option<Box<dyn ModifyUpstreamResponseBody>>,
     /// A buffer for the modified response body.
     pub response_body_buffer: Option<BytesMut>,
     /// OpenTelemetry tracer for distributed tracing (available with the "tracing" feature).

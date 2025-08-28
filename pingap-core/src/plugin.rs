@@ -14,7 +14,6 @@
 
 use super::{Ctx, HttpResponse};
 use async_trait::async_trait;
-use bytes::Bytes;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use std::borrow::Cow;
@@ -59,8 +58,8 @@ pub enum ResponsePluginResult {
 #[derive(Debug, PartialEq, Eq)]
 pub enum ResponseBodyPluginResult {
     Unchanged,
-    PartialReplaced(Option<Bytes>),
-    FullyReplaced(Option<Bytes>),
+    PartialReplaced,
+    FullyReplaced,
 }
 
 // Manually implement the PartialEq trait for RequestPluginResult
