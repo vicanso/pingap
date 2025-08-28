@@ -14,7 +14,7 @@
 
 use crate::Plugin;
 use ahash::AHashMap;
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use http::StatusCode;
 use http::Uri;
 #[cfg(feature = "tracing")]
@@ -81,20 +81,13 @@ fn format_duration(mut buf: BytesMut, ms: u64) -> BytesMut {
 /// Trait for modifying the response body.
 pub trait ModifyResponseBody: Sync + Send {
     /// Handles the modification of response body data.
-    fn handle(&self, data: Bytes) -> pingora::Result<Bytes>;
-    /// Returns the name of the modifier.
-    fn name(&self) -> String {
-        "unknown".to_string()
-    }
-}
-
-pub trait ModifyUpstreamResponseBody: Sync + Send {
     fn handle(
         &mut self,
         session: &Session,
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
     ) -> pingora::Result<()>;
+    /// Returns the name of the modifier.
     fn name(&self) -> String {
         "unknown".to_string()
     }
@@ -236,8 +229,7 @@ pub struct Features {
     /// A handler for modifying the final response body.
     pub modify_response_body: Option<Box<dyn ModifyResponseBody>>,
     /// A handler for modifying the upstream response body.
-    pub modify_upstream_response_body:
-        Option<Box<dyn ModifyUpstreamResponseBody>>,
+    pub modify_upstream_response_body: Option<Box<dyn ModifyResponseBody>>,
     /// A buffer for the modified response body.
     pub response_body_buffer: Option<BytesMut>,
     /// OpenTelemetry tracer for distributed tracing (available with the "tracing" feature).

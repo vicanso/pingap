@@ -17,7 +17,7 @@ use crate::plugin::{get_plugin, ADMIN_SERVER_PLUGIN};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use http::StatusCode;
 use http::{HeaderName, HeaderValue};
 use once_cell::sync::Lazy;
@@ -735,6 +735,45 @@ impl Server {
         for (name, plugin) in plugins.iter() {
             let now = Instant::now();
             match plugin.handle_upstream_response_body(
+                session,
+                ctx,
+                body,
+                end_of_stream,
+            )? {
+                ResponseBodyPluginResult::PartialReplaced => {
+                    let elapsed = now.elapsed().as_millis() as u32;
+                    debug!(
+                        category = LOG_CATEGORY,
+                        name, elapsed, "response body plugin modify body"
+                    );
+                },
+                ResponseBodyPluginResult::FullyReplaced => {
+                    let elapsed = now.elapsed().as_millis() as u32;
+                    debug!(
+                        category = LOG_CATEGORY,
+                        name, elapsed, "response body plugin replace body"
+                    );
+                },
+                _ => {},
+            }
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub fn handle_response_body_plugin(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        body: &mut Option<bytes::Bytes>,
+        end_of_stream: bool,
+    ) -> pingora::Result<()> {
+        let Some(plugins) = ctx.plugins.clone() else {
+            return Ok(());
+        };
+        for (name, plugin) in plugins.iter() {
+            let now = Instant::now();
+            match plugin.handle_response_body(
                 session,
                 ctx,
                 body,
@@ -1479,7 +1518,7 @@ impl ProxyHttp for Server {
     /// Handles response body modifications and compression.
     fn response_body_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         body: &mut Option<Bytes>,
         end_of_stream: bool,
         ctx: &mut Self::CTX,
@@ -1489,52 +1528,53 @@ impl ProxyHttp for Server {
     {
         debug!(category = LOG_CATEGORY, "--> response body filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- response body filter"););
-        let Some(features) = ctx.features.as_mut() else {
-            return Ok(None);
-        };
-        let Some(modify) = &features.modify_response_body else {
-            return Ok(None);
-        };
-        // set modify response body
-        if let Some(buf) = features.response_body_buffer.as_mut() {
-            if let Some(b) = body {
-                buf.extend(&b[..]);
-                b.clear();
-            }
-        } else {
-            let mut buf = BytesMut::new();
-            if let Some(b) = body {
-                buf.extend(&b[..]);
-                b.clear();
-            }
-            features.response_body_buffer = Some(buf);
-        };
+        self.handle_response_body_plugin(session, ctx, body, end_of_stream)?;
+        // let Some(features) = ctx.features.as_mut() else {
+        //     return Ok(None);
+        // };
+        // let Some(modify) = &features.modify_response_body else {
+        //     return Ok(None);
+        // };
+        // // set modify response body
+        // if let Some(buf) = features.response_body_buffer.as_mut() {
+        //     if let Some(b) = body {
+        //         buf.extend(&b[..]);
+        //         b.clear();
+        //     }
+        // } else {
+        //     let mut buf = BytesMut::new();
+        //     if let Some(b) = body {
+        //         buf.extend(&b[..]);
+        //         b.clear();
+        //     }
+        //     features.response_body_buffer = Some(buf);
+        // };
 
-        if end_of_stream {
-            if let Some(ref buf) = features.response_body_buffer {
-                let name = modify.name();
-                let now = Instant::now();
-                *body = Some(modify.handle(Bytes::from(buf.to_owned()))?);
-                let elapsed = now.elapsed().as_millis() as u32;
-                debug!(
-                    category = LOG_CATEGORY,
-                    name, elapsed, "modify response body"
-                );
-                #[cfg(feature = "full")]
-                if let Some(features) = ctx.features.as_mut() {
-                    if let Some(ref mut span) = features.upstream_span.as_mut()
-                    {
-                        let key = format!("response.modified_body.{name}_time");
-                        span.set_attribute(KeyValue::new(key, elapsed as i64));
-                    }
-                }
-            }
-            // if the body is empty, it will trigger response_body_filter again
-            // so set modify response body to None
-            if let Some(features) = ctx.features.as_mut() {
-                features.modify_response_body = None;
-            }
-        }
+        // if end_of_stream {
+        //     if let Some(ref buf) = features.response_body_buffer {
+        //         let name = modify.name();
+        //         let now = Instant::now();
+        //         *body = Some(modify.handle(Bytes::from(buf.to_owned()))?);
+        //         let elapsed = now.elapsed().as_millis() as u32;
+        //         debug!(
+        //             category = LOG_CATEGORY,
+        //             name, elapsed, "modify response body"
+        //         );
+        //         #[cfg(feature = "full")]
+        //         if let Some(features) = ctx.features.as_mut() {
+        //             if let Some(ref mut span) = features.upstream_span.as_mut()
+        //             {
+        //                 let key = format!("response.modified_body.{name}_time");
+        //                 span.set_attribute(KeyValue::new(key, elapsed as i64));
+        //             }
+        //         }
+        //     }
+        //     // if the body is empty, it will trigger response_body_filter again
+        //     // so set modify response body to None
+        //     if let Some(features) = ctx.features.as_mut() {
+        //         features.modify_response_body = None;
+        //     }
+        // }
 
         Ok(None)
     }

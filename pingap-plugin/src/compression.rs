@@ -26,7 +26,7 @@ use http::HeaderValue;
 use pingap_config::PluginConf;
 use pingap_core::HTTP_HEADER_TRANSFER_CHUNKED;
 use pingap_core::{
-    new_internal_error, Ctx, ModifyUpstreamResponseBody, Plugin, PluginStep,
+    new_internal_error, Ctx, ModifyResponseBody, Plugin, PluginStep,
     RequestPluginResult, ResponseBodyPluginResult, ResponsePluginResult,
 };
 use pingora::http::ResponseHeader;
@@ -68,7 +68,7 @@ impl Compressor {
     }
 }
 
-impl ModifyUpstreamResponseBody for Compressor {
+impl ModifyResponseBody for Compressor {
     fn handle(
         &mut self,
         _session: &Session,

@@ -23,7 +23,7 @@ use pingap_core::HTTP_HEADER_TRANSFER_CHUNKED;
 use pingap_core::{
     Ctx, Plugin, PluginStep, RequestPluginResult, ResponsePluginResult,
 };
-use pingap_core::{ModifyUpstreamResponseBody, ResponseBodyPluginResult};
+use pingap_core::{ModifyResponseBody, ResponseBodyPluginResult};
 use pingap_plugin::{
     get_hash_key, get_int_conf, get_plugin_factory, get_str_conf, Error,
 };
@@ -52,7 +52,7 @@ struct ImageOptimizer {
     buffer: BytesMut,
 }
 
-impl ModifyUpstreamResponseBody for ImageOptimizer {
+impl ModifyResponseBody for ImageOptimizer {
     fn handle(
         &mut self,
         _session: &Session,
