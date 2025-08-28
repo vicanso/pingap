@@ -336,21 +336,21 @@ impl Plugin for Compression {
             TRANSFER_ENCODING,
             HTTP_HEADER_TRANSFER_CHUNKED.1.clone(),
         );
-        let feature = ctx.features.get_or_insert_default();
-        let encoding = if zstd_level > 0 {
-            feature.modify_upstream_response_body =
-                Some(Box::new(Compressor::new(Algorithm::Zstd, zstd_level)?));
-            ZSTD
+        // let feature = ctx.features.get_or_insert_default();
+        let (handler, encoding) = if zstd_level > 0 {
+            (
+                Box::new(Compressor::new(Algorithm::Zstd, zstd_level)?),
+                ZSTD,
+            )
         } else if br_level > 0 {
-            feature.modify_upstream_response_body =
-                Some(Box::new(Compressor::new(Algorithm::Brotli, br_level)?));
-            BR
+            (Box::new(Compressor::new(Algorithm::Brotli, br_level)?), BR)
         } else {
-            feature.modify_upstream_response_body =
-                Some(Box::new(Compressor::new(Algorithm::Gzip, gzip_level)?));
-            GZIP
+            (
+                Box::new(Compressor::new(Algorithm::Gzip, gzip_level)?),
+                GZIP,
+            )
         };
-        ctx.add_variable(PLUGIN_ID, "");
+        ctx.add_modify_body_handler(PLUGIN_ID, handler);
         let _ = upstream_response.insert_header(CONTENT_ENCODING, encoding);
 
         Ok(ResponsePluginResult::Modified)
@@ -363,21 +363,16 @@ impl Plugin for Compression {
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
     ) -> pingora::Result<ResponseBodyPluginResult> {
-        if ctx.get_variable(PLUGIN_ID).is_none() {
-            return Ok(ResponseBodyPluginResult::Unchanged);
-        }
-        let Some(features) = ctx.features.as_mut() else {
-            return Ok(ResponseBodyPluginResult::Unchanged);
-        };
-        let Some(modifier) = features.modify_upstream_response_body.as_mut()
-        else {
-            return Ok(ResponseBodyPluginResult::Unchanged);
-        };
-        modifier.handle(session, body, end_of_stream)?;
-        if end_of_stream {
-            Ok(ResponseBodyPluginResult::FullyReplaced)
+        if let Some(modifier) = ctx.get_modify_body_handler(PLUGIN_ID) {
+            modifier.handle(session, body, end_of_stream)?;
+            let result = if end_of_stream {
+                ResponseBodyPluginResult::FullyReplaced
+            } else {
+                ResponseBodyPluginResult::PartialReplaced
+            };
+            Ok(result)
         } else {
-            Ok(ResponseBodyPluginResult::PartialReplaced)
+            Ok(ResponseBodyPluginResult::Unchanged)
         }
     }
 }

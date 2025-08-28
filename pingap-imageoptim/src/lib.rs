@@ -223,7 +223,6 @@ impl Plugin for ImageOptim {
                 break;
             }
         }
-        ctx.add_variable(PLUGIN_ID, "");
         // if the image is not changed, it will be optimized again, so we need to remove the content-length
         // Remove content-length since we're modifying the body
         upstream_response.remove_header(&http::header::CONTENT_LENGTH);
@@ -235,9 +234,9 @@ impl Plugin for ImageOptim {
         let _ = upstream_response
             .insert_header(http::header::CONTENT_TYPE, &format_type);
 
-        let feature = ctx.features.get_or_insert_default();
-        feature.modify_upstream_response_body =
-            Some(Box::new(ImageOptimizer {
+        ctx.add_modify_body_handler(
+            PLUGIN_ID,
+            Box::new(ImageOptimizer {
                 image_type,
                 png_quality: self.png_quality,
                 jpeg_quality: self.jpeg_quality,
@@ -247,7 +246,8 @@ impl Plugin for ImageOptim {
                 webp_quality: 100,
                 format_type,
                 buffer: BytesMut::new(),
-            }));
+            }),
+        );
         Ok(ResponsePluginResult::Modified)
     }
     fn handle_upstream_response_body(
@@ -257,21 +257,16 @@ impl Plugin for ImageOptim {
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
     ) -> pingora::Result<ResponseBodyPluginResult> {
-        if ctx.get_variable(PLUGIN_ID).is_none() {
-            return Ok(ResponseBodyPluginResult::Unchanged);
-        }
-        let Some(features) = ctx.features.as_mut() else {
-            return Ok(ResponseBodyPluginResult::Unchanged);
-        };
-        let Some(modifier) = features.modify_upstream_response_body.as_mut()
-        else {
-            return Ok(ResponseBodyPluginResult::Unchanged);
-        };
-        modifier.handle(session, body, end_of_stream)?;
-        if end_of_stream {
-            Ok(ResponseBodyPluginResult::FullyReplaced)
+        if let Some(modifier) = ctx.get_modify_body_handler(PLUGIN_ID) {
+            modifier.handle(session, body, end_of_stream)?;
+            let result = if end_of_stream {
+                ResponseBodyPluginResult::FullyReplaced
+            } else {
+                ResponseBodyPluginResult::PartialReplaced
+            };
+            Ok(result)
         } else {
-            Ok(ResponseBodyPluginResult::PartialReplaced)
+            Ok(ResponseBodyPluginResult::Unchanged)
         }
     }
 }
@@ -483,12 +478,6 @@ png_quality = 90
             upstream_response.headers.get("transfer-encoding").unwrap()
         );
         assert_eq!(true, ResponsePluginResult::Modified == result);
-        assert_eq!(
-            true,
-            ctx.features
-                .unwrap()
-                .modify_upstream_response_body
-                .is_some()
-        );
+        assert_eq!(true, ctx.get_modify_body_handler(PLUGIN_ID).is_some());
     }
 }

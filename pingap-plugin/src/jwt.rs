@@ -335,13 +335,15 @@ impl Plugin for JwtAuth {
             http::header::TRANSFER_ENCODING,
             HTTP_HEADER_TRANSFER_CHUNKED.1.clone(),
         );
-        let features = ctx.features.get_or_insert_default();
-        features.modify_response_body = Some(Box::new(Sign {
-            algorithm: self.algorithm.clone(),
-            secret: self.secret.clone(),
-            buffer: BytesMut::new(),
-        }));
-        ctx.add_variable(PLUGIN_ID, "");
+
+        ctx.add_modify_body_handler(
+            PLUGIN_ID,
+            Box::new(Sign {
+                algorithm: self.algorithm.clone(),
+                secret: self.secret.clone(),
+                buffer: BytesMut::new(),
+            }),
+        );
 
         Ok(ResponsePluginResult::Modified)
     }
@@ -352,20 +354,16 @@ impl Plugin for JwtAuth {
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
     ) -> pingora::Result<ResponseBodyPluginResult> {
-        if ctx.get_variable(PLUGIN_ID).is_none() {
-            return Ok(ResponseBodyPluginResult::Unchanged);
-        }
-        let Some(features) = ctx.features.as_mut() else {
-            return Ok(ResponseBodyPluginResult::Unchanged);
-        };
-        let Some(modifier) = features.modify_response_body.as_mut() else {
-            return Ok(ResponseBodyPluginResult::Unchanged);
-        };
-        modifier.handle(session, body, end_of_stream)?;
-        if end_of_stream {
-            Ok(ResponseBodyPluginResult::FullyReplaced)
+        if let Some(modifier) = ctx.get_modify_body_handler(PLUGIN_ID) {
+            modifier.handle(session, body, end_of_stream)?;
+            let result = if end_of_stream {
+                ResponseBodyPluginResult::FullyReplaced
+            } else {
+                ResponseBodyPluginResult::PartialReplaced
+            };
+            Ok(result)
         } else {
-            Ok(ResponseBodyPluginResult::PartialReplaced)
+            Ok(ResponseBodyPluginResult::Unchanged)
         }
     }
 }

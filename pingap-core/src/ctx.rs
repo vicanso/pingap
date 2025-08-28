@@ -226,10 +226,9 @@ pub struct Features {
     pub plugin_processing_times: Option<Vec<(String, u32)>>,
     /// Statistics about response compression.
     pub compression_stat: Option<CompressionStat>,
-    /// A handler for modifying the final response body.
-    pub modify_response_body: Option<Box<dyn ModifyResponseBody>>,
-    /// A handler for modifying the upstream response body.
-    pub modify_upstream_response_body: Option<Box<dyn ModifyResponseBody>>,
+    /// A map of plugin names and their response body handlers.
+    pub modify_body_handlers:
+        Option<AHashMap<String, Box<dyn ModifyResponseBody>>>,
     /// A buffer for the modified response body.
     pub response_body_buffer: Option<BytesMut>,
     /// OpenTelemetry tracer for distributed tracing (available with the "tracing" feature).
@@ -361,6 +360,36 @@ impl Ctx {
             .map(|v| v.as_str())
     }
 
+    /// Adds a modify body handler to the context.
+    ///
+    /// # Arguments
+    /// * `name` - The name of the handler.
+    /// * `handler` - The handler to add.
+    #[inline]
+    pub fn add_modify_body_handler(
+        &mut self,
+        name: &str,
+        handler: Box<dyn ModifyResponseBody>,
+    ) {
+        let features = self.features.get_or_insert_default();
+        let handlers = features
+            .modify_body_handlers
+            .get_or_insert_with(AHashMap::new);
+        handlers.insert(name.to_string(), handler);
+    }
+
+    /// Returns the modify body handler by name.
+    #[inline]
+    pub fn get_modify_body_handler(
+        &mut self,
+        name: &str,
+    ) -> Option<&mut Box<dyn ModifyResponseBody>> {
+        self.features
+            .as_mut()
+            .and_then(|f| f.modify_body_handlers.as_mut())
+            .and_then(|h| h.get_mut(name))
+    }
+
     // A private helper function to filter out time values that are too large (over an hour),
     // which might indicate an error or uninitialized state.
     #[inline]
@@ -407,7 +436,11 @@ impl Ctx {
         let times = features
             .plugin_processing_times
             .get_or_insert_with(|| Vec::with_capacity(5));
-        times.push((name.to_string(), time));
+        if let Some(item) = times.iter_mut().find(|item| item.0 == name) {
+            item.1 = time;
+        } else {
+            times.push((name.to_string(), time));
+        }
     }
 
     /// Appends a formatted value to the provided log buffer based on the given key.
