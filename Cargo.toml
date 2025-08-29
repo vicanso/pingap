@@ -119,7 +119,7 @@ name = "bench"
 harness = false
 
 [package.metadata.cargo-machete]
-ignored = ["humantime-serde"]
+ignored = ["humantime-serde", "include-flate"]
 
 [workspace]
 members = [
