@@ -63,6 +63,8 @@ rust-embed = { version = "8.7.2", features = [
     "mime-guess",
     "compression",
 ], default-features = false }
+# TODO remove it after using edition 2024
+include-flate = "=0.3.0"
 scopeguard = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

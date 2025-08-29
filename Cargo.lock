@@ -2286,39 +2286,25 @@ checksum = "d0263a3d970d5c054ed9312c0057b4f3bde9c0b33836d3637361d4a9e6e7a408"
 
 [[package]]
 name = "include-flate"
-version = "0.3.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e01b7cb6ca682a621e7cda1c358c9724b53a7b4409be9be1dd443b7f3a26f998"
+checksum = "df49c16750695486c1f34de05da5b7438096156466e7f76c38fcdf285cf0113e"
 dependencies = [
  "include-flate-codegen",
- "include-flate-compress",
+ "lazy_static",
  "libflate 2.1.0",
- "zstd",
 ]
 
 [[package]]
 name = "include-flate-codegen"
-version = "0.3.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f49bf5274aebe468d6e6eba14a977eaf1efa481dc173f361020de70c1c48050"
+checksum = "8c5b246c6261be723b85c61ecf87804e8ea4a35cb68be0ff282ed84b95ffe7d7"
 dependencies = [
- "include-flate-compress",
  "libflate 2.1.0",
- "proc-macro-error",
  "proc-macro2",
  "quote",
  "syn 2.0.106",
- "zstd",
-]
-
-[[package]]
-name = "include-flate-compress"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eae6a40e716bcd5931f5dbb79cd921512a4f647e2e9413fded3171fca3824dbc"
-dependencies = [
- "libflate 2.1.0",
- "zstd",
 ]
 
 [[package]]
@@ -3499,6 +3485,7 @@ dependencies = [
  "http",
  "humantime",
  "humantime-serde",
+ "include-flate",
  "itoa",
  "mimalloc",
  "nanoid",
