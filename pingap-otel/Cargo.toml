@@ -19,16 +19,16 @@ arc-swap = { workspace = true }
 async-trait = { workspace = true }
 humantime = { workspace = true }
 once_cell = { workspace = true }
-opentelemetry = { version = "0.28.0", default-features = false, features = [
+opentelemetry = { version = "0.30.0", default-features = false, features = [
     "trace",
 ] }
-opentelemetry-http = { version = "0.28.0", default-features = false }
-opentelemetry-jaeger-propagator = { version = "0.28.0" }
-opentelemetry-otlp = { version = "0.28.0", default-features = false, features = [
+opentelemetry-http = { version = "0.30.0", default-features = false }
+opentelemetry-jaeger-propagator = { version = "0.30.0" }
+opentelemetry-otlp = { version = "0.30.0", default-features = false, features = [
     "grpc-tonic",
     "trace",
 ] }
-opentelemetry_sdk = { version = "0.28.0", features = [
+opentelemetry_sdk = { version = "0.30.0", features = [
     "rt-tokio",
 ], default-features = false }
 pingora = { workspace = true }

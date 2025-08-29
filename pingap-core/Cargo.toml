@@ -20,7 +20,7 @@ hostname = "0.4.1"
 http = { workspace = true }
 itoa = { workspace = true }
 once_cell = { workspace = true }
-opentelemetry = { version = "0.28.0", default-features = false, features = [
+opentelemetry = { version = "0.30.0", default-features = false, features = [
     "trace",
 ], optional = true }
 pingora = { workspace = true }
