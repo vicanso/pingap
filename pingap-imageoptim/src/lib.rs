@@ -37,7 +37,7 @@ use tracing::debug;
 
 mod optimizer;
 
-const PLUGIN_ID: &str = "__image_optimize_plugin__";
+const PLUGIN_ID: &str = "_image_optimize_";
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 

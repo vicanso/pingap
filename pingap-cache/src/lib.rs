@@ -45,7 +45,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 impl From<Error> for pingora::BError {
     fn from(value: Error) -> Self {
-        pingap_core::new_internal_error(500, value.to_string())
+        pingap_core::new_internal_error(500, value)
     }
 }
 

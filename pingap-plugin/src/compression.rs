@@ -45,9 +45,9 @@ const ZSTD: &str = "zstd"; // Zstandard compression
 const BR: &str = "br"; // Brotli compression
 const GZIP: &str = "gzip"; // Gzip compression
 
-const FULL_BODY_COMPRESS_MODE: &str = "full";
+const UPSTREAM_RESPONSE_COMPRESS_MODE: &str = "upstream";
 
-const PLUGIN_ID: &str = "__compress_plugin__";
+const PLUGIN_ID: &str = "_compress_";
 
 struct Compressor {
     compressor: Box<dyn Encode + Send + Sync>,
@@ -75,17 +75,15 @@ impl ModifyResponseBody for Compressor {
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
     ) -> pingora::Result<()> {
-        if let Some(data) = body {
-            let data = self
-                .compressor
-                .as_mut()
-                .encode(data.as_ref(), end_of_stream)
-                .map_err(|e| new_internal_error(500, e.to_string()))?;
+        let input_data = body.as_deref().unwrap_or(&[]);
+        let data = self
+            .compressor
+            .as_mut()
+            .encode(input_data, end_of_stream)
+            .map_err(|e| new_internal_error(500, e))?;
+        // if body is some, replace it with the compressed data
+        if body.is_some() {
             *body = Some(data);
-        } else if end_of_stream {
-            self.compressor
-                .encode(&[], true)
-                .map_err(|e| new_internal_error(500, e.to_string()))?;
         }
         Ok(())
     }
@@ -239,7 +237,7 @@ impl Plugin for Compression {
         ctx: &mut Ctx,
     ) -> pingora::Result<RequestPluginResult> {
         if step == PluginStep::EarlyRequest
-            && self.mode == FULL_BODY_COMPRESS_MODE
+            && self.mode == UPSTREAM_RESPONSE_COMPRESS_MODE
         {
             let (zstd_level, br_level, gzip_level) =
                 self.get_compress_level(session);
@@ -263,7 +261,7 @@ impl Plugin for Compression {
         if !self.support_compression {
             return Ok(RequestPluginResult::Skipped);
         }
-        if self.mode == FULL_BODY_COMPRESS_MODE {
+        if self.mode == UPSTREAM_RESPONSE_COMPRESS_MODE {
             return Ok(RequestPluginResult::Skipped);
         }
         let (zstd_level, br_level, gzip_level) =
@@ -307,7 +305,9 @@ impl Plugin for Compression {
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<ResponsePluginResult> {
-        if !self.support_compression || self.mode != FULL_BODY_COMPRESS_MODE {
+        if !self.support_compression
+            || self.mode != UPSTREAM_RESPONSE_COMPRESS_MODE
+        {
             return Ok(ResponsePluginResult::Unchanged);
         }
         if upstream_response.headers.contains_key(CONTENT_ENCODING) {

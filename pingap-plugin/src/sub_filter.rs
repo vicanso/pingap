@@ -32,7 +32,7 @@ use regex::Regex;
 use std::borrow::Cow;
 use std::sync::Arc;
 
-const PLUGIN_ID: &str = "__sub_filter_plugin__";
+const PLUGIN_ID: &str = "_sub_filter_";
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 

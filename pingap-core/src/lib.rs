@@ -25,10 +25,13 @@ pub enum Error {
 }
 
 /// Creates a new internal error
-pub fn new_internal_error(status: u16, message: String) -> pingora::BError {
+pub fn new_internal_error(
+    status: u16,
+    message: impl ToString,
+) -> pingora::BError {
     pingora::Error::because(
         pingora::ErrorType::HTTPStatus(status),
-        message,
+        message.to_string(),
         pingora::Error::new(pingora::ErrorType::InternalError),
     )
 }
@@ -60,7 +63,7 @@ mod tests {
 
     #[test]
     fn test_new_internal_error() {
-        let err = new_internal_error(500, "Internal Server Error".to_string());
+        let err = new_internal_error(500, "Internal Server Error");
         assert_eq!(
             err.to_string().trim(),
             "HTTPStatus context: Internal Server Error cause:  InternalError"

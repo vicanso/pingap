@@ -57,5 +57,5 @@ uuid = { workspace = true }
 
 
 [dev-dependencies]
-pretty_assertions = "1.4.0"
+pretty_assertions = "1.4.1"
 tokio-test = "0.4.4"

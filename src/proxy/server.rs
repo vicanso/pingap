@@ -149,13 +149,26 @@ fn get_server_locations(name: &str) -> Option<Arc<Vec<String>>> {
 }
 
 #[inline]
-pub fn get_latency(value: &Option<u64>) -> Option<u64> {
-    let current = real_now_ms();
-    if let Some(value) = value {
-        Some(current - value)
-    } else {
-        Some(current)
+pub fn get_start_time(started_at: &Instant) -> i32 {
+    // the offset of start time
+    let value = started_at.elapsed().as_millis() as i32;
+    if value == 0 {
+        return -1;
     }
+    -value
+}
+
+#[inline]
+pub fn get_latency(started_at: &Instant, value: &Option<i32>) -> Option<i32> {
+    let Some(value) = value else {
+        return None;
+    };
+    if *value >= 0 {
+        return None;
+    }
+    let latency = started_at.elapsed().as_millis() as i32 + *value;
+
+    Some(latency)
 }
 
 /// Core HTTP proxy server implementation that handles request processing, caching, and monitoring.
@@ -740,18 +753,13 @@ impl Server {
                 body,
                 end_of_stream,
             )? {
-                ResponseBodyPluginResult::PartialReplaced => {
+                ResponseBodyPluginResult::PartialReplaced
+                | ResponseBodyPluginResult::FullyReplaced => {
                     let elapsed = now.elapsed().as_millis() as u32;
+                    ctx.add_plugin_processing_time(name, elapsed);
                     debug!(
                         category = LOG_CATEGORY,
                         name, elapsed, "response body plugin modify body"
-                    );
-                },
-                ResponseBodyPluginResult::FullyReplaced => {
-                    let elapsed = now.elapsed().as_millis() as u32;
-                    debug!(
-                        category = LOG_CATEGORY,
-                        name, elapsed, "response body plugin replace body"
                     );
                 },
                 _ => {},
@@ -779,18 +787,13 @@ impl Server {
                 body,
                 end_of_stream,
             )? {
-                ResponseBodyPluginResult::PartialReplaced => {
+                ResponseBodyPluginResult::PartialReplaced
+                | ResponseBodyPluginResult::FullyReplaced => {
                     let elapsed = now.elapsed().as_millis() as u32;
+                    ctx.add_plugin_processing_time(name, elapsed);
                     debug!(
                         category = LOG_CATEGORY,
                         name, elapsed, "response body plugin modify body"
-                    );
-                },
-                ResponseBodyPluginResult::FullyReplaced => {
-                    let elapsed = now.elapsed().as_millis() as u32;
-                    debug!(
-                        category = LOG_CATEGORY,
-                        name, elapsed, "response body plugin replace body"
                     );
                 },
                 _ => {},
@@ -874,10 +877,9 @@ impl ProxyHttp for Server {
                 && digest_detail.tls_established
                     >= digest_detail.tcp_established
             {
-                ctx.timing.tls_handshake = Some(
-                    digest_detail.tls_established
-                        - digest_detail.tcp_established,
-                );
+                let latency = digest_detail.tls_established
+                    - digest_detail.tcp_established;
+                ctx.timing.tls_handshake = Some(latency as i32);
             }
             ctx.conn.tls_cipher = digest_detail.tls_cipher;
             ctx.conn.tls_version = digest_detail.tls_version;
@@ -967,7 +969,7 @@ impl ProxyHttp for Server {
         if let Some(location) = &current_location {
             location
                 .validate_content_length(header)
-                .map_err(|e| new_internal_error(413, e.to_string()))?;
+                .map_err(|e| new_internal_error(413, e))?;
 
             // add processing, if processing is max than limit,
             // it will return error with 429 status code
@@ -977,7 +979,7 @@ impl ProxyHttp for Server {
                     ctx.state.location_processing_count = processing;
                 },
                 Err(e) => {
-                    return Err(new_internal_error(429, e.to_string()));
+                    return Err(new_internal_error(429, e));
                 },
             };
             if location.support_grpc_web() {
@@ -988,8 +990,7 @@ impl ProxyHttp for Server {
                     .ok_or_else(|| {
                         new_internal_error(
                             500,
-                            "grpc web bridge module should be added"
-                                .to_string(),
+                            "grpc web bridge module should be added",
                         )
                     })?;
                 grpc_web.init();
@@ -1048,12 +1049,9 @@ impl ProxyHttp for Server {
             let body = self
                 .prometheus
                 .as_ref()
-                .ok_or(new_internal_error(
-                    500,
-                    "get prometheus fail".to_string(),
-                ))?
+                .ok_or(new_internal_error(500, "get prometheus fail"))?
                 .metrics()
-                .map_err(|e| new_internal_error(500, e.to_string()))?;
+                .map_err(|e| new_internal_error(500, e))?;
             HttpResponse::text(body).send(session).await?;
             return Ok(true);
         }
@@ -1166,7 +1164,9 @@ impl ProxyHttp for Server {
             )
         })?;
 
-        ctx.timing.upstream_connect = get_latency(&ctx.timing.upstream_connect);
+        // start connect to upstream
+        ctx.timing.upstream_connect =
+            Some(get_start_time(&ctx.timing.created_at));
 
         Ok(Box::new(peer))
     }
@@ -1187,30 +1187,35 @@ impl ProxyHttp for Server {
     {
         debug!(category = LOG_CATEGORY, "--> connected to upstream");
         defer!(debug!(category = LOG_CATEGORY, "<-- connected to upstream"););
+        ctx.timing.upstream_connect =
+            get_latency(&ctx.timing.created_at, &ctx.timing.upstream_connect);
         if let Some(digest) = digest {
             let detail = get_digest_detail(digest);
             if !reused {
                 let upstream_connect_time =
                     ctx.timing.upstream_connect.unwrap_or_default();
-                if upstream_connect_time > 0
-                    && detail.tcp_established > upstream_connect_time
-                {
-                    ctx.timing.upstream_tcp_connect =
-                        Some(detail.tcp_established - upstream_connect_time);
-                }
+                // upstream tcp, tls(if https) connect time
+                let mut upstream_tcp_connect = upstream_connect_time;
                 if detail.tls_established > detail.tcp_established {
-                    ctx.timing.upstream_tls_handshake =
-                        Some(detail.tls_established - detail.tcp_established);
+                    let latency = (detail.tls_established
+                        - detail.tcp_established)
+                        as i32;
+                    upstream_tcp_connect -= latency;
+                    ctx.timing.upstream_tls_handshake = Some(latency);
+                }
+                if upstream_tcp_connect > 0 {
+                    ctx.timing.upstream_tcp_connect =
+                        Some(upstream_tcp_connect);
                 }
             }
             ctx.timing.upstream_connection_duration =
                 Some(detail.connection_time);
         }
-
         ctx.upstream.reused = reused;
-        ctx.timing.upstream_connect = get_latency(&ctx.timing.upstream_connect);
+
+        // upstream start processing
         ctx.timing.upstream_processing =
-            get_latency(&ctx.timing.upstream_processing);
+            Some(get_start_time(&ctx.timing.created_at));
 
         Ok(())
     }
@@ -1249,7 +1254,7 @@ impl ProxyHttp for Server {
             if let Some(location) = get_location(&ctx.upstream.location) {
                 location
                     .client_body_size_limit(ctx.state.payload_size)
-                    .map_err(|e| new_internal_error(413, e.to_string()))?;
+                    .map_err(|e| new_internal_error(413, e))?;
             }
         }
         Ok(())
@@ -1371,7 +1376,7 @@ impl ProxyHttp for Server {
                     lookup_duration = humantime::Duration::from(d).to_string();
                 }
 
-                let ms = d.as_millis() as u64;
+                let ms = d.as_millis() as i32;
                 let _ = upstream_response
                     .insert_header("X-Cache-Lookup", format!("{ms}ms"));
                 ctx.timing.cache_lookup = Some(ms);
@@ -1384,7 +1389,7 @@ impl ProxyHttp for Server {
                     lock_duration = humantime::Duration::from(d).to_string();
                 }
 
-                let ms = d.as_millis() as u64;
+                let ms = d.as_millis() as i32;
                 let _ = upstream_response
                     .insert_header("X-Cache-Lock", format!("{ms}ms"));
                 ctx.timing.cache_lock = Some(ms);
@@ -1447,15 +1452,18 @@ impl ProxyHttp for Server {
 
         if ctx.state.status.is_none() {
             ctx.state.status = Some(upstream_response.status);
+            // start to get upstream response data
             ctx.timing.upstream_response =
-                get_latency(&ctx.timing.upstream_response);
+                Some(get_start_time(&ctx.timing.created_at));
         }
         if let Some(id) = &ctx.state.request_id {
             let _ = upstream_response
                 .insert_header(HTTP_HEADER_NAME_X_REQUEST_ID.clone(), id);
         }
-        ctx.timing.upstream_processing =
-            get_latency(&ctx.timing.upstream_processing);
+        ctx.timing.upstream_processing = get_latency(
+            &ctx.timing.created_at,
+            &ctx.timing.upstream_processing,
+        );
         Ok(())
     }
 
@@ -1479,8 +1487,10 @@ impl ProxyHttp for Server {
         )?;
 
         if end_of_stream {
-            ctx.timing.upstream_response =
-                get_latency(&ctx.timing.upstream_response);
+            ctx.timing.upstream_response = get_latency(
+                &ctx.timing.created_at,
+                &ctx.timing.upstream_response,
+            );
             #[cfg(feature = "full")]
             if let Some(features) = ctx.features.as_mut() {
                 if let Some(ref mut span) = features.upstream_span.as_mut() {
@@ -1529,53 +1539,6 @@ impl ProxyHttp for Server {
         debug!(category = LOG_CATEGORY, "--> response body filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- response body filter"););
         self.handle_response_body_plugin(session, ctx, body, end_of_stream)?;
-        // let Some(features) = ctx.features.as_mut() else {
-        //     return Ok(None);
-        // };
-        // let Some(modify) = &features.modify_response_body else {
-        //     return Ok(None);
-        // };
-        // // set modify response body
-        // if let Some(buf) = features.response_body_buffer.as_mut() {
-        //     if let Some(b) = body {
-        //         buf.extend(&b[..]);
-        //         b.clear();
-        //     }
-        // } else {
-        //     let mut buf = BytesMut::new();
-        //     if let Some(b) = body {
-        //         buf.extend(&b[..]);
-        //         b.clear();
-        //     }
-        //     features.response_body_buffer = Some(buf);
-        // };
-
-        // if end_of_stream {
-        //     if let Some(ref buf) = features.response_body_buffer {
-        //         let name = modify.name();
-        //         let now = Instant::now();
-        //         *body = Some(modify.handle(Bytes::from(buf.to_owned()))?);
-        //         let elapsed = now.elapsed().as_millis() as u32;
-        //         debug!(
-        //             category = LOG_CATEGORY,
-        //             name, elapsed, "modify response body"
-        //         );
-        //         #[cfg(feature = "full")]
-        //         if let Some(features) = ctx.features.as_mut() {
-        //             if let Some(ref mut span) = features.upstream_span.as_mut()
-        //             {
-        //                 let key = format!("response.modified_body.{name}_time");
-        //                 span.set_attribute(KeyValue::new(key, elapsed as i64));
-        //             }
-        //         }
-        //     }
-        //     // if the body is empty, it will trigger response_body_filter again
-        //     // so set modify response body to None
-        //     if let Some(features) = ctx.features.as_mut() {
-        //         features.modify_response_body = None;
-        //     }
-        // }
-
         Ok(None)
     }
 

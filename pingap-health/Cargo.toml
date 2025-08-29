@@ -25,6 +25,6 @@ tonic-health = "0.13.1"
 url = { workspace = true }
 
 [dev-dependencies]
-pretty_assertions = "1.4.0"
-tempfile = "3.16.0"
+pretty_assertions = "1.4.1"
+tempfile = "3.21.0"
 tokio-test = "0.4.4"

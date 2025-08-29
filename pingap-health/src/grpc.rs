@@ -88,10 +88,7 @@ impl HealthCheck for GrpcHealthCheck {
             .await
             .map_err(|e| new_internal_error(500, e.to_string()))?;
         if resp.get_ref().status() != ServingStatus::Serving.into() {
-            return Err(new_internal_error(
-                500,
-                "grpc server is not serving".to_string(),
-            ));
+            return Err(new_internal_error(500, "grpc server is not serving"));
         }
 
         Ok(())

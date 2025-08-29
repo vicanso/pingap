@@ -96,8 +96,8 @@ default = []
 
 
 [dev-dependencies]
-criterion = { version = "0.5.1", features = ["html_reports"] }
-pretty_assertions = "1.4.0"
+criterion = { version = "0.7.0", features = ["html_reports"] }
+pretty_assertions = "1.4.1"
 tokio-test = "0.4.4"
 
 
@@ -202,7 +202,7 @@ substring = "1.4.5"
 sysinfo = { version = "0.34.2", features = [
     "system",
 ], default-features = false }
-tempfile = "3.16.0"
+tempfile = "3.21.0"
 time = { version = "0.3.41", features = ["local-offset"] }
 tokio = { version = "1.46.0", default-features = false, features = ["fs"] }
 toml = "0.9.5"

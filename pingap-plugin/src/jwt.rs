@@ -37,7 +37,7 @@ use substring::Substring;
 use tokio::time::sleep;
 use tracing::debug;
 
-const PLUGIN_ID: &str = "__jwt_plugin__";
+const PLUGIN_ID: &str = "_jwt_";
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 

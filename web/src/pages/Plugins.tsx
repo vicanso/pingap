@@ -496,7 +496,7 @@ export default function Plugins() {
           defaultValue: pluginConfig.mode as string,
           span: 2,
           category: ExFormItemCategory.RADIOS,
-          options: newStringOptions(["pipe", "full"], false),
+          options: newStringOptions(["response", "upstream"], false),
         },
       );
       break;

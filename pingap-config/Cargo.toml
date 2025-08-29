@@ -50,6 +50,6 @@ ignored = ["humantime-serde"]
 
 
 [dev-dependencies]
-pretty_assertions = "1.4.0"
+pretty_assertions = "1.4.1"
 tokio-test = "0.4.4"
 nanoid = "0.4.0"

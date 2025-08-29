@@ -29,10 +29,10 @@ pub use grpc::GrpcHealthCheck;
 pub use http::HealthCheckConf;
 
 /// Creates a new internal error
-fn new_internal_error(status: u16, message: String) -> pingora::BError {
+fn new_internal_error(status: u16, message: impl ToString) -> pingora::BError {
     pingora::Error::because(
         pingora::ErrorType::HTTPStatus(status),
-        message,
+        message.to_string(),
         pingora::Error::new(pingora::ErrorType::InternalError),
     )
 }
@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn test_new_internal_error() {
-        let err = new_internal_error(500, "test".to_string());
+        let err = new_internal_error(500, "test");
         assert_eq!(
             err.to_string().trim(),
             "HTTPStatus context: test cause:  InternalError"

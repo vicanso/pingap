@@ -34,8 +34,8 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
-pretty_assertions = "1.4.0"
-tempfile = "3.16.0"
+pretty_assertions = "1.4.1"
+tempfile = "3.21.0"
 tokio-test = "0.4.4"
-criterion = { version = "0.5.1", features = ["html_reports"] }
+criterion = { version = "0.7.0", features = ["html_reports"] }
 toml = { workspace = true }

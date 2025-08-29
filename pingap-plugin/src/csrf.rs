@@ -263,9 +263,8 @@ impl Plugin for Csrf {
             // - Set-Cookie: Sets the token cookie
             let set_cookie = (
                 header::SET_COOKIE,
-                HeaderValue::from_str(&builder.build().to_string()).map_err(
-                    |e| pingap_core::new_internal_error(400, e.to_string()),
-                )?,
+                HeaderValue::from_str(&builder.build().to_string())
+                    .map_err(|e| pingap_core::new_internal_error(400, e))?,
             );
 
             let resp = HttpResponse {

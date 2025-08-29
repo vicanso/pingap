@@ -39,7 +39,7 @@ const HOUR: u64 = 60 * MINUTE;
 #[inline]
 /// Format the duration in human readable format, checking smaller units first.
 /// e.g., ms, s, m, h.
-fn format_duration(mut buf: BytesMut, ms: u64) -> BytesMut {
+pub fn format_duration(mut buf: BytesMut, ms: u64) -> BytesMut {
     if ms < SECOND {
         // Format as milliseconds if less than a second.
         buf.extend_from_slice(itoa::Buffer::new().format(ms).as_bytes());
@@ -125,23 +125,23 @@ pub struct Timing {
     /// May be large for reused connections.
     pub connection_duration: u64,
     /// The duration of the TLS handshake with the client in milliseconds.
-    pub tls_handshake: Option<u64>,
+    pub tls_handshake: Option<i32>,
     /// The total duration to connect to the upstream server in milliseconds.
-    pub upstream_connect: Option<u64>,
+    pub upstream_connect: Option<i32>,
     /// The duration of the TCP connection to the upstream server in milliseconds.
-    pub upstream_tcp_connect: Option<u64>,
+    pub upstream_tcp_connect: Option<i32>,
     /// The duration of the TLS handshake with the upstream server in milliseconds.
-    pub upstream_tls_handshake: Option<u64>,
+    pub upstream_tls_handshake: Option<i32>,
     /// The duration the upstream server took to process the request in milliseconds.
-    pub upstream_processing: Option<u64>,
+    pub upstream_processing: Option<i32>,
     /// The duration from sending the request to receiving the upstream response in milliseconds.
-    pub upstream_response: Option<u64>,
+    pub upstream_response: Option<i32>,
     /// The total duration of the upstream connection in milliseconds.
     pub upstream_connection_duration: Option<u64>,
     /// The duration of the cache lookup in milliseconds.
-    pub cache_lookup: Option<u64>,
+    pub cache_lookup: Option<i32>,
     /// The duration spent waiting for a cache lock in milliseconds.
-    pub cache_lock: Option<u64>,
+    pub cache_lock: Option<i32>,
 }
 
 impl Default for Timing {
@@ -229,8 +229,6 @@ pub struct Features {
     /// A map of plugin names and their response body handlers.
     pub modify_body_handlers:
         Option<AHashMap<String, Box<dyn ModifyResponseBody>>>,
-    /// A buffer for the modified response body.
-    pub response_body_buffer: Option<BytesMut>,
     /// OpenTelemetry tracer for distributed tracing (available with the "tracing" feature).
     #[cfg(feature = "tracing")]
     pub otel_tracer: Option<OtelTracer>,
@@ -393,8 +391,13 @@ impl Ctx {
     // A private helper function to filter out time values that are too large (over an hour),
     // which might indicate an error or uninitialized state.
     #[inline]
-    fn get_time_field(&self, field: Option<u64>) -> Option<u64> {
-        field.filter(|&value| value < HOUR)
+    fn get_time_field(&self, field: Option<i32>) -> Option<u32> {
+        if let Some(value) = field {
+            if value >= 0 {
+                return Some(value.try_into().unwrap_or_default());
+            }
+        }
+        None
     }
 
     /// Returns the upstream response time if it's less than one hour, otherwise None.
@@ -402,7 +405,7 @@ impl Ctx {
     ///
     /// Returns: Option<u64> representing milliseconds, or None if time exceeds 1 hour.
     #[inline]
-    pub fn get_upstream_response_time(&self) -> Option<u64> {
+    pub fn get_upstream_response_time(&self) -> Option<u32> {
         self.get_time_field(self.timing.upstream_response)
     }
 
@@ -411,7 +414,7 @@ impl Ctx {
     ///
     /// Returns: Option<u64> representing milliseconds, or None if time exceeds 1 hour.
     #[inline]
-    pub fn get_upstream_connect_time(&self) -> Option<u64> {
+    pub fn get_upstream_connect_time(&self) -> Option<u32> {
         self.get_time_field(self.timing.upstream_connect)
     }
 
@@ -420,7 +423,7 @@ impl Ctx {
     ///
     /// Returns: Option<u64> representing milliseconds, or None if time exceeds 1 hour.
     #[inline]
-    pub fn get_upstream_processing_time(&self) -> Option<u64> {
+    pub fn get_upstream_processing_time(&self) -> Option<u32> {
         self.get_time_field(self.timing.upstream_processing)
     }
 
@@ -437,7 +440,7 @@ impl Ctx {
             .plugin_processing_times
             .get_or_insert_with(|| Vec::with_capacity(5));
         if let Some(item) = times.iter_mut().find(|item| item.0 == name) {
-            item.1 = time;
+            item.1 += time;
         } else {
             times.push((name.to_string(), time));
         }
@@ -802,14 +805,13 @@ mod tests {
     #[test]
     fn test_get_time_field() {
         let mut ctx = Ctx::new();
-        let one_hour_ms = 3_600_000;
 
         // Test with a valid time
         ctx.timing.upstream_response = Some(100);
         assert_eq!(ctx.get_upstream_response_time(), Some(100));
 
-        // Test with a time that is too large
-        ctx.timing.upstream_response = Some(one_hour_ms + 1);
+        // Test with a time is negative
+        ctx.timing.upstream_response = Some(-1);
         assert_eq!(
             ctx.get_upstream_response_time(),
             None,
@@ -984,13 +986,16 @@ mod tests {
             vec!["key1".to_string(), "key2".to_string(), "key3".to_string()],
             ctx.cache.unwrap().keys.unwrap()
         );
-        // let key = get_cache_key(
-        //     &ctx,
-        //     "GET",
-        //     &Uri::from_static("https://example.com/path"),
-        // );
-        // assert_eq!(key.namespace_str(), Some(""));
-        // assert_eq!(key.primary_key_str(), Some("GET:https://example.com/path"));
+
+        let mut ctx = Ctx::new();
+        ctx.cache.get_or_insert_default();
+        let key = get_cache_key(
+            &ctx,
+            "GET",
+            &Uri::from_static("https://example.com/path"),
+        );
+        assert_eq!(key.namespace_str(), Some(""));
+        assert_eq!(key.primary_key_str(), Some("GET:https://example.com/path"));
     }
 
     #[test]

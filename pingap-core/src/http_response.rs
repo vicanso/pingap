@@ -208,7 +208,7 @@ impl HttpResponse {
         // Attempt to parse the location string into a valid HeaderValue.
         let value = HeaderValue::from_str(location).map_err(|e| {
             error!(error = e.to_string(), "to header value fail");
-            new_internal_error(500, e.to_string())
+            new_internal_error(500, e)
         })?;
         // Build the redirect response.
         Ok(Self::builder(StatusCode::TEMPORARY_REDIRECT)
@@ -238,7 +238,7 @@ impl HttpResponse {
                 error = e.to_string(),
                 "to json fail"
             );
-            new_internal_error(400, e.to_string())
+            new_internal_error(400, e)
         })?;
         // Build the JSON response.
         Ok(Self::builder(StatusCode::OK)
@@ -399,7 +399,7 @@ where
             // Read a chunk of data from the source reader.
             let size = self.reader.read(&mut buffer).await.map_err(|e| {
                 error!(error = e.to_string(), "read data fail");
-                new_internal_error(400, e.to_string())
+                new_internal_error(400, e)
             })?;
             // Determine if this is the final chunk.
             let end = size < chunk_size;

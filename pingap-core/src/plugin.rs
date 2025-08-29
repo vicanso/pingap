@@ -57,8 +57,11 @@ pub enum ResponsePluginResult {
 // Represents the action a plugin task on a response
 #[derive(Debug, PartialEq, Eq)]
 pub enum ResponseBodyPluginResult {
+    /// The plugin did not modify the response body.
     Unchanged,
+    /// The plugin partially replaced the response body.
     PartialReplaced,
+    /// The plugin fully replaced the response body.
     FullyReplaced,
 }
 
@@ -153,7 +156,6 @@ pub trait Plugin: Sync + Send {
     /// Processes an HTTP response body at a specified lifecycle step.
     ///
     /// # Parameters
-    /// * `_step` - Current processing step in the response body lifecycle
     /// * `_session` - Mutable reference to the HTTP session
     /// * `_ctx` - Mutable reference to the request context
     /// * `_body` - Mutable reference to the response body
@@ -181,7 +183,6 @@ pub trait Plugin: Sync + Send {
     /// Processes an upstream response at a specified lifecycle step.
     ///
     /// # Parameters
-    /// * `_step` - Current processing step in the upstream response lifecycle
     /// * `_session` - Mutable reference to the HTTP session
     /// * `_ctx` - Mutable reference to the request context
     /// * `_upstream_response` - Mutable reference to the upstream response header
@@ -204,7 +205,6 @@ pub trait Plugin: Sync + Send {
     /// Processes an upstream response body at a specified lifecycle step.
     ///
     /// # Parameters
-    /// * `_step` - Current processing step in the upstream response body lifecycle
     /// * `_session` - Mutable reference to the HTTP session
     /// * `_ctx` - Mutable reference to the request context
     /// * `_body` - Mutable reference to the upstream response body
