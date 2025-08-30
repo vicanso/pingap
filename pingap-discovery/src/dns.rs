@@ -363,16 +363,33 @@ pub fn new_dns_discover_backends(discovery: &Discovery) -> Result<Backends> {
 
 #[cfg(test)]
 mod tests {
-    use super::Dns;
+    use super::{is_dns_discovery, new_dns_discover_backends, Dns};
+    use crate::Discovery;
     use pretty_assertions::assert_eq;
 
     #[tokio::test]
     async fn test_async_dns_discover() {
-        let dns = Dns::new(&["github.com".to_string()], true, true).unwrap();
+        assert_eq!(true, is_dns_discovery("dns"));
+        let dns = Dns::new(&["api".to_string()], true, true)
+            .unwrap()
+            .with_name_server("8.8.8.8".to_string())
+            .with_domain("github.com".to_string());
         let (ip_list, _) = dns.tokio_lookup_ip().await.unwrap();
         assert_eq!(true, !ip_list.is_empty());
 
         let (backends, _, _) = dns.run_discover().await.unwrap();
         assert_eq!(true, !backends.is_empty());
+
+        // new dns discover backends
+        let result = new_dns_discover_backends(&Discovery {
+            addr: vec!["api".to_string()],
+            tls: true,
+            ipv4_only: true,
+            dns_server: Some("8.8.8.8".to_string()),
+            dns_domain: Some("github.com".to_string()),
+            dns_search: Some("local".to_string()),
+            sender: None,
+        });
+        assert_eq!(true, result.is_ok());
     }
 }
