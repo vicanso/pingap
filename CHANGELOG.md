@@ -1,5 +1,88 @@
 # Changelog
 
+## [0.12.0](https://github.com/vicanso/pingap/compare/v0.11.2..v0.12.0) - 2025-08-30
+
+### ⛰️  Features
+
+- Support setting coarse clock interval from env - ([a264a12](https://github.com/vicanso/pingap/commit/a264a1213edfb00dfe511e7328d05e41177a52e2))
+- Supports acme dns-01 challenge using the huawei cloud dns api - ([2df3a6f](https://github.com/vicanso/pingap/commit/2df3a6f32a2014dd5ec40df303552642f0d638af))
+- Supports acme dns-01 challenge using the cloudflare dns api - ([46ded17](https://github.com/vicanso/pingap/commit/46ded171c56b757d9fcfd3b605c1eec53af008a5))
+- Supports acme dns-01 challenge using the alibaba cloud dns api - ([7f92f6f](https://github.com/vicanso/pingap/commit/7f92f6f9235d091130c175606bbdcda7d24bba20))
+
+### 🐛 Bug Fixes
+
+- Fix get location plugins handle - ([ea1aa3e](https://github.com/vicanso/pingap/commit/ea1aa3edb104305929e6af75543e1c1bca4a3972))
+- Fix format - ([b2ed3fa](https://github.com/vicanso/pingap/commit/b2ed3faaffba286b477afe4d82f8df6ac8488198))
+- Fix now time - ([287bbf1](https://github.com/vicanso/pingap/commit/287bbf19822c282c856b42b690dd581e948819b0))
+- Fix coarsetime update - ([9e73259](https://github.com/vicanso/pingap/commit/9e7325924b3adde5c95567784ea01ccb40f71f83))
+- Fix ttl lru limit - ([941b2c4](https://github.com/vicanso/pingap/commit/941b2c41bcdc977ca8f03d09236dd0815d0a3c6e))
+- Fix location path rewrite, #135 - ([07fd221](https://github.com/vicanso/pingap/commit/07fd2218ed4bc017d600843d756509b819f70c84))
+- Fix lint - ([6a8004c](https://github.com/vicanso/pingap/commit/6a8004c15c0a4c766e6ae1c3d14ec355ba304c75))
+- Fix test error - ([811f255](https://github.com/vicanso/pingap/commit/811f255a7c04943a46ac0f95c94cef5b1329f5a3))
+
+### 🚜 Refactor
+
+- Use include-flat = "=0.3.0" - ([b4e35b9](https://github.com/vicanso/pingap/commit/b4e35b9789a0d9fb88e9e8f4c3fb7bc42a1719c4))
+- Adjust timing fields - ([fe802b5](https://github.com/vicanso/pingap/commit/fe802b5aef2eb8e15021f5067ba2588af5618e79))
+- Use ahashmap to save modify body handle function - ([04efbc7](https://github.com/vicanso/pingap/commit/04efbc79ac3657608125b0d6c2776f022e630ceb))
+- Adjust body response handle plugin - ([d6a19b0](https://github.com/vicanso/pingap/commit/d6a19b07f38e4c4f376ab114d823d4a8bff583e8))
+- Add plugin id for upstream body handler - ([50872e8](https://github.com/vicanso/pingap/commit/50872e8bc73fa993606d78b5f16681dd8d4c0d4f))
+- Adjust upstream body handler - ([91920a1](https://github.com/vicanso/pingap/commit/91920a1447db4a622b1f23df88c6a989a67f0871))
+- Adjust plugin trait - ([24fdbbd](https://github.com/vicanso/pingap/commit/24fdbbdb54dec176c40070e8d54916a7c9983c9e))
+- Fill access empty field with "-" - ([2f44c12](https://github.com/vicanso/pingap/commit/2f44c12e4a03bea03ff77a871f6399f093daec34))
+- Adjust plugin trait - ([3b337a3](https://github.com/vicanso/pingap/commit/3b337a354c07c6e5198168b146c99f7d0b3cc334))
+- Adjust new session for test - ([3b7e6e0](https://github.com/vicanso/pingap/commit/3b7e6e0aa8a7bb75ec8f62328ba28e2347a6ca77))
+- Adjust image optimize plugin - ([6db923b](https://github.com/vicanso/pingap/commit/6db923ba921807e29ceab8f526cea3691734ed58))
+- Adjust pingap imageoptim - ([54a7aa3](https://github.com/vicanso/pingap/commit/54a7aa329a290d2417bc5ad90066aa1694d7320b))
+- Adjust plugin trait of pingap core - ([91e9cc0](https://github.com/vicanso/pingap/commit/91e9cc0e56ea7e978bf59f1ad1745cd9057b9cd4))
+- Adjust pingap performance - ([8a1efc8](https://github.com/vicanso/pingap/commit/8a1efc8d59286e9f497e5e3f96991a9137d00b6d))
+- Adjust pingap certificate - ([ead8605](https://github.com/vicanso/pingap/commit/ead8605dfe46bbbadfa49185cfab86d99dbeeb81))
+- Adjust pingap upstream - ([dc68545](https://github.com/vicanso/pingap/commit/dc68545aede210996c5827655796109b43613eb3))
+- Remove unused module - ([18858e5](https://github.com/vicanso/pingap/commit/18858e53fd4d7cc778463b50901982d78115f9ae))
+- Adjust pingap location - ([185aa73](https://github.com/vicanso/pingap/commit/185aa732999af57a67803355fb038b5075a444ee))
+- Adjust pingap logger - ([542f4a6](https://github.com/vicanso/pingap/commit/542f4a6fe66f761ac5617dabed171199205af5cf))
+- Adjust pingap discovery - ([3a389f5](https://github.com/vicanso/pingap/commit/3a389f5e07854be1f8894da787f1cf8780f21f4f))
+- Adjust pingap util - ([53278d9](https://github.com/vicanso/pingap/commit/53278d9470605b40d582b9207eaabb6396ffc3a3))
+- Use ctor for coarsetime updater - ([8320184](https://github.com/vicanso/pingap/commit/832018407793d2eb0f157c6c75fb7373647018e2))
+- Use coarsetime instant for better performance - ([2926d9e](https://github.com/vicanso/pingap/commit/2926d9e3fdff97c14e0205cf7e77f6ea336746e1))
+- Use real now ms for accurate calculation - ([ff6eae2](https://github.com/vicanso/pingap/commit/ff6eae24f57dbeddd878358f21c8358a1d47d550))
+- Set max value for coarse clock interval - ([b9fe71f](https://github.com/vicanso/pingap/commit/b9fe71f026987cd538dcdf033f471b366401c3c4))
+- Adjust background service task - ([39cc5f0](https://github.com/vicanso/pingap/commit/39cc5f01dd43f6d55eae85a2a9a0a665343aa1e3))
+- Adjust plugin trait - ([4321ddb](https://github.com/vicanso/pingap/commit/4321ddbad74a5b31fae6572ec567356e1755af11))
+- Adjust http header function - ([7ec012c](https://github.com/vicanso/pingap/commit/7ec012c1b3a2c67ef54c2fcc5f4971384d17cb15))
+- Adjust the ctx struct into a clean, composed structure - ([2f2ec91](https://github.com/vicanso/pingap/commit/2f2ec91d87a7e41aee5d8e86ca20048a22e2f907))
+- Adjust dns 01 challenge handle function - ([491f02e](https://github.com/vicanso/pingap/commit/491f02e2cfa19b236c022c1b372ece0bb54407c0))
+
+### 📚 Documentation
+
+- Update readme of pingap location - ([14d4166](https://github.com/vicanso/pingap/commit/14d41663611fd9126722fd215fdfe9f5a3fd64c2))
+- Update readme of pingap util - ([4e5bd18](https://github.com/vicanso/pingap/commit/4e5bd181770e26fa1decc7f66c5ac2b818010f07))
+- Update document of core - ([4c567e0](https://github.com/vicanso/pingap/commit/4c567e02b1789356e90107b6d4cae1c51cf255a8))
+
+### 🧪 Testing
+
+- Bench for tinyufo - ([d4f698e](https://github.com/vicanso/pingap/commit/d4f698e8f4bda4bd8c1413e9b8ba1416647b6352))
+- Add more test for file cache - ([1e55a02](https://github.com/vicanso/pingap/commit/1e55a024fbbeb34539ac2ca957e4b8521bf040dd))
+- Fix test of service time - ([f4aa080](https://github.com/vicanso/pingap/commit/f4aa080c03978a43109e4f1fdbed930f4101a052))
+- Adjust ttl lru limit test - ([426e42c](https://github.com/vicanso/pingap/commit/426e42c19d27bfa338a40d9f9cdd2a213d5ed0ed))
+- Add more unit test - ([c643b4a](https://github.com/vicanso/pingap/commit/c643b4a5c2ca40c7fd923396edbc590cb5aab738))
+- Fix test of request plugin result - ([082ea56](https://github.com/vicanso/pingap/commit/082ea56852915fabb4f6aa6e908c6d08d43e3fdc))
+
+### ⚙️ Miscellaneous Tasks
+
+- Add version tag for docker images - ([50bff53](https://github.com/vicanso/pingap/commit/50bff53f27080ef6300fe33b47ee16cee042aaf4))
+- Update pingora - ([aae13de](https://github.com/vicanso/pingap/commit/aae13def9f7397a583f07dd077af09686e1e7341))
+- Ignore machete - ([23d0047](https://github.com/vicanso/pingap/commit/23d004715b51ca739b78b49c95065d00ada55ec9))
+- Update open telemetry - ([96d6746](https://github.com/vicanso/pingap/commit/96d6746023dcf813d5b3cf74245c6cce57057dd8))
+- Adjust github workflow - ([e212c1b](https://github.com/vicanso/pingap/commit/e212c1b6301154596e54076c4cda253c9d413e91))
+- Remove unused modules - ([9a8301d](https://github.com/vicanso/pingap/commit/9a8301d91b441f8788e7e522f6654512d5a8cb7a))
+- Update github workflow - ([9ad8e05](https://github.com/vicanso/pingap/commit/9ad8e051995e7eb88942e102d0b2e9622236bd6a))
+- Update github workflow - ([3bcb6ad](https://github.com/vicanso/pingap/commit/3bcb6ad3ee7e540681511560221f5cfe2a17a48d))
+
+### Eat
+
+- Supports acme dns-01 challenge using the tencent cloud dns api - ([f734cfb](https://github.com/vicanso/pingap/commit/f734cfba14c230aeffad5b1992a071976213bf09))
+
 ## [0.12.0](https://github.com/vicanso/pingap/compare/v0.11.2..v0.12.0) - 2025-08-16
 
 ### ⛰️  Features
