@@ -13,9 +13,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use ahash::AHashSet;
 use ipnet::IpNet;
-// Import HashSet for efficient IP lookups.
-use std::collections::HashSet;
 use std::net::{AddrParseError, IpAddr};
 use std::str::FromStr;
 
@@ -24,7 +23,7 @@ use std::str::FromStr;
 pub struct IpRules {
     ip_net_list: Vec<IpNet>,
     // Use a HashSet for O(1) average time complexity for individual IP lookups.
-    ip_set: HashSet<IpAddr>,
+    ip_set: AHashSet<IpAddr>,
 }
 
 impl IpRules {
@@ -34,7 +33,7 @@ impl IpRules {
     /// Invalid entries are ignored and a warning is logged.
     pub fn new<T: AsRef<str>>(values: &[T]) -> Self {
         let mut ip_net_list = vec![];
-        let mut ip_set = HashSet::new();
+        let mut ip_set = AHashSet::new();
 
         for item in values {
             let item_str = item.as_ref();

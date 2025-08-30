@@ -15,8 +15,8 @@
 use bytes::BytesMut;
 use chrono::{Local, Utc};
 use once_cell::sync::Lazy;
-use pingap_core::{get_hostname, Ctx, HOST_NAME_TAG};
-use pingap_util::{format_byte_size, format_duration};
+use pingap_core::{format_duration, get_hostname, Ctx, HOST_NAME_TAG};
+use pingap_util::format_byte_size;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::Regex;
@@ -476,7 +476,7 @@ impl Parser {
                 TagCategory::LatencyHuman => {
                     if let Some(instant) = instant {
                         let ms = (instant - ctx.timing.created_at).as_millis();
-                        format_duration(&mut buf, ms as u64);
+                        buf = format_duration(buf, ms as u64);
                     } else {
                         buf.extend_from_slice(EMPTY_FIELD);
                     }

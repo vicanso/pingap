@@ -41,13 +41,9 @@ assert_eq!(data, decrypted);
 ### Formatting
 
 ```rust
-use pingap_util::{format_duration, format_byte_size};
+use pingap_util::{format_byte_size};
 
 let mut buf = String::new();
-format_duration(&mut buf, 12345);
-assert_eq!(buf, "12.3s");
-
-buf.clear();
 format_byte_size(&mut buf, 1024 * 1024);
 assert_eq!(buf, "1MB");
 ```

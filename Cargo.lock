@@ -3946,7 +3946,9 @@ name = "pingap-util"
 version = "0.12.0"
 dependencies = [
  "aes-gcm-siv",
+ "ahash",
  "base64",
+ "criterion",
  "dirs",
  "ipnet",
  "once_cell",

@@ -24,42 +24,39 @@ macro_rules! format_with_units {
         $base_unit:expr,
         $( ($threshold:expr, $unit:expr, $divisor:expr) ),*
     ) => {
-        let value_f = $value as f64;
+        let value = $value; // Use the value as an integer.
         let mut handled = false;
 
-        // Use a temporary variable to handle string-specific logic before writing.
-        #[allow(unused_variables)]
-        let temp_writer = "";
-
-        // Iterate through the thresholds in reverse order (largest unit first).
+        // Iterate through thresholds, largest unit first.
         $(
-            if !handled && value_f >= $threshold as f64 {
-                let divisor_f = $divisor as f64;
+            if !handled && value >= $threshold {
+                // 1. Calculate the whole and fractional parts using integer math.
+                let whole_part = value / $divisor;
+                let remainder = value % $divisor;
 
-                // 1. Format the number with one decimal place into a temporary String.
-                let num_str = format!("{:.1}", value_f / divisor_f);
+                // 2. Calculate the first decimal digit.
+                // We multiply by 10 before dividing to get the digit.
+                // E.g., for 1234 bytes -> 1234 % 1024 = 210. (210 * 10) / 1024 = 2.
+                let decimal_digit = (remainder * 10) / $divisor;
 
-                // 2. Trim the ".0" suffix from the temporary string if it exists.
-                let final_num_str = num_str.strip_suffix(".0").unwrap_or(&num_str);
-
-                // 3. Write the final, trimmed number and the unit to the writer.
-                let _ = write!($writer, "{}{}", final_num_str, $unit);
+                // 3. Write directly to the writer, avoiding intermediate strings.
+                let _ = write!($writer, "{}", whole_part);
+                if decimal_digit > 0 {
+                    // Only write the decimal part if it's not zero.
+                    // This naturally handles the "strip .0" logic.
+                    let _ = write!($writer, ".{}", decimal_digit);
+                }
+                let _ = write!($writer, "{}", $unit);
 
                 handled = true;
             }
         )*
 
-        // If no threshold was met, use the base unit.
+        // Fallback for the base unit.
         if !handled {
-            let _ = write!($writer, "{}{}", $value, $base_unit);
+            let _ = write!($writer, "{}{}", value, $base_unit);
         }
     };
-}
-
-/// Formats a duration in milliseconds into a human-readable string (ms, s).
-pub fn format_duration(buf: &mut impl Write, ms: u64) {
-    const SEC: u64 = 1_000;
-    format_with_units!(buf, ms, "ms", (SEC, "s", SEC));
 }
 
 /// Formats a byte size into a human-readable string (B, KB, MB, GB).
@@ -82,13 +79,6 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    // ... (tests remain exactly the same and will pass) ...
-    fn formatted_duration(ms: u64) -> String {
-        let mut s = String::new();
-        format_duration(&mut s, ms);
-        s
-    }
-
     fn formatted_byte_size(size: usize) -> String {
         let mut s = String::new();
         format_byte_size(&mut s, size);
@@ -103,13 +93,5 @@ mod tests {
         assert_eq!(formatted_byte_size(1024), "1KB");
         assert_eq!(formatted_byte_size(1124), "1.1KB");
         assert_eq!(formatted_byte_size(1220 * 1000), "1.2MB");
-    }
-
-    #[test]
-    fn test_format_duration() {
-        assert_eq!(formatted_duration(100), "100ms");
-        assert_eq!(formatted_duration(999), "999ms");
-        assert_eq!(formatted_duration(1000), "1s");
-        assert_eq!(formatted_duration(12400), "12.4s");
     }
 }
