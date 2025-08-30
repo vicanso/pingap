@@ -106,7 +106,7 @@ tokio-test = "0.4.4"
 [profile.release]
 codegen-units = 1
 lto = true
-strip = "debuginfo"
+strip = true
 
 [profile.release-perf]
 inherits = "release"
