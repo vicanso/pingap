@@ -206,8 +206,14 @@ where
     S: BackendSelection + 'static,
     S::Iter: BackendIter,
 {
+    let mut update_frequency = if let Some(value) = conf.update_frequency {
+        Some(value)
+    } else {
+        Some(Duration::from_secs(30))
+    };
     // For static discovery, perform immediate backend update
     if is_static_discovery(&conf.guess_discovery()) {
+        update_frequency = None;
         lb.update()
             .now_or_never()
             .expect("static should not block")
@@ -227,7 +233,7 @@ where
     // Configure health checking
     lb.parallel_health_check = health_check_conf.parallel_check;
     lb.set_health_check(hc);
-    lb.update_frequency = conf.update_frequency;
+    lb.update_frequency = update_frequency;
     lb.health_check_frequency = Some(health_check_conf.check_frequency);
     Ok(lb)
 }
