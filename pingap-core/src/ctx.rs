@@ -28,8 +28,7 @@ use pingora::proxy::Session;
 use pingora_limits::inflight::Guard;
 use std::fmt::Write;
 use std::sync::Arc;
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 // Constants for time conversions in milliseconds.
 const SECOND: u64 = 1_000;
@@ -394,7 +393,7 @@ impl Ctx {
     fn get_time_field(&self, field: Option<i32>) -> Option<u32> {
         if let Some(value) = field {
             if value >= 0 {
-                return Some(value.try_into().unwrap_or_default());
+                return Some(value as u32);
             }
         }
         None

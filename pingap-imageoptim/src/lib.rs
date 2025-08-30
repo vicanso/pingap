@@ -223,9 +223,18 @@ impl Plugin for ImageOptim {
                 break;
             }
         }
+        let mut capacity = 8192;
         // if the image is not changed, it will be optimized again, so we need to remove the content-length
         // Remove content-length since we're modifying the body
-        upstream_response.remove_header(&http::header::CONTENT_LENGTH);
+        if let Some(value) =
+            upstream_response.remove_header(&http::header::CONTENT_LENGTH)
+        {
+            if let Ok(size) =
+                value.to_str().unwrap_or_default().parse::<usize>()
+            {
+                capacity = size;
+            }
+        }
         // Switch to chunked transfer encoding
         let _ = upstream_response.insert_header(
             http::header::TRANSFER_ENCODING,
@@ -245,7 +254,7 @@ impl Plugin for ImageOptim {
                 // only support lossless
                 webp_quality: 100,
                 format_type,
-                buffer: BytesMut::new(),
+                buffer: BytesMut::with_capacity(capacity),
             }),
         );
         Ok(ResponsePluginResult::Modified)
