@@ -209,7 +209,7 @@ where
     let mut update_frequency = if let Some(value) = conf.update_frequency {
         Some(value)
     } else {
-        Some(Duration::from_secs(30))
+        Some(Duration::from_secs(60))
     };
     // For static discovery, perform immediate backend update
     if is_static_discovery(&conf.guess_discovery()) {
