@@ -34,7 +34,9 @@ use pingap_core::{
     get_cache_key, CompressionStat, Ctx, PluginStep, RequestPluginResult,
     ResponseBodyPluginResult, ResponsePluginResult,
 };
-use pingap_core::{real_now_ms, HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID};
+use pingap_core::{
+    get_digest_detail, HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID,
+};
 use pingap_location::{get_location, Location};
 use pingap_logger::Parser;
 #[cfg(feature = "full")]
@@ -68,7 +70,6 @@ use pingora::modules::http::grpc_web::{GrpcWeb, GrpcWebBridge};
 use pingora::modules::http::HttpModules;
 use pingora::protocols::http::error_resp;
 use pingora::protocols::Digest;
-use pingora::protocols::TimingDigest;
 use pingora::proxy::{http_proxy_service, FailToProxy, HttpProxy};
 use pingora::proxy::{ProxyHttp, Session};
 use pingora::server::configuration;
@@ -79,7 +80,7 @@ use snafu::Snafu;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 use tracing::{debug, error, info};
 
 #[derive(Debug, Snafu)]
@@ -735,67 +736,6 @@ impl Server {
     }
 }
 
-/// Helper struct to store connection timing and TLS details
-#[derive(Debug, Default)]
-struct DigestDetail {
-    /// Whether the connection was reused from pool
-    connection_reused: bool,
-    /// Total connection time in milliseconds
-    connection_time: u64,
-    /// Timestamp when TCP connection was established
-    tcp_established: u64,
-    /// Timestamp when TLS handshake completed
-    tls_established: u64,
-    /// TLS protocol version if using HTTPS
-    tls_version: Option<String>,
-    /// TLS cipher suite in use if using HTTPS
-    tls_cipher: Option<String>,
-}
-
-#[inline]
-fn timing_to_ms(timing: Option<&Option<TimingDigest>>) -> u64 {
-    timing
-        .and_then(|v| v.as_ref())
-        .map(|item| {
-            item.established_ts
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64
-        })
-        .unwrap_or_default()
-}
-
-/// Extracts timing and TLS information from connection digest.
-/// Used for metrics and logging connection details.
-#[inline]
-fn get_digest_detail(digest: &Digest) -> DigestDetail {
-    let tcp_established = timing_to_ms(digest.timing_digest.first());
-    let mut connection_time = 0;
-    let now = real_now_ms();
-    if tcp_established > 0 && tcp_established < now {
-        connection_time = now - tcp_established;
-    }
-    let connection_reused = connection_time > 100;
-
-    let Some(ssl_digest) = &digest.ssl_digest else {
-        return DigestDetail {
-            connection_reused,
-            tcp_established,
-            connection_time,
-            ..Default::default()
-        };
-    };
-
-    DigestDetail {
-        connection_reused,
-        tcp_established,
-        connection_time,
-        tls_established: timing_to_ms(digest.timing_digest.last()),
-        tls_version: Some(ssl_digest.version.to_string()),
-        tls_cipher: Some(ssl_digest.cipher.to_string()),
-    }
-}
-
 const MODULE_GRPC_WEB: &str = "grpc-web";
 
 // proxy_set_header X-Real-IP $remote_addr;
@@ -1095,6 +1035,37 @@ impl Server {
         }
         Ok(())
     }
+
+    fn process_cache_control(
+        &self,
+        c: &mut CacheControl,
+        max_ttl: Option<Duration>,
+    ) -> Result<(), NoCacheReason> {
+        // no-cache, no-store, private
+        if c.no_cache() || c.no_store() || c.private() {
+            return Err(NoCacheReason::OriginNotCache);
+        }
+
+        // max-age=0
+        if c.max_age().ok().flatten().unwrap_or_default() == 0 {
+            return Err(NoCacheReason::OriginNotCache);
+        }
+
+        // set cache max ttl
+        if let Some(d) = max_ttl {
+            if c.fresh_duration().unwrap_or_default() > d {
+                // 更新 s-maxage 的值
+                let s_maxage_value =
+                    itoa::Buffer::new().format(d.as_secs()).as_bytes().to_vec();
+                c.directives.insert(
+                    "s-maxage".to_string(),
+                    Some(DirectiveValue(s_maxage_value)),
+                );
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[inline]
@@ -1222,14 +1193,17 @@ impl ProxyHttp for Server {
     ) -> pingora::Result<Box<HttpPeer>> {
         debug!(category = LOG_CATEGORY, "--> upstream peer");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream peer"););
-        let mut location_name = "unknown".to_string();
-        let peer = if let Some(location) = get_location(&ctx.upstream.location)
-        {
-            location_name.clone_from(&location.name);
-            if let Some(up) =
-                get_upstream_with_variables(&location.upstream, ctx)
-            {
+        // let mut location_name = "unknown".to_string();
+        let peer = get_location(&ctx.upstream.location)
+            .and_then(|location| {
+                let upstream =
+                    get_upstream_with_variables(&location.upstream, ctx)?;
+                Some((location, upstream))
+            })
+            .and_then(|(location, up)| {
                 ctx.upstream.connected_count = up.connected();
+                #[cfg(not(feature = "full"))]
+                let _location = &location;
                 #[cfg(feature = "full")]
                 if let Some(features) = &ctx.features {
                     if let Some(tracer) = &features.otel_tracer {
@@ -1251,18 +1225,16 @@ impl ProxyHttp for Server {
                     });
                 ctx.upstream.name = up.name.clone();
                 peer
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-        .ok_or_else(|| {
-            new_internal_error(
-                503,
-                format!("No available upstream for {location_name}"),
-            )
-        })?;
+            })
+            .ok_or_else(|| {
+                new_internal_error(
+                    503,
+                    format!(
+                        "No available upstream for {}",
+                        &ctx.upstream.location
+                    ),
+                )
+            })?;
 
         // start connect to upstream
         ctx.timing.upstream_connect =
@@ -1290,26 +1262,7 @@ impl ProxyHttp for Server {
         ctx.timing.upstream_connect =
             get_latency(&ctx.timing.created_at, &ctx.timing.upstream_connect);
         if let Some(digest) = digest {
-            let detail = get_digest_detail(digest);
-            if !reused {
-                let upstream_connect_time =
-                    ctx.timing.upstream_connect.unwrap_or_default();
-                // upstream tcp, tls(if https) connect time
-                let mut upstream_tcp_connect = upstream_connect_time;
-                if detail.tls_established > detail.tcp_established {
-                    let latency = (detail.tls_established
-                        - detail.tcp_established)
-                        as i32;
-                    upstream_tcp_connect -= latency;
-                    ctx.timing.upstream_tls_handshake = Some(latency);
-                }
-                if upstream_tcp_connect > 0 {
-                    ctx.timing.upstream_tcp_connect =
-                        Some(upstream_tcp_connect);
-                }
-            }
-            ctx.timing.upstream_connection_duration =
-                Some(detail.connection_time);
+            ctx.update_upstream_timing_from_digest(digest, reused);
         }
         ctx.upstream.reused = reused;
 
@@ -1401,47 +1354,24 @@ impl ProxyHttp for Server {
     ) -> pingora::Result<RespCacheable> {
         debug!(category = LOG_CATEGORY, "--> response cache filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- response cache filter"););
-        let mut check_cache_control = false;
-        let mut max_ttl = None;
-        if let Some(cache_info) = &ctx.cache {
-            check_cache_control = cache_info.check_cache_control;
-            max_ttl = cache_info.max_ttl;
-        }
-        if check_cache_control && resp.headers.get("Cache-Control").is_none() {
+
+        let (check_cache_control, max_ttl) = ctx.cache.as_ref().map_or(
+            (false, None), // 如果 ctx.cache 为 None 时的默认值
+            |c| (c.check_cache_control, c.max_ttl),
+        );
+
+        let mut cc = CacheControl::from_resp_headers(resp);
+
+        if let Some(c) = &mut cc {
+            // 将所有复杂的验证和修改逻辑委托给辅助函数
+            if let Err(reason) = self.process_cache_control(c, max_ttl) {
+                return Ok(RespCacheable::Uncacheable(reason));
+            }
+        } else if check_cache_control {
+            // 如果需要 Cache-Control 头但它不存在或解析失败
             return Ok(RespCacheable::Uncacheable(
                 NoCacheReason::OriginNotCache,
             ));
-        }
-        let mut cc = CacheControl::from_resp_headers(resp);
-        if let Some(ref mut c) = &mut cc {
-            if c.no_cache() || c.no_store() || c.private() {
-                return Ok(RespCacheable::Uncacheable(
-                    NoCacheReason::OriginNotCache,
-                ));
-            }
-            //  max-age=0
-            if let Ok(max_age) = c.max_age() {
-                if max_age.unwrap_or_default() == 0 {
-                    return Ok(RespCacheable::Uncacheable(
-                        NoCacheReason::OriginNotCache,
-                    ));
-                }
-            }
-            // adjust cache ttl
-            if let Some(d) = max_ttl {
-                if c.fresh_duration().unwrap_or_default() > d {
-                    // update cache-control s-maxage value
-                    c.directives.insert(
-                        "s-maxage".to_string(),
-                        Some(DirectiveValue(
-                            itoa::Buffer::new()
-                                .format(d.as_secs())
-                                .as_bytes()
-                                .to_vec(),
-                        )),
-                    );
-                }
-            }
         }
 
         Ok(resp_cacheable(

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::Plugin;
+use crate::{real_now_ms, Plugin};
 use ahash::AHashMap;
 use bytes::BytesMut;
 use http::StatusCode;
@@ -24,11 +24,13 @@ use opentelemetry::{
     Context,
 };
 use pingora::cache::CacheKey;
+use pingora::protocols::Digest;
+use pingora::protocols::TimingDigest;
 use pingora::proxy::Session;
 use pingora_limits::inflight::Guard;
 use std::fmt::Write;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 // Constants for time conversions in milliseconds.
 const SECOND: u64 = 1_000;
@@ -304,6 +306,67 @@ pub struct Ctx {
     pub features: Option<Features>,
     /// Plugins for the current location
     pub plugins: Option<Vec<(String, Arc<dyn Plugin>)>>,
+}
+
+/// Helper struct to store connection timing and TLS details
+#[derive(Debug, Default)]
+pub struct DigestDetail {
+    /// Whether the connection was reused from pool
+    pub connection_reused: bool,
+    /// Total connection time in milliseconds
+    pub connection_time: u64,
+    /// Timestamp when TCP connection was established
+    pub tcp_established: u64,
+    /// Timestamp when TLS handshake completed
+    pub tls_established: u64,
+    /// TLS protocol version if using HTTPS
+    pub tls_version: Option<String>,
+    /// TLS cipher suite in use if using HTTPS
+    pub tls_cipher: Option<String>,
+}
+
+#[inline]
+fn timing_to_ms(timing: Option<&Option<TimingDigest>>) -> u64 {
+    timing
+        .and_then(|v| v.as_ref())
+        .map(|item| {
+            item.established_ts
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64
+        })
+        .unwrap_or_default()
+}
+
+/// Extracts timing and TLS information from connection digest.
+/// Used for metrics and logging connection details.
+#[inline]
+pub fn get_digest_detail(digest: &Digest) -> DigestDetail {
+    let tcp_established = timing_to_ms(digest.timing_digest.first());
+    let mut connection_time = 0;
+    let now = real_now_ms();
+    if tcp_established > 0 && tcp_established < now {
+        connection_time = now - tcp_established;
+    }
+    let connection_reused = connection_time > 100;
+
+    let Some(ssl_digest) = &digest.ssl_digest else {
+        return DigestDetail {
+            connection_reused,
+            tcp_established,
+            connection_time,
+            ..Default::default()
+        };
+    };
+
+    DigestDetail {
+        connection_reused,
+        tcp_established,
+        connection_time,
+        tls_established: timing_to_ms(digest.timing_digest.last()),
+        tls_version: Some(ssl_digest.version.to_string()),
+        tls_cipher: Some(ssl_digest.cipher.to_string()),
+    }
 }
 
 impl Ctx {
@@ -717,6 +780,33 @@ impl Ctx {
             cache_keys.extend(keys);
         } else {
             cache_info.keys = Some(keys);
+        }
+    }
+    /// Updates the upstream timing from the digest.
+    #[inline]
+    pub fn update_upstream_timing_from_digest(
+        &mut self,
+        digest: &Digest,
+        reused: bool,
+    ) {
+        let detail = get_digest_detail(digest);
+        self.timing.upstream_connection_duration = Some(detail.connection_time);
+        if reused {
+            return;
+        }
+
+        let upstream_connect_time =
+            self.timing.upstream_connect.unwrap_or_default();
+        // upstream tcp, tls(if https) connect time
+        let mut upstream_tcp_connect = upstream_connect_time;
+        if detail.tls_established > detail.tcp_established {
+            let latency =
+                (detail.tls_established - detail.tcp_established) as i32;
+            upstream_tcp_connect -= latency;
+            self.timing.upstream_tls_handshake = Some(latency);
+        }
+        if upstream_tcp_connect > 0 {
+            self.timing.upstream_tcp_connect = Some(upstream_tcp_connect);
         }
     }
 }
