@@ -1066,6 +1066,150 @@ impl Server {
 
         Ok(())
     }
+
+    #[inline]
+    fn handle_cache_headers(
+        &self,
+        session: &Session,
+        upstream_response: &mut ResponseHeader,
+        ctx: &mut Ctx,
+    ) {
+        let cache_status = session.cache.phase().as_str();
+        let _ = upstream_response.insert_header("x-cache-status", cache_status);
+
+        // process lookup duration
+        let lookup_duration_str = self.process_cache_timing(
+            session.cache.lookup_duration(),
+            "x-cache-lookup",
+            upstream_response,
+            &mut ctx.timing.cache_lookup,
+        );
+
+        // process lock duration
+        let lock_duration_str = self.process_cache_timing(
+            session.cache.lock_duration(),
+            "x-cache-lock",
+            upstream_response,
+            &mut ctx.timing.cache_lock,
+        );
+
+        #[cfg(not(feature = "full"))]
+        {
+            let _ = lookup_duration_str;
+            let _ = lock_duration_str;
+        }
+
+        // (optional) process OpenTelemetry
+        #[cfg(feature = "full")]
+        self.update_otel_cache_attrs(
+            ctx,
+            cache_status,
+            lookup_duration_str,
+            lock_duration_str,
+        );
+    }
+
+    #[inline]
+    fn process_cache_timing(
+        &self,
+        duration_opt: Option<Duration>,
+        header_name: &'static str,
+        resp: &mut ResponseHeader,
+        ctx_field: &mut Option<i32>,
+    ) -> String {
+        if let Some(d) = duration_opt {
+            let ms = d.as_millis() as i32;
+
+            // use itoa to avoid format! heap memory allocation
+            let mut buffer = itoa::Buffer::new();
+            let mut value_bytes = Vec::with_capacity(6);
+            value_bytes.extend_from_slice(buffer.format(ms).as_bytes());
+            value_bytes.extend_from_slice(b"ms");
+
+            let _ = resp.insert_header(header_name, value_bytes);
+            *ctx_field = Some(ms);
+
+            #[cfg(feature = "full")]
+            return humantime::Duration::from(d).to_string();
+        }
+        String::new()
+    }
+
+    #[inline]
+    #[cfg(feature = "full")]
+    fn update_otel_cache_attrs(
+        &self,
+        ctx: &mut Ctx,
+        cache_status: &str,
+        lookup_duration: String,
+        lock_duration: String,
+    ) {
+        if let Some(tracer) =
+            ctx.features.as_mut().and_then(|f| f.otel_tracer.as_mut())
+        {
+            let attrs = vec![
+                KeyValue::new("cache.status", cache_status.to_string()),
+                KeyValue::new("cache.lookup", lookup_duration),
+                KeyValue::new("cache.lock", lock_duration),
+            ];
+            tracer.http_request_span.set_attributes(attrs);
+        }
+    }
+
+    #[cfg(feature = "full")]
+    fn inject_telemetry_headers(
+        &self,
+        ctx: &Ctx,
+        upstream_response: &mut ResponseHeader,
+    ) {
+        // 优化：使用 and_then 扁平化嵌套的 if let
+        if let Some(tracer) =
+            ctx.features.as_ref().and_then(|f| f.otel_tracer.as_ref())
+        {
+            let span_context = tracer.http_request_span.span_context();
+            if span_context.is_valid() {
+                // Add trace ID
+                let _ = upstream_response.insert_header(
+                    "X-Trace-Id",
+                    span_context.trace_id().to_string(),
+                );
+                // Add span ID
+                let _ = upstream_response.insert_header(
+                    "X-Span-Id",
+                    span_context.span_id().to_string(),
+                );
+            }
+        }
+    }
+
+    fn finalize_upstream_session(&self, ctx: &mut Ctx) {
+        ctx.timing.upstream_response =
+            get_latency(&ctx.timing.created_at, &ctx.timing.upstream_response);
+
+        #[cfg(feature = "full")]
+        if let Some(mut span) =
+            ctx.features.as_mut().and_then(|f| f.upstream_span.take())
+        {
+            let timing = &ctx.timing;
+            span.set_attributes([
+                KeyValue::new("upstream.addr", ctx.upstream.address.clone()),
+                KeyValue::new("upstream.reused", ctx.upstream.reused),
+                KeyValue::new(
+                    "upstream.connect_time",
+                    timing.upstream_connect.unwrap_or_default() as i64,
+                ),
+                KeyValue::new(
+                    "upstream.processing_time",
+                    timing.upstream_processing.unwrap_or_default() as i64,
+                ),
+                KeyValue::new(
+                    "upstream.response_time",
+                    timing.upstream_response.unwrap_or_default() as i64,
+                ),
+            ]);
+            span.end();
+        }
+    }
 }
 
 #[inline]
@@ -1394,59 +1538,18 @@ impl ProxyHttp for Server {
         debug!(category = LOG_CATEGORY, "--> response filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- response filter"););
         if session.cache.enabled() {
-            // ignore insert header error
-            let cache_status = session.cache.phase().as_str();
-            let _ =
-                upstream_response.insert_header("X-Cache-Status", cache_status);
-            #[cfg(feature = "full")]
-            let mut lookup_duration = "".to_string();
-            if let Some(d) = session.cache.lookup_duration() {
-                #[cfg(feature = "full")]
-                {
-                    lookup_duration = humantime::Duration::from(d).to_string();
-                }
-
-                let ms = d.as_millis() as i32;
-                let _ = upstream_response
-                    .insert_header("X-Cache-Lookup", format!("{ms}ms"));
-                ctx.timing.cache_lookup = Some(ms);
-            }
-            #[cfg(feature = "full")]
-            let mut lock_duration = "".to_string();
-            if let Some(d) = session.cache.lock_duration() {
-                #[cfg(feature = "full")]
-                {
-                    lock_duration = humantime::Duration::from(d).to_string();
-                }
-
-                let ms = d.as_millis() as i32;
-                let _ = upstream_response
-                    .insert_header("X-Cache-Lock", format!("{ms}ms"));
-                ctx.timing.cache_lock = Some(ms);
-            }
-
-            #[cfg(feature = "full")]
-            // open telemetry
-            if let Some(features) = ctx.features.as_mut() {
-                if let Some(ref mut tracer) = features.otel_tracer.as_mut() {
-                    let attrs = vec![
-                        KeyValue::new("cache.status", cache_status),
-                        KeyValue::new("cache.lookup", lookup_duration),
-                        KeyValue::new("cache.lookup", lock_duration),
-                    ];
-                    tracer.http_request_span.set_attributes(attrs);
-                }
-            }
+            self.handle_cache_headers(session, upstream_response, ctx);
         }
 
+        // call response plugin
         self.handle_response_plugin(session, ctx, upstream_response)
             .await?;
 
+        // add server-timing response header
         if self.enable_server_timing {
             let _ = upstream_response
-                .insert_header("Server-Timing", ctx.generate_server_timing());
+                .insert_header("server-timing", ctx.generate_server_timing());
         }
-
         Ok(())
     }
 
@@ -1460,25 +1563,7 @@ impl ProxyHttp for Server {
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream response filter"););
         self.handle_upstream_response_plugin(session, ctx, upstream_response)?;
         #[cfg(feature = "full")]
-        // open telemetry
-        if let Some(features) = &ctx.features {
-            if let Some(tracer) = &features.otel_tracer {
-                // Add trace context to response headers
-                let span_context = tracer.http_request_span.span_context();
-                if span_context.is_valid() {
-                    // Add trace ID
-                    let _ = upstream_response.insert_header(
-                        "X-Trace-Id",
-                        span_context.trace_id().to_string(),
-                    );
-                    // Add span ID
-                    let _ = upstream_response.insert_header(
-                        "X-Span-Id",
-                        span_context.span_id().to_string(),
-                    );
-                }
-            }
-        }
+        self.inject_telemetry_headers(ctx, upstream_response);
 
         if ctx.state.status.is_none() {
             ctx.state.status = Some(upstream_response.status);
@@ -1486,10 +1571,12 @@ impl ProxyHttp for Server {
             ctx.timing.upstream_response =
                 Some(get_start_time(&ctx.timing.created_at));
         }
+
         if let Some(id) = &ctx.state.request_id {
             let _ = upstream_response
-                .insert_header(HTTP_HEADER_NAME_X_REQUEST_ID.clone(), id);
+                .insert_header(&HTTP_HEADER_NAME_X_REQUEST_ID, id);
         }
+
         ctx.timing.upstream_processing = get_latency(
             &ctx.timing.created_at,
             &ctx.timing.upstream_processing,
@@ -1517,39 +1604,7 @@ impl ProxyHttp for Server {
         )?;
 
         if end_of_stream {
-            ctx.timing.upstream_response = get_latency(
-                &ctx.timing.created_at,
-                &ctx.timing.upstream_response,
-            );
-            #[cfg(feature = "full")]
-            if let Some(features) = ctx.features.as_mut() {
-                if let Some(ref mut span) = features.upstream_span.as_mut() {
-                    span.set_attributes([
-                        KeyValue::new(
-                            "upstream.addr",
-                            ctx.upstream.address.clone(),
-                        ),
-                        KeyValue::new("upstream.reused", ctx.upstream.reused),
-                        KeyValue::new(
-                            "upstream.connect_time",
-                            ctx.timing.upstream_connect.unwrap_or_default()
-                                as i64,
-                        ),
-                        KeyValue::new(
-                            "upstream.processing_time",
-                            ctx.timing.upstream_processing.unwrap_or_default()
-                                as i64,
-                        ),
-                        KeyValue::new(
-                            "upstream.response_time",
-                            ctx.timing.upstream_response.unwrap_or_default()
-                                as i64,
-                        ),
-                    ]);
-                    span.end();
-                    features.upstream_span = None;
-                }
-            }
+            self.finalize_upstream_session(ctx);
         }
         Ok(())
     }
