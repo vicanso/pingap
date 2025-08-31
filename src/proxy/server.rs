@@ -19,7 +19,6 @@ use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
-use http::{HeaderName, HeaderValue};
 use once_cell::sync::Lazy;
 use pingap_acme::handle_lets_encrypt;
 use pingap_certificate::{GlobalCertificate, TlsSettingParams};
@@ -81,7 +80,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
-use substring::Substring;
 use tracing::{debug, error, info};
 
 #[derive(Debug, Snafu)]
@@ -477,390 +475,8 @@ impl Server {
         }
         Ok(false)
     }
-}
-
-/// Helper struct to store connection timing and TLS details
-#[derive(Debug, Default)]
-struct DigestDetail {
-    /// Whether the connection was reused from pool
-    connection_reused: bool,
-    /// Total connection time in milliseconds
-    connection_time: u64,
-    /// Timestamp when TCP connection was established
-    tcp_established: u64,
-    /// Timestamp when TLS handshake completed
-    tls_established: u64,
-    /// TLS protocol version if using HTTPS
-    tls_version: Option<String>,
-    /// TLS cipher suite in use if using HTTPS
-    tls_cipher: Option<String>,
-}
-
-/// Extracts timing and TLS information from connection digest.
-/// Used for metrics and logging connection details.
-#[inline]
-fn get_digest_detail(digest: &Digest) -> DigestDetail {
-    let get_established = |value: Option<&Option<TimingDigest>>| -> u64 {
-        value
-            .map(|item| {
-                if let Some(item) = item {
-                    item.established_ts
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64
-                } else {
-                    0
-                }
-            })
-            .unwrap_or_default()
-    };
-
-    let tcp_established = get_established(digest.timing_digest.first());
-    let mut connection_time = 0;
-    let now = real_now_ms();
-    if tcp_established > 0 && tcp_established < now {
-        connection_time = now - tcp_established;
-    }
-    let connection_reused = connection_time > 100;
-
-    let Some(ssl_digest) = &digest.ssl_digest else {
-        return DigestDetail {
-            connection_reused,
-            tcp_established,
-            connection_time,
-            ..Default::default()
-        };
-    };
-
-    DigestDetail {
-        connection_reused,
-        tcp_established,
-        connection_time,
-        tls_established: get_established(digest.timing_digest.last()),
-        tls_version: Some(ssl_digest.version.to_string()),
-        tls_cipher: Some(ssl_digest.cipher.to_string()),
-    }
-}
-
-static MODULE_GRPC_WEB: &str = "grpc-web";
-
-// proxy_set_header X-Real-IP $remote_addr;
-// proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-// proxy_set_header X-Forwarded-Proto $scheme;
-// proxy_set_header X-Forwarded-Host $host;
-// proxy_set_header X-Forwarded-Port $server_port;
-
-static DEFAULT_PROXY_SET_HEADERS: Lazy<Vec<HttpHeader>> = Lazy::new(|| {
-    convert_headers(&[
-        "X-Real-IP:$remote_addr".to_string(),
-        "X-Forwarded-For:$proxy_add_x_forwarded_for".to_string(),
-        "X-Forwarded-Proto:$scheme".to_string(),
-        "X-Forwarded-Host:$host".to_string(),
-        "X-Forwarded-Port:$server_port".to_string(),
-    ])
-    .unwrap()
-});
-
-impl Server {
-    /// Sets or appends proxy-related headers before forwarding request
-    /// Handles both default reverse proxy headers and custom configured headers
     #[inline]
-    pub fn set_append_proxy_headers(
-        &self,
-        session: &Session,
-        ctx: &Ctx,
-        header: &mut RequestHeader,
-    ) {
-        let Some(location) = get_location(&ctx.upstream.location) else {
-            return;
-        };
-        // Helper closure to avoid code duplication
-        let mut set_header = |k: &HeaderName, v: &HeaderValue, append: bool| {
-            let value = convert_header_value(v, session, ctx)
-                .unwrap_or_else(|| v.clone());
-            // v validate for HeaderValue, so always no error
-            if append {
-                let _ = header.append_header(k, value);
-            } else {
-                let _ = header.insert_header(k, value);
-            };
-        };
-
-        // Set default reverse proxy headers if enabled
-        if location.enable_reverse_proxy_headers {
-            DEFAULT_PROXY_SET_HEADERS
-                .iter()
-                .for_each(|(k, v)| set_header(k, v, false));
-        }
-
-        // Set custom proxy headers
-        if let Some(arr) = &location.proxy_set_headers {
-            arr.iter().for_each(|(k, v)| set_header(k, v, false));
-        }
-
-        // Append custom proxy headers
-        if let Some(arr) = &location.proxy_add_headers {
-            arr.iter().for_each(|(k, v)| set_header(k, v, true));
-        }
-    }
-
-    #[inline]
-    fn get_context_plugins(
-        &self,
-        location: Arc<Location>,
-        session: &Session,
-    ) -> Option<Vec<(String, Arc<dyn Plugin>)>> {
-        if session.is_upgrade_req() {
-            return None;
-        }
-        let plugins = location.plugins.as_ref()?;
-        let mut location_plugins = Vec::with_capacity(plugins.len());
-        for name in plugins.iter() {
-            if let Some(plugin) = get_plugin(name) {
-                location_plugins.push((name.clone(), plugin));
-            }
-        }
-        if location_plugins.is_empty() {
-            None
-        } else {
-            Some(location_plugins)
-        }
-    }
-
-    /// Executes request plugins in the configured chain
-    /// Returns true if a plugin handled the request completely
-    #[inline]
-    pub async fn handle_request_plugin(
-        &self,
-        step: PluginStep,
-        session: &mut Session,
-        ctx: &mut Ctx,
-    ) -> pingora::Result<bool> {
-        let Some(plugins) = ctx.plugins.clone() else {
-            return Ok(false);
-        };
-
-        for (name, plugin) in plugins.iter() {
-            let now = Instant::now();
-            match plugin.handle_request(step, session, ctx).await? {
-                RequestPluginResult::Continue => {
-                    continue;
-                },
-                RequestPluginResult::Skipped => {
-                    let elapsed = now.elapsed().as_millis() as u32;
-                    debug!(
-                        category = LOG_CATEGORY,
-                        name,
-                        elapsed,
-                        step = step.to_string(),
-                        "skip request plugin"
-                    );
-                    ctx.add_plugin_processing_time(name, elapsed);
-                    continue;
-                },
-                RequestPluginResult::Respond(resp) => {
-                    let elapsed = now.elapsed().as_millis() as u32;
-                    debug!(
-                        category = LOG_CATEGORY,
-                        name,
-                        elapsed,
-                        step = step.to_string(),
-                        "request plugin create new response"
-                    );
-                    ctx.add_plugin_processing_time(name, elapsed);
-                    // ignore http response status >= 900
-                    if resp.status.as_u16() < 900 {
-                        ctx.state.status = Some(resp.status);
-                        resp.send(session).await?;
-                    }
-                    return Ok(true);
-                },
-            };
-        }
-        Ok(false)
-    }
-
-    /// Run response plugins
-    #[inline]
-    pub async fn handle_response_plugin(
-        &self,
-        session: &mut Session,
-        ctx: &mut Ctx,
-        upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<()> {
-        let Some(plugins) = ctx.plugins.clone() else {
-            return Ok(());
-        };
-        for (name, plugin) in plugins.iter() {
-            let now = Instant::now();
-            if let ResponsePluginResult::Modified = plugin
-                .handle_response(session, ctx, upstream_response)
-                .await?
-            {
-                let elapsed = now.elapsed().as_millis() as u32;
-                debug!(
-                    category = LOG_CATEGORY,
-                    name, elapsed, "response plugin modify headers"
-                );
-                ctx.add_plugin_processing_time(name, elapsed);
-            };
-        }
-        Ok(())
-    }
-
-    #[inline]
-    pub fn handle_upstream_response_plugin(
-        &self,
-        session: &mut Session,
-        ctx: &mut Ctx,
-        upstream_response: &mut ResponseHeader,
-    ) -> pingora::Result<()> {
-        let Some(plugins) = ctx.plugins.clone() else {
-            return Ok(());
-        };
-        for (name, plugin) in plugins.iter() {
-            let now = Instant::now();
-            if let ResponsePluginResult::Modified = plugin
-                .handle_upstream_response(session, ctx, upstream_response)?
-            {
-                let elapsed = now.elapsed().as_millis() as u32;
-                debug!(
-                    category = LOG_CATEGORY,
-                    name, elapsed, "upstream response plugin modify headers"
-                );
-                ctx.add_plugin_processing_time(name, elapsed);
-            };
-        }
-        Ok(())
-    }
-
-    #[inline]
-    pub fn handle_upstream_response_body_plugin(
-        &self,
-        session: &mut Session,
-        ctx: &mut Ctx,
-        body: &mut Option<bytes::Bytes>,
-        end_of_stream: bool,
-    ) -> pingora::Result<()> {
-        let Some(plugins) = ctx.plugins.clone() else {
-            return Ok(());
-        };
-        for (name, plugin) in plugins.iter() {
-            let now = Instant::now();
-            match plugin.handle_upstream_response_body(
-                session,
-                ctx,
-                body,
-                end_of_stream,
-            )? {
-                ResponseBodyPluginResult::PartialReplaced
-                | ResponseBodyPluginResult::FullyReplaced => {
-                    let elapsed = now.elapsed().as_millis() as u32;
-                    ctx.add_plugin_processing_time(name, elapsed);
-                    debug!(
-                        category = LOG_CATEGORY,
-                        name, elapsed, "response body plugin modify body"
-                    );
-                },
-                _ => {},
-            }
-        }
-        Ok(())
-    }
-
-    #[inline]
-    pub fn handle_response_body_plugin(
-        &self,
-        session: &mut Session,
-        ctx: &mut Ctx,
-        body: &mut Option<bytes::Bytes>,
-        end_of_stream: bool,
-    ) -> pingora::Result<()> {
-        let Some(plugins) = ctx.plugins.clone() else {
-            return Ok(());
-        };
-        for (name, plugin) in plugins.iter() {
-            let now = Instant::now();
-            match plugin.handle_response_body(
-                session,
-                ctx,
-                body,
-                end_of_stream,
-            )? {
-                ResponseBodyPluginResult::PartialReplaced
-                | ResponseBodyPluginResult::FullyReplaced => {
-                    let elapsed = now.elapsed().as_millis() as u32;
-                    ctx.add_plugin_processing_time(name, elapsed);
-                    debug!(
-                        category = LOG_CATEGORY,
-                        name, elapsed, "response body plugin modify body"
-                    );
-                },
-                _ => {},
-            }
-        }
-        Ok(())
-    }
-}
-
-#[inline]
-fn get_upstream_with_variables(
-    upstream: &str,
-    ctx: &Ctx,
-) -> Option<Arc<Upstream>> {
-    if upstream.starts_with("$") {
-        if let Some(value) =
-            ctx.get_variable(upstream.substring(1, upstream.len()))
-        {
-            get_upstream(value)
-        } else {
-            get_upstream(upstream)
-        }
-    } else {
-        get_upstream(upstream)
-    }
-}
-
-#[async_trait]
-impl ProxyHttp for Server {
-    type CTX = Ctx;
-    fn new_ctx(&self) -> Self::CTX {
-        debug!(category = LOG_CATEGORY, "new ctx");
-        Ctx::new()
-    }
-    fn init_downstream_modules(&self, modules: &mut HttpModules) {
-        debug!(category = LOG_CATEGORY, "--> init downstream modules");
-        defer!(debug!(category = LOG_CATEGORY, "<-- init downstream modules"););
-        // Add disabled downstream compression module by default
-        modules.add_module(ResponseCompressionBuilder::enable(0));
-        let Some(value) = &self.modules else {
-            return;
-        };
-        for item in value.iter() {
-            if item == MODULE_GRPC_WEB {
-                modules.add_module(Box::new(GrpcWeb));
-            }
-        }
-    }
-    /// Handles early request processing before main request handling.
-    /// Key responsibilities:
-    /// - Sets up connection tracking and metrics
-    /// - Records timing information
-    /// - Initializes OpenTelemetry tracing
-    /// - Matches request to location configuration
-    /// - Validates request parameters
-    /// - Initializes compression and gRPC modules if needed
-    async fn early_request_filter(
-        &self,
-        session: &mut Session,
-        ctx: &mut Self::CTX,
-    ) -> pingora::Result<()>
-    where
-        Self::CTX: Send + Sync,
-    {
-        debug!(category = LOG_CATEGORY, "--> early request filter");
-        defer!(debug!(category = LOG_CATEGORY, "<-- early request filter"););
-
+    fn initialize_context(&self, session: &mut Session, ctx: &mut Ctx) {
         session.set_read_timeout(self.downstream_read_timeout);
         session.set_write_timeout(self.downstream_write_timeout);
 
@@ -902,106 +518,539 @@ impl ProxyHttp for Server {
             ctx.conn.server_addr = Some(addr.ip().to_string());
             ctx.conn.server_port = Some(addr.port());
         }
-
+    }
+    #[inline]
+    #[cfg(feature = "full")]
+    fn initialize_telemetry(&self, session: &Session, ctx: &mut Ctx) {
         let header = session.req_header();
         let host = pingap_core::get_host(header).unwrap_or_default();
         let path = header.uri.path();
+        // enable open telemetry
+        if let Some(tracer) = pingap_otel::new_http_proxy_tracer(&self.name) {
+            let cx = global::get_text_map_propagator(|propagator| {
+                propagator.extract(&HeaderExtractor(&header.headers))
+            });
+            let mut span = tracer
+                .span_builder(path.to_string())
+                .with_kind(SpanKind::Server)
+                .start_with_context(&tracer, &cx);
+            span.set_attributes(vec![
+                KeyValue::new("http.method", header.method.to_string()),
+                KeyValue::new("http.url", header.uri.to_string()),
+                KeyValue::new("http.host", host.to_string()),
+            ]);
 
-        #[cfg(feature = "full")]
-        if self.enabled_otel {
-            // enable open telemetry
-            if let Some(tracer) = pingap_otel::new_http_proxy_tracer(&self.name)
-            {
-                let cx = global::get_text_map_propagator(|propagator| {
-                    propagator.extract(&HeaderExtractor(&header.headers))
-                });
-                let mut span = tracer
-                    .span_builder(path.to_string())
-                    .with_kind(SpanKind::Server)
-                    .start_with_context(&tracer, &cx);
-                span.set_attributes(vec![
-                    KeyValue::new("http.method", header.method.to_string()),
-                    KeyValue::new("http.url", header.uri.to_string()),
-                    KeyValue::new("http.host", host.to_string()),
-                ]);
-
-                let features = ctx.features.get_or_insert_default();
-                features.otel_tracer = Some(OtelTracer {
-                    tracer,
-                    http_request_span: span,
-                });
-            }
+            let features = ctx.features.get_or_insert_default();
+            features.otel_tracer = Some(OtelTracer {
+                tracer,
+                http_request_span: span,
+            });
         }
+    }
+
+    #[inline]
+    async fn find_and_apply_location(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+    ) -> pingora::Result<()> {
+        let header = session.req_header();
+        let host = pingap_core::get_host(header).unwrap_or_default();
+        let path = header.uri.path();
 
         // locations not found
         let Some(locations) = get_server_locations(&self.name) else {
             return Ok(());
         };
 
-        let mut current_location = None;
-
-        for name in locations.iter() {
-            let Some(location) = get_location(name) else {
-                continue;
-            };
-            current_location = Some(location.clone());
+        // use find_map to optimize logic, performance and readability
+        let matched_info = locations.iter().find_map(|name| {
+            let location = get_location(name)?;
             let mut captures = AHashMap::with_capacity(4);
-            let matched = location.match_host_path(host, path, &mut captures);
-            if matched {
-                ctx.upstream.location = location.name.clone();
-                if !captures.is_empty() {
-                    ctx.extend_variables(captures);
-                };
-                break;
+            if location.match_host_path(host, path, &mut captures) {
+                Some((location, captures))
+            } else {
+                None
             }
+        });
+
+        let Some((location, captures)) = matched_info else {
+            return Ok(());
+        };
+
+        // only execute all subsequent operations after successfully matching location
+        ctx.upstream.location = location.name.clone();
+        if !captures.is_empty() {
+            ctx.extend_variables(captures);
         }
+
         debug!(
             category = LOG_CATEGORY,
             "variables: {:?}",
             ctx.features.as_ref().map(|item| &item.variables)
         );
+
         // set prometheus stats
         #[cfg(feature = "full")]
         if let Some(prom) = &self.prometheus {
             prom.before(&ctx.upstream.location);
         }
 
-        if let Some(location) = &current_location {
-            location
-                .validate_content_length(header)
-                .map_err(|e| new_internal_error(413, e))?;
+        // validate content length
+        location
+            .validate_content_length(header)
+            .map_err(|e| new_internal_error(413, e))?;
 
-            // add processing, if processing is max than limit,
-            // it will return error with 429 status code
-            match location.add_processing() {
-                Ok((accepted, processing)) => {
-                    ctx.state.location_accepted_count = accepted;
-                    ctx.state.location_processing_count = processing;
-                },
-                Err(e) => {
-                    return Err(new_internal_error(429, e));
-                },
-            };
-            if location.support_grpc_web() {
-                // Initialize grpc web module for this request
-                let grpc_web = session
-                    .downstream_modules_ctx
-                    .get_mut::<GrpcWebBridge>()
-                    .ok_or_else(|| {
-                        new_internal_error(
-                            500,
-                            "grpc web bridge module should be added",
-                        )
-                    })?;
-                grpc_web.init();
-            }
+        // limit processing
+        let (accepted, processing) = location
+            .add_processing()
+            .map_err(|e| new_internal_error(429, e))?;
+        ctx.state.location_accepted_count = accepted;
+        ctx.state.location_processing_count = processing;
 
-            ctx.plugins = self.get_context_plugins(location.clone(), session);
-
-            let _ = self
-                .handle_request_plugin(PluginStep::EarlyRequest, session, ctx)
-                .await?;
+        // initialize gRPC Web
+        if location.support_grpc_web() {
+            let grpc_web = session
+                .downstream_modules_ctx
+                .get_mut::<GrpcWebBridge>()
+                .ok_or_else(|| {
+                    new_internal_error(
+                        500,
+                        "grpc web bridge module should be added",
+                    )
+                })?;
+            grpc_web.init();
         }
+
+        // initialize plugins and execute
+        ctx.plugins = self.get_context_plugins(location.clone(), session);
+        let _ = self
+            .handle_request_plugin(PluginStep::EarlyRequest, session, ctx)
+            .await?;
+
+        Ok(())
+    }
+}
+
+/// Helper struct to store connection timing and TLS details
+#[derive(Debug, Default)]
+struct DigestDetail {
+    /// Whether the connection was reused from pool
+    connection_reused: bool,
+    /// Total connection time in milliseconds
+    connection_time: u64,
+    /// Timestamp when TCP connection was established
+    tcp_established: u64,
+    /// Timestamp when TLS handshake completed
+    tls_established: u64,
+    /// TLS protocol version if using HTTPS
+    tls_version: Option<String>,
+    /// TLS cipher suite in use if using HTTPS
+    tls_cipher: Option<String>,
+}
+
+#[inline]
+fn timing_to_ms(timing: Option<&Option<TimingDigest>>) -> u64 {
+    timing
+        .and_then(|v| v.as_ref())
+        .map(|item| {
+            item.established_ts
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64
+        })
+        .unwrap_or_default()
+}
+
+/// Extracts timing and TLS information from connection digest.
+/// Used for metrics and logging connection details.
+#[inline]
+fn get_digest_detail(digest: &Digest) -> DigestDetail {
+    let tcp_established = timing_to_ms(digest.timing_digest.first());
+    let mut connection_time = 0;
+    let now = real_now_ms();
+    if tcp_established > 0 && tcp_established < now {
+        connection_time = now - tcp_established;
+    }
+    let connection_reused = connection_time > 100;
+
+    let Some(ssl_digest) = &digest.ssl_digest else {
+        return DigestDetail {
+            connection_reused,
+            tcp_established,
+            connection_time,
+            ..Default::default()
+        };
+    };
+
+    DigestDetail {
+        connection_reused,
+        tcp_established,
+        connection_time,
+        tls_established: timing_to_ms(digest.timing_digest.last()),
+        tls_version: Some(ssl_digest.version.to_string()),
+        tls_cipher: Some(ssl_digest.cipher.to_string()),
+    }
+}
+
+const MODULE_GRPC_WEB: &str = "grpc-web";
+
+// proxy_set_header X-Real-IP $remote_addr;
+// proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+// proxy_set_header X-Forwarded-Proto $scheme;
+// proxy_set_header X-Forwarded-Host $host;
+// proxy_set_header X-Forwarded-Port $server_port;
+
+static DEFAULT_PROXY_SET_HEADERS: Lazy<Vec<HttpHeader>> = Lazy::new(|| {
+    convert_headers(&[
+        "X-Real-IP:$remote_addr".to_string(),
+        "X-Forwarded-For:$proxy_add_x_forwarded_for".to_string(),
+        "X-Forwarded-Proto:$scheme".to_string(),
+        "X-Forwarded-Host:$host".to_string(),
+        "X-Forwarded-Port:$server_port".to_string(),
+    ])
+    .unwrap()
+});
+
+impl Server {
+    /// Sets or appends proxy-related headers before forwarding request
+    /// Handles both default reverse proxy headers and custom configured headers
+    #[inline]
+    pub fn set_append_proxy_headers(
+        &self,
+        session: &Session,
+        ctx: &Ctx,
+        header: &mut RequestHeader,
+    ) {
+        let Some(location) = get_location(&ctx.upstream.location) else {
+            return;
+        };
+
+        let default_headers = location
+            .enable_reverse_proxy_headers
+            .then_some(DEFAULT_PROXY_SET_HEADERS.iter())
+            .into_iter()
+            .flatten()
+            .map(|(k, v)| (k, v, false)); // false means set, not append
+
+        // custom set headers for location
+        let custom_set_headers = location
+            .proxy_set_headers
+            .iter()
+            .flatten() // if proxy_set_headers is None, this will produce an empty iterator
+            .map(|(k, v)| (k, v, false)); // false means set, not append
+
+        // custom add headers for location
+        let custom_add_headers = location
+            .proxy_add_headers
+            .iter()
+            .flatten() // same as proxy_set_headers
+            .map(|(k, v)| (k, v, true)); // true means append, not set
+
+        // link all iterators and iterate once
+        default_headers
+            .chain(custom_set_headers)
+            .chain(custom_add_headers)
+            .for_each(|(k, v, append)| {
+                // same as the original `set_header` closure
+                let value = convert_header_value(v, session, ctx)
+                    .unwrap_or_else(|| v.clone());
+
+                if append {
+                    let _ = header.append_header(k, value);
+                } else {
+                    let _ = header.insert_header(k, value);
+                }
+            });
+    }
+
+    #[inline]
+    fn get_context_plugins(
+        &self,
+        location: Arc<Location>,
+        session: &Session,
+    ) -> Option<Vec<(String, Arc<dyn Plugin>)>> {
+        if session.is_upgrade_req() {
+            return None;
+        }
+        let plugins = location.plugins.as_ref()?;
+
+        let location_plugins: Vec<_> = plugins
+            .iter()
+            .filter_map(|name| {
+                get_plugin(name).map(|plugin| (name.clone(), plugin))
+            })
+            .collect();
+
+        // use then_some to handle empty collection
+        (!location_plugins.is_empty()).then_some(location_plugins)
+    }
+
+    /// Executes request plugins in the configured chain
+    /// Returns true if a plugin handled the request completely
+    #[inline]
+    pub async fn handle_request_plugin(
+        &self,
+        step: PluginStep,
+        session: &mut Session,
+        ctx: &mut Ctx,
+    ) -> pingora::Result<bool> {
+        let plugin_count = ctx.plugins.as_ref().map_or(0, |p| p.len());
+        if plugin_count == 0 {
+            return Ok(false);
+        }
+        for i in 0..plugin_count {
+            // get plugin reference in the loop, it's a cheap operation (Arc clone)
+            // this can solve the borrow checker problem in async for loop
+            let (name, plugin) = {
+                let p = ctx.plugins.as_ref().unwrap(); // ctx.plugins is not None
+                (p[i].0.clone(), p[i].1.clone())
+            };
+            let now = Instant::now();
+            let result = plugin.handle_request(step, session, ctx).await?;
+            let elapsed = now.elapsed().as_millis() as u32;
+
+            // extract repeated logging and timing logic
+            let mut record_time = |msg: &str| {
+                debug!(
+                    category = LOG_CATEGORY,
+                    name,
+                    elapsed,
+                    step = step.to_string(),
+                    "{msg}"
+                );
+                ctx.add_plugin_processing_time(&name, elapsed);
+            };
+
+            match result {
+                RequestPluginResult::Skipped => {
+                    continue;
+                },
+                RequestPluginResult::Respond(resp) => {
+                    record_time("request plugin create new response");
+                    // ignore status >= 900
+                    if resp.status.as_u16() < 900 {
+                        ctx.state.status = Some(resp.status);
+                        resp.send(session).await?;
+                    }
+                    return Ok(true);
+                },
+                RequestPluginResult::Continue => {
+                    record_time("request plugin run and continue request");
+                },
+            }
+        }
+        Ok(false)
+    }
+
+    /// Run response plugins
+    #[inline]
+    pub async fn handle_response_plugin(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        upstream_response: &mut ResponseHeader,
+    ) -> pingora::Result<()> {
+        let plugin_count = ctx.plugins.as_ref().map_or(0, |p| p.len());
+        if plugin_count == 0 {
+            return Ok(());
+        }
+        for i in 0..plugin_count {
+            // get plugin reference in the loop, it's a cheap operation (Arc clone)
+            // this can solve the borrow checker problem in async for loop
+            let (name, plugin) = {
+                let p = ctx.plugins.as_ref().unwrap(); // ctx.plugins is not None
+                (p[i].0.clone(), p[i].1.clone())
+            };
+            let now = Instant::now();
+            if let ResponsePluginResult::Modified = plugin
+                .handle_response(session, ctx, upstream_response)
+                .await?
+            {
+                let elapsed = now.elapsed().as_millis() as u32;
+                debug!(
+                    category = LOG_CATEGORY,
+                    name, elapsed, "response plugin modify headers"
+                );
+                ctx.add_plugin_processing_time(&name, elapsed);
+            };
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub fn handle_upstream_response_plugin(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        upstream_response: &mut ResponseHeader,
+    ) -> pingora::Result<()> {
+        let plugin_count = ctx.plugins.as_ref().map_or(0, |p| p.len());
+        if plugin_count == 0 {
+            return Ok(());
+        }
+        for i in 0..plugin_count {
+            // get plugin reference in the loop, it's a cheap operation (Arc clone)
+            // this can solve the borrow checker problem in async for loop
+            let (name, plugin) = {
+                let p = ctx.plugins.as_ref().unwrap(); // ctx.plugins is not None
+                (p[i].0.clone(), p[i].1.clone())
+            };
+            let now = Instant::now();
+            if let ResponsePluginResult::Modified = plugin
+                .handle_upstream_response(session, ctx, upstream_response)?
+            {
+                let elapsed = now.elapsed().as_millis() as u32;
+                debug!(
+                    category = LOG_CATEGORY,
+                    name, elapsed, "upstream response plugin modify headers"
+                );
+                ctx.add_plugin_processing_time(&name, elapsed);
+            };
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub fn handle_upstream_response_body_plugin(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        body: &mut Option<bytes::Bytes>,
+        end_of_stream: bool,
+    ) -> pingora::Result<()> {
+        let plugin_count = ctx.plugins.as_ref().map_or(0, |p| p.len());
+        if plugin_count == 0 {
+            return Ok(());
+        }
+        for i in 0..plugin_count {
+            // get plugin reference in the loop, it's a cheap operation (Arc clone)
+            // this can solve the borrow checker problem in async for loop
+            let (name, plugin) = {
+                let p = ctx.plugins.as_ref().unwrap(); // ctx.plugins is not None
+                (p[i].0.clone(), p[i].1.clone())
+            };
+            let now = Instant::now();
+            match plugin.handle_upstream_response_body(
+                session,
+                ctx,
+                body,
+                end_of_stream,
+            )? {
+                ResponseBodyPluginResult::PartialReplaced
+                | ResponseBodyPluginResult::FullyReplaced => {
+                    let elapsed = now.elapsed().as_millis() as u32;
+                    ctx.add_plugin_processing_time(&name, elapsed);
+                    debug!(
+                        category = LOG_CATEGORY,
+                        name, elapsed, "response body plugin modify body"
+                    );
+                },
+                _ => {},
+            }
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub fn handle_response_body_plugin(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        body: &mut Option<bytes::Bytes>,
+        end_of_stream: bool,
+    ) -> pingora::Result<()> {
+        let plugin_count = ctx.plugins.as_ref().map_or(0, |p| p.len());
+        if plugin_count == 0 {
+            return Ok(());
+        }
+        for i in 0..plugin_count {
+            // get plugin reference in the loop, it's a cheap operation (Arc clone)
+            // this can solve the borrow checker problem in async for loop
+            let (name, plugin) = {
+                let p = ctx.plugins.as_ref().unwrap(); // ctx.plugins is not None
+                (p[i].0.clone(), p[i].1.clone())
+            };
+            let now = Instant::now();
+            match plugin.handle_response_body(
+                session,
+                ctx,
+                body,
+                end_of_stream,
+            )? {
+                ResponseBodyPluginResult::PartialReplaced
+                | ResponseBodyPluginResult::FullyReplaced => {
+                    let elapsed = now.elapsed().as_millis() as u32;
+                    ctx.add_plugin_processing_time(&name, elapsed);
+                    debug!(
+                        category = LOG_CATEGORY,
+                        name, elapsed, "response body plugin modify body"
+                    );
+                },
+                _ => {},
+            }
+        }
+        Ok(())
+    }
+}
+
+#[inline]
+fn get_upstream_with_variables(
+    upstream: &str,
+    ctx: &Ctx,
+) -> Option<Arc<Upstream>> {
+    let key = upstream
+        .strip_prefix('$')
+        .and_then(|var_name| ctx.get_variable(var_name))
+        .unwrap_or(upstream);
+    get_upstream(key)
+}
+
+#[async_trait]
+impl ProxyHttp for Server {
+    type CTX = Ctx;
+    fn new_ctx(&self) -> Self::CTX {
+        debug!(category = LOG_CATEGORY, "new ctx");
+        Ctx::new()
+    }
+    fn init_downstream_modules(&self, modules: &mut HttpModules) {
+        debug!(category = LOG_CATEGORY, "--> init downstream modules");
+        defer!(debug!(category = LOG_CATEGORY, "<-- init downstream modules"););
+        // Add disabled downstream compression module by default
+        modules.add_module(ResponseCompressionBuilder::enable(0));
+
+        self.modules.iter().flatten().for_each(|item| {
+            if item == MODULE_GRPC_WEB {
+                modules.add_module(Box::new(GrpcWeb));
+            }
+        });
+    }
+    /// Handles early request processing before main request handling.
+    /// Key responsibilities:
+    /// - Sets up connection tracking and metrics
+    /// - Records timing information
+    /// - Initializes OpenTelemetry tracing
+    /// - Matches request to location configuration
+    /// - Validates request parameters
+    /// - Initializes compression and gRPC modules if needed
+    async fn early_request_filter(
+        &self,
+        session: &mut Session,
+        ctx: &mut Self::CTX,
+    ) -> pingora::Result<()>
+    where
+        Self::CTX: Send + Sync,
+    {
+        debug!(category = LOG_CATEGORY, "--> early request filter");
+        defer!(debug!(category = LOG_CATEGORY, "<-- early request filter"););
+
+        self.initialize_context(session, ctx);
+        #[cfg(feature = "full")]
+        if self.enabled_otel {
+            self.initialize_telemetry(session, ctx);
+        }
+        self.find_and_apply_location(session, ctx).await?;
+
         Ok(())
     }
     /// Main request processing filter.
@@ -1704,7 +1753,10 @@ impl ProxyHttp for Server {
         }
         #[cfg(feature = "full")]
         if let Some(prom) = &self.prometheus {
-            prom.after(session, ctx);
+            // because prom.before will not be called if location is empty
+            if !ctx.upstream.location.is_empty() {
+                prom.after(session, ctx);
+            }
         }
 
         #[cfg(feature = "full")]

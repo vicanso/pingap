@@ -528,5 +528,18 @@ aqcrKJfS+xaKWxXPiNlpBMG5
         let info_list = get_certificate_info_list();
         assert_eq!(info_list.len(), 2);
         assert_eq!(info_list[0].1.domains.join(","), "pingap.io");
+
+        let certs = list_certificates();
+        assert_eq!(certs.len(), 2);
+        assert_eq!(certs.get("pingap.io").unwrap().certificate.is_some(), true);
+        assert_eq!(certs.get("*").unwrap().certificate.is_some(), true);
+        assert_eq!(
+            certs
+                .get(DEFAULT_SERVER_NAME)
+                .unwrap()
+                .certificate
+                .is_some(),
+            true
+        );
     }
 }

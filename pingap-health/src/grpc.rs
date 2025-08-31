@@ -73,7 +73,7 @@ impl GrpcHealthCheck {
 impl HealthCheck for GrpcHealthCheck {
     async fn check(&self, target: &Backend) -> pingora::Result<()> {
         let uri = format!("{}://{}", self.scheme, target.addr);
-
+        // TODO set tls config for https
         let conn = tonic::transport::Endpoint::from_shared(uri)
             .map_err(|e| new_internal_error(500, e.to_string()))?
             .origin(self.origin.clone())
