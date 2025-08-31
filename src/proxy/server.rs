@@ -630,6 +630,109 @@ impl Server {
 
         Ok(())
     }
+
+    #[inline]
+    async fn handle_admin_request(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+    ) -> Option<pingora::Result<bool>> {
+        if self.admin {
+            match self.serve_admin(session, ctx).await {
+                Ok(true) => return Some(Ok(true)), // handled
+                Ok(false) => {}, // not admin request, continue
+                Err(e) => return Some(Err(e)), // error
+            }
+        }
+        None // not admin service, continue
+    }
+    #[inline]
+    async fn handle_acme_challenge(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+    ) -> Option<pingora::Result<bool>> {
+        if self.lets_encrypt_enabled {
+            let storage = match get_config_storage() {
+                Some(s) => s,
+                None => {
+                    return Some(Err(new_internal_error(
+                        500,
+                        "get config storage fail".to_string(),
+                    )));
+                },
+            };
+
+            return match handle_lets_encrypt(storage, session, ctx).await {
+                Ok(true) => Some(Ok(true)),   // 已处理 ACME 请求
+                Ok(false) => Some(Ok(false)), // 明确表示未处理，进入标准流程（虽然通常ACME处理后会是true）
+                Err(e) => Some(Err(e)),
+            };
+        }
+        None // 未启用 Let's Encrypt，继续
+    }
+    #[inline]
+    #[cfg(feature = "full")]
+    async fn handle_metrics_request(
+        &self,
+        session: &mut Session,
+        _ctx: &mut Ctx,
+    ) -> Option<pingora::Result<bool>> {
+        let header = session.req_header();
+        let should_handle = !self.prometheus_push_mode
+            && self.prometheus.is_some()
+            && header.uri.path() == self.prometheus_metrics;
+
+        if should_handle {
+            let prom = self.prometheus.as_ref().unwrap(); // is_some() 检查已通过
+            let result = async {
+                let body =
+                    prom.metrics().map_err(|e| new_internal_error(500, e))?;
+                HttpResponse::text(body).send(session).await?;
+                Ok(true)
+            }
+            .await;
+            return Some(result);
+        }
+        None
+    }
+    #[inline]
+    async fn handle_standard_request(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+    ) -> pingora::Result<bool> {
+        let Some(location) = get_location(&ctx.upstream.location) else {
+            let header = session.req_header();
+            let host = pingap_core::get_host(header).unwrap_or_default();
+            let body = Bytes::from(format!(
+                "Location not found, host:{host} path:{}",
+                header.uri.path()
+            ));
+            HttpResponse::unknown_error(body).send(session).await?;
+            return Ok(true);
+        };
+
+        debug!(
+            category = LOG_CATEGORY,
+            server = self.name,
+            location = location.name,
+            "location is matched"
+        );
+
+        let variables =
+            ctx.features.as_ref().and_then(|f| f.variables.as_ref());
+        location.rewrite(session.req_header_mut(), variables);
+
+        if self
+            .handle_request_plugin(PluginStep::Request, session, ctx)
+            .await?
+        {
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
 }
 
 /// Helper struct to store connection timing and TLS details
@@ -1070,74 +1173,22 @@ impl ProxyHttp for Server {
     {
         debug!(category = LOG_CATEGORY, "--> request filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- request filter"););
-        if self.admin && self.serve_admin(session, ctx).await? {
-            return Ok(true);
+        // try to handle special requests in order
+        // admin route
+        if let Some(result) = self.handle_admin_request(session, ctx).await {
+            return result;
         }
-        // only enable for http 80
-        if self.lets_encrypt_enabled {
-            let Some(storage) = get_config_storage() else {
-                return Err(new_internal_error(
-                    500,
-                    "get config storage fail".to_string(),
-                ));
-            };
-            let done = handle_lets_encrypt(storage, session, ctx).await?;
-            if done {
-                return Ok(true);
-            }
+        // acme http challengt
+        if let Some(result) = self.handle_acme_challenge(session, ctx).await {
+            return result;
         }
-
-        let header = session.req_header_mut();
-
-        // prometheus pull metric
+        // prometheus metrics pull request
         #[cfg(feature = "full")]
-        if !self.prometheus_push_mode
-            && self.prometheus.is_some()
-            && header.uri.path() == self.prometheus_metrics
-        {
-            let body = self
-                .prometheus
-                .as_ref()
-                .ok_or(new_internal_error(500, "get prometheus fail"))?
-                .metrics()
-                .map_err(|e| new_internal_error(500, e))?;
-            HttpResponse::text(body).send(session).await?;
-            return Ok(true);
+        if let Some(result) = self.handle_metrics_request(session, ctx).await {
+            return result;
         }
 
-        let Some(location) = get_location(&ctx.upstream.location) else {
-            let host = pingap_core::get_host(header).unwrap_or_default();
-            HttpResponse::unknown_error(Bytes::from(format!(
-                "Location not found, host:{host} path:{}",
-                header.uri.path(),
-            )))
-            .send(session)
-            .await?;
-            return Ok(true);
-        };
-
-        debug!(
-            category = LOG_CATEGORY,
-            server = self.name,
-            location = location.name,
-            "location is matched"
-        );
-
-        location.rewrite(
-            header,
-            ctx.features
-                .as_ref()
-                .and_then(|features| features.variables.as_ref()),
-        );
-
-        let done = self
-            .handle_request_plugin(PluginStep::Request, session, ctx)
-            .await?;
-        if done {
-            return Ok(true);
-        }
-
-        Ok(false)
+        self.handle_standard_request(session, ctx).await
     }
 
     /// Filters requests before sending to upstream.
