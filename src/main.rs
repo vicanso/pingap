@@ -31,6 +31,7 @@ use pingap_location::try_init_locations;
 use pingap_otel::TracerService;
 use pingap_performance::new_performance_metrics_log_service;
 use pingap_plugin::get_plugin_factory;
+use pingap_proxy::{parse_from_conf, ServerConf};
 use pingap_upstream::{new_upstream_health_check_task, try_init_upstreams};
 use pingora::server;
 use pingora::server::configuration::Opt;
@@ -39,7 +40,7 @@ use process::{
     get_admin_addr, get_start_time, new_auto_restart_service,
     new_observer_service, set_admin_addr,
 };
-use proxy::{Server, ServerConf};
+use proxy::Server;
 use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::OsString;
@@ -485,8 +486,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         error!(error, "init plugins fail",);
     }
 
-    let mut server_conf_list: Vec<ServerConf> =
-        proxy::parse_from_conf(conf.clone());
+    let mut server_conf_list: Vec<ServerConf> = parse_from_conf(conf.clone());
 
     if let Some(addr) = &get_admin_addr() {
         let (server_conf, _, plugin_conf) = plugin::parse_admin_plugin(addr)?;

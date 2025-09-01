@@ -52,6 +52,7 @@ pingap-logger = { version = "0.12.0", path = "pingap-logger" }
 pingap-otel = { version = "0.12.0", path = "pingap-otel", optional = true }
 pingap-performance = { version = "0.12.0", path = "pingap-performance" }
 pingap-plugin = { version = "0.12.0", path = "pingap-plugin" }
+pingap-proxy = { version = "0.12.0", path = "pingap-proxy" }
 pingap-pyroscope = { version = "0.12.0", path = "pingap-pyroscope", optional = true }
 pingap-sentry = { version = "0.12.0", path = "pingap-sentry", optional = true }
 pingap-upstream = { version = "0.12.0", path = "pingap-upstream" }
@@ -136,6 +137,7 @@ members = [
     "pingap-otel",
     "pingap-performance",
     "pingap-plugin",
+    "pingap-proxy",
     "pingap-pyroscope",
     "pingap-sentry",
     "pingap-upstream",

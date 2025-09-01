@@ -12,10 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod server;
+mod pulgin_loader;
+mod server_conf;
 
-pub static LOG_CATEGORY: &str = "proxy";
-
-// TODO remove this
-#[allow(unused_imports)]
-pub use server::*;
+pub use pulgin_loader::*;
+pub use server_conf::*;

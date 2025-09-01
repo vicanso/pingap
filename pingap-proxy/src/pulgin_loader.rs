@@ -12,10 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod server;
+use pingap_core::Plugin;
+use std::sync::Arc;
 
-pub static LOG_CATEGORY: &str = "proxy";
-
-// TODO remove this
-#[allow(unused_imports)]
-pub use server::*;
+pub trait PluginLoader: Send + Sync {
+    fn load(&self, name: &str) -> Option<Arc<dyn Plugin>>;
+}

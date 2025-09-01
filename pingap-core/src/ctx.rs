@@ -737,6 +737,9 @@ impl Ctx {
             if let Some(times) = &features.plugin_processing_times {
                 let mut plugin_time: u32 = 0;
                 for (name, time) in times {
+                    if *time == 0 {
+                        continue;
+                    }
                     plugin_time += time;
                     let mut plugin_name = String::with_capacity(7 + name.len());
                     plugin_name.push_str("plugin.");

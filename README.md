@@ -213,26 +213,26 @@ CPU: M4 Pro, Thread: 1
 ### Ping no access log:
 
 ```bash
-wrk 'http://127.0.0.1:6100/ping' --latency
+wrk 'http://127.0.0.1:6118/ping' --latency
 
-Running 10s test @ http://127.0.0.1:6100/ping
+Running 10s test @ http://127.0.0.1:6118/ping
   2 threads and 10 connections
   Thread Stats   Avg      Stdev     Max   +/- Stdev
-    Latency    59.87us   20.27us   1.00ms   81.00%
-    Req/Sec    82.12k     3.04k   85.77k    90.59%
+    Latency    66.41us   23.67us   1.11ms   76.54%
+    Req/Sec    73.99k     2.88k   79.77k    68.81%
   Latency Distribution
-     50%   63.00us
-     75%   69.00us
-     90%   76.00us
-     99%   97.00us
-  1650275 requests in 10.10s, 215.61MB read
-Requests/sec: 163396.17
-Transfer/sec:     21.35MB
+     50%   67.00us
+     75%   80.00us
+     90%   91.00us
+     99%  116.00us
+  1487330 requests in 10.10s, 194.32MB read
+Requests/sec: 147260.15
+Transfer/sec:     19.24MB
 ```
 
 ## Rust version
 
-Our current MSRV is 1.74
+Our current MSRV is 1.83
 
 # License
 

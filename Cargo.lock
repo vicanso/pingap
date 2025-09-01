@@ -3496,6 +3496,7 @@ dependencies = [
  "pingap-otel",
  "pingap-performance",
  "pingap-plugin",
+ "pingap-proxy",
  "pingap-pyroscope",
  "pingap-sentry",
  "pingap-upstream",
@@ -3892,6 +3893,19 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
+]
+
+[[package]]
+name = "pingap-proxy"
+version = "0.12.0"
+dependencies = [
+ "criterion",
+ "pingap-config",
+ "pingap-core",
+ "pingora",
+ "pretty_assertions",
+ "tempfile",
+ "tokio-test",
 ]
 
 [[package]]

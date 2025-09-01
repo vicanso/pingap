@@ -1,0 +1,22 @@
+[package]
+name = "pingap-proxy"
+version = "0.12.0"
+edition = "2021"
+authors = ["Tree Xie <tree.xie@outlook.com>"]
+license = "Apache-2.0"
+homepage = "https://github.com/vicanso/pingap"
+repository = "https://github.com/vicanso/pingap"
+keywords = ["pingap", "proxy"]
+description = "Proxy for pingap"
+
+
+[dependencies]
+pingap-config = { version = "0.12.0", path = "../pingap-config" }
+pingap-core = { version = "0.12.0", path = "../pingap-core" }
+pingora = { workspace = true }
+
+[dev-dependencies]
+pretty_assertions = "1.4.1"
+tempfile = "3.21.0"
+tokio-test = "0.4.4"
+criterion = { version = "0.7.0", features = ["html_reports"] }

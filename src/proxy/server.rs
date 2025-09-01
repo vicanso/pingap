@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{ServerConf, LOG_CATEGORY};
-use crate::plugin::{get_plugin, ADMIN_SERVER_PLUGIN};
+use super::LOG_CATEGORY;
+use crate::plugin::{new_plugin_loader, ADMIN_SERVER_PLUGIN};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -52,6 +52,7 @@ use pingap_performance::{accept_request, end_request};
 use pingap_performance::{
     new_prometheus, new_prometheus_push_service, Prometheus,
 };
+use pingap_proxy::{PluginLoader, ServerConf};
 use pingap_upstream::{get_upstream, Upstream};
 use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::DirectiveValue;
@@ -242,8 +243,13 @@ pub struct Server {
     /// Whether to enable server-timing header
     enable_server_timing: bool,
 
+    // downstream read timeout
     downstream_read_timeout: Option<Duration>,
+    // downstream write timeout
     downstream_write_timeout: Option<Duration>,
+
+    // plugin loader
+    plugin_loader: Arc<dyn PluginLoader>,
 }
 
 pub struct ServerServices {
@@ -326,6 +332,7 @@ impl Server {
             modules: conf.modules.clone(),
             downstream_read_timeout: conf.downstream_read_timeout,
             downstream_write_timeout: conf.downstream_write_timeout,
+            plugin_loader: new_plugin_loader(),
         };
         Ok(s)
     }
@@ -464,7 +471,9 @@ impl Server {
         session: &mut Session,
         ctx: &mut Ctx,
     ) -> pingora::Result<bool> {
-        if let Some(plugin) = get_plugin(ADMIN_SERVER_PLUGIN.as_str()) {
+        if let Some(plugin) =
+            self.plugin_loader.load(ADMIN_SERVER_PLUGIN.as_str())
+        {
             let result = plugin
                 .handle_request(PluginStep::Request, session, ctx)
                 .await?;
@@ -821,7 +830,9 @@ impl Server {
         let location_plugins: Vec<_> = plugins
             .iter()
             .filter_map(|name| {
-                get_plugin(name).map(|plugin| (name.clone(), plugin))
+                self.plugin_loader
+                    .load(name)
+                    .map(|plugin| (name.clone(), plugin))
             })
             .collect();
 
@@ -1839,11 +1850,11 @@ impl ProxyHttp for Server {
 mod tests {
     use super::*;
     use crate::proxy::server::get_digest_detail;
-    use crate::proxy::server_conf::parse_from_conf;
     use crate::proxy::try_init_server_locations;
     use pingap_config::PingapConf;
     use pingap_core::{CacheInfo, Ctx, UpstreamInfo};
     use pingap_location::try_init_locations;
+    use pingap_proxy::parse_from_conf;
     use pingap_upstream::try_init_upstreams;
     use pingora::http::ResponseHeader;
     use pingora::protocols::tls::SslDigest;
