@@ -45,7 +45,8 @@ use pingap_performance::{accept_request, end_request};
 use pingap_performance::{
     new_prometheus, new_prometheus_push_service, Prometheus,
 };
-use pingap_upstream::{get_upstream, Upstream};
+use pingap_upstream::Upstream;
+use pingap_upstream::UpstreamProvider;
 use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::DirectiveValue;
 use pingora::cache::cache_control::{CacheControl, InterpretCacheControl};
@@ -245,6 +246,9 @@ pub struct Server {
 
     // locations
     locations: Arc<dyn LocationProvider>,
+
+    // upstreams
+    upstreams: Arc<dyn UpstreamProvider>,
 }
 
 pub struct ServerServices {
@@ -267,6 +271,7 @@ impl Server {
     pub fn new(
         conf: &ServerConf,
         locations: Arc<dyn LocationProvider>,
+        upstreams: Arc<dyn UpstreamProvider>,
         plugin_loader: Arc<dyn PluginLoader>,
     ) -> Result<Self> {
         debug!(
@@ -332,6 +337,7 @@ impl Server {
             downstream_read_timeout: conf.downstream_read_timeout,
             downstream_write_timeout: conf.downstream_write_timeout,
             locations,
+            upstreams,
             plugin_loader,
         };
         Ok(s)
@@ -1061,12 +1067,13 @@ impl Server {
 fn get_upstream_with_variables(
     upstream: &str,
     ctx: &Ctx,
+    upstreams: &dyn UpstreamProvider,
 ) -> Option<Arc<Upstream>> {
     let key = upstream
         .strip_prefix('$')
         .and_then(|var_name| ctx.get_variable(var_name))
         .unwrap_or(upstream);
-    get_upstream(key)
+    upstreams.load(key)
 }
 
 #[async_trait]
@@ -1187,8 +1194,11 @@ impl ProxyHttp for Server {
             .locations
             .load(&ctx.upstream.location)
             .and_then(|location| {
-                let upstream =
-                    get_upstream_with_variables(&location.upstream, ctx)?;
+                let upstream = get_upstream_with_variables(
+                    &location.upstream,
+                    ctx,
+                    self.upstreams.as_ref(),
+                )?;
                 Some((location, upstream))
             })
             .and_then(|(location, up)| {
@@ -1602,9 +1612,11 @@ impl ProxyHttp for Server {
             location.sub_processing();
         }
         // get from cache does not connect to upstream
-        if let Some(upstream) =
-            get_upstream_with_variables(&ctx.upstream.name, ctx)
-        {
+        if let Some(upstream) = get_upstream_with_variables(
+            &ctx.upstream.name,
+            ctx,
+            self.upstreams.as_ref(),
+        ) {
             ctx.upstream.processing_count = Some(upstream.completed());
         }
         if ctx.state.status.is_none() {
@@ -1661,7 +1673,6 @@ mod tests {
     use pingap_config::PingapConf;
     use pingap_core::{CacheInfo, Ctx, UpstreamInfo};
     use pingap_location::LocationStats;
-    use pingap_upstream::try_init_upstreams;
     use pingora::http::ResponseHeader;
     use pingora::protocols::tls::SslDigest;
     use pingora::protocols::{Digest, TimingDigest};
@@ -1758,13 +1769,20 @@ category = "config"
 value = 'proxy_set_headers = ["name:value"]'
         "###;
         let pingap_conf = PingapConf::new(toml_data.as_ref(), false).unwrap();
-        try_init_upstreams(&pingap_conf.upstreams, None).unwrap();
         try_init_server_locations(&pingap_conf.servers, &pingap_conf.locations)
             .unwrap();
 
         let location = Arc::new(
             Location::new("lo", pingap_conf.locations.get("lo").unwrap())
                 .unwrap(),
+        );
+        let upstream = Arc::new(
+            Upstream::new(
+                "charts",
+                pingap_conf.upstreams.get("charts").unwrap(),
+                None,
+            )
+            .unwrap(),
         );
 
         struct TmpPluginLoader {}
@@ -1784,10 +1802,22 @@ value = 'proxy_set_headers = ["name:value"]'
                 HashMap::new()
             }
         }
+        struct TmpUpstreamLoader {
+            upstream: Arc<Upstream>,
+        }
+        impl UpstreamProvider for TmpUpstreamLoader {
+            fn load(&self, _name: &str) -> Option<Arc<Upstream>> {
+                Some(self.upstream.clone())
+            }
+            fn list(&self) -> Vec<(String, Arc<Upstream>)> {
+                vec![("charts".to_string(), self.upstream.clone())]
+            }
+        }
         let confs = parse_from_conf(pingap_conf);
         Server::new(
             &confs[0],
             Arc::new(TmpLocationLoader { location }),
+            Arc::new(TmpUpstreamLoader { upstream }),
             Arc::new(TmpPluginLoader {}),
         )
         .unwrap()

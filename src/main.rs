@@ -15,6 +15,8 @@
 use crate::locations::new_locations;
 use crate::locations::try_init_locations;
 use crate::plugin::new_plugin_loader;
+use crate::upstreams::new_upstreams;
+use crate::upstreams::try_init_upstreams;
 use clap::Parser;
 use crossbeam_channel::Sender;
 use pingap_acme::new_lets_encrypt_service;
@@ -36,7 +38,7 @@ use pingap_plugin::get_plugin_factory;
 use pingap_proxy::{
     parse_from_conf, try_init_server_locations, Server, ServerConf,
 };
-use pingap_upstream::{new_upstream_health_check_task, try_init_upstreams};
+use pingap_upstream::new_upstream_health_check_task;
 use pingora::server;
 use pingora::server::configuration::Opt;
 use pingora::services::background::background_service;
@@ -55,6 +57,7 @@ use tracing::{error, info};
 mod locations;
 mod plugin;
 mod process;
+mod upstreams;
 mod webhook;
 
 // Avoid musl's default allocator due to lackluster performance
@@ -235,7 +238,12 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     pingap_config::try_init_config_storage(&args.conf)?;
     // config::set_config_path(&args.conf);
     let mut my_server = server::Server::new(None)?;
-    let ps = Server::new(&server_conf, new_locations(), new_plugin_loader())?;
+    let ps = Server::new(
+        &server_conf,
+        new_locations(),
+        new_upstreams(),
+        new_plugin_loader(),
+    )?;
     let services = ps.run(&my_server.configuration)?;
     my_server.add_service(services.lb);
 
@@ -541,7 +549,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             ),
             (
                 "performance_metrics".to_string(),
-                new_performance_metrics_log_service(new_locations()),
+                new_performance_metrics_log_service(
+                    new_locations(),
+                    new_upstreams(),
+                ),
             ),
         ],
     );
@@ -598,8 +609,12 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     for server_conf in server_conf_list.iter() {
         let listen_80_port = server_conf.addr.ends_with(":80");
-        let mut ps =
-            Server::new(server_conf, new_locations(), new_plugin_loader())?;
+        let mut ps = Server::new(
+            server_conf,
+            new_locations(),
+            new_upstreams(),
+            new_plugin_loader(),
+        )?;
         if enabled_http_challenge && listen_80_port {
             ps.enable_lets_encrypt();
         }
@@ -640,6 +655,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let upstream_health_check_task = new_upstream_health_check_task(
         Duration::from_secs(10),
         webhook::get_webhook_sender(),
+        new_upstreams(),
     );
     my_server.add_service(background_service(
         &upstream_health_check_task.name(),

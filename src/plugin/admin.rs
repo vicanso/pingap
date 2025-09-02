@@ -41,7 +41,6 @@ use pingap_core::{
 use pingap_performance::get_process_system_info;
 use pingap_performance::get_processing_accepted;
 use pingap_plugin::{get_plugin_factory, Error};
-use pingap_upstream::{get_upstream_healthy_status, UpstreamHealthyStatus};
 use pingap_util::base64_decode;
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
@@ -158,7 +157,7 @@ struct BasicInfo {
     tcp_count: usize,
     tcp6_count: usize,
     supported_plugins: Vec<String>,
-    upstream_healthy_status: HashMap<String, UpstreamHealthyStatus>,
+    // upstream_healthy_status: HashMap<String, UpstreamHealthyStatus>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -594,7 +593,7 @@ async fn handle_request_admin(
             tcp_count: info.tcp_count,
             tcp6_count: info.tcp6_count,
             supported_plugins: get_plugin_factory().supported_plugins(),
-            upstream_healthy_status: get_upstream_healthy_status(),
+            // upstream_healthy_status: get_upstream_healthy_status(),
         };
         basic_info.features.push("default".to_string());
 

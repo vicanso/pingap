@@ -12,10 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::sync::Arc;
+
 mod hash_strategy;
 mod peer_tracer;
 mod upstream;
 
 pub(crate) const LOG_CATEGORY: &str = "upstream";
+
+pub trait UpstreamProvider: Send + Sync {
+    fn load(&self, name: &str) -> Option<Arc<Upstream>>;
+    fn list(&self) -> Vec<(String, Arc<Upstream>)>;
+}
 
 pub use upstream::*;

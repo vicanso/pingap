@@ -14,13 +14,12 @@
 
 use crate::hash_strategy::HashStrategy;
 use crate::peer_tracer::UpstreamPeerTracer;
-use crate::LOG_CATEGORY;
+use crate::{UpstreamProvider, LOG_CATEGORY};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use derive_more::Debug;
 use futures_util::FutureExt;
-use once_cell::sync::Lazy;
 use pingap_config::UpstreamConf;
 use pingap_core::{
     BackgroundTask, BackgroundTaskService, Error as ServiceError,
@@ -173,7 +172,33 @@ pub struct Upstream {
     tracer: Option<Tracer>,
 
     /// Counter for number of requests currently being processed by this upstream
-    processing: AtomicI32,
+    pub processing: AtomicI32,
+}
+
+impl Upstream {
+    pub async fn run_health_check(&self) -> Result<()> {
+        if let Some(lb) = self.as_round_robin() {
+            lb.update().await.map_err(|e| Error::Common {
+                category: "run_health_check".to_string(),
+                message: e.to_string(),
+            })?;
+            lb.backends()
+                .run_health_check(lb.parallel_health_check)
+                .await;
+        } else if let Some(lb) = self.as_consistent() {
+            lb.update().await.map_err(|e| Error::Common {
+                category: "run_health_check".to_string(),
+                message: e.to_string(),
+            })?;
+            lb.backends()
+                .run_health_check(lb.parallel_health_check)
+                .await;
+        }
+        Ok(())
+    }
+    pub fn is_transparent(&self) -> bool {
+        matches!(self.lb, SelectionLb::Transparent)
+    }
 }
 
 // Creates new backend servers based on discovery method (DNS/Docker/Static)
@@ -194,6 +219,22 @@ fn new_backends(
         category: category.to_string(),
         message: e.to_string(),
     })
+}
+
+/// Get the processing and connected status of all upstreams
+///
+/// # Returns
+/// * `HashMap<String, (i32, Option<i32>)>` - Processing and connected status of all upstreams
+pub fn get_upstreams_processing_connected(
+    upstreams: Arc<dyn UpstreamProvider>,
+) -> HashMap<String, (i32, Option<i32>)> {
+    let mut processing_connected = HashMap::new();
+    upstreams.list().iter().for_each(|(k, v)| {
+        let count = v.processing.load(Ordering::Relaxed);
+        let connected = v.connected();
+        processing_connected.insert(k.to_string(), (count, connected));
+    });
+    processing_connected
 }
 
 fn update_health_check_params<S>(
@@ -525,17 +566,7 @@ impl Upstream {
     }
 }
 
-type Upstreams = AHashMap<String, Arc<Upstream>>;
-static UPSTREAM_MAP: Lazy<ArcSwap<Upstreams>> =
-    Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
-
-pub fn get_upstream(name: &str) -> Option<Arc<Upstream>> {
-    if name.is_empty() {
-        return None;
-    }
-    UPSTREAM_MAP.load().get(name).cloned()
-}
-
+pub type Upstreams = AHashMap<String, Arc<Upstream>>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpstreamHealthyStatus {
     pub healthy: u32,
@@ -549,9 +580,11 @@ pub struct UpstreamHealthyStatus {
 /// * `HashMap<String, UpstreamHealthyStatus>` - Healthy status of all upstreams
 ///
 /// This function iterates through all upstreams and checks their health status.
-pub fn get_upstream_healthy_status() -> HashMap<String, UpstreamHealthyStatus> {
+pub fn get_upstream_healthy_status(
+    upstreams: Arc<dyn UpstreamProvider>,
+) -> HashMap<String, UpstreamHealthyStatus> {
     let mut healthy_status = HashMap::new();
-    UPSTREAM_MAP.load().iter().for_each(|(k, v)| {
+    upstreams.list().iter().for_each(|(k, v)| {
         let mut total = 0;
         let mut healthy = 0;
         let mut unhealthy_backends = vec![];
@@ -588,120 +621,11 @@ pub fn get_upstream_healthy_status() -> HashMap<String, UpstreamHealthyStatus> {
     healthy_status
 }
 
-/// Get the processing and connected status of all upstreams
-///
-/// # Returns
-/// * `HashMap<String, (i32, Option<i32>)>` - Processing and connected status of all upstreams
-pub fn get_upstreams_processing_connected(
-) -> HashMap<String, (i32, Option<i32>)> {
-    let mut processing_connected = HashMap::new();
-    UPSTREAM_MAP.load().iter().for_each(|(k, v)| {
-        let count = v.processing.load(Ordering::Relaxed);
-        let connected = v.connected();
-        processing_connected.insert(k.to_string(), (count, connected));
-    });
-    processing_connected
-}
-
-fn new_ahash_upstreams(
-    upstream_configs: &HashMap<String, UpstreamConf>,
-    sender: Option<Arc<NotificationSender>>,
-) -> Result<(Upstreams, Vec<String>)> {
-    let mut upstreams = AHashMap::new();
-    let mut updated_upstreams = vec![];
-    for (name, conf) in upstream_configs.iter() {
-        let key = conf.hash_key();
-        if let Some(found) = get_upstream(name) {
-            // not modified
-            if found.key == key {
-                upstreams.insert(name.to_string(), found);
-                continue;
-            }
-        }
-        let up = Arc::new(Upstream::new(name, conf, sender.clone())?);
-        upstreams.insert(name.to_string(), up);
-        updated_upstreams.push(name.to_string());
-    }
-    Ok((upstreams, updated_upstreams))
-}
-
-/// Initialize the upstreams
-///
-/// # Arguments
-/// * `upstream_configs` - The upstream configurations
-/// * `sender` - The notification sender
-///
-/// # Returns
-pub fn try_init_upstreams(
-    upstream_configs: &HashMap<String, UpstreamConf>,
-    sender: Option<Arc<NotificationSender>>,
-) -> Result<()> {
-    let (upstreams, _) = new_ahash_upstreams(upstream_configs, sender)?;
-    UPSTREAM_MAP.store(Arc::new(upstreams));
-    Ok(())
-}
-
-async fn run_health_check(up: &Arc<Upstream>) -> Result<()> {
-    if let Some(lb) = up.as_round_robin() {
-        lb.update().await.map_err(|e| Error::Common {
-            category: "run_health_check".to_string(),
-            message: e.to_string(),
-        })?;
-        lb.backends()
-            .run_health_check(lb.parallel_health_check)
-            .await;
-    } else if let Some(lb) = up.as_consistent() {
-        lb.update().await.map_err(|e| Error::Common {
-            category: "run_health_check".to_string(),
-            message: e.to_string(),
-        })?;
-        lb.backends()
-            .run_health_check(lb.parallel_health_check)
-            .await;
-    }
-    Ok(())
-}
-
-pub async fn try_update_upstreams(
-    upstream_configs: &HashMap<String, UpstreamConf>,
-    sender: Option<Arc<NotificationSender>>,
-) -> Result<Vec<String>> {
-    let (upstreams, updated_upstreams) =
-        new_ahash_upstreams(upstream_configs, sender)?;
-    for (name, up) in upstreams.iter() {
-        // no need to run health check if not new upstream
-        if !updated_upstreams.contains(name) {
-            continue;
-        }
-        // run health check before switch to new upstream
-        if let Err(e) = run_health_check(up).await {
-            error!(
-                category = LOG_CATEGORY,
-                error = %e,
-                upstream = name,
-                "update upstream health check fail"
-            );
-        }
-    }
-    UPSTREAM_MAP.store(Arc::new(upstreams));
-    Ok(updated_upstreams)
-}
-
 #[async_trait]
 impl BackgroundTask for HealthCheckTask {
     async fn execute(&self, check_count: u32) -> Result<bool, ServiceError> {
         // get upstream names
-        let upstreams = {
-            let mut upstreams = vec![];
-            for (name, up) in UPSTREAM_MAP.load().iter() {
-                // transparent ignore health check
-                if matches!(up.lb, SelectionLb::Transparent) {
-                    continue;
-                }
-                upstreams.push((name.to_string(), up.clone()));
-            }
-            upstreams
-        };
+        let upstreams = self.upstreams.list();
         let interval = self.interval.as_secs();
         // run health check for each upstream
         let jobs = upstreams.into_iter().map(|(name, up)| {
@@ -802,7 +726,9 @@ impl BackgroundTask for HealthCheckTask {
                 self.unhealthy_upstreams.load().clone();
             let mut notify_healthy_upstreams = vec![];
             let mut unhealthy_upstreams = vec![];
-            for (name, status) in get_upstream_healthy_status().iter() {
+            for (name, status) in
+                get_upstream_healthy_status(self.upstreams.clone()).iter()
+            {
                 if status.healthy == 0 {
                     unhealthy_upstreams.push(name.to_string());
                 } else if current_unhealthy_upstreams.contains(name) {
@@ -846,16 +772,19 @@ struct HealthCheckTask {
     interval: Duration,
     sender: Option<Arc<NotificationSender>>,
     unhealthy_upstreams: ArcSwap<Vec<String>>,
+    upstreams: Arc<dyn UpstreamProvider>,
 }
 
 pub fn new_upstream_health_check_task(
     interval: Duration,
     sender: Option<Arc<NotificationSender>>,
+    upstreams: Arc<dyn UpstreamProvider>,
 ) -> BackgroundTaskService {
     let task = Box::new(HealthCheckTask {
         interval,
         sender,
         unhealthy_upstreams: ArcSwap::new(Arc::new(vec![])),
+        upstreams,
     });
     let name = "upstream_health_check";
     let mut service =

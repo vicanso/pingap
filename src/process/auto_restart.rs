@@ -15,6 +15,7 @@
 use super::{restart, LOG_CATEGORY};
 use crate::locations::try_init_locations;
 use crate::plugin;
+use crate::upstreams::try_update_upstreams;
 use crate::webhook::{get_webhook_sender, send_notification};
 use async_trait::async_trait;
 use pingap_config::{
@@ -27,7 +28,6 @@ use pingap_core::{
     NotificationData, NotificationLevel,
 };
 use pingap_proxy::try_init_server_locations;
-use pingap_upstream::try_update_upstreams;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};

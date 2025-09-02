@@ -69,6 +69,8 @@ const useBasicState = create<ConfigState>()((set) => ({
   initialized: false,
   fetch: async () => {
     const { data } = await request.get<Basic>("/basic");
+    // TODO 是否可以获取upstream 状态
+    data.upstream_healthy_status = {};
     set({
       initialized: true,
       data,

@@ -15,4 +15,5 @@
 pub mod locations;
 pub mod plugin;
 pub mod process;
+pub mod upstreams;
 pub mod webhook;
