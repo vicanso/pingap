@@ -3899,13 +3899,35 @@ dependencies = [
 name = "pingap-proxy"
 version = "0.12.0"
 dependencies = [
+ "ahash",
+ "arc-swap",
+ "async-trait",
+ "bytes",
+ "cfg-if",
  "criterion",
+ "http",
+ "humantime",
+ "itoa",
+ "num_cpus",
+ "once_cell",
+ "pingap-acme",
+ "pingap-certificate",
  "pingap-config",
  "pingap-core",
+ "pingap-location",
+ "pingap-logger",
+ "pingap-otel",
+ "pingap-performance",
+ "pingap-upstream",
+ "pingap-util",
  "pingora",
  "pretty_assertions",
+ "scopeguard",
+ "snafu",
  "tempfile",
+ "tokio",
  "tokio-test",
+ "tracing",
 ]
 
 [[package]]

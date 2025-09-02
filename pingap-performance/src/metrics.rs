@@ -16,13 +16,16 @@ use super::{get_process_system_info, get_processing_accepted, LOG_CATEGORY};
 use async_trait::async_trait;
 use pingap_cache::{get_cache_backend, is_cache_backend_init};
 use pingap_core::{BackgroundTask, Error};
-use pingap_location::get_locations_stats;
+use pingap_location::LocationProvider;
 use pingap_upstream::{
     get_upstream_healthy_status, get_upstreams_processing_connected,
 };
+use std::sync::Arc;
 use tracing::info;
 
-struct PerformanceMetricsLogTask {}
+struct PerformanceMetricsLogTask {
+    locations: Arc<dyn LocationProvider>,
+}
 
 /// Joins a vector of strings into a single string separated by ", ".
 /// Returns `None` if the input vector is empty.
@@ -52,11 +55,13 @@ impl BackgroundTask for PerformanceMetricsLogTask {
 
         // Collect active location processing counts
         // Format: "location1:count1, location2:count2, ..."
-        let locations_stats_vec = get_locations_stats()
+        let locations_stats_vec = self
+            .locations
+            .stats()
             .into_iter()
-            .filter(|(_, (processing, _))| *processing != 0)
-            .map(|(name, (processing, accepted))| {
-                format!("{name}:{processing}/{accepted}")
+            .filter(|(_, stats)| stats.processing != 0)
+            .map(|(name, stats)| {
+                format!("{name}:{}/{}", stats.processing, stats.accepted)
             })
             .collect::<Vec<_>>();
         let locations_stats = join_non_empty(locations_stats_vec);
@@ -114,6 +119,8 @@ impl BackgroundTask for PerformanceMetricsLogTask {
 
 /// Creates a new service that periodically logs performance metrics
 /// Returns a tuple of (service name, service task)
-pub fn new_performance_metrics_log_service() -> Box<dyn BackgroundTask> {
-    Box::new(PerformanceMetricsLogTask {})
+pub fn new_performance_metrics_log_service(
+    locations: Arc<dyn LocationProvider>,
+) -> Box<dyn BackgroundTask> {
+    Box::new(PerformanceMetricsLogTask { locations })
 }

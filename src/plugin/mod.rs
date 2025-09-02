@@ -31,8 +31,7 @@ mod admin;
 mod stats;
 
 /// UUID for the admin server plugin, generated at runtime
-pub static ADMIN_SERVER_PLUGIN: Lazy<String> =
-    Lazy::new(|| uuid::Uuid::now_v7().to_string());
+pub static ADMIN_SERVER_PLUGIN: &str = "pingap:admin";
 
 /// Parses admin plugin configuration from an address string.
 ///
@@ -99,7 +98,7 @@ pub fn parse_admin_plugin(
             addr,
             ..Default::default()
         },
-        ADMIN_SERVER_PLUGIN.clone(),
+        ADMIN_SERVER_PLUGIN.to_string(),
         toml::from_str::<PluginConf>(&data).unwrap(),
     ))
 }

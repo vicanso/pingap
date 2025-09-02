@@ -14,16 +14,12 @@
 
 use super::regex::RegexCapture;
 use ahash::AHashMap;
-use arc_swap::ArcSwap;
-use once_cell::sync::Lazy;
 use pingap_config::LocationConf;
 use pingap_core::{convert_headers, HttpHeader};
 use pingora::http::RequestHeader;
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
-use std::sync::Arc;
 use tracing::{debug, error};
 
 const LOG_CATEGORY: &str = "location";
@@ -41,6 +37,11 @@ pub enum Error {
     BodyTooLarge { max: usize },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
+
+pub struct LocationStats {
+    pub processing: i32,
+    pub accepted: u64,
+}
 
 // PathSelector enum represents different ways to match request paths:
 // - Regex: Uses regex pattern matching
@@ -508,64 +509,12 @@ impl Location {
         }
         false
     }
-}
-
-type Locations = AHashMap<String, Arc<Location>>;
-static LOCATION_MAP: Lazy<ArcSwap<Locations>> =
-    Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
-
-/// Gets a location configuration by name from the global location map.
-///
-/// # Arguments
-/// * `name` - Name of the location to retrieve
-///
-/// # Returns
-/// * `Option<Arc<Location>>` - The location if found, None otherwise
-pub fn get_location(name: &str) -> Option<Arc<Location>> {
-    if name.is_empty() {
-        return None;
-    }
-    LOCATION_MAP.load().get(name).cloned()
-}
-
-/// Gets a map of current request processing and accepted counts for all locations.
-///
-/// # Returns
-/// * `HashMap<String, (i32, u64)>` - Map of location names to their current processing and accepted counts
-pub fn get_locations_stats() -> HashMap<String, (i32, u64)> {
-    let mut stats = HashMap::new();
-    LOCATION_MAP.load().iter().for_each(|(k, v)| {
-        stats.insert(
-            k.to_string(),
-            (
-                v.processing.load(Ordering::Relaxed),
-                v.accepted.load(Ordering::Relaxed),
-            ),
-        );
-    });
-    stats
-}
-
-/// Initializes or updates the global location configurations
-/// Returns list of location names that were updated
-pub fn try_init_locations(
-    location_configs: &HashMap<String, LocationConf>,
-) -> Result<Vec<String>> {
-    let mut locations = AHashMap::new();
-    let mut updated_locations = vec![];
-    for (name, conf) in location_configs.iter() {
-        if let Some(found) = get_location(name) {
-            if found.key == conf.hash_key() {
-                locations.insert(name.to_string(), found);
-                continue;
-            }
+    pub fn stats(&self) -> LocationStats {
+        LocationStats {
+            processing: self.processing.load(Ordering::Relaxed),
+            accepted: self.accepted.load(Ordering::Relaxed),
         }
-        updated_locations.push(name.clone());
-        let lo = Location::new(name, conf)?;
-        locations.insert(name.to_string(), Arc::new(lo));
     }
-    LOCATION_MAP.store(Arc::new(locations));
-    Ok(updated_locations)
 }
 
 #[cfg(test)]

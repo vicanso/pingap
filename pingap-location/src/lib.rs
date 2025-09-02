@@ -12,6 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
+pub trait LocationProvider: Send + Sync {
+    fn load(&self, name: &str) -> Option<Arc<Location>>;
+    fn stats(&self) -> HashMap<String, LocationStats>;
+}
+
 mod location;
 
 mod regex;

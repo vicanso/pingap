@@ -11,12 +11,37 @@ description = "Proxy for pingap"
 
 
 [dependencies]
+ahash = { workspace = true }
+arc-swap = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+cfg-if = { workspace = true }
+http = { workspace = true }
+humantime = { workspace = true, optional = true }
+itoa = { workspace = true }
+num_cpus = { workspace = true }
+once_cell = { workspace = true }
+pingap-acme = { version = "0.12.0", path = "../pingap-acme" }
+pingap-certificate = { version = "0.12.0", path = "../pingap-certificate" }
 pingap-config = { version = "0.12.0", path = "../pingap-config" }
 pingap-core = { version = "0.12.0", path = "../pingap-core" }
+pingap-location = { version = "0.12.0", path = "../pingap-location" }
+pingap-logger = { version = "0.12.0", path = "../pingap-logger" }
+pingap-otel = { version = "0.12.0", path = "../pingap-otel", optional = true }
+pingap-performance = { version = "0.12.0", path = "../pingap-performance" }
+pingap-upstream = { version = "0.12.0", path = "../pingap-upstream" }
+pingap-util = { version = "0.12.0", path = "../pingap-util" }
 pingora = { workspace = true }
+scopeguard = { workspace = true }
+snafu = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
 tempfile = "3.21.0"
 tokio-test = "0.4.4"
 criterion = { version = "0.7.0", features = ["html_reports"] }
+
+[features]
+tracing = ["pingap-otel", "humantime"]

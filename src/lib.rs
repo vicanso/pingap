@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod locations;
 pub mod plugin;
 pub mod process;
-pub mod proxy;
 pub mod webhook;

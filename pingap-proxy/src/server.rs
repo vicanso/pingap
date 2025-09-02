@@ -12,8 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::LOG_CATEGORY;
-use crate::plugin::{new_plugin_loader, ADMIN_SERVER_PLUGIN};
+#[cfg(feature = "tracing")]
+use super::tracing::{
+    initialize_telemetry, inject_telemetry_headers, set_otel_request_attrs,
+    set_otel_upstream_attrs, update_otel_cache_attrs,
+};
+use super::{set_append_proxy_headers, PluginLoader, ServerConf, LOG_CATEGORY};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -24,12 +28,6 @@ use pingap_acme::handle_lets_encrypt;
 use pingap_certificate::{GlobalCertificate, TlsSettingParams};
 use pingap_config::get_config_storage;
 use pingap_core::BackgroundTask;
-#[cfg(feature = "full")]
-use pingap_core::OtelTracer;
-use pingap_core::{
-    convert_header_value, convert_headers, new_internal_error, HttpHeader,
-    Plugin,
-};
 use pingap_core::{
     get_cache_key, CompressionStat, Ctx, PluginStep, RequestPluginResult,
     ResponseBodyPluginResult, ResponsePluginResult,
@@ -37,22 +35,16 @@ use pingap_core::{
 use pingap_core::{
     get_digest_detail, HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID,
 };
-use pingap_location::{get_location, Location};
+use pingap_core::{new_internal_error, Plugin};
+use pingap_location::{Location, LocationProvider};
 use pingap_logger::Parser;
-#[cfg(feature = "full")]
-use pingap_otel::HeaderExtractor;
-#[cfg(feature = "full")]
-use pingap_otel::{
-    global,
-    trace::{Span, SpanKind, Tracer},
-    KeyValue,
-};
+#[cfg(feature = "tracing")]
+use pingap_otel::{trace::Span, KeyValue};
 use pingap_performance::{accept_request, end_request};
-#[cfg(feature = "full")]
+#[cfg(feature = "tracing")]
 use pingap_performance::{
     new_prometheus, new_prometheus_push_service, Prometheus,
 };
-use pingap_proxy::{PluginLoader, ServerConf};
 use pingap_upstream::{get_upstream, Upstream};
 use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::DirectiveValue;
@@ -223,18 +215,18 @@ pub struct Server {
     tcp_socket_options: Option<TcpSocketOptions>,
 
     /// Prometheus metrics registry when metrics collection is enabled
-    #[cfg(feature = "full")]
+    #[cfg(feature = "tracing")]
     prometheus: Option<Arc<Prometheus>>,
 
     /// Whether to push metrics to remote Prometheus pushgateway
     prometheus_push_mode: bool,
 
     /// Prometheus metrics endpoint path or push gateway URL
-    #[cfg(feature = "full")]
+    #[cfg(feature = "tracing")]
     prometheus_metrics: String,
 
     /// Whether OpenTelemetry tracing is enabled
-    #[cfg(feature = "full")]
+    #[cfg(feature = "tracing")]
     enabled_otel: bool,
 
     /// List of enabled modules (e.g. "grpc-web")
@@ -250,6 +242,9 @@ pub struct Server {
 
     // plugin loader
     plugin_loader: Arc<dyn PluginLoader>,
+
+    // locations
+    locations: Arc<dyn LocationProvider>,
 }
 
 pub struct ServerServices {
@@ -269,7 +264,11 @@ impl Server {
     /// - TLS settings
     /// - Prometheus metrics (if enabled)
     /// - Threading configuration
-    pub fn new(conf: &ServerConf) -> Result<Self> {
+    pub fn new(
+        conf: &ServerConf,
+        locations: Arc<dyn LocationProvider>,
+        plugin_loader: Arc<dyn PluginLoader>,
+    ) -> Result<Self> {
         debug!(
             category = LOG_CATEGORY,
             config = conf.to_string(),
@@ -294,7 +293,7 @@ impl Server {
         };
         let prometheus_metrics =
             conf.prometheus_metrics.clone().unwrap_or_default();
-        #[cfg(feature = "full")]
+        #[cfg(feature = "tracing")]
         let prometheus = if prometheus_metrics.is_empty() {
             None
         } else {
@@ -322,17 +321,18 @@ impl Server {
             enabled_h2: conf.enabled_h2,
             tcp_socket_options,
             prometheus_push_mode: prometheus_metrics.contains("://"),
-            #[cfg(feature = "full")]
+            #[cfg(feature = "tracing")]
             enabled_otel: conf.otlp_exporter.is_some(),
-            #[cfg(feature = "full")]
+            #[cfg(feature = "tracing")]
             prometheus_metrics,
-            #[cfg(feature = "full")]
+            #[cfg(feature = "tracing")]
             prometheus,
             enable_server_timing: conf.enable_server_timing,
             modules: conf.modules.clone(),
             downstream_read_timeout: conf.downstream_read_timeout,
             downstream_write_timeout: conf.downstream_write_timeout,
-            plugin_loader: new_plugin_loader(),
+            locations,
+            plugin_loader,
         };
         Ok(s)
     }
@@ -350,7 +350,7 @@ impl Server {
             return None;
         }
         cfg_if::cfg_if! {
-            if #[cfg(feature = "full")] {
+            if #[cfg(feature = "tracing")] {
                 let Some(prometheus) = &self.prometheus else {
                     return None;
                 };
@@ -471,9 +471,7 @@ impl Server {
         session: &mut Session,
         ctx: &mut Ctx,
     ) -> pingora::Result<bool> {
-        if let Some(plugin) =
-            self.plugin_loader.load(ADMIN_SERVER_PLUGIN.as_str())
-        {
+        if let Some(plugin) = self.plugin_loader.load("pingap:admin") {
             let result = plugin
                 .handle_request(PluginStep::Request, session, ctx)
                 .await?;
@@ -529,34 +527,6 @@ impl Server {
             ctx.conn.server_port = Some(addr.port());
         }
     }
-    #[inline]
-    #[cfg(feature = "full")]
-    fn initialize_telemetry(&self, session: &Session, ctx: &mut Ctx) {
-        let header = session.req_header();
-        let host = pingap_core::get_host(header).unwrap_or_default();
-        let path = header.uri.path();
-        // enable open telemetry
-        if let Some(tracer) = pingap_otel::new_http_proxy_tracer(&self.name) {
-            let cx = global::get_text_map_propagator(|propagator| {
-                propagator.extract(&HeaderExtractor(&header.headers))
-            });
-            let mut span = tracer
-                .span_builder(path.to_string())
-                .with_kind(SpanKind::Server)
-                .start_with_context(&tracer, &cx);
-            span.set_attributes(vec![
-                KeyValue::new("http.method", header.method.to_string()),
-                KeyValue::new("http.url", header.uri.to_string()),
-                KeyValue::new("http.host", host.to_string()),
-            ]);
-
-            let features = ctx.features.get_or_insert_default();
-            features.otel_tracer = Some(OtelTracer {
-                tracer,
-                http_request_span: span,
-            });
-        }
-    }
 
     #[inline]
     async fn find_and_apply_location(
@@ -575,7 +545,7 @@ impl Server {
 
         // use find_map to optimize logic, performance and readability
         let matched_info = locations.iter().find_map(|name| {
-            let location = get_location(name)?;
+            let location = self.locations.load(name)?;
             let mut captures = AHashMap::with_capacity(4);
             if location.match_host_path(host, path, &mut captures) {
                 Some((location, captures))
@@ -588,7 +558,7 @@ impl Server {
             return Ok(());
         };
 
-        // only execute all subsequent operations after successfully matching location
+        // only execute all subsequent operations after successtracingy matching location
         ctx.upstream.location = location.name.clone();
         if !captures.is_empty() {
             ctx.extend_variables(captures);
@@ -601,7 +571,7 @@ impl Server {
         );
 
         // set prometheus stats
-        #[cfg(feature = "full")]
+        #[cfg(feature = "tracing")]
         if let Some(prom) = &self.prometheus {
             prom.before(&ctx.upstream.location);
         }
@@ -682,7 +652,7 @@ impl Server {
         None // 未启用 Let's Encrypt，继续
     }
     #[inline]
-    #[cfg(feature = "full")]
+    #[cfg(feature = "tracing")]
     async fn handle_metrics_request(
         &self,
         session: &mut Session,
@@ -712,7 +682,7 @@ impl Server {
         session: &mut Session,
         ctx: &mut Ctx,
     ) -> pingora::Result<bool> {
-        let Some(location) = get_location(&ctx.upstream.location) else {
+        let Some(location) = self.locations.load(&ctx.upstream.location) else {
             let header = session.req_header();
             let host = pingap_core::get_host(header).unwrap_or_default();
             let body = Bytes::from(format!(
@@ -747,75 +717,7 @@ impl Server {
 
 const MODULE_GRPC_WEB: &str = "grpc-web";
 
-// proxy_set_header X-Real-IP $remote_addr;
-// proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-// proxy_set_header X-Forwarded-Proto $scheme;
-// proxy_set_header X-Forwarded-Host $host;
-// proxy_set_header X-Forwarded-Port $server_port;
-
-static DEFAULT_PROXY_SET_HEADERS: Lazy<Vec<HttpHeader>> = Lazy::new(|| {
-    convert_headers(&[
-        "X-Real-IP:$remote_addr".to_string(),
-        "X-Forwarded-For:$proxy_add_x_forwarded_for".to_string(),
-        "X-Forwarded-Proto:$scheme".to_string(),
-        "X-Forwarded-Host:$host".to_string(),
-        "X-Forwarded-Port:$server_port".to_string(),
-    ])
-    .unwrap()
-});
-
 impl Server {
-    /// Sets or appends proxy-related headers before forwarding request
-    /// Handles both default reverse proxy headers and custom configured headers
-    #[inline]
-    pub fn set_append_proxy_headers(
-        &self,
-        session: &Session,
-        ctx: &Ctx,
-        header: &mut RequestHeader,
-    ) {
-        let Some(location) = get_location(&ctx.upstream.location) else {
-            return;
-        };
-
-        let default_headers = location
-            .enable_reverse_proxy_headers
-            .then_some(DEFAULT_PROXY_SET_HEADERS.iter())
-            .into_iter()
-            .flatten()
-            .map(|(k, v)| (k, v, false)); // false means set, not append
-
-        // custom set headers for location
-        let custom_set_headers = location
-            .proxy_set_headers
-            .iter()
-            .flatten() // if proxy_set_headers is None, this will produce an empty iterator
-            .map(|(k, v)| (k, v, false)); // false means set, not append
-
-        // custom add headers for location
-        let custom_add_headers = location
-            .proxy_add_headers
-            .iter()
-            .flatten() // same as proxy_set_headers
-            .map(|(k, v)| (k, v, true)); // true means append, not set
-
-        // link all iterators and iterate once
-        default_headers
-            .chain(custom_set_headers)
-            .chain(custom_add_headers)
-            .for_each(|(k, v, append)| {
-                // same as the original `set_header` closure
-                let value = convert_header_value(v, session, ctx)
-                    .unwrap_or_else(|| v.clone());
-
-                if append {
-                    let _ = header.append_header(k, value);
-                } else {
-                    let _ = header.insert_header(k, value);
-                }
-            });
-    }
-
     #[inline]
     fn get_context_plugins(
         &self,
@@ -1104,15 +1006,15 @@ impl Server {
             &mut ctx.timing.cache_lock,
         );
 
-        #[cfg(not(feature = "full"))]
+        #[cfg(not(feature = "tracing"))]
         {
             let _ = lookup_duration_str;
             let _ = lock_duration_str;
         }
 
         // (optional) process OpenTelemetry
-        #[cfg(feature = "full")]
-        self.update_otel_cache_attrs(
+        #[cfg(feature = "tracing")]
+        update_otel_cache_attrs(
             ctx,
             cache_status,
             lookup_duration_str,
@@ -1140,86 +1042,18 @@ impl Server {
             let _ = resp.insert_header(header_name, value_bytes);
             *ctx_field = Some(ms);
 
-            #[cfg(feature = "full")]
+            #[cfg(feature = "tracing")]
             return humantime::Duration::from(d).to_string();
         }
         String::new()
-    }
-
-    #[inline]
-    #[cfg(feature = "full")]
-    fn update_otel_cache_attrs(
-        &self,
-        ctx: &mut Ctx,
-        cache_status: &str,
-        lookup_duration: String,
-        lock_duration: String,
-    ) {
-        if let Some(tracer) =
-            ctx.features.as_mut().and_then(|f| f.otel_tracer.as_mut())
-        {
-            let attrs = vec![
-                KeyValue::new("cache.status", cache_status.to_string()),
-                KeyValue::new("cache.lookup", lookup_duration),
-                KeyValue::new("cache.lock", lock_duration),
-            ];
-            tracer.http_request_span.set_attributes(attrs);
-        }
-    }
-
-    #[cfg(feature = "full")]
-    fn inject_telemetry_headers(
-        &self,
-        ctx: &Ctx,
-        upstream_response: &mut ResponseHeader,
-    ) {
-        // 优化：使用 and_then 扁平化嵌套的 if let
-        if let Some(tracer) =
-            ctx.features.as_ref().and_then(|f| f.otel_tracer.as_ref())
-        {
-            let span_context = tracer.http_request_span.span_context();
-            if span_context.is_valid() {
-                // Add trace ID
-                let _ = upstream_response.insert_header(
-                    "X-Trace-Id",
-                    span_context.trace_id().to_string(),
-                );
-                // Add span ID
-                let _ = upstream_response.insert_header(
-                    "X-Span-Id",
-                    span_context.span_id().to_string(),
-                );
-            }
-        }
     }
 
     fn finalize_upstream_session(&self, ctx: &mut Ctx) {
         ctx.timing.upstream_response =
             get_latency(&ctx.timing.created_at, &ctx.timing.upstream_response);
 
-        #[cfg(feature = "full")]
-        if let Some(mut span) =
-            ctx.features.as_mut().and_then(|f| f.upstream_span.take())
-        {
-            let timing = &ctx.timing;
-            span.set_attributes([
-                KeyValue::new("upstream.addr", ctx.upstream.address.clone()),
-                KeyValue::new("upstream.reused", ctx.upstream.reused),
-                KeyValue::new(
-                    "upstream.connect_time",
-                    timing.upstream_connect.unwrap_or_default() as i64,
-                ),
-                KeyValue::new(
-                    "upstream.processing_time",
-                    timing.upstream_processing.unwrap_or_default() as i64,
-                ),
-                KeyValue::new(
-                    "upstream.response_time",
-                    timing.upstream_response.unwrap_or_default() as i64,
-                ),
-            ]);
-            span.end();
-        }
+        #[cfg(feature = "tracing")]
+        set_otel_upstream_attrs(ctx);
     }
 }
 
@@ -1274,9 +1108,9 @@ impl ProxyHttp for Server {
         defer!(debug!(category = LOG_CATEGORY, "<-- early request filter"););
 
         self.initialize_context(session, ctx);
-        #[cfg(feature = "full")]
+        #[cfg(feature = "tracing")]
         if self.enabled_otel {
-            self.initialize_telemetry(session, ctx);
+            initialize_telemetry(&self.name, session, ctx);
         }
         self.find_and_apply_location(session, ctx).await?;
 
@@ -1309,7 +1143,7 @@ impl ProxyHttp for Server {
             return result;
         }
         // prometheus metrics pull request
-        #[cfg(feature = "full")]
+        #[cfg(feature = "tracing")]
         if let Some(result) = self.handle_metrics_request(session, ctx).await {
             return result;
         }
@@ -1349,7 +1183,9 @@ impl ProxyHttp for Server {
         debug!(category = LOG_CATEGORY, "--> upstream peer");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream peer"););
         // let mut location_name = "unknown".to_string();
-        let peer = get_location(&ctx.upstream.location)
+        let peer = self
+            .locations
+            .load(&ctx.upstream.location)
             .and_then(|location| {
                 let upstream =
                     get_upstream_with_variables(&location.upstream, ctx)?;
@@ -1357,9 +1193,9 @@ impl ProxyHttp for Server {
             })
             .and_then(|(location, up)| {
                 ctx.upstream.connected_count = up.connected();
-                #[cfg(not(feature = "full"))]
+                #[cfg(not(feature = "tracing"))]
                 let _location = &location;
-                #[cfg(feature = "full")]
+                #[cfg(feature = "tracing")]
                 if let Some(features) = &ctx.features {
                     if let Some(tracer) = &features.otel_tracer {
                         let name = format!("upstream.{}", &location.upstream);
@@ -1440,7 +1276,9 @@ impl ProxyHttp for Server {
     {
         debug!(category = LOG_CATEGORY, "--> upstream request filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream request filter"););
-        self.set_append_proxy_headers(session, ctx, upstream_response);
+        if let Some(location) = self.locations.load(&ctx.upstream.location) {
+            set_append_proxy_headers(session, ctx, upstream_response, location);
+        }
         Ok(())
     }
     /// Filters request body chunks before sending upstream.
@@ -1459,7 +1297,8 @@ impl ProxyHttp for Server {
         defer!(debug!(category = LOG_CATEGORY, "<-- request body filter"););
         if let Some(buf) = body {
             ctx.state.payload_size += buf.len();
-            if let Some(location) = get_location(&ctx.upstream.location) {
+            if let Some(location) = self.locations.load(&ctx.upstream.location)
+            {
                 location
                     .client_body_size_limit(ctx.state.payload_size)
                     .map_err(|e| new_internal_error(413, e))?;
@@ -1573,8 +1412,8 @@ impl ProxyHttp for Server {
         debug!(category = LOG_CATEGORY, "--> upstream response filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream response filter"););
         self.handle_upstream_response_plugin(session, ctx, upstream_response)?;
-        #[cfg(feature = "full")]
-        self.inject_telemetry_headers(ctx, upstream_response);
+        #[cfg(feature = "tracing")]
+        inject_telemetry_headers(ctx, upstream_response);
 
         if ctx.state.status.is_none() {
             ctx.state.status = Some(upstream_response.status);
@@ -1759,7 +1598,7 @@ impl ProxyHttp for Server {
         defer!(debug!(category = LOG_CATEGORY, "<-- logging"););
         end_request();
         self.processing.fetch_sub(1, Ordering::Relaxed);
-        if let Some(location) = get_location(&ctx.upstream.location) {
+        if let Some(location) = self.locations.load(&ctx.upstream.location) {
             location.sub_processing();
         }
         // get from cache does not connect to upstream
@@ -1773,7 +1612,7 @@ impl ProxyHttp for Server {
                 ctx.state.status = Some(header.status);
             }
         }
-        #[cfg(feature = "full")]
+        #[cfg(feature = "tracing")]
         // enable open telemetry and proxy upstream fail
         if let Some(features) = ctx.features.as_mut() {
             if let Some(ref mut span) = features.upstream_span.as_mut() {
@@ -1798,7 +1637,7 @@ impl ProxyHttp for Server {
                 }
             }
         }
-        #[cfg(feature = "full")]
+        #[cfg(feature = "tracing")]
         if let Some(prom) = &self.prometheus {
             // because prom.before will not be called if location is empty
             if !ctx.upstream.location.is_empty() {
@@ -1806,39 +1645,8 @@ impl ProxyHttp for Server {
             }
         }
 
-        #[cfg(feature = "full")]
-        // open telemetry
-        if let Some(features) = ctx.features.as_mut() {
-            if let Some(ref mut tracer) = features.otel_tracer.as_mut() {
-                let ip = if let Some(ip) = &ctx.conn.client_ip {
-                    ip.to_string()
-                } else {
-                    let ip = pingap_core::get_client_ip(session);
-                    ctx.conn.client_ip = Some(ip.clone());
-                    ip
-                };
-                let mut attrs = vec![
-                    KeyValue::new("http.client_ip", ip),
-                    KeyValue::new(
-                        "http.status_code",
-                        ctx.state.status.unwrap_or_default().as_u16() as i64,
-                    ),
-                    KeyValue::new(
-                        "http.response.body.size",
-                        session.body_bytes_sent() as i64,
-                    ),
-                ];
-                if !ctx.upstream.location.is_empty() {
-                    attrs.push(KeyValue::new(
-                        "http.location",
-                        ctx.upstream.location.clone(),
-                    ));
-                }
-
-                tracer.http_request_span.set_attributes(attrs);
-                tracer.http_request_span.end()
-            }
-        }
+        #[cfg(feature = "tracing")]
+        set_otel_request_attrs(session, ctx);
 
         if let Some(p) = &self.log_parser {
             info!("{}", p.format(session, ctx));
@@ -1849,12 +1657,10 @@ impl ProxyHttp for Server {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proxy::server::get_digest_detail;
-    use crate::proxy::try_init_server_locations;
+    use crate::server_conf::parse_from_conf;
     use pingap_config::PingapConf;
     use pingap_core::{CacheInfo, Ctx, UpstreamInfo};
-    use pingap_location::try_init_locations;
-    use pingap_proxy::parse_from_conf;
+    use pingap_location::LocationStats;
     use pingap_upstream::try_init_upstreams;
     use pingora::http::ResponseHeader;
     use pingora::protocols::tls::SslDigest;
@@ -1953,11 +1759,38 @@ value = 'proxy_set_headers = ["name:value"]'
         "###;
         let pingap_conf = PingapConf::new(toml_data.as_ref(), false).unwrap();
         try_init_upstreams(&pingap_conf.upstreams, None).unwrap();
-        try_init_locations(&pingap_conf.locations).unwrap();
         try_init_server_locations(&pingap_conf.servers, &pingap_conf.locations)
             .unwrap();
+
+        let location = Arc::new(
+            Location::new("lo", pingap_conf.locations.get("lo").unwrap())
+                .unwrap(),
+        );
+
+        struct TmpPluginLoader {}
+        impl PluginLoader for TmpPluginLoader {
+            fn load(&self, _name: &str) -> Option<Arc<dyn Plugin>> {
+                None
+            }
+        }
+        struct TmpLocationLoader {
+            location: Arc<Location>,
+        }
+        impl LocationProvider for TmpLocationLoader {
+            fn load(&self, _name: &str) -> Option<Arc<Location>> {
+                Some(self.location.clone())
+            }
+            fn stats(&self) -> HashMap<String, LocationStats> {
+                HashMap::new()
+            }
+        }
         let confs = parse_from_conf(pingap_conf);
-        Server::new(&confs[0]).unwrap()
+        Server::new(
+            &confs[0],
+            Arc::new(TmpLocationLoader { location }),
+            Arc::new(TmpPluginLoader {}),
+        )
+        .unwrap()
     }
 
     #[test]

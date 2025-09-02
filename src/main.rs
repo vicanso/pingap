@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::locations::new_locations;
+use crate::locations::try_init_locations;
+use crate::plugin::new_plugin_loader;
 use clap::Parser;
 use crossbeam_channel::Sender;
 use pingap_acme::new_lets_encrypt_service;
@@ -26,12 +29,13 @@ use pingap_core::BackgroundTaskService;
 #[cfg(feature = "imageoptim")]
 #[allow(unused_imports)]
 use pingap_imageoptim::ImageOptim;
-use pingap_location::try_init_locations;
 #[cfg(feature = "full")]
 use pingap_otel::TracerService;
 use pingap_performance::new_performance_metrics_log_service;
 use pingap_plugin::get_plugin_factory;
-use pingap_proxy::{parse_from_conf, ServerConf};
+use pingap_proxy::{
+    parse_from_conf, try_init_server_locations, Server, ServerConf,
+};
 use pingap_upstream::{new_upstream_health_check_task, try_init_upstreams};
 use pingora::server;
 use pingora::server::configuration::Opt;
@@ -40,7 +44,6 @@ use process::{
     get_admin_addr, get_start_time, new_auto_restart_service,
     new_observer_service, set_admin_addr,
 };
-use proxy::Server;
 use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::OsString;
@@ -49,9 +52,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info};
 
+mod locations;
 mod plugin;
 mod process;
-mod proxy;
 mod webhook;
 
 // Avoid musl's default allocator due to lackluster performance
@@ -232,7 +235,7 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     pingap_config::try_init_config_storage(&args.conf)?;
     // config::set_config_path(&args.conf);
     let mut my_server = server::Server::new(None)?;
-    let ps = Server::new(&server_conf)?;
+    let ps = Server::new(&server_conf, new_locations(), new_plugin_loader())?;
     let services = ps.run(&my_server.configuration)?;
     my_server.add_service(services.lb);
 
@@ -426,7 +429,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     try_init_upstreams(&conf.upstreams, webhook::get_webhook_sender())?;
     try_init_locations(&conf.locations)?;
-    proxy::try_init_server_locations(&conf.servers, &conf.locations)?;
+    try_init_server_locations(&conf.servers, &conf.locations)?;
     let certificates = conf.certificates.clone();
 
     let opt = Opt {
@@ -538,7 +541,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             ),
             (
                 "performance_metrics".to_string(),
-                new_performance_metrics_log_service(),
+                new_performance_metrics_log_service(new_locations()),
             ),
         ],
     );
@@ -595,7 +598,8 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     for server_conf in server_conf_list.iter() {
         let listen_80_port = server_conf.addr.ends_with(":80");
-        let mut ps = Server::new(server_conf)?;
+        let mut ps =
+            Server::new(server_conf, new_locations(), new_plugin_loader())?;
         if enabled_http_challenge && listen_80_port {
             ps.enable_lets_encrypt();
         }

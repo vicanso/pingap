@@ -13,8 +13,9 @@
 // limitations under the License.
 
 use super::{restart, LOG_CATEGORY};
+use crate::locations::try_init_locations;
+use crate::plugin;
 use crate::webhook::{get_webhook_sender, send_notification};
-use crate::{plugin, proxy};
 use async_trait::async_trait;
 use pingap_config::{
     get_config_storage, get_current_config, load_config, set_current_config,
@@ -25,7 +26,7 @@ use pingap_core::{
     BackgroundTask, BackgroundTaskService, Error as ServiceError,
     NotificationData, NotificationLevel,
 };
-use pingap_location::try_init_locations;
+use pingap_proxy::try_init_server_locations;
 use pingap_upstream::try_update_upstreams;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
@@ -243,7 +244,7 @@ async fn diff_and_update_config(
             }
         }
         if should_reload_server_location {
-            match proxy::try_init_server_locations(
+            match try_init_server_locations(
                 &new_config.servers,
                 &new_config.locations,
             ) {

@@ -12,8 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod pulgin_loader;
+mod headers;
+mod loader;
+mod server;
 mod server_conf;
+#[cfg(feature = "tracing")]
+mod tracing;
+static LOG_CATEGORY: &str = "proxy";
 
-pub use pulgin_loader::*;
+pub(crate) use headers::*;
+pub use loader::*;
+pub use server::*;
 pub use server_conf::*;
+#[allow(unused_imports)]
+#[cfg(feature = "tracing")]
+pub(crate) use tracing::*;

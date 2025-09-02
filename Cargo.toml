@@ -90,6 +90,7 @@ tracing = [
     "pingap-cache/tracing",
     "pingap-core/tracing",
     "pingap-performance/tracing",
+    "pingap-proxy/tracing",
     "pingap-otel",
     "pingap-sentry",
 ]
