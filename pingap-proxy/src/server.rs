@@ -17,7 +17,7 @@ use super::tracing::{
     initialize_telemetry, inject_telemetry_headers, set_otel_request_attrs,
     set_otel_upstream_attrs, update_otel_cache_attrs,
 };
-use super::{set_append_proxy_headers, PluginLoader, ServerConf, LOG_CATEGORY};
+use super::{set_append_proxy_headers, ServerConf, LOG_CATEGORY};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -28,6 +28,7 @@ use pingap_acme::handle_lets_encrypt;
 use pingap_certificate::{GlobalCertificate, TlsSettingParams};
 use pingap_config::get_config_storage;
 use pingap_core::BackgroundTask;
+use pingap_core::PluginProvider;
 use pingap_core::{
     get_cache_key, CompressionStat, Ctx, PluginStep, RequestPluginResult,
     ResponseBodyPluginResult, ResponsePluginResult,
@@ -45,8 +46,7 @@ use pingap_performance::{accept_request, end_request};
 use pingap_performance::{
     new_prometheus, new_prometheus_push_service, Prometheus,
 };
-use pingap_upstream::Upstream;
-use pingap_upstream::UpstreamProvider;
+use pingap_upstream::{Upstream, UpstreamProvider};
 use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::DirectiveValue;
 use pingora::cache::cache_control::{CacheControl, InterpretCacheControl};
@@ -242,13 +242,13 @@ pub struct Server {
     downstream_write_timeout: Option<Duration>,
 
     // plugin loader
-    plugin_loader: Arc<dyn PluginLoader>,
+    plugin_provider: Arc<dyn PluginProvider>,
 
     // locations
-    locations: Arc<dyn LocationProvider>,
+    location_provider: Arc<dyn LocationProvider>,
 
     // upstreams
-    upstreams: Arc<dyn UpstreamProvider>,
+    upstream_provider: Arc<dyn UpstreamProvider>,
 }
 
 pub struct ServerServices {
@@ -270,9 +270,9 @@ impl Server {
     /// - Threading configuration
     pub fn new(
         conf: &ServerConf,
-        locations: Arc<dyn LocationProvider>,
-        upstreams: Arc<dyn UpstreamProvider>,
-        plugin_loader: Arc<dyn PluginLoader>,
+        location_provider: Arc<dyn LocationProvider>,
+        upstream_provider: Arc<dyn UpstreamProvider>,
+        plugin_provider: Arc<dyn PluginProvider>,
     ) -> Result<Self> {
         debug!(
             category = LOG_CATEGORY,
@@ -336,9 +336,9 @@ impl Server {
             modules: conf.modules.clone(),
             downstream_read_timeout: conf.downstream_read_timeout,
             downstream_write_timeout: conf.downstream_write_timeout,
-            locations,
-            upstreams,
-            plugin_loader,
+            location_provider,
+            upstream_provider,
+            plugin_provider,
         };
         Ok(s)
     }
@@ -477,7 +477,7 @@ impl Server {
         session: &mut Session,
         ctx: &mut Ctx,
     ) -> pingora::Result<bool> {
-        if let Some(plugin) = self.plugin_loader.load("pingap:admin") {
+        if let Some(plugin) = self.plugin_provider.load("pingap:admin") {
             let result = plugin
                 .handle_request(PluginStep::Request, session, ctx)
                 .await?;
@@ -551,7 +551,7 @@ impl Server {
 
         // use find_map to optimize logic, performance and readability
         let matched_info = locations.iter().find_map(|name| {
-            let location = self.locations.load(name)?;
+            let location = self.location_provider.load(name)?;
             let mut captures = AHashMap::with_capacity(4);
             if location.match_host_path(host, path, &mut captures) {
                 Some((location, captures))
@@ -688,7 +688,9 @@ impl Server {
         session: &mut Session,
         ctx: &mut Ctx,
     ) -> pingora::Result<bool> {
-        let Some(location) = self.locations.load(&ctx.upstream.location) else {
+        let Some(location) =
+            self.location_provider.load(&ctx.upstream.location)
+        else {
             let header = session.req_header();
             let host = pingap_core::get_host(header).unwrap_or_default();
             let body = Bytes::from(format!(
@@ -738,7 +740,7 @@ impl Server {
         let location_plugins: Vec<_> = plugins
             .iter()
             .filter_map(|name| {
-                self.plugin_loader
+                self.plugin_provider
                     .load(name)
                     .map(|plugin| (name.clone(), plugin))
             })
@@ -1191,13 +1193,13 @@ impl ProxyHttp for Server {
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream peer"););
         // let mut location_name = "unknown".to_string();
         let peer = self
-            .locations
+            .location_provider
             .load(&ctx.upstream.location)
             .and_then(|location| {
                 let upstream = get_upstream_with_variables(
                     &location.upstream,
                     ctx,
-                    self.upstreams.as_ref(),
+                    self.upstream_provider.as_ref(),
                 )?;
                 Some((location, upstream))
             })
@@ -1286,7 +1288,9 @@ impl ProxyHttp for Server {
     {
         debug!(category = LOG_CATEGORY, "--> upstream request filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream request filter"););
-        if let Some(location) = self.locations.load(&ctx.upstream.location) {
+        if let Some(location) =
+            self.location_provider.load(&ctx.upstream.location)
+        {
             set_append_proxy_headers(session, ctx, upstream_response, location);
         }
         Ok(())
@@ -1307,7 +1311,8 @@ impl ProxyHttp for Server {
         defer!(debug!(category = LOG_CATEGORY, "<-- request body filter"););
         if let Some(buf) = body {
             ctx.state.payload_size += buf.len();
-            if let Some(location) = self.locations.load(&ctx.upstream.location)
+            if let Some(location) =
+                self.location_provider.load(&ctx.upstream.location)
             {
                 location
                     .client_body_size_limit(ctx.state.payload_size)
@@ -1608,14 +1613,16 @@ impl ProxyHttp for Server {
         defer!(debug!(category = LOG_CATEGORY, "<-- logging"););
         end_request();
         self.processing.fetch_sub(1, Ordering::Relaxed);
-        if let Some(location) = self.locations.load(&ctx.upstream.location) {
+        if let Some(location) =
+            self.location_provider.load(&ctx.upstream.location)
+        {
             location.sub_processing();
         }
         // get from cache does not connect to upstream
         if let Some(upstream) = get_upstream_with_variables(
             &ctx.upstream.name,
             ctx,
-            self.upstreams.as_ref(),
+            self.upstream_provider.as_ref(),
         ) {
             ctx.upstream.processing_count = Some(upstream.completed());
         }
@@ -1786,7 +1793,7 @@ value = 'proxy_set_headers = ["name:value"]'
         );
 
         struct TmpPluginLoader {}
-        impl PluginLoader for TmpPluginLoader {
+        impl PluginProvider for TmpPluginLoader {
             fn load(&self, _name: &str) -> Option<Arc<dyn Plugin>> {
                 None
             }

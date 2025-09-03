@@ -17,40 +17,47 @@ use arc_swap::ArcSwap;
 use once_cell::sync::Lazy;
 use pingap_config::UpstreamConf;
 use pingap_core::{Error, NotificationSender};
-use pingap_upstream::{Upstream, UpstreamProvider, Upstreams};
+use pingap_upstream::{
+    new_ahash_upstreams, Upstream, UpstreamProvider, Upstreams,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::error;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-static UPSTREAM_MAP: Lazy<ArcSwap<Upstreams>> =
-    Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
+struct Provider {
+    upstreams: ArcSwap<Upstreams>,
+}
 
-fn new_ahash_upstreams(
-    upstream_configs: &HashMap<String, UpstreamConf>,
-    sender: Option<Arc<NotificationSender>>,
-) -> Result<(Upstreams, Vec<String>)> {
-    let mut upstreams = AHashMap::new();
-    let mut updated_upstreams = vec![];
-    for (name, conf) in upstream_configs.iter() {
-        let key = conf.hash_key();
-        if let Some(found) = UPSTREAM_MAP.load().get(name).cloned() {
-            // not modified
-            if found.key == key {
-                upstreams.insert(name.to_string(), found);
-                continue;
-            }
-        }
-        let up = Arc::new(Upstream::new(name, conf, sender.clone()).map_err(
-            |e| Error::Invalid {
-                message: e.to_string(),
-            },
-        )?);
-        upstreams.insert(name.to_string(), up);
-        updated_upstreams.push(name.to_string());
+impl Provider {
+    fn store(&self, data: Upstreams) {
+        self.upstreams.store(Arc::new(data));
     }
-    Ok((upstreams, updated_upstreams))
+}
+
+impl UpstreamProvider for Provider {
+    fn load(&self, name: &str) -> Option<Arc<Upstream>> {
+        self.upstreams.load().get(name).cloned()
+    }
+
+    fn list(&self) -> Vec<(String, Arc<Upstream>)> {
+        self.upstreams
+            .load()
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect()
+    }
+}
+
+static UPSTREAM_PROVIDER: Lazy<Arc<Provider>> = Lazy::new(|| {
+    Arc::new(Provider {
+        upstreams: ArcSwap::from_pointee(AHashMap::new()),
+    })
+});
+
+pub fn new_upstream_provider() -> Arc<dyn UpstreamProvider> {
+    UPSTREAM_PROVIDER.clone()
 }
 
 /// Initialize the upstreams
@@ -64,8 +71,16 @@ pub fn try_init_upstreams(
     upstream_configs: &HashMap<String, UpstreamConf>,
     sender: Option<Arc<NotificationSender>>,
 ) -> Result<()> {
-    let (upstreams, _) = new_ahash_upstreams(upstream_configs, sender)?;
-    UPSTREAM_MAP.store(Arc::new(upstreams));
+    let (upstreams, _) = new_ahash_upstreams(
+        upstream_configs,
+        UPSTREAM_PROVIDER.clone(),
+        sender,
+    )
+    .map_err(|e| Error::Invalid {
+        message: e.to_string(),
+    })?;
+
+    UPSTREAM_PROVIDER.store(upstreams);
     Ok(())
 }
 
@@ -73,8 +88,14 @@ pub async fn try_update_upstreams(
     upstream_configs: &HashMap<String, UpstreamConf>,
     sender: Option<Arc<NotificationSender>>,
 ) -> Result<Vec<String>> {
-    let (upstreams, updated_upstreams) =
-        new_ahash_upstreams(upstream_configs, sender)?;
+    let (upstreams, updated_upstreams) = new_ahash_upstreams(
+        upstream_configs,
+        UPSTREAM_PROVIDER.clone(),
+        sender,
+    )
+    .map_err(|e| Error::Invalid {
+        message: e.to_string(),
+    })?;
     for (name, up) in upstreams.iter() {
         // no need to run health check if not new upstream
         if !updated_upstreams.contains(name) {
@@ -90,25 +111,6 @@ pub async fn try_update_upstreams(
             );
         }
     }
-    UPSTREAM_MAP.store(Arc::new(upstreams));
+    UPSTREAM_PROVIDER.store(upstreams);
     Ok(updated_upstreams)
-}
-
-struct Provider {}
-impl UpstreamProvider for Provider {
-    fn load(&self, name: &str) -> Option<Arc<Upstream>> {
-        UPSTREAM_MAP.load().get(name).cloned()
-    }
-
-    fn list(&self) -> Vec<(String, Arc<Upstream>)> {
-        UPSTREAM_MAP
-            .load()
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.clone()))
-            .collect()
-    }
-}
-
-pub fn new_upstreams() -> Arc<dyn UpstreamProvider> {
-    Arc::new(Provider {})
 }

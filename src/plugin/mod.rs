@@ -17,9 +17,9 @@ use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use once_cell::sync::Lazy;
 use pingap_config::PluginConf;
-use pingap_core::{Plugin, PluginStep};
+use pingap_core::{Plugin, PluginProvider, PluginStep, Plugins};
 use pingap_plugin::get_plugin_factory;
-use pingap_proxy::{PluginLoader, ServerConf};
+use pingap_proxy::ServerConf;
 use pingap_util::base64_encode;
 use snafu::Snafu;
 use std::collections::HashMap;
@@ -207,10 +207,31 @@ remark = "Adjust the accept encoding order and choose one econding"
     ]
 }
 
-/// Global storage for all active plugins
-type Plugins = AHashMap<String, Arc<dyn Plugin>>;
-static PLUGINS: Lazy<ArcSwap<Plugins>> =
-    Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
+struct Provider {
+    plugins: ArcSwap<Plugins>,
+}
+
+impl Provider {
+    fn store(&self, data: Plugins) {
+        self.plugins.store(Arc::new(data));
+    }
+}
+
+static PLUGIN_PROVIDER: Lazy<Arc<Provider>> = Lazy::new(|| {
+    Arc::new(Provider {
+        plugins: ArcSwap::from_pointee(AHashMap::new()),
+    })
+});
+
+impl PluginProvider for Provider {
+    fn load(&self, name: &str) -> Option<Arc<dyn Plugin>> {
+        self.plugins.load().get(name).cloned()
+    }
+}
+
+pub fn new_plugin_provider() -> Arc<dyn PluginProvider> {
+    PLUGIN_PROVIDER.clone()
+}
 
 /// Parses plugin configurations and instantiates plugin instances.
 ///
@@ -303,13 +324,12 @@ pub fn try_init_plugins(
 
     let mut updated_plugins = vec![];
     let mut plugins = AHashMap::new();
-    let loader = new_plugin_loader();
     let plugin_configs: Vec<(String, PluginConf)> = plugin_configs
         .into_iter()
         .filter(|(name, conf)| {
             let conf_hash_key = get_hash_key(conf);
             let mut exists = false;
-            if let Some(plugin) = loader.load(name) {
+            if let Some(plugin) = PLUGIN_PROVIDER.load(name) {
                 exists = true;
                 // exists plugin with same config
                 if plugin.config_key() == conf_hash_key {
@@ -335,7 +355,7 @@ pub fn try_init_plugins(
     let (new_plugins, new_errors) = parse_plugins(plugin_configs);
     plugins.extend(new_plugins);
     errors.extend(new_errors);
-    PLUGINS.store(Arc::new(plugins));
+    PLUGIN_PROVIDER.store(plugins);
     let error = if !errors.is_empty() {
         let error = errors
             .iter()
@@ -349,18 +369,6 @@ pub fn try_init_plugins(
     };
 
     (updated_plugins, error)
-}
-
-struct Loader {}
-
-impl PluginLoader for Loader {
-    fn load(&self, name: &str) -> Option<Arc<dyn Plugin>> {
-        PLUGINS.load().get(name).cloned()
-    }
-}
-
-pub fn new_plugin_loader() -> Arc<dyn PluginLoader> {
-    Arc::new(Loader {})
 }
 
 /// Helper functions for accessing plugin configuration values

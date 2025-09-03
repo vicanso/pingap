@@ -15,8 +15,20 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Location provider trait
 pub trait LocationProvider: Send + Sync {
+    /// Load a location by name
+    ///
+    /// # Arguments
+    /// * `name` - The name of the location to load
+    ///
+    /// # Returns
+    /// * `Option<Arc<Location>>` - The location if found, None otherwise
     fn load(&self, name: &str) -> Option<Arc<Location>>;
+    /// Get the stats of the locations
+    ///
+    /// # Returns
+    /// * `HashMap<String, LocationStats>` - The stats of the locations
     fn stats(&self) -> HashMap<String, LocationStats>;
 }
 

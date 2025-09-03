@@ -20,9 +20,12 @@ use pingora::http::RequestHeader;
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::sync::Arc;
 use tracing::{debug, error};
 
 const LOG_CATEGORY: &str = "location";
+
+pub type Locations = AHashMap<String, Arc<Location>>;
 
 // Error enum for various location-related errors
 #[derive(Debug, Snafu)]

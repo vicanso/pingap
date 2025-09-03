@@ -17,26 +17,45 @@ use arc_swap::ArcSwap;
 use once_cell::sync::Lazy;
 use pingap_config::Error;
 use pingap_config::LocationConf;
-use pingap_location::{Location, LocationProvider, LocationStats};
+use pingap_location::{Location, LocationProvider, LocationStats, Locations};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-type LocationsMap = AHashMap<String, Arc<Location>>;
-static LOCATION_MAP: Lazy<ArcSwap<LocationsMap>> =
-    Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
-
 type Result<T> = std::result::Result<T, Error>;
 
-/// Gets a map of current request processing and accepted counts for all locations.
-///
-/// # Returns
-/// * `HashMap<String, (i32, u64)>` - Map of location names to their current processing and accepted counts
-pub fn get_locations_stats() -> HashMap<String, LocationStats> {
-    let mut stats = HashMap::new();
-    LOCATION_MAP.load().iter().for_each(|(k, v)| {
-        stats.insert(k.to_string(), v.stats());
-    });
-    stats
+struct Provider {
+    locations: ArcSwap<Locations>,
+}
+
+impl Provider {
+    fn store(&self, data: Locations) {
+        self.locations.store(Arc::new(data));
+    }
+}
+
+impl LocationProvider for Provider {
+    fn load(&self, name: &str) -> Option<Arc<Location>> {
+        if name.is_empty() {
+            return None;
+        }
+        self.locations.load().get(name).cloned()
+    }
+    fn stats(&self) -> HashMap<String, LocationStats> {
+        let mut stats = HashMap::new();
+        self.locations.load().iter().for_each(|(k, v)| {
+            stats.insert(k.to_string(), v.stats());
+        });
+        stats
+    }
+}
+
+static LOCATION_PROVIDER: Lazy<Arc<Provider>> = Lazy::new(|| {
+    Arc::new(Provider {
+        locations: ArcSwap::from_pointee(AHashMap::new()),
+    })
+});
+pub fn new_location_provider() -> Arc<dyn LocationProvider> {
+    LOCATION_PROVIDER.clone()
 }
 
 /// Initializes or updates the global location configurations
@@ -47,7 +66,7 @@ pub fn try_init_locations(
     let mut locations = AHashMap::new();
     let mut updated_locations = vec![];
     for (name, conf) in location_configs.iter() {
-        if let Some(found) = get_location(name) {
+        if let Some(found) = LOCATION_PROVIDER.load(name) {
             if found.key == conf.hash_key() {
                 locations.insert(name.to_string(), found);
                 continue;
@@ -59,35 +78,6 @@ pub fn try_init_locations(
         })?;
         locations.insert(name.to_string(), Arc::new(lo));
     }
-    LOCATION_MAP.store(Arc::new(locations));
+    LOCATION_PROVIDER.store(locations);
     Ok(updated_locations)
-}
-
-/// Gets a location configuration by name from the global location map.
-///
-/// # Arguments
-/// * `name` - Name of the location to retrieve
-///
-/// # Returns
-/// * `Option<Arc<Location>>` - The location if found, None otherwise
-pub fn get_location(name: &str) -> Option<Arc<Location>> {
-    if name.is_empty() {
-        return None;
-    }
-    LOCATION_MAP.load().get(name).cloned()
-}
-
-struct Provider {}
-
-impl LocationProvider for Provider {
-    fn load(&self, name: &str) -> Option<Arc<Location>> {
-        get_location(name)
-    }
-    fn stats(&self) -> HashMap<String, LocationStats> {
-        get_locations_stats()
-    }
-}
-
-pub fn new_locations() -> Arc<dyn LocationProvider> {
-    Arc::new(Provider {})
 }

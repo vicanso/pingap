@@ -25,8 +25,8 @@ use std::sync::Arc;
 use tracing::info;
 
 struct PerformanceMetricsLogTask {
-    locations: Arc<dyn LocationProvider>,
-    upstreams: Arc<dyn UpstreamProvider>,
+    location_provider: Arc<dyn LocationProvider>,
+    upstream_provider: Arc<dyn UpstreamProvider>,
 }
 
 /// Joins a vector of strings into a single string separated by ", ".
@@ -58,7 +58,7 @@ impl BackgroundTask for PerformanceMetricsLogTask {
         // Collect active location processing counts
         // Format: "location1:count1, location2:count2, ..."
         let locations_stats_vec = self
-            .locations
+            .location_provider
             .stats()
             .into_iter()
             .filter(|(_, stats)| stats.processing != 0)
@@ -71,7 +71,7 @@ impl BackgroundTask for PerformanceMetricsLogTask {
         // Collect upstream processing and connection counts
 
         let (processing_vec, connected_vec) =
-            get_upstreams_processing_connected(self.upstreams.clone())
+            get_upstreams_processing_connected(self.upstream_provider.clone())
                 .into_iter()
                 .fold(
                     (Vec::new(), Vec::new()), // 初始值：一个包含两个空 Vec 的元组
@@ -93,7 +93,7 @@ impl BackgroundTask for PerformanceMetricsLogTask {
         let system_info = get_process_system_info();
         let (processing, accepted) = get_processing_accepted();
         let upstreams_healthy_status =
-            get_upstream_healthy_status(self.upstreams.clone())
+            get_upstream_healthy_status(self.upstream_provider.clone())
                 .iter()
                 .map(|(name, status)| {
                     format!("{name}:{}/{}", status.healthy, status.total)
@@ -125,11 +125,11 @@ impl BackgroundTask for PerformanceMetricsLogTask {
 /// Creates a new service that periodically logs performance metrics
 /// Returns a tuple of (service name, service task)
 pub fn new_performance_metrics_log_service(
-    locations: Arc<dyn LocationProvider>,
-    upstreams: Arc<dyn UpstreamProvider>,
+    location_provider: Arc<dyn LocationProvider>,
+    upstream_provider: Arc<dyn UpstreamProvider>,
 ) -> Box<dyn BackgroundTask> {
     Box::new(PerformanceMetricsLogTask {
-        locations,
-        upstreams,
+        location_provider,
+        upstream_provider,
     })
 }

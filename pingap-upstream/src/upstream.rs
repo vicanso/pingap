@@ -14,7 +14,7 @@
 
 use crate::hash_strategy::HashStrategy;
 use crate::peer_tracer::UpstreamPeerTracer;
-use crate::{UpstreamProvider, LOG_CATEGORY};
+use crate::{UpstreamProvider, Upstreams, LOG_CATEGORY};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -172,7 +172,7 @@ pub struct Upstream {
     tracer: Option<Tracer>,
 
     /// Counter for number of requests currently being processed by this upstream
-    pub processing: AtomicI32,
+    processing: AtomicI32,
 }
 
 impl Upstream {
@@ -226,10 +226,10 @@ fn new_backends(
 /// # Returns
 /// * `HashMap<String, (i32, Option<i32>)>` - Processing and connected status of all upstreams
 pub fn get_upstreams_processing_connected(
-    upstreams: Arc<dyn UpstreamProvider>,
+    upstream_provider: Arc<dyn UpstreamProvider>,
 ) -> HashMap<String, (i32, Option<i32>)> {
     let mut processing_connected = HashMap::new();
-    upstreams.list().iter().for_each(|(k, v)| {
+    upstream_provider.list().iter().for_each(|(k, v)| {
         let count = v.processing.load(Ordering::Relaxed);
         let connected = v.connected();
         processing_connected.insert(k.to_string(), (count, connected));
@@ -566,7 +566,6 @@ impl Upstream {
     }
 }
 
-pub type Upstreams = AHashMap<String, Arc<Upstream>>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpstreamHealthyStatus {
     pub healthy: u32,
@@ -581,10 +580,10 @@ pub struct UpstreamHealthyStatus {
 ///
 /// This function iterates through all upstreams and checks their health status.
 pub fn get_upstream_healthy_status(
-    upstreams: Arc<dyn UpstreamProvider>,
+    upstream_provider: Arc<dyn UpstreamProvider>,
 ) -> HashMap<String, UpstreamHealthyStatus> {
     let mut healthy_status = HashMap::new();
-    upstreams.list().iter().for_each(|(k, v)| {
+    upstream_provider.list().iter().for_each(|(k, v)| {
         let mut total = 0;
         let mut healthy = 0;
         let mut unhealthy_backends = vec![];
@@ -621,11 +620,34 @@ pub fn get_upstream_healthy_status(
     healthy_status
 }
 
+pub fn new_ahash_upstreams(
+    upstream_configs: &HashMap<String, UpstreamConf>,
+    upstream_provider: Arc<dyn UpstreamProvider>,
+    sender: Option<Arc<NotificationSender>>,
+) -> Result<(Upstreams, Vec<String>)> {
+    let mut upstreams = AHashMap::new();
+    let mut updated_upstreams = vec![];
+    for (name, conf) in upstream_configs.iter() {
+        let key = conf.hash_key();
+        if let Some(found) = upstream_provider.load(name) {
+            // not modified
+            if found.key == key {
+                upstreams.insert(name.to_string(), found);
+                continue;
+            }
+        }
+        let up = Arc::new(Upstream::new(name, conf, sender.clone())?);
+        upstreams.insert(name.to_string(), up);
+        updated_upstreams.push(name.to_string());
+    }
+    Ok((upstreams, updated_upstreams))
+}
+
 #[async_trait]
 impl BackgroundTask for HealthCheckTask {
     async fn execute(&self, check_count: u32) -> Result<bool, ServiceError> {
         // get upstream names
-        let upstreams = self.upstreams.list();
+        let upstreams = self.upstream_provider.list();
         let interval = self.interval.as_secs();
         // run health check for each upstream
         let jobs = upstreams.into_iter().map(|(name, up)| {
@@ -727,7 +749,8 @@ impl BackgroundTask for HealthCheckTask {
             let mut notify_healthy_upstreams = vec![];
             let mut unhealthy_upstreams = vec![];
             for (name, status) in
-                get_upstream_healthy_status(self.upstreams.clone()).iter()
+                get_upstream_healthy_status(self.upstream_provider.clone())
+                    .iter()
             {
                 if status.healthy == 0 {
                     unhealthy_upstreams.push(name.to_string());
@@ -772,19 +795,19 @@ struct HealthCheckTask {
     interval: Duration,
     sender: Option<Arc<NotificationSender>>,
     unhealthy_upstreams: ArcSwap<Vec<String>>,
-    upstreams: Arc<dyn UpstreamProvider>,
+    upstream_provider: Arc<dyn UpstreamProvider>,
 }
 
 pub fn new_upstream_health_check_task(
+    upstream_provider: Arc<dyn UpstreamProvider>,
     interval: Duration,
     sender: Option<Arc<NotificationSender>>,
-    upstreams: Arc<dyn UpstreamProvider>,
 ) -> BackgroundTaskService {
     let task = Box::new(HealthCheckTask {
         interval,
         sender,
         unhealthy_upstreams: ArcSwap::new(Arc::new(vec![])),
-        upstreams,
+        upstream_provider,
     });
     let name = "upstream_health_check";
     let mut service =

@@ -13,7 +13,6 @@
 // limitations under the License.
 
 mod headers;
-mod loader;
 mod server;
 mod server_conf;
 #[cfg(feature = "tracing")]
@@ -21,7 +20,6 @@ mod tracing;
 static LOG_CATEGORY: &str = "proxy";
 
 pub(crate) use headers::*;
-pub use loader::*;
 pub use server::*;
 pub use server_conf::*;
 #[allow(unused_imports)]

@@ -13,10 +13,12 @@
 // limitations under the License.
 
 use super::{Ctx, HttpResponse};
+use ahash::AHashMap;
 use async_trait::async_trait;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use std::borrow::Cow;
+use std::sync::Arc;
 use strum::EnumString;
 
 #[derive(
@@ -229,6 +231,20 @@ pub trait Plugin: Sync + Send {
         Ok(ResponseBodyPluginResult::Unchanged)
     }
 }
+
+/// Plugin provider trait
+pub trait PluginProvider: Send + Sync {
+    /// Load a plugin by name
+    ///
+    /// # Arguments
+    /// * `name` - The name of the plugin to load
+    ///
+    /// # Returns
+    /// * `Option<Arc<dyn Plugin>>` - The plugin if found, None otherwise
+    fn load(&self, name: &str) -> Option<Arc<dyn Plugin>>;
+}
+
+pub type Plugins = AHashMap<String, Arc<dyn Plugin>>;
 
 #[cfg(test)]
 mod tests {

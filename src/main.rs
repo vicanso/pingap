@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::locations::new_locations;
+use crate::locations::new_location_provider;
 use crate::locations::try_init_locations;
-use crate::plugin::new_plugin_loader;
-use crate::upstreams::new_upstreams;
+use crate::plugin::new_plugin_provider;
+use crate::upstreams::new_upstream_provider;
 use crate::upstreams::try_init_upstreams;
 use clap::Parser;
 use crossbeam_channel::Sender;
@@ -240,9 +240,9 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     let mut my_server = server::Server::new(None)?;
     let ps = Server::new(
         &server_conf,
-        new_locations(),
-        new_upstreams(),
-        new_plugin_loader(),
+        new_location_provider(),
+        new_upstream_provider(),
+        new_plugin_provider(),
     )?;
     let services = ps.run(&my_server.configuration)?;
     my_server.add_service(services.lb);
@@ -550,8 +550,8 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 "performance_metrics".to_string(),
                 new_performance_metrics_log_service(
-                    new_locations(),
-                    new_upstreams(),
+                    new_location_provider(),
+                    new_upstream_provider(),
                 ),
             ),
         ],
@@ -611,9 +611,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         let listen_80_port = server_conf.addr.ends_with(":80");
         let mut ps = Server::new(
             server_conf,
-            new_locations(),
-            new_upstreams(),
-            new_plugin_loader(),
+            new_location_provider(),
+            new_upstream_provider(),
+            new_plugin_provider(),
         )?;
         if enabled_http_challenge && listen_80_port {
             ps.enable_lets_encrypt();
@@ -653,9 +653,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     ));
 
     let upstream_health_check_task = new_upstream_health_check_task(
+        new_upstream_provider(),
         Duration::from_secs(10),
         webhook::get_webhook_sender(),
-        new_upstreams(),
     );
     my_server.add_service(background_service(
         &upstream_health_check_task.name(),

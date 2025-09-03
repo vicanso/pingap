@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use ahash::AHashMap;
 use std::sync::Arc;
 
 mod hash_strategy;
@@ -20,8 +21,22 @@ mod upstream;
 
 pub(crate) const LOG_CATEGORY: &str = "upstream";
 
+pub type Upstreams = AHashMap<String, Arc<Upstream>>;
+
+/// Upstream provider trait
 pub trait UpstreamProvider: Send + Sync {
+    /// Load an upstream by name
+    ///
+    /// # Arguments
+    /// * `name` - The name of the upstream to load
+    ///
+    /// # Returns
+    /// * `Option<Arc<Upstream>>` - The upstream if found, None otherwise
     fn load(&self, name: &str) -> Option<Arc<Upstream>>;
+    /// Get the list of upstreams
+    ///
+    /// # Returns
+    /// * `Vec<(String, Arc<Upstream>)>` - The list of upstreams
     fn list(&self) -> Vec<(String, Arc<Upstream>)>;
 }
 

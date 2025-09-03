@@ -58,6 +58,17 @@ graph TD
     plugin --> core
     plugin --> util
 
+    proxy --> acme
+    proxy --> certificate
+    proxy --> config
+    proxy --> core
+    proxy --> location
+    proxy --> logger
+    proxy --> otel
+    proxy --> performance
+    proxy --> upstream
+    proxy --> util
+
     upstream --> config
     upstream --> core
     upstream --> discovery

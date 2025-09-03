@@ -3479,11 +3479,9 @@ dependencies = [
  "humantime",
  "humantime-serde",
  "include-flate",
- "itoa",
  "mimalloc",
  "nanoid",
  "nix 0.29.0",
- "num_cpus",
  "once_cell",
  "pingap-acme",
  "pingap-cache",
@@ -3506,7 +3504,6 @@ dependencies = [
  "pretty_assertions",
  "regex",
  "rust-embed",
- "scopeguard",
  "serde",
  "serde_json",
  "sha2",
@@ -3518,7 +3515,6 @@ dependencies = [
  "tracing",
  "url",
  "urlencoding",
- "uuid",
 ]
 
 [[package]]
@@ -3750,11 +3746,9 @@ name = "pingap-location"
 version = "0.12.0"
 dependencies = [
  "ahash",
- "arc-swap",
  "bytesize",
  "criterion",
  "http",
- "once_cell",
  "pingap-config",
  "pingap-core",
  "pingora",
@@ -3962,7 +3956,6 @@ dependencies = [
  "derive_more",
  "futures",
  "futures-util",
- "once_cell",
  "pingap-config",
  "pingap-core",
  "pingap-discovery",
