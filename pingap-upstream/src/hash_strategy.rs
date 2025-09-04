@@ -16,7 +16,8 @@ use pingora::proxy::Session;
 use std::borrow::Cow;
 
 /// A pre-parsed, efficient representation of the hash strategy.
-pub(crate) enum HashStrategy {
+#[derive(PartialEq)]
+pub enum HashStrategy {
     Url,
     Ip,
     Header(String),
@@ -85,6 +86,25 @@ mod tests {
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
+
+    #[test]
+    fn test_new_hash_strategy() {
+        assert!(HashStrategy::Url == HashStrategy::from(("url", "")));
+        assert!(HashStrategy::Ip == HashStrategy::from(("ip", "")));
+        assert!(
+            HashStrategy::Header("User-Agent".to_string())
+                == HashStrategy::from(("header", "User-Agent"))
+        );
+        assert!(
+            HashStrategy::Cookie("deviceId".to_string())
+                == HashStrategy::from(("cookie", "deviceId"))
+        );
+        assert!(
+            HashStrategy::Query("id".to_string())
+                == HashStrategy::from(("query", "id"))
+        );
+        assert!(HashStrategy::Path == HashStrategy::from(("", "")));
+    }
 
     #[tokio::test]
     async fn test_get_hash_key_value() {

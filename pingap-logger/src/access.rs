@@ -460,7 +460,7 @@ impl Parser {
                     if let Some(status) = &ctx.state.status {
                         buf.extend_from_slice(status.as_str().as_bytes());
                     } else {
-                        buf.extend_from_slice(b"0");
+                        buf.extend_from_slice(b"-");
                     }
                 },
                 TagCategory::Latency => {
@@ -803,7 +803,7 @@ mod tests {
         };
         let log = p.format(&session, &ctx);
         assert_eq!(
-            "github.com GET /vicanso/pingap HTTP/1.1 size=1 10.1.1.1 1.1.1.1 https /vicanso/pingap?size=1 - pingap/0.1.1 0 0B 0 0 0B abc application/json true 192.186.1.1:6188 1 100ms test 300ms 1.2 nanoid",
+            "github.com GET /vicanso/pingap HTTP/1.1 size=1 10.1.1.1 1.1.1.1 https /vicanso/pingap?size=1 - pingap/0.1.1 0 0B - 0 0B abc application/json true 192.186.1.1:6188 1 100ms test 300ms 1.2 nanoid",
             log
         );
 

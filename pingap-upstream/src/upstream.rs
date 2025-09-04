@@ -818,13 +818,36 @@ pub fn new_upstream_health_check_task(
 
 #[cfg(test)]
 mod tests {
-    use super::{new_backends, Upstream, UpstreamConf};
+    use super::{new_backends, Upstream, UpstreamConf, UpstreamProvider};
+    use crate::{
+        get_upstream_healthy_status, get_upstreams_processing_connected,
+        new_ahash_upstreams,
+    };
     use pingap_discovery::Discovery;
     use pingora::protocols::ALPN;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
+    use std::collections::HashMap;
+    use std::sync::atomic::AtomicI32;
+    use std::sync::Arc;
     use std::time::Duration;
     use tokio_test::io::Builder;
+
+    struct TmpProvider {
+        upstream: Arc<Upstream>,
+    }
+
+    impl UpstreamProvider for TmpProvider {
+        fn load(&self, name: &str) -> Option<Arc<Upstream>> {
+            if name == self.upstream.name {
+                return Some(self.upstream.clone());
+            }
+            None
+        }
+        fn list(&self) -> Vec<(String, Arc<Upstream>)> {
+            vec![(self.upstream.name.clone(), self.upstream.clone())]
+        }
+    }
 
     #[test]
     fn test_new_backends() {
@@ -933,5 +956,117 @@ mod tests {
         .unwrap();
         assert_eq!(true, up.new_http_peer(&session, &None,).is_some());
         assert_eq!(true, up.as_round_robin().is_some());
+    }
+
+    #[test]
+    fn test_get_upstreams_processing_connected() {
+        let mut tmp_upstream = Upstream::new(
+            "test",
+            &UpstreamConf {
+                addrs: vec!["127.0.0.1:5001".to_string()],
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        tmp_upstream.processing = AtomicI32::new(10);
+        let upstream = Arc::new(tmp_upstream);
+
+        let stat = get_upstreams_processing_connected(Arc::new(TmpProvider {
+            upstream,
+        }));
+
+        assert_eq!(1, stat.len());
+        assert_eq!(10, stat.get("test").unwrap().0);
+    }
+
+    #[test]
+    fn test_get_upstream_healthy_status() {
+        let tmp_upstream = Upstream::new(
+            "test",
+            &UpstreamConf {
+                addrs: vec!["127.0.0.1:5001".to_string()],
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        let status = get_upstream_healthy_status(Arc::new(TmpProvider {
+            upstream: Arc::new(tmp_upstream),
+        }));
+        assert_eq!(1, status.len());
+        // no health check, so is healthy
+        assert_eq!(1, status.get("test").unwrap().healthy);
+    }
+
+    #[test]
+    fn test_new_ahash_upstreams() {
+        let mut tmp_upstream = Upstream::new(
+            "test",
+            &UpstreamConf {
+                addrs: vec!["127.0.0.1:5001".to_string()],
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        tmp_upstream.processing = AtomicI32::new(10);
+        let upstream = Arc::new(tmp_upstream);
+        let upstream_provider = Arc::new(TmpProvider { upstream });
+
+        let mut upstream_configs = HashMap::new();
+        upstream_configs.insert(
+            "test".to_string(),
+            UpstreamConf {
+                addrs: vec!["127.0.0.1:5001".to_string()],
+                ..Default::default()
+            },
+        );
+        let (upstreams, updated_upstreams) = new_ahash_upstreams(
+            &upstream_configs,
+            upstream_provider.clone(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(0, updated_upstreams.len());
+        assert_eq!(1, upstreams.len());
+        assert_eq!(true, upstreams.contains_key("test"));
+
+        // new upstream address
+        let mut upstream_configs = HashMap::new();
+        upstream_configs.insert(
+            "test".to_string(),
+            UpstreamConf {
+                addrs: vec!["127.0.0.1:5002".to_string()],
+                ..Default::default()
+            },
+        );
+        let (upstreams, updated_upstreams) = new_ahash_upstreams(
+            &upstream_configs,
+            upstream_provider.clone(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(1, updated_upstreams.len());
+        assert_eq!(1, upstreams.len());
+        assert_eq!(true, upstreams.contains_key("test"));
+
+        // new upstream, remove old upstream
+        let mut upstream_configs = HashMap::new();
+        upstream_configs.insert(
+            "test1".to_string(),
+            UpstreamConf {
+                addrs: vec!["127.0.0.1:5001".to_string()],
+                ..Default::default()
+            },
+        );
+        let (upstreams, updated_upstreams) =
+            new_ahash_upstreams(&upstream_configs, upstream_provider, None)
+                .unwrap();
+
+        assert_eq!(1, updated_upstreams.len());
+        assert_eq!(1, upstreams.len());
+        assert_eq!(false, upstreams.contains_key("test"));
+        assert_eq!(true, upstreams.contains_key("test1"));
     }
 }

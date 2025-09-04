@@ -36,3 +36,8 @@ tracing = { workspace = true }
 [dev-dependencies]
 pretty_assertions = "1.4.1"
 tokio-test = "0.4.4"
+criterion = { version = "0.7.0", features = ["html_reports"] }
+
+[[bench]]
+name = "bench"
+harness = false

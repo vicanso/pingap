@@ -40,4 +40,5 @@ pub trait UpstreamProvider: Send + Sync {
     fn list(&self) -> Vec<(String, Arc<Upstream>)>;
 }
 
+pub use hash_strategy::HashStrategy;
 pub use upstream::*;

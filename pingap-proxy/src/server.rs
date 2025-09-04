@@ -1429,6 +1429,7 @@ impl ProxyHttp for Server {
         self.handle_upstream_response_plugin(session, ctx, upstream_response)?;
         #[cfg(feature = "tracing")]
         inject_telemetry_headers(ctx, upstream_response);
+        ctx.upstream.status = Some(upstream_response.status);
 
         if ctx.state.status.is_none() {
             ctx.state.status = Some(upstream_response.status);

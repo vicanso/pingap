@@ -57,6 +57,39 @@ pub use tinyufo::TinyUfo;
 pub use ttl_lru_limit::*;
 pub use util::*;
 
+#[allow(dead_code)]
+#[cfg(test)]
+fn new_get_session(
+    headers: Vec<String>,
+    url: String,
+) -> std::sync::mpsc::Receiver<Option<pingora::proxy::Session>> {
+    let (tx, rx) = std::sync::mpsc::sync_channel(0);
+    std::thread::spawn(move || {
+        match tokio::runtime::Runtime::new() {
+            Ok(rt) => {
+                let send = async move {
+                    let headers = headers.join("\r\n");
+                    let input_header =
+                        format!("GET {url} HTTP/1.1\r\n{headers}\r\n\r\n");
+                    let mock_io = tokio_test::io::Builder::new()
+                        .read(input_header.as_bytes())
+                        .build();
+
+                    let mut session =
+                        pingora::proxy::Session::new_h1(Box::new(mock_io));
+                    session.read_request().await.unwrap();
+                    let _ = tx.send(Some(session));
+                };
+                rt.block_on(send);
+            },
+            Err(_e) => {
+                let _ = tx.send(None);
+            },
+        };
+    });
+    rx
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

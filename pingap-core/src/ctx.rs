@@ -178,6 +178,8 @@ pub struct UpstreamInfo {
     pub processing_count: Option<i32>,
     /// The current number of active connections to the upstream.
     pub connected_count: Option<i32>,
+    /// The HTTP status code of upstream response.
+    pub status: Option<StatusCode>,
 }
 
 /// State related to the current request being processed.
@@ -543,6 +545,13 @@ impl Ctx {
                     buf.extend(b"true");
                 } else {
                     buf.extend(b"false");
+                }
+            },
+            "upstream_status" => {
+                if let Some(status) = &self.upstream.status {
+                    buf.extend_from_slice(status.as_str().as_bytes());
+                } else {
+                    buf.extend_from_slice(b"-");
                 }
             },
             "upstream_addr" => buf.extend(self.upstream.address.as_bytes()),

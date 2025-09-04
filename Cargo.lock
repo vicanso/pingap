@@ -3953,6 +3953,7 @@ dependencies = [
  "arc-swap",
  "async-trait",
  "bytesize",
+ "criterion",
  "derive_more",
  "futures",
  "futures-util",

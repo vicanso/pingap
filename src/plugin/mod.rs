@@ -150,12 +150,25 @@ pub fn get_builtin_proxy_plugins() -> Vec<(String, PluginConf)> {
             "pingap:compression".to_string(),
             toml::from_str::<PluginConf>(
                 r###"
-step = "early_request"
 category = "compression"
 gzip_level = 6
 br_level = 6
-zstd_level = 6
+zstd_level = 3
 remark = "Compression for http, support zstd:3, br:6, gzip:6"
+"###,
+            )
+            .unwrap(),
+        ),
+        (
+            "pingap:compressionUpstream".to_string(),
+            toml::from_str::<PluginConf>(
+                r###"
+category = "compression"
+gzip_level = 6
+br_level = 6
+zstd_level = 3
+mode = "upstream"
+remark = "Compression for upstream response, support zstd:3, br:6, gzip:6"
 "###,
             )
             .unwrap(),
@@ -199,7 +212,7 @@ remark = "Generate a request id for service"
 category = "accept_encoding"
 encodings = "zstd, br, gzip"
 only_one_encoding = true
-remark = "Adjust the accept encoding order and choose one econding"
+remark = "Adjust the accept encoding order and choose one encoding"
 "###,
             )
             .unwrap(),
