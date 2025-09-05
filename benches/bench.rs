@@ -141,8 +141,8 @@ fn bench_location_filter(c: &mut Criterion) {
         )
         .unwrap();
         b.iter(|| {
-            lo.match_host_path("", "/api/users/me", &mut AHashMap::new());
-            lo.match_host_path("", "/rest", &mut AHashMap::new());
+            lo.match_host_path("", "/api/users/me");
+            lo.match_host_path("", "/rest");
         });
     });
 
@@ -157,8 +157,8 @@ fn bench_location_filter(c: &mut Criterion) {
         )
         .unwrap();
         b.iter(|| {
-            lo.match_host_path("", "/rest/api/users/me", &mut AHashMap::new());
-            lo.match_host_path("", "/rest", &mut AHashMap::new());
+            lo.match_host_path("", "/rest/api/users/me");
+            lo.match_host_path("", "/rest");
         });
     });
     group.bench_function("equal", |b| {
@@ -172,8 +172,8 @@ fn bench_location_filter(c: &mut Criterion) {
         )
         .unwrap();
         b.iter(|| {
-            lo.match_host_path("", "/api/users/me", &mut AHashMap::new());
-            lo.match_host_path("", "/api", &mut AHashMap::new());
+            lo.match_host_path("", "/api/users/me");
+            lo.match_host_path("", "/api");
         });
     });
 

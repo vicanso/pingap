@@ -552,8 +552,8 @@ impl Server {
         // use find_map to optimize logic, performance and readability
         let matched_info = locations.iter().find_map(|name| {
             let location = self.location_provider.load(name)?;
-            let mut captures = AHashMap::with_capacity(4);
-            if location.match_host_path(host, path, &mut captures) {
+            let (matched, captures) = location.match_host_path(host, path);
+            if matched {
                 Some((location, captures))
             } else {
                 None
@@ -566,7 +566,7 @@ impl Server {
 
         // only execute all subsequent operations after successtracingy matching location
         ctx.upstream.location = location.name.clone();
-        if !captures.is_empty() {
+        if let Some(captures) = captures {
             ctx.extend_variables(captures);
         }
 
@@ -759,52 +759,57 @@ impl Server {
         session: &mut Session,
         ctx: &mut Ctx,
     ) -> pingora::Result<bool> {
-        let plugin_count = ctx.plugins.as_ref().map_or(0, |p| p.len());
-        if plugin_count == 0 {
+        let plugins = match ctx.plugins.take() {
+            Some(p) => p,
+            None => return Ok(false), // No plugins, exit early.
+        };
+        if plugins.is_empty() {
             return Ok(false);
         }
-        for i in 0..plugin_count {
-            // get plugin reference in the loop, it's a cheap operation (Arc clone)
-            // this can solve the borrow checker problem in async for loop
-            let (name, plugin) = {
-                let p = ctx.plugins.as_ref().unwrap(); // ctx.plugins is not None
-                (p[i].0.clone(), p[i].1.clone())
-            };
-            let now = Instant::now();
-            let result = plugin.handle_request(step, session, ctx).await?;
-            let elapsed = now.elapsed().as_millis() as u32;
 
-            // extract repeated logging and timing logic
-            let mut record_time = |msg: &str| {
-                debug!(
-                    category = LOG_CATEGORY,
-                    name,
-                    elapsed,
-                    step = step.to_string(),
-                    "{msg}"
-                );
-                ctx.add_plugin_processing_time(&name, elapsed);
-            };
+        let result = async {
+            let mut request_done = false;
+            for (name, plugin) in plugins.iter() {
+                let now = Instant::now();
+                let result = plugin.handle_request(step, session, ctx).await?;
+                let elapsed = now.elapsed().as_millis() as u32;
 
-            match result {
-                RequestPluginResult::Skipped => {
-                    continue;
-                },
-                RequestPluginResult::Respond(resp) => {
-                    record_time("request plugin create new response");
-                    // ignore status >= 900
-                    if resp.status.as_u16() < 900 {
-                        ctx.state.status = Some(resp.status);
-                        resp.send(session).await?;
-                    }
-                    return Ok(true);
-                },
-                RequestPluginResult::Continue => {
-                    record_time("request plugin run and continue request");
-                },
+                // extract repeated logging and timing logic
+                let mut record_time = |msg: &str| {
+                    debug!(
+                        category = LOG_CATEGORY,
+                        name,
+                        elapsed,
+                        step = step.to_string(),
+                        "{msg}"
+                    );
+                    ctx.add_plugin_processing_time(name, elapsed);
+                };
+
+                match result {
+                    RequestPluginResult::Skipped => {
+                        continue;
+                    },
+                    RequestPluginResult::Respond(resp) => {
+                        record_time("request plugin create new response");
+                        // ignore status >= 900
+                        if resp.status.as_u16() < 900 {
+                            ctx.state.status = Some(resp.status);
+                            resp.send(session).await?;
+                        }
+                        request_done = true;
+                        break;
+                    },
+                    RequestPluginResult::Continue => {
+                        record_time("request plugin run and continue request");
+                    },
+                }
             }
+            Ok(request_done)
         }
-        Ok(false)
+        .await;
+        ctx.plugins = Some(plugins);
+        result
     }
 
     /// Run response plugins
@@ -815,31 +820,34 @@ impl Server {
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<()> {
-        let plugin_count = ctx.plugins.as_ref().map_or(0, |p| p.len());
-        if plugin_count == 0 {
+        let plugins = match ctx.plugins.take() {
+            Some(p) => p,
+            None => return Ok(()), // No plugins, exit early.
+        };
+        if plugins.is_empty() {
             return Ok(());
         }
-        for i in 0..plugin_count {
-            // get plugin reference in the loop, it's a cheap operation (Arc clone)
-            // this can solve the borrow checker problem in async for loop
-            let (name, plugin) = {
-                let p = ctx.plugins.as_ref().unwrap(); // ctx.plugins is not None
-                (p[i].0.clone(), p[i].1.clone())
-            };
-            let now = Instant::now();
-            if let ResponsePluginResult::Modified = plugin
-                .handle_response(session, ctx, upstream_response)
-                .await?
-            {
-                let elapsed = now.elapsed().as_millis() as u32;
-                debug!(
-                    category = LOG_CATEGORY,
-                    name, elapsed, "response plugin modify headers"
-                );
-                ctx.add_plugin_processing_time(&name, elapsed);
-            };
+
+        let result = async {
+            for (name, plugin) in plugins.iter() {
+                let now = Instant::now();
+                if let ResponsePluginResult::Modified = plugin
+                    .handle_response(session, ctx, upstream_response)
+                    .await?
+                {
+                    let elapsed = now.elapsed().as_millis() as u32;
+                    debug!(
+                        category = LOG_CATEGORY,
+                        name, elapsed, "response plugin modify headers"
+                    );
+                    ctx.add_plugin_processing_time(name, elapsed);
+                };
+            }
+            Ok(())
         }
-        Ok(())
+        .await;
+        ctx.plugins = Some(plugins);
+        result
     }
 
     #[inline]
@@ -849,30 +857,34 @@ impl Server {
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<()> {
-        let plugin_count = ctx.plugins.as_ref().map_or(0, |p| p.len());
-        if plugin_count == 0 {
+        let plugins = match ctx.plugins.take() {
+            Some(p) => p,
+            None => return Ok(()), // No plugins, exit early.
+        };
+        if plugins.is_empty() {
             return Ok(());
         }
-        for i in 0..plugin_count {
-            // get plugin reference in the loop, it's a cheap operation (Arc clone)
-            // this can solve the borrow checker problem in async for loop
-            let (name, plugin) = {
-                let p = ctx.plugins.as_ref().unwrap(); // ctx.plugins is not None
-                (p[i].0.clone(), p[i].1.clone())
-            };
-            let now = Instant::now();
-            if let ResponsePluginResult::Modified = plugin
-                .handle_upstream_response(session, ctx, upstream_response)?
-            {
-                let elapsed = now.elapsed().as_millis() as u32;
-                debug!(
-                    category = LOG_CATEGORY,
-                    name, elapsed, "upstream response plugin modify headers"
-                );
-                ctx.add_plugin_processing_time(&name, elapsed);
-            };
-        }
-        Ok(())
+
+        let result = {
+            for (name, plugin) in plugins.iter() {
+                let now = Instant::now();
+                if let ResponsePluginResult::Modified = plugin
+                    .handle_upstream_response(session, ctx, upstream_response)?
+                {
+                    let elapsed = now.elapsed().as_millis() as u32;
+                    debug!(
+                        category = LOG_CATEGORY,
+                        name,
+                        elapsed,
+                        "upstream response plugin modify headers"
+                    );
+                    ctx.add_plugin_processing_time(name, elapsed);
+                };
+            }
+            Ok(())
+        };
+        ctx.plugins = Some(plugins);
+        result
     }
 
     #[inline]
@@ -883,37 +895,39 @@ impl Server {
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
     ) -> pingora::Result<()> {
-        let plugin_count = ctx.plugins.as_ref().map_or(0, |p| p.len());
-        if plugin_count == 0 {
+        let plugins = match ctx.plugins.take() {
+            Some(p) => p,
+            None => return Ok(()), // No plugins, exit early.
+        };
+        if plugins.is_empty() {
             return Ok(());
         }
-        for i in 0..plugin_count {
-            // get plugin reference in the loop, it's a cheap operation (Arc clone)
-            // this can solve the borrow checker problem in async for loop
-            let (name, plugin) = {
-                let p = ctx.plugins.as_ref().unwrap(); // ctx.plugins is not None
-                (p[i].0.clone(), p[i].1.clone())
-            };
-            let now = Instant::now();
-            match plugin.handle_upstream_response_body(
-                session,
-                ctx,
-                body,
-                end_of_stream,
-            )? {
-                ResponseBodyPluginResult::PartialReplaced
-                | ResponseBodyPluginResult::FullyReplaced => {
-                    let elapsed = now.elapsed().as_millis() as u32;
-                    ctx.add_plugin_processing_time(&name, elapsed);
-                    debug!(
-                        category = LOG_CATEGORY,
-                        name, elapsed, "response body plugin modify body"
-                    );
-                },
-                _ => {},
+
+        let result = {
+            for (name, plugin) in plugins.iter() {
+                let now = Instant::now();
+                match plugin.handle_upstream_response_body(
+                    session,
+                    ctx,
+                    body,
+                    end_of_stream,
+                )? {
+                    ResponseBodyPluginResult::PartialReplaced
+                    | ResponseBodyPluginResult::FullyReplaced => {
+                        let elapsed = now.elapsed().as_millis() as u32;
+                        ctx.add_plugin_processing_time(name, elapsed);
+                        debug!(
+                            category = LOG_CATEGORY,
+                            name, elapsed, "response body plugin modify body"
+                        );
+                    },
+                    _ => {},
+                }
             }
-        }
-        Ok(())
+            Ok(())
+        };
+        ctx.plugins = Some(plugins);
+        result
     }
 
     #[inline]
@@ -924,37 +938,38 @@ impl Server {
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
     ) -> pingora::Result<()> {
-        let plugin_count = ctx.plugins.as_ref().map_or(0, |p| p.len());
-        if plugin_count == 0 {
+        let plugins = match ctx.plugins.take() {
+            Some(p) => p,
+            None => return Ok(()), // No plugins, exit early.
+        };
+        if plugins.is_empty() {
             return Ok(());
         }
-        for i in 0..plugin_count {
-            // get plugin reference in the loop, it's a cheap operation (Arc clone)
-            // this can solve the borrow checker problem in async for loop
-            let (name, plugin) = {
-                let p = ctx.plugins.as_ref().unwrap(); // ctx.plugins is not None
-                (p[i].0.clone(), p[i].1.clone())
-            };
-            let now = Instant::now();
-            match plugin.handle_response_body(
-                session,
-                ctx,
-                body,
-                end_of_stream,
-            )? {
-                ResponseBodyPluginResult::PartialReplaced
-                | ResponseBodyPluginResult::FullyReplaced => {
-                    let elapsed = now.elapsed().as_millis() as u32;
-                    ctx.add_plugin_processing_time(&name, elapsed);
-                    debug!(
-                        category = LOG_CATEGORY,
-                        name, elapsed, "response body plugin modify body"
-                    );
-                },
-                _ => {},
+        let result = {
+            for (name, plugin) in plugins.iter() {
+                let now = Instant::now();
+                match plugin.handle_response_body(
+                    session,
+                    ctx,
+                    body,
+                    end_of_stream,
+                )? {
+                    ResponseBodyPluginResult::PartialReplaced
+                    | ResponseBodyPluginResult::FullyReplaced => {
+                        let elapsed = now.elapsed().as_millis() as u32;
+                        ctx.add_plugin_processing_time(name, elapsed);
+                        debug!(
+                            category = LOG_CATEGORY,
+                            name, elapsed, "response body plugin modify body"
+                        );
+                    },
+                    _ => {},
+                }
             }
-        }
-        Ok(())
+            Ok(())
+        };
+        ctx.plugins = Some(plugins);
+        result
     }
 
     fn process_cache_control(
@@ -1054,14 +1069,6 @@ impl Server {
             return humantime::Duration::from(d).to_string();
         }
         String::new()
-    }
-
-    fn finalize_upstream_session(&self, ctx: &mut Ctx) {
-        ctx.timing.upstream_response =
-            get_latency(&ctx.timing.created_at, &ctx.timing.upstream_response);
-
-        #[cfg(feature = "tracing")]
-        set_otel_upstream_attrs(ctx);
     }
 }
 
@@ -1470,7 +1477,14 @@ impl ProxyHttp for Server {
         )?;
 
         if end_of_stream {
-            self.finalize_upstream_session(ctx);
+            ctx.timing.upstream_response = get_latency(
+                &ctx.timing.created_at,
+                &ctx.timing.upstream_response,
+            );
+
+            #[cfg(feature = "tracing")]
+            set_otel_upstream_attrs(ctx);
+            // self.finalize_upstream_session(ctx);
         }
         Ok(())
     }

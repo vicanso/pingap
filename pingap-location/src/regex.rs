@@ -38,23 +38,26 @@ impl RegexCapture {
     pub fn captures(
         &self,
         value: &str,
-        capture_variables: &mut AHashMap<String, String>,
-    ) -> bool {
+    ) -> (bool, Option<AHashMap<String, String>>) {
         // get captures, if not matched, return false
         let Some(captures) = self.re.captures(value) else {
-            return false;
+            return (false, None);
         };
+
+        let mut capture_variables = None;
 
         // iterate all named capture groups
         for name in self.re.capture_names().flatten() {
             if let Some(match_value) = captures.name(name) {
-                capture_variables
+                let values =
+                    capture_variables.get_or_insert_with(AHashMap::new);
+                values
                     .insert(name.to_string(), match_value.as_str().to_string());
             }
         }
 
         // return true if matched
-        true
+        (true, capture_variables)
     }
 }
 
@@ -69,9 +72,9 @@ mod tests {
             r"(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})",
         )
         .unwrap();
-        let mut capture_variables = AHashMap::new();
-        let matched = re.captures("2024-03-14", &mut capture_variables);
+        let (matched, capture_variables) = re.captures("2024-03-14");
         assert_eq!(true, matched);
+        let capture_variables = capture_variables.unwrap();
         assert_eq!("2024", capture_variables.get("year").unwrap());
         assert_eq!("03", capture_variables.get("month").unwrap());
         assert_eq!("14", capture_variables.get("day").unwrap());

@@ -1,4 +1,3 @@
-use ahash::AHashMap;
 use criterion::{criterion_group, criterion_main, Criterion};
 use pingap_config::LocationConf;
 use pingap_location::Location;
@@ -17,8 +16,7 @@ fn bench_match_host_path(c: &mut Criterion) {
         )
         .unwrap();
         b.iter(|| {
-            let matched =
-                lo.match_host_path("", "/api/users", &mut AHashMap::new());
+            let (matched, _) = lo.match_host_path("", "/api/users");
             if !matched {
                 panic!("match failed");
             }
@@ -35,8 +33,7 @@ fn bench_match_host_path(c: &mut Criterion) {
         )
         .unwrap();
         b.iter(|| {
-            let matched =
-                lo.match_host_path("", "/api/users", &mut AHashMap::new());
+            let (matched, _) = lo.match_host_path("", "/api/users");
             if !matched {
                 panic!("match failed");
             }
@@ -54,11 +51,7 @@ fn bench_match_host_path(c: &mut Criterion) {
         )
         .unwrap();
         b.iter(|| {
-            let matched = lo.match_host_path(
-                "pingap.io",
-                "/api/users",
-                &mut AHashMap::new(),
-            );
+            let (matched, _) = lo.match_host_path("pingap.io", "/api/users");
             if !matched {
                 panic!("match failed");
             }

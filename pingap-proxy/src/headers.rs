@@ -27,11 +27,11 @@ use std::sync::Arc;
 
 static DEFAULT_PROXY_SET_HEADERS: Lazy<Vec<HttpHeader>> = Lazy::new(|| {
     convert_headers(&[
-        "X-Real-IP:$remote_addr".to_string(),
-        "X-Forwarded-For:$proxy_add_x_forwarded_for".to_string(),
-        "X-Forwarded-Proto:$scheme".to_string(),
-        "X-Forwarded-Host:$host".to_string(),
-        "X-Forwarded-Port:$server_port".to_string(),
+        "x-real-ip:$remote_addr".to_string(),
+        "x-forwarded-for:$proxy_add_x_forwarded_for".to_string(),
+        "x-forwarded-proto:$scheme".to_string(),
+        "x-forwarded-host:$host".to_string(),
+        "x-forwarded-port:$server_port".to_string(),
     ])
     .unwrap()
 });
@@ -81,4 +81,118 @@ pub fn set_append_proxy_headers(
                 let _ = header.insert_header(k, value);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::set_append_proxy_headers;
+    use pingap_config::LocationConf;
+    use pingap_core::Ctx;
+    use pingap_location::Location;
+    use pingora::{http::RequestHeader, proxy::Session};
+    use pretty_assertions::assert_eq;
+    use std::sync::Arc;
+    use tokio_test::io::Builder;
+
+    async fn new_session() -> Session {
+        let headers = [
+            "Host: github.com",
+            "Referer: https://github.com/",
+            "User-Agent: pingap/0.1.1",
+            "Cookie: deviceId=abc",
+            "Accept: application/json",
+            "X-Uuid: 138q71",
+            "X-Forwarded-For: 1.1.1.1, 192.168.1.2",
+        ]
+        .join("\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?key=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        session
+    }
+
+    #[tokio::test]
+    async fn test_set_append_proxy_headers() {
+        let session = new_session().await;
+        let mut ctx = Ctx::default();
+        ctx.conn.remote_addr = Some("192.168.1.3".to_string());
+        ctx.conn.server_port = Some(8080);
+        let mut header = RequestHeader::build("GET", b"/", None).unwrap();
+        let location = Arc::new(
+            Location::new(
+                "test",
+                &LocationConf {
+                    enable_reverse_proxy_headers: Some(true),
+                    proxy_add_headers: Some(vec![
+                        "x-server:123".to_string(),
+                        "x-server:456".to_string(),
+                    ]),
+                    proxy_set_headers: Some(vec!["x-trace-id:ab".to_string()]),
+                    ..Default::default()
+                },
+            )
+            .unwrap(),
+        );
+        set_append_proxy_headers(&session, &ctx, &mut header, location);
+
+        assert_eq!(
+            "192.168.1.3",
+            header.headers.get("x-real-ip").unwrap().to_str().unwrap()
+        );
+        assert_eq!(
+            "1.1.1.1, 192.168.1.2, 192.168.1.3",
+            header
+                .headers
+                .get("x-forwarded-for")
+                .unwrap()
+                .to_str()
+                .unwrap()
+        );
+        assert_eq!(
+            "http",
+            header
+                .headers
+                .get("x-forwarded-proto")
+                .unwrap()
+                .to_str()
+                .unwrap()
+        );
+        assert_eq!(
+            "github.com",
+            header
+                .headers
+                .get("x-forwarded-host")
+                .unwrap()
+                .to_str()
+                .unwrap()
+        );
+        assert_eq!(
+            "8080",
+            header
+                .headers
+                .get("x-forwarded-port")
+                .unwrap()
+                .to_str()
+                .unwrap()
+        );
+
+        println!("{:?}", header.headers);
+
+        assert_eq!(
+            "123,456",
+            header
+                .headers
+                .get_all("x-server")
+                .iter()
+                .map(|v| v.to_str().unwrap())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        assert_eq!(
+            "ab",
+            header.headers.get("x-trace-id").unwrap().to_str().unwrap()
+        );
+    }
 }

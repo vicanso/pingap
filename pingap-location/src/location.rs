@@ -90,20 +90,16 @@ impl PathSelector {
         }
     }
     #[inline]
-    fn is_match(
-        &self,
-        path: &str,
-        captures: &mut AHashMap<String, String>,
-    ) -> bool {
+    fn is_match(&self, path: &str) -> (bool, Option<AHashMap<String, String>>) {
         match self {
             // For exact path matching, compare path strings directly
-            PathSelector::Equal(value) => value == path,
+            PathSelector::Equal(value) => (value == path, None),
             // For regex path matching, use regex is_match
-            PathSelector::Regex(value) => value.captures(path, captures),
+            PathSelector::Regex(value) => value.captures(path),
             // For prefix path matching, check if path starts with prefix
-            PathSelector::Prefix(value) => path.starts_with(value),
+            PathSelector::Prefix(value) => (path.starts_with(value), None),
             // Empty path selector matches everything
-            PathSelector::Any => true,
+            PathSelector::Any => (true, None),
         }
     }
 }
@@ -141,14 +137,10 @@ impl HostSelector {
         }
     }
     #[inline]
-    fn is_match(
-        &self,
-        host: &str,
-        captures: &mut AHashMap<String, String>,
-    ) -> bool {
+    fn is_match(&self, host: &str) -> (bool, Option<AHashMap<String, String>>) {
         match self {
-            HostSelector::Equal(value) => value == host,
-            HostSelector::Regex(value) => value.captures(host, captures),
+            HostSelector::Equal(value) => (value == host, None),
+            HostSelector::Regex(value) => value.captures(host),
         }
     }
 }
@@ -421,33 +413,38 @@ impl Location {
         &self,
         host: &str,
         path: &str,
-        captures: &mut AHashMap<String, String>,
-    ) -> bool {
+    ) -> (bool, Option<AHashMap<String, String>>) {
         // Check host matching against configured host patterns
         // let mut variables: Vec<(String, String)> = vec![];
 
         // First check path matching if a path pattern is configured
+        let mut capture_values = None;
         if !self.path.is_empty() {
-            let matched = self.path_selector.is_match(path, captures);
+            let (matched, captures) = self.path_selector.is_match(path);
             if !matched {
-                return false;
+                return (false, None);
             }
+            capture_values = captures;
         }
 
         // If no host patterns configured, path match is sufficient
         if self.hosts.is_empty() {
-            return true;
+            return (true, capture_values);
         }
 
         let matched = self.hosts.iter().any(|host_selector| {
-            let matched = host_selector.is_match(host, captures);
-            if matched {
-                return true;
+            let (matched, captures) = host_selector.is_match(host);
+            if let Some(captures) = captures {
+                if let Some(values) = capture_values.as_mut() {
+                    values.extend(captures);
+                } else {
+                    capture_values = Some(captures);
+                }
             }
-            false
+            matched
         });
 
-        matched
+        (matched, capture_values)
     }
 
     /// Applies URL rewriting rules if configured for this location.
@@ -568,11 +565,8 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(
-            true,
-            lo.match_host_path("pingap", "/api", &mut AHashMap::new())
-        );
-        assert_eq!(true, lo.match_host_path("", "", &mut AHashMap::new()));
+        assert_eq!(true, lo.match_host_path("pingap", "/api").0);
+        assert_eq!(true, lo.match_host_path("", "").0);
 
         // host
         let lo = Location::new(
@@ -584,15 +578,9 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(
-            true,
-            lo.match_host_path("pingap", "/api", &mut AHashMap::new())
-        );
-        assert_eq!(
-            true,
-            lo.match_host_path("pingap", "", &mut AHashMap::new())
-        );
-        assert_eq!(false, lo.match_host_path("", "/api", &mut AHashMap::new()));
+        assert_eq!(true, lo.match_host_path("pingap", "/api").0);
+        assert_eq!(true, lo.match_host_path("pingap", "").0);
+        assert_eq!(false, lo.match_host_path("", "/api").0);
 
         // regex
         let lo = Location::new(
@@ -604,15 +592,9 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(
-            true,
-            lo.match_host_path("", "/api/users", &mut AHashMap::new())
-        );
-        assert_eq!(
-            true,
-            lo.match_host_path("", "/users", &mut AHashMap::new())
-        );
-        assert_eq!(false, lo.match_host_path("", "/api", &mut AHashMap::new()));
+        assert_eq!(true, lo.match_host_path("", "/api/users").0);
+        assert_eq!(true, lo.match_host_path("", "/users").0);
+        assert_eq!(false, lo.match_host_path("", "/api").0);
 
         // regex ^/api
         let lo = Location::new(
@@ -624,15 +606,9 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(
-            true,
-            lo.match_host_path("", "/api/users", &mut AHashMap::new())
-        );
-        assert_eq!(
-            false,
-            lo.match_host_path("", "/users", &mut AHashMap::new())
-        );
-        assert_eq!(true, lo.match_host_path("", "/api", &mut AHashMap::new()));
+        assert_eq!(true, lo.match_host_path("", "/api/users").0);
+        assert_eq!(false, lo.match_host_path("", "/users").0);
+        assert_eq!(true, lo.match_host_path("", "/api").0);
 
         // prefix
         let lo = Location::new(
@@ -644,15 +620,9 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(
-            true,
-            lo.match_host_path("", "/api/users", &mut AHashMap::new())
-        );
-        assert_eq!(
-            false,
-            lo.match_host_path("", "/users", &mut AHashMap::new())
-        );
-        assert_eq!(true, lo.match_host_path("", "/api", &mut AHashMap::new()));
+        assert_eq!(true, lo.match_host_path("", "/api/users").0);
+        assert_eq!(false, lo.match_host_path("", "/users").0);
+        assert_eq!(true, lo.match_host_path("", "/api").0);
 
         // equal
         let lo = Location::new(
@@ -664,15 +634,9 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(
-            false,
-            lo.match_host_path("", "/api/users", &mut AHashMap::new())
-        );
-        assert_eq!(
-            false,
-            lo.match_host_path("", "/users", &mut AHashMap::new())
-        );
-        assert_eq!(true, lo.match_host_path("", "/api", &mut AHashMap::new()));
+        assert_eq!(false, lo.match_host_path("", "/api/users").0);
+        assert_eq!(false, lo.match_host_path("", "/users").0);
+        assert_eq!(true, lo.match_host_path("", "/api").0);
     }
 
     #[test]
@@ -687,13 +651,10 @@ mod tests {
             },
         )
         .unwrap();
-        let mut variables = AHashMap::new();
-        let matched = lo.match_host_path(
-            "charts.npmtrend.com",
-            "/users/123",
-            &mut variables,
-        );
+        let (matched, variables) =
+            lo.match_host_path("charts.npmtrend.com", "/users/123");
         assert_eq!(true, matched);
+        let variables = variables.unwrap();
         assert_eq!("users", variables.get("route").unwrap());
         assert_eq!("charts", variables.get("name").unwrap());
     }
