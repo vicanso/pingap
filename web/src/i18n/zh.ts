@@ -450,6 +450,8 @@ export default {
       "输入设置响应头的名称 : 输入设置响应头的值",
     responseHeadersRemoveHeader: "删除响应头",
     responseHeadersRemoveHeaderPlaceholder: "输入响应头名称",
+    responseHeadersMode: "模式",
+    responseHeadersModePlaceholder: "选择响应头模式",
     combinedAuthAuthorizations: "认证配置列表",
     combinedAuthAuthParameters: "认证参数",
     combinedAuthAuthAppIdPlaceholder: "输入应用id",

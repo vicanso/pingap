@@ -90,7 +90,7 @@ RUST_LOG=INFO pingap -c=/opt/pingap/conf \
 
 
 ```bash
-docker run -it -d --restart=always \
+docker run -d --restart=always \
   -v $PWD/pingap:/opt/pingap \
   -p 3018:3018 \
   -e PINGAP_ADMIN_ADDR=0.0.0.0:3018 \

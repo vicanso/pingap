@@ -103,7 +103,7 @@ Key flags:
 Run Pingap in a Docker container with auto-reload and admin interface enabled:
 
 ```bash
-docker run -it -d --restart=always \
+docker run -d --restart=always \
   -v $PWD/pingap:/opt/pingap \
   -p 3018:3018 \
   -e PINGAP_ADMIN_ADDR=0.0.0.0:3018 \
@@ -114,7 +114,6 @@ docker run -it -d --restart=always \
 ```
 
 Key options:
-- `-it`: Interactive terminal (allows input/output)
 - `-d`: Run container in detached/background mode
 - `--restart=always`: Automatically restart container if it stops
 - `-v $PWD/pingap:/opt/pingap`: Mount local config directory into container

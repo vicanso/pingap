@@ -960,6 +960,15 @@ export default function Plugins() {
           span: 6,
           category: ExFormItemCategory.KV_LIST,
         },
+        {
+          name: "mode",
+          label: pluginI18n("responseHeadersMode"),
+          placeholder: pluginI18n("responseHeadersModePlaceholder"),
+          defaultValue: pluginConfig.mode as string,
+          span: 6,
+          category: ExFormItemCategory.RADIOS,
+          options: newStringOptions(["upstream", "response"], true),
+        }
       );
       break;
     }

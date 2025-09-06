@@ -11,7 +11,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use super::{get_hash_key, get_plugin_factory, get_str_slice_conf, Error};
+use super::{
+    get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf, Error,
+};
 use async_trait::async_trait;
 use ctor::ctor;
 use http::header::HeaderName;
@@ -66,6 +68,9 @@ pub struct ResponseHeaders {
     /// - Format: Vec of (header_name, header_value) pairs
     ///   Example: [("x-default-header", "default-value")]
     set_headers_not_exists: Vec<HttpHeader>,
+
+    // upstream or response
+    mode: String,
 
     /// Unique identifier for this plugin instance
     /// Generated from the plugin configuration to track changes
@@ -157,6 +162,8 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
             }
         }
 
+        let mode = get_str_conf(value, "mode");
+
         let params = Self {
             hash_value,
             add_headers,
@@ -164,6 +171,7 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
             remove_headers,
             rename_headers,
             set_headers_not_exists,
+            mode,
         };
 
         Ok(params)
@@ -183,37 +191,9 @@ impl ResponseHeaders {
         debug!(params = params.to_string(), "new stats plugin");
         Self::try_from(params)
     }
-}
 
-#[async_trait]
-impl Plugin for ResponseHeaders {
-    /// Returns the unique hash key for this plugin instance.
     #[inline]
-    fn config_key(&self) -> Cow<'_, str> {
-        Cow::Borrowed(&self.hash_value)
-    }
-
-    /// Handles response header modifications during the response phase.
-    ///
-    /// # Arguments
-    /// * `session` - Current HTTP session
-    /// * `ctx` - Plugin state context
-    /// * `upstream_response` - Response headers to modify
-    ///
-    /// # Processing Order
-    /// 1. Add new headers (preserving existing values)
-    /// 2. Remove specified headers
-    /// 3. Set headers (overwriting existing values)
-    /// 4. Rename headers (moving values to new names)
-    ///
-    /// # Returns
-    /// * `Ok(())` - Headers processed successfully
-    /// * `Err(...)` - If a critical error occurs
-    ///
-    /// Note: Individual header operation failures are ignored to ensure
-    /// the response can still be processed.
-    #[inline]
-    async fn handle_response(
+    fn handle_headers(
         &self,
         session: &mut Session,
         ctx: &mut Ctx,
@@ -276,6 +256,61 @@ impl Plugin for ResponseHeaders {
             }
         }
         Ok(ResponsePluginResult::Modified)
+    }
+}
+
+#[async_trait]
+impl Plugin for ResponseHeaders {
+    /// Returns the unique hash key for this plugin instance.
+    #[inline]
+    fn config_key(&self) -> Cow<'_, str> {
+        Cow::Borrowed(&self.hash_value)
+    }
+
+    /// Handle upstream response header modifications.
+    #[inline]
+    fn handle_upstream_response(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        upstream_response: &mut ResponseHeader,
+    ) -> pingora::Result<ResponsePluginResult> {
+        if self.mode != "upstream" {
+            return Ok(ResponsePluginResult::Unchanged);
+        }
+        self.handle_headers(session, ctx, upstream_response)
+    }
+
+    /// Handles response header modifications during the response phase.
+    ///
+    /// # Arguments
+    /// * `session` - Current HTTP session
+    /// * `ctx` - Plugin state context
+    /// * `upstream_response` - Response headers to modify
+    ///
+    /// # Processing Order
+    /// 1. Add new headers (preserving existing values)
+    /// 2. Remove specified headers
+    /// 3. Set headers (overwriting existing values)
+    /// 4. Rename headers (moving values to new names)
+    ///
+    /// # Returns
+    /// * `Ok(())` - Headers processed successfully
+    /// * `Err(...)` - If a critical error occurs
+    ///
+    /// Note: Individual header operation failures are ignored to ensure
+    /// the response can still be processed.
+    #[inline]
+    async fn handle_response(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        upstream_response: &mut ResponseHeader,
+    ) -> pingora::Result<ResponsePluginResult> {
+        if self.mode == "upstream" {
+            return Ok(ResponsePluginResult::Unchanged);
+        }
+        self.handle_headers(session, ctx, upstream_response)
     }
 }
 

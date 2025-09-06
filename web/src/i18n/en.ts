@@ -487,6 +487,8 @@ export default {
       "Input the header name : Input the header value",
     responseHeadersRemoveHeader: "Remove Header",
     responseHeadersRemoveHeaderPlaceholder: "Input the header name",
+    responseHeadersMode: "Mode",
+    responseHeadersModePlaceholder: "Select the mode of response headers",
     combinedAuthAuthorizations: "Authorizations",
     combinedAuthAuthParameters: "Parameters",
     combinedAuthAuthAppIdPlaceholder: "Input the app id",
