@@ -37,7 +37,7 @@ impl Provider {
 }
 
 impl UpstreamProvider for Provider {
-    fn load(&self, name: &str) -> Option<Arc<Upstream>> {
+    fn get(&self, name: &str) -> Option<Arc<Upstream>> {
         self.upstreams.load().get(name).cloned()
     }
 

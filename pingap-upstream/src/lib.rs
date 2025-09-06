@@ -25,14 +25,14 @@ pub type Upstreams = AHashMap<String, Arc<Upstream>>;
 
 /// Upstream provider trait
 pub trait UpstreamProvider: Send + Sync {
-    /// Load an upstream by name
+    /// Get an upstream by name
     ///
     /// # Arguments
-    /// * `name` - The name of the upstream to load
+    /// * `name` - The name of the upstream to get
     ///
     /// # Returns
     /// * `Option<Arc<Upstream>>` - The upstream if found, None otherwise
-    fn load(&self, name: &str) -> Option<Arc<Upstream>>;
+    fn get(&self, name: &str) -> Option<Arc<Upstream>>;
     /// Get the list of upstreams
     ///
     /// # Returns

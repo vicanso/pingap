@@ -477,7 +477,7 @@ impl Server {
         session: &mut Session,
         ctx: &mut Ctx,
     ) -> pingora::Result<bool> {
-        if let Some(plugin) = self.plugin_provider.load("pingap:admin") {
+        if let Some(plugin) = self.plugin_provider.get("pingap:admin") {
             let result = plugin
                 .handle_request(PluginStep::Request, session, ctx)
                 .await?;
@@ -551,7 +551,7 @@ impl Server {
 
         // use find_map to optimize logic, performance and readability
         let matched_info = locations.iter().find_map(|name| {
-            let location = self.location_provider.load(name)?;
+            let location = self.location_provider.get(name)?;
             let (matched, captures) = location.match_host_path(host, path);
             if matched {
                 Some((location, captures))
@@ -688,8 +688,7 @@ impl Server {
         session: &mut Session,
         ctx: &mut Ctx,
     ) -> pingora::Result<bool> {
-        let Some(location) =
-            self.location_provider.load(&ctx.upstream.location)
+        let Some(location) = self.location_provider.get(&ctx.upstream.location)
         else {
             let header = session.req_header();
             let host = pingap_core::get_host(header).unwrap_or_default();
@@ -741,7 +740,7 @@ impl Server {
             .iter()
             .filter_map(|name| {
                 self.plugin_provider
-                    .load(name)
+                    .get(name)
                     .map(|plugin| (name.clone(), plugin))
             })
             .collect();
@@ -1082,7 +1081,7 @@ fn get_upstream_with_variables(
         .strip_prefix('$')
         .and_then(|var_name| ctx.get_variable(var_name))
         .unwrap_or(upstream);
-    upstreams.load(key)
+    upstreams.get(key)
 }
 
 #[async_trait]
@@ -1201,7 +1200,7 @@ impl ProxyHttp for Server {
         // let mut location_name = "unknown".to_string();
         let peer = self
             .location_provider
-            .load(&ctx.upstream.location)
+            .get(&ctx.upstream.location)
             .and_then(|location| {
                 let upstream = get_upstream_with_variables(
                     &location.upstream,
@@ -1296,7 +1295,7 @@ impl ProxyHttp for Server {
         debug!(category = LOG_CATEGORY, "--> upstream request filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream request filter"););
         if let Some(location) =
-            self.location_provider.load(&ctx.upstream.location)
+            self.location_provider.get(&ctx.upstream.location)
         {
             set_append_proxy_headers(session, ctx, upstream_response, location);
         }
@@ -1319,7 +1318,7 @@ impl ProxyHttp for Server {
         if let Some(buf) = body {
             ctx.state.payload_size += buf.len();
             if let Some(location) =
-                self.location_provider.load(&ctx.upstream.location)
+                self.location_provider.get(&ctx.upstream.location)
             {
                 location
                     .client_body_size_limit(ctx.state.payload_size)
@@ -1629,7 +1628,7 @@ impl ProxyHttp for Server {
         end_request();
         self.processing.fetch_sub(1, Ordering::Relaxed);
         if let Some(location) =
-            self.location_provider.load(&ctx.upstream.location)
+            self.location_provider.get(&ctx.upstream.location)
         {
             location.sub_processing();
         }
@@ -1809,7 +1808,7 @@ value = 'proxy_set_headers = ["name:value"]'
 
         struct TmpPluginLoader {}
         impl PluginProvider for TmpPluginLoader {
-            fn load(&self, _name: &str) -> Option<Arc<dyn Plugin>> {
+            fn get(&self, _name: &str) -> Option<Arc<dyn Plugin>> {
                 None
             }
         }
@@ -1817,7 +1816,7 @@ value = 'proxy_set_headers = ["name:value"]'
             location: Arc<Location>,
         }
         impl LocationProvider for TmpLocationLoader {
-            fn load(&self, _name: &str) -> Option<Arc<Location>> {
+            fn get(&self, _name: &str) -> Option<Arc<Location>> {
                 Some(self.location.clone())
             }
             fn stats(&self) -> HashMap<String, LocationStats> {
@@ -1828,7 +1827,7 @@ value = 'proxy_set_headers = ["name:value"]'
             upstream: Arc<Upstream>,
         }
         impl UpstreamProvider for TmpUpstreamLoader {
-            fn load(&self, _name: &str) -> Option<Arc<Upstream>> {
+            fn get(&self, _name: &str) -> Option<Arc<Upstream>> {
                 Some(self.upstream.clone())
             }
             fn list(&self) -> Vec<(String, Arc<Upstream>)> {

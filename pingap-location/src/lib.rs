@@ -17,14 +17,14 @@ use std::sync::Arc;
 
 /// Location provider trait
 pub trait LocationProvider: Send + Sync {
-    /// Load a location by name
+    /// Get a location by name
     ///
     /// # Arguments
-    /// * `name` - The name of the location to load
+    /// * `name` - The name of the location to get
     ///
     /// # Returns
     /// * `Option<Arc<Location>>` - The location if found, None otherwise
-    fn load(&self, name: &str) -> Option<Arc<Location>>;
+    fn get(&self, name: &str) -> Option<Arc<Location>>;
     /// Get the stats of the locations
     ///
     /// # Returns

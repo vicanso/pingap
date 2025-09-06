@@ -234,14 +234,14 @@ pub trait Plugin: Sync + Send {
 
 /// Plugin provider trait
 pub trait PluginProvider: Send + Sync {
-    /// Load a plugin by name
+    /// Get a plugin by name
     ///
     /// # Arguments
-    /// * `name` - The name of the plugin to load
+    /// * `name` - The name of the plugin to get
     ///
     /// # Returns
     /// * `Option<Arc<dyn Plugin>>` - The plugin if found, None otherwise
-    fn load(&self, name: &str) -> Option<Arc<dyn Plugin>>;
+    fn get(&self, name: &str) -> Option<Arc<dyn Plugin>>;
 }
 
 pub type Plugins = AHashMap<String, Arc<dyn Plugin>>;

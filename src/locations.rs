@@ -34,7 +34,7 @@ impl Provider {
 }
 
 impl LocationProvider for Provider {
-    fn load(&self, name: &str) -> Option<Arc<Location>> {
+    fn get(&self, name: &str) -> Option<Arc<Location>> {
         if name.is_empty() {
             return None;
         }
@@ -66,7 +66,7 @@ pub fn try_init_locations(
     let mut locations = AHashMap::new();
     let mut updated_locations = vec![];
     for (name, conf) in location_configs.iter() {
-        if let Some(found) = LOCATION_PROVIDER.load(name) {
+        if let Some(found) = LOCATION_PROVIDER.get(name) {
             if found.key == conf.hash_key() {
                 locations.insert(name.to_string(), found);
                 continue;

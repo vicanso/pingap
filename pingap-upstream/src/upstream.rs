@@ -629,7 +629,7 @@ pub fn new_ahash_upstreams(
     let mut updated_upstreams = vec![];
     for (name, conf) in upstream_configs.iter() {
         let key = conf.hash_key();
-        if let Some(found) = upstream_provider.load(name) {
+        if let Some(found) = upstream_provider.get(name) {
             // not modified
             if found.key == key {
                 upstreams.insert(name.to_string(), found);
@@ -838,7 +838,7 @@ mod tests {
     }
 
     impl UpstreamProvider for TmpProvider {
-        fn load(&self, name: &str) -> Option<Arc<Upstream>> {
+        fn get(&self, name: &str) -> Option<Arc<Upstream>> {
             if name == self.upstream.name {
                 return Some(self.upstream.clone());
             }

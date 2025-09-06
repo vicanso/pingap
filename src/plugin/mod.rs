@@ -237,7 +237,7 @@ static PLUGIN_PROVIDER: Lazy<Arc<Provider>> = Lazy::new(|| {
 });
 
 impl PluginProvider for Provider {
-    fn load(&self, name: &str) -> Option<Arc<dyn Plugin>> {
+    fn get(&self, name: &str) -> Option<Arc<dyn Plugin>> {
         self.plugins.load().get(name).cloned()
     }
 }
@@ -342,7 +342,7 @@ pub fn try_init_plugins(
         .filter(|(name, conf)| {
             let conf_hash_key = get_hash_key(conf);
             let mut exists = false;
-            if let Some(plugin) = PLUGIN_PROVIDER.load(name) {
+            if let Some(plugin) = PLUGIN_PROVIDER.get(name) {
                 exists = true;
                 // exists plugin with same config
                 if plugin.config_key() == conf_hash_key {
