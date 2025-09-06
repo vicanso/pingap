@@ -112,6 +112,44 @@ enum SelectionLb {
     Transparent,
 }
 
+impl SelectionLb {
+    fn get_health_frequency(&self) -> (u64, u64) {
+        match self {
+            SelectionLb::RoundRobin(lb) => (
+                lb.update_frequency.unwrap_or_default().as_secs(),
+                lb.health_check_frequency.unwrap_or_default().as_secs(),
+            ),
+            SelectionLb::Consistent { lb, .. } => (
+                lb.update_frequency.unwrap_or_default().as_secs(),
+                lb.health_check_frequency.unwrap_or_default().as_secs(),
+            ),
+            SelectionLb::Transparent => (0, 0),
+        }
+    }
+    async fn update(&self) -> pingora::Result<()> {
+        match self {
+            SelectionLb::RoundRobin(lb) => lb.update().await,
+            SelectionLb::Consistent { lb, .. } => lb.update().await,
+            SelectionLb::Transparent => Ok(()),
+        }
+    }
+    async fn run_health_check(&self) {
+        match self {
+            SelectionLb::RoundRobin(lb) => {
+                lb.backends()
+                    .run_health_check(lb.parallel_health_check)
+                    .await
+            },
+            SelectionLb::Consistent { lb, .. } => {
+                lb.backends()
+                    .run_health_check(lb.parallel_health_check)
+                    .await
+            },
+            SelectionLb::Transparent => (),
+        }
+    }
+}
+
 #[derive(Debug)]
 /// Represents a group of backend servers and their configuration for load balancing and connection management
 pub struct Upstream {
@@ -177,23 +215,12 @@ pub struct Upstream {
 
 impl Upstream {
     pub async fn run_health_check(&self) -> Result<()> {
-        if let Some(lb) = self.as_round_robin() {
-            lb.update().await.map_err(|e| Error::Common {
-                category: "run_health_check".to_string(),
-                message: e.to_string(),
-            })?;
-            lb.backends()
-                .run_health_check(lb.parallel_health_check)
-                .await;
-        } else if let Some(lb) = self.as_consistent() {
-            lb.update().await.map_err(|e| Error::Common {
-                category: "run_health_check".to_string(),
-                message: e.to_string(),
-            })?;
-            lb.backends()
-                .run_health_check(lb.parallel_health_check)
-                .await;
-        }
+        self.lb.update().await.map_err(|e| Error::Common {
+            category: "run_health_check".to_string(),
+            message: e.to_string(),
+        })?;
+        self.lb.run_health_check().await;
+
         Ok(())
     }
     pub fn is_transparent(&self) -> bool {
@@ -335,29 +362,29 @@ fn new_load_balancer(
     // let algo_method = conf.algo.clone().unwrap_or_default();
     let algo_method = conf.algo.as_deref().unwrap_or("round_robin");
 
-    match algo_method.split(':').collect::<Vec<_>>().as_slice() {
-        ["hash", hash_type, hash_key] => {
-            let lb = update_health_check_params(
-                LoadBalancer::<Consistent>::from_backends(backends),
-                name,
-                conf,
-                sender,
-            )?;
-            Ok(SelectionLb::Consistent {
-                lb,
-                hash: HashStrategy::from((*hash_type, *hash_key)),
-            })
-        },
-        _ => {
-            // Default to RoundRobin
-            let lb = update_health_check_params(
-                LoadBalancer::<RoundRobin>::from_backends(backends),
-                name,
-                conf,
-                sender,
-            )?;
-            Ok(SelectionLb::RoundRobin(lb))
-        },
+    let parts: Vec<&str> = algo_method.split(':').collect();
+    if parts.first() == Some(&"hash") && parts.len() >= 2 {
+        let hash_type = parts[1];
+        let hash_key = parts.get(2).copied().unwrap_or_default();
+        let lb = update_health_check_params(
+            LoadBalancer::<Consistent>::from_backends(backends),
+            name,
+            conf,
+            sender,
+        )?;
+        Ok(SelectionLb::Consistent {
+            lb,
+            hash: HashStrategy::from((hash_type, hash_key)),
+        })
+    } else {
+        // Default to RoundRobin
+        let lb = update_health_check_params(
+            LoadBalancer::<RoundRobin>::from_backends(backends),
+            name,
+            conf,
+            sender,
+        )?;
+        Ok(SelectionLb::RoundRobin(lb))
     }
 }
 
@@ -664,25 +691,7 @@ impl BackgroundTask for HealthCheckTask {
                 // get update frequency(update service)
                 // and health check frequency
                 let (update_frequency, health_check_frequency) =
-                    if let Some(lb) = up.as_round_robin() {
-                        let update_frequency =
-                            lb.update_frequency.unwrap_or_default().as_secs();
-                        let health_check_frequency = lb
-                            .health_check_frequency
-                            .unwrap_or_default()
-                            .as_secs();
-                        (update_frequency, health_check_frequency)
-                    } else if let Some(lb) = up.as_consistent() {
-                        let update_frequency =
-                            lb.update_frequency.unwrap_or_default().as_secs();
-                        let health_check_frequency = lb
-                            .health_check_frequency
-                            .unwrap_or_default()
-                            .as_secs();
-                        (update_frequency, health_check_frequency)
-                    } else {
-                        (0, 0)
-                    };
+                    up.lb.get_health_frequency();
 
                 // the first time should match
                 // update check
@@ -690,13 +699,7 @@ impl BackgroundTask for HealthCheckTask {
                     || (update_frequency > 0
                         && check_frequency_matched(update_frequency))
                 {
-                    let result = if let Some(lb) = up.as_round_robin() {
-                        lb.update().await
-                    } else if let Some(lb) = up.as_consistent() {
-                        lb.update().await
-                    } else {
-                        Ok(())
-                    };
+                    let result = up.lb.update().await;
                     if let Err(e) = result {
                         error!(
                             category = LOG_CATEGORY,
@@ -717,15 +720,7 @@ impl BackgroundTask for HealthCheckTask {
                     return;
                 }
                 let health_check_start_time = SystemTime::now();
-                if let Some(lb) = up.as_round_robin() {
-                    lb.backends()
-                        .run_health_check(lb.parallel_health_check)
-                        .await;
-                } else if let Some(lb) = up.as_consistent() {
-                    lb.backends()
-                        .run_health_check(lb.parallel_health_check)
-                        .await;
-                }
+                up.lb.run_health_check().await;
                 info!(
                     category = LOG_CATEGORY,
                     name,
@@ -818,7 +813,10 @@ pub fn new_upstream_health_check_task(
 
 #[cfg(test)]
 mod tests {
-    use super::{new_backends, Upstream, UpstreamConf, UpstreamProvider};
+    use super::{
+        new_backends, new_load_balancer, Upstream, UpstreamConf,
+        UpstreamProvider,
+    };
     use crate::{
         get_upstream_healthy_status, get_upstreams_processing_connected,
         new_ahash_upstreams,
@@ -828,7 +826,7 @@ mod tests {
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
-    use std::sync::atomic::AtomicI32;
+    use std::sync::atomic::{AtomicI32, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
     use tokio_test::io::Builder;
@@ -954,8 +952,25 @@ mod tests {
             None,
         )
         .unwrap();
+        up.processing.fetch_add(10, Ordering::Relaxed);
+        let value = up.processing.load(Ordering::Relaxed);
+        assert_eq!(value, up.completed());
+        assert_eq!(value - 1, up.processing.load(Ordering::Relaxed));
         assert_eq!(true, up.new_http_peer(&session, &None,).is_some());
         assert_eq!(true, up.as_round_robin().is_some());
+
+        // test consistent hash
+        let tmp_upstream = Upstream::new(
+            "ip",
+            &UpstreamConf {
+                addrs: vec!["127.0.0.1:5001".to_string()],
+                algo: Some("hash:ip".to_string()),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(true, tmp_upstream.as_consistent().is_some());
     }
 
     #[test]
@@ -997,6 +1012,23 @@ mod tests {
         assert_eq!(1, status.len());
         // no health check, so is healthy
         assert_eq!(1, status.get("test").unwrap().healthy);
+
+        let tmp_upstream = Upstream::new(
+            "ip",
+            &UpstreamConf {
+                addrs: vec!["127.0.0.1:5001".to_string()],
+                algo: Some("hash:ip".to_string()),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        let status = get_upstream_healthy_status(Arc::new(TmpProvider {
+            upstream: Arc::new(tmp_upstream),
+        }));
+        assert_eq!(1, status.len());
+        // no health check, so is healthy
+        assert_eq!(1, status.get("ip").unwrap().healthy);
     }
 
     #[test]
@@ -1068,5 +1100,47 @@ mod tests {
         assert_eq!(1, upstreams.len());
         assert_eq!(false, upstreams.contains_key("test"));
         assert_eq!(true, upstreams.contains_key("test1"));
+    }
+
+    #[test]
+    fn test_selection_load_balancer() {
+        let round_robin = new_load_balancer(
+            "test",
+            &UpstreamConf {
+                discovery: Some("dns".to_string()),
+                addrs: vec!["127.0.0.1:3000".to_string()],
+                update_frequency: Some(Duration::from_secs(5)),
+                health_check: Some(
+                    "http://127.0.0.1:3000/?check_frequency=3s".to_string(),
+                ),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        let (update_frequency, health_check_frequency) =
+            round_robin.get_health_frequency();
+        assert_eq!(5, update_frequency);
+        assert_eq!(3, health_check_frequency);
+
+        let consistent = new_load_balancer(
+            "test",
+            &UpstreamConf {
+                discovery: Some("dns".to_string()),
+                algo: Some("hash:ip".to_string()),
+                addrs: vec!["127.0.0.1:3000".to_string()],
+                update_frequency: Some(Duration::from_secs(10)),
+                health_check: Some(
+                    "http://127.0.0.1:3000/?check_frequency=2s".to_string(),
+                ),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        let (update_frequency, health_check_frequency) =
+            consistent.get_health_frequency();
+        assert_eq!(10, update_frequency);
+        assert_eq!(2, health_check_frequency);
     }
 }

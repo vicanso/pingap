@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use pingap_core::{
+    get_client_ip, get_cookie_value, get_query_value, get_req_header_value,
+};
 use pingora::proxy::Session;
 use std::borrow::Cow;
 
@@ -42,21 +45,21 @@ impl HashStrategy {
                 if let Some(ip) = client_ip {
                     Cow::Borrowed(ip)
                 } else {
-                    Cow::Owned(pingap_core::get_client_ip(session))
+                    Cow::Owned(get_client_ip(session))
                 }
             },
             HashStrategy::Header(key) => {
-                pingap_core::get_req_header_value(session.req_header(), key)
+                get_req_header_value(session.req_header(), key)
                     .map(Cow::Borrowed)
                     .unwrap_or(Cow::Borrowed(""))
             },
             HashStrategy::Cookie(key) => {
-                pingap_core::get_cookie_value(session.req_header(), key)
+                get_cookie_value(session.req_header(), key)
                     .map(Cow::Borrowed)
                     .unwrap_or(Cow::Borrowed(""))
             },
             HashStrategy::Query(key) => {
-                pingap_core::get_query_value(session.req_header(), key)
+                get_query_value(session.req_header(), key)
                     .map(Cow::Borrowed)
                     .unwrap_or(Cow::Borrowed(""))
             },
