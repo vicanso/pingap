@@ -15,6 +15,8 @@
 use crate::locations::new_location_provider;
 use crate::locations::try_init_locations;
 use crate::plugin::new_plugin_provider;
+use crate::server_locations::new_server_locations_provider;
+use crate::server_locations::try_init_server_locations;
 use crate::upstreams::new_upstream_provider;
 use crate::upstreams::try_init_upstreams;
 use clap::Parser;
@@ -35,9 +37,7 @@ use pingap_imageoptim::ImageOptim;
 use pingap_otel::TracerService;
 use pingap_performance::new_performance_metrics_log_service;
 use pingap_plugin::get_plugin_factory;
-use pingap_proxy::{
-    parse_from_conf, try_init_server_locations, Server, ServerConf,
-};
+use pingap_proxy::{parse_from_conf, Server, ServerConf};
 use pingap_upstream::new_upstream_health_check_task;
 use pingora::server;
 use pingora::server::configuration::Opt;
@@ -57,6 +57,7 @@ use tracing::{error, info};
 mod locations;
 mod plugin;
 mod process;
+mod server_locations;
 mod upstreams;
 mod webhook;
 
@@ -240,6 +241,7 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     let mut my_server = server::Server::new(None)?;
     let ps = Server::new(
         &server_conf,
+        new_server_locations_provider(),
         new_location_provider(),
         new_upstream_provider(),
         new_plugin_provider(),
@@ -611,6 +613,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         let listen_80_port = server_conf.addr.ends_with(":80");
         let mut ps = Server::new(
             server_conf,
+            new_server_locations_provider(),
             new_location_provider(),
             new_upstream_provider(),
             new_plugin_provider(),

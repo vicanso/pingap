@@ -18,8 +18,7 @@ use super::tracing::{
     set_otel_upstream_attrs, update_otel_cache_attrs,
 };
 use super::{set_append_proxy_headers, ServerConf, LOG_CATEGORY};
-use ahash::AHashMap;
-use arc_swap::ArcSwap;
+use crate::ServerLocationsProvider;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
@@ -71,7 +70,6 @@ use pingora::services::listening::Service;
 use pingora::upstreams::peer::{HttpPeer, Peer};
 use scopeguard::defer;
 use snafu::Snafu;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -83,63 +81,6 @@ pub enum Error {
     Common { category: String, message: String },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
-
-/// Represents a mapping of server names to their location configurations.
-/// This allows efficient lookup of location settings for each virtual host/server.
-type ServerLocations = AHashMap<String, Arc<Vec<String>>>;
-
-/// Global static map storing server location configurations.
-/// Uses ArcSwap for thread-safe atomic updates without locking.
-static SERVER_LOCATIONS_MAP: Lazy<ArcSwap<ServerLocations>> =
-    Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
-
-/// Initializes server locations with their associated configurations.
-/// - Orders locations by weight to determine processing priority
-/// - Updates only modified server configurations
-/// - Returns list of updated server names
-pub fn try_init_server_locations(
-    servers: &HashMap<String, pingap_config::ServerConf>,
-    locations: &HashMap<String, pingap_config::LocationConf>,
-) -> Result<Vec<String>> {
-    // get the location weight
-    let mut location_weights = HashMap::new();
-    for (name, item) in locations.iter() {
-        location_weights.insert(name.to_string(), item.get_weight());
-    }
-    let mut server_locations = AHashMap::new();
-    let mut updated_servers = vec![];
-    for (name, server) in servers.iter() {
-        if let Some(items) = &server.locations {
-            let mut items = items.clone();
-            // sort the location by weight
-            items.sort_by_key(|item| {
-                let weight = location_weights
-                    .get(item.as_str())
-                    .map(|value| value.to_owned())
-                    .unwrap_or_default();
-                std::cmp::Reverse(weight)
-            });
-            let mut not_modified = false;
-            if let Some(current_locations) = get_server_locations(name) {
-                if current_locations.join(",") == items.join(",") {
-                    not_modified = true;
-                }
-            }
-            if !not_modified {
-                updated_servers.push(name.to_string());
-            }
-
-            server_locations.insert(name.to_string(), Arc::new(items));
-        }
-    }
-    SERVER_LOCATIONS_MAP.store(Arc::new(server_locations));
-    Ok(updated_servers)
-}
-
-#[inline]
-fn get_server_locations(name: &str) -> Option<Arc<Vec<String>>> {
-    SERVER_LOCATIONS_MAP.load().get(name).cloned()
-}
 
 #[inline]
 pub fn get_start_time(started_at: &Instant) -> i32 {
@@ -241,6 +182,8 @@ pub struct Server {
     // downstream write timeout
     downstream_write_timeout: Option<Duration>,
 
+    // server locations
+    server_locations_provider: Arc<dyn ServerLocationsProvider>,
     // plugin loader
     plugin_provider: Arc<dyn PluginProvider>,
 
@@ -270,6 +213,7 @@ impl Server {
     /// - Threading configuration
     pub fn new(
         conf: &ServerConf,
+        server_locations_provider: Arc<dyn ServerLocationsProvider>,
         location_provider: Arc<dyn LocationProvider>,
         upstream_provider: Arc<dyn UpstreamProvider>,
         plugin_provider: Arc<dyn PluginProvider>,
@@ -336,6 +280,7 @@ impl Server {
             modules: conf.modules.clone(),
             downstream_read_timeout: conf.downstream_read_timeout,
             downstream_write_timeout: conf.downstream_write_timeout,
+            server_locations_provider,
             location_provider,
             upstream_provider,
             plugin_provider,
@@ -545,7 +490,8 @@ impl Server {
         let path = header.uri.path();
 
         // locations not found
-        let Some(locations) = get_server_locations(&self.name) else {
+        let Some(locations) = self.server_locations_provider.get(&self.name)
+        else {
             return Ok(());
         };
 
@@ -1701,6 +1647,7 @@ mod tests {
     use pingora::server::configuration;
     use pingora::services::Service;
     use pretty_assertions::assert_eq;
+    use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::{Duration, SystemTime};
     use tokio_test::io::Builder;
@@ -1790,8 +1737,6 @@ category = "config"
 value = 'proxy_set_headers = ["name:value"]'
         "###;
         let pingap_conf = PingapConf::new(toml_data.as_ref(), false).unwrap();
-        try_init_server_locations(&pingap_conf.servers, &pingap_conf.locations)
-            .unwrap();
 
         let location = Arc::new(
             Location::new("lo", pingap_conf.locations.get("lo").unwrap())
@@ -1834,9 +1779,21 @@ value = 'proxy_set_headers = ["name:value"]'
                 vec![("charts".to_string(), self.upstream.clone())]
             }
         }
+        struct TmpServerLocationsLoader {
+            server_locations: Arc<Vec<String>>,
+        }
+        impl ServerLocationsProvider for TmpServerLocationsLoader {
+            fn get(&self, _name: &str) -> Option<Arc<Vec<String>>> {
+                Some(self.server_locations.clone())
+            }
+        }
+
         let confs = parse_from_conf(pingap_conf);
         Server::new(
             &confs[0],
+            Arc::new(TmpServerLocationsLoader {
+                server_locations: Arc::new(vec!["lo".to_string()]),
+            }),
             Arc::new(TmpLocationLoader { location }),
             Arc::new(TmpUpstreamLoader { upstream }),
             Arc::new(TmpPluginLoader {}),

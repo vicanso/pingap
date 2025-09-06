@@ -15,5 +15,6 @@
 pub mod locations;
 pub mod plugin;
 pub mod process;
+pub mod server_locations;
 pub mod upstreams;
 pub mod webhook;

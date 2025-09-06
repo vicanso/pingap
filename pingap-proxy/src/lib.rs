@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use ahash::AHashMap;
+use std::sync::Arc;
+
 mod headers;
 mod server;
 mod server_conf;
@@ -25,3 +28,15 @@ pub use server_conf::*;
 #[allow(unused_imports)]
 #[cfg(feature = "tracing")]
 pub(crate) use tracing::*;
+
+pub trait ServerLocationsProvider: Send + Sync {
+    /// Get the locations of the server
+    ///
+    /// # Arguments
+    /// * `name` - The name of the server to get
+    ///
+    /// # Returns
+    /// * `Option<Arc<Vec<String>>>` - The locations of the server if found, None otherwise
+    fn get(&self, name: &str) -> Option<Arc<Vec<String>>>;
+}
+pub type ServerLocations = AHashMap<String, Arc<Vec<String>>>;
