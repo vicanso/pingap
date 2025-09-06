@@ -3894,7 +3894,6 @@ name = "pingap-proxy"
 version = "0.12.0"
 dependencies = [
  "ahash",
- "arc-swap",
  "async-trait",
  "bytes",
  "cfg-if",
