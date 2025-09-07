@@ -39,7 +39,7 @@ msrv:
 
 
 bloat:
-	cargo bloat --release --crates
+	cargo bloat --release --crates --bin pingap
 
 outdated:
 	cargo outdated

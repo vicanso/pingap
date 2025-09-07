@@ -105,6 +105,7 @@ tokio-test = "0.4.4"
 codegen-units = 1
 lto = true
 strip = true
+panic = "abort"
 
 [profile.release-perf]
 inherits = "release"
