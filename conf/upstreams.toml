@@ -84,8 +84,8 @@ addrs = ["127.0.0.1:5000", "127.0.0.1:5001 10"]
 # read_timeout = "10s"
 
 # How long to wait before closing a idle connection waiting for connection reuse
-# Default `none`
-# idle_timeout = "2m"
+# Default `1m`
+# idle_timeout = "1m"
 
 # How long to wait before a `write()` to upstream finishes
 # Default `none`

@@ -1,0 +1,21 @@
+[locations.testLocation]
+plugins = ["mockApiTest"]
+upstream = "nginx"
+
+[plugins.mockApiTest]
+category = "mock"
+data = '{"status": "ok", "message": "This is a test response generated successfully.", "source": "nginx-direct-return"}'
+headers = [
+    "content-type:application/json",
+    "cache-control:public, max-age=60",
+]
+path = "/api/test"
+status = 200
+
+[servers.testServer]
+addr = "127.0.0.1:8090"
+locations = ["testLocation"]
+threads = 1
+
+[upstreams.nginx]
+addrs = ["127.0.0.1:8080"]
