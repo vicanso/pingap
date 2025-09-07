@@ -11,6 +11,7 @@
 - `logger`: Provides logging functionality and log management
 - `otel`: Implements OpenTelemetry integration for distributed tracing and metrics
 - `performance`: Provides performance metrics 
+- `proxy`: Proxy server for pingap
 - `plugin`: Manages plugin system for extending functionality
 - `pyroscope`: Integrates with Pyroscope for continuous profiling
 - `sentry`: Provides error tracking and monitoring via Sentry integration

@@ -15,7 +15,7 @@ flowchart LR
   internet("Internet") -- request --> pingap["Pingap"]
   pingap -- proxy:pingap.io/api/* --> apiUpstream["10.1.1.1,10.1.1.2"]
   pingap -- proxy:cdn.pingap.io --> cdnUpstream["10.1.2.1,10.1.2.2"]
-  pingap -- proxy:pingap.io --> upstream["10.1.3.1,10.1.3.2"]
+  pingap -- proxy:/* --> upstream["10.1.3.1,10.1.3.2"]
 ```
 
 ## Key Features
@@ -37,10 +37,10 @@ flowchart LR
   - Hot reload support (10-second activation)
   - Web UI for easy management
 - **Security & Performance**:
-  - Let's Encrypt integration
+  - Let's Encrypt integration(dns-01 or http-01 challenge)
   - Multi-domain TLS support with automatic certificate selection
   - HTTP plugin system (caching, compression, auth, rate limiting)
-  - Detailed performance metrics
+  - Detailed performance metrics, include: upstream connect time, processing time, and etc.
 
 ## Quick Start
 
@@ -58,11 +58,12 @@ Key flags:
 - `-c`: Path to config directory or TOML file
 - `-d`: Run in daemon/background mode
 - `--log`: Path to log file (logs are appended)
-- `RUST_LOG=INFO`: Set logging level (DEBUG, INFO, WARN, ERROR)
+- `RUST_LOG=INFO`: Set logging level (DEBUG, INFO, WARN, ERROR), default is `INFO`
 
 ## Graceful Restart
 
 Performs a zero-downtime restart of Pingap by following these steps:
+
 1. Validates the new configuration
 2. Gracefully shuts down the existing process
 3. Starts a new process to handle incoming requests
@@ -83,43 +84,26 @@ Key flags:
 ## Auto Restart
 
 Automatically monitors configuration files and handles changes in two ways:
+
 - **Full Restart**: When core configurations change, performs a graceful restart
-- **Hot Reload**: When only upstream or location configurations change, updates take effect within ~10 seconds without restart
+- **Hot Reload**: When only upstream, location and plugin configurations change, updates take effect within ~10 seconds without restart
 
 ```bash
 # Enable auto-restart and hot reload
 RUST_LOG=INFO pingap -c=/opt/pingap/conf \
-  -a -d --autoreload --log=/opt/pingap/pingap.log
+  -a -d --log=/opt/pingap/pingap.log
 ```
 
 Key flags:
 - `-a`: Enable auto-restart on configuration changes
-- `--autoreload`: Enable hot reload for upstream/location changes
 - `-d`: Run in daemon mode
 - `-c`: Path to configuration directory
 
+Auto restart include hot reload, If you just want to use hot reload, you should `--autoreload` instead of `-a`.
+
 ## Docker
 
-Run Pingap in a Docker container with auto-reload and admin interface enabled:
-
-```bash
-docker run -d --restart=always \
-  -v $PWD/pingap:/opt/pingap \
-  -p 3018:3018 \
-  -e PINGAP_ADMIN_ADDR=0.0.0.0:3018 \
-  -e PINGAP_ADMIN_USER=pingap \
-  -e PINGAP_ADMIN_PASSWORD=123123 \
-  -e PINGAP_AUTORELOAD=true \
-  vicanso/pingap -c /opt/pingap/conf
-```
-
-Key options:
-- `-d`: Run container in detached/background mode
-- `--restart=always`: Automatically restart container if it stops
-- `-v $PWD/pingap:/opt/pingap`: Mount local config directory into container
-- `-p 3018:3018`: Expose admin interface port
-
-Note: Remember to change the default admin credentials (`pingap:123123`) in production environments.
+Run Pingap in a Docker container with auto-reload and admin interface enabled. You can find the relevant instructions here: [(https://pingap.io/pingap-en/docs/docker](https://pingap.io/pingap-en/docs/docker)
 
 ## Dev
 
@@ -153,7 +137,7 @@ addr = "0.0.0.0:6188"
 locations = ["lo"]
 ```
 
-All toml configurations are as follows [pingap.toml](./conf/pingap.toml).
+You can find the relevant instructions here: [https://pingap.io/pingap-en/docs/config](https://pingap.io/pingap-en/docs/config).
 
 ## Proxy step
 
