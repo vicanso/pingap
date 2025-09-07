@@ -102,4 +102,19 @@ mod tests {
             "HTTPStatus context: Internal Server Error cause:  InternalError"
         );
     }
+
+    #[test]
+    fn test_new_get_session() {
+        let session = new_get_session(
+            vec!["user-agent: pingap/0.1.1".to_string()],
+            "https://github.com".to_string(),
+        )
+        .recv()
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            b"pingap/0.1.1",
+            session.get_header("user-agent").unwrap().as_bytes()
+        );
+    }
 }

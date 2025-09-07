@@ -110,7 +110,6 @@ fn bench_get_variable(c: &mut Criterion) {
         });
     });
 }
-
 criterion_group!(
     benches,
     bench_remove_query_from_header,

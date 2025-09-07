@@ -328,16 +328,15 @@ pub struct DigestDetail {
 }
 
 #[inline]
-fn timing_to_ms(timing: Option<&Option<TimingDigest>>) -> u64 {
-    timing
-        .and_then(|v| v.as_ref())
-        .map(|item| {
-            item.established_ts
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64
-        })
-        .unwrap_or_default()
+pub(crate) fn timing_to_ms(timing: Option<&Option<TimingDigest>>) -> u64 {
+    match timing {
+        Some(Some(item)) => item
+            .established_ts
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64,
+        _ => 0,
+    }
 }
 
 /// Extracts timing and TLS information from connection digest.
@@ -868,9 +867,11 @@ pub fn get_cache_key(ctx: &Ctx, method: &str, uri: &Uri) -> CacheKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
     use bytes::BytesMut;
+    use pingora::protocols::tls::SslDigest;
     use pretty_assertions::assert_eq;
-    use std::time::Duration;
+    use std::{sync::Arc, time::Duration};
 
     #[test]
     fn test_ctx_new() {
@@ -1130,6 +1131,13 @@ mod tests {
                 .as_ref()
         );
 
+        ctx.upstream.status = Some(StatusCode::CREATED);
+        assert_eq!(
+            b"201",
+            ctx.append_log_value(BytesMut::new(), "upstream_status")
+                .as_ref()
+        );
+
         ctx.state.processing_count = 10;
         assert_eq!(
             b"10",
@@ -1354,5 +1362,64 @@ mod tests {
                 ("plugin2".to_string(), 200)
             ])
         );
+    }
+
+    #[test]
+    fn test_get_digest_detail() {
+        let mut digest = Digest::default();
+        let detail = get_digest_detail(&digest);
+        assert_eq!(detail.connection_reused, false);
+        assert_eq!(detail.connection_time, 0);
+        assert_eq!(detail.tcp_established, 0);
+        assert_eq!(detail.tls_established, 0);
+        assert_eq!(detail.tls_version, None);
+        assert_eq!(detail.tls_cipher, None);
+
+        digest.timing_digest.push(Some(TimingDigest {
+            established_ts: SystemTime::UNIX_EPOCH
+                .checked_add(Duration::from_secs(5))
+                .unwrap(),
+        }));
+        digest.timing_digest.push(Some(TimingDigest {
+            established_ts: SystemTime::UNIX_EPOCH
+                .checked_add(Duration::from_secs(3))
+                .unwrap(),
+        }));
+        digest.ssl_digest = Some(Arc::new(SslDigest {
+            version: "1.3",
+            cipher: "123",
+            organization: Some("cloudflare".to_string()),
+            serial_number: Some(
+                "0x00000000000000000000000000000abc".to_string(),
+            ),
+            cert_digest: vec![],
+        }));
+        let detail = get_digest_detail(&digest);
+        assert_eq!(detail.connection_reused, true);
+        assert_eq!(detail.tcp_established, 5000);
+        assert_eq!(detail.tls_established, 3000);
+        assert_eq!(detail.tls_version, Some("1.3".to_string()));
+        assert_eq!(detail.tls_cipher, Some("123".to_string()));
+    }
+
+    #[test]
+    fn test_modify_body_handler() {
+        let mut ctx = Ctx::default();
+
+        struct TestHandler {}
+        impl ModifyResponseBody for TestHandler {
+            fn handle(
+                &mut self,
+                _session: &Session,
+                body: &mut Option<bytes::Bytes>,
+                _end_of_stream: bool,
+            ) -> pingora::Result<()> {
+                *body = Some(Bytes::from("test"));
+                Ok(())
+            }
+        }
+
+        ctx.add_modify_body_handler("test", Box::new(TestHandler {}));
+        assert_eq!(true, ctx.get_modify_body_handler("test").is_some());
     }
 }
