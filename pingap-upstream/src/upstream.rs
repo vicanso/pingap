@@ -451,7 +451,7 @@ impl Upstream {
             connection_timeout: conf.connection_timeout,
             total_connection_timeout: conf.total_connection_timeout,
             read_timeout: conf.read_timeout,
-            idle_timeout: conf.idle_timeout,
+            idle_timeout: conf.idle_timeout.or(Some(Duration::from_secs(60))),
             write_timeout: conf.write_timeout,
             verify_cert: conf.verify_cert,
             tcp_recv_buf: conf.tcp_recv_buf.map(|item| item.as_u64() as usize),
