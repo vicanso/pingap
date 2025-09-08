@@ -23,6 +23,7 @@ use ctor::ctor;
 use hex::ToHex;
 use http::StatusCode;
 use pingap_config::PluginConf;
+use pingap_core::{get_client_ip, get_query_value, now_sec};
 use pingap_core::{
     Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
     HTTP_HEADER_NO_STORE,
@@ -156,14 +157,13 @@ impl CombinedAuth {
     /// * `ts` - Unix timestamp
     /// * `digest` - SHA-256 HMAC of `secret:timestamp`
     #[inline]
-    fn validate(&self, session: &Session) -> Result<()> {
+    fn validate(&self, session: &Session, ctx: &mut Ctx) -> Result<()> {
         let category = "combined_auth";
         let req_header = session.req_header();
 
         // Step 1: Extract and validate app_id
         // The app_id must be provided as a query parameter: ?app_id=your_app_id
-        let Some(app_id) = pingap_core::get_query_value(req_header, "app_id")
-        else {
+        let Some(app_id) = get_query_value(req_header, "app_id") else {
             return Err(Error::Invalid {
                 category: category.to_string(),
                 message: "app id is empty".to_string(),
@@ -189,8 +189,11 @@ impl CombinedAuth {
         // Checks if the client IP is in the allowed list
         // Uses X-Forwarded-For header for IP detection behind proxies
         if let Some(ip_rules) = &auth_param.ip_rules {
-            let ip = pingap_core::get_client_ip(session);
-            if !ip_rules.is_match(&ip).unwrap_or_default() {
+            let ip = ctx
+                .conn
+                .client_ip
+                .get_or_insert_with(|| get_client_ip(session));
+            if !ip_rules.is_match(ip).unwrap_or_default() {
                 return Err(Error::Invalid {
                     category: category.to_string(),
                     message: "ip is invalid".to_string(),
@@ -200,8 +203,7 @@ impl CombinedAuth {
 
         // Step 5: Timestamp validation
         // Requires a Unix timestamp as query parameter: ?ts=1234567890
-        let ts =
-            pingap_core::get_query_value(req_header, "ts").unwrap_or_default();
+        let ts = get_query_value(req_header, "ts").unwrap_or_default();
         if ts.is_empty() {
             return Err(Error::Invalid {
                 category: category.to_string(),
@@ -214,7 +216,7 @@ impl CombinedAuth {
             category: category.to_string(),
             message: e.to_string(),
         })?;
-        let now = pingap_core::now_sec() as i64;
+        let now = now_sec() as i64;
         if (now - value).abs() > auth_param.deviation {
             return Err(Error::Invalid {
                 category: category.to_string(),
@@ -225,8 +227,7 @@ impl CombinedAuth {
         // Step 6: HMAC Authentication
         // Requires a hex-encoded SHA-256 HMAC digest as query parameter: ?digest=abc123...
         // digest = hex(SHA256(secret:timestamp))
-        let digest = pingap_core::get_query_value(req_header, "digest")
-            .unwrap_or_default();
+        let digest = get_query_value(req_header, "digest").unwrap_or_default();
         if digest.is_empty() {
             return Err(Error::Invalid {
                 category: category.to_string(),
@@ -274,12 +275,12 @@ impl Plugin for CombinedAuth {
         &self,
         step: PluginStep,
         session: &mut Session,
-        _ctx: &mut Ctx,
+        ctx: &mut Ctx,
     ) -> pingora::Result<RequestPluginResult> {
         if step != self.plugin_step {
             return Ok(RequestPluginResult::Skipped);
         }
-        if let Err(e) = self.validate(session) {
+        if let Err(e) = self.validate(session, ctx) {
             return Ok(RequestPluginResult::Respond(HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
                 headers: Some(vec![HTTP_HEADER_NO_STORE.clone()]),
@@ -304,7 +305,7 @@ mod tests {
     use super::{AuthParam, CombinedAuth};
     use ahash::AHashMap;
     use hex::ToHex;
-    use pingap_core::PluginStep;
+    use pingap_core::{Ctx, PluginStep};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use sha2::{Digest, Sha256};
@@ -338,7 +339,7 @@ mod tests {
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = combined_auth.validate(&session);
+        let result = combined_auth.validate(&session, &mut Ctx::default());
         assert_eq!(true, result.is_err());
         assert_eq!(
             "Plugin combined_auth invalid, message: app id is empty",
@@ -353,7 +354,7 @@ mod tests {
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = combined_auth.validate(&session);
+        let result = combined_auth.validate(&session, &mut Ctx::default());
         assert_eq!(true, result.is_err());
         assert_eq!(
             "Plugin combined_auth invalid, message: app id is invalid",
@@ -368,7 +369,7 @@ mod tests {
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = combined_auth.validate(&session);
+        let result = combined_auth.validate(&session, &mut Ctx::default());
         assert_eq!(true, result.is_err());
         assert_eq!(
             "Plugin combined_auth invalid, message: ip is invalid",
@@ -383,7 +384,7 @@ mod tests {
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = combined_auth.validate(&session);
+        let result = combined_auth.validate(&session, &mut Ctx::default());
         assert_eq!(true, result.is_err());
         assert_eq!(
             "Plugin combined_auth invalid, message: timestamp is empty",
@@ -398,7 +399,7 @@ mod tests {
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = combined_auth.validate(&session);
+        let result = combined_auth.validate(&session, &mut Ctx::default());
         assert_eq!(true, result.is_err());
         assert_eq!(
             "Plugin combined_auth invalid, message: timestamp deviation is invalid",
@@ -414,7 +415,7 @@ mod tests {
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = combined_auth.validate(&session);
+        let result = combined_auth.validate(&session, &mut Ctx::default());
         assert_eq!(true, result.is_err());
         assert_eq!(
             "Plugin combined_auth invalid, message: digest is empty",
@@ -430,7 +431,7 @@ mod tests {
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = combined_auth.validate(&session);
+        let result = combined_auth.validate(&session, &mut Ctx::default());
         assert_eq!(true, result.is_err());
         assert_eq!(
             "Plugin combined_auth invalid, message: digest is invalid",
@@ -449,7 +450,7 @@ mod tests {
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
-        let result = combined_auth.validate(&session);
+        let result = combined_auth.validate(&session, &mut Ctx::default());
         assert_eq!(true, result.is_ok());
     }
 }

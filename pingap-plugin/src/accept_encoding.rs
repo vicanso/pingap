@@ -37,10 +37,7 @@ pub struct AcceptEncoding {
     encodings: Vec<String>,
 
     /// Controls whether multiple encodings can be forwarded to the upstream server.
-    /// - When `Some(true)`: Only the first matching encoding will be used
-    /// - When `Some(false)`: All matching encodings will be included
-    /// - When `None`: Behaves the same as `Some(false)`
-    only_one_encoding: Option<bool>,
+    only_one_encoding: bool,
 
     /// A unique identifier for this plugin instance.
     /// Used for internal tracking and debugging purposes.
@@ -66,7 +63,7 @@ impl TryFrom<&PluginConf> for AcceptEncoding {
 
         Ok(Self {
             encodings,
-            only_one_encoding: Some(only_one_encoding),
+            only_one_encoding,
             hash_value,
             plugin_step: PluginStep::EarlyRequest,
         })
@@ -126,14 +123,13 @@ impl Plugin for AcceptEncoding {
         };
         let accept_encoding = accept_encoding.to_str().unwrap_or_default();
 
-        let only_one_encoding = self.only_one_encoding.unwrap_or_default();
         let mut new_accept_encodings: SmallVec<[String; 3]> =
             SmallVec::with_capacity(self.encodings.len());
 
         // Filter the accepted encodings based on our supported list
         for encoding in self.encodings.iter() {
             // If only_one_encoding is true, stop after finding the first match
-            if only_one_encoding && !new_accept_encodings.is_empty() {
+            if self.only_one_encoding && !new_accept_encodings.is_empty() {
                 break;
             }
             // Add encoding if it's in the Accept-Encoding header
@@ -187,7 +183,7 @@ only_one_encoding = true
         )
         .unwrap();
         assert_eq!("zstd,br,gzip", params.encodings.join(","));
-        assert_eq!(true, params.only_one_encoding.unwrap_or_default());
+        assert_eq!(true, params.only_one_encoding);
     }
 
     #[tokio::test]

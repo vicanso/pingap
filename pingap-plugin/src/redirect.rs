@@ -20,7 +20,8 @@ use ctor::ctor;
 use http::StatusCode;
 use pingap_config::PluginConf;
 use pingap_core::{
-    convert_headers, Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
+    convert_headers, get_host, Ctx, HttpResponse, Plugin, PluginStep,
+    RequestPluginResult,
 };
 use pingora::proxy::Session;
 use std::borrow::Cow;
@@ -148,8 +149,7 @@ impl Plugin for Redirect {
 
         // Extract host from request headers
         // Fallback to empty string if not found
-        let host =
-            pingap_core::get_host(session.req_header()).unwrap_or_default();
+        let host = get_host(session.req_header()).unwrap_or_default();
 
         // Determine target schema based on configuration
         let schema = if self.http_to_https { "https" } else { "http" };

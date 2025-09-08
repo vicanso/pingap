@@ -450,13 +450,16 @@ impl Plugin for Directory {
         if step != self.plugin_step {
             return Ok(RequestPluginResult::Skipped);
         }
-        let mut filename = session.req_header().uri.path().to_string();
-        if !self.autoindex && filename.len() <= 1 {
-            filename.clone_from(&self.index);
-        }
-        if let Ok(value) = decode(&filename) {
-            filename.clone_from(&value.into_owned());
-        }
+        let path_str = session.req_header().uri.path();
+        let source_str = if !self.autoindex && path_str.len() <= 1 {
+            &self.index
+        } else {
+            path_str
+        };
+        let filename = match decode(source_str) {
+            Ok(decoded_value) => decoded_value.into_owned(),
+            Err(_) => source_str.to_string(),
+        };
         // convert to relative path
         let file = self.path.join(filename.substring(1, filename.len()));
         debug!(file = format!("{file:?}"), "static file serve");

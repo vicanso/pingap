@@ -203,7 +203,7 @@ impl Plugin for BasicAuth {
 
         // Validate credentials against our authorized list
         // Uses constant-time comparison (through Vec comparison) to prevent timing attacks
-        if !self.authorizations.contains(&value.to_vec()) {
+        if !self.authorizations.iter().any(|auth| auth == value) {
             // If configured, apply rate limiting delay
             // This helps prevent automated brute force attempts
             if let Some(d) = self.delay {

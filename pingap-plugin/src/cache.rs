@@ -31,6 +31,7 @@ use pingap_core::{
     get_cache_key, get_client_ip, Ctx, HttpResponse, Plugin, PluginStep,
     RequestPluginResult,
 };
+use pingap_util::IpRules;
 use pingora::cache::eviction::simple_lru::Manager;
 use pingora::cache::eviction::EvictionManager;
 use pingora::cache::key::CacheHashKey;
@@ -94,7 +95,7 @@ pub struct Cache {
     // Whether to check the cache-control header, if not exist the response will not be cached.
     check_cache_control: bool,
     // IP-based access control for cache purge operations
-    purge_ip_rules: pingap_util::IpRules,
+    purge_ip_rules: IpRules,
     // Optional regex pattern to skip caching for certain requests
     skip: Option<Regex>,
     // Unique identifier for this cache configuration
@@ -267,10 +268,8 @@ impl TryFrom<&PluginConf> for Cache {
             None
         };
 
-        let purge_ip_rules = pingap_util::IpRules::new(&get_str_slice_conf(
-            value,
-            "purge_ip_list",
-        ));
+        let purge_ip_rules =
+            IpRules::new(&get_str_slice_conf(value, "purge_ip_list"));
 
         let skip_value = get_str_conf(value, "skip");
         let skip = if skip_value.is_empty() {
@@ -364,9 +363,7 @@ impl Plugin for Cache {
         // Cache operations only support GET/HEAD for retrieval and PURGE for invalidation
         let req_header = session.req_header();
         let method = &req_header.method;
-        if ![Method::GET, Method::HEAD, METHOD_PURGE.to_owned()]
-            .contains(method)
-        {
+        if ![&Method::GET, &Method::HEAD, &*METHOD_PURGE].contains(&method) {
             return Ok(RequestPluginResult::Skipped);
         }
 
@@ -401,16 +398,19 @@ impl Plugin for Cache {
         }
 
         // Handle PURGE requests with IP-based access control
-        if method == METHOD_PURGE.to_owned() {
-            let found =
-                match self.purge_ip_rules.is_match(&get_client_ip(session)) {
-                    Ok(matched) => matched,
-                    Err(e) => {
-                        return Ok(RequestPluginResult::Respond(
-                            HttpResponse::bad_request(e.to_string()),
-                        ));
-                    },
-                };
+        if method == *METHOD_PURGE {
+            let ip = ctx
+                .conn
+                .client_ip
+                .get_or_insert_with(|| get_client_ip(session));
+            let found = match self.purge_ip_rules.is_match(ip) {
+                Ok(matched) => matched,
+                Err(e) => {
+                    return Ok(RequestPluginResult::Respond(
+                        HttpResponse::bad_request(e.to_string()),
+                    ));
+                },
+            };
             if !found {
                 return Ok(RequestPluginResult::Respond(HttpResponse {
                     status: StatusCode::FORBIDDEN,

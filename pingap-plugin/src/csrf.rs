@@ -21,6 +21,7 @@ use http::{header, HeaderValue, Method, StatusCode};
 use humantime::parse_duration;
 use nanoid::nanoid;
 use pingap_config::{PluginCategory, PluginConf};
+use pingap_core::{get_cookie_value, new_internal_error, now_sec};
 use pingap_core::{
     Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
     HTTP_HEADER_NO_STORE,
@@ -149,7 +150,7 @@ fn generate_token(key: &str) -> String {
     // Generate random ID using nanoid (URL-safe, 12 chars)
     let id = nanoid!(12);
     // Add current timestamp in hex format
-    let prefix = format!("{id}.{:x}", pingap_core::now_sec());
+    let prefix = format!("{id}.{:x}", now_sec());
 
     // Create cryptographic signature:
     // - Uses SHA-256 for hashing
@@ -187,7 +188,7 @@ fn validate_token(key: &str, ttl: u64, value: &str) -> bool {
 
     // Check expiration if TTL is configured
     if ttl > 0 {
-        let now = pingap_core::now_sec();
+        let now = now_sec();
         // Parse timestamp from hex and compare with current time
         if now - u64::from_str_radix(arr[1], 16).unwrap_or_default() > ttl {
             return false;
@@ -264,7 +265,7 @@ impl Plugin for Csrf {
             let set_cookie = (
                 header::SET_COOKIE,
                 HeaderValue::from_str(&builder.build().to_string())
-                    .map_err(|e| pingap_core::new_internal_error(400, e))?,
+                    .map_err(|e| new_internal_error(400, e))?,
             );
 
             let resp = HttpResponse {
@@ -300,7 +301,7 @@ impl Plugin for Csrf {
         //    - Prevents CSRF as attacker cannot set custom headers
         // 3. Validate token format, expiration, and signature
         if value
-            != pingap_core::get_cookie_value(session.req_header(), &self.name)
+            != get_cookie_value(session.req_header(), &self.name)
                 .unwrap_or_default()
             || !validate_token(&self.key, self.ttl, &value)
         {

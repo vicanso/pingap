@@ -22,7 +22,10 @@ use ctor::ctor;
 use http::{HeaderName, StatusCode};
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
-use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult};
+use pingap_core::{
+    get_query_value, remove_query_from_header, Ctx, HttpResponse, Plugin,
+    PluginStep, RequestPluginResult,
+};
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::str::FromStr;
@@ -240,7 +243,7 @@ impl Plugin for KeyAuth {
         // 2. Otherwise, look for the key in headers
         // 3. Default to empty bytes if not found
         let value = if let Some(key) = &self.query {
-            pingap_core::get_query_value(session.req_header(), key)
+            get_query_value(session.req_header(), key)
                 .unwrap_or_default()
                 .as_bytes()
         } else {
@@ -262,7 +265,7 @@ impl Plugin for KeyAuth {
         // 1. Check if provided key exists in the configured valid keys
         // 2. If invalid and delay is configured, wait before responding
         //    This helps prevent timing attacks and brute force attempts
-        if !self.keys.contains(&value.to_vec()) {
+        if !self.keys.iter().any(|key| key == value) {
             if let Some(d) = self.delay {
                 sleep(d).await;
             }
@@ -280,10 +283,9 @@ impl Plugin for KeyAuth {
             if let Some(name) = &self.header {
                 session.req_header_mut().remove_header(name);
             } else if let Some(name) = &self.query {
-                if let Err(e) = pingap_core::remove_query_from_header(
-                    session.req_header_mut(),
-                    name,
-                ) {
+                if let Err(e) =
+                    remove_query_from_header(session.req_header_mut(), name)
+                {
                     error!(error = e.to_string(), "remove query fail");
                 }
             }

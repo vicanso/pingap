@@ -22,6 +22,9 @@ use http::StatusCode;
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
+    get_client_ip, get_cookie_value, get_query_value, get_req_header_value,
+};
+use pingap_core::{
     Ctx, HttpResponse, Inflight, Plugin, PluginStep, Rate, RequestPluginResult,
 };
 use pingora::proxy::Session;
@@ -204,31 +207,29 @@ impl Limiter {
         let key = match self.tag {
             LimitTag::Query => {
                 // Get value from URL query parameter
-                pingap_core::get_query_value(session.req_header(), &self.key)
+                get_query_value(session.req_header(), &self.key)
                     .unwrap_or_default()
                     .to_string()
             },
             LimitTag::RequestHeader => {
                 // Get value from HTTP request header
-                pingap_core::get_req_header_value(
-                    session.req_header(),
-                    &self.key,
-                )
-                .unwrap_or_default()
-                .to_string()
+                get_req_header_value(session.req_header(), &self.key)
+                    .unwrap_or_default()
+                    .to_string()
             },
             LimitTag::Cookie => {
                 // Get value from cookie
-                pingap_core::get_cookie_value(session.req_header(), &self.key)
+                get_cookie_value(session.req_header(), &self.key)
                     .unwrap_or_default()
                     .to_string()
             },
             _ => {
-                // Get client IP from X-Forwarded-For or connection
-                let client_ip = pingap_core::get_client_ip(session);
-                // Store client IP in context for potential later use
-                ctx.conn.client_ip = Some(client_ip.clone());
-                client_ip
+                let ip = ctx
+                    .conn
+                    .client_ip
+                    .get_or_insert_with(|| get_client_ip(session));
+
+                ip.to_string()
             },
         };
 

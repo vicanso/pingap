@@ -28,7 +28,7 @@ time = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-appender = "0.2.3"
-tracing-subscriber = { version = "0.3.19", features = [
+tracing-subscriber = { version = "0.3.20", features = [
     "local-time",
     "json",
     "fmt",

@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use pingap_core::Ctx;
 use pingap_core::OtelTracer;
+use pingap_core::{get_client_ip, Ctx};
 use pingap_otel::HeaderExtractor;
 use pingap_otel::{
     global,
@@ -127,15 +127,12 @@ pub(crate) fn set_otel_upstream_attrs(ctx: &mut Ctx) {
 pub(crate) fn set_otel_request_attrs(session: &Session, ctx: &mut Ctx) {
     if let Some(features) = ctx.features.as_mut() {
         if let Some(ref mut tracer) = features.otel_tracer.as_mut() {
-            let ip = if let Some(ip) = &ctx.conn.client_ip {
-                ip.to_string()
-            } else {
-                let ip = pingap_core::get_client_ip(session);
-                ctx.conn.client_ip = Some(ip.clone());
-                ip
-            };
+            let ip = ctx
+                .conn
+                .client_ip
+                .get_or_insert_with(|| get_client_ip(session));
             let mut attrs = vec![
-                KeyValue::new("http.client_ip", ip),
+                KeyValue::new("http.client_ip", ip.to_string()),
                 KeyValue::new(
                     "http.status_code",
                     ctx.state.status.unwrap_or_default().as_u16() as i64,

@@ -124,6 +124,9 @@ struct Args {
     /// Output template configuration
     #[arg(long)]
     template: bool,
+    /// Default threads for each server
+    #[arg(long)]
+    threads: Option<usize>,
 }
 
 fn new_server_conf(
@@ -154,6 +157,9 @@ fn new_server_conf(
         server_conf.upgrade_sock = upgrade_sock.to_string();
     }
     if let Some(threads) = basic_conf.threads {
+        server_conf.threads = threads.max(1);
+    }
+    if let Some(threads) = args.threads {
         server_conf.threads = threads.max(1);
     }
     if let Some(work_stealing) = basic_conf.work_stealing {

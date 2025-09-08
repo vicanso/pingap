@@ -75,14 +75,13 @@ impl ModifyResponseBody for Compressor {
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
     ) -> pingora::Result<()> {
-        let input_data = body.as_deref().unwrap_or(&[]);
-        let data = self
-            .compressor
-            .as_mut()
-            .encode(input_data, end_of_stream)
-            .map_err(|e| new_internal_error(500, e))?;
         // if body is some, replace it with the compressed data
-        if body.is_some() {
+        if let Some(input_data) = body {
+            let data = self
+                .compressor
+                .as_mut()
+                .encode(input_data, end_of_stream)
+                .map_err(|e| new_internal_error(500, e))?;
             *body = Some(data);
         }
         Ok(())
@@ -327,7 +326,7 @@ impl Plugin for Compression {
         }
         debug!(
             zstd_level,
-            br_level, gzip_level, "full body compression level"
+            br_level, gzip_level, "upstream response body compression level"
         );
         // Remove content-length since we're modifying the body
         upstream_response.remove_header(&CONTENT_LENGTH);

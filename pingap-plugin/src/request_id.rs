@@ -180,15 +180,15 @@ impl Plugin for RequestId {
         // Determine which header name to use for the request ID
         // Either the custom configured name or the default X-Request-ID
         let key = if let Some(header) = &self.header_name {
-            header.clone()
+            header
         } else {
-            HTTP_HEADER_NAME_X_REQUEST_ID.clone()
+            &HTTP_HEADER_NAME_X_REQUEST_ID
         };
 
         // Check if request already has an ID header
         // If it does, store it in context and continue processing
         // This preserves request IDs across service boundaries
-        if let Some(id) = session.get_header(&key) {
+        if let Some(id) = session.get_header(key) {
             ctx.state.request_id =
                 Some(id.to_str().unwrap_or_default().to_string());
             return Ok(RequestPluginResult::Continue);

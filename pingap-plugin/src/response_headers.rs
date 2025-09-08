@@ -18,6 +18,7 @@ use async_trait::async_trait;
 use ctor::ctor;
 use http::header::HeaderName;
 use pingap_config::{PluginCategory, PluginConf};
+use pingap_core::ModifiedMode;
 use pingap_core::{
     convert_header, convert_header_value, Ctx, HttpHeader, Plugin,
     ResponsePluginResult,
@@ -70,7 +71,7 @@ pub struct ResponseHeaders {
     set_headers_not_exists: Vec<HttpHeader>,
 
     // upstream or response
-    mode: String,
+    mode: ModifiedMode,
 
     /// Unique identifier for this plugin instance
     /// Generated from the plugin configuration to track changes
@@ -171,7 +172,7 @@ impl TryFrom<&PluginConf> for ResponseHeaders {
             remove_headers,
             rename_headers,
             set_headers_not_exists,
-            mode,
+            mode: ModifiedMode::from(mode.as_str()),
         };
 
         Ok(params)
@@ -275,7 +276,7 @@ impl Plugin for ResponseHeaders {
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<ResponsePluginResult> {
-        if self.mode != "upstream" {
+        if self.mode != ModifiedMode::Upstream {
             return Ok(ResponsePluginResult::Unchanged);
         }
         self.handle_headers(session, ctx, upstream_response)
@@ -307,7 +308,7 @@ impl Plugin for ResponseHeaders {
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<ResponsePluginResult> {
-        if self.mode == "upstream" {
+        if self.mode == ModifiedMode::Upstream {
             return Ok(ResponsePluginResult::Unchanged);
         }
         self.handle_headers(session, ctx, upstream_response)

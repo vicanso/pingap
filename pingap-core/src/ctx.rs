@@ -79,6 +79,22 @@ pub fn format_duration(mut buf: BytesMut, ms: u64) -> BytesMut {
     }
     buf
 }
+
+#[derive(PartialEq)]
+pub enum ModifiedMode {
+    Upstream,
+    Response,
+}
+
+impl From<&str> for ModifiedMode {
+    fn from(value: &str) -> Self {
+        match value {
+            "upstream" => ModifiedMode::Upstream,
+            _ => ModifiedMode::Response,
+        }
+    }
+}
+
 /// Trait for modifying the response body.
 pub trait ModifyResponseBody: Sync + Send {
     /// Handles the modification of response body data.

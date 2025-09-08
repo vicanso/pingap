@@ -20,7 +20,10 @@ use bytes::Bytes;
 use ctor::ctor;
 use http::StatusCode;
 use pingap_config::PluginConf;
-use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult};
+use pingap_core::{
+    get_client_ip, Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
+};
+use pingap_util::IpRules;
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -61,8 +64,7 @@ impl TryFrom<&PluginConf> for IpRestriction {
 
         // Parse IP rules from configuration
         // Supports both individual IPs ("192.168.1.1") and CIDR ranges ("10.0.0.0/24")
-        let ip_rules =
-            pingap_util::IpRules::new(&get_str_slice_conf(value, "ip_list"));
+        let ip_rules = IpRules::new(&get_str_slice_conf(value, "ip_list"));
 
         // Get custom error message or use default
         let mut message = get_str_conf(value, "message");
@@ -140,17 +142,14 @@ impl Plugin for IpRestriction {
 
         // Get client IP address, using cached value if available
         // Otherwise extract from X-Forwarded-For or remote address
-        let ip = if let Some(ip) = &ctx.conn.client_ip {
-            ip.to_string()
-        } else {
-            let ip = pingap_core::get_client_ip(session);
-            ctx.conn.client_ip = Some(ip.clone()); // Cache for future use
-            ip
-        };
+        let ip = ctx
+            .conn
+            .client_ip
+            .get_or_insert_with(|| get_client_ip(session));
 
         // Check if IP matches any configured rules
         // Returns error if IP is malformed
-        let found = match self.ip_rules.is_match(&ip) {
+        let found = match self.ip_rules.is_match(ip) {
             Ok(matched) => matched,
             Err(e) => {
                 return Ok(RequestPluginResult::Respond(
