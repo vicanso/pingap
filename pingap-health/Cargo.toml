@@ -20,8 +20,8 @@ pingora = { workspace = true }
 snafu = { workspace = true }
 strum = { workspace = true }
 tracing = { workspace = true }
-tonic = "0.13.1"
-tonic-health = "0.13.1"
+tonic = "0.14.2"
+tonic-health = "0.14.2"
 url = { workspace = true }
 
 [dev-dependencies]

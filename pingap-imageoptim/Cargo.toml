@@ -20,7 +20,7 @@ bytemuck = "1.23.2"
 bytes = { workspace = true }
 ctor = { workspace = true }
 http = { workspace = true }
-image = { version = "0.25.6", features = ["webp", "avif"] }
+image = { version = "=0.25.6", features = ["webp", "avif"] }
 imagequant = { version = "4.4.1", default-features = false }
 lodepng = "3.12.1"
 mozjpeg = "0.10.13"

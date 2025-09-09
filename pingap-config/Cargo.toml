@@ -21,7 +21,7 @@ base64 = { workspace = true }
 bytesize = { workspace = true }
 crc32fast = { workspace = true }
 diff = "0.1.13"
-etcd-client = "0.15.0"
+etcd-client = "0.16.1"
 futures-util = { workspace = true }
 glob = { workspace = true }
 http = { workspace = true }

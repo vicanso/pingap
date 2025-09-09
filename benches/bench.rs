@@ -210,7 +210,9 @@ fn bench_get_super_ts(c: &mut Criterion) {
     });
 }
 
-fn get_logger_session(s: crossbeam_channel::Sender<Option<Session>>) {
+fn get_logger_session(
+) -> std::sync::mpsc::Receiver<Option<pingora::proxy::Session>> {
+    let (tx, rx) = std::sync::mpsc::sync_channel(0);
     std::thread::spawn(move || {
         match tokio::runtime::Runtime::new() {
             Ok(rt) => {
@@ -230,15 +232,16 @@ fn get_logger_session(s: crossbeam_channel::Sender<Option<Session>>) {
 
                     let mut session = Session::new_h1(Box::new(mock_io));
                     session.read_request().await.unwrap();
-                    let _ = s.send(Some(session));
+                    let _ = tx.send(Some(session));
                 };
                 rt.block_on(send);
             },
             Err(_e) => {
-                let _ = s.send(None);
+                let _ = tx.send(None);
             },
         };
     });
+    rx
 }
 
 fn bench_map(c: &mut Criterion) {
@@ -267,8 +270,7 @@ fn bench_map(c: &mut Criterion) {
 }
 
 fn bench_logger_format(c: &mut Criterion) {
-    let (s, r) = crossbeam_channel::bounded(0);
-    get_logger_session(s);
+    let r = get_logger_session();
     let session = r.recv().unwrap().unwrap();
     c.bench_function("logger format", |b| {
         let p: Parser =
