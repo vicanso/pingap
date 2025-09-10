@@ -46,7 +46,7 @@ use snafu::Snafu;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant};
 use tracing::{debug, error, info};
 
 #[derive(Debug, Snafu)]
@@ -674,7 +674,8 @@ pub fn new_ahash_upstreams(
 impl BackgroundTask for HealthCheckTask {
     async fn execute(&self, check_count: u32) -> Result<bool, ServiceError> {
         // get upstream names
-        let upstreams = self.upstream_provider.list();
+        let mut upstreams = self.upstream_provider.list();
+        upstreams.retain(|(_, up)| !up.is_transparent());
         let interval = self.interval.as_secs();
         // run health check for each upstream
         let jobs = upstreams.into_iter().map(|(name, up)| {
@@ -699,6 +700,7 @@ impl BackgroundTask for HealthCheckTask {
                     || (update_frequency > 0
                         && check_frequency_matched(update_frequency))
                 {
+                    let update_backend_start_time = Instant::now();
                     let result = up.lb.update().await;
                     if let Err(e) = result {
                         error!(
@@ -708,9 +710,14 @@ impl BackgroundTask for HealthCheckTask {
                             "update backends fail"
                         )
                     } else {
-                        debug!(
+                        info!(
                             category = LOG_CATEGORY,
-                            name, "update backend success"
+                            name,
+                            elapsed = format!(
+                                "{}ms",
+                                update_backend_start_time.elapsed().as_millis()
+                            ),
+                            "update backend success"
                         );
                     }
                 }
@@ -719,17 +726,14 @@ impl BackgroundTask for HealthCheckTask {
                 if !check_frequency_matched(health_check_frequency) {
                     return;
                 }
-                let health_check_start_time = SystemTime::now();
+                let health_check_start_time = Instant::now();
                 up.lb.run_health_check().await;
                 info!(
                     category = LOG_CATEGORY,
                     name,
                     elapsed = format!(
                         "{}ms",
-                        health_check_start_time
-                            .elapsed()
-                            .unwrap_or_default()
-                            .as_millis()
+                        health_check_start_time.elapsed().as_millis()
                     ),
                     "health check is done"
                 );
