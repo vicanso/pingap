@@ -21,6 +21,7 @@ use super::{set_append_proxy_headers, ServerConf, LOG_CATEGORY};
 use crate::ServerLocationsProvider;
 use async_trait::async_trait;
 use bytes::Bytes;
+use bytes::BytesMut;
 use http::StatusCode;
 use once_cell::sync::Lazy;
 use pingap_acme::handle_lets_encrypt;
@@ -73,6 +74,7 @@ use snafu::Snafu;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::mpsc::Sender;
 use tracing::{debug, error, info};
 
 #[derive(Debug, Snafu)]
@@ -192,6 +194,9 @@ pub struct Server {
 
     // upstreams
     upstream_provider: Arc<dyn UpstreamProvider>,
+
+    // logger
+    access_logger: Option<Sender<BytesMut>>,
 }
 
 pub struct ServerServices {
@@ -213,6 +218,7 @@ impl Server {
     /// - Threading configuration
     pub fn new(
         conf: &ServerConf,
+        access_logger: Option<Sender<BytesMut>>,
         server_locations_provider: Arc<dyn ServerLocationsProvider>,
         location_provider: Arc<dyn LocationProvider>,
         upstream_provider: Arc<dyn UpstreamProvider>,
@@ -284,6 +290,7 @@ impl Server {
             location_provider,
             upstream_provider,
             plugin_provider,
+            access_logger,
         };
         Ok(s)
     }
@@ -1628,7 +1635,14 @@ impl ProxyHttp for Server {
         set_otel_request_attrs(session, ctx);
 
         if let Some(p) = &self.log_parser {
-            info!("{}", p.format(session, ctx));
+            let buf = p.format(session, ctx);
+            if let Some(logger) = &self.access_logger {
+                let _ = logger.try_send(buf);
+            } else {
+                let msg = std::string::String::from_utf8(buf.into())
+                    .unwrap_or_default();
+                info!("{msg}");
+            }
         }
     }
 }
@@ -1791,6 +1805,8 @@ value = 'proxy_set_headers = ["name:value"]'
         let confs = parse_from_conf(pingap_conf);
         Server::new(
             &confs[0],
+            // TODO
+            None,
             Arc::new(TmpServerLocationsLoader {
                 server_locations: Arc::new(vec!["lo".to_string()]),
             }),

@@ -1,0 +1,127 @@
+// Copyright 2024-2025 Tree xie.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use super::file_appender::new_file_appender;
+use super::LOG_CATEGORY;
+use async_trait::async_trait;
+use bytes::BytesMut;
+use pingap_core::Error;
+use pingora::server::ShutdownWatch;
+use pingora::services::background::BackgroundService;
+use std::io::{BufWriter, Write};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::Mutex;
+use tracing::{error, info};
+use tracing_appender::rolling::RollingFileAppender;
+
+type Result<T> = std::result::Result<T, Error>;
+
+pub struct AsyncLoggerTask {
+    path: String,
+    receiver: Mutex<Option<Receiver<BytesMut>>>,
+    writer: Mutex<Option<BufWriter<RollingFileAppender>>>,
+}
+
+pub async fn new_async_logger(
+    path: &str,
+) -> Result<(Sender<BytesMut>, AsyncLoggerTask)> {
+    let file_appender =
+        new_file_appender(path).map_err(|e| Error::Invalid {
+            message: e.to_string(),
+        })?;
+
+    let buffered_writer = BufWriter::new(file_appender);
+
+    let (tx, rx) = channel::<BytesMut>(1000);
+
+    let task = AsyncLoggerTask {
+        path: path.to_string(),
+        receiver: Mutex::new(Some(rx)),
+        writer: Mutex::new(Some(buffered_writer)),
+    };
+
+    Ok((tx, task))
+}
+
+#[async_trait]
+impl BackgroundService for AsyncLoggerTask {
+    async fn start(&self, mut shutdown: ShutdownWatch) {
+        let Some(mut receiver) = self.receiver.lock().await.take() else {
+            return;
+        };
+        let Some(mut writer) = self.writer.lock().await.take() else {
+            return;
+        };
+        info!(
+            category = LOG_CATEGORY,
+            path = self.path,
+            "async logger is running",
+        );
+        const MAX_BATCH_SIZE: usize = 128;
+
+        loop {
+            tokio::select! {
+                _ = shutdown.changed() => {
+                    break;
+                }
+                Some(msg) = receiver.recv() => {
+                    let mut messages = Vec::with_capacity(MAX_BATCH_SIZE);
+                    messages.push(msg);
+                    while messages.len() < MAX_BATCH_SIZE {
+                        match receiver.try_recv() {
+                            Ok(msg) => {
+                                messages.push(msg);
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                    for mut msg in messages {
+                        msg.extend_from_slice(b"\n");
+                        if let Err(e) = writer.write(&msg) {
+                            error!(
+                                category = LOG_CATEGORY,
+                                error = %e,
+                                "write fail",
+                            );
+                        }
+                    }
+                }
+                else => {
+                    // `recv()` return None, all senders are gone
+                    break;
+                }
+            }
+        }
+        // clear channel
+        while let Some(mut msg) = receiver.recv().await {
+            msg.extend_from_slice(b"\n");
+            if let Err(e) = writer.write_all(&msg) {
+                error!(
+                    category = LOG_CATEGORY,
+                    error = %e,
+                    "write fail",
+                );
+            }
+        }
+
+        // flush writer
+        if let Err(e) = writer.flush() {
+            error!(
+                category = LOG_CATEGORY,
+                error = %e,
+                "flush fail",
+            );
+        }
+    }
+}

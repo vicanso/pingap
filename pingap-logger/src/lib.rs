@@ -15,6 +15,8 @@
 use snafu::Snafu;
 
 mod access;
+mod async_logger;
+mod file_appender;
 #[cfg(unix)]
 mod syslog;
 mod writer;
@@ -30,4 +32,5 @@ pub enum Error {
 }
 
 pub use access::*;
+pub use async_logger::*;
 pub use writer::*;

@@ -306,7 +306,7 @@ impl Parser {
         size
     }
     // Formats a log entry based on the session and context
-    pub fn format(&self, session: &Session, ctx: &Ctx) -> String {
+    pub fn format(&self, session: &Session, ctx: &Ctx) -> BytesMut {
         // Better capacity estimation based on tag types and count
         let mut buf = BytesMut::with_capacity(self.capacity);
         let req_header = session.req_header();
@@ -547,7 +547,7 @@ impl Parser {
             };
         }
 
-        std::string::String::from_utf8(buf.into()).unwrap_or_default()
+        buf
     }
 }
 

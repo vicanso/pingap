@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::file_appender::new_file_appender;
 #[cfg(unix)]
 use super::syslog::new_syslog_writer;
 use super::{Error, LOG_CATEGORY};
@@ -269,8 +270,8 @@ pub struct LoggerParams {
 fn new_file_writer(
     params: &LoggerParams,
 ) -> Result<(BoxMakeWriter, Option<Box<dyn BackgroundTask>>)> {
+    let file_appender = new_file_appender(&params.log)?;
     let mut file = pingap_util::resolve_path(&params.log);
-    let mut rolling_type = "".to_string();
     let mut compression = "".to_string();
     let mut level = 0;
     let mut days_ago = 0;
@@ -279,9 +280,7 @@ fn new_file_writer(
     if let Some((_, query)) = params.log.split_once('?') {
         file = file.replace(&format!("?{query}"), "");
         let m = convert_query_map(query);
-        if let Some(value) = m.get("rolling") {
-            rolling_type = value.to_string();
-        }
+
         if let Some(value) = m.get("compression") {
             compression = value.to_string();
         }
@@ -304,7 +303,6 @@ fn new_file_writer(
             message: "parent of file log is invalid".to_string(),
         })?
     };
-    fs::create_dir_all(dir).map_err(|e| Error::Io { source: e })?;
     if !compression.is_empty() {
         task = Some(new_log_compress_service(LogCompressParams {
             compression,
@@ -314,24 +312,6 @@ fn new_file_writer(
             time_point_hour,
         }));
     }
-
-    let filename = if filepath.is_dir() {
-        "".to_string()
-    } else {
-        filepath
-            .file_name()
-            .ok_or_else(|| Error::Invalid {
-                message: "file log is invalid".to_string(),
-            })?
-            .to_string_lossy()
-            .to_string()
-    };
-    let file_appender = match rolling_type.as_str() {
-        "minutely" => tracing_appender::rolling::minutely(dir, filename),
-        "hourly" => tracing_appender::rolling::hourly(dir, filename),
-        "never" => tracing_appender::rolling::never(dir, filename),
-        _ => tracing_appender::rolling::daily(dir, filename),
-    };
 
     let writer = if params.capacity < MIN_BUFFER_CAPACITY {
         BoxMakeWriter::new(file_appender)

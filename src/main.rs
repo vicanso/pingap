@@ -19,8 +19,9 @@ use crate::server_locations::new_server_locations_provider;
 use crate::server_locations::try_init_server_locations;
 use crate::upstreams::new_upstream_provider;
 use crate::upstreams::try_init_upstreams;
+use bytes::BytesMut;
 use clap::Parser;
-use crossbeam_channel::Sender;
+use crossbeam_channel::Receiver;
 use pingap_acme::new_lets_encrypt_service;
 use pingap_cache::new_storage_clear_service;
 use pingap_certificate::{
@@ -33,6 +34,7 @@ use pingap_core::BackgroundTaskService;
 #[cfg(feature = "imageoptim")]
 #[allow(unused_imports)]
 use pingap_imageoptim::ImageOptim;
+use pingap_logger::{new_async_logger, AsyncLoggerTask};
 #[cfg(feature = "full")]
 use pingap_otel::TracerService;
 use pingap_performance::new_performance_metrics_log_service;
@@ -174,8 +176,8 @@ fn new_server_conf(
 
 fn get_config(
     admin: bool,
-    s: Sender<Result<PingapConf, pingap_config::Error>>,
-) {
+) -> Receiver<Result<PingapConf, pingap_config::Error>> {
+    let (s, r) = crossbeam_channel::bounded(0);
     std::thread::spawn(move || {
         match tokio::runtime::Runtime::new() {
             Ok(rt) => {
@@ -203,9 +205,11 @@ fn get_config(
             },
         };
     });
+    r
 }
 
-fn sync_config(path: String, s: Sender<Result<(), pingap_config::Error>>) {
+fn sync_config(path: String) -> Receiver<Result<(), pingap_config::Error>> {
+    let (s, r) = crossbeam_channel::bounded(0);
     std::thread::spawn(move || {
         match tokio::runtime::Runtime::new() {
             Ok(rt) => {
@@ -228,6 +232,42 @@ fn sync_config(path: String, s: Sender<Result<(), pingap_config::Error>>) {
             },
         };
     });
+    r
+}
+
+fn new_access_logger(
+    path: &str,
+) -> Receiver<
+    Result<
+        (tokio::sync::mpsc::Sender<BytesMut>, AsyncLoggerTask),
+        pingap_core::Error,
+    >,
+> {
+    let file = path.to_string();
+    let (s, r) = crossbeam_channel::bounded(0);
+    std::thread::spawn(move || {
+        match tokio::runtime::Runtime::new() {
+            Ok(rt) => {
+                let send = async move {
+                    let result = new_async_logger(&file).await;
+                    if let Err(e) = s.send(result) {
+                        // use println because log is not init
+                        println!("sender fail, {e}");
+                    }
+                };
+                rt.block_on(send);
+            },
+            Err(e) => {
+                if let Err(e) = s.send(Err(pingap_core::Error::Invalid {
+                    message: e.to_string(),
+                })) {
+                    // use println because log is not init
+                    println!("sender fail, {e}");
+                }
+            },
+        };
+    });
+    r
 }
 
 fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
@@ -247,6 +287,7 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     let mut my_server = server::Server::new(None)?;
     let ps = Server::new(
         &server_conf,
+        None,
         new_server_locations_provider(),
         new_location_provider(),
         new_upstream_provider(),
@@ -342,6 +383,25 @@ fn parse_arguments() -> Args {
     args
 }
 
+fn parse_access_log(
+    access_log: Option<&String>,
+) -> (Option<String>, Option<String>) {
+    let default_value = (None, None);
+    let Some(access_log) = access_log else {
+        return default_value;
+    };
+    if access_log.starts_with('{') {
+        return default_value;
+    }
+    let Some((path, access)) = access_log.split_once(' ') else {
+        return default_value;
+    };
+    if !access.starts_with('{') {
+        return default_value;
+    }
+    (Some(access.to_string()), Some(path.to_string()))
+}
+
 fn run() -> Result<(), Box<dyn Error>> {
     let args = parse_arguments();
 
@@ -361,8 +421,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     // Initialize configuration
     pingap_config::try_init_config_storage(&args.conf)?;
-    let (s, r) = crossbeam_channel::bounded(0);
-    get_config(args.admin.is_some(), s);
+    let r = get_config(args.admin.is_some());
     let conf = r.recv()??;
 
     // Initialize logging system
@@ -382,8 +441,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     // sync config to other storage
     if let Some(sync_path) = args.sync {
-        let (s, r) = crossbeam_channel::bounded(0);
-        sync_config(sync_path, s);
+        let r = sync_config(sync_path);
         r.recv()??;
         info!("sync config success");
         return Ok(());
@@ -615,10 +673,24 @@ fn run() -> Result<(), Box<dyn Error>> {
         });
     }
 
-    for server_conf in server_conf_list.iter() {
+    for mut server_conf in server_conf_list {
         let listen_80_port = server_conf.addr.ends_with(":80");
+        let (access_log, log_path) =
+            parse_access_log(server_conf.access_log.as_ref());
+
+        server_conf.access_log = access_log;
+
+        let access_logger = if let Some(log_path) = log_path {
+            let r = new_access_logger(&log_path);
+            let (tx, task) = r.recv()??;
+            my_server.add_service(background_service("access_logger", task));
+            Some(tx)
+        } else {
+            None
+        };
         let mut ps = Server::new(
-            server_conf,
+            &server_conf,
+            access_logger,
             new_server_locations_provider(),
             new_location_provider(),
             new_upstream_provider(),
