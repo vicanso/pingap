@@ -570,6 +570,7 @@ impl Parser {
 /// # Examples
 ///
 /// ```
+/// use pingap_logger::parse_access_log_directive;
 /// let (access_log, path) = parse_access_log_directive(Some(
 ///     &"{when} {host} {method} {path}".to_string(),
 /// ));
@@ -578,6 +579,7 @@ impl Parser {
 /// ```
 ///
 /// ```
+/// use pingap_logger::parse_access_log_directive;
 /// let (access_log, path) = parse_access_log_directive(Some(
 ///     &"/var/log/pingap.log {when} {host} {method} {path}".to_string(),
 /// ));
