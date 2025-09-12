@@ -34,6 +34,7 @@ use pingap_core::BackgroundTaskService;
 #[cfg(feature = "imageoptim")]
 #[allow(unused_imports)]
 use pingap_imageoptim::ImageOptim;
+use pingap_logger::parse_access_log_directive;
 use pingap_logger::{new_async_logger, AsyncLoggerTask};
 #[cfg(feature = "full")]
 use pingap_otel::TracerService;
@@ -383,25 +384,6 @@ fn parse_arguments() -> Args {
     args
 }
 
-fn parse_access_log(
-    access_log: Option<&String>,
-) -> (Option<String>, Option<String>) {
-    let default_value = (None, None);
-    let Some(access_log) = access_log else {
-        return default_value;
-    };
-    if access_log.starts_with('{') {
-        return default_value;
-    }
-    let Some((path, access)) = access_log.split_once(' ') else {
-        return default_value;
-    };
-    if !access.starts_with('{') {
-        return default_value;
-    }
-    (Some(access.to_string()), Some(path.to_string()))
-}
-
 fn run() -> Result<(), Box<dyn Error>> {
     let args = parse_arguments();
 
@@ -673,12 +655,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         });
     }
 
-    for mut server_conf in server_conf_list {
+    for server_conf in server_conf_list {
         let listen_80_port = server_conf.addr.ends_with(":80");
-        let (access_log, log_path) =
-            parse_access_log(server_conf.access_log.as_ref());
-
-        server_conf.access_log = access_log;
+        let (_, log_path) =
+            parse_access_log_directive(server_conf.access_log.as_ref());
 
         let access_logger = if let Some(log_path) = log_path {
             let r = new_access_logger(&log_path);

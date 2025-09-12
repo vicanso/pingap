@@ -38,7 +38,7 @@ use pingap_core::{
 };
 use pingap_core::{new_internal_error, Plugin};
 use pingap_location::{Location, LocationProvider};
-use pingap_logger::Parser;
+use pingap_logger::{parse_access_log_directive, Parser};
 #[cfg(feature = "tracing")]
 use pingap_otel::{trace::Span, KeyValue};
 use pingap_performance::{accept_request, end_request};
@@ -230,8 +230,9 @@ impl Server {
             "new server"
         );
         let mut p = None;
-        let access_log = conf.access_log.clone().unwrap_or_default();
-        if !access_log.is_empty() {
+        let (access_log, _) =
+            parse_access_log_directive(conf.access_log.as_ref());
+        if let Some(access_log) = access_log {
             p = Some(Parser::from(access_log.as_str()));
         }
         let tcp_socket_options = if conf.tcp_fastopen.is_some()

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use bytes::BytesMut;
+use chrono::format::SecondsFormat;
 use chrono::{Local, Utc};
 use once_cell::sync::Lazy;
 use pingap_core::{format_duration, get_hostname, Ctx, HOST_NAME_TAG};
@@ -422,7 +423,9 @@ impl Parser {
                 TagCategory::When => {
                     if let Some(now) = &now {
                         buf.extend_from_slice(
-                            now.with_timezone(&Local).to_rfc3339().as_bytes(),
+                            now.with_timezone(&Local)
+                                .to_rfc3339_opts(SecondsFormat::Millis, false)
+                                .as_bytes(),
                         );
                     } else {
                         buf.extend_from_slice(EMPTY_FIELD);
@@ -430,7 +433,10 @@ impl Parser {
                 },
                 TagCategory::WhenUtcIso => {
                     if let Some(now) = &now {
-                        buf.extend_from_slice(now.to_rfc3339().as_bytes());
+                        buf.extend_from_slice(
+                            now.to_rfc3339_opts(SecondsFormat::Millis, true)
+                                .as_bytes(),
+                        );
                     } else {
                         buf.extend_from_slice(EMPTY_FIELD);
                     }
@@ -551,9 +557,57 @@ impl Parser {
     }
 }
 
+/// Parse the access log directive
+///
+/// # Arguments
+///
+/// * `access_log` - The access log directive
+///
+/// # Returns
+///
+/// * `(access_log, path)` - The access log directive and the path
+///
+/// # Examples
+///
+/// ```
+/// let (access_log, path) = parse_access_log_directive(Some(
+///     &"{when} {host} {method} {path}".to_string(),
+/// ));
+/// assert_eq!(Some("{when} {host} {method} {path}".to_string()), access_log);
+/// assert_eq!(None, path);
+/// ```
+///
+/// ```
+/// let (access_log, path) = parse_access_log_directive(Some(
+///     &"/var/log/pingap.log {when} {host} {method} {path}".to_string(),
+/// ));
+/// assert_eq!(Some("{when} {host} {method} {path}".to_string()), access_log);
+/// assert_eq!(Some("/var/log/pingap.log".to_string()), path);
+/// ```
+pub fn parse_access_log_directive(
+    access_log: Option<&String>,
+) -> (Option<String>, Option<String>) {
+    let default_value = (access_log.cloned(), None);
+    let Some(access_log) = access_log else {
+        return default_value;
+    };
+    if access_log.starts_with('{') {
+        return default_value;
+    }
+    let Some((path, access)) = access_log.split_once(' ') else {
+        return default_value;
+    };
+    if !access.starts_with('{') {
+        return default_value;
+    }
+    (Some(access.to_string()), Some(path.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{format_extra_tag, Parser, Tag, TagCategory};
+    use super::{
+        format_extra_tag, parse_access_log_directive, Parser, Tag, TagCategory,
+    };
     use http::Method;
     use pingap_core::{
         ConnectionInfo, Ctx, RequestState, Timing, UpstreamInfo,
@@ -561,6 +615,21 @@ mod tests {
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
+
+    #[test]
+    fn test_parse_access_log_directive() {
+        let (access, path) = parse_access_log_directive(Some(
+            &"{when} {host} {method} {path}".to_string(),
+        ));
+        assert_eq!(Some("{when} {host} {method} {path}".to_string()), access);
+        assert_eq!(None, path);
+
+        let (access, path) = parse_access_log_directive(Some(
+            &"/var/log/pingap.log {when} {host} {method} {path}".to_string(),
+        ));
+        assert_eq!(Some("{when} {host} {method} {path}".to_string()), access);
+        assert_eq!(Some("/var/log/pingap.log".to_string()), path);
+    }
 
     #[test]
     fn test_format_extra_tag() {
@@ -809,11 +878,11 @@ mod tests {
 
         let p: Parser = "{when_utc_iso}".into();
         let log = p.format(&session, &ctx);
-        assert_eq!(true, log.len() > 25);
+        assert_eq!(true, log.len() > 20);
 
         let p: Parser = "{when}".into();
         let log = p.format(&session, &ctx);
-        assert_eq!(true, log.len() > 25);
+        assert_eq!(true, log.len() > 20);
 
         let p: Parser = "{when_unix}".into();
         let log = p.format(&session, &ctx);
