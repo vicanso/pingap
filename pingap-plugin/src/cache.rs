@@ -39,12 +39,10 @@ use pingora::cache::lock::{CacheKeyLock, CacheLock};
 use pingora::cache::predictor::{CacheablePredictor, Predictor};
 use pingora::proxy::Session;
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::time::Duration;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -69,80 +67,27 @@ static CACHE_LOCK_THREE_SECONDS: Lazy<
     Box<(dyn CacheKeyLock + std::marker::Send + Sync + 'static)>,
 > = Lazy::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(3)));
 
-struct CacheBackendProvider {
-    cache_backends: Mutex<HashMap<String, &'static HttpCache>>,
-}
-
-static BACKENDS: Lazy<CacheBackendProvider> =
-    Lazy::new(|| CacheBackendProvider {
-        cache_backends: Mutex::new(HashMap::new()),
-    });
-
 pub fn get_or_init_cache_backend(
     conf: &PluginConf,
 ) -> Result<&'static HttpCache> {
-    let hash_value = get_hash_key(conf);
-    let mut directory = get_str_conf(conf, "directory");
-    if directory.is_empty() {
-        directory = tempfile::TempDir::new()
-            .map_err(|e| Error::Invalid {
-                category: PluginCategory::Cache.to_string(),
-                message: e.to_string(),
-            })?
-            .keep()
-            .to_string_lossy()
-            .to_string();
-    }
-    let key = if directory.starts_with("memory://") {
-        hash_value.clone()
-    } else {
-        directory.clone()
-    };
-
-    let mut cache_backends =
-        BACKENDS.cache_backends.lock().map_err(|e| Error::Invalid {
-            category: PluginCategory::Cache.to_string(),
-            message: e.to_string(),
-        })?;
-    if let Some(backend) = cache_backends.get(&key) {
-        return Ok(backend);
-    }
-
+    let directory = get_str_conf(conf, "directory");
     let max_size = get_str_conf(conf, "max_size");
-    let max_size = if !max_size.is_empty() {
-        ByteSize::from_str(&max_size).ok()
+    let cache_max_size = if !max_size.is_empty() {
+        Some(ByteSize::from_str(&max_size).map_err(|e| Error::Invalid {
+            category: "cache".to_string(),
+            message: e.to_string(),
+        })?)
     } else {
         None
     };
-
-    let cache_directory = if !directory.is_empty() {
-        Some(directory)
-    } else {
-        None
-    };
-
-    let cache_backend = new_cache_backend(CacheBackendOption {
-        cache_directory,
-        cache_max_size: max_size,
+    new_cache_backend(CacheBackendOption {
+        cache_directory: Some(directory),
+        cache_max_size,
     })
     .map_err(|e| Error::Invalid {
-        category: PluginCategory::Cache.to_string(),
+        category: "cache".to_string(),
         message: e.to_string(),
-    })?;
-
-    info!(
-        category = "cache_plugin",
-        size = ByteSize::b(cache_backend.size as u64).to_string(),
-        cache_type = cache_backend.cache_type,
-        cache_mode = cache_backend.cache_mode,
-        inactive = cache_backend.cache.cache.inactive().map(|v| v.as_secs()),
-        "init cache backend success"
-    );
-    let cache_ref: &'static HttpCache =
-        Box::leak(Box::new(cache_backend.cache));
-
-    cache_backends.insert(key, cache_ref);
-    Ok(cache_ref)
+    })
 }
 
 pub struct Cache {

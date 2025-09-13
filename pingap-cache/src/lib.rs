@@ -14,10 +14,14 @@
 
 use bytesize::ByteSize;
 use memory_stats::memory_stats;
+use once_cell::sync::Lazy;
+use once_cell::sync::OnceCell;
 use pingap_core::convert_query_map;
 use snafu::Snafu;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
+use tracing::info;
 
 mod file;
 mod http_cache;
@@ -61,39 +65,61 @@ fn new_file_cache(dir: &str) -> Result<HttpCache> {
     })
 }
 
-const MAX_MEMORY_SIZE: usize = 100 * 1024 * 1024;
-static CACHED_INIT: AtomicBool = AtomicBool::new(false);
-
-/// Check if the cache backend has been initialized
-pub fn is_cache_backend_init() -> bool {
-    CACHED_INIT.load(Ordering::Relaxed)
-}
-
 #[derive(Debug, Default)]
 pub struct CacheBackendOption {
     /// Directory to store cache files
     pub cache_directory: Option<String>,
-    /// Maximum size of cache storage
     pub cache_max_size: Option<ByteSize>,
 }
 
-pub struct CacheBackend {
-    pub cache: HttpCache,
-    pub cache_type: String,
-    pub size: usize,
-    pub cache_mode: String,
+struct CacheBackendProvider {
+    cache_backends: Mutex<HashMap<String, &'static HttpCache>>,
 }
 
-pub fn new_cache_backend(option: CacheBackendOption) -> Result<CacheBackend> {
-    // Determine cache size from config or use default MAX_MEMORY_SIZE
-    let mut size = if let Some(cache_max_size) = option.cache_max_size {
-        cache_max_size.as_u64() as usize
-    } else {
-        MAX_MEMORY_SIZE
-    };
+static BACKENDS: Lazy<CacheBackendProvider> =
+    Lazy::new(|| CacheBackendProvider {
+        cache_backends: Mutex::new(HashMap::new()),
+    });
 
-    let mut cache_type = "memory";
-    let mut cache_mode = "".to_string();
+static MEMORY_BACKEND: OnceCell<HttpCache> = OnceCell::new();
+
+const MAX_MEMORY_SIZE: usize = 100 * 1024 * 1024;
+
+fn try_init_memory_backend(
+    cache_directory: &str,
+    cache_max_size: Option<ByteSize>,
+) -> &'static HttpCache {
+    MEMORY_BACKEND.get_or_init(|| {
+        // Determine cache size from config or use default MAX_MEMORY_SIZE
+        let mut size = if let Some(cache_max_size) = cache_max_size {
+            cache_max_size.as_u64() as usize
+        } else {
+            MAX_MEMORY_SIZE
+        };
+        let max_memory = if let Some(value) = memory_stats() {
+            value.physical_mem * 1024 / 2
+        } else {
+            ByteSize::mb(256).as_u64() as usize
+        };
+        let mut cache_mode = "".to_string();
+
+        if let Some((_, query)) = cache_directory.split_once('?') {
+            let query_map = convert_query_map(query);
+            cache_mode = query_map.get("mode").cloned().unwrap_or_default();
+        }
+
+        size = size.min(max_memory);
+        info!(
+            category = LOG_CATEGORY,
+            size, cache_mode, "init memory cache backend success"
+        );
+        new_tiny_ufo_cache(&cache_mode, size)
+    })
+}
+
+pub fn new_cache_backend(
+    option: CacheBackendOption,
+) -> Result<&'static HttpCache> {
     // Get optional cache directory from config
     let cache_directory = if let Some(cache_directory) = &option.cache_directory
     {
@@ -102,42 +128,35 @@ pub fn new_cache_backend(option: CacheBackendOption) -> Result<CacheBackend> {
         "".to_string()
     };
 
-    // Choose between file-based or memory-based cache
-    let cache = if !cache_directory.is_empty()
-        && !cache_directory.starts_with("memory://")
-    {
-        // Use file-based cache if directory is specified
-        cache_type = "file";
-        new_file_cache(cache_directory.as_str()).map_err(|e| {
-            Error::Invalid {
-                message: e.to_string(),
-            }
-        })?
-    } else {
-        // For memory cache, limit size to half of available physical memory
-        // or fallback to 256MB if memory stats unavailable
-        let max_memory = if let Some(value) = memory_stats() {
-            value.physical_mem * 1024 / 2
-        } else {
-            ByteSize::mb(256).as_u64() as usize
-        };
+    if cache_directory.is_empty() || cache_directory.starts_with("memory://") {
+        return Ok(try_init_memory_backend(
+            cache_directory.as_str(),
+            option.cache_max_size,
+        ));
+    }
+    let mut cache_backends =
+        BACKENDS.cache_backends.lock().map_err(|e| Error::Invalid {
+            message: e.to_string(),
+        })?;
+    if let Some(backend) = cache_backends.get(&cache_directory) {
+        return Ok(backend);
+    }
 
-        if let Some((_, query)) = cache_directory.split_once('?') {
-            let query_map = convert_query_map(query);
-            cache_mode = query_map.get("mode").cloned().unwrap_or_default();
-        }
+    // Use file-based cache if directory is specified
+    let cache =
+        new_file_cache(&cache_directory).map_err(|e| Error::Invalid {
+            message: e.to_string(),
+        })?;
+    info!(
+        category = LOG_CATEGORY,
+        inactive = cache.cache.inactive().map(|v| v.as_secs()),
+        "init file cache backend success"
+    );
 
-        size = size.min(max_memory);
-        // Create memory-based tiny UFO cache
-        new_tiny_ufo_cache(&cache_mode, size)
-    };
+    let cache_ref: &'static HttpCache = Box::leak(Box::new(cache));
+    cache_backends.insert(cache_directory, cache_ref);
 
-    Ok(CacheBackend {
-        cache,
-        cache_type: cache_type.to_string(),
-        size,
-        cache_mode: cache_mode.to_string(),
-    })
+    Ok(cache_ref)
 }
 
 pub use http_cache::{new_storage_clear_service, HttpCache};
