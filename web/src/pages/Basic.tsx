@@ -128,22 +128,6 @@ export default function Basic() {
       category: ExFormItemCategory.TEXT,
     },
     {
-      name: "cache_directory",
-      label: basicI18n("cacheDirectory"),
-      placeholder: basicI18n("cacheDirectoryPlaceholder"),
-      defaultValue: basic.cache_directory,
-      span: 3,
-      category: ExFormItemCategory.TEXT,
-    },
-    {
-      name: "cache_max_size",
-      label: basicI18n("cacheMaxSize"),
-      placeholder: basicI18n("cacheMaxSizePlaceholder"),
-      defaultValue: basic.cache_max_size,
-      span: 3,
-      category: ExFormItemCategory.TEXT,
-    },
-    {
       name: "upgrade_sock",
       label: basicI18n("upgradeSock"),
       placeholder: basicI18n("upgradeSockPlaceholder"),

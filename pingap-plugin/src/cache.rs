@@ -26,7 +26,7 @@ use http::{Method, StatusCode};
 use humantime::parse_duration;
 use once_cell::sync::{Lazy, OnceCell};
 use pingap_cache::{new_cache_backend, CacheBackendOption, HttpCache};
-use pingap_config::{get_current_config, PluginCategory, PluginConf};
+use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     get_cache_key, get_client_ip, Ctx, HttpResponse, Plugin, PluginStep,
     RequestPluginResult,
@@ -66,29 +66,6 @@ static CACHE_LOCK_TWO_SECONDS: Lazy<
 static CACHE_LOCK_THREE_SECONDS: Lazy<
     Box<(dyn CacheKeyLock + std::marker::Send + Sync + 'static)>,
 > = Lazy::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(3)));
-
-pub fn get_or_init_cache_backend(
-    conf: &PluginConf,
-) -> Result<&'static HttpCache> {
-    let directory = get_str_conf(conf, "directory");
-    let max_size = get_str_conf(conf, "max_size");
-    let cache_max_size = if !max_size.is_empty() {
-        Some(ByteSize::from_str(&max_size).map_err(|e| Error::Invalid {
-            category: "cache".to_string(),
-            message: e.to_string(),
-        })?)
-    } else {
-        None
-    };
-    new_cache_backend(CacheBackendOption {
-        cache_directory: Some(directory),
-        cache_max_size,
-    })
-    .map_err(|e| Error::Invalid {
-        category: "cache".to_string(),
-        message: e.to_string(),
-    })
-}
 
 pub struct Cache {
     // Determines when this plugin runs in the request/response lifecycle
@@ -135,12 +112,10 @@ pub struct Cache {
 /// - Uses the configured cache size from current config if available
 /// - Falls back to MAX_MEMORY_SIZE (100MB) if not configured
 /// - Ensures only one instance is created using OnceCell
-fn get_eviction_manager() -> &'static Manager {
+fn get_eviction_manager(cache_max_size: Option<ByteSize>) -> &'static Manager {
     EVICTION_MANAGER.get_or_init(|| {
         // Use configured cache size or fall back to default MAX_MEMORY_SIZE
-        let size = if let Some(cache_max_size) =
-            get_current_config().basic.cache_max_size
-        {
+        let size = if let Some(cache_max_size) = cache_max_size {
             cache_max_size.as_u64() as usize
         } else {
             MAX_MEMORY_SIZE
@@ -215,9 +190,27 @@ impl TryFrom<&PluginConf> for Cache {
     /// - Compiles skip regex if provided
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let cache = get_or_init_cache_backend(value)?;
+        let directory = get_str_conf(value, "directory");
+        let max_size = get_str_conf(value, "max_size");
+        let cache_max_size = if !max_size.is_empty() {
+            Some(ByteSize::from_str(&max_size).map_err(|e| Error::Invalid {
+                category: "cache".to_string(),
+                message: e.to_string(),
+            })?)
+        } else {
+            None
+        };
+        let cache = new_cache_backend(CacheBackendOption {
+            cache_directory: Some(directory.to_string()),
+            cache_max_size,
+        })
+        .map_err(|e| Error::Invalid {
+            category: "cache".to_string(),
+            message: e.to_string(),
+        })?;
+
         let eviction = if value.contains_key("eviction") {
-            let eviction = get_eviction_manager();
+            let eviction = get_eviction_manager(cache_max_size);
             Some(eviction as &'static (dyn EvictionManager + Sync))
         } else {
             None

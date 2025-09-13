@@ -771,10 +771,6 @@ pub struct BasicConf {
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub auto_restart_check_interval: Option<Duration>,
-    /// Directory to store cache files
-    pub cache_directory: Option<String>,
-    /// Maximum size of cache storage
-    pub cache_max_size: Option<ByteSize>,
 }
 
 impl BasicConf {

@@ -117,12 +117,6 @@ export default {
       "Input auto restart check interval(e.g. 30s)",
     pidFile: "Pid File",
     pidFilePlaceholder: "Input pid file path(e.g. /opt/pingap/pingap.pid)",
-    cacheDirectory: "Cache Directory",
-    cacheDirectoryPlaceholder:
-      "Input the file cache directory(e.g. /opt/cache)",
-    cacheMaxSize: "Cache Max Size",
-    cacheMaxSizePlaceholder:
-      "Input max size of cache(e.g. 100mb), it's only for memory cache",
     upgradeSock: "Upgrade Sock For Daemon",
     upgradeSockPlaceholder: "Input upgrade unix sock for daemon",
     user: "User For Daemon",
