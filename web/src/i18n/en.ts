@@ -361,6 +361,10 @@ export default {
     redirectPrefix: "Prefix",
     redirectPrefixPlaceholder: "Input prefix url append to redirect url",
     redirectHttps: "Https",
+    cacheDirectory: "Directory",
+    cacheDirectoryPlaceholder: "Input the directory of cache",
+    cacheMaxSize: "Max Size",
+    cacheMaxSizePlaceholder: "Input the max size of cache",
     cacheLock: "Lock",
     cacheLockPlaceholder:
       "Input the lock duration lookups to the same asset(e.g. 2s)",

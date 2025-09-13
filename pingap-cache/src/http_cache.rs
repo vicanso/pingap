@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_cache_backend, is_cache_backend_init, LOG_CATEGORY};
+use super::LOG_CATEGORY;
 use super::{Error, Result, PAGE_SIZE};
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use pingap_core::BackgroundTask;
-use pingap_core::Error as ServiceError;
 use pingora::cache::key::{CacheHashKey, CompactCacheKey};
 use pingora::cache::storage::MissFinishType;
 use pingora::cache::storage::{HandleHit, HandleMiss};
@@ -27,7 +26,7 @@ use pingora::cache::{
 };
 use std::any::Any;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 use tracing::info;
 
 type BinaryMeta = (Vec<u8>, Vec<u8>);
@@ -184,64 +183,54 @@ pub trait HttpCacheStorage: Sync + Send {
     }
 }
 
-async fn do_file_storage_clear(
-    count: u32,
-    cache: Arc<dyn HttpCacheStorage>,
-) -> Result<bool, ServiceError> {
-    // Add 1 every loop
-    let offset = 60;
-    if count % offset != 0 {
-        return Ok(false);
-    }
+// async fn do_file_storage_clear(
+//     count: u32,
+//     cache: Arc<dyn HttpCacheStorage>,
+// ) -> Result<bool, ServiceError> {
+//     // Add 1 every loop
+//     let offset = 60;
+//     if count % offset != 0 {
+//         return Ok(false);
+//     }
 
-    let Some(inactive_duration) = cache.inactive() else {
-        return Ok(false);
-    };
+//     let Some(inactive_duration) = cache.inactive() else {
+//         return Ok(false);
+//     };
 
-    let Some(access_before) = SystemTime::now().checked_sub(inactive_duration)
-    else {
-        return Ok(false);
-    };
+//     let Some(access_before) = SystemTime::now().checked_sub(inactive_duration)
+//     else {
+//         return Ok(false);
+//     };
 
-    let Ok((success, fail)) = cache.clear(access_before).await else {
-        return Ok(true);
-    };
-    if success < 0 {
-        return Ok(true);
-    }
-    info!(
-        category = LOG_CATEGORY,
-        success, fail, "file cache storage clear"
-    );
-    Ok(true)
-}
+//     let Ok((success, fail)) = cache.clear(access_before).await else {
+//         return Ok(true);
+//     };
+//     if success < 0 {
+//         return Ok(true);
+//     }
+//     info!(
+//         category = LOG_CATEGORY,
+//         success, fail, "file cache storage clear"
+//     );
+//     Ok(true)
+// }
 
-struct StorageClearTask {
-    cache: Arc<dyn HttpCacheStorage>,
-}
+// struct StorageClearTask {
+//     cache: Arc<dyn HttpCacheStorage>,
+// }
 
-#[async_trait]
-impl BackgroundTask for StorageClearTask {
-    async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
-        do_file_storage_clear(count, self.cache.clone()).await?;
-        Ok(true)
-    }
-}
+// #[async_trait]
+// impl BackgroundTask for StorageClearTask {
+//     async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
+//         do_file_storage_clear(count, self.cache.clone()).await?;
+//         Ok(true)
+//     }
+// }
 
 pub fn new_storage_clear_service() -> Option<Box<dyn BackgroundTask>> {
-    // if cache backend not initialized, do not create storage clear service
-    if !is_cache_backend_init() {
-        return None;
-    }
-    // because the cache backend is initialized once,
-    // so we can use the default option
-    let Ok(backend) = get_cache_backend(None) else {
-        return None;
-    };
-    backend.cache.inactive()?;
-    Some(Box::new(StorageClearTask {
-        cache: backend.cache.clone(),
-    }))
+    // TODO
+    // clear the directory if it is a file cache
+    None
 }
 
 pub struct HttpCache {

@@ -104,7 +104,7 @@ pub struct Compression {
     decompression: Option<bool>,
     // Defines when this plugin runs in the request processing pipeline
     plugin_step: PluginStep,
-    // Pipe mode or full body mode
+    // Response mode or upstream response mode
     mode: String,
     // Unique identifier for caching and tracking plugin instances
     hash_value: String,
@@ -266,7 +266,10 @@ impl Plugin for Compression {
         let (zstd_level, br_level, gzip_level) =
             self.get_compress_level(session);
 
-        debug!(zstd_level, br_level, gzip_level, "pipe compression level");
+        debug!(
+            zstd_level,
+            br_level, gzip_level, "response compression level"
+        );
 
         if zstd_level == 0 && br_level == 0 && gzip_level == 0 {
             return Ok(RequestPluginResult::Skipped);

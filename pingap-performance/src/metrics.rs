@@ -14,7 +14,6 @@
 
 use super::{get_process_system_info, get_processing_accepted, LOG_CATEGORY};
 use async_trait::async_trait;
-use pingap_cache::{get_cache_backend, is_cache_backend_init};
 use pingap_core::{BackgroundTask, Error};
 use pingap_location::LocationProvider;
 use pingap_upstream::{
@@ -42,19 +41,6 @@ fn join_non_empty(items: Vec<String>) -> Option<String> {
 #[async_trait]
 impl BackgroundTask for PerformanceMetricsLogTask {
     async fn execute(&self, _count: u32) -> Result<bool, Error> {
-        // Get cache statistics (reading/writing counts)
-        let (cache_reading, cache_writing) = if is_cache_backend_init() {
-            // 使用 and_then 链式处理 Option，避免嵌套
-            get_cache_backend(None)
-                .ok() // Result<T, E> -> Option<T>
-                .and_then(|cache| cache.stats())
-                .map_or((-1, -1), |stats| {
-                    (stats.reading as i64, stats.writing as i64)
-                })
-        } else {
-            (-1, -1)
-        };
-
         // Collect active location processing counts
         // Format: "location1:count1, location2:count2, ..."
         let locations_stats_vec = self
@@ -115,8 +101,6 @@ impl BackgroundTask for PerformanceMetricsLogTask {
             fd_count = system_info.fd_count, // File descriptor count
             tcp_count = system_info.tcp_count, // IPv4 TCP connection count
             tcp6_count = system_info.tcp6_count, // IPv6 TCP connection count
-            cache_reading,                 // Active cache reads
-            cache_writing,                 // Active cache writes
         );
         Ok(true)
     }

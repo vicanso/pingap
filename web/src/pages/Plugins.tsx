@@ -339,6 +339,22 @@ export default function Plugins() {
     case PluginCategory.CACHE: {
       items.push(
         {
+          name: "directory",
+          label: pluginI18n("cacheDirectory"),
+          placeholder: pluginI18n("cacheDirectoryPlaceholder"),
+          defaultValue: pluginConfig.directory as string,
+          span: 3,
+          category: ExFormItemCategory.TEXT,
+        },
+        {
+          name: "max_size",
+          label: pluginI18n("cacheMaxSize"),
+          placeholder: pluginI18n("cacheMaxSizePlaceholder"),
+          defaultValue: pluginConfig.max_size as string,
+          span: 3,
+          category: ExFormItemCategory.TEXT,
+        },
+        {
           name: "lock",
           label: pluginI18n("cacheLock"),
           placeholder: pluginI18n("cacheLockPlaceholder"),

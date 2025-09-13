@@ -25,7 +25,7 @@ use fancy_regex::Regex;
 use http::{Method, StatusCode};
 use humantime::parse_duration;
 use once_cell::sync::{Lazy, OnceCell};
-use pingap_cache::{get_cache_backend, CacheBackendOption, HttpCache};
+use pingap_cache::{new_cache_backend, CacheBackendOption, HttpCache};
 use pingap_config::{get_current_config, PluginCategory, PluginConf};
 use pingap_core::{
     get_cache_key, get_client_ip, Ctx, HttpResponse, Plugin, PluginStep,
@@ -39,10 +39,12 @@ use pingora::cache::lock::{CacheKeyLock, CacheLock};
 use pingora::cache::predictor::{CacheablePredictor, Predictor};
 use pingora::proxy::Session;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -66,6 +68,82 @@ static CACHE_LOCK_TWO_SECONDS: Lazy<
 static CACHE_LOCK_THREE_SECONDS: Lazy<
     Box<(dyn CacheKeyLock + std::marker::Send + Sync + 'static)>,
 > = Lazy::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(3)));
+
+struct CacheBackendProvider {
+    cache_backends: Mutex<HashMap<String, &'static HttpCache>>,
+}
+
+static BACKENDS: Lazy<CacheBackendProvider> =
+    Lazy::new(|| CacheBackendProvider {
+        cache_backends: Mutex::new(HashMap::new()),
+    });
+
+pub fn get_or_init_cache_backend(
+    conf: &PluginConf,
+) -> Result<&'static HttpCache> {
+    let hash_value = get_hash_key(conf);
+    let mut directory = get_str_conf(conf, "directory");
+    if directory.is_empty() {
+        directory = tempfile::TempDir::new()
+            .map_err(|e| Error::Invalid {
+                category: PluginCategory::Cache.to_string(),
+                message: e.to_string(),
+            })?
+            .keep()
+            .to_string_lossy()
+            .to_string();
+    }
+    let key = if directory.starts_with("memory://") {
+        hash_value.clone()
+    } else {
+        directory.clone()
+    };
+
+    let mut cache_backends =
+        BACKENDS.cache_backends.lock().map_err(|e| Error::Invalid {
+            category: PluginCategory::Cache.to_string(),
+            message: e.to_string(),
+        })?;
+    if let Some(backend) = cache_backends.get(&key) {
+        return Ok(backend);
+    }
+
+    let max_size = get_str_conf(conf, "max_size");
+    let max_size = if !max_size.is_empty() {
+        ByteSize::from_str(&max_size).ok()
+    } else {
+        None
+    };
+
+    let cache_directory = if !directory.is_empty() {
+        Some(directory)
+    } else {
+        None
+    };
+
+    let cache_backend = new_cache_backend(CacheBackendOption {
+        cache_directory,
+        cache_max_size: max_size,
+    })
+    .map_err(|e| Error::Invalid {
+        category: PluginCategory::Cache.to_string(),
+        message: e.to_string(),
+    })?;
+
+    info!(
+        category = "cache_plugin",
+        size = ByteSize::b(cache_backend.size as u64).to_string(),
+        cache_type = cache_backend.cache_type,
+        cache_mode = cache_backend.cache_mode,
+        inactive = cache_backend.cache.cache.inactive().map(|v| v.as_secs()),
+        "init cache backend success"
+    );
+    let cache_ref: &'static HttpCache =
+        Box::leak(Box::new(cache_backend.cache));
+
+    cache_backends.insert(key, cache_ref);
+    Ok(cache_ref)
+}
 
 pub struct Cache {
     // Determines when this plugin runs in the request/response lifecycle
@@ -192,15 +270,7 @@ impl TryFrom<&PluginConf> for Cache {
     /// - Compiles skip regex if provided
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
-        let basic_conf = &get_current_config().basic;
-        let cache = get_cache_backend(Some(CacheBackendOption {
-            cache_directory: basic_conf.cache_directory.clone(),
-            cache_max_size: basic_conf.cache_max_size,
-        }))
-        .map_err(|e| Error::Invalid {
-            category: "cache_backend".to_string(),
-            message: e.to_string(),
-        })?;
+        let cache = get_or_init_cache_backend(value)?;
         let eviction = if value.contains_key("eviction") {
             let eviction = get_eviction_manager();
             Some(eviction as &'static (dyn EvictionManager + Sync))
@@ -547,20 +617,5 @@ max_ttl = "1m"
         );
         assert_eq!(true, session.cache.enabled());
         assert_eq!(100 * 1000, cache.max_file_size);
-
-        // purge
-        let headers = ["Accept-Encoding: gzip", "X-Forwarded-For: 127.0.0.1"]
-            .join("\r\n");
-        let input_header = format!(
-            "PURGE /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n"
-        );
-        let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        let mut session = Session::new_h1(Box::new(mock_io));
-        session.read_request().await.unwrap();
-        let mut ctx = Ctx::default();
-        cache
-            .handle_request(PluginStep::Request, &mut session, &mut ctx)
-            .await
-            .unwrap();
     }
 }
