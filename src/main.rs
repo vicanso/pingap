@@ -284,8 +284,12 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
         error!(error, "init plugins fail",);
     }
     pingap_config::try_init_config_storage(&args.conf)?;
+    let opt = Opt {
+        daemon: args.daemon,
+        ..Default::default()
+    };
     // config::set_config_path(&args.conf);
-    let mut my_server = server::Server::new(None)?;
+    let mut my_server = server::Server::new(Some(opt))?;
     let ps = Server::new(
         &server_conf,
         None,
