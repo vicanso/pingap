@@ -85,6 +85,14 @@ static MEMORY_BACKEND: OnceCell<HttpCache> = OnceCell::new();
 
 const MAX_MEMORY_SIZE: usize = 100 * 1024 * 1024;
 
+pub(crate) fn get_file_backends() -> Vec<&'static HttpCache> {
+    if let Ok(backends) = BACKENDS.cache_backends.lock() {
+        backends.values().copied().collect()
+    } else {
+        Vec::new()
+    }
+}
+
 fn try_init_memory_backend(
     cache_directory: &str,
     cache_max_size: Option<ByteSize>,

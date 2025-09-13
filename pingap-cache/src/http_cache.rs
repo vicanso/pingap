@@ -14,9 +14,11 @@
 
 use super::LOG_CATEGORY;
 use super::{Error, Result, PAGE_SIZE};
+use crate::get_file_backends;
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use pingap_core::BackgroundTask;
+use pingap_core::Error as ServiceError;
 use pingora::cache::key::{CacheHashKey, CompactCacheKey};
 use pingora::cache::storage::MissFinishType;
 use pingora::cache::storage::{HandleHit, HandleMiss};
@@ -27,6 +29,7 @@ use pingora::cache::{
 use std::any::Any;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::SystemTime;
 use tracing::info;
 
 type BinaryMeta = (Vec<u8>, Vec<u8>);
@@ -113,6 +116,13 @@ pub struct HttpCacheStats {
     pub writing: u32,
 }
 
+#[derive(Debug, Clone)]
+pub struct HttpCacheClearStats {
+    pub success: i32,
+    pub fail: i32,
+    pub description: String,
+}
+
 /// Storage interface for HTTP caching operations
 ///
 /// This trait defines the core operations needed to implement a storage backend
@@ -158,12 +168,16 @@ pub trait HttpCacheStorage: Sync + Send {
     /// * `access_before` - Remove items last accessed before this timestamp
     ///
     /// # Returns
-    /// * `Result<(i32, i32)>` - Count of (successful, failed) removals
+    /// * `Result<HttpCacheClearStats>` - Clear stats
     async fn clear(
         &self,
         _access_before: std::time::SystemTime,
-    ) -> Result<(i32, i32)> {
-        Ok((-1, -1))
+    ) -> Result<HttpCacheClearStats> {
+        Ok(HttpCacheClearStats {
+            success: -1,
+            fail: -1,
+            description: "".to_string(),
+        })
     }
 
     /// Returns current storage statistics.
@@ -183,54 +197,51 @@ pub trait HttpCacheStorage: Sync + Send {
     }
 }
 
-// async fn do_file_storage_clear(
-//     count: u32,
-//     cache: Arc<dyn HttpCacheStorage>,
-// ) -> Result<bool, ServiceError> {
-//     // Add 1 every loop
-//     let offset = 60;
-//     if count % offset != 0 {
-//         return Ok(false);
-//     }
+async fn do_file_storage_clear(count: u32) -> Result<bool, ServiceError> {
+    // Add 1 every loop
+    let offset = 60;
+    if count % offset != 0 {
+        return Ok(false);
+    }
 
-//     let Some(inactive_duration) = cache.inactive() else {
-//         return Ok(false);
-//     };
+    let backends = get_file_backends();
+    for backend in backends {
+        let cache = &backend.cache;
+        let Some(inactive_duration) = cache.inactive() else {
+            continue;
+        };
 
-//     let Some(access_before) = SystemTime::now().checked_sub(inactive_duration)
-//     else {
-//         return Ok(false);
-//     };
+        let Some(access_before) =
+            SystemTime::now().checked_sub(inactive_duration)
+        else {
+            return Ok(false);
+        };
 
-//     let Ok((success, fail)) = cache.clear(access_before).await else {
-//         return Ok(true);
-//     };
-//     if success < 0 {
-//         return Ok(true);
-//     }
-//     info!(
-//         category = LOG_CATEGORY,
-//         success, fail, "file cache storage clear"
-//     );
-//     Ok(true)
-// }
+        let Ok(stats) = cache.clear(access_before).await else {
+            return Ok(true);
+        };
+        info!(
+            category = LOG_CATEGORY,
+            success = stats.success,
+            fail = stats.fail,
+            description = stats.description,
+        );
+    }
+    Ok(true)
+}
 
-// struct StorageClearTask {
-//     cache: Arc<dyn HttpCacheStorage>,
-// }
+struct StorageClearTask {}
 
-// #[async_trait]
-// impl BackgroundTask for StorageClearTask {
-//     async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
-//         do_file_storage_clear(count, self.cache.clone()).await?;
-//         Ok(true)
-//     }
-// }
+#[async_trait]
+impl BackgroundTask for StorageClearTask {
+    async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
+        do_file_storage_clear(count).await?;
+        Ok(true)
+    }
+}
 
 pub fn new_storage_clear_service() -> Option<Box<dyn BackgroundTask>> {
-    // TODO
-    // clear the directory if it is a file cache
-    None
+    Some(Box::new(StorageClearTask {}))
 }
 
 pub struct HttpCache {

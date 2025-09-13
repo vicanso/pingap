@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::http_cache::{CacheObject, HttpCacheStats, HttpCacheStorage};
+use super::http_cache::{
+    CacheObject, HttpCacheClearStats, HttpCacheStats, HttpCacheStorage,
+};
 use super::{Error, Result, LOG_CATEGORY, PAGE_SIZE};
 #[cfg(feature = "tracing")]
 use super::{CACHE_READING_TIME, CACHE_WRITING_TIME};
@@ -443,10 +445,17 @@ impl HttpCacheStorage for FileCache {
     /// * `access_before` - Remove entries last accessed before this time
     ///
     /// # Returns
-    /// * `Ok((success, fail))` - Number of successfully and unsuccessfully removed entries
-    async fn clear(&self, access_before: SystemTime) -> Result<(i32, i32)> {
+    /// * `Ok(HttpCacheClearStats)` - Clear stats
+    async fn clear(
+        &self,
+        access_before: SystemTime,
+    ) -> Result<HttpCacheClearStats> {
         let mut success = 0;
         let mut fail = 0;
+        let description = format!(
+            "clear cache file, directory: {}, access before: {:?}",
+            self.directory, access_before
+        );
         for entry in WalkDir::new(&self.directory)
             .into_iter()
             .filter_map(|item| item.ok())
@@ -482,7 +491,11 @@ impl HttpCacheStorage for FileCache {
                 },
             };
         }
-        Ok((success, fail))
+        Ok(HttpCacheClearStats {
+            success,
+            fail,
+            description,
+        })
     }
     fn inactive(&self) -> Option<Duration> {
         Some(self.cache_inactive)
@@ -619,10 +632,10 @@ mod tests {
 
         // Clear files accessed more than 10 minutes ago.
         let access_before = SystemTime::now() - Duration::from_secs(600);
-        let (success, fail) = cache.clear(access_before).await.unwrap();
+        let stats = cache.clear(access_before).await.unwrap();
 
-        assert_eq!(success, 1);
-        assert_eq!(fail, 0);
+        assert_eq!(stats.success, 1);
+        assert_eq!(stats.fail, 0);
 
         // Verify that the old file was deleted and the new one remains.
         assert!(!old_file_path.exists());
