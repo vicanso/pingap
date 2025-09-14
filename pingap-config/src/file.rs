@@ -34,7 +34,7 @@ impl FileStorage {
         let mut filepath = pingap_util::resolve_path(path);
         // Parse query parameters if present (e.g., "path/to/config?separation=true")
         if let Some((path, query)) = path.split_once('?') {
-            let m = pingap_core::convert_query_map(query);
+            let m = pingap_core::parse_query_string(query);
             separation = m.contains_key("separation");
             filepath = pingap_util::resolve_path(path);
         }

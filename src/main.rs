@@ -55,6 +55,8 @@ use std::ffi::OsString;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use sysinfo::System;
+
 use tracing::{error, info};
 
 mod locations;
@@ -404,6 +406,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     if args.cp && args.admin.is_some() {
         return run_admin_node(args);
     }
+
+    let mut sys = System::new();
+    sys.refresh_memory();
+    pingap_cache::update_available_memory(sys.available_memory());
 
     // Initialize configuration
     pingap_config::try_init_config_storage(&args.conf)?;

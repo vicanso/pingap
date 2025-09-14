@@ -21,7 +21,7 @@ use bytesize::ByteSize;
 use chrono::Timelike;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use pingap_core::convert_query_map;
+use pingap_core::parse_query_string;
 use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
 use std::fs;
@@ -279,7 +279,7 @@ fn new_file_writer(
     let mut task = None;
     if let Some((_, query)) = params.log.split_once('?') {
         file = file.replace(&format!("?{query}"), "");
-        let m = convert_query_map(query);
+        let m = parse_query_string(query);
 
         if let Some(value) = m.get("compression") {
             compression = value.to_string();

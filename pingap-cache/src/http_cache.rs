@@ -247,12 +247,16 @@ pub fn new_storage_clear_service() -> Option<Box<dyn BackgroundTask>> {
 pub struct HttpCache {
     pub directory: Option<String>,
     pub cache: Arc<dyn HttpCacheStorage>,
+    pub max_size: u64,
 }
 
 impl HttpCache {
     #[inline]
     pub fn stats(&self) -> Option<HttpCacheStats> {
         self.cache.stats()
+    }
+    pub fn max_size(&self) -> u64 {
+        self.max_size
     }
 }
 

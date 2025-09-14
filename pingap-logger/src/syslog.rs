@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::Error;
-use pingap_core::{convert_query_map, get_hostname};
+use pingap_core::{get_hostname, parse_query_string};
 use std::io;
 use std::str::FromStr;
 use std::sync::Mutex;
@@ -89,7 +89,7 @@ impl io::Write for SyslogWriterGuard<'_, Formatter5424> {
 }
 
 pub fn new_syslog_writer(value: &str) -> Result<BoxMakeWriter> {
-    let query_map = convert_query_map(value);
+    let query_map = parse_query_string(value);
 
     let format_type = query_map.get("format").cloned().unwrap_or_default();
     let process = query_map

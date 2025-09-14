@@ -13,12 +13,14 @@
 // limitations under the License.
 
 use bytesize::ByteSize;
-use memory_stats::memory_stats;
 use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
-use pingap_core::convert_query_map;
+use pingap_core::parse_query_string;
 use snafu::Snafu;
 use std::collections::HashMap;
+use std::str::FromStr;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tracing::info;
@@ -55,6 +57,7 @@ fn new_tiny_ufo_cache(mode: &str, size: usize) -> HttpCache {
     HttpCache {
         directory: None,
         cache: Arc::new(tiny::new_tiny_ufo_cache(mode, size / PAGE_SIZE, size)),
+        max_size: size as u64,
     }
 }
 fn new_file_cache(dir: &str) -> Result<HttpCache> {
@@ -62,14 +65,8 @@ fn new_file_cache(dir: &str) -> Result<HttpCache> {
     Ok(HttpCache {
         directory: Some(cache.directory.clone()),
         cache: Arc::new(cache),
+        max_size: 0,
     })
-}
-
-#[derive(Debug, Default)]
-pub struct CacheBackendOption {
-    /// Directory to store cache files
-    pub cache_directory: Option<String>,
-    pub cache_max_size: Option<ByteSize>,
 }
 
 struct CacheBackendProvider {
@@ -83,7 +80,7 @@ static BACKENDS: Lazy<CacheBackendProvider> =
 
 static MEMORY_BACKEND: OnceCell<HttpCache> = OnceCell::new();
 
-const MAX_MEMORY_SIZE: usize = 100 * 1024 * 1024;
+const MAX_MEMORY_SIZE: usize = 1024 * 1024 * 1024;
 
 pub(crate) fn get_file_backends() -> Vec<&'static HttpCache> {
     if let Ok(backends) = BACKENDS.cache_backends.lock() {
@@ -93,68 +90,66 @@ pub(crate) fn get_file_backends() -> Vec<&'static HttpCache> {
     }
 }
 
-fn try_init_memory_backend(
-    cache_directory: &str,
-    cache_max_size: Option<ByteSize>,
-) -> &'static HttpCache {
+static AVAILABLE_MEMORY: AtomicU64 = AtomicU64::new(0);
+
+pub fn update_available_memory(available_memory: u64) {
+    AVAILABLE_MEMORY.store(available_memory, Ordering::Relaxed);
+}
+
+fn try_init_memory_backend(value: &str) -> &'static HttpCache {
     MEMORY_BACKEND.get_or_init(|| {
-        // Determine cache size from config or use default MAX_MEMORY_SIZE
-        let mut size = if let Some(cache_max_size) = cache_max_size {
-            cache_max_size.as_u64() as usize
-        } else {
-            MAX_MEMORY_SIZE
-        };
-        let max_memory = if let Some(value) = memory_stats() {
-            value.physical_mem * 1024 / 2
+        let query = parse_query_string(value);
+        let cache_max_size = query.get("max_size");
+        let available_memory =
+            AVAILABLE_MEMORY.load(Ordering::Relaxed) as usize;
+        let max_memory = if available_memory > 0 {
+            available_memory
         } else {
             ByteSize::mb(256).as_u64() as usize
         };
-        let mut cache_mode = "".to_string();
 
-        if let Some((_, query)) = cache_directory.split_once('?') {
-            let query_map = convert_query_map(query);
-            cache_mode = query_map.get("mode").cloned().unwrap_or_default();
-        }
+        // Determine cache size from config or use default MAX_MEMORY_SIZE
+        let mut size = if let Some(cache_max_size) = cache_max_size {
+            if let Ok(value) = cache_max_size.parse::<u8>() {
+                max_memory * (value.min(100) as usize) / 100
+            } else {
+                ByteSize::from_str(cache_max_size)
+                    .map(|item| item.as_u64() as usize)
+                    .unwrap_or(max_memory)
+            }
+        } else {
+            max_memory
+        };
 
-        size = size.min(max_memory);
+        let cache_mode = query.get("mode").cloned().unwrap_or_default();
+
+        size = size.min(MAX_MEMORY_SIZE);
         info!(
             category = LOG_CATEGORY,
-            size, cache_mode, "init memory cache backend success"
+            size = ByteSize(size as u64).to_string(),
+            cache_mode,
+            "init memory cache backend success"
         );
         new_tiny_ufo_cache(&cache_mode, size)
     })
 }
 
-pub fn new_cache_backend(
-    option: CacheBackendOption,
-) -> Result<&'static HttpCache> {
-    // Get optional cache directory from config
-    let cache_directory = if let Some(cache_directory) = &option.cache_directory
-    {
-        cache_directory.trim().to_string()
-    } else {
-        "".to_string()
-    };
-
-    if cache_directory.is_empty() || cache_directory.starts_with("memory://") {
-        return Ok(try_init_memory_backend(
-            cache_directory.as_str(),
-            option.cache_max_size,
-        ));
+pub fn new_cache_backend(directory: &str) -> Result<&'static HttpCache> {
+    if directory.is_empty() || directory.starts_with("memory://") {
+        return Ok(try_init_memory_backend(directory));
     }
     let mut cache_backends =
         BACKENDS.cache_backends.lock().map_err(|e| Error::Invalid {
             message: e.to_string(),
         })?;
-    if let Some(backend) = cache_backends.get(&cache_directory) {
+    if let Some(backend) = cache_backends.get(directory) {
         return Ok(backend);
     }
 
     // Use file-based cache if directory is specified
-    let cache =
-        new_file_cache(&cache_directory).map_err(|e| Error::Invalid {
-            message: e.to_string(),
-        })?;
+    let cache = new_file_cache(directory).map_err(|e| Error::Invalid {
+        message: e.to_string(),
+    })?;
     info!(
         category = LOG_CATEGORY,
         inactive = cache.cache.inactive().map(|v| v.as_secs()),
@@ -162,7 +157,7 @@ pub fn new_cache_backend(
     );
 
     let cache_ref: &'static HttpCache = Box::leak(Box::new(cache));
-    cache_backends.insert(cache_directory, cache_ref);
+    cache_backends.insert(directory.to_string(), cache_ref);
 
     Ok(cache_ref)
 }

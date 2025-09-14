@@ -346,7 +346,7 @@ pub fn get_cookie_value<'a>(
 ///
 /// This function is robust and can handle both partial (`"a=1&b=2"`) and full
 /// (`"http://.../?a=1&b=2"`) inputs.
-pub fn convert_query_map(value: &str) -> HashMap<String, String> {
+pub fn parse_query_string(value: &str) -> HashMap<String, String> {
     // Isolate the query part of the string.
     let query_str = value.split('?').nth(1).unwrap_or(value);
     // Use the `url` crate's dedicated parser, which is robust and handles URL decoding.
@@ -811,15 +811,15 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_query_map() {
+    fn test_parse_query_string() {
         let query = "apikey=123&name=pingap";
-        let map = convert_query_map(query);
+        let map = parse_query_string(query);
         assert_eq!(map.len(), 2);
         assert_eq!(map["apikey"], "123");
         assert_eq!(map["name"], "pingap");
 
         let query = "https://pingap.io/vicanso/pingap?apikey=123&name=pingap";
-        let map = convert_query_map(query);
+        let map = parse_query_string(query);
         assert_eq!(map.len(), 2);
         assert_eq!(map["apikey"], "123");
         assert_eq!(map["name"], "pingap");

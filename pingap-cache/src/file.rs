@@ -20,13 +20,16 @@ use super::{Error, Result, LOG_CATEGORY, PAGE_SIZE};
 use super::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use async_trait::async_trait;
 use bytes::Bytes;
+use bytesize::ByteSize;
+use chrono::{DateTime, Local};
 use humantime::parse_duration;
 use path_absolutize::*;
-use pingap_core::{convert_query_map, TinyUfo};
+use pingap_core::{parse_query_string, TinyUfo};
 #[cfg(feature = "tracing")]
 use prometheus::Histogram;
 use scopeguard::defer;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime};
 use substring::Substring;
@@ -132,7 +135,7 @@ fn parse_params(dir: &str) -> FileCacheParams {
     };
 
     if !query.is_empty() {
-        let m = convert_query_map(query);
+        let m = parse_query_string(query);
         params.reading_max = m
             .get("reading_max")
             .and_then(|v| v.parse().ok())
@@ -147,7 +150,11 @@ fn parse_params(dir: &str) -> FileCacheParams {
             .unwrap_or(params.cache_max);
         params.cache_file_max_weight = m
             .get("cache_file_max_size")
-            .and_then(|v| v.parse::<usize>().map(|v| v / PAGE_SIZE).ok())
+            .and_then(|v| {
+                ByteSize::from_str(v)
+                    .map(|v| v.as_u64() as usize / PAGE_SIZE)
+                    .ok()
+            })
             .unwrap_or(params.cache_file_max_weight);
         params.inactive = m
             .get("inactive")
@@ -452,9 +459,11 @@ impl HttpCacheStorage for FileCache {
     ) -> Result<HttpCacheClearStats> {
         let mut success = 0;
         let mut fail = 0;
+        let datetime_local: DateTime<Local> = access_before.into();
+
         let description = format!(
-            "clear cache file, directory: {}, access before: {:?}",
-            self.directory, access_before
+            "clear cache file, directory: {}, access before: {datetime_local}",
+            self.directory
         );
         for entry in WalkDir::new(&self.directory)
             .into_iter()

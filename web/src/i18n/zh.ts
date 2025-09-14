@@ -327,8 +327,6 @@ export default {
     redirectHttps: "https",
     cacheDirectory: "目录",
     cacheDirectoryPlaceholder: "输入缓存使用的目录",
-    cacheMaxSize: "最大缓存大小",
-    cacheMaxSizePlaceholder: "输入最大的缓存大小",
     cacheLock: "锁等待",
     cacheLockPlaceholder: "输入请求相同资源时的最长锁等待时长(如2s)",
     cacheMaxFileSize: "最大响应缓存大小",

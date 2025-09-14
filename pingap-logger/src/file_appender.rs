@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::Error;
-use pingap_core::convert_query_map;
+use pingap_core::parse_query_string;
 use std::fs;
 use std::path::Path;
 use tracing_appender::rolling::RollingFileAppender;
@@ -25,7 +25,7 @@ pub(crate) fn new_file_appender(
     let mut rolling_type = "".to_string();
     if let Some((_, query)) = log_path.split_once('?') {
         file = file.replace(&format!("?{query}"), "");
-        let m = convert_query_map(query);
+        let m = parse_query_string(query);
         if let Some(value) = m.get("rolling") {
             rolling_type = value.to_string();
         }

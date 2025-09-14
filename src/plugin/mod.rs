@@ -73,7 +73,7 @@ pub fn parse_admin_plugin(
         path = "/".to_string();
     }
     let query =
-        pingap_core::convert_query_map(info.query().unwrap_or_default());
+        pingap_core::parse_query_string(info.query().unwrap_or_default());
     let max_age = if let Some(value) = query.get("max_age") {
         value.to_string()
     } else {
