@@ -510,6 +510,10 @@ impl Plugin for Directory {
                         },
                     }
                 } else {
+                    headers.push((
+                        header::CONTENT_LENGTH,
+                        HeaderValue::from(size),
+                    ));
                     let mut resp = HttpChunkResponse::new(&mut f);
                     resp.chunk_size = chunk_size;
                     if cacheable {

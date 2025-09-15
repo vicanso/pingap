@@ -1325,19 +1325,19 @@ impl ProxyHttp for Server {
         defer!(debug!(category = LOG_CATEGORY, "<-- response cache filter"););
 
         let (check_cache_control, max_ttl) = ctx.cache.as_ref().map_or(
-            (false, None), // 如果 ctx.cache 为 None 时的默认值
+            (false, None), // ctx.cache is None
             |c| (c.check_cache_control, c.max_ttl),
         );
 
         let mut cc = CacheControl::from_resp_headers(resp);
 
         if let Some(c) = &mut cc {
-            // 将所有复杂的验证和修改逻辑委托给辅助函数
+            // delegate all complex validation and modification logic to the helper function
             if let Err(reason) = self.process_cache_control(c, max_ttl) {
                 return Ok(RespCacheable::Uncacheable(reason));
             }
         } else if check_cache_control {
-            // 如果需要 Cache-Control 头但它不存在或解析失败
+            // if Cache-Control header is required but it doesn't exist or parsing fails
             return Ok(RespCacheable::Uncacheable(
                 NoCacheReason::OriginNotCache,
             ));

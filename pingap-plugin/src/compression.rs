@@ -76,14 +76,15 @@ impl ModifyResponseBody for Compressor {
         end_of_stream: bool,
     ) -> pingora::Result<()> {
         // if body is some, replace it with the compressed data
-        if let Some(input_data) = body {
-            let data = self
-                .compressor
-                .as_mut()
-                .encode(input_data, end_of_stream)
-                .map_err(|e| new_internal_error(500, e))?;
-            *body = Some(data);
-        }
+        // the compress data will be buffer, so it may be empty some times
+        let input_data =
+            body.as_ref().map(|data| data.as_ref()).unwrap_or_default();
+        let data = self
+            .compressor
+            .as_mut()
+            .encode(input_data, end_of_stream)
+            .map_err(|e| new_internal_error(500, e))?;
+        *body = Some(data);
         Ok(())
     }
     fn name(&self) -> String {

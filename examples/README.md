@@ -3,7 +3,7 @@
 ## Static-Server
 
 ```bash
-cargo run -- -c=~/github/pingap/examples/static-serve.toml --admin=127.0.0.1:3018
+pingap -c ~/github/pingap/examples/static-serve --admin=127.0.0.1:3018
 ```
 
 ```bash

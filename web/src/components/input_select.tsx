@@ -61,7 +61,11 @@ export const InputSelect = React.forwardRef<HTMLInputElement, InputSelectProps>(
         <Select
           defaultValue={(defaultValue || "") as string}
           onValueChange={(option) => {
-            onValueChange(option);
+            if (option === "none") {
+              onValueChange("");
+            } else {
+              onValueChange(option);
+            }
           }}
         >
           <SelectTrigger className="w-full">

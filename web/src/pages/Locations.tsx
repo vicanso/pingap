@@ -76,6 +76,7 @@ export default function Locations() {
     [
       "pingap:stats",
       "pingap:compression",
+      "pingap:compressionUpstream",
       "pingap:requestId",
       "pingap:ping",
       "pingap:acceptEncodingAdjustment",

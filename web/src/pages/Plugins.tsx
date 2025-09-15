@@ -343,7 +343,7 @@ export default function Plugins() {
           label: pluginI18n("cacheDirectory"),
           placeholder: pluginI18n("cacheDirectoryPlaceholder"),
           defaultValue: pluginConfig.directory as string,
-          span: 3,
+          span: 6,
           category: ExFormItemCategory.TEXT,
         },
         {

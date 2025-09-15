@@ -15,7 +15,10 @@
 use pingora::tls::x509::X509;
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::{
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    sync::Arc,
+};
 
 mod chain;
 mod dynamic_certificate;
@@ -204,11 +207,14 @@ pub use dynamic_certificate::{
     get_certificate_info_list, list_certificates, try_update_certificates,
     GlobalCertificate, TlsSettingParams,
 };
+pub use rcgen;
 pub use self_signed::new_self_signed_certificate_validity_service;
 pub use tls_certificate::TlsCertificate;
 pub use validity_checker::new_certificate_validity_service;
 
-pub use rcgen;
+pub trait CertificateProvider: Send + Sync {
+    fn get(&self, sni: &str) -> Option<&Arc<TlsCertificate>>;
+}
 
 #[cfg(test)]
 mod tests {

@@ -1,0 +1,7 @@
+[plugins.staticCache]
+category = "cache"
+check_cache_control = true
+directory = "/opt/pingap/cache/static?levels=1:2&inactive=7d"
+lock = "2s"
+max_file_size = "1mb"
+max_ttl = "7d"
