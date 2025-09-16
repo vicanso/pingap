@@ -31,8 +31,8 @@ pub enum Error {
     #[snafu(display("Plugin {category}, exceed limit {value}/{max}"))]
     Exceed {
         category: String,
-        max: isize,
-        value: isize,
+        max: f64,
+        value: f64,
     },
     #[snafu(display("Plugin {category}, regex error {source}"))]
     Regex {

@@ -427,7 +427,7 @@ export default {
     limitKey: "Key",
     limitKeyPlaceholder: "Input the name of limit key",
     limitMax: "Max",
-    limitMaxPlaceholder: "Input the max value of limit(inflight for max concurrent, rate for max rps)",
+    limitMaxPlaceholder: "Input the max value of limit",
     limitInterval: "Interval",
     limitIntervalPlaceholder: "Input the interval of limit",
     limitWeight: "Weight",

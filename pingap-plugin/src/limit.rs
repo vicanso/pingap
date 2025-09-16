@@ -61,7 +61,7 @@ pub struct Limiter {
 
     /// Maximum number of requests/connections allowed within the interval (for rate limiting)
     /// or at the same time (for inflight limiting)
-    max: isize,
+    max: f64,
 
     /// The name of the header/cookie/query parameter to use as the limiting key
     /// Only used when tag is not LimitTag::Ip
@@ -134,10 +134,13 @@ impl TryFrom<&PluginConf> for Limiter {
         // Create either inflight or rate limiter based on config
         let mut inflight = None;
         let mut rate = None;
+        let mut max = get_int_conf(value, "max") as f64;
         if get_str_conf(value, "type") == "inflight" {
             // Inflight limiter uses atomic counters to track concurrent requests
             inflight = Some(Inflight::new());
         } else {
+            // convert it to rps
+            max /= interval.as_secs_f64().max(1.0);
             // Rate limiter uses time-bucketed counters
             rate = Some(Rate::new(interval));
         }
@@ -150,7 +153,7 @@ impl TryFrom<&PluginConf> for Limiter {
             hash_value,
             tag,
             key: get_str_conf(value, "key"),
-            max: get_int_conf(value, "max") as isize,
+            max,
             inflight,
             rate,
             plugin_step: step,
@@ -244,7 +247,7 @@ impl Limiter {
         let value = if let Some(rate) = &self.rate {
             // For rate limiting:
             rate.observe(&key, 1); // Record this request
-            let value = if self.weight > 0.0 {
+            if self.weight > 0.0 {
                 rate.rate_with(&key, |rate_info| {
                     let prev =
                         rate_info.prev_samples as f64 * (1. - self.weight);
@@ -253,17 +256,16 @@ impl Limiter {
                 })
             } else {
                 rate.rate(&key) // get the per second rate estimation of previous time window
-            };
-            value.ceil() as isize
+            }
         } else if let Some(inflight) = &self.inflight {
             // For inflight limiting:
             // Increment counter
             // Store guard in context - when guard is dropped, counter auto-decrements
             let (guard, value) = inflight.incr(&key, 1);
             ctx.state.guard = Some(guard);
-            value
+            value as f64
         } else {
-            0
+            0.0
         };
 
         // Check if limit exceeded

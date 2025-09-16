@@ -394,7 +394,7 @@ export default {
     limitKey: "Key",
     limitKeyPlaceholder: "输入限制key的名称",
     limitMax: "最大值",
-    limitMaxPlaceholder: "输入限制的最大值(inflight为最大并发，rate则表示最大rps)",
+    limitMaxPlaceholder: "输入限制的最大值",
     limitInterval: "间隔",
     limitIntervalPlaceholder: "输入限制的间隔时长",
     limitWeight: "权重",
