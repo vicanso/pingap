@@ -76,10 +76,18 @@ pub(crate) fn get_bool_conf(value: &PluginConf, key: &str) -> bool {
 }
 
 pub fn get_int_conf(value: &PluginConf, key: &str) -> i64 {
+    get_int_conf_or_default(value, key, 0)
+}
+
+pub fn get_int_conf_or_default(
+    value: &PluginConf,
+    key: &str,
+    default_value: i64,
+) -> i64 {
     if let Some(value) = value.get(key) {
-        value.as_integer().unwrap_or_default()
+        value.as_integer().unwrap_or(default_value)
     } else {
-        0
+        default_value
     }
 }
 

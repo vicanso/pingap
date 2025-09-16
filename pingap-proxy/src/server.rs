@@ -25,6 +25,7 @@ use bytes::BytesMut;
 use http::StatusCode;
 use once_cell::sync::Lazy;
 use pingap_acme::handle_lets_encrypt;
+use pingap_certificate::CertificateProvider;
 use pingap_certificate::{GlobalCertificate, TlsSettingParams};
 use pingap_config::get_config_storage;
 use pingap_core::BackgroundTask;
@@ -195,6 +196,9 @@ pub struct Server {
     // upstreams
     upstream_provider: Arc<dyn UpstreamProvider>,
 
+    // certificates
+    certificate_provider: Arc<dyn CertificateProvider>,
+
     // logger
     access_logger: Option<Sender<BytesMut>>,
 }
@@ -223,6 +227,7 @@ impl Server {
         location_provider: Arc<dyn LocationProvider>,
         upstream_provider: Arc<dyn UpstreamProvider>,
         plugin_provider: Arc<dyn PluginProvider>,
+        certificate_provider: Arc<dyn CertificateProvider>,
     ) -> Result<Self> {
         debug!(
             category = LOG_CATEGORY,
@@ -291,6 +296,7 @@ impl Server {
             location_provider,
             upstream_provider,
             plugin_provider,
+            certificate_provider,
             access_logger,
         };
         Ok(s)
@@ -351,7 +357,8 @@ impl Server {
         let mut dynamic_cert = None;
         // tls
         if self.global_certificates {
-            dynamic_cert = Some(GlobalCertificate::default());
+            dynamic_cert =
+                Some(GlobalCertificate::new(self.certificate_provider.clone()));
         }
 
         let is_tls = dynamic_cert.is_some();
@@ -1652,6 +1659,8 @@ impl ProxyHttp for Server {
 mod tests {
     use super::*;
     use crate::server_conf::parse_from_conf;
+    use ahash::AHashMap;
+    use pingap_certificate::{DynamicCertificates, TlsCertificate};
     use pingap_config::PingapConf;
     use pingap_core::{CacheInfo, Ctx, UpstreamInfo};
     use pingap_location::LocationStats;
@@ -1803,6 +1812,17 @@ value = 'proxy_set_headers = ["name:value"]'
             }
         }
 
+        struct TmpCertificateLoader {}
+        impl CertificateProvider for TmpCertificateLoader {
+            fn get(&self, _sni: &str) -> Option<Arc<TlsCertificate>> {
+                None
+            }
+            fn list(&self) -> Arc<DynamicCertificates> {
+                Arc::new(AHashMap::new())
+            }
+            fn store(&self, _data: DynamicCertificates) {}
+        }
+
         let confs = parse_from_conf(pingap_conf);
         Server::new(
             &confs[0],
@@ -1814,6 +1834,7 @@ value = 'proxy_set_headers = ["name:value"]'
             Arc::new(TmpLocationLoader { location }),
             Arc::new(TmpUpstreamLoader { upstream }),
             Arc::new(TmpPluginLoader {}),
+            Arc::new(TmpCertificateLoader {}),
         )
         .unwrap()
     }

@@ -30,6 +30,7 @@ use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
     OrderStatus, RetryPolicy,
 };
+use pingap_certificate::CertificateProvider;
 use pingap_certificate::{
     parse_leaf_chain_certificates, try_update_certificates, Certificate,
 };
@@ -120,6 +121,7 @@ async fn do_update_certificates(
     count: u32,
     storage: &'static (dyn ConfigStorage + Sync + Send),
     params: &[UpdateCertificateParams],
+    provider: Arc<dyn CertificateProvider>,
     sender: Option<Arc<NotificationSender>>,
 ) -> Result<bool, ServiceError> {
     if params.is_empty() {
@@ -174,8 +176,13 @@ async fn do_update_certificates(
             continue;
         }
 
-        if let Err(e) =
-            renew_certificate(storage, item.clone(), sender.clone()).await
+        if let Err(e) = renew_certificate(
+            storage,
+            item.clone(),
+            provider.clone(),
+            sender.clone(),
+        )
+        .await
         {
             error!(
                 category = LOG_CATEGORY,
@@ -192,17 +199,19 @@ async fn do_update_certificates(
 async fn renew_certificate(
     storage: &'static (dyn ConfigStorage + Sync + Send),
     params: UpdateCertificateParams,
+    provider: Arc<dyn CertificateProvider>,
     sender: Option<Arc<NotificationSender>>,
 ) -> Result<()> {
     let conf = update_certificate_lets_encrypt(storage, params.clone()).await?;
     set_current_config(&conf);
-    handle_successful_renewal(&params.domains, &conf, sender).await;
+    handle_successful_renewal(&params.domains, &conf, provider, sender).await;
     Ok(())
 }
 
 async fn handle_successful_renewal(
     domains: &[String],
     conf: &PingapConf,
+    provider: Arc<dyn CertificateProvider>,
     sender: Option<Arc<NotificationSender>>,
 ) {
     info!(
@@ -221,7 +230,7 @@ async fn handle_successful_renewal(
             .await;
     }
 
-    let (_, error) = try_update_certificates(&conf.certificates);
+    let (_, error) = try_update_certificates(provider, &conf.certificates);
     if !error.is_empty() {
         error!(
             category = LOG_CATEGORY,
@@ -243,6 +252,7 @@ async fn handle_successful_renewal(
 
 struct LetsEncryptTask {
     storage: &'static (dyn ConfigStorage + Sync + Send),
+    certificate_provider: Arc<dyn CertificateProvider>,
     sender: Option<Arc<NotificationSender>>,
 }
 
@@ -280,6 +290,7 @@ impl BackgroundTask for LetsEncryptTask {
             count,
             self.storage,
             &params,
+            self.certificate_provider.clone(),
             self.sender.clone(),
         )
         .await?;
@@ -291,9 +302,14 @@ impl BackgroundTask for LetsEncryptTask {
 /// and regenerate if the certificate is invalid or will be expired.
 pub fn new_lets_encrypt_service(
     storage: &'static (dyn ConfigStorage + Sync + Send),
+    certificate_provider: Arc<dyn CertificateProvider>,
     sender: Option<Arc<NotificationSender>>,
 ) -> Box<dyn BackgroundTask> {
-    Box::new(LetsEncryptTask { storage, sender })
+    Box::new(LetsEncryptTask {
+        storage,
+        certificate_provider,
+        sender,
+    })
 }
 
 /// Get the cert from file and convert it to certificate struct.

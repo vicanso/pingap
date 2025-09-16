@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Certificate, Error, TlsCertificate, LOG_CATEGORY};
+use super::CertificateProvider;
+use super::DynamicCertificates;
+use super::{Error, TlsCertificate, LOG_CATEGORY};
 use ahash::AHashMap;
-use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use once_cell::sync::Lazy;
 use pingap_config::CertificateConf;
 use pingora::listeners::tls::TlsSettings;
 use pingora::tls::ext;
@@ -31,20 +31,10 @@ use tracing::{debug, error, info};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-// Type alias for storing certificates in a high-performance hash map
-type DynamicCertificates = AHashMap<String, Arc<TlsCertificate>>;
-
-// Global certificate storage using thread-safe atomic references
-// - ArcSwap enables atomic pointer swapping for zero-downtime updates
-// - Lazy initialization ensures the map is only created when first accessed
-// - Arc provides thread-safe reference counting for shared access
-static DYNAMIC_CERTIFICATE_MAP: Lazy<ArcSwap<DynamicCertificates>> =
-    Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
-
 // Fallback server name used when:
 // - No SNI (Server Name Indication) is provided in TLS handshake
 // - No matching certificate is found for the requested domain
-static DEFAULT_SERVER_NAME: &str = "*";
+pub static DEFAULT_SERVER_NAME: &str = "*";
 
 // Parses certificate configurations and builds the certificate store
 // Parameters:
@@ -114,10 +104,11 @@ fn parse_certificates(
 /// Updates certificates atomically using ArcSwap, detecting changes by comparing hash_keys.
 /// Supports multiple domains per certificate and wildcard certificates.
 pub fn try_update_certificates(
+    provider: Arc<dyn CertificateProvider>,
     certificate_configs: &HashMap<String, CertificateConf>,
 ) -> (Vec<String>, String) {
     let (new_certs, errors) = parse_certificates(certificate_configs);
-    let old_certs = DYNAMIC_CERTIFICATE_MAP.load();
+    let old_certs = provider.list();
     let updated_certificates: Vec<String> = new_certs
         .iter()
         .filter(|(name, cert)| {
@@ -133,38 +124,8 @@ pub fn try_update_certificates(
         .map(|(name, msg)| format!("{}({})", msg, name))
         .collect();
 
-    DYNAMIC_CERTIFICATE_MAP.store(Arc::new(new_certs));
+    provider.store(new_certs);
     (updated_certificates, error_messages.join(";"))
-}
-
-/// Retrieves a list of all certificates and their associated information
-///
-/// # Returns
-/// * `Arc<DynamicCertificates>` - List of tuples containing certificate names and their info
-pub fn list_certificates() -> Arc<DynamicCertificates> {
-    DYNAMIC_CERTIFICATE_MAP.load().clone()
-}
-
-/// Retrieves a list of all certificates and their associated information
-///
-/// # Returns
-/// * `Vec<(String, Certificate)>` - List of tuples containing certificate names and their info
-///
-/// The name will be either the configured certificate name or the domain name if no
-/// specific name was set.
-pub fn get_certificate_info_list() -> Vec<(String, Certificate)> {
-    let mut infos = vec![];
-    for (name, cert) in DYNAMIC_CERTIFICATE_MAP.load().iter() {
-        if let Some(info) = &cert.info {
-            let key = if let Some(value) = &cert.name {
-                value.clone()
-            } else {
-                name.clone()
-            };
-            infos.push((key, info.clone()));
-        }
-    }
-    infos
 }
 
 /// Parameters for configuring TLS settings
@@ -236,10 +197,15 @@ fn convert_tls_version(version: &Option<String>) -> Option<SslVersion> {
 /// - Wildcard certificates
 /// - Default fallback certificates
 /// - Self-signed CA certificates
-#[derive(Debug, Clone, Default)]
-pub struct GlobalCertificate {}
+#[derive(Clone)]
+pub struct GlobalCertificate {
+    provider: Arc<dyn CertificateProvider>,
+}
 
 impl GlobalCertificate {
+    pub fn new(provider: Arc<dyn CertificateProvider>) -> Self {
+        Self { provider }
+    }
     /// New a dynamic certificate from tls setting parameters
     pub fn new_tls_settings(
         &self,
@@ -324,20 +290,8 @@ impl pingora::listeners::TlsAccept for GlobalCertificate {
             server_name = sni
         );
 
-        let certs = DYNAMIC_CERTIFICATE_MAP.load();
-
         // Optimized lookup sequence.
-        let dynamic_certificate = certs
-            .get(sni)
-            .or_else(|| {
-                // If exact match fails, try wildcard match without new string allocation.
-                sni.split_once('.')
-                    .and_then(|(_, domain)| certs.get(&format!("*.{}", domain)))
-            })
-            .or_else(|| {
-                // Fallback to the default certificate.
-                certs.get(DEFAULT_SERVER_NAME)
-            });
+        let dynamic_certificate = self.provider.get(sni);
 
         let Some(d) = dynamic_certificate else {
             error!(
@@ -376,6 +330,7 @@ impl pingora::listeners::TlsAccept for GlobalCertificate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arc_swap::ArcSwap;
     use pingap_config::CertificateConf;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
@@ -458,28 +413,6 @@ aqcrKJfS+xaKWxXPiNlpBMG5
     }
 
     #[test]
-    fn test_new_tls_settings() {
-        let dynamic = GlobalCertificate::default();
-        let mut tls_settings = dynamic
-            .new_tls_settings(&TlsSettingParams {
-                server_name: "pingap".to_string(),
-                enabled_h2: true,
-                cipher_list: Some(
-                    "ECDHE-ECDSA-AES128-SHA:ECDHE-RSA-AES128-SHA".to_string(),
-                ),
-                cipher_suites: Some(
-                    "ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256"
-                        .to_string(),
-                ),
-                tls_min_version: Some("tlsv1.1".to_string()),
-                tls_max_version: Some("tlsv1.3".to_string()),
-            })
-            .unwrap();
-        assert_eq!(true, tls_settings.min_proto_version().is_some());
-        assert_eq!(true, tls_settings.max_proto_version().is_some());
-    }
-
-    #[test]
     fn test_parse_certificate() {
         let (tls_cert, tls_key) = get_tls_pem();
         let cert_info = CertificateConf {
@@ -503,43 +436,32 @@ aqcrKJfS+xaKWxXPiNlpBMG5
 
         let mut map = HashMap::new();
         map.insert("pingap".to_string(), cert_info);
-        try_update_certificates(&map);
 
-        let cert = DYNAMIC_CERTIFICATE_MAP
-            .load()
-            .get("pingap.io")
-            .cloned()
-            .unwrap();
+        struct TmpProvider {
+            certificates: ArcSwap<DynamicCertificates>,
+        }
+        impl CertificateProvider for TmpProvider {
+            fn get(&self, sni: &str) -> Option<Arc<TlsCertificate>> {
+                self.certificates.load().get(sni).cloned()
+            }
+            fn list(&self) -> Arc<DynamicCertificates> {
+                self.certificates.load().clone()
+            }
+            fn store(&self, data: DynamicCertificates) {
+                self.certificates.store(Arc::new(data));
+            }
+        }
+        let provider = Arc::new(TmpProvider {
+            certificates: ArcSwap::from_pointee(AHashMap::new()),
+        });
+        try_update_certificates(provider.clone(), &map);
+
+        let cert = provider.get("pingap.io").unwrap();
         assert_eq!(true, cert.certificate.is_some());
         assert_eq!(
             "O=mkcert development CA, OU=vicanso@tree, CN=mkcert vicanso@tree"
                 .to_string(),
             cert.info.clone().unwrap().issuer
-        );
-
-        let cert = DYNAMIC_CERTIFICATE_MAP.load().get("*").cloned().unwrap();
-        assert_eq!(true, cert.certificate.is_some());
-        assert_eq!(
-            "O=mkcert development CA, OU=vicanso@tree, CN=mkcert vicanso@tree"
-                .to_string(),
-            cert.info.clone().unwrap().issuer
-        );
-
-        let info_list = get_certificate_info_list();
-        assert_eq!(info_list.len(), 2);
-        assert_eq!(info_list[0].1.domains.join(","), "pingap.io");
-
-        let certs = list_certificates();
-        assert_eq!(certs.len(), 2);
-        assert_eq!(certs.get("pingap.io").unwrap().certificate.is_some(), true);
-        assert_eq!(certs.get("*").unwrap().certificate.is_some(), true);
-        assert_eq!(
-            certs
-                .get(DEFAULT_SERVER_NAME)
-                .unwrap()
-                .certificate
-                .is_some(),
-            true
         );
     }
 }

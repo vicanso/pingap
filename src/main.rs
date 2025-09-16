@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::certificates::new_certificate_provider;
 use crate::locations::new_location_provider;
 use crate::locations::try_init_locations;
 use crate::plugin::new_plugin_provider;
@@ -59,6 +60,7 @@ use sysinfo::System;
 
 use tracing::{error, info};
 
+mod certificates;
 mod locations;
 mod plugin;
 mod process;
@@ -299,6 +301,7 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
         new_location_provider(),
         new_upstream_provider(),
         new_plugin_provider(),
+        new_certificate_provider(),
     )?;
     let services = ps.run(&my_server.configuration)?;
     my_server.add_service(services.lb);
@@ -599,7 +602,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         vec![
             (
                 "validity_checker".to_string(),
-                new_certificate_validity_service(webhook::get_webhook_sender()),
+                new_certificate_validity_service(
+                    new_certificate_provider(),
+                    webhook::get_webhook_sender(),
+                ),
             ),
             (
                 "self_signed_certificate_stale".to_string(),
@@ -638,6 +644,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 "lets_encrypt",
                 new_lets_encrypt_service(
                     storage,
+                    new_certificate_provider(),
                     webhook::get_webhook_sender(),
                 ),
             );
@@ -645,7 +652,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     let (updated_certificates, errors) =
-        pingap_certificate::try_update_certificates(&certificates);
+        pingap_certificate::try_update_certificates(
+            new_certificate_provider(),
+            &certificates,
+        );
     if !updated_certificates.is_empty() {
         info!(
             updated_certificates = updated_certificates.join(","),
@@ -685,6 +695,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             new_location_provider(),
             new_upstream_provider(),
             new_plugin_provider(),
+            new_certificate_provider(),
         )?;
         if enabled_http_challenge && listen_80_port {
             ps.enable_lets_encrypt();

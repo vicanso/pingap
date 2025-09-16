@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_hash_key, get_int_conf, get_plugin_factory, get_step_conf,
-    get_str_conf, Error,
+    get_hash_key, get_int_conf, get_int_conf_or_default, get_plugin_factory,
+    get_step_conf, get_str_conf, Error,
 };
 use async_trait::async_trait;
 use ctor::ctor;
@@ -142,7 +142,9 @@ impl TryFrom<&PluginConf> for Limiter {
             rate = Some(Rate::new(interval));
         }
 
-        let weight = get_int_conf(value, "weight").clamp(0, 100) as f64 / 100.0;
+        let weight = get_int_conf_or_default(value, "weight", 50).clamp(0, 100)
+            as f64
+            / 100.0;
 
         let params = Self {
             hash_value,
@@ -250,7 +252,7 @@ impl Limiter {
                     (prev + curr) / rate_info.interval.as_secs_f64()
                 })
             } else {
-                rate.rate(&key) // Get current rate for time window
+                rate.rate(&key) // get the per second rate estimation of previous time window
             };
             value.ceil() as isize
         } else if let Some(inflight) = &self.inflight {

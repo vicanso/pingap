@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use ahash::AHashMap;
 use pingora::tls::x509::X509;
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
@@ -203,17 +204,19 @@ impl Certificate {
     }
 }
 
-pub use dynamic_certificate::{
-    get_certificate_info_list, list_certificates, try_update_certificates,
-    GlobalCertificate, TlsSettingParams,
-};
+pub use dynamic_certificate::*;
 pub use rcgen;
 pub use self_signed::new_self_signed_certificate_validity_service;
 pub use tls_certificate::TlsCertificate;
 pub use validity_checker::new_certificate_validity_service;
 
+// Type alias for storing certificates in a high-performance hash map
+pub type DynamicCertificates = AHashMap<String, Arc<TlsCertificate>>;
+
 pub trait CertificateProvider: Send + Sync {
-    fn get(&self, sni: &str) -> Option<&Arc<TlsCertificate>>;
+    fn get(&self, sni: &str) -> Option<Arc<TlsCertificate>>;
+    fn list(&self) -> Arc<DynamicCertificates>;
+    fn store(&self, data: DynamicCertificates);
 }
 
 #[cfg(test)]

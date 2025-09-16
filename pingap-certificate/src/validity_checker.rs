@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{list_certificates, LOG_CATEGORY};
+use crate::CertificateProvider;
+
+use super::LOG_CATEGORY;
 use async_trait::async_trait;
 use pingap_core::Error as ServiceError;
 use pingap_core::{
@@ -41,6 +43,7 @@ const CHECK_INTERVAL_MINUTES: u32 = 24 * 60;
 /// * `Err(ServiceError)` if an error occurred during the check
 async fn do_validity_check(
     count: u32,
+    provider: Arc<dyn CertificateProvider>,
     sender: Option<Arc<NotificationSender>>,
 ) -> Result<bool, ServiceError> {
     if count % CHECK_INTERVAL_MINUTES != 0 {
@@ -49,7 +52,7 @@ async fn do_validity_check(
 
     let now = pingap_core::now_sec() as i64;
     let mut name_list = vec![];
-    for (name, cert) in list_certificates().iter() {
+    for (name, cert) in provider.list().iter() {
         let Some(info) = &cert.info else {
             continue;
         };
@@ -104,13 +107,15 @@ async fn do_validity_check(
 }
 
 struct CertificateValidityTask {
+    provider: Arc<dyn CertificateProvider>,
     sender: Option<Arc<NotificationSender>>,
 }
 
 #[async_trait]
 impl BackgroundTask for CertificateValidityTask {
     async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
-        do_validity_check(count, self.sender.clone()).await?;
+        do_validity_check(count, self.provider.clone(), self.sender.clone())
+            .await?;
         Ok(true)
     }
 }
@@ -123,7 +128,8 @@ impl BackgroundTask for CertificateValidityTask {
 /// * Service name as String
 /// * Service task future for executing validity checks
 pub fn new_certificate_validity_service(
+    provider: Arc<dyn CertificateProvider>,
     sender: Option<Arc<NotificationSender>>,
 ) -> Box<dyn BackgroundTask> {
-    Box::new(CertificateValidityTask { sender })
+    Box::new(CertificateValidityTask { provider, sender })
 }

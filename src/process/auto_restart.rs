@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::{restart, LOG_CATEGORY};
+use crate::certificates::new_certificate_provider;
 use crate::locations::try_init_locations;
 use crate::plugin;
 use crate::server_locations::try_init_server_locations;
@@ -218,6 +219,7 @@ async fn diff_and_update_config(
         if should_reload_certificate {
             let (updated_certificates, errors) =
                 pingap_certificate::try_update_certificates(
+                    new_certificate_provider(),
                     &new_config.certificates,
                 );
             info!(category = LOG_CATEGORY, "reload certificate success");

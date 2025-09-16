@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::{get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf};
+use crate::certificates::new_certificate_provider;
 use crate::process::{get_start_time, restart_now};
 use crate::upstreams::new_upstream_provider;
 use async_trait::async_trait;
@@ -26,7 +27,6 @@ use hex::ToHex;
 use http::Method;
 use http::{header, HeaderValue, StatusCode};
 use humantime::parse_duration;
-use pingap_certificate::get_certificate_info_list;
 use pingap_config::{
     self, get_current_config, save_config, BasicConf, CertificateConf,
     LoadConfigOptions, LocationConf, PluginCategory, PluginConf, ServerConf,
@@ -640,8 +640,15 @@ async fn handle_request_admin(
             .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
     } else if path == "/certificates" {
         let mut infos = HashMap::new();
-        for (name, info) in get_certificate_info_list() {
-            infos.insert(name, info);
+        for (name, cert) in new_certificate_provider().list().iter() {
+            if let Some(info) = &cert.info {
+                let key = if let Some(value) = &cert.name {
+                    value.clone()
+                } else {
+                    name.clone()
+                };
+                infos.insert(key, info.clone());
+            }
         }
         HttpResponse::try_from_json(&infos)
             .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
