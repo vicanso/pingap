@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::certificates::new_certificate_provider;
+use crate::certificates::{new_certificate_provider, try_update_certificates};
 use crate::locations::new_location_provider;
 use crate::locations::try_init_locations;
 use crate::plugin::new_plugin_provider;
@@ -595,6 +595,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             ));
         }
     }
+    let certificate_provider = new_certificate_provider();
 
     let mut simple_background_service = BackgroundTaskService::new(
         "simple_background_service",
@@ -603,7 +604,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 "validity_checker".to_string(),
                 new_certificate_validity_service(
-                    new_certificate_provider(),
+                    certificate_provider.clone(),
                     webhook::get_webhook_sender(),
                 ),
             ),
@@ -644,18 +645,14 @@ fn run() -> Result<(), Box<dyn Error>> {
                 "lets_encrypt",
                 new_lets_encrypt_service(
                     storage,
-                    new_certificate_provider(),
+                    certificate_provider.clone(),
                     webhook::get_webhook_sender(),
                 ),
             );
         }
     }
 
-    let (updated_certificates, errors) =
-        pingap_certificate::try_update_certificates(
-            new_certificate_provider(),
-            &certificates,
-        );
+    let (updated_certificates, errors) = try_update_certificates(&certificates);
     if !updated_certificates.is_empty() {
         info!(
             updated_certificates = updated_certificates.join(","),
@@ -695,7 +692,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             new_location_provider(),
             new_upstream_provider(),
             new_plugin_provider(),
-            new_certificate_provider(),
+            certificate_provider.clone(),
         )?;
         if enabled_http_challenge && listen_80_port {
             ps.enable_lets_encrypt();

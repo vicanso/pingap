@@ -6,7 +6,10 @@ Before the pingap version is stable, no pull requests will be accepted. If you h
 
 ## Overview
 
-Pingap is a high-performance reverse proxy built on [pingora](https://github.com/cloudflare/pingora), offering a simpler and more efficient alternative to nginx. Sentry and OpenTelemetry are supported in full-featured release version.
+Pingap is a high-performance reverse proxy powered by the `[Cloudflare Pingora](https://github.com/cloudflare/pingora)` . It simplifies operational management by enabling dynamic, zero-downtime configuration hot-reloading through concise TOML files and an intuitive web admin interface.
+
+Its core strength lies in a powerful plugin system, offering over a dozen out-of-the-box features for Authentication (JWT, Key Auth), Security (CSRF, IP/Referer/UA Restrictions), Traffic Control (Rate Limiting, Caching), Content Modification (Redirects, Content Substitution), and Observability (Request ID). This makes `Pingap` not just a proxy, but a flexible and extensible application gateway, engineered to effortlessly handle complex scenarios from API protection to modern web application deployments.
+
 
 [中文说明](./README_zh.md) | [Examples](./examples/README.md) | [Documentation](http://pingap.io/pingap-en/)
 
@@ -20,92 +23,86 @@ flowchart LR
 
 ## Key Features
 
-- **Multi-Location Support**: Configure multiple locations with host/path filtering and weighted routing
-- **Advanced Proxy Features**:
-  - Path rewriting with regex support
-  - Transparent proxy
-  - HTTP/1.1 and HTTP/2 support (including h2c)
-  - gRPC-web reverse proxy
-- **Service Discovery**: Static, DNS, and Docker label support
-- **Monitoring & Observability**:
-  - 10+ Prometheus metrics (pull/push)
-  - OpenTelemetry with W3C context and Jaeger trace support
-  - Access logging with 30+ configurable attributes
-- **Configuration**:
-  - TOML-based configuration
-  - File and etcd storage support
-  - Hot reload support (10-second activation)
-  - Web UI for easy management
-- **Security & Performance**:
-  - Let's Encrypt integration(dns-01 or http-01 challenge)
-  - Multi-domain TLS support with automatic certificate selection
-  - HTTP plugin system (caching, compression, auth, rate limiting)
-  - Detailed performance metrics, include: upstream connect time, processing time, and etc.
+- 🚀 High Performance & Reliability
+  - Built with Rust for memory safety and top-tier performance.
+  - Powered by Cloudflare Pingora, a battle-tested asynchronous networking library.
+  - Supports HTTP/1.1, HTTP/2, and gRPC-web proxying.
 
-## Quick Start
+- 🔧 Dynamic & Easy to Use
+  - Zero-downtime configuration changes with hot-reloading.
+  - Simple, human-readable TOML configuration files.
+  - Full-featured Web UI for intuitive, real-time management.
+  - Supports both file and etcd as configuration backends.
 
-Pingap can be started with either a configuration directory or a single TOML file:
+- 🧩 Powerful Extensibility
+  - A rich plugin system to handle common gateway tasks.
+  - Advanced routing with host, path, and regex matching.
+  - Built-in service discovery via static lists, DNS, or Docker labels.
+  - Automated HTTPS with Let's Encrypt (supporting both HTTP-01 and DNS-01 challenges).
 
-```bash
-# Using a config directory
-RUST_LOG=INFO pingap -c=/opt/pingap/conf -d --log=/opt/pingap/pingap.log
+- 📊 Modern Observability
+  - Native Prometheus metrics for monitoring (pull & push modes).
+  - Integrated OpenTelemetry support for distributed tracing.
+  - Highly customizable access logs with over 30 variables.
+  - Detailed performance metrics, including upstream connect time, processing time, and more.
 
-# Using a single TOML file
-RUST_LOG=INFO pingap -c=/opt/pingap/pingap.toml -d --log=/opt/pingap/pingap.log
+## 🚀 Getting Started
+
+The easiest way to get started with Pingap is by using Docker Compose.
+
+1. Create a `docker-compose.yml` file:
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  pingap:
+    image: vicanso/pingap:latest # For production, use a specific version like vicanso/pingap:0.12.1-full
+    container_name: pingap-instance
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Mount a local directory to persist all configurations and data
+      - ./pingap_data:/opt/pingap
+    environment:
+      # Configure using environment variables
+      - PINGAP_CONF=/opt/pingap/conf
+      - PINGAP_ADMIN_ADDR=0.0.0.0:80/pingap
+      - PINGAP_ADMIN_USER=pingap
+      - PINGAP_ADMIN_PASSWORD=<YourSecurePassword> # Change this!
+    command:
+      # Start pingap and enable hot-reloading
+      - pingap
+      - --autoreload
 ```
 
-Key flags:
-- `-c`: Path to config directory or TOML file
-- `-d`: Run in daemon/background mode
-- `--log`: Path to log file (logs are appended)
-- `RUST_LOG=INFO`: Set logging level (DEBUG, INFO, WARN, ERROR), default is `INFO`
-
-## Graceful Restart
-
-Performs a zero-downtime restart of Pingap by following these steps:
-
-1. Validates the new configuration
-2. Gracefully shuts down the existing process
-3. Starts a new process to handle incoming requests
+2. Create a data directory and run:
 
 ```bash
-# Graceful restart command
-RUST_LOG=INFO pingap -c=/opt/pingap/conf -t \
-  && pkill -SIGQUIT pingap \
-  && RUST_LOG=INFO pingap -c=/opt/pingap/conf -d -u --log=/opt/pingap/pingap.log
+mkdir pingap_data
+docker-compose up -d
 ```
 
-Key flags:
-- `-t`: Test/validate configuration before restart
-- `-u`: Upgrade mode (ensures smooth handover from old process)
-- `-d`: Run in daemon mode
-- `SIGQUIT`: Signal for graceful shutdown
+3. Access the Admin UI:
 
-## Auto Restart
+Your Pingap instance is now running! You can access the web admin interface at http://localhost/pingap with the credentials you set.
 
-Automatically monitors configuration files and handles changes in two ways:
+For more detailed instructions, including running from a binary, check out our [Documentation](https://pingap.io/pingap-en/docs/getting_started).
 
-- **Full Restart**: When core configurations change, performs a graceful restart
-- **Hot Reload**: When only upstream, location and plugin configurations change, updates take effect within ~10 seconds without restart
 
-```bash
-# Enable auto-restart and hot reload
-RUST_LOG=INFO pingap -c=/opt/pingap/conf \
-  -a -d --log=/opt/pingap/pingap.log
-```
+## Dynamic Configuration
 
-Key flags:
-- `-a`: Enable auto-restart on configuration changes
-- `-d`: Run in daemon mode
-- `-c`: Path to configuration directory
+Pingap is designed to adapt to configuration changes without downtime.
 
-Auto restart include hot reload, If you just want to use hot reload, you should `--autoreload` instead of `-a`.
+Hot Reload (--autoreload): For most changes—like updating upstreams, locations, or plugins—Pingap applies the new configuration within 10 seconds without a restart. This is the recommended mode for containerized environments.
 
-## Docker
+Graceful Restart (-a or --autorestart): For fundamental changes (like modifying server listen ports), this mode performs a full, zero-downtime restart, ensuring no requests are dropped.
 
-Run Pingap in a Docker container with auto-reload and admin interface enabled. You can find the relevant instructions here: [(https://pingap.io/pingap-en/docs/docker](https://pingap.io/pingap-en/docs/docker)
 
-## Dev
+## 🔧 Development
 
 ```bash
 make dev
@@ -122,7 +119,7 @@ make build-web
 ```
 
 
-## Config
+## 📝 Configuration
 
 ```toml
 [upstreams.charts]
@@ -139,7 +136,7 @@ locations = ["lo"]
 
 You can find the relevant instructions here: [https://pingap.io/pingap-en/docs/config](https://pingap.io/pingap-en/docs/config).
 
-## Proxy step
+## 🔄 Proxy step
 
 ```mermaid
 graph TD;
@@ -189,11 +186,11 @@ graph TD;
   response["HTTP Response"] --> stop("Logging");
 ```
 
-## Performance
+## 📊 Performance
 
 CPU: M4 Pro, Thread: 1
 
-### Ping no access log:
+### Ping no access log
 
 ```bash
 wrk 'http://127.0.0.1:6118/ping' --latency
@@ -213,10 +210,10 @@ Requests/sec: 147260.15
 Transfer/sec:     19.24MB
 ```
 
-## Rust version
+## 📦 Rust version
 
 Our current MSRV is 1.83
 
-# License
+## 📄 License
 
 This project is Licensed under [Apache License, Version 2.0](./LICENSE).

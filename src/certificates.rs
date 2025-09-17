@@ -16,8 +16,11 @@ use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use once_cell::sync::Lazy;
 use pingap_certificate::{
-    CertificateProvider, DynamicCertificates, DEFAULT_SERVER_NAME,
+    parse_certificates, CertificateProvider, DynamicCertificates,
+    DEFAULT_SERVER_NAME,
 };
+use pingap_config::CertificateConf;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 struct Provider {
@@ -59,4 +62,39 @@ static CERTIFICATE_PROVIDER: Lazy<Arc<Provider>> = Lazy::new(|| {
 
 pub fn new_certificate_provider() -> Arc<dyn CertificateProvider> {
     CERTIFICATE_PROVIDER.clone()
+}
+
+/// Updates the global certificate store with new configurations
+///
+/// # Arguments
+/// * `certificate_configs` - HashMap of certificate names to their configurations
+///
+/// # Returns
+/// * `Vec<String>` - List of domain names whose certificates were updated
+/// * `String` - Semicolon-separated list of parsing errors
+///
+/// Updates certificates atomically using ArcSwap, detecting changes by comparing hash_keys.
+/// Supports multiple domains per certificate and wildcard certificates.
+pub fn try_update_certificates(
+    certificate_configs: &HashMap<String, CertificateConf>,
+) -> (Vec<String>, String) {
+    let (new_certs, errors) = parse_certificates(certificate_configs);
+    let old_certs = CERTIFICATE_PROVIDER.list();
+    let updated_certificates: Vec<String> = new_certs
+        .iter()
+        .filter(|(name, cert)| {
+            old_certs
+                .get(*name)
+                .is_none_or(|old_cert| old_cert.hash_key != cert.hash_key)
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+
+    let error_messages: Vec<String> = errors
+        .into_iter()
+        .map(|(name, msg)| format!("{}({})", msg, name))
+        .collect();
+
+    CERTIFICATE_PROVIDER.store(new_certs);
+    (updated_certificates, error_messages.join(";"))
 }

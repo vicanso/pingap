@@ -32,11 +32,11 @@ use instant_acme::{
 };
 use pingap_certificate::CertificateProvider;
 use pingap_certificate::{
-    parse_leaf_chain_certificates, try_update_certificates, Certificate,
+    parse_certificates, parse_leaf_chain_certificates, Certificate,
 };
 use pingap_config::{
-    get_current_config, set_current_config, ConfigStorage, LoadConfigOptions,
-    PingapConf, CATEGORY_CERTIFICATE,
+    get_current_config, set_current_config, CertificateConf, ConfigStorage,
+    LoadConfigOptions, PingapConf, CATEGORY_CERTIFICATE,
 };
 use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
@@ -46,6 +46,7 @@ use pingap_core::{
 };
 use pingora::http::StatusCode;
 use pingora::proxy::Session;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Once;
 use std::time::Duration;
@@ -206,6 +207,31 @@ async fn renew_certificate(
     set_current_config(&conf);
     handle_successful_renewal(&params.domains, &conf, provider, sender).await;
     Ok(())
+}
+
+fn try_update_certificates(
+    provider: Arc<dyn CertificateProvider>,
+    certificate_configs: &HashMap<String, CertificateConf>,
+) -> (Vec<String>, String) {
+    let (new_certs, errors) = parse_certificates(certificate_configs);
+    let old_certs = provider.list();
+    let updated_certificates: Vec<String> = new_certs
+        .iter()
+        .filter(|(name, cert)| {
+            old_certs
+                .get(*name)
+                .is_none_or(|old_cert| old_cert.hash_key != cert.hash_key)
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+
+    let error_messages: Vec<String> = errors
+        .into_iter()
+        .map(|(name, msg)| format!("{}({})", msg, name))
+        .collect();
+
+    provider.store(new_certs);
+    (updated_certificates, error_messages.join(";"))
 }
 
 async fn handle_successful_renewal(
