@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::storage::Storage;
-use crate::Error;
+use crate::{Error, Observer};
 use async_trait::async_trait;
 use etcd_client::{Client, ConnectOptions, GetOptions, WatchOptions};
 use humantime::parse_duration;
@@ -137,5 +137,30 @@ impl Storage for EtcdStorage {
             source: Box::new(e),
         })?;
         Ok(())
+    }
+
+    /// Indicates that this storage supports watching for changes
+    fn support_observer(&self) -> bool {
+        true
+    }
+    /// Sets up a watch on the config path to observe changes
+    /// Note: May miss changes if processing takes too long between updates
+    /// Should be used with periodic full fetches to ensure consistency
+    async fn observe(&self) -> Result<Observer> {
+        // 逻辑并不完善，有可能因为变更处理中途又发生其它变更导致缺失
+        // 因此还需配合fetch的形式比对
+        let mut c = self.connect().await?;
+        let (_, stream) = c
+            .watch(
+                self.path.as_bytes(),
+                Some(WatchOptions::default().with_prefix()),
+            )
+            .await
+            .map_err(|e| Error::Etcd {
+                source: Box::new(e),
+            })?;
+        Ok(Observer {
+            etcd_watch_stream: Some(stream),
+        })
     }
 }

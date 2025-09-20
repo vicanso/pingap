@@ -41,15 +41,12 @@ impl AcmeDnsTask for ManualDnsTask {
         );
         let name = nanoid!(8);
         // let key = format!("storages/{name}.toml");
-        let Ok(mut data) = toml::to_string_pretty(&json!({
+        let data = json!({
             "category": "config",
             "secret": "",
             "value": value,
             "remark": "dns text value for acme challenge, it will be removed later auto"
-        })) else {
-            return Ok(());
-        };
-        data = format!("[storages.{name}]\n{data}");
+        });
         if let Err(e) = self
             .config_manager
             .update(Category::Storage, &name, &data)

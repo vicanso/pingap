@@ -14,7 +14,7 @@
 
 use super::{get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf};
 use crate::certificates::new_certificate_provider;
-use crate::config_manager::{self, get_config_manager};
+use crate::config_manager::get_config_manager;
 use crate::process::{get_start_time, restart_now};
 use crate::upstreams::new_upstream_provider;
 use async_trait::async_trait;
@@ -517,18 +517,19 @@ impl AdminServe {
         session: &mut Session,
     ) -> pingora::Result<HttpResponse> {
         let buf = get_request_body(session).await?;
-        let conf = PingapConfig::new(&buf, false).map_err(|e| {
+        let config = toml::from_slice(&buf).map_err(|e| {
             error!(error = e.to_string(), "import config fail");
             pingap_core::new_internal_error(400, e)
         })?;
-        if let Some(storage) = pingap_config::get_config_storage() {
-            pingap_config::sync_config(&conf, storage)
-                .await
-                .map_err(|e| {
-                    error!(error = e.to_string(), "import config fail");
-                    pingap_core::new_internal_error(400, e)
-                })?;
-        }
+        // let conf = PingapConfig::new(&buf, false).map_err(|e| {
+        //     error!(error = e.to_string(), "import config fail");
+        //     pingap_core::new_internal_error(400, e)
+        // })?;
+        self.manager.save_all(&config).await.map_err(|e| {
+            error!(error = e.to_string(), "import config fail");
+            pingap_core::new_internal_error(400, e)
+        })?;
+
         Ok(HttpResponse::no_content())
     }
 }
@@ -624,7 +625,7 @@ async fn handle_request_admin(
         })
     } else if path == "/basic" {
         let current_config = plugin.load_config(true).await?;
-        let info = get_process_system_info();
+        let info = get_process_system_info(plugin.manager.get_current_config());
 
         let (processing, accepted) = get_processing_accepted();
 

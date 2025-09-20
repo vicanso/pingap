@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::Error;
+use crate::{Error, Observer};
 use async_trait::async_trait;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -27,4 +27,15 @@ pub trait Storage: Send + Sync {
 
     /// delete from storage
     async fn delete(&self, key: &str) -> Result<()>;
+    fn support_observer(&self) -> bool {
+        false
+    }
+    /// Sets up a watch on the config path to observe changes
+    /// Note: May miss changes if processing takes too long between updates
+    /// Should be used with periodic full fetches to ensure consistency
+    async fn observe(&self) -> Result<Observer> {
+        Ok(Observer {
+            etcd_watch_stream: None,
+        })
+    }
 }

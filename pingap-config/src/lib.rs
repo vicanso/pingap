@@ -16,7 +16,6 @@
 use async_trait::async_trait;
 use etcd_client::WatchStream;
 use glob::glob;
-use once_cell::sync::OnceCell;
 use snafu::Snafu;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -25,9 +24,7 @@ use tokio::fs;
 use tracing::debug;
 
 mod common;
-mod etcd;
 mod etcd_storage;
-mod file;
 mod file_storage;
 mod manager;
 mod storage;
@@ -165,59 +162,12 @@ pub trait ConfigStorage {
     async fn load(&self, key: &str) -> Result<Vec<u8>>;
 }
 
-// Global static storage for the configuration backend
-static CONFIG_STORAGE: OnceCell<Box<(dyn ConfigStorage + Sync + Send)>> =
-    OnceCell::new();
-
-// Creates a new configuration storage based on the path
-// Supports both etcd:// and file:// protocols
-fn new_config_storage(
-    path: &str,
-) -> Result<Box<(dyn ConfigStorage + Sync + Send)>> {
-    let s: Box<(dyn ConfigStorage + Sync + Send)> =
-        if path.starts_with(ETCD_PROTOCOL) {
-            let storage = EtcdStorage::new(path)?;
-            Box::new(storage)
-        } else {
-            let storage = FileStorage::new(path)?;
-            Box::new(storage)
-        };
-    Ok(s)
-}
-
-/// Initializes the configuration storage system if it hasn't been initialized yet
-///
-/// # Arguments
-/// * `path` - A string path that can be either a file path (file://) or etcd path (etcd://)
-///
-/// # Returns
-/// * `Result<&'static (dyn ConfigStorage + Sync + Send)>` - A reference to the initialized storage
-///   The reference has a static lifetime since it's stored in a global OnceCell
-pub fn try_init_config_storage(
-    path: &str,
-) -> Result<&'static (dyn ConfigStorage + Sync + Send)> {
-    // Attempts to get existing storage or initialize a new one if not present
-    // get_or_try_init ensures this initialization happens only once
-    let conf = CONFIG_STORAGE.get_or_try_init(|| new_config_storage(path))?;
-    // Returns a reference to the storage implementation
-    Ok(conf.as_ref())
-}
-
 pub fn new_config_manager(value: &str) -> Result<ConfigManager> {
-    if value.starts_with(ETCD_PROTOCOL) {
+    if value.starts_with(etcd_storage::ETCD_PROTOCOL) {
         new_etcd_config_manager(value)
     } else {
         new_file_config_manager(value)
     }
-}
-
-pub async fn load_config(opts: LoadConfigOptions) -> Result<PingapConfig> {
-    let Some(storage) = CONFIG_STORAGE.get() else {
-        return Err(Error::Invalid {
-            message: "storage is not inited".to_string(),
-        });
-    };
-    storage.load_config(opts).await
 }
 
 pub async fn read_all_toml_files(dir: &str) -> Result<Vec<u8>> {
@@ -241,104 +191,21 @@ pub async fn read_all_toml_files(dir: &str) -> Result<Vec<u8>> {
     Ok(data)
 }
 
-pub fn support_observer() -> bool {
-    if let Some(storage) = CONFIG_STORAGE.get() {
-        storage.support_observer()
-    } else {
-        false
-    }
-}
-
-pub fn get_config_storage() -> Option<&'static (dyn ConfigStorage + Sync + Send)>
-{
-    if let Some(storage) = CONFIG_STORAGE.get() {
-        Some(storage.as_ref())
-    } else {
-        None
-    }
-}
-
-pub async fn save_config(
-    conf: &PingapConfig,
-    category: &str,
-    name: Option<&str>,
-) -> Result<()> {
-    let Some(storage) = CONFIG_STORAGE.get() else {
-        return Err(Error::Invalid {
-            message: "storage is not inited".to_string(),
-        });
-    };
-    storage.save_config(conf, category, name).await
-}
 pub async fn sync_to_path(
     config_manager: Arc<ConfigManager>,
     path: &str,
 ) -> Result<()> {
-    let conf = config_manager.get_current_config();
-    let storage = new_config_storage(path)?;
-    sync_config(&conf, storage.as_ref()).await
-}
-
-pub async fn sync_config(
-    conf: &PingapConfig,
-    storage: &(dyn ConfigStorage + Send + Sync),
-) -> Result<()> {
-    let mut arr = vec![(common::CATEGORY_BASIC, None)];
-    for key in conf.servers.keys() {
-        arr.push((common::CATEGORY_SERVER, Some(key.as_str())));
-    }
-    for key in conf.locations.keys() {
-        arr.push((common::CATEGORY_LOCATION, Some(key.as_str())));
-    }
-    for key in conf.upstreams.keys() {
-        arr.push((common::CATEGORY_UPSTREAM, Some(key.as_str())));
-    }
-    for key in conf.plugins.keys() {
-        arr.push((common::CATEGORY_PLUGIN, Some(key.as_str())));
-    }
-    for key in conf.certificates.keys() {
-        arr.push((common::CATEGORY_CERTIFICATE, Some(key.as_str())));
-    }
-    for key in conf.storages.keys() {
-        arr.push((common::CATEGORY_STORAGE, Some(key.as_str())));
-    }
-    for (category, name) in arr {
-        storage.save_config(conf, category, name).await?;
-    }
+    let config = config_manager.get_current_config();
+    let config = toml::to_string_pretty(&config.as_ref().clone())
+        .map_err(|e| Error::Ser { source: e })?;
+    let config = toml::from_str::<PingapTomlConfig>(&config)
+        .map_err(|e| Error::De { source: e })?;
+    let new_config_manager = new_config_manager(path)?;
+    new_config_manager.save_all(&config).await?;
     Ok(())
 }
 
 pub use common::*;
-pub use etcd::{EtcdStorage, ETCD_PROTOCOL};
-pub use file::FileStorage;
+pub use etcd_storage::ETCD_PROTOCOL;
 pub use manager::*;
 pub use storage::*;
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        get_config_storage, load_config, support_observer, sync_to_path,
-        try_init_config_storage, LoadConfigOptions,
-    };
-    use pretty_assertions::assert_eq;
-    use tempfile::TempDir;
-
-    #[tokio::test]
-    async fn test_load_config() {
-        assert_eq!(true, get_config_storage().is_none());
-        try_init_config_storage("./conf").unwrap();
-        let conf = load_config(LoadConfigOptions {
-            replace_include: true,
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-        assert_eq!(8, conf.hash().unwrap().len());
-        assert_eq!(false, support_observer());
-        assert_eq!(true, get_config_storage().is_some());
-        let dir = TempDir::new().unwrap();
-        let file = dir.keep().join("pingap.toml");
-        tokio::fs::write(&file, b"").await.unwrap();
-        sync_to_path(file.to_string_lossy().as_ref()).await.unwrap();
-    }
-}

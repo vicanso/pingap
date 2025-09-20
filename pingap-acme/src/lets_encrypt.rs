@@ -70,6 +70,7 @@ async fn update_certificate_lets_encrypt(
     // get new certificate from lets encrypt
     let (pem, key) =
         new_lets_encrypt(config_manager.clone(), true, params.clone()).await?;
+
     let cert: Option<CertificateConf> = config_manager
         .get(Category::Certificate, &params.name)
         .await
@@ -88,7 +89,6 @@ async fn update_certificate_lets_encrypt(
                 message: e.to_string(),
             })?;
     }
-
     Ok(())
 }
 
@@ -124,18 +124,7 @@ async fn do_update_certificates(
     if count % UPDATE_INTERVAL != 0 {
         return Ok(false);
     }
-    let toml_config =
-        config_manager
-            .load_all()
-            .await
-            .map_err(|e| ServiceError::Invalid {
-                message: e.to_string(),
-            })?;
-    let config = toml_config.to_pingap_config(true).map_err(|e| {
-        ServiceError::Invalid {
-            message: e.to_string(),
-        }
-    })?;
+    let config = config_manager.get_current_config();
     for item in params.iter() {
         let name = &item.name;
         let domains = &item.domains;
@@ -209,7 +198,6 @@ async fn renew_certificate(
 ) -> Result<()> {
     update_certificate_lets_encrypt(config_manager.clone(), params.clone())
         .await?;
-    // set_current_config(&conf);
     handle_successful_renewal(
         &params.domains,
         config_manager,
@@ -296,6 +284,10 @@ async fn handle_successful_renewal(
                 })
                 .await;
         }
+    } else {
+        // update certificate success
+        // so set the current config
+        config_manager.set_current_config(config);
     }
     Ok(())
 }
@@ -310,18 +302,7 @@ struct LetsEncryptTask {
 impl BackgroundTask for LetsEncryptTask {
     async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
         let mut params = vec![];
-        let toml_config =
-            self.config_manager.load_all().await.map_err(|e| {
-                ServiceError::Invalid {
-                    message: e.to_string(),
-                }
-            })?;
-
-        let config = toml_config.to_pingap_config(true).map_err(|e| {
-            ServiceError::Invalid {
-                message: e.to_string(),
-            }
-        })?;
+        let config = self.config_manager.get_current_config();
 
         for (name, certificate) in config.certificates.iter() {
             let acme = certificate.acme.clone().unwrap_or_default();

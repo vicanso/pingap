@@ -17,7 +17,7 @@ use crate::etcd_storage::EtcdStorage;
 use crate::file_storage::FileStorage;
 use crate::storage::Storage;
 use crate::PingapConfig;
-use crate::{Category, Error};
+use crate::{Category, Error, Observer};
 use arc_swap::ArcSwap;
 use pingap_core::parse_query_string;
 use pingap_util::resolve_path;
@@ -263,6 +263,12 @@ impl ConfigManager {
             mode,
             current_config: ArcSwap::from_pointee(PingapConfig::default()),
         }
+    }
+    pub fn support_observer(&self) -> bool {
+        self.storage.support_observer()
+    }
+    pub async fn observe(&self) -> Result<Observer> {
+        self.storage.observe().await
     }
 
     pub fn get_current_config(&self) -> Arc<PingapConfig> {

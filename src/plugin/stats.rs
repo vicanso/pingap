@@ -17,7 +17,7 @@ use crate::process::get_start_time;
 use async_trait::async_trait;
 use bytes::Bytes;
 use ctor::ctor;
-use pingap_config::{PluginCategory, PluginConf};
+use pingap_config::{PingapConfig, PluginCategory, PluginConf};
 use pingap_core::{
     get_hostname, Ctx, HttpResponse, PluginStep, RequestPluginResult,
 };
@@ -169,7 +169,7 @@ impl Plugin for Stats {
             Duration::from_secs(pingap_core::now_sec() - get_start_time())
                 .into();
         let (processing, accepted) = get_processing_accepted();
-        let info = get_process_system_info();
+        let info = get_process_system_info(Arc::new(PingapConfig::default()));
         let resp = HttpResponse::try_from_json(&ServerStats {
             accepted,
             processing,
