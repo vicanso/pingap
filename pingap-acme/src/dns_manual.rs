@@ -15,19 +15,20 @@
 use super::{AcmeDnsTask, Error, LOG_CATEGORY};
 use async_trait::async_trait;
 use nanoid::nanoid;
-use pingap_config::ConfigStorage;
+use pingap_config::{Category, ConfigManager};
 use serde_json::json;
+use std::sync::Arc;
 use tracing::{error, info};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub(crate) struct ManualDnsTask {
-    storage: &'static (dyn ConfigStorage + Sync + Send),
+    config_manager: Arc<ConfigManager>,
 }
 
 impl ManualDnsTask {
-    pub fn new(storage: &'static (dyn ConfigStorage + Sync + Send)) -> Self {
-        Self { storage }
+    pub fn new(config_manager: Arc<ConfigManager>) -> Self {
+        Self { config_manager }
     }
 }
 
@@ -39,7 +40,7 @@ impl AcmeDnsTask for ManualDnsTask {
             "set the DNS record {domain} IN TXT {value}",
         );
         let name = nanoid!(8);
-        let key = format!("storages/{name}.toml");
+        // let key = format!("storages/{name}.toml");
         let Ok(mut data) = toml::to_string_pretty(&json!({
             "category": "config",
             "secret": "",
@@ -49,7 +50,11 @@ impl AcmeDnsTask for ManualDnsTask {
             return Ok(());
         };
         data = format!("[storages.{name}]\n{data}");
-        if let Err(e) = self.storage.save(&key, data.as_bytes()).await {
+        if let Err(e) = self
+            .config_manager
+            .update(Category::Storage, &name, &data)
+            .await
+        {
             error!(error = e.to_string(), "save dns txt record fail");
         };
         Ok(())

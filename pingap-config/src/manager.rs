@@ -12,11 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::convert_pingap_config;
 use crate::etcd_storage::EtcdStorage;
 use crate::file_storage::FileStorage;
 use crate::storage::Storage;
+use crate::PingapConfig;
 use crate::{Category, Error};
+use arc_swap::ArcSwap;
 use pingap_core::parse_query_string;
+use pingap_util::resolve_path;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
@@ -79,6 +83,17 @@ fn format_item_toml_config(
 }
 
 impl PingapTomlConfig {
+    pub fn to_toml(&self) -> Result<String> {
+        to_string_pretty(self)
+    }
+    pub fn to_pingap_config(
+        &self,
+        replace_include: bool,
+    ) -> Result<PingapConfig> {
+        let value = self.to_toml()?;
+        convert_pingap_config(value.as_bytes(), replace_include)
+    }
+
     fn get_toml(&self, category: &Category, name: &str) -> Result<String> {
         let value = self.get(category, name);
         format_item_toml_config(value, category, name)
@@ -95,30 +110,20 @@ impl PingapTomlConfig {
         };
         match category {
             Category::Basic => wrapper(self.basic.clone()),
-            Category::Server => wrapper(
-                self.servers.clone().map(|servers| Value::Table(servers)),
-            ),
-            Category::Location => wrapper(
-                self.locations
-                    .clone()
-                    .map(|locations| Value::Table(locations)),
-            ),
-            Category::Upstream => wrapper(
-                self.upstreams
-                    .clone()
-                    .map(|upstreams| Value::Table(upstreams)),
-            ),
-            Category::Plugin => wrapper(
-                self.plugins.clone().map(|plugins| Value::Table(plugins)),
-            ),
-            Category::Certificate => wrapper(
-                self.certificates
-                    .clone()
-                    .map(|certificates| Value::Table(certificates)),
-            ),
-            Category::Storage => wrapper(
-                self.storages.clone().map(|storages| Value::Table(storages)),
-            ),
+            Category::Server => wrapper(self.servers.clone().map(Value::Table)),
+            Category::Location => {
+                wrapper(self.locations.clone().map(Value::Table))
+            },
+            Category::Upstream => {
+                wrapper(self.upstreams.clone().map(Value::Table))
+            },
+            Category::Plugin => wrapper(self.plugins.clone().map(Value::Table)),
+            Category::Certificate => {
+                wrapper(self.certificates.clone().map(Value::Table))
+            },
+            Category::Storage => {
+                wrapper(self.storages.clone().map(Value::Table))
+            },
         }
     }
     fn update(&mut self, category: &Category, name: &str, value: Value) {
@@ -155,33 +160,27 @@ impl PingapTomlConfig {
             Category::Server => self
                 .servers
                 .as_ref()
-                .map(|servers| servers.get(name).cloned())
-                .flatten(),
+                .and_then(|servers| servers.get(name).cloned()),
             Category::Location => self
                 .locations
                 .as_ref()
-                .map(|locations| locations.get(name).cloned())
-                .flatten(),
+                .and_then(|locations| locations.get(name).cloned()),
             Category::Upstream => self
                 .upstreams
                 .as_ref()
-                .map(|upstreams| upstreams.get(name).cloned())
-                .flatten(),
+                .and_then(|upstreams| upstreams.get(name).cloned()),
             Category::Plugin => self
                 .plugins
                 .as_ref()
-                .map(|plugins| plugins.get(name).cloned())
-                .flatten(),
+                .and_then(|plugins| plugins.get(name).cloned()),
             Category::Certificate => self
                 .certificates
                 .as_ref()
-                .map(|certificates| certificates.get(name).cloned())
-                .flatten(),
+                .and_then(|certificates| certificates.get(name).cloned()),
             Category::Storage => self
                 .storages
                 .as_ref()
-                .map(|storages| storages.get(name).cloned())
-                .flatten(),
+                .and_then(|storages| storages.get(name).cloned()),
         }
     }
     fn delete(&mut self, category: &Category, name: &str) {
@@ -209,7 +208,7 @@ impl PingapTomlConfig {
     }
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum ConfigMode {
     /// single mode (e.g., pingap.toml)
     Single,
@@ -227,6 +226,7 @@ pub fn new_file_config_manager(path: &str) -> Result<ConfigManager> {
     } else {
         path.to_string()
     };
+    let file = resolve_path(&file);
     let filepath = Path::new(&file);
     let mode = if filepath.is_dir() {
         if parse_query_string(path).contains_key("separation") {
@@ -243,7 +243,7 @@ pub fn new_file_config_manager(path: &str) -> Result<ConfigManager> {
 }
 
 pub fn new_etcd_config_manager(path: &str) -> Result<ConfigManager> {
-    let storage = EtcdStorage::new(&path)?;
+    let storage = EtcdStorage::new(path)?;
     Ok(ConfigManager::new(
         Arc::new(storage),
         ConfigMode::MultiByItem,
@@ -253,11 +253,23 @@ pub fn new_etcd_config_manager(path: &str) -> Result<ConfigManager> {
 pub struct ConfigManager {
     storage: Arc<dyn Storage>,
     mode: ConfigMode,
+    current_config: ArcSwap<PingapConfig>,
 }
 
 impl ConfigManager {
     pub fn new(storage: Arc<dyn Storage>, mode: ConfigMode) -> Self {
-        Self { storage, mode }
+        Self {
+            storage,
+            mode,
+            current_config: ArcSwap::from_pointee(PingapConfig::default()),
+        }
+    }
+
+    pub fn get_current_config(&self) -> Arc<PingapConfig> {
+        self.current_config.load().clone()
+    }
+    pub fn set_current_config(&self, config: PingapConfig) {
+        self.current_config.store(Arc::new(config));
     }
 
     /// get storage key
@@ -379,14 +391,14 @@ impl ConfigManager {
         let config: PingapTomlConfig =
             toml::from_str(&data).map_err(|e| Error::De { source: e })?;
 
-        return if let Some(value) = config.get(&category, name) {
+        if let Some(value) = config.get(&category, name) {
             let value = to_string_pretty(&value)?;
             let value =
                 toml::from_str(&value).map_err(|e| Error::De { source: e })?;
             Ok(Some(value))
         } else {
             Ok(None)
-        };
+        }
     }
     pub async fn delete(&self, category: Category, name: &str) -> Result<()> {
         let key = self.get_key(&category, name);

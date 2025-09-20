@@ -28,6 +28,7 @@ use pingap_acme::handle_lets_encrypt;
 use pingap_certificate::CertificateProvider;
 use pingap_certificate::{GlobalCertificate, TlsSettingParams};
 use pingap_config::get_config_storage;
+use pingap_config::ConfigManager;
 use pingap_core::BackgroundTask;
 use pingap_core::PluginProvider;
 use pingap_core::{
@@ -199,6 +200,9 @@ pub struct Server {
     // certificates
     certificate_provider: Arc<dyn CertificateProvider>,
 
+    // config manager
+    config_manager: Arc<ConfigManager>,
+
     // logger
     access_logger: Option<Sender<BytesMut>>,
 }
@@ -223,6 +227,7 @@ impl Server {
     pub fn new(
         conf: &ServerConf,
         access_logger: Option<Sender<BytesMut>>,
+        config_manager: Arc<ConfigManager>,
         server_locations_provider: Arc<dyn ServerLocationsProvider>,
         location_provider: Arc<dyn LocationProvider>,
         upstream_provider: Arc<dyn UpstreamProvider>,
@@ -298,6 +303,7 @@ impl Server {
             plugin_provider,
             certificate_provider,
             access_logger,
+            config_manager,
         };
         Ok(s)
     }
@@ -600,17 +606,13 @@ impl Server {
         ctx: &mut Ctx,
     ) -> Option<pingora::Result<bool>> {
         if self.lets_encrypt_enabled {
-            let storage = match get_config_storage() {
-                Some(s) => s,
-                None => {
-                    return Some(Err(new_internal_error(
-                        500,
-                        "get config storage fail".to_string(),
-                    )));
-                },
-            };
-
-            return match handle_lets_encrypt(storage, session, ctx).await {
+            return match handle_lets_encrypt(
+                self.config_manager.clone(),
+                session,
+                ctx,
+            )
+            .await
+            {
                 Ok(true) => Some(Ok(true)),   // 已处理 ACME 请求
                 Ok(false) => Some(Ok(false)), // 明确表示未处理，进入标准流程（虽然通常ACME处理后会是true）
                 Err(e) => Some(Err(e)),
@@ -1661,7 +1663,7 @@ mod tests {
     use crate::server_conf::parse_from_conf;
     use ahash::AHashMap;
     use pingap_certificate::{DynamicCertificates, TlsCertificate};
-    use pingap_config::PingapConf;
+    use pingap_config::PingapConfig;
     use pingap_core::{CacheInfo, Ctx, UpstreamInfo};
     use pingap_location::LocationStats;
     use pingora::http::ResponseHeader;
@@ -1760,7 +1762,7 @@ value = "PLpKJqvfkjTcYTDpauJf+2JnEayP+bm+0Oe60Jk="
 category = "config"
 value = 'proxy_set_headers = ["name:value"]'
         "###;
-        let pingap_conf = PingapConf::new(toml_data.as_ref(), false).unwrap();
+        let pingap_conf = PingapConfig::new(toml_data.as_ref(), false).unwrap();
 
         let location = Arc::new(
             Location::new("lo", pingap_conf.locations.get("lo").unwrap())

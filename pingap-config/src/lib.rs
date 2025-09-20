@@ -18,6 +18,8 @@ use etcd_client::WatchStream;
 use glob::glob;
 use once_cell::sync::OnceCell;
 use snafu::Snafu;
+use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::fs;
 use tracing::debug;
@@ -103,6 +105,24 @@ pub enum Category {
     Certificate,
     Storage,
 }
+impl FromStr for Category {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "basic" => Ok(Category::Basic),
+            "server" => Ok(Category::Server),
+            "location" => Ok(Category::Location),
+            "upstream" => Ok(Category::Upstream),
+            "plugin" => Ok(Category::Plugin),
+            "certificate" => Ok(Category::Certificate),
+            "storage" => Ok(Category::Storage),
+            _ => Err(Error::Invalid {
+                message: format!("invalid category: {s}"),
+            }),
+        }
+    }
+}
 
 // Options for loading configuration
 #[derive(Debug, Default, Clone)]
@@ -115,12 +135,15 @@ pub struct LoadConfigOptions {
 #[async_trait]
 pub trait ConfigStorage {
     // Load configuration with specified options
-    async fn load_config(&self, opts: LoadConfigOptions) -> Result<PingapConf>;
+    async fn load_config(
+        &self,
+        opts: LoadConfigOptions,
+    ) -> Result<PingapConfig>;
 
     // Save configuration for a specific category and optional name
     async fn save_config(
         &self,
-        conf: &PingapConf,
+        conf: &PingapConfig,
         category: &str,
         name: Option<&str>,
     ) -> Result<()>;
@@ -180,7 +203,15 @@ pub fn try_init_config_storage(
     Ok(conf.as_ref())
 }
 
-pub async fn load_config(opts: LoadConfigOptions) -> Result<PingapConf> {
+pub fn new_config_manager(value: &str) -> Result<ConfigManager> {
+    if value.starts_with(ETCD_PROTOCOL) {
+        new_etcd_config_manager(value)
+    } else {
+        new_file_config_manager(value)
+    }
+}
+
+pub async fn load_config(opts: LoadConfigOptions) -> Result<PingapConfig> {
     let Some(storage) = CONFIG_STORAGE.get() else {
         return Err(Error::Invalid {
             message: "storage is not inited".to_string(),
@@ -228,7 +259,7 @@ pub fn get_config_storage() -> Option<&'static (dyn ConfigStorage + Sync + Send)
 }
 
 pub async fn save_config(
-    conf: &PingapConf,
+    conf: &PingapConfig,
     category: &str,
     name: Option<&str>,
 ) -> Result<()> {
@@ -239,14 +270,17 @@ pub async fn save_config(
     };
     storage.save_config(conf, category, name).await
 }
-pub async fn sync_to_path(path: &str) -> Result<()> {
-    let conf = get_current_config();
+pub async fn sync_to_path(
+    config_manager: Arc<ConfigManager>,
+    path: &str,
+) -> Result<()> {
+    let conf = config_manager.get_current_config();
     let storage = new_config_storage(path)?;
     sync_config(&conf, storage.as_ref()).await
 }
 
 pub async fn sync_config(
-    conf: &PingapConf,
+    conf: &PingapConfig,
     storage: &(dyn ConfigStorage + Send + Sync),
 ) -> Result<()> {
     let mut arr = vec![(common::CATEGORY_BASIC, None)];
@@ -277,6 +311,7 @@ pub async fn sync_config(
 pub use common::*;
 pub use etcd::{EtcdStorage, ETCD_PROTOCOL};
 pub use file::FileStorage;
+pub use manager::*;
 pub use storage::*;
 
 #[cfg(test)]

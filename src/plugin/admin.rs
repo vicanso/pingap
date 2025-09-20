@@ -14,6 +14,7 @@
 
 use super::{get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf};
 use crate::certificates::new_certificate_provider;
+use crate::config_manager::{self, get_config_manager};
 use crate::process::{get_start_time, restart_now};
 use crate::upstreams::new_upstream_provider;
 use async_trait::async_trait;
@@ -28,12 +29,12 @@ use http::Method;
 use http::{header, HeaderValue, StatusCode};
 use humantime::parse_duration;
 use pingap_config::{
-    self, get_current_config, save_config, BasicConf, CertificateConf,
-    LoadConfigOptions, LocationConf, PluginCategory, PluginConf, ServerConf,
-    StorageConf, UpstreamConf, CATEGORY_CERTIFICATE, CATEGORY_STORAGE,
+    self, BasicConf, Category, CertificateConf, ConfigManager, LocationConf,
+    PluginCategory, PluginConf, ServerConf, StorageConf, UpstreamConf,
+    CATEGORY_CERTIFICATE, CATEGORY_STORAGE,
 };
 use pingap_config::{
-    PingapConf, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
+    PingapConfig, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
     CATEGORY_UPSTREAM,
 };
 use pingap_core::{
@@ -54,6 +55,7 @@ use sha2::{Digest, Sha256};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Write;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use substring::Substring;
@@ -124,6 +126,7 @@ pub struct AdminServe {
     pub path: String,
     pub authorizations: Vec<(String, String)>,
     pub plugin_step: PluginStep,
+    manager: Arc<ConfigManager>,
     max_age: Duration,
     hash_value: String,
     ip_fail_limit: TtlLruLimit,
@@ -217,6 +220,10 @@ impl TryFrom<&PluginConf> for AdminServe {
                 Duration::from_secs(5 * 60),
                 ip_fail_limit as usize,
             ),
+            manager: get_config_manager().map_err(|e| Error::Invalid {
+                category: "config_manager".to_string(),
+                message: e.to_string(),
+            })?,
             authorizations,
         };
 
@@ -289,17 +296,26 @@ impl AdminServe {
     async fn load_config(
         &self,
         replace_include: bool,
-    ) -> pingora::Result<PingapConf> {
-        let conf = pingap_config::load_config(LoadConfigOptions {
-            replace_include,
-            admin: true,
-        })
-        .await
-        .map_err(|e| {
+    ) -> pingora::Result<PingapConfig> {
+        let config = self.manager.load_all().await.map_err(|e| {
             error!("failed to load config: {e}");
             pingap_core::new_internal_error(400, e)
         })?;
-        Ok(conf)
+        let config = config.to_pingap_config(replace_include).map_err(|e| {
+            error!("failed to convert config: {e}");
+            pingap_core::new_internal_error(400, e)
+        })?;
+        Ok(config)
+        // let conf = pingap_config::load_config(LoadConfigOptions {
+        //     replace_include,
+        //     admin: true,
+        // })
+        // .await
+        // .map_err(|e| {
+        //     error!("failed to load config: {e}");
+        //     pingap_core::new_internal_error(400, e)
+        // })?;
+        // Ok(conf)
     }
     async fn get_config(
         &self,
@@ -343,17 +359,23 @@ impl AdminServe {
         category: &str,
         name: &str,
     ) -> pingora::Result<HttpResponse> {
-        let mut conf = self.load_config(false).await?;
-        conf.remove(category, name).map_err(|e| {
-            error!(error = e.to_string(), "validate config fail");
+        let category = Category::from_str(category)
+            .map_err(|e| pingap_core::new_internal_error(400, e))?;
+        self.manager.delete(category, name).await.map_err(|e| {
+            error!(error = e.to_string(), "delete config fail");
             pingap_core::new_internal_error(400, e)
         })?;
-        save_config(&conf, category, Some(name))
-            .await
-            .map_err(|e| {
-                error!(error = e.to_string(), "save config fail");
-                pingap_core::new_internal_error(400, e)
-            })?;
+        // let mut conf = self.load_config(false).await?;
+        // conf.remove(category, name).map_err(|e| {
+        //     error!(error = e.to_string(), "validate config fail");
+        //     pingap_core::new_internal_error(400, e)
+        // })?;
+        // save_config(&conf, category, Some(name))
+        //     .await
+        //     .map_err(|e| {
+        //         error!(error = e.to_string(), "save config fail");
+        //         pingap_core::new_internal_error(400, e)
+        //     })?;
         Ok(HttpResponse::no_content())
     }
     async fn update_config(
@@ -369,8 +391,6 @@ impl AdminServe {
             ));
         }
         let buf = get_request_body(session).await?;
-        let key = name.to_string();
-        let mut conf = self.load_config(false).await?;
         match category {
             CATEGORY_UPSTREAM => {
                 let upstream: UpstreamConf = serde_json::from_slice(&buf)
@@ -381,7 +401,13 @@ impl AdminServe {
                         );
                         pingap_core::new_internal_error(400, e)
                     })?;
-                conf.upstreams.insert(key, upstream);
+                self.manager
+                    .update(Category::Upstream, name, &upstream)
+                    .await
+                    .map_err(|e| {
+                        error!(error = e.to_string(), "update config fail");
+                        pingap_core::new_internal_error(400, e)
+                    })?;
             },
             CATEGORY_LOCATION => {
                 let location: LocationConf = serde_json::from_slice(&buf)
@@ -392,7 +418,13 @@ impl AdminServe {
                         );
                         pingap_core::new_internal_error(400, e)
                     })?;
-                conf.locations.insert(key, location);
+                self.manager
+                    .update(Category::Location, name, &location)
+                    .await
+                    .map_err(|e| {
+                        error!(error = e.to_string(), "update config fail");
+                        pingap_core::new_internal_error(400, e)
+                    })?;
             },
             CATEGORY_SERVER => {
                 let server: ServerConf =
@@ -403,7 +435,13 @@ impl AdminServe {
                         );
                         pingap_core::new_internal_error(400, e)
                     })?;
-                conf.servers.insert(key, server);
+                self.manager
+                    .update(Category::Server, name, &server)
+                    .await
+                    .map_err(|e| {
+                        error!(error = e.to_string(), "update config fail");
+                        pingap_core::new_internal_error(400, e)
+                    })?;
             },
             CATEGORY_PLUGIN => {
                 let plugin: PluginConf =
@@ -414,7 +452,13 @@ impl AdminServe {
                         );
                         pingap_core::new_internal_error(400, e)
                     })?;
-                conf.plugins.insert(key, plugin);
+                self.manager
+                    .update(Category::Plugin, name, &plugin)
+                    .await
+                    .map_err(|e| {
+                        error!(error = e.to_string(), "update config fail");
+                        pingap_core::new_internal_error(400, e)
+                    })?;
             },
             CATEGORY_CERTIFICATE => {
                 let certificate: CertificateConf = serde_json::from_slice(&buf)
@@ -425,7 +469,13 @@ impl AdminServe {
                         );
                         pingap_core::new_internal_error(400, e)
                     })?;
-                conf.certificates.insert(key, certificate);
+                self.manager
+                    .update(Category::Certificate, name, &certificate)
+                    .await
+                    .map_err(|e| {
+                        error!(error = e.to_string(), "update config fail");
+                        pingap_core::new_internal_error(400, e)
+                    })?;
             },
             CATEGORY_STORAGE => {
                 let storage: StorageConf = serde_json::from_slice(&buf)
@@ -436,7 +486,13 @@ impl AdminServe {
                         );
                         pingap_core::new_internal_error(400, e)
                     })?;
-                conf.storages.insert(key, storage);
+                self.manager
+                    .update(Category::Storage, name, &storage)
+                    .await
+                    .map_err(|e| {
+                        error!(error = e.to_string(), "update config fail");
+                        pingap_core::new_internal_error(400, e)
+                    })?;
             },
             _ => {
                 let basic_conf: BasicConf = serde_json::from_slice(&buf)
@@ -444,15 +500,16 @@ impl AdminServe {
                         error!(error = e.to_string(), "descrialize basic fail");
                         pingap_core::new_internal_error(400, e)
                     })?;
-                conf.basic = basic_conf;
+                self.manager
+                    .update(Category::Basic, "", &basic_conf)
+                    .await
+                    .map_err(|e| {
+                        error!(error = e.to_string(), "update config fail");
+                        pingap_core::new_internal_error(400, e)
+                    })?;
             },
         };
-        save_config(&conf, category, Some(name))
-            .await
-            .map_err(|e| {
-                error!(error = e.to_string(), "save config fail");
-                pingap_core::new_internal_error(400, e)
-            })?;
+
         Ok(HttpResponse::no_content())
     }
     async fn import_config(
@@ -460,7 +517,7 @@ impl AdminServe {
         session: &mut Session,
     ) -> pingora::Result<HttpResponse> {
         let buf = get_request_body(session).await?;
-        let conf = PingapConf::new(&buf, false).map_err(|e| {
+        let conf = PingapConfig::new(&buf, false).map_err(|e| {
             error!(error = e.to_string(), "import config fail");
             pingap_core::new_internal_error(400, e)
         })?;
@@ -566,7 +623,7 @@ async fn handle_request_admin(
             .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
         })
     } else if path == "/basic" {
-        let current_config = get_current_config();
+        let current_config = plugin.load_config(true).await?;
         let info = get_process_system_info();
 
         let (processing, accepted) = get_processing_accepted();
@@ -575,7 +632,11 @@ async fn handle_request_admin(
             start_time: get_start_time(),
             version: pingap_util::get_pkg_version().to_string(),
             rustc_version: pingap_util::get_rustc_version(),
-            config_hash: pingap_config::get_config_hash(),
+            config_hash: plugin
+                .manager
+                .get_current_config()
+                .hash()
+                .unwrap_or_default(),
             user: current_config.basic.user.clone().unwrap_or_default(),
             group: current_config.basic.group.clone().unwrap_or_default(),
             pid: info.pid.to_string(),

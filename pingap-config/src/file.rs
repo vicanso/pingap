@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{
-    read_all_toml_files, ConfigStorage, Error, LoadConfigOptions, PingapConf,
+    read_all_toml_files, ConfigStorage, Error, LoadConfigOptions, PingapConfig,
     Result,
 };
 use async_trait::async_trait;
@@ -55,12 +55,12 @@ impl FileStorage {
 #[async_trait]
 impl ConfigStorage for FileStorage {
     /// Load config from file.
-    async fn load_config(&self, opts: LoadConfigOptions) -> Result<PingapConf> {
+    async fn load_config(&self, opts: LoadConfigOptions) -> Result<PingapConfig> {
         let filepath = self.path.clone();
         let dir = Path::new(&filepath);
         // Return default config if admin mode and path doesn't exist
         if opts.admin && !dir.exists() {
-            return Ok(PingapConf::default());
+            return Ok(PingapConfig::default());
         }
         // Create directory if needed for non-TOML paths
         if !filepath.ends_with(".toml") && !dir.exists() {
@@ -85,12 +85,12 @@ impl ConfigStorage for FileStorage {
             })?;
             data.append(&mut buf);
         }
-        PingapConf::new(data.as_slice(), opts.replace_include)
+        PingapConfig::new(data.as_slice(), opts.replace_include)
     }
     /// Save config to file by category.
     async fn save_config(
         &self,
-        conf: &PingapConf,
+        conf: &PingapConfig,
         category: &str,
         name: Option<&str>,
     ) -> Result<()> {
@@ -218,7 +218,7 @@ mod tests {
 
         let toml_data = read_all_toml_files("../../conf").await.unwrap();
         let conf =
-            PingapConf::new(toml_data.to_vec().as_slice(), false).unwrap();
+            PingapConfig::new(toml_data.to_vec().as_slice(), false).unwrap();
         for category in [
             CATEGORY_CERTIFICATE.to_string(),
             CATEGORY_UPSTREAM.to_string(),

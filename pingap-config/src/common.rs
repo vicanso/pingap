@@ -13,19 +13,14 @@
 // limitations under the License.
 
 use super::{Error, Result};
-// use crate::plugin::parse_plugins;
-// use crate::proxy::Parser;
-use arc_swap::ArcSwap;
 use bytesize::ByteSize;
 use http::{HeaderName, HeaderValue};
-use once_cell::sync::Lazy;
 use pingap_discovery::{is_static_discovery, DNS_DISCOVERY};
 use regex::Regex;
 use serde::{Deserialize, Serialize, Serializer};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Cursor;
 use std::net::ToSocketAddrs;
-use std::sync::Arc;
 use std::time::Duration;
 use std::{collections::HashMap, str::FromStr};
 use strum::EnumString;
@@ -821,7 +816,7 @@ fn format_toml(value: &Value) -> String {
 pub type PluginConf = Map<String, Value>;
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
-pub struct PingapConf {
+pub struct PingapConfig {
     pub basic: BasicConf,
     pub upstreams: HashMap<String, UpstreamConf>,
     pub locations: HashMap<String, LocationConf>,
@@ -831,7 +826,7 @@ pub struct PingapConf {
     pub storages: HashMap<String, StorageConf>,
 }
 
-impl PingapConf {
+impl PingapConfig {
     pub fn get_toml(
         &self,
         category: &str,
@@ -967,10 +962,10 @@ fn get_include_toml(
     Some(arr.join("\n"))
 }
 
-fn convert_pingap_config(
+pub(crate) fn convert_pingap_config(
     data: &[u8],
-    replace_includes: bool,
-) -> Result<PingapConf, Error> {
+    replace_include: bool,
+) -> Result<PingapConfig, Error> {
     let data: TomlConfig = toml::from_str(
         std::string::String::from_utf8_lossy(data)
             .to_string()
@@ -978,7 +973,7 @@ fn convert_pingap_config(
     )
     .map_err(|e| Error::De { source: e })?;
 
-    let mut conf = PingapConf {
+    let mut conf = PingapConfig {
         basic: data.basic.unwrap_or_default(),
         ..Default::default()
     };
@@ -992,21 +987,21 @@ fn convert_pingap_config(
     }
 
     for (name, value) in data.upstreams.unwrap_or_default() {
-        let toml = convert_include_toml(&includes, replace_includes, value);
+        let toml = convert_include_toml(&includes, replace_include, value);
 
         let upstream: UpstreamConf = toml::from_str(toml.as_str())
             .map_err(|e| Error::De { source: e })?;
         conf.upstreams.insert(name, upstream);
     }
     for (name, value) in data.locations.unwrap_or_default() {
-        let toml = convert_include_toml(&includes, replace_includes, value);
+        let toml = convert_include_toml(&includes, replace_include, value);
 
         let location: LocationConf = toml::from_str(toml.as_str())
             .map_err(|e| Error::De { source: e })?;
         conf.locations.insert(name, location);
     }
     for (name, value) in data.servers.unwrap_or_default() {
-        let toml = convert_include_toml(&includes, replace_includes, value);
+        let toml = convert_include_toml(&includes, replace_include, value);
 
         let server: ServerConf = toml::from_str(toml.as_str())
             .map_err(|e| Error::De { source: e })?;
@@ -1035,7 +1030,7 @@ struct Description {
     data: String,
 }
 
-impl PingapConf {
+impl PingapConfig {
     pub fn new(data: &[u8], replace_includes: bool) -> Result<Self> {
         convert_pingap_config(data, replace_includes)
     }
@@ -1223,7 +1218,7 @@ impl PingapConf {
         descriptions
     }
     /// Get the different content of two config.
-    pub fn diff(&self, other: &PingapConf) -> (Vec<String>, Vec<String>) {
+    pub fn diff(&self, other: &PingapConfig) -> (Vec<String>, Vec<String>) {
         let mut category_list = vec![];
 
         let current_descriptions = self.descriptions();
@@ -1298,32 +1293,10 @@ impl PingapConf {
     }
 }
 
-static CURRENT_CONFIG: Lazy<ArcSwap<PingapConf>> =
-    Lazy::new(|| ArcSwap::from_pointee(PingapConf::default()));
-/// Set current config of pingap.
-pub fn set_current_config(value: &PingapConf) {
-    CURRENT_CONFIG.store(Arc::new(value.clone()));
-}
-
-/// Get the running pingap config.
-pub fn get_current_config() -> Arc<PingapConf> {
-    CURRENT_CONFIG.load().clone()
-}
-
-/// Get current running pingap's config crc hash
-pub fn get_config_hash() -> String {
-    get_current_config().hash().unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        get_config_hash, set_current_config, validate_cert, BasicConf,
-        CertificateConf,
-    };
-    use super::{
-        LocationConf, PingapConf, PluginCategory, ServerConf, UpstreamConf,
-    };
+    use super::{validate_cert, CertificateConf};
+    use super::{LocationConf, PluginCategory, ServerConf, UpstreamConf};
     use pingap_core::PluginStep;
     use pingap_util::base64_encode;
     use pretty_assertions::assert_eq;
@@ -1375,20 +1348,6 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
         let value = base64_encode(pem);
         let result = validate_cert(&value);
         assert_eq!(true, result.is_ok());
-    }
-
-    #[test]
-    fn test_current_config() {
-        let conf = PingapConf {
-            basic: BasicConf {
-                name: Some("Pingap-X".to_string()),
-                threads: Some(5),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        set_current_config(&conf);
-        assert_eq!("B7B8046B", get_config_hash());
     }
 
     #[test]

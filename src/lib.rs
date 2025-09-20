@@ -13,6 +13,7 @@
 // limitations under the License.
 
 pub mod certificates;
+pub mod config_manager;
 pub mod locations;
 pub mod plugin;
 pub mod process;

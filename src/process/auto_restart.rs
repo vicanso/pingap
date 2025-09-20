@@ -14,6 +14,7 @@
 
 use super::{restart, LOG_CATEGORY};
 use crate::certificates::try_update_certificates;
+use crate::config_manager::get_config_manager;
 use crate::locations::try_init_locations;
 use crate::plugin;
 use crate::server_locations::try_init_server_locations;
@@ -21,9 +22,9 @@ use crate::upstreams::try_update_upstreams;
 use crate::webhook::{get_webhook_sender, send_notification};
 use async_trait::async_trait;
 use pingap_config::{
-    get_config_storage, get_current_config, load_config, set_current_config,
-    LoadConfigOptions, PingapConf, CATEGORY_CERTIFICATE, CATEGORY_LOCATION,
-    CATEGORY_PLUGIN, CATEGORY_UPSTREAM,
+    get_config_storage, load_config, LoadConfigOptions, PingapConfig,
+    CATEGORY_CERTIFICATE, CATEGORY_LOCATION, CATEGORY_PLUGIN,
+    CATEGORY_UPSTREAM,
 };
 use pingap_core::{
     BackgroundTask, BackgroundTaskService, Error as ServiceError,
@@ -59,7 +60,9 @@ async fn diff_and_update_config(
     })
     .await?;
     new_config.validate()?;
-    let current_config: PingapConf = get_current_config().as_ref().clone();
+    let config_manager = get_config_manager()?;
+    let current_config: PingapConfig =
+        config_manager.get_current_config().as_ref().clone();
 
     let (updated_category_list, original_diff_result) =
         current_config.diff(&new_config);
@@ -292,7 +295,7 @@ async fn diff_and_update_config(
             return Ok(());
         }
         // update current config to be hot reload config
-        set_current_config(&hot_reload_config);
+        config_manager.set_current_config(hot_reload_config);
         if !original_diff_result.is_empty() {
             send_notification(NotificationData {
                 category: "diff_config".to_string(),
@@ -313,7 +316,7 @@ async fn diff_and_update_config(
     }
     // restart mode
     // update current config to be hot reload config
-    set_current_config(&hot_reload_config);
+    config_manager.set_current_config(hot_reload_config.clone());
 
     // diff hot reload config and new config
     let (_, new_config_result) = hot_reload_config.diff(&new_config);

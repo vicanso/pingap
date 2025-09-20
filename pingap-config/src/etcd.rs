@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{ConfigStorage, Error, LoadConfigOptions, Result};
-use super::{Observer, PingapConf};
+use super::{Observer, PingapConfig};
 use async_trait::async_trait;
 use etcd_client::{Client, ConnectOptions, GetOptions, WatchOptions};
 use humantime::parse_duration;
@@ -101,7 +101,7 @@ impl EtcdStorage {
 #[async_trait]
 impl ConfigStorage for EtcdStorage {
     /// Load config from etcd by fetching all keys under the base path
-    async fn load_config(&self, opts: LoadConfigOptions) -> Result<PingapConf> {
+    async fn load_config(&self, opts: LoadConfigOptions) -> Result<PingapConfig> {
         let mut c = self.connect().await?;
         let replace_include = opts.replace_include;
         let mut opts = GetOptions::new();
@@ -118,14 +118,14 @@ impl ConfigStorage for EtcdStorage {
             buffer.extend(item.value());
             buffer.push(0x0a);
         }
-        PingapConf::new(buffer.as_slice(), replace_include)
+        PingapConfig::new(buffer.as_slice(), replace_include)
     }
     /// Save config to etcd, optionally separating by category/name
     /// If separation is enabled and name is provided, saves individual sections
     /// Otherwise saves the entire category as one entry
     async fn save_config(
         &self,
-        conf: &PingapConf,
+        conf: &PingapConfig,
         category: &str,
         name: Option<&str>,
     ) -> Result<()> {
@@ -203,7 +203,7 @@ impl ConfigStorage for EtcdStorage {
 mod tests {
     use super::EtcdStorage;
     use crate::{
-        read_all_toml_files, ConfigStorage, LoadConfigOptions, PingapConf,
+        read_all_toml_files, ConfigStorage, LoadConfigOptions, PingapConfig,
         CATEGORY_BASIC, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
         CATEGORY_STORAGE, CATEGORY_UPSTREAM,
     };
@@ -219,7 +219,7 @@ mod tests {
         let storage = EtcdStorage::new(&url).unwrap();
         let toml_data = read_all_toml_files("../../conf").await.unwrap();
         let conf =
-            PingapConf::new(toml_data.to_vec().as_slice(), false).unwrap();
+            PingapConfig::new(toml_data.to_vec().as_slice(), false).unwrap();
 
         storage
             .save_config(&conf, CATEGORY_BASIC, None)
