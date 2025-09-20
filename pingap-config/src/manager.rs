@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::etcd_storage::EtcdStorage;
 use crate::file_storage::FileStorage;
 use crate::storage::Storage;
 use crate::{Category, Error};
@@ -53,36 +54,34 @@ pub struct PingapTomlConfig {
     pub storages: Option<Map<String, Value>>,
 }
 
+fn format_item_toml_config(
+    value: Option<Value>,
+    category: &Category,
+    name: &str,
+) -> Result<String> {
+    if let Some(value) = value {
+        let mut wrapper = Map::new();
+        if name.is_empty() {
+            wrapper.insert(format_category(category).to_string(), value);
+        } else {
+            let mut inner = Map::new();
+            inner.insert(name.to_string(), value);
+            wrapper.insert(
+                format_category(category).to_string(),
+                Value::Table(inner),
+            );
+        }
+
+        to_string_pretty(&wrapper)
+    } else {
+        Ok("".to_string())
+    }
+}
+
 impl PingapTomlConfig {
     fn get_toml(&self, category: &Category, name: &str) -> Result<String> {
-        let wrapper = |key: &str, value: Option<Value>| -> Result<String> {
-            if let Some(value) = value {
-                let mut wrapper = Map::new();
-                wrapper.insert(key.to_string(), value);
-                to_string_pretty(&wrapper)
-            } else {
-                Ok("".to_string())
-            }
-        };
         let value = self.get(category, name);
-        let key = match category {
-            Category::Basic => format_category(category).to_string(),
-            Category::Server => format!("{}.{name}", format_category(category)),
-            Category::Location => {
-                format!("{}.{name}", format_category(category))
-            },
-            Category::Upstream => {
-                format!("{}.{name}", format_category(category))
-            },
-            Category::Plugin => format!("{}.{name}", format_category(category)),
-            Category::Certificate => {
-                format!("{}.{name}", format_category(category))
-            },
-            Category::Storage => {
-                format!("{}.{name}", format_category(category))
-            },
-        };
-        wrapper(&key, value)
+        format_item_toml_config(value, category, name)
     }
     fn get_category_toml(&self, category: &Category) -> Result<String> {
         let wrapper = |value: Option<Value>| {
@@ -185,6 +184,29 @@ impl PingapTomlConfig {
                 .flatten(),
         }
     }
+    fn delete(&mut self, category: &Category, name: &str) {
+        match category {
+            Category::Basic => self.basic = None,
+            Category::Server => {
+                self.servers.get_or_insert_default().remove(name);
+            },
+            Category::Location => {
+                self.locations.get_or_insert_default().remove(name);
+            },
+            Category::Upstream => {
+                self.upstreams.get_or_insert_default().remove(name);
+            },
+            Category::Plugin => {
+                self.plugins.get_or_insert_default().remove(name);
+            },
+            Category::Certificate => {
+                self.certificates.get_or_insert_default().remove(name);
+            },
+            Category::Storage => {
+                self.storages.get_or_insert_default().remove(name);
+            },
+        };
+    }
 }
 
 #[derive(PartialEq, Clone)]
@@ -200,7 +222,7 @@ pub enum ConfigMode {
 static SINGLE_KEY: &str = "pingap.toml";
 
 pub fn new_file_config_manager(path: &str) -> Result<ConfigManager> {
-    let file = if let Some((path, query)) = path.split_once('?') {
+    let file = if let Some((path, _)) = path.split_once('?') {
         path.to_string()
     } else {
         path.to_string()
@@ -218,6 +240,14 @@ pub fn new_file_config_manager(path: &str) -> Result<ConfigManager> {
 
     let storage = FileStorage::new(&file)?;
     Ok(ConfigManager::new(Arc::new(storage), mode))
+}
+
+pub fn new_etcd_config_manager(path: &str) -> Result<ConfigManager> {
+    let storage = EtcdStorage::new(&path)?;
+    Ok(ConfigManager::new(
+        Arc::new(storage),
+        ConfigMode::MultiByItem,
+    ))
 }
 
 pub struct ConfigManager {
@@ -303,48 +333,6 @@ impl ConfigManager {
                             .await?;
                     }
                 }
-
-                // if let Some(servers) = &config.servers {
-                //     for name in servers.keys() {
-                //         let value = config.get_toml(&Category::Server, name)?;
-                //         self.storage
-                //             .save(
-                //                 &self.get_key(&Category::Server, name),
-                //                 &value,
-                //             )
-                //             .await?;
-                //     }
-                // }
-
-                // macro_rules! process_and_save {
-                //     ($self:ident, $field:expr, $category:expr) => {
-                //         if let Some(items) = &$field {
-                //             for (name, value) in items.iter() {
-                //                 let key = $self.get_key(&$category, name);
-                //                 $self
-                //                     .storage
-                //                     .save(&key, &to_string_pretty(value)?)
-                //                     .await?;
-                //             }
-                //         }
-                //     };
-                // }
-                // // server config
-                // process_and_save!(self, config.servers, Category::Server);
-                // // location config
-                // process_and_save!(self, config.locations, Category::Location);
-                // // upstream config
-                // process_and_save!(self, config.upstreams, Category::Upstream);
-                // // plugin config
-                // process_and_save!(self, config.plugins, Category::Plugin);
-                // // certificate config
-                // process_and_save!(
-                //     self,
-                //     config.certificates,
-                //     Category::Certificate
-                // );
-                // // storage config
-                // process_and_save!(self, config.storages, Category::Storage);
             },
         }
 
@@ -361,23 +349,23 @@ impl ConfigManager {
             .map_err(|e| Error::Ser { source: e })?;
         // update by item
         if self.mode == ConfigMode::MultiByItem {
+            let value: Value =
+                toml::from_str(&value).map_err(|e| Error::De { source: e })?;
+            let value = format_item_toml_config(Some(value), &category, name)?;
             return self.storage.save(&key, &value).await;
         }
         // load all config
         let mut config = self.load_all().await?;
         let value: Value =
             toml::from_str(&value).map_err(|e| Error::De { source: e })?;
-        // update by type
-        if self.mode == ConfigMode::MultiByType {
-            config.update(&category, name, value);
-            let value = config.get_category_toml(&category)?;
-
-            return self.storage.save(&key, &value).await;
-        }
-
         config.update(&category, name, value);
+        // update by type
+        let value = if self.mode == ConfigMode::MultiByType {
+            config.get_category_toml(&category)?
+        } else {
+            to_string_pretty(&config)?
+        };
 
-        let value = to_string_pretty(&config)?;
         self.storage.save(&key, &value).await?;
         Ok(())
     }
@@ -387,73 +375,39 @@ impl ConfigManager {
         name: &str,
     ) -> Result<Option<T>> {
         let key = self.get_key(&category, name);
-        // get by item
-        if self.mode == ConfigMode::MultiByItem {
-            let data = self.storage.fetch(&key).await?;
-            let value =
-                toml::from_str(&data).map_err(|e| Error::De { source: e })?;
-            return Ok(Some(value));
-        }
-        // get by type
-        if self.mode == ConfigMode::MultiByType {
-            let data = self.storage.fetch(&key).await?;
-            let config: PingapTomlConfig =
-                toml::from_str(&data).map_err(|e| Error::De { source: e })?;
+        let data = self.storage.fetch(&key).await?;
+        let config: PingapTomlConfig =
+            toml::from_str(&data).map_err(|e| Error::De { source: e })?;
 
-            return if let Some(value) = config.get(&category, name) {
-                let value = to_string_pretty(&value)?;
-                let value = toml::from_str(&value)
-                    .map_err(|e| Error::De { source: e })?;
-                Ok(Some(value))
-            } else {
-                Ok(None)
-            };
-        }
-        // single mode
-        let config = self.load_all().await?;
-        let value = match category {
-            Category::Basic => config.basic,
-            Category::Server => config
-                .servers
-                .and_then(|servers| servers.get(name).cloned()),
-            Category::Location => config
-                .locations
-                .and_then(|locations| locations.get(name).cloned()),
-            Category::Upstream => config
-                .upstreams
-                .and_then(|upstreams| upstreams.get(name).cloned()),
-            Category::Plugin => config
-                .plugins
-                .and_then(|plugins| plugins.get(name).cloned()),
-            Category::Certificate => config
-                .certificates
-                .and_then(|certificates| certificates.get(name).cloned()),
-            Category::Storage => config
-                .storages
-                .and_then(|storages| storages.get(name).cloned()),
+        return if let Some(value) = config.get(&category, name) {
+            let value = to_string_pretty(&value)?;
+            let value =
+                toml::from_str(&value).map_err(|e| Error::De { source: e })?;
+            Ok(Some(value))
+        } else {
+            Ok(None)
         };
-        let value = match value {
-            Some(value) => {
-                let value = to_string_pretty(&value)?;
-                let value = toml::from_str(&value)
-                    .map_err(|e| Error::De { source: e })?;
-                Some(value)
-            },
-            _ => None,
-        };
-        Ok(value)
     }
-    pub fn delete(&self, category: Category, name: &str) -> Result<()> {
-        // TODO delete by item
-        // TODO delete by type
-        // TODO delete all
-        Ok(())
+    pub async fn delete(&self, category: Category, name: &str) -> Result<()> {
+        let key = self.get_key(&category, name);
+        if self.mode == ConfigMode::MultiByItem {
+            return self.storage.delete(&key).await;
+        }
+        let mut config = self.load_all().await?;
+        config.delete(&category, name);
+        let value = if self.mode == ConfigMode::MultiByType {
+            config.get_category_toml(&category)?
+        } else {
+            to_string_pretty(&config)?
+        };
+        self.storage.save(&key, &value).await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nanoid::nanoid;
     use pretty_assertions::assert_eq;
 
     fn new_pingap_config() -> PingapTomlConfig {
@@ -533,7 +487,6 @@ mod tests {
 
         // get all data from file
         let data = manager.storage.fetch("").await.unwrap();
-        println!("data:{data:?}");
         let new_config = toml::from_str::<PingapTomlConfig>(&data).unwrap();
 
         assert_eq!(toml::to_string(&config), toml::to_string(&new_config));
@@ -599,12 +552,12 @@ threads = 1
         )
         .unwrap();
         manager
-            .update(Category::Server, "server1", &new_server_config)
+            .update(Category::Server, "server2", &new_server_config)
             .await
             .unwrap();
         // get new server config
         let value: Value = manager
-            .get(Category::Server, "server1")
+            .get(Category::Server, "server2")
             .await
             .unwrap()
             .unwrap();
@@ -801,6 +754,91 @@ value = "/storage22"
             toml::to_string(&value).unwrap()
         );
         // ----- storage config test end ----- //
+
+        // ----- delete config test start ----- //
+
+        // delete basic config
+        manager.delete(Category::Basic, "").await.unwrap();
+        let basic_config: Option<Value> =
+            manager.get(Category::Basic, "").await.unwrap();
+        assert_eq!(None, basic_config);
+
+        // delete server config
+        manager.delete(Category::Server, "server1").await.unwrap();
+        let server_config: Option<Value> =
+            manager.get(Category::Server, "server1").await.unwrap();
+        assert_eq!(None, server_config);
+
+        // delete location config
+        manager
+            .delete(Category::Location, "location1")
+            .await
+            .unwrap();
+        let location_config: Option<Value> =
+            manager.get(Category::Location, "location1").await.unwrap();
+        assert_eq!(None, location_config);
+
+        // delete upstream config
+        manager
+            .delete(Category::Upstream, "upstream1")
+            .await
+            .unwrap();
+        let upstream_config: Option<Value> =
+            manager.get(Category::Upstream, "upstream1").await.unwrap();
+        assert_eq!(None, upstream_config);
+
+        // delete plugin config
+        manager.delete(Category::Plugin, "plugin1").await.unwrap();
+        let plugin_config: Option<Value> =
+            manager.get(Category::Plugin, "plugin1").await.unwrap();
+        assert_eq!(None, plugin_config);
+
+        // delete certificate config
+        manager
+            .delete(Category::Certificate, "certificate1")
+            .await
+            .unwrap();
+        let certificate_config: Option<Value> = manager
+            .get(Category::Certificate, "certificate1")
+            .await
+            .unwrap();
+        assert_eq!(None, certificate_config);
+
+        // delete storage config
+        manager.delete(Category::Storage, "storage1").await.unwrap();
+        let storage_config: Option<Value> =
+            manager.get(Category::Storage, "storage1").await.unwrap();
+        assert_eq!(None, storage_config);
+
+        let current_config = manager.load_all().await.unwrap();
+        assert_eq!(
+            r#"[servers.server2]
+addr = "192.186.1.1:8080"
+locations = ["location1"]
+threads = 1
+
+[upstreams.upstream2]
+addrs = ["192.168.1.1:7081"]
+
+[locations.location2]
+upstream = "upstream22"
+
+[plugins.plugin2]
+category = "plugin22"
+value = "/plugin22"
+
+[certificates.certificate2]
+cert = "/certificate22"
+key = "/key22"
+
+[storages.storage2]
+category = "storage22"
+value = "/storage22"
+"#,
+            toml::to_string(&current_config).unwrap()
+        );
+
+        // ----- delete config test end ----- //
     }
 
     #[tokio::test]
@@ -830,6 +868,16 @@ value = "/storage22"
             file.path().to_string_lossy()
         ))
         .unwrap();
+        test_config_manger(manager, ConfigMode::MultiByItem).await;
+    }
+
+    #[tokio::test]
+    async fn test_etcd_config_manger() {
+        let url = format!(
+            "etcd://127.0.0.1:2379/{}?timeout=10s&connect_timeout=5s",
+            nanoid!(16)
+        );
+        let manager = new_etcd_config_manager(&url).unwrap();
         test_config_manger(manager, ConfigMode::MultiByItem).await;
     }
 }

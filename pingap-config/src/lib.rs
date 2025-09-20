@@ -24,6 +24,7 @@ use tracing::debug;
 
 mod common;
 mod etcd;
+mod etcd_storage;
 mod file;
 mod file_storage;
 mod manager;
@@ -92,7 +93,7 @@ impl Observer {
     }
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum Category {
     Basic,
     Server,
