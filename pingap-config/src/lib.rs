@@ -25,6 +25,9 @@ use tracing::debug;
 mod common;
 mod etcd;
 mod file;
+mod file_storage;
+mod manager;
+mod storage;
 
 // Error enum for all possible configuration-related errors
 #[derive(Debug, Snafu)]
@@ -87,6 +90,17 @@ impl Observer {
 
         Ok(resp.is_some())
     }
+}
+
+#[derive(PartialEq, Clone)]
+pub enum Category {
+    Basic,
+    Server,
+    Location,
+    Upstream,
+    Plugin,
+    Certificate,
+    Storage,
 }
 
 // Options for loading configuration
@@ -262,6 +276,7 @@ pub async fn sync_config(
 pub use common::*;
 pub use etcd::{EtcdStorage, ETCD_PROTOCOL};
 pub use file::FileStorage;
+pub use storage::*;
 
 #[cfg(test)]
 mod tests {
