@@ -1430,7 +1430,7 @@ impl ProxyHttp for Server {
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
         ctx: &mut Self::CTX,
-    ) -> pingora::Result<()> {
+    ) -> pingora::Result<Option<std::time::Duration>> {
         debug!(category = LOG_CATEGORY, "--> upstream response body filter");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream response body filter"););
 
@@ -1451,7 +1451,7 @@ impl ProxyHttp for Server {
             set_otel_upstream_attrs(ctx);
             // self.finalize_upstream_session(ctx);
         }
-        Ok(())
+        Ok(None)
     }
 
     /// Final filter for response body before sending to client.
