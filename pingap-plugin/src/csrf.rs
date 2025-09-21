@@ -360,7 +360,7 @@ ttl = "1a"
             .unwrap(),
         );
         assert_eq!(
-            r#"Plugin csrf invalid, message: unknown time unit "a", supported units: ns, us, ms, sec, min, hours, days, weeks, months, years (and few variations)"#,
+            r#"Plugin csrf invalid, message: unknown time unit "a", supported units: ns, us/µs, ms, sec, min, hours, days, weeks, months, years (and few variations)"#,
             result.err().unwrap().to_string()
         );
 
