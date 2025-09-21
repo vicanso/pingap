@@ -138,7 +138,7 @@ struct Args {
     threads: Option<usize>,
 }
 
-fn new_server_conf(
+fn new_server_config(
     args: &Args,
     conf: &PingapConfig,
 ) -> server::configuration::ServerConf {
@@ -182,7 +182,6 @@ fn new_server_conf(
 }
 
 fn get_config(
-    _admin: bool,
     config_manager: Arc<ConfigManager>,
 ) -> Receiver<Result<PingapConfig, pingap_config::Error>> {
     let (s, r) = crossbeam_channel::bounded(0);
@@ -429,24 +428,43 @@ fn run() -> Result<(), Box<dyn Error>> {
     // Initialize configuration
     let config_manager = try_init_config_manager(&args.conf)?;
 
-    let r = get_config(args.admin.is_some(), get_config_manager()?);
-    let conf = r.recv()??;
-    config_manager.set_current_config(conf.clone());
+    let r = get_config(get_config_manager()?);
+    let config = match r.recv() {
+        Ok(Ok(conf)) => conf,
+        Ok(Err(e)) => {
+            if args.admin.is_none() {
+                return Err(e.into());
+            }
+            PingapConfig::default()
+        },
+        Err(e) => {
+            if args.admin.is_none() {
+                return Err(e.into());
+            }
+            PingapConfig::default()
+        },
+    };
+
+    config_manager.set_current_config(config.clone());
 
     // Initialize logging system
     let compression_task =
         pingap_logger::logger_try_init(pingap_logger::LoggerParams {
-            capacity: conf.basic.log_buffered_size.unwrap_or_default().as_u64(),
+            capacity: config
+                .basic
+                .log_buffered_size
+                .unwrap_or_default()
+                .as_u64(),
             log: args.log.clone().unwrap_or_default(),
-            level: conf.basic.log_level.clone().unwrap_or_default(),
-            json: conf.basic.log_format_json.unwrap_or_default(),
+            level: config.basic.log_level.clone().unwrap_or_default(),
+            json: config.basic.log_format_json.unwrap_or_default(),
         })?;
 
     // TODO a better way
     // since the cache will be initialized in validate function
     // so set the current conf first
     // pingap_config::set_current_config(&conf);
-    conf.validate()?;
+    config.validate()?;
 
     // sync config to other storage
     if let Some(sync_path) = args.sync {
@@ -456,13 +474,17 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    let basic_conf = &conf.basic;
+    let basic_conf = &config.basic;
 
     let webhook_url = basic_conf.webhook.clone().unwrap_or_default();
     webhook::init_webhook_notification_sender(
         webhook_url,
-        conf.basic.webhook_type.clone().unwrap_or_default(),
-        conf.basic.webhook_notifications.clone().unwrap_or_default(),
+        config.basic.webhook_type.clone().unwrap_or_default(),
+        config
+            .basic
+            .webhook_notifications
+            .clone()
+            .unwrap_or_default(),
     );
 
     // return if test mode
@@ -510,10 +532,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         process::set_restart_process_command(cmd);
     }
 
-    try_init_upstreams(&conf.upstreams, webhook::get_webhook_sender())?;
-    try_init_locations(&conf.locations)?;
-    try_init_server_locations(&conf.servers, &conf.locations)?;
-    let certificates = conf.certificates.clone();
+    try_init_upstreams(&config.upstreams, webhook::get_webhook_sender())?;
+    try_init_locations(&config.locations)?;
+    try_init_server_locations(&config.servers, &config.locations)?;
+    let certificates = config.certificates.clone();
 
     let opt = Opt {
         upgrade: args.upgrade,
@@ -523,7 +545,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         conf: None,
     };
     let mut my_server = server::Server::new(Some(opt))?;
-    let server_conf = new_server_conf(&args, &conf);
+    let server_conf = new_server_config(&args, &config);
     info!(
         pid_file = server_conf.pid_file,
         upgrade_sock = server_conf.upgrade_sock,
@@ -567,12 +589,12 @@ fn run() -> Result<(), Box<dyn Error>> {
         "plugins" = get_plugin_factory().supported_plugins().join(","),
         "plugins are registered"
     );
-    let (_, error) = plugin::try_init_plugins(&conf.plugins);
+    let (_, error) = plugin::try_init_plugins(&config.plugins);
     if !error.is_empty() {
         error!(error, "init plugins fail",);
     }
 
-    let mut server_conf_list: Vec<ServerConf> = parse_from_conf(conf.clone());
+    let mut server_conf_list: Vec<ServerConf> = parse_from_conf(config.clone());
 
     if let Some(addr) = &get_admin_addr() {
         let (server_conf, _, plugin_conf) = plugin::parse_admin_plugin(addr)?;
