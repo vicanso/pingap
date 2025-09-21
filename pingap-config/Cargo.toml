@@ -22,12 +22,10 @@ bytesize = { workspace = true }
 crc32fast = { workspace = true }
 diff = "0.1.13"
 etcd-client = "0.16.1"
-futures-util = { workspace = true }
 glob = { workspace = true }
 http = { workspace = true }
 humantime = { workspace = true }
 humantime-serde = { workspace = true }
-once_cell = { workspace = true }
 pingap-core = { version = "0.12.0", path = "../pingap-core" }
 pingap-discovery = { version = "0.12.0", path = "../pingap-discovery" }
 pingap-util = { version = "0.12.0", path = "../pingap-util" }
