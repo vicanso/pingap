@@ -57,6 +57,7 @@ pub struct BackgroundTaskService {
     tasks: Vec<(String, Box<dyn BackgroundTask>)>, // Holds named tasks
     interval: Duration,
     immediately: bool,
+    initial_delay: Option<Duration>,
 }
 
 impl BackgroundTaskService {
@@ -72,6 +73,7 @@ impl BackgroundTaskService {
             tasks,
             interval,
             immediately: false,
+            initial_delay: None,
         }
     }
     /// A convenience constructor for creating a service with a single task.
@@ -86,6 +88,9 @@ impl BackgroundTaskService {
     /// Set whether the service should run immediately or wait for the interval
     pub fn set_immediately(&mut self, immediately: bool) {
         self.immediately = immediately;
+    }
+    pub fn set_initial_delay(&mut self, initial_delay: Option<Duration>) {
+        self.initial_delay = initial_delay;
     }
     /// Add a task to the service
     /// This is useful for adding tasks to the service after it has been created
@@ -110,6 +115,9 @@ impl BackgroundService for BackgroundTaskService {
             "background service is running",
         );
 
+        if let Some(initial_delay) = self.initial_delay {
+            tokio::time::sleep(initial_delay).await;
+        }
         let mut period = interval(self.interval);
         // The first tick fires immediately, which is often not desired. We skip it.
         if !self.immediately {

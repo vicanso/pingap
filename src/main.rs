@@ -658,6 +658,8 @@ fn run() -> Result<(), Box<dyn Error>> {
             ),
         ],
     );
+    simple_background_service.set_immediately(true);
+    simple_background_service.set_initial_delay(Some(Duration::from_secs(3)));
 
     if let Some(task) = new_storage_clear_service() {
         simple_background_service.add_task("storage_clear", task);
