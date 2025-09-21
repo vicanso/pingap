@@ -31,7 +31,9 @@ use pingap_certificate::CertificateProvider;
 use pingap_certificate::{
     parse_certificates, parse_leaf_chain_certificates, Certificate,
 };
-use pingap_config::{Category, CertificateConf, ConfigManager, PingapConfig};
+use pingap_config::{
+    Category, CertificateConf, ConfigManager, PingapConfig, StorageConf,
+};
 use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
 use pingap_core::HttpResponse;
@@ -409,7 +411,7 @@ pub async fn handle_lets_encrypt(
         // token auth
         let token = path.substring(WELL_KNOWN_PATH_PREFIX.len(), path.len());
 
-        let value: Option<String> = config_manager
+        let value: Option<StorageConf> = config_manager
             .get(Category::Storage, token)
             .await
             .map_err(|e| {
@@ -429,9 +431,14 @@ pub async fn handle_lets_encrypt(
             category = LOG_CATEGORY,
             token, "let't encrypt http-01 success"
         );
+        let body = if let Some(value) = value {
+            value.value
+        } else {
+            "".to_string()
+        };
         HttpResponse {
             status: StatusCode::OK,
-            body: value.unwrap_or_default().into(),
+            body: body.into(),
             ..Default::default()
         }
         .send(session)
@@ -623,7 +630,12 @@ async fn new_lets_encrypt(
                 .update(
                     Category::Storage,
                     &challenge.token,
-                    &key_auth.as_str().to_string(),
+                    &StorageConf {
+                        value: key_auth.as_str().to_string(),
+                        category: "config".to_string(),
+                        secret: None,
+                        remark: Some("let's encrypt http-01 token".to_string()),
+                    },
                 )
                 .await
                 .map_err(|e| Error::Fail {
