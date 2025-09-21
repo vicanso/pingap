@@ -29,6 +29,7 @@ pingap-core = { version = "0.12.0", path = "../pingap-core" }
 pingora = { workspace = true }
 reqwest = { workspace = true }
 rustls = "0.23.31"
+scopeguard = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha1 = { workspace = true }

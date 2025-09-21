@@ -102,6 +102,7 @@ default = []
 criterion = { version = "0.7.0", features = ["html_reports"] }
 pretty_assertions = "1.4.1"
 tokio-test = "0.4.4"
+tempfile = { workspace = true }
 
 
 [profile.release]

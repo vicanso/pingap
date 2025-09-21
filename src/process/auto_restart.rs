@@ -21,8 +21,7 @@ use crate::upstreams::try_update_upstreams;
 use crate::webhook::{get_webhook_sender, send_notification};
 use async_trait::async_trait;
 use pingap_config::{
-    get_config_storage, get_current_config, load_config, set_current_config,
-    LoadConfigOptions, PingapConf, CATEGORY_CERTIFICATE, CATEGORY_LOCATION,
+    ConfigManager, PingapConfig, CATEGORY_CERTIFICATE, CATEGORY_LOCATION,
     CATEGORY_PLUGIN, CATEGORY_UPSTREAM,
 };
 use pingap_core::{
@@ -32,6 +31,7 @@ use pingap_core::{
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::interval;
 use tracing::{debug, error, info};
@@ -51,15 +51,14 @@ use tracing::{debug, error, info};
 /// 5. If hot_reload_only=false and there are non-hot-reloadable changes,
 ///    triggers a full server restart
 async fn diff_and_update_config(
+    config_manager: Arc<ConfigManager>,
     hot_reload_only: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let new_config = load_config(LoadConfigOptions {
-        replace_include: true,
-        ..Default::default()
-    })
-    .await?;
+    let new_toml_config = config_manager.load_all().await?;
+    let new_config = new_toml_config.to_pingap_config(true)?;
     new_config.validate()?;
-    let current_config: PingapConf = get_current_config().as_ref().clone();
+    let current_config: PingapConfig =
+        config_manager.get_current_config().as_ref().clone();
 
     let (updated_category_list, original_diff_result) =
         current_config.diff(&new_config);
@@ -123,6 +122,7 @@ async fn diff_and_update_config(
                 CATEGORY_UPSTREAM => should_reload_upstream = true,
                 CATEGORY_PLUGIN => should_reload_plugin = true,
                 CATEGORY_CERTIFICATE => {
+                    // acme should be reload by let's encrypt service
                     if !exists_acme {
                         should_reload_certificate = true;
                     }
@@ -292,7 +292,7 @@ async fn diff_and_update_config(
             return Ok(());
         }
         // update current config to be hot reload config
-        set_current_config(&hot_reload_config);
+        config_manager.set_current_config(hot_reload_config);
         if !original_diff_result.is_empty() {
             send_notification(NotificationData {
                 category: "diff_config".to_string(),
@@ -313,7 +313,7 @@ async fn diff_and_update_config(
     }
     // restart mode
     // update current config to be hot reload config
-    set_current_config(&hot_reload_config);
+    config_manager.set_current_config(hot_reload_config.clone());
 
     // diff hot reload config and new config
     let (_, new_config_result) = hot_reload_config.diff(&new_config);
@@ -364,10 +364,12 @@ struct AutoRestart {
     only_hot_reload: bool,
     /// Tracks if currently performing a hot reload
     running_hot_reload: AtomicBool,
+    config_manager: Arc<ConfigManager>,
 }
 
 /// Creates a new auto-restart service that checks for config changes periodically
 pub fn new_auto_restart_service(
+    config_manager: Arc<ConfigManager>,
     interval: Duration,
     only_hot_reload: bool,
 ) -> BackgroundTaskService {
@@ -378,6 +380,7 @@ pub fn new_auto_restart_service(
     }
 
     let task = Box::new(AutoRestart {
+        config_manager,
         running_hot_reload: AtomicBool::new(false),
         only_hot_reload,
         restart_unit,
@@ -399,6 +402,7 @@ pub fn new_auto_restart_service(
 /// - File system events (real-time)
 /// - Graceful shutdown signals
 pub struct ConfigObserverService {
+    config_manager: Arc<ConfigManager>,
     /// How often to check for changes
     interval: Duration,
     /// If true, only perform hot reloads when changes detected
@@ -410,10 +414,12 @@ const MIN_DELAY: u32 = 500;
 const MAX_DELAY: u32 = 60 * 1000;
 
 pub fn new_observer_service(
+    config_manager: Arc<ConfigManager>,
     interval: Duration,
     only_hot_reload: bool,
 ) -> ConfigObserverService {
     ConfigObserverService {
+        config_manager,
         interval,
         only_hot_reload,
         delay: AtomicU32::new(MIN_DELAY),
@@ -425,9 +431,9 @@ static OBSERVER_NAME: &str = "configObserver";
 #[async_trait]
 impl BackgroundService for ConfigObserverService {
     async fn start(&self, mut shutdown: ShutdownWatch) {
-        let Some(storage) = get_config_storage() else {
+        if !self.config_manager.support_observer() {
             return;
-        };
+        }
         let period_human: humantime::Duration = self.interval.into();
 
         info!(
@@ -438,7 +444,7 @@ impl BackgroundService for ConfigObserverService {
         );
         let mut period = interval(self.interval);
 
-        let result = storage.observe().await;
+        let result = self.config_manager.observe().await;
         if let Err(e) = result {
             error!(
                 category = LOG_CATEGORY,
@@ -458,7 +464,7 @@ impl BackgroundService for ConfigObserverService {
                 _ = period.tick() => {
                     // fetch and diff update
                     // some change may be restart
-                    run_diff_and_update_config(self.only_hot_reload).await;
+                    run_diff_and_update_config(self.config_manager.clone(), self.only_hot_reload).await;
                 }
                 result = observer.watch() => {
                     let delay = self.delay.load(Ordering::Relaxed);
@@ -471,7 +477,7 @@ impl BackgroundService for ConfigObserverService {
                                 continue;
                             }
                             // only hot reload for observe updated
-                            run_diff_and_update_config(true).await;
+                            run_diff_and_update_config(self.config_manager.clone(), true).await;
                         },
                         Err(e) => {
                             error!(
@@ -493,8 +499,13 @@ impl BackgroundService for ConfigObserverService {
 
 /// Helper function to run the config diff and update process
 /// Logs any errors that occur during the update
-async fn run_diff_and_update_config(hot_reload_only: bool) {
-    if let Err(e) = diff_and_update_config(hot_reload_only).await {
+async fn run_diff_and_update_config(
+    config_manager: Arc<ConfigManager>,
+    hot_reload_only: bool,
+) {
+    if let Err(e) =
+        diff_and_update_config(config_manager, hot_reload_only).await
+    {
         error!(
             category = LOG_CATEGORY,
             error = %e,
@@ -520,7 +531,11 @@ impl BackgroundTask for AutoRestart {
         };
         self.running_hot_reload
             .store(hot_reload_only, Ordering::Relaxed);
-        run_diff_and_update_config(hot_reload_only).await;
+        run_diff_and_update_config(
+            self.config_manager.clone(),
+            hot_reload_only,
+        )
+        .await;
         Ok(true)
     }
 }

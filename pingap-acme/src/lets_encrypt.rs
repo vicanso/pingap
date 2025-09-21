@@ -12,10 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    get_token_path, get_value_from_env, AcmeDnsTask, Error, Result,
-    LOG_CATEGORY,
-};
+use super::{get_value_from_env, AcmeDnsTask, Error, Result, LOG_CATEGORY};
 use crate::dns_ali::AliDnsTask;
 use crate::dns_cf::CfDnsTask;
 use crate::dns_huawei::HuaweiDnsTask;
@@ -34,10 +31,7 @@ use pingap_certificate::CertificateProvider;
 use pingap_certificate::{
     parse_certificates, parse_leaf_chain_certificates, Certificate,
 };
-use pingap_config::{
-    get_current_config, set_current_config, CertificateConf, ConfigStorage,
-    LoadConfigOptions, PingapConf, CATEGORY_CERTIFICATE,
-};
+use pingap_config::{Category, CertificateConf, ConfigManager, PingapConfig};
 use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
 use pingap_core::HttpResponse;
@@ -46,7 +40,9 @@ use pingap_core::{
 };
 use pingora::http::StatusCode;
 use pingora::proxy::Session;
+use scopeguard::defer;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Once;
 use std::time::Duration;
@@ -70,34 +66,32 @@ fn ensure_crypto_provider() {
 /// 2. Update the configuration with the new certificate
 /// 3. Save the updated configuration
 async fn update_certificate_lets_encrypt(
-    storage: &'static (dyn ConfigStorage + Sync + Send),
+    config_manager: Arc<ConfigManager>,
     params: UpdateCertificateParams,
-) -> Result<PingapConf> {
+) -> Result<()> {
     // get new certificate from lets encrypt
-    let (pem, key) = new_lets_encrypt(storage, true, params.clone()).await?;
-    let mut conf = storage
-        .load_config(LoadConfigOptions {
-            ..Default::default()
-        })
+    let (pem, key) =
+        new_lets_encrypt(config_manager.clone(), true, params.clone()).await?;
+
+    let cert: Option<CertificateConf> = config_manager
+        .get(Category::Certificate, &params.name)
         .await
         .map_err(|e| Error::Fail {
             category: "load_config".to_string(),
             message: e.to_string(),
         })?;
-
-    if let Some(cert) = conf.certificates.get_mut(&params.name) {
+    if let Some(mut cert) = cert {
         cert.tls_cert = Some(pem);
         cert.tls_key = Some(key);
+        config_manager
+            .update(Category::Certificate, &params.name, &cert)
+            .await
+            .map_err(|e| Error::Fail {
+                category: "save_config".to_string(),
+                message: e.to_string(),
+            })?;
     }
-    storage
-        .save_config(&conf, CATEGORY_CERTIFICATE, Some(&params.name))
-        .await
-        .map_err(|e| Error::Fail {
-            category: "save_config".to_string(),
-            message: e.to_string(),
-        })?;
-
-    Ok(conf)
+    Ok(())
 }
 
 /// File cache parameters
@@ -120,7 +114,7 @@ struct UpdateCertificateParams {
 /// The check runs every UPDATE_INTERVAL iterations to avoid excessive checks.
 async fn do_update_certificates(
     count: u32,
-    storage: &'static (dyn ConfigStorage + Sync + Send),
+    config_manager: Arc<ConfigManager>,
     params: &[UpdateCertificateParams],
     provider: Arc<dyn CertificateProvider>,
     sender: Option<Arc<NotificationSender>>,
@@ -132,6 +126,7 @@ async fn do_update_certificates(
     if count % UPDATE_INTERVAL != 0 {
         return Ok(false);
     }
+    let config = config_manager.get_current_config();
     for item in params.iter() {
         let name = &item.name;
         let domains = &item.domains;
@@ -142,7 +137,7 @@ async fn do_update_certificates(
             continue;
         }
 
-        let should_renew = match get_lets_encrypt_certificate(name) {
+        let should_renew = match get_lets_encrypt_certificate(&config, name) {
             Ok(Some(certificate)) => {
                 // check if certificate is valid or domains changed
                 let needs_renewal = !certificate.valid(item.buffer_days);
@@ -178,7 +173,7 @@ async fn do_update_certificates(
         }
 
         if let Err(e) = renew_certificate(
-            storage,
+            config_manager.clone(),
             item.clone(),
             provider.clone(),
             sender.clone(),
@@ -198,14 +193,20 @@ async fn do_update_certificates(
 }
 
 async fn renew_certificate(
-    storage: &'static (dyn ConfigStorage + Sync + Send),
+    config_manager: Arc<ConfigManager>,
     params: UpdateCertificateParams,
     provider: Arc<dyn CertificateProvider>,
     sender: Option<Arc<NotificationSender>>,
 ) -> Result<()> {
-    let conf = update_certificate_lets_encrypt(storage, params.clone()).await?;
-    set_current_config(&conf);
-    handle_successful_renewal(&params.domains, &conf, provider, sender).await;
+    update_certificate_lets_encrypt(config_manager.clone(), params.clone())
+        .await?;
+    handle_successful_renewal(
+        &params.domains,
+        config_manager,
+        provider,
+        sender,
+    )
+    .await?;
     Ok(())
 }
 
@@ -236,15 +237,27 @@ fn try_update_certificates(
 
 async fn handle_successful_renewal(
     domains: &[String],
-    conf: &PingapConf,
+    config_manager: Arc<ConfigManager>,
     provider: Arc<dyn CertificateProvider>,
     sender: Option<Arc<NotificationSender>>,
-) {
+) -> Result<()> {
     info!(
         category = LOG_CATEGORY,
         domains = domains.join(","),
         "renew certificate success"
     );
+    let toml_config =
+        config_manager.load_all().await.map_err(|e| Error::Fail {
+            category: "load_config".to_string(),
+            message: e.to_string(),
+        })?;
+    let config =
+        toml_config
+            .to_pingap_config(true)
+            .map_err(|e| Error::Fail {
+                category: "convert_config".to_string(),
+                message: e.to_string(),
+            })?;
     if let Some(sender) = &sender {
         sender
             .notify(NotificationData {
@@ -256,7 +269,7 @@ async fn handle_successful_renewal(
             .await;
     }
 
-    let (_, error) = try_update_certificates(provider, &conf.certificates);
+    let (_, error) = try_update_certificates(provider, &config.certificates);
     if !error.is_empty() {
         error!(
             category = LOG_CATEGORY,
@@ -273,20 +286,32 @@ async fn handle_successful_renewal(
                 })
                 .await;
         }
+    } else {
+        // update certificate success
+        // so set the current config
+        config_manager.set_current_config(config);
     }
+    Ok(())
 }
 
 struct LetsEncryptTask {
-    storage: &'static (dyn ConfigStorage + Sync + Send),
+    config_manager: Arc<ConfigManager>,
     certificate_provider: Arc<dyn CertificateProvider>,
     sender: Option<Arc<NotificationSender>>,
+    running: AtomicBool,
 }
 
 #[async_trait]
 impl BackgroundTask for LetsEncryptTask {
     async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
+        if self.running.swap(true, Ordering::Relaxed) {
+            return Ok(true);
+        }
+        defer!(self.running.store(false, Ordering::Relaxed););
         let mut params = vec![];
-        for (name, certificate) in get_current_config().certificates.iter() {
+        let config = self.config_manager.get_current_config();
+
+        for (name, certificate) in config.certificates.iter() {
             let acme = certificate.acme.clone().unwrap_or_default();
             let domains = certificate.domains.clone().unwrap_or_default();
             if acme.is_empty() || domains.is_empty() {
@@ -314,7 +339,7 @@ impl BackgroundTask for LetsEncryptTask {
         }
         do_update_certificates(
             count,
-            self.storage,
+            self.config_manager.clone(),
             &params,
             self.certificate_provider.clone(),
             self.sender.clone(),
@@ -327,21 +352,24 @@ impl BackgroundTask for LetsEncryptTask {
 /// Create a Let's Encrypt service to generate the certificate,
 /// and regenerate if the certificate is invalid or will be expired.
 pub fn new_lets_encrypt_service(
-    storage: &'static (dyn ConfigStorage + Sync + Send),
+    config_manager: Arc<ConfigManager>,
     certificate_provider: Arc<dyn CertificateProvider>,
     sender: Option<Arc<NotificationSender>>,
 ) -> Box<dyn BackgroundTask> {
     Box::new(LetsEncryptTask {
-        storage,
+        config_manager,
         certificate_provider,
         sender,
+        running: AtomicBool::new(false),
     })
 }
 
 /// Get the cert from file and convert it to certificate struct.
-pub fn get_lets_encrypt_certificate(name: &str) -> Result<Option<Certificate>> {
-    let binding = get_current_config();
-    let Some(cert) = binding.certificates.get(name) else {
+fn get_lets_encrypt_certificate(
+    config: &PingapConfig,
+    name: &str,
+) -> Result<Option<Certificate>> {
+    let Some(cert) = config.certificates.get(name) else {
         return Err(Error::NotFound {
             message: "cert not found".to_string(),
         });
@@ -371,7 +399,7 @@ pub fn get_lets_encrypt_certificate(name: &str) -> Result<Option<Certificate>> {
 /// 3. Loads the pre-stored token response from storage
 /// 4. Returns the token response to validate domain ownership
 pub async fn handle_lets_encrypt(
-    storage: &'static (dyn ConfigStorage + Sync + Send),
+    config_manager: Arc<ConfigManager>,
     session: &mut Session,
     _ctx: &mut Ctx,
 ) -> pingora::Result<bool> {
@@ -381,8 +409,10 @@ pub async fn handle_lets_encrypt(
         // token auth
         let token = path.substring(WELL_KNOWN_PATH_PREFIX.len(), path.len());
 
-        let value =
-            storage.load(&get_token_path(token)).await.map_err(|e| {
+        let value: Option<String> = config_manager
+            .get(Category::Storage, token)
+            .await
+            .map_err(|e| {
                 error!(
                     category = LOG_CATEGORY,
                     error = %e,
@@ -401,7 +431,7 @@ pub async fn handle_lets_encrypt(
         );
         HttpResponse {
             status: StatusCode::OK,
-            body: value.into(),
+            body: value.unwrap_or_default().into(),
             ..Default::default()
         }
         .send(session)
@@ -425,7 +455,7 @@ pub async fn handle_lets_encrypt(
 ///
 /// Returns a tuple of (certificate_chain_pem, private_key_pem)
 async fn new_lets_encrypt(
-    storage: &'static (dyn ConfigStorage + Sync + Send),
+    config_manager: Arc<ConfigManager>,
     production: bool,
     params: UpdateCertificateParams,
 ) -> Result<(String, String)> {
@@ -532,7 +562,7 @@ async fn new_lets_encrypt(
                 "huawei" => {
                     Box::new(HuaweiDnsTask::new(&params.dns_service_url)?)
                 },
-                _ => Box::new(ManualDnsTask::new(storage)),
+                _ => Box::new(ManualDnsTask::new(config_manager.clone())),
             };
 
             info!(
@@ -589,17 +619,17 @@ async fn new_lets_encrypt(
                 })?;
 
             let key_auth = challenge.key_authorization();
-            storage
-                .save(
-                    &get_token_path(&challenge.token),
-                    key_auth.as_str().as_bytes(),
+            config_manager
+                .update(
+                    Category::Storage,
+                    &challenge.token,
+                    &key_auth.as_str().to_string(),
                 )
                 .await
                 .map_err(|e| Error::Fail {
                     category: "save_token".to_string(),
                     message: e.to_string(),
                 })?;
-
             info!(
                 category = LOG_CATEGORY,
                 token = challenge.token,

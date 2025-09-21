@@ -53,20 +53,6 @@ pub enum Error {
 /// Convenience type alias for Results with our Error type
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-/// Generates the token path for ACME challenges
-///
-/// # Arguments
-///
-/// * `key` - The challenge token key
-///
-/// # Returns
-///
-/// The formatted path string for the token
-#[must_use]
-pub fn get_token_path(key: &str) -> String {
-    format!("pingap-acme-tokens/{key}")
-}
-
 fn get_value_from_env(value: &str) -> String {
     if value.is_empty() {
         return value.to_string();

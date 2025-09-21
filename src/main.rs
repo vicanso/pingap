@@ -23,14 +23,15 @@ use crate::upstreams::try_init_upstreams;
 use bytes::BytesMut;
 use clap::Parser;
 use crossbeam_channel::Receiver;
+use pingap::config_manager::{get_config_manager, try_init_config_manager};
 use pingap_acme::new_lets_encrypt_service;
 use pingap_cache::new_storage_clear_service;
 use pingap_certificate::{
     new_certificate_validity_service,
     new_self_signed_certificate_validity_service,
 };
-use pingap_config::{get_config_storage, ETCD_PROTOCOL};
-use pingap_config::{LoadConfigOptions, PingapConf};
+use pingap_config::PingapConfig;
+use pingap_config::{ConfigManager, ETCD_PROTOCOL};
 use pingap_core::BackgroundTaskService;
 #[cfg(feature = "imageoptim")]
 #[allow(unused_imports)]
@@ -41,7 +42,7 @@ use pingap_logger::{new_async_logger, AsyncLoggerTask};
 use pingap_otel::TracerService;
 use pingap_performance::new_performance_metrics_log_service;
 use pingap_plugin::get_plugin_factory;
-use pingap_proxy::{parse_from_conf, Server, ServerConf};
+use pingap_proxy::{parse_from_conf, Providers, Server, ServerConf};
 use pingap_upstream::new_upstream_health_check_task;
 use pingora::server;
 use pingora::server::configuration::Opt;
@@ -61,6 +62,7 @@ use sysinfo::System;
 use tracing::{error, info};
 
 mod certificates;
+mod config_manager;
 mod locations;
 mod plugin;
 mod process;
@@ -138,7 +140,7 @@ struct Args {
 
 fn new_server_conf(
     args: &Args,
-    conf: &PingapConf,
+    conf: &PingapConfig,
 ) -> server::configuration::ServerConf {
     let basic_conf = &conf.basic;
     let mut server_conf = server::configuration::ServerConf {
@@ -181,21 +183,26 @@ fn new_server_conf(
 
 fn get_config(
     admin: bool,
-) -> Receiver<Result<PingapConf, pingap_config::Error>> {
+    config_manager: Arc<ConfigManager>,
+) -> Receiver<Result<PingapConfig, pingap_config::Error>> {
     let (s, r) = crossbeam_channel::bounded(0);
     std::thread::spawn(move || {
         match tokio::runtime::Runtime::new() {
             Ok(rt) => {
                 let send = async move {
-                    let result =
-                        pingap_config::load_config(LoadConfigOptions {
-                            replace_include: true,
-                            admin,
-                        })
-                        .await;
-                    if let Err(e) = s.send(result) {
-                        // use println because log is not init
-                        println!("sender fail, {e}");
+                    match config_manager.load_all().await {
+                        Ok(config) => {
+                            // TODO 原有的load config有admin模式
+                            let result = config.to_pingap_config(true);
+                            if let Err(e) = s.send(result) {
+                                println!("sender fail, {e}");
+                            }
+                        },
+                        Err(e) => {
+                            if let Err(e) = s.send(Err(e)) {
+                                println!("sender fail, {e}");
+                            }
+                        },
                     }
                 };
                 rt.block_on(send);
@@ -213,13 +220,18 @@ fn get_config(
     r
 }
 
-fn sync_config(path: String) -> Receiver<Result<(), pingap_config::Error>> {
+fn sync_config(
+    config_manager: Arc<ConfigManager>,
+    path: String,
+) -> Receiver<Result<(), pingap_config::Error>> {
     let (s, r) = crossbeam_channel::bounded(0);
     std::thread::spawn(move || {
         match tokio::runtime::Runtime::new() {
             Ok(rt) => {
                 let send = async move {
-                    let result = pingap_config::sync_to_path(&path).await;
+                    let result =
+                        pingap_config::sync_to_path(config_manager, &path)
+                            .await;
                     if let Err(e) = s.send(result) {
                         // use println because log is not init
                         println!("sender fail, {e}");
@@ -287,22 +299,22 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     if !error.is_empty() {
         error!(error, "init plugins fail",);
     }
-    pingap_config::try_init_config_storage(&args.conf)?;
+    let config_manager = try_init_config_manager(&args.conf)?;
     let opt = Opt {
         daemon: args.daemon,
         ..Default::default()
     };
     // config::set_config_path(&args.conf);
     let mut my_server = server::Server::new(Some(opt))?;
-    let ps = Server::new(
-        &server_conf,
-        None,
-        new_server_locations_provider(),
-        new_location_provider(),
-        new_upstream_provider(),
-        new_plugin_provider(),
-        new_certificate_provider(),
-    )?;
+    let providers = Providers {
+        server_locations_provider: new_server_locations_provider(),
+        location_provider: new_location_provider(),
+        upstream_provider: new_upstream_provider(),
+        plugin_provider: new_plugin_provider(),
+        certificate_provider: new_certificate_provider(),
+    };
+    let ps =
+        Server::new(&server_conf, None, config_manager.clone(), providers)?;
     let services = ps.run(&my_server.configuration)?;
     my_server.add_service(services.lb);
 
@@ -415,9 +427,11 @@ fn run() -> Result<(), Box<dyn Error>> {
     pingap_cache::update_available_memory(sys.available_memory());
 
     // Initialize configuration
-    pingap_config::try_init_config_storage(&args.conf)?;
-    let r = get_config(args.admin.is_some());
+    let config_manager = try_init_config_manager(&args.conf)?;
+
+    let r = get_config(args.admin.is_some(), get_config_manager()?);
     let conf = r.recv()??;
+    config_manager.set_current_config(conf.clone());
 
     // Initialize logging system
     let compression_task =
@@ -431,12 +445,12 @@ fn run() -> Result<(), Box<dyn Error>> {
     // TODO a better way
     // since the cache will be initialized in validate function
     // so set the current conf first
-    pingap_config::set_current_config(&conf);
+    // pingap_config::set_current_config(&conf);
     conf.validate()?;
 
     // sync config to other storage
     if let Some(sync_path) = args.sync {
-        let r = sync_config(sync_path);
+        let r = sync_config(config_manager.clone(), sync_path);
         r.recv()??;
         info!("sync config success");
         return Ok(());
@@ -615,6 +629,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 "performance_metrics".to_string(),
                 new_performance_metrics_log_service(
+                    config_manager.clone(),
                     new_location_provider(),
                     new_upstream_provider(),
                 ),
@@ -640,16 +655,14 @@ fn run() -> Result<(), Box<dyn Error>> {
         .unwrap_or_default()
         .is_empty()
     {
-        if let Some(storage) = get_config_storage() {
-            simple_background_service.add_task(
-                "lets_encrypt",
-                new_lets_encrypt_service(
-                    storage,
-                    certificate_provider.clone(),
-                    webhook::get_webhook_sender(),
-                ),
-            );
-        }
+        simple_background_service.add_task(
+            "lets_encrypt",
+            new_lets_encrypt_service(
+                config_manager.clone(),
+                certificate_provider.clone(),
+                webhook::get_webhook_sender(),
+            ),
+        );
     }
 
     let (updated_certificates, errors) = try_update_certificates(&certificates);
@@ -685,14 +698,18 @@ fn run() -> Result<(), Box<dyn Error>> {
         } else {
             None
         };
+        let providers = Providers {
+            server_locations_provider: new_server_locations_provider(),
+            location_provider: new_location_provider(),
+            upstream_provider: new_upstream_provider(),
+            plugin_provider: new_plugin_provider(),
+            certificate_provider: certificate_provider.clone(),
+        };
         let mut ps = Server::new(
             &server_conf,
             access_logger,
-            new_server_locations_provider(),
-            new_location_provider(),
-            new_upstream_provider(),
-            new_plugin_provider(),
-            certificate_provider.clone(),
+            config_manager.clone(),
+            providers,
         )?;
         if enabled_http_challenge && listen_80_port {
             ps.enable_lets_encrypt();
@@ -706,16 +723,18 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     if args.autorestart || args.autoreload {
         let only_hot_reload = !args.autorestart;
-        if pingap_config::support_observer() {
+        if config_manager.support_observer() {
             my_server.add_service(background_service(
                 "observer",
                 new_observer_service(
+                    config_manager.clone(),
                     auto_restart_check_interval,
                     only_hot_reload,
                 ),
             ));
         } else {
             let auto_restart_task = new_auto_restart_service(
+                config_manager.clone(),
                 auto_restart_check_interval,
                 only_hot_reload,
             );

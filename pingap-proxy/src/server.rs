@@ -27,7 +27,7 @@ use once_cell::sync::Lazy;
 use pingap_acme::handle_lets_encrypt;
 use pingap_certificate::CertificateProvider;
 use pingap_certificate::{GlobalCertificate, TlsSettingParams};
-use pingap_config::get_config_storage;
+use pingap_config::ConfigManager;
 use pingap_core::BackgroundTask;
 use pingap_core::PluginProvider;
 use pingap_core::{
@@ -199,6 +199,9 @@ pub struct Server {
     // certificates
     certificate_provider: Arc<dyn CertificateProvider>,
 
+    // config manager
+    config_manager: Arc<ConfigManager>,
+
     // logger
     access_logger: Option<Sender<BytesMut>>,
 }
@@ -213,6 +216,14 @@ const META_DEFAULTS: CacheMetaDefaults =
 static HTTP_500_RESPONSE: Lazy<ResponseHeader> =
     Lazy::new(|| error_resp::gen_error_response(500));
 
+pub struct Providers {
+    pub server_locations_provider: Arc<dyn ServerLocationsProvider>,
+    pub location_provider: Arc<dyn LocationProvider>,
+    pub upstream_provider: Arc<dyn UpstreamProvider>,
+    pub plugin_provider: Arc<dyn PluginProvider>,
+    pub certificate_provider: Arc<dyn CertificateProvider>,
+}
+
 impl Server {
     /// Creates a new HTTP proxy server instance with the given configuration.
     /// Initializes all server components including:
@@ -223,11 +234,8 @@ impl Server {
     pub fn new(
         conf: &ServerConf,
         access_logger: Option<Sender<BytesMut>>,
-        server_locations_provider: Arc<dyn ServerLocationsProvider>,
-        location_provider: Arc<dyn LocationProvider>,
-        upstream_provider: Arc<dyn UpstreamProvider>,
-        plugin_provider: Arc<dyn PluginProvider>,
-        certificate_provider: Arc<dyn CertificateProvider>,
+        config_manager: Arc<ConfigManager>,
+        providers: Providers,
     ) -> Result<Self> {
         debug!(
             category = LOG_CATEGORY,
@@ -292,12 +300,13 @@ impl Server {
             modules: conf.modules.clone(),
             downstream_read_timeout: conf.downstream_read_timeout,
             downstream_write_timeout: conf.downstream_write_timeout,
-            server_locations_provider,
-            location_provider,
-            upstream_provider,
-            plugin_provider,
-            certificate_provider,
+            server_locations_provider: providers.server_locations_provider,
+            location_provider: providers.location_provider,
+            upstream_provider: providers.upstream_provider,
+            plugin_provider: providers.plugin_provider,
+            certificate_provider: providers.certificate_provider,
             access_logger,
+            config_manager,
         };
         Ok(s)
     }
@@ -600,17 +609,13 @@ impl Server {
         ctx: &mut Ctx,
     ) -> Option<pingora::Result<bool>> {
         if self.lets_encrypt_enabled {
-            let storage = match get_config_storage() {
-                Some(s) => s,
-                None => {
-                    return Some(Err(new_internal_error(
-                        500,
-                        "get config storage fail".to_string(),
-                    )));
-                },
-            };
-
-            return match handle_lets_encrypt(storage, session, ctx).await {
+            return match handle_lets_encrypt(
+                self.config_manager.clone(),
+                session,
+                ctx,
+            )
+            .await
+            {
                 Ok(true) => Some(Ok(true)),   // 已处理 ACME 请求
                 Ok(false) => Some(Ok(false)), // 明确表示未处理，进入标准流程（虽然通常ACME处理后会是true）
                 Err(e) => Some(Err(e)),
@@ -1661,7 +1666,7 @@ mod tests {
     use crate::server_conf::parse_from_conf;
     use ahash::AHashMap;
     use pingap_certificate::{DynamicCertificates, TlsCertificate};
-    use pingap_config::PingapConf;
+    use pingap_config::{new_file_config_manager, PingapConfig};
     use pingap_core::{CacheInfo, Ctx, UpstreamInfo};
     use pingap_location::LocationStats;
     use pingora::http::ResponseHeader;
@@ -1760,7 +1765,7 @@ value = "PLpKJqvfkjTcYTDpauJf+2JnEayP+bm+0Oe60Jk="
 category = "config"
 value = 'proxy_set_headers = ["name:value"]'
         "###;
-        let pingap_conf = PingapConf::new(toml_data.as_ref(), false).unwrap();
+        let pingap_conf = PingapConfig::new(toml_data.as_ref(), false).unwrap();
 
         let location = Arc::new(
             Location::new("lo", pingap_conf.locations.get("lo").unwrap())
@@ -1824,17 +1829,24 @@ value = 'proxy_set_headers = ["name:value"]'
         }
 
         let confs = parse_from_conf(pingap_conf);
-        Server::new(
-            &confs[0],
-            // TODO
-            None,
-            Arc::new(TmpServerLocationsLoader {
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        let providers = Providers {
+            server_locations_provider: Arc::new(TmpServerLocationsLoader {
                 server_locations: Arc::new(vec!["lo".to_string()]),
             }),
-            Arc::new(TmpLocationLoader { location }),
-            Arc::new(TmpUpstreamLoader { upstream }),
-            Arc::new(TmpPluginLoader {}),
-            Arc::new(TmpCertificateLoader {}),
+            location_provider: Arc::new(TmpLocationLoader { location }),
+            upstream_provider: Arc::new(TmpUpstreamLoader { upstream }),
+            plugin_provider: Arc::new(TmpPluginLoader {}),
+            certificate_provider: Arc::new(TmpCertificateLoader {}),
+        };
+        Server::new(
+            &confs[0],
+            None,
+            Arc::new(
+                new_file_config_manager(&file.path().to_string_lossy())
+                    .unwrap(),
+            ),
+            providers,
         )
         .unwrap()
     }

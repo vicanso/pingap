@@ -15,10 +15,11 @@
 use bytesize::ByteSize;
 use memory_stats::memory_stats;
 use once_cell::sync::Lazy;
-use pingap_config::get_current_config;
+use pingap_config::PingapConfig;
 use serde::{Deserialize, Serialize};
 use std::process;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::sync::Arc;
 use sysinfo::MemoryRefreshKind;
 use sysinfo::{RefreshKind, System};
 
@@ -81,10 +82,8 @@ pub struct ProcessSystemInfo {
 
 /// Gathers and returns system information including memory usage, CPU details,
 /// process statistics and network connection counts
-pub fn get_process_system_info() -> ProcessSystemInfo {
-    let current_config = get_current_config();
-    let data =
-        std::fs::read(current_config.basic.get_pid_file()).unwrap_or_default();
+pub fn get_process_system_info(config: Arc<PingapConfig>) -> ProcessSystemInfo {
+    let data = std::fs::read(config.basic.get_pid_file()).unwrap_or_default();
     let mut pid = std::string::String::from_utf8_lossy(&data)
         .trim()
         .parse::<u32>()
@@ -110,14 +109,14 @@ pub fn get_process_system_info() -> ProcessSystemInfo {
     }
 
     let cpu_count = num_cpus::get();
-    let default_threads = current_config.basic.threads.unwrap_or(1);
+    let default_threads = config.basic.threads.unwrap_or(1);
     let default_threads = if default_threads == 0 {
         cpu_count
     } else {
         default_threads
     };
 
-    let threads: usize = current_config
+    let threads: usize = config
         .servers
         // values of current_config.servers
         .values()
@@ -168,7 +167,7 @@ mod tests {
 
     #[test]
     fn test_get_process_system_info() {
-        let info = get_process_system_info();
+        let info = get_process_system_info(Arc::new(PingapConfig::default()));
         assert_eq!(true, info.memory_mb > 0);
         assert_eq!(true, !info.memory.is_empty());
         assert_eq!(true, !info.arch.is_empty());

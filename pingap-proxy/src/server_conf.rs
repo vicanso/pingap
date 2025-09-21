@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use pingap_config::PingapConf;
+use pingap_config::PingapConfig;
 use pingora::protocols::l4::ext::TcpKeepalive;
 use std::fmt;
 use std::time::Duration;
@@ -156,8 +156,8 @@ impl fmt::Display for ServerConf {
     }
 }
 
-// Conversion implementation from PingapConf to Vec<ServerConf>
-pub fn parse_from_conf(conf: PingapConf) -> Vec<ServerConf> {
+// Conversion implementation from PingapConfig to Vec<ServerConf>
+pub fn parse_from_conf(conf: PingapConfig) -> Vec<ServerConf> {
     let mut upstreams = vec![];
     for (name, item) in conf.upstreams {
         upstreams.push((name, item));
