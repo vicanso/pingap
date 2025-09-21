@@ -101,7 +101,7 @@ impl Storage for EtcdStorage {
     async fn fetch(&self, key: &str) -> Result<String> {
         let mut c = self.connect().await?;
         let key = self.get_path(key);
-        let mut opts = GetOptions::new().with_prefix();
+        let mut opts = GetOptions::new();
         if !key.ends_with(".toml") {
             opts = opts.with_prefix();
         }

@@ -53,15 +53,15 @@ static PREDICTOR: OnceCell<Predictor<32>> = OnceCell::new();
 static EVICTION_MANAGER: OnceCell<Manager> = OnceCell::new();
 // CacheLock: Prevents multiple requests from generating the same cache entry simultaneously
 static CACHE_LOCK_ONE_SECOND: Lazy<
-    Box<(dyn CacheKeyLock + std::marker::Send + Sync + 'static)>,
+    Box<dyn CacheKeyLock + std::marker::Send + Sync + 'static>,
 > = Lazy::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(1)));
 
 static CACHE_LOCK_TWO_SECONDS: Lazy<
-    Box<(dyn CacheKeyLock + std::marker::Send + Sync + 'static)>,
+    Box<dyn CacheKeyLock + std::marker::Send + Sync + 'static>,
 > = Lazy::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(2)));
 
 static CACHE_LOCK_THREE_SECONDS: Lazy<
-    Box<(dyn CacheKeyLock + std::marker::Send + Sync + 'static)>,
+    Box<dyn CacheKeyLock + std::marker::Send + Sync + 'static>,
 > = Lazy::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(3)));
 
 pub struct Cache {

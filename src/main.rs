@@ -182,7 +182,7 @@ fn new_server_conf(
 }
 
 fn get_config(
-    admin: bool,
+    _admin: bool,
     config_manager: Arc<ConfigManager>,
 ) -> Receiver<Result<PingapConfig, pingap_config::Error>> {
     let (s, r) = crossbeam_channel::bounded(0);
