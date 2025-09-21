@@ -763,6 +763,7 @@ fn init() {
 #[cfg(test)]
 mod tests {
     use super::{AdminAsset, AdminServe, EmbeddedStaticFile};
+    use crate::config_manager::try_init_config_manager;
     use pingap_config::PluginConf;
     use pingap_core::HttpResponse;
     use pretty_assertions::assert_eq;
@@ -770,6 +771,8 @@ mod tests {
 
     #[test]
     fn test_admin_params() {
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        try_init_config_manager(&file.path().to_string_lossy()).unwrap();
         let params = AdminServe::try_from(
             &toml::from_str::<PluginConf>(
                 r#"

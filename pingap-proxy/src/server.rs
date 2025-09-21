@@ -1841,7 +1841,6 @@ value = 'proxy_set_headers = ["name:value"]'
         };
         Server::new(
             &confs[0],
-            // TODO
             None,
             Arc::new(
                 new_file_config_manager(&file.path().to_string_lossy())

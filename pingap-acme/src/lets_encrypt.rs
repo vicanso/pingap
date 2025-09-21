@@ -40,7 +40,9 @@ use pingap_core::{
 };
 use pingora::http::StatusCode;
 use pingora::proxy::Session;
+use scopeguard::defer;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Once;
 use std::time::Duration;
@@ -296,11 +298,16 @@ struct LetsEncryptTask {
     config_manager: Arc<ConfigManager>,
     certificate_provider: Arc<dyn CertificateProvider>,
     sender: Option<Arc<NotificationSender>>,
+    running: AtomicBool,
 }
 
 #[async_trait]
 impl BackgroundTask for LetsEncryptTask {
     async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
+        if self.running.swap(true, Ordering::Relaxed) {
+            return Ok(true);
+        }
+        defer!(self.running.store(false, Ordering::Relaxed););
         let mut params = vec![];
         let config = self.config_manager.get_current_config();
 
@@ -353,6 +360,7 @@ pub fn new_lets_encrypt_service(
         config_manager,
         certificate_provider,
         sender,
+        running: AtomicBool::new(false),
     })
 }
 
