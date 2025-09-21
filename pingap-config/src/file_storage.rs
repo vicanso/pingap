@@ -17,6 +17,7 @@ use crate::Error;
 use async_trait::async_trait;
 use glob::glob;
 use pingap_util::resolve_path;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tracing::debug;
@@ -46,6 +47,13 @@ impl FileStorage {
             path: path.to_path_buf(),
         })
     }
+    fn get_target_path(&self, key: &str) -> PathBuf {
+        if self.path.is_file() {
+            self.path.clone()
+        } else {
+            self.path.join(key)
+        }
+    }
 }
 
 async fn read_all_toml_files(dir: &str) -> Result<Vec<u8>> {
@@ -72,32 +80,25 @@ async fn read_all_toml_files(dir: &str) -> Result<Vec<u8>> {
 #[async_trait]
 impl Storage for FileStorage {
     async fn fetch(&self, key: &str) -> Result<String> {
-        let value = if self.path.is_file() {
-            fs::read(&self.path).await.map_err(|e| Error::Io {
-                source: e,
-                file: self.path.to_string_lossy().to_string(),
-            })
-        } else {
-            let path = self.path.join(key);
-            if path.is_file() {
-                fs::read(&path).await.map_err(|e| Error::Io {
+        let target_path = self.get_target_path(key);
+        let value = if target_path.is_file() {
+            match fs::read(&target_path).await {
+                Ok(data) => Ok(data),
+                Err(e) if e.kind() == ErrorKind::NotFound => Ok(Vec::new()),
+                Err(e) => Err(Error::Io {
                     source: e,
-                    file: path.to_string_lossy().to_string(),
-                })
-            } else {
-                read_all_toml_files(&path.to_string_lossy()).await
+                    file: target_path.to_string_lossy().to_string(),
+                }),
             }
+        } else {
+            read_all_toml_files(&target_path.to_string_lossy()).await
         }?;
 
         Ok(String::from_utf8_lossy(&value).trim().to_string())
     }
 
     async fn save(&self, key: &str, value: &str) -> Result<()> {
-        let file = if self.path.is_file() {
-            self.path.clone()
-        } else {
-            self.path.join(key)
-        };
+        let file = self.get_target_path(key);
         if let Some(parent) = file.parent() {
             fs::create_dir_all(parent).await.map_err(|e| Error::Io {
                 source: e,
@@ -112,16 +113,15 @@ impl Storage for FileStorage {
     }
 
     async fn delete(&self, key: &str) -> Result<()> {
-        let file = if self.path.is_file() {
-            self.path.clone()
-        } else {
-            self.path.join(key)
-        };
-        fs::remove_file(&file).await.map_err(|e| Error::Io {
-            source: e,
-            file: file.to_string_lossy().to_string(),
-        })?;
-        Ok(())
+        let file = self.get_target_path(key);
+        match fs::remove_file(&file).await {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(Error::Io {
+                source: e,
+                file: file.to_string_lossy().to_string(),
+            }),
+        }
     }
 }
 

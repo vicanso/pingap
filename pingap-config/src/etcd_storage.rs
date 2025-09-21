@@ -19,6 +19,7 @@ use etcd_client::{Client, ConnectOptions, GetOptions, WatchOptions};
 use humantime::parse_duration;
 use pingap_util::path_join;
 use substring::Substring;
+use tokio::sync::OnceCell;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -29,6 +30,7 @@ pub struct EtcdStorage {
     addrs: Vec<String>,
     // Connection options (timeout, auth, etc)
     options: ConnectOptions,
+    client: OnceCell<Client>,
 }
 pub const ETCD_PROTOCOL: &str = "etcd://";
 
@@ -81,15 +83,23 @@ impl EtcdStorage {
             addrs,
             options,
             path,
+            client: OnceCell::new(),
         })
     }
+
     /// Connect to etcd server.
     async fn connect(&self) -> Result<Client> {
-        Client::connect(&self.addrs, Some(self.options.clone()))
-            .await
-            .map_err(|e| Error::Etcd {
-                source: Box::new(e),
+        let c = self
+            .client
+            .get_or_try_init(|| async {
+                Client::connect(&self.addrs, Some(self.options.clone()))
+                    .await
+                    .map_err(|e| Error::Etcd {
+                        source: Box::new(e),
+                    })
             })
+            .await?;
+        Ok(c.clone())
     }
     fn get_path(&self, key: &str) -> String {
         path_join(&self.path, key)

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::certificates::{new_certificate_provider, try_update_certificates};
+use crate::config_manager::{get_config_manager, try_init_config_manager};
 use crate::locations::new_location_provider;
 use crate::locations::try_init_locations;
 use crate::plugin::new_plugin_provider;
@@ -23,7 +24,6 @@ use crate::upstreams::try_init_upstreams;
 use bytes::BytesMut;
 use clap::Parser;
 use crossbeam_channel::Receiver;
-use pingap::config_manager::{get_config_manager, try_init_config_manager};
 use pingap_acme::new_lets_encrypt_service;
 use pingap_cache::new_storage_clear_service;
 use pingap_certificate::{

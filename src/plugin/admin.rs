@@ -306,16 +306,6 @@ impl AdminServe {
             pingap_core::new_internal_error(400, e)
         })?;
         Ok(config)
-        // let conf = pingap_config::load_config(LoadConfigOptions {
-        //     replace_include,
-        //     admin: true,
-        // })
-        // .await
-        // .map_err(|e| {
-        //     error!("failed to load config: {e}");
-        //     pingap_core::new_internal_error(400, e)
-        // })?;
-        // Ok(conf)
     }
     async fn get_config(
         &self,

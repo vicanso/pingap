@@ -18,6 +18,7 @@ use http::{HeaderName, HeaderValue};
 use pingap_discovery::{is_static_discovery, DNS_DISCOVERY};
 use regex::Regex;
 use serde::{Deserialize, Serialize, Serializer};
+use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Cursor;
 use std::net::ToSocketAddrs;
@@ -164,14 +165,6 @@ fn validate_cert(value: &str) -> Result<()> {
 }
 
 impl CertificateConf {
-    /// Generates a unique hash key for this certificate configuration
-    /// Used for caching and comparison purposes
-    pub fn hash_key(&self) -> String {
-        let mut hasher = DefaultHasher::new();
-        self.hash(&mut hasher);
-        format!("{:x}", hasher.finish())
-    }
-
     /// Validates the certificate configuration:
     /// - Validates private key can be parsed if present
     /// - Validates certificate can be parsed if present  
@@ -304,14 +297,6 @@ pub struct UpstreamConf {
 }
 
 impl UpstreamConf {
-    /// Generates a unique hash key for this upstream configuration
-    /// Used for caching and comparison purposes
-    pub fn hash_key(&self) -> String {
-        let mut hasher = DefaultHasher::new();
-        self.hash(&mut hasher);
-        format!("{:x}", hasher.finish())
-    }
-
     /// Determines the appropriate service discovery mechanism:
     /// - Returns configured discovery if set
     /// - Returns DNS discovery if any address contains a hostname
@@ -473,14 +458,6 @@ pub struct LocationConf {
 }
 
 impl LocationConf {
-    /// Generates a unique hash key for this location configuration
-    /// Used for caching and comparison purposes
-    pub fn hash_key(&self) -> String {
-        let mut hasher = DefaultHasher::new();
-        self.hash(&mut hasher);
-        format!("{:x}", hasher.finish())
-    }
-
     /// Validates the location configuration:
     /// 1. Validates that headers are properly formatted as "name: value"
     /// 2. Validates header names and values are valid HTTP headers
@@ -794,6 +771,17 @@ pub struct StorageConf {
     pub remark: Option<String>,
 }
 
+pub trait Hashable: Hash {
+    fn hash_key(&self) -> String {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        format!("{:x}", hasher.finish())
+    }
+}
+impl Hashable for CertificateConf {}
+impl Hashable for UpstreamConf {}
+impl Hashable for LocationConf {}
+
 #[derive(Deserialize, Debug, Serialize)]
 struct TomlConfig {
     basic: Option<BasicConf>,
@@ -827,79 +815,89 @@ pub struct PingapConfig {
 }
 
 impl PingapConfig {
+    // 需要一个辅助函数来避免重复
+    fn get_value_for_category<T: Serialize>(
+        &self,
+        map: &HashMap<String, T>,
+        name: Option<&str>,
+    ) -> Result<toml::Value> {
+        match name {
+            // 如果指定了名称，只序列化那一个项
+            Some(name) => {
+                if let Some(item) = map.get(name) {
+                    let mut table = Map::new();
+                    table.insert(
+                        name.to_string(),
+                        toml::Value::try_from(item)
+                            .map_err(|e| Error::Ser { source: e })?,
+                    );
+                    Ok(toml::Value::Table(table))
+                } else {
+                    Ok(toml::Value::Table(Map::new())) // 未找到，返回空表
+                }
+            },
+            // 否则，序列化整个类别
+            None => Ok(toml::Value::try_from(map)
+                .map_err(|e| Error::Ser { source: e })?),
+        }
+    }
     pub fn get_toml(
         &self,
         category: &str,
         name: Option<&str>,
     ) -> Result<(String, String)> {
-        let ping_conf = toml::to_string_pretty(self)
-            .map_err(|e| Error::Ser { source: e })?;
-        let data: TomlConfig =
-            toml::from_str(&ping_conf).map_err(|e| Error::De { source: e })?;
-
-        let filter_values = |mut values: Map<String, Value>| {
-            let name = name.unwrap_or_default();
-            if name.is_empty() {
-                return values;
-            }
-            let remove_keys: Vec<_> = values
-                .keys()
-                .filter(|key| *key != name)
-                .map(|key| key.to_string())
-                .collect();
-            for key in remove_keys {
-                values.remove(&key);
-            }
-            values
-        };
-        let get_path = |key: &str| {
-            let name = name.unwrap_or_default();
-            if key == CATEGORY_BASIC || name.is_empty() {
-                return format!("/{key}.toml");
-            }
-            format!("/{key}/{name}.toml")
-        };
-
-        let (key, value) = match category {
+        let (key, value_to_serialize) = match category {
             CATEGORY_SERVER => {
-                ("servers", filter_values(data.servers.unwrap_or_default()))
+                ("servers", self.get_value_for_category(&self.servers, name)?)
             },
             CATEGORY_LOCATION => (
                 "locations",
-                filter_values(data.locations.unwrap_or_default()),
+                self.get_value_for_category(&self.locations, name)?,
             ),
             CATEGORY_UPSTREAM => (
                 "upstreams",
-                filter_values(data.upstreams.unwrap_or_default()),
+                self.get_value_for_category(&self.upstreams, name)?,
             ),
             CATEGORY_PLUGIN => {
-                ("plugins", filter_values(data.plugins.unwrap_or_default()))
+                ("plugins", self.get_value_for_category(&self.plugins, name)?)
             },
             CATEGORY_CERTIFICATE => (
                 "certificates",
-                filter_values(data.certificates.unwrap_or_default()),
+                self.get_value_for_category(&self.certificates, name)?,
             ),
-            CATEGORY_STORAGE => {
-                ("storages", filter_values(data.storages.unwrap_or_default()))
-            },
-            _ => {
-                let value = toml::to_string(&data.basic.unwrap_or_default())
-                    .map_err(|e| Error::Ser { source: e })?;
-                let m: Map<String, Value> = toml::from_str(&value)
-                    .map_err(|e| Error::De { source: e })?;
-                ("basic", m)
-            },
+            CATEGORY_STORAGE => (
+                "storages",
+                self.get_value_for_category(&self.storages, name)?,
+            ),
+            _ => (
+                CATEGORY_BASIC,
+                toml::Value::try_from(&self.basic)
+                    .map_err(|e| Error::Ser { source: e })?,
+            ),
         };
-        let path = get_path(key);
-        if value.is_empty() {
-            return Ok((path, "".to_string()));
+
+        let path = {
+            let name = name.unwrap_or_default();
+            if key == CATEGORY_BASIC || name.is_empty() {
+                format!("/{key}.toml")
+            } else {
+                format!("/{key}/{name}.toml")
+            }
+        };
+
+        if let Some(table) = value_to_serialize.as_table() {
+            if table.is_empty() {
+                return Ok((path, "".to_string()));
+            }
         }
 
-        let mut m = Map::new();
-        let _ = m.insert(key.to_string(), toml::Value::Table(value));
-        let value =
-            toml::to_string_pretty(&m).map_err(|e| Error::Ser { source: e })?;
-        Ok((path, value))
+        let mut wrapper = Map::new();
+        wrapper.insert(key.to_string(), value_to_serialize);
+
+        let toml_string = toml::to_string_pretty(&wrapper)
+            .map_err(|e| Error::Ser { source: e })?;
+
+        Ok((path, toml_string))
     }
     pub fn get_storage_value(&self, name: &str) -> Result<String> {
         for (key, item) in self.storages.iter() {
@@ -1219,83 +1217,96 @@ impl PingapConfig {
     }
     /// Get the different content of two config.
     pub fn diff(&self, other: &PingapConfig) -> (Vec<String>, Vec<String>) {
-        let mut category_list = vec![];
+        // 1. 将描述列表转换为 HashMap，以便进行高效的键查找。
+        let current_map: HashMap<_, _> = self
+            .descriptions()
+            .into_iter()
+            .map(|d| (d.name.clone(), d))
+            .collect();
+        let new_map: HashMap<_, _> = other
+            .descriptions()
+            .into_iter()
+            .map(|d| (d.name.clone(), d))
+            .collect();
 
-        let current_descriptions = self.descriptions();
-        let new_descriptions = other.descriptions();
-        let mut diff_result = vec![];
+        // 使用 HashSet 存储受影响的类别，以自动处理重复。
+        let mut affected_categories = HashSet::new();
 
-        // remove item
-        let mut exists_remove = false;
-        for item in current_descriptions.iter() {
-            let mut found = false;
-            for new_item in new_descriptions.iter() {
-                if item.name == new_item.name {
-                    found = true;
-                }
-            }
-            if !found {
-                exists_remove = true;
-                diff_result.push(format!("--{}", item.name));
-                category_list.push(item.category.clone());
-            }
-        }
-        if exists_remove {
-            diff_result.push("".to_string());
-        }
+        // 分别存储新增、删除和修改的项，以便最后格式化输出。
+        let mut added_items = vec![];
+        let mut removed_items = vec![];
+        let mut modified_items = vec![];
 
-        // add item
-        let mut exists_add = false;
-        for new_item in new_descriptions.iter() {
-            let mut found = false;
-            for item in current_descriptions.iter() {
-                if item.name == new_item.name {
-                    found = true;
-                }
-            }
-            if !found {
-                exists_add = true;
-                diff_result.push(format!("++{}", new_item.name));
-                category_list.push(new_item.category.clone());
-            }
-        }
-        if exists_add {
-            diff_result.push("".to_string());
-        }
+        // 2. 遍历当前配置，查找被删除或被修改的项。
+        for (name, current_item) in &current_map {
+            match new_map.get(name) {
+                Some(new_item) => {
+                    // 键存在于两个配置中，检查内容是否发生变化。
+                    if current_item.data != new_item.data {
+                        affected_categories
+                            .insert(current_item.category.clone());
 
-        for item in current_descriptions.iter() {
-            for new_item in new_descriptions.iter() {
-                if item.name != new_item.name {
-                    continue;
-                }
-                let mut item_diff_result = vec![];
-                for diff in diff::lines(&item.data, &new_item.data) {
-                    match diff {
-                        diff::Result::Left(l) => {
-                            item_diff_result.push(format!("-{l}"))
-                        },
-                        diff::Result::Right(r) => {
-                            item_diff_result.push(format!("+{r}"))
-                        },
-                        _ => {},
-                    };
-                }
-                if !item_diff_result.is_empty() {
-                    diff_result.push(item.name.clone());
-                    diff_result.extend(item_diff_result);
-                    diff_result.push("\n".to_string());
-                    category_list.push(item.category.clone());
-                }
+                        // 使用 diff::lines 生成逐行差异
+                        let mut item_diff_result = vec![];
+                        for diff in
+                            diff::lines(&current_item.data, &new_item.data)
+                        {
+                            match diff {
+                                diff::Result::Left(l) => {
+                                    item_diff_result.push(format!("- {l}"))
+                                },
+                                diff::Result::Right(r) => {
+                                    item_diff_result.push(format!("+ {r}"))
+                                },
+                                _ => (),
+                            }
+                        }
+
+                        if !item_diff_result.is_empty() {
+                            modified_items.push(format!("[MODIFIED] {name}"));
+                            modified_items.extend(item_diff_result);
+                            modified_items.push("".to_string()); // 添加空行分隔
+                        }
+                    }
+                },
+                None => {
+                    // 在新配置中不存在，说明该项已被删除。
+                    removed_items.push(format!("-- [REMOVED] {name}"));
+                    affected_categories.insert(current_item.category.clone());
+                },
             }
         }
 
-        (category_list, diff_result)
+        // 3. 遍历新配置，查找新增的项。
+        for (name, new_item) in &new_map {
+            if !current_map.contains_key(name) {
+                added_items.push(format!("++ [ADDED] {name}"));
+                affected_categories.insert(new_item.category.clone());
+            }
+        }
+
+        // 4. 组合所有差异，生成最终的可读输出。
+        let mut final_diff = Vec::new();
+        if !added_items.is_empty() {
+            final_diff.extend(added_items);
+            final_diff.push("".to_string()); // 添加空行分隔
+        }
+        if !removed_items.is_empty() {
+            final_diff.extend(removed_items);
+            final_diff.push("".to_string());
+        }
+        if !modified_items.is_empty() {
+            final_diff.extend(modified_items);
+        }
+
+        // 将 HashSet 转换为 Vec 并返回结果
+        (affected_categories.into_iter().collect(), final_diff)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_cert, CertificateConf};
+    use super::{validate_cert, CertificateConf, Hashable};
     use super::{LocationConf, PluginCategory, ServerConf, UpstreamConf};
     use pingap_core::PluginStep;
     use pingap_util::base64_encode;

@@ -21,7 +21,6 @@ type Result<T> = std::result::Result<T, Error>;
 
 static CONFIG_MANAGER: OnceCell<Arc<ConfigManager>> = OnceCell::new();
 
-#[allow(dead_code)]
 pub fn try_init_config_manager(value: &str) -> Result<Arc<ConfigManager>> {
     CONFIG_MANAGER
         .get_or_try_init(|| {

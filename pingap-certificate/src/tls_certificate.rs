@@ -21,6 +21,7 @@ use super::{
     parse_leaf_chain_certificates, Certificate, Error, Result, LOG_CATEGORY,
 };
 use pingap_config::CertificateConf;
+use pingap_config::Hashable;
 use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::x509::X509;
 use std::sync::Arc;

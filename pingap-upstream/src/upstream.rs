@@ -20,6 +20,7 @@ use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use derive_more::Debug;
 use futures_util::FutureExt;
+use pingap_config::Hashable;
 use pingap_config::UpstreamConf;
 use pingap_core::{
     BackgroundTask, BackgroundTaskService, Error as ServiceError,

@@ -14,6 +14,7 @@
 
 use super::regex::RegexCapture;
 use ahash::AHashMap;
+use pingap_config::Hashable;
 use pingap_config::LocationConf;
 use pingap_core::{convert_headers, HttpHeader};
 use pingora::http::RequestHeader;

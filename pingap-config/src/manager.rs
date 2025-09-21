@@ -408,6 +408,10 @@ impl ConfigManager {
     }
     pub async fn delete(&self, category: Category, name: &str) -> Result<()> {
         let key = self.get_key(&category, name);
+
+        let mut current_config = (*self.get_current_config()).clone();
+        current_config.remove(category.to_string().as_str(), name)?;
+
         if self.mode == ConfigMode::MultiByItem {
             return self.storage.delete(&key).await;
         }

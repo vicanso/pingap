@@ -16,7 +16,7 @@ use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use once_cell::sync::Lazy;
 use pingap_config::Error;
-use pingap_config::LocationConf;
+use pingap_config::{Hashable, LocationConf};
 use pingap_location::{Location, LocationProvider, LocationStats, Locations};
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -13,7 +13,6 @@
 // limitations under the License.
 
 // External crate imports for async operations, etcd client, and error handling
-use async_trait::async_trait;
 use etcd_client::WatchStream;
 use glob::glob;
 use snafu::Snafu;
@@ -102,6 +101,22 @@ pub enum Category {
     Certificate,
     Storage,
 }
+
+impl std::fmt::Display for Category {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // 使用 match 来为每个变体指定其字符串表示
+        // write! 宏将字符串写入格式化器
+        match self {
+            Category::Basic => write!(f, "basic"),
+            Category::Server => write!(f, "server"),
+            Category::Location => write!(f, "location"),
+            Category::Upstream => write!(f, "upstream"),
+            Category::Plugin => write!(f, "plugin"),
+            Category::Certificate => write!(f, "certificate"),
+            Category::Storage => write!(f, "storage"),
+        }
+    }
+}
 impl FromStr for Category {
     type Err = Error;
 
@@ -119,47 +134,6 @@ impl FromStr for Category {
             }),
         }
     }
-}
-
-// Options for loading configuration
-#[derive(Debug, Default, Clone)]
-pub struct LoadConfigOptions {
-    pub replace_include: bool, // Whether to replace include directives
-    pub admin: bool,           // Whether this is an admin configuration
-}
-
-// Trait defining storage backend operations for configuration
-#[async_trait]
-pub trait ConfigStorage {
-    // Load configuration with specified options
-    async fn load_config(
-        &self,
-        opts: LoadConfigOptions,
-    ) -> Result<PingapConfig>;
-
-    // Save configuration for a specific category and optional name
-    async fn save_config(
-        &self,
-        conf: &PingapConfig,
-        category: &str,
-        name: Option<&str>,
-    ) -> Result<()>;
-
-    // Whether this storage supports change observation
-    fn support_observer(&self) -> bool {
-        false
-    }
-
-    // Create an observer for this storage
-    async fn observe(&self) -> Result<Observer> {
-        Ok(Observer {
-            etcd_watch_stream: None,
-        })
-    }
-
-    // Low-level storage operations
-    async fn save(&self, key: &str, data: &[u8]) -> Result<()>;
-    async fn load(&self, key: &str) -> Result<Vec<u8>>;
 }
 
 pub fn new_config_manager(value: &str) -> Result<ConfigManager> {
