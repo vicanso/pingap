@@ -405,7 +405,7 @@ impl Parser {
                     _ => buf.extend_from_slice(EMPTY_FIELD),
                 },
                 TagCategory::Referrer => {
-                    let value = session.get_header_bytes("Referer");
+                    let value = session.get_header_bytes("referer");
                     if value.is_empty() {
                         buf.extend_from_slice(EMPTY_FIELD);
                     } else {
@@ -413,7 +413,7 @@ impl Parser {
                     }
                 },
                 TagCategory::UserAgent => {
-                    let value = session.get_header_bytes("User-Agent");
+                    let value = session.get_header_bytes("user-agent");
                     if value.is_empty() {
                         buf.extend_from_slice(EMPTY_FIELD);
                     } else {
@@ -482,7 +482,7 @@ impl Parser {
                 TagCategory::LatencyHuman => {
                     if let Some(instant) = instant {
                         let ms = (instant - ctx.timing.created_at).as_millis();
-                        buf = format_duration(buf, ms as u64);
+                        format_duration(&mut buf, ms as u64);
                     } else {
                         buf.extend_from_slice(EMPTY_FIELD);
                     }
@@ -545,7 +545,7 @@ impl Parser {
                 },
                 TagCategory::Context => {
                     if let Some(key) = &tag.data {
-                        buf = ctx.append_log_value(buf, key.as_str());
+                        ctx.append_log_value(&mut buf, key.as_str());
                     } else {
                         buf.extend_from_slice(EMPTY_FIELD);
                     }
@@ -608,13 +608,14 @@ pub fn parse_access_log_directive(
 #[cfg(test)]
 mod tests {
     use super::{
-        format_extra_tag, parse_access_log_directive, Parser, Tag, TagCategory,
+        format_extra_tag, get_resp_header_value, parse_access_log_directive,
+        Parser, Tag, TagCategory,
     };
     use http::Method;
     use pingap_core::{
         ConnectionInfo, Ctx, RequestState, Timing, UpstreamInfo,
     };
-    use pingora::proxy::Session;
+    use pingora::{http::ResponseHeader, proxy::Session};
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;
 
@@ -889,5 +890,22 @@ mod tests {
         let p: Parser = "{when_unix}".into();
         let log = p.format(&session, &ctx);
         assert_eq!(true, log.len() == 13);
+    }
+
+    #[test]
+    fn test_get_resp_header_value() {
+        let mut header =
+            ResponseHeader::build_no_case(200, Some(1024)).unwrap();
+        header
+            .append_header("Content-Type", "application/json")
+            .unwrap();
+        let value = get_resp_header_value(&header, "content-type");
+        assert_eq!(
+            "application/json",
+            std::str::from_utf8(value.unwrap()).unwrap()
+        );
+
+        let value = get_resp_header_value(&header, "content-type-not-exists");
+        assert_eq!(None, value);
     }
 }

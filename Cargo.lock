@@ -3486,6 +3486,7 @@ dependencies = [
  "prometheus",
  "scopeguard",
  "snafu",
+ "strum 0.27.2",
  "substring",
  "tempfile",
  "tokio",

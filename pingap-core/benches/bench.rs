@@ -75,7 +75,8 @@ fn bench_format_duration(c: &mut Criterion) {
 
     group.bench_function("< 1s", |b| {
         b.iter(|| {
-            let buf = format_duration(BytesMut::new(), 999);
+            let mut buf = BytesMut::new();
+            format_duration(&mut buf, 999);
             if buf.len() != 5 {
                 panic!("buf: {:?}", buf);
             }
@@ -84,7 +85,8 @@ fn bench_format_duration(c: &mut Criterion) {
 
     group.bench_function("< 1m", |b| {
         b.iter(|| {
-            let buf = format_duration(BytesMut::new(), 9999);
+            let mut buf = BytesMut::new();
+            format_duration(&mut buf, 9999);
             if buf.len() != 4 {
                 panic!("buf: {:?}", buf);
             }

@@ -248,7 +248,8 @@ fn handle_special_headers(
     if buf.starts_with(b":") {
         let key = std::str::from_utf8(&buf[1..]).ok()?;
         // Use `append_log_value` to get the string representation of the context field.
-        let value = ctx.append_log_value(BytesMut::with_capacity(20), key);
+        let mut value = BytesMut::with_capacity(20);
+        ctx.append_log_value(&mut value, key);
         if !value.is_empty() {
             // Convert the resulting bytes to a HeaderValue.
             return HeaderValue::from_bytes(&value).ok();

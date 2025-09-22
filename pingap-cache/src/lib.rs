@@ -54,14 +54,15 @@ impl From<Error> for pingora::BError {
 }
 
 fn new_tiny_ufo_cache(mode: &str, size: usize) -> HttpCache {
+    let mode = CacheMode::from_str(mode).unwrap_or_default();
     HttpCache {
         directory: None,
-        cache: Arc::new(tiny::new_tiny_ufo_cache(mode, size / PAGE_SIZE, size)),
+        cache: Arc::new(tiny::TinyUfoCache::new(mode, size / PAGE_SIZE, size)),
         max_size: size as u64,
     }
 }
 fn new_file_cache(dir: &str) -> Result<HttpCache> {
-    let cache = file::new_file_cache(dir)?;
+    let cache = FileCache::new(dir)?;
     Ok(HttpCache {
         directory: Some(cache.directory.clone()),
         cache: Arc::new(cache),
@@ -168,6 +169,9 @@ pub use http_cache::{new_storage_clear_service, HttpCache};
 mod prom;
 #[cfg(feature = "tracing")]
 pub use prom::{CACHE_READING_TIME, CACHE_WRITING_TIME};
+
+use crate::file::FileCache;
+use crate::tiny::CacheMode;
 
 #[cfg(test)]
 mod tests {

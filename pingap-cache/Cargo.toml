@@ -32,6 +32,7 @@ pingora = { workspace = true }
 prometheus = { version = "0.13.4", default-features = false, optional = true }
 scopeguard = { workspace = true }
 snafu = { workspace = true }
+strum = { workspace = true }
 substring = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

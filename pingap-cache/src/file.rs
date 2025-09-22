@@ -29,10 +29,10 @@ use pingap_core::{parse_query_string, TinyUfo};
 use prometheus::Histogram;
 use scopeguard::defer;
 use std::path::Path;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime};
-use substring::Substring;
 use tokio::fs;
 use tracing::{debug, error, info};
 use urlencoding::decode;
@@ -110,21 +110,22 @@ impl Default for FileCacheParams {
 ///
 /// # Returns
 /// The absolute path as a String
-fn resolve_path(path: &str) -> String {
-    if path.is_empty() {
-        return "".to_string();
+fn resolve_path(path_str: &str) -> String {
+    if path_str.is_empty() {
+        return String::new();
     }
-    let mut p = path.to_string();
-    if p.starts_with('~') {
-        if let Some(home) = dirs::home_dir() {
-            p = home.to_string_lossy().to_string() + p.substring(1, p.len());
-        };
-    }
-    if let Ok(p) = Path::new(&p).absolutize() {
-        p.to_string_lossy().to_string()
+    let path = if let Some(stripped) = path_str.strip_prefix("~/") {
+        dirs::home_dir()
+            .map(|home| home.join(stripped))
+            .unwrap_or_else(|| PathBuf::from(path_str))
     } else {
-        p
-    }
+        PathBuf::from(path_str)
+    };
+
+    path.absolutize().map_or_else(
+        |_| path.to_string_lossy().into_owned(),
+        |p| p.to_string_lossy().into_owned(),
+    )
 }
 
 fn parse_params(dir: &str) -> FileCacheParams {
@@ -189,71 +190,76 @@ fn parse_params(dir: &str) -> FileCacheParams {
     params
 }
 
-/// Create a file cache and use tinyufo for hotspot data caching
-pub fn new_file_cache(dir: &str) -> Result<FileCache> {
-    let params = parse_params(dir);
-
-    let path = Path::new(&params.directory);
-    // directory not exist, create it
-    if !path.exists() {
-        std::fs::create_dir_all(path).map_err(|e| Error::Io { source: e })?;
-    }
-    info!(
-        category = LOG_CATEGORY,
-        dir = params.directory,
-        levels = params
-            .levels
-            .iter()
-            .map(|v| v.to_string())
-            .collect::<Vec<String>>()
-            .join(":"),
-        reading_max = params.reading_max,
-        writing_max = params.writing_max,
-        cache_max = params.cache_max,
-        cache_file_max_weight = params.cache_file_max_weight,
-        "new file cache"
-    );
-    let mut cache = None;
-    if params.cache_max > 0 {
-        cache =
-            Some(TinyUfo::new(params.cache_max, params.cache_max * PAGE_SIZE));
-    }
-
-    Ok(FileCache {
-        directory: params.directory,
-        cache_file_max_weight: params.cache_file_max_weight as u16,
-        reading: AtomicU32::new(0),
-        reading_max: params.reading_max,
-        #[cfg(feature = "tracing")]
-        read_time: CACHE_READING_TIME.clone(),
-        writing: AtomicU32::new(0),
-        writing_max: params.writing_max,
-        #[cfg(feature = "tracing")]
-        write_time: CACHE_WRITING_TIME.clone(),
-        cache,
-        cache_inactive: params.inactive,
-        levels: params.levels,
-    })
-}
-
 impl FileCache {
+    /// Create a file cache and use tinyufo for hotspot data caching
+    pub fn new(dir: &str) -> Result<Self> {
+        let params = parse_params(dir);
+
+        let path = Path::new(&params.directory);
+        // directory not exist, create it
+        if !path.exists() {
+            std::fs::create_dir_all(path)
+                .map_err(|e| Error::Io { source: e })?;
+        }
+        info!(
+            category = LOG_CATEGORY,
+            dir = params.directory,
+            levels = params
+                .levels
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<String>>()
+                .join(":"),
+            reading_max = params.reading_max,
+            writing_max = params.writing_max,
+            cache_max = params.cache_max,
+            cache_file_max_weight = params.cache_file_max_weight,
+            "new file cache"
+        );
+        let mut cache = None;
+        if params.cache_max > 0 {
+            cache = Some(TinyUfo::new(
+                params.cache_max,
+                params.cache_max * PAGE_SIZE,
+            ));
+        }
+
+        Ok(FileCache {
+            directory: params.directory,
+            cache_file_max_weight: params.cache_file_max_weight as u16,
+            reading: AtomicU32::new(0),
+            reading_max: params.reading_max,
+            #[cfg(feature = "tracing")]
+            read_time: CACHE_READING_TIME.clone(),
+            writing: AtomicU32::new(0),
+            writing_max: params.writing_max,
+            #[cfg(feature = "tracing")]
+            write_time: CACHE_WRITING_TIME.clone(),
+            cache,
+            cache_inactive: params.inactive,
+            levels: params.levels,
+        })
+    }
     #[inline]
     fn get_file_path(&self, key: &str, namespace: &str) -> std::path::PathBuf {
         let mut path = Path::new(&self.directory).to_path_buf();
         if !namespace.is_empty() {
-            path = path.join(namespace);
+            path.push(namespace);
         };
         if self.levels.is_empty() {
-            return path.join(key);
+            path.push(key);
+            return path;
         }
-        let mut index = key.len() - 1;
+        let mut current_len = key.len() - 1;
         for level in self.levels.iter() {
             let level = *level as usize;
-            let hex = key.substring(index - level, index);
-            path = path.join(hex);
-            index -= level;
+            if current_len > level {
+                path.push(&key[current_len - level..current_len]);
+                current_len -= level;
+            }
         }
-        path.join(key)
+        path.push(key);
+        path
     }
 }
 
@@ -298,10 +304,8 @@ impl HttpCacheStorage for FileCache {
 
         #[cfg(feature = "tracing")]
         let start = SystemTime::now();
-        let file = self.get_file_path(
-            key,
-            std::string::String::from_utf8_lossy(namespace).as_ref(),
-        );
+        let namespace_str = std::str::from_utf8(namespace).unwrap_or_default();
+        let file = self.get_file_path(key, namespace_str);
 
         // add reading count
         let count = self.reading.fetch_add(1, Ordering::Relaxed);
@@ -370,10 +374,8 @@ impl HttpCacheStorage for FileCache {
         #[cfg(feature = "tracing")]
         let start = SystemTime::now();
         let buf: Bytes = data.into();
-        let file = self.get_file_path(
-            key,
-            std::string::String::from_utf8_lossy(namespace).as_ref(),
-        );
+        let namespace_str = std::str::from_utf8(namespace).unwrap_or_default();
+        let file = self.get_file_path(key, namespace_str);
         // add writing count
         let count = self.writing.fetch_add(1, Ordering::Relaxed);
         defer!(self.writing.fetch_sub(1, Ordering::Relaxed););
@@ -555,7 +557,7 @@ mod tests {
 
         let cache_config =
             format!("{}?cache_max=100&cache_file_max_size=1024", dir_path_str);
-        let cache = new_file_cache(&cache_config).unwrap();
+        let cache = FileCache::new(&cache_config).unwrap();
 
         let key = "my-test-key";
         let obj = CacheObject {
@@ -586,7 +588,7 @@ mod tests {
 
         // --- Test fallback from file ---
         // Create a new cache instance to simulate a fresh start with no in-memory cache.
-        let fresh_cache = new_file_cache(&cache_config).unwrap();
+        let fresh_cache = FileCache::new(&cache_config).unwrap();
 
         // 4. GET from the new instance should be a hit from the file.
         let file_obj = fresh_cache.get(key, namespace).await.unwrap().unwrap();
@@ -620,7 +622,7 @@ mod tests {
     #[tokio::test]
     async fn test_cache_clear() {
         let dir = tempdir().unwrap();
-        let cache = new_file_cache(dir.path().to_str().unwrap()).unwrap();
+        let cache = FileCache::new(dir.path().to_str().unwrap()).unwrap();
 
         // Create a file and set its access time to be in the past.
         let old_file_path = cache.get_file_path("old_key", "ns");
@@ -658,7 +660,7 @@ mod tests {
 
         // Case 1: No levels.
         let cache_no_levels =
-            new_file_cache(dir.path().to_str().unwrap()).unwrap();
+            FileCache::new(dir.path().to_str().unwrap()).unwrap();
         let path1 = cache_no_levels.get_file_path("mykey", "namespace");
         assert!(path1.to_string_lossy().ends_with("/namespace/mykey"));
 
@@ -666,7 +668,7 @@ mod tests {
         let cache_with_levels_config =
             format!("{}?levels=1:2", dir.path().to_str().unwrap());
         let cache_with_levels =
-            new_file_cache(&cache_with_levels_config).unwrap();
+            FileCache::new(&cache_with_levels_config).unwrap();
         let key = "abcdef123456";
         let path2 = cache_with_levels.get_file_path(key, "ns");
         assert!(path2.to_string_lossy().ends_with("/ns/5/34/abcdef123456"));
@@ -682,7 +684,7 @@ mod tests {
         )
         .unwrap();
         let dir = format!("{}?cache_max=100", dir.path().to_string_lossy());
-        let cache = new_file_cache(&dir).unwrap();
+        let cache = FileCache::new(&dir).unwrap();
 
         let key = "key";
         let obj = CacheObject {
@@ -707,7 +709,7 @@ mod tests {
         assert_eq!(obj, result);
 
         // empty tinyufo, get from file
-        let cache = new_file_cache(&dir).unwrap();
+        let cache = FileCache::new(&dir).unwrap();
         let result = cache.get(key, namespace).await.unwrap().unwrap();
         assert_eq!(obj, result);
 
@@ -752,7 +754,7 @@ mod tests {
     fn test_stats() {
         let dir = TempDir::new().unwrap();
         let dir = dir.keep().to_string_lossy().to_string();
-        let cache = new_file_cache(&dir).unwrap();
+        let cache = FileCache::new(&dir).unwrap();
         assert_eq!(0, cache.stats().unwrap().reading);
         assert_eq!(0, cache.stats().unwrap().writing);
     }

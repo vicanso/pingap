@@ -16,6 +16,7 @@ use super::http_cache::{CacheObject, HttpCacheStorage};
 use super::{Result, LOG_CATEGORY};
 use async_trait::async_trait;
 use pingap_core::TinyUfo;
+use strum::EnumString;
 use tracing::debug;
 
 /// Type alias for cache key
@@ -29,7 +30,13 @@ pub struct TinyUfoCache {
     cache: TinyUfo<CacheKey, CacheObject>,
 }
 
-static COMPACT_MODE: &str = "compact";
+/// 定义缓存模式，使其类型安全
+#[derive(Debug, Clone, Copy, Default, EnumString)]
+pub enum CacheMode {
+    #[default]
+    Normal,
+    Compact,
+}
 
 impl TinyUfoCache {
     /// Creates a new TinyUfoCache instance
@@ -40,21 +47,20 @@ impl TinyUfoCache {
     /// * `total_weight_limit` - The maximum total weight of items in the cache
     /// * `estimated_size` - Estimated number of items for internal capacity planning
     pub fn new(
-        mode: &str,
+        mode: CacheMode,
         total_weight_limit: usize,
         estimated_size: usize,
     ) -> Self {
-        if mode == COMPACT_MODE {
-            Self {
-                cache: TinyUfo::new_compact(
-                    total_weight_limit,
-                    estimated_size / 32,
-                ),
-            }
-        } else {
-            Self {
-                cache: TinyUfo::new(total_weight_limit, estimated_size / 32),
-            }
+        const SAMPLES_DIVISOR: usize = 32;
+        let samples = estimated_size / SAMPLES_DIVISOR;
+
+        match mode {
+            CacheMode::Compact => Self {
+                cache: TinyUfo::new_compact(total_weight_limit, samples),
+            },
+            CacheMode::Normal => Self {
+                cache: TinyUfo::new(total_weight_limit, samples),
+            },
         }
     }
 }
@@ -62,13 +68,13 @@ impl TinyUfoCache {
 /// Creates a new TinyUfoCache instance
 ///
 /// This is a convenience function that wraps `TinyUfoCache::new`
-pub fn new_tiny_ufo_cache(
-    mode: &str,
-    total_weight_limit: usize,
-    estimated_size: usize,
-) -> TinyUfoCache {
-    TinyUfoCache::new(mode, total_weight_limit, estimated_size)
-}
+// pub fn new_tiny_ufo_cache(
+//     mode: &str,
+//     total_weight_limit: usize,
+//     estimated_size: usize,
+// ) -> TinyUfoCache {
+//     TinyUfoCache::new(mode, total_weight_limit, estimated_size)
+// }
 
 #[async_trait]
 impl HttpCacheStorage for TinyUfoCache {
@@ -153,7 +159,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     #[tokio::test]
     async fn test_tiny_ufo_cache() {
-        let cache = new_tiny_ufo_cache("", 10, 10);
+        let cache = TinyUfoCache::new(CacheMode::Normal, 10, 10);
         let key = "key";
         let obj = CacheObject {
             meta: (b"Hello".to_vec(), b"World".to_vec()),

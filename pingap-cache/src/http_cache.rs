@@ -498,7 +498,7 @@ impl Storage for HttpCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tiny::new_tiny_ufo_cache;
+    use crate::tiny::{CacheMode, TinyUfoCache};
     use bytes::{Bytes, BytesMut};
     use pingora::cache::storage::{HitHandler, MissHandler};
     use pretty_assertions::assert_eq;
@@ -529,7 +529,7 @@ mod tests {
     async fn test_object_miss_handler() {
         let key = "key";
 
-        let cache = Arc::new(new_tiny_ufo_cache("", 10, 10));
+        let cache = Arc::new(TinyUfoCache::new(CacheMode::Normal, 10, 10));
         let obj = ObjectMissHandler {
             meta: (b"Hello".to_vec(), b"World".to_vec()),
             body: BytesMut::new(),

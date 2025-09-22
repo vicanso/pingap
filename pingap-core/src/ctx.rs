@@ -40,7 +40,7 @@ const HOUR: u64 = 60 * MINUTE;
 #[inline]
 /// Format the duration in human readable format, checking smaller units first.
 /// e.g., ms, s, m, h.
-pub fn format_duration(mut buf: BytesMut, ms: u64) -> BytesMut {
+pub fn format_duration(buf: &mut BytesMut, ms: u64) {
     if ms < SECOND {
         // Format as milliseconds if less than a second.
         buf.extend_from_slice(itoa::Buffer::new().format(ms).as_bytes());
@@ -77,7 +77,6 @@ pub fn format_duration(mut buf: BytesMut, ms: u64) -> BytesMut {
         }
         buf.extend_from_slice(b"h");
     }
-    buf
 }
 
 #[derive(PartialEq)]
@@ -534,7 +533,7 @@ impl Ctx {
     ///
     /// Returns: The modified BytesMut buffer.
     #[inline]
-    pub fn append_log_value(&self, mut buf: BytesMut, key: &str) -> BytesMut {
+    pub fn append_log_value(&self, buf: &mut BytesMut, key: &str) {
         // A macro to simplify formatting and appending optional time values.
         macro_rules! append_time {
             // Append raw milliseconds.
@@ -546,7 +545,7 @@ impl Ctx {
             // Append human-readable formatted time.
             ($val:expr, human) => {
                 if let Some(ms) = $val {
-                    buf = format_duration(buf, ms as u64);
+                    format_duration(buf, ms as u64);
                 }
             };
         }
@@ -701,7 +700,6 @@ impl Ctx {
             // Ignore unknown keys.
             _ => {},
         }
-        buf
     }
 
     /// Generates a Server-Timing header value based on the context's timing metrics.
@@ -946,33 +944,30 @@ mod tests {
     fn test_append_log_value_coverage() {
         let mut ctx = Ctx::new();
         // Test an unknown key, should do nothing.
-        let buf = ctx.append_log_value(BytesMut::new(), "unknown_key");
+        let mut buf = BytesMut::new();
+        ctx.append_log_value(&mut buf, "unknown_key");
         assert!(buf.is_empty(), "Unknown key should not append anything");
 
         // Test boolean values
+        buf = BytesMut::new();
         ctx.conn.reused = true;
-        assert_eq!(
-            &ctx.append_log_value(BytesMut::new(), "connection_reused")[..],
-            b"true"
-        );
+        ctx.append_log_value(&mut buf, "connection_reused");
+        assert_eq!(&buf[..], b"true");
 
         // Test optional string values
         ctx.conn.tls_version = Some("TLSv1.3".to_string());
-        assert_eq!(
-            &ctx.append_log_value(BytesMut::new(), "tls_version")[..],
-            b"TLSv1.3"
-        );
+        buf = BytesMut::new();
+        ctx.append_log_value(&mut buf, "tls_version");
+        assert_eq!(&buf[..], b"TLSv1.3");
 
         // Test service_time calculation
         coarsetime::Clock::update();
         std::thread::sleep(Duration::from_millis(11));
-        let service_time_str =
-            ctx.append_log_value(BytesMut::new(), "service_time");
+        buf = BytesMut::new();
+        ctx.append_log_value(&mut buf, "service_time");
         coarsetime::Clock::update();
-        let service_time: u64 = std::str::from_utf8(&service_time_str)
-            .unwrap()
-            .parse()
-            .unwrap();
+        let service_time: u64 =
+            std::str::from_utf8(&buf[..]).unwrap().parse().unwrap();
         assert!(service_time >= 10, "Service time should be at least 10ms");
     }
 
@@ -1044,35 +1039,35 @@ mod tests {
     #[test]
     fn test_format_duration() {
         let mut buf = BytesMut::new();
-        buf = format_duration(buf, (3600 + 3500) * 1000);
+        format_duration(&mut buf, (3600 + 3500) * 1000);
         assert_eq!(b"1.9h", buf.as_ref());
 
         buf = BytesMut::new();
-        buf = format_duration(buf, (3600 + 1800) * 1000);
+        format_duration(&mut buf, (3600 + 1800) * 1000);
         assert_eq!(b"1.5h", buf.as_ref());
 
         buf = BytesMut::new();
-        buf = format_duration(buf, (3600 + 100) * 1000);
+        format_duration(&mut buf, (3600 + 100) * 1000);
         assert_eq!(b"1h", buf.as_ref());
 
         buf = BytesMut::new();
-        buf = format_duration(buf, (60 + 50) * 1000);
+        format_duration(&mut buf, (60 + 50) * 1000);
         assert_eq!(b"1.8m", buf.as_ref());
 
         buf = BytesMut::new();
-        buf = format_duration(buf, (60 + 2) * 1000);
+        format_duration(&mut buf, (60 + 2) * 1000);
         assert_eq!(b"1m", buf.as_ref());
 
         buf = BytesMut::new();
-        buf = format_duration(buf, 1000);
+        format_duration(&mut buf, 1000);
         assert_eq!(b"1s", buf.as_ref());
 
         buf = BytesMut::new();
-        buf = format_duration(buf, 512);
+        format_duration(&mut buf, 512);
         assert_eq!(b"512ms", buf.as_ref());
 
         buf = BytesMut::new();
-        buf = format_duration(buf, 1112);
+        format_duration(&mut buf, 1112);
         assert_eq!(b"1.1s", buf.as_ref());
     }
 
@@ -1120,201 +1115,138 @@ mod tests {
     fn test_state() {
         let mut ctx = Ctx::new();
 
+        let mut buf = BytesMut::new();
         ctx.conn.id = 10;
-        assert_eq!(
-            b"10",
-            ctx.append_log_value(BytesMut::new(), "connection_id")
-                .as_ref()
-        );
+        ctx.append_log_value(&mut buf, "connection_id");
+        assert_eq!(b"10", buf.as_ref());
 
-        assert_eq!(
-            b"false",
-            ctx.append_log_value(BytesMut::new(), "upstream_reused")
-                .as_ref()
-        );
+        buf = BytesMut::new();
+        ctx.append_log_value(&mut buf, "upstream_reused");
+        assert_eq!(b"false", buf.as_ref());
 
+        buf = BytesMut::new();
         ctx.upstream.reused = true;
-        assert_eq!(
-            b"true",
-            ctx.append_log_value(BytesMut::new(), "upstream_reused")
-                .as_ref()
-        );
+        ctx.append_log_value(&mut buf, "upstream_reused");
+        assert_eq!(b"true", buf.as_ref());
 
+        buf = BytesMut::new();
         ctx.upstream.address = "192.168.1.1:80".to_string();
-        assert_eq!(
-            b"192.168.1.1:80",
-            ctx.append_log_value(BytesMut::new(), "upstream_addr")
-                .as_ref()
-        );
+        ctx.append_log_value(&mut buf, "upstream_addr");
+        assert_eq!(b"192.168.1.1:80", buf.as_ref());
 
+        buf = BytesMut::new();
         ctx.upstream.status = Some(StatusCode::CREATED);
-        assert_eq!(
-            b"201",
-            ctx.append_log_value(BytesMut::new(), "upstream_status")
-                .as_ref()
-        );
+        ctx.append_log_value(&mut buf, "upstream_status");
+        assert_eq!(b"201", buf.as_ref());
 
+        buf = BytesMut::new();
         ctx.state.processing_count = 10;
-        assert_eq!(
-            b"10",
-            ctx.append_log_value(BytesMut::new(), "processing").as_ref()
-        );
+        ctx.append_log_value(&mut buf, "processing");
+        assert_eq!(b"10", buf.as_ref());
 
+        buf = BytesMut::new();
         ctx.timing.upstream_connect = Some(1);
-        assert_eq!(
-            b"1",
-            ctx.append_log_value(BytesMut::new(), "upstream_connect_time")
-                .as_ref()
-        );
-        assert_eq!(
-            b"1ms",
-            ctx.append_log_value(
-                BytesMut::new(),
-                "upstream_connect_time_human"
-            )
-            .as_ref()
-        );
+        ctx.append_log_value(&mut buf, "upstream_connect_time");
+        assert_eq!(b"1", buf.as_ref());
 
+        buf = BytesMut::new();
+        ctx.append_log_value(&mut buf, "upstream_connect_time_human");
+        assert_eq!(b"1ms", buf.as_ref());
+
+        buf = BytesMut::new();
         ctx.upstream.connected_count = Some(30);
-        assert_eq!(
-            b"30",
-            ctx.append_log_value(BytesMut::new(), "upstream_connected")
-                .as_ref()
-        );
+        ctx.append_log_value(&mut buf, "upstream_connected");
+        assert_eq!(b"30", buf.as_ref());
 
+        buf = BytesMut::new();
         ctx.timing.upstream_processing = Some(2);
-        assert_eq!(
-            b"2",
-            ctx.append_log_value(BytesMut::new(), "upstream_processing_time")
-                .as_ref()
-        );
-        assert_eq!(
-            b"2ms",
-            ctx.append_log_value(
-                BytesMut::new(),
-                "upstream_processing_time_human"
-            )
-            .as_ref()
-        );
+        ctx.append_log_value(&mut buf, "upstream_processing_time");
+        assert_eq!(b"2", buf.as_ref());
 
+        buf = BytesMut::new();
+        ctx.append_log_value(&mut buf, "upstream_processing_time_human");
+        assert_eq!(b"2ms", buf.as_ref());
+
+        buf = BytesMut::new();
         ctx.timing.upstream_response = Some(3);
-        assert_eq!(
-            b"3",
-            ctx.append_log_value(BytesMut::new(), "upstream_response_time")
-                .as_ref()
-        );
-        assert_eq!(
-            b"3ms",
-            ctx.append_log_value(
-                BytesMut::new(),
-                "upstream_response_time_human"
-            )
-            .as_ref()
-        );
+        ctx.append_log_value(&mut buf, "upstream_response_time");
+        assert_eq!(b"3", buf.as_ref());
 
+        buf = BytesMut::new();
+        ctx.append_log_value(&mut buf, "upstream_response_time_human");
+        assert_eq!(b"3ms", buf.as_ref());
+
+        buf = BytesMut::new();
         ctx.timing.upstream_tcp_connect = Some(100);
-        assert_eq!(
-            b"100",
-            ctx.append_log_value(BytesMut::new(), "upstream_tcp_connect_time")
-                .as_ref()
-        );
-        assert_eq!(
-            b"100ms",
-            ctx.append_log_value(
-                BytesMut::new(),
-                "upstream_tcp_connect_time_human"
-            )
-            .as_ref()
-        );
+        ctx.append_log_value(&mut buf, "upstream_tcp_connect_time");
+        assert_eq!(b"100", buf.as_ref());
 
+        buf = BytesMut::new();
+        ctx.append_log_value(&mut buf, "upstream_tcp_connect_time_human");
+        assert_eq!(b"100ms", buf.as_ref());
+
+        buf = BytesMut::new();
         ctx.timing.upstream_tls_handshake = Some(110);
-        assert_eq!(
-            b"110",
-            ctx.append_log_value(
-                BytesMut::new(),
-                "upstream_tls_handshake_time"
-            )
-            .as_ref()
-        );
-        assert_eq!(
-            b"110ms",
-            ctx.append_log_value(
-                BytesMut::new(),
-                "upstream_tls_handshake_time_human"
-            )
-            .as_ref()
-        );
+        ctx.append_log_value(&mut buf, "upstream_tls_handshake_time");
+        assert_eq!(b"110", buf.as_ref());
 
+        buf = BytesMut::new();
+        ctx.append_log_value(&mut buf, "upstream_tls_handshake_time_human");
+        assert_eq!(b"110ms", buf.as_ref());
+
+        buf = BytesMut::new();
         ctx.timing.upstream_connection_duration = Some(120);
-        assert_eq!(
-            b"120",
-            ctx.append_log_value(BytesMut::new(), "upstream_connection_time")
-                .as_ref()
-        );
-        assert_eq!(
-            b"120ms",
-            ctx.append_log_value(
-                BytesMut::new(),
-                "upstream_connection_time_human"
-            )
-            .as_ref()
-        );
+        ctx.append_log_value(&mut buf, "upstream_connection_time");
+        assert_eq!(b"120", buf.as_ref());
 
+        buf = BytesMut::new();
+        ctx.append_log_value(&mut buf, "upstream_connection_time_human");
+        assert_eq!(b"120ms", buf.as_ref());
+
+        buf = BytesMut::new();
         ctx.upstream.location = "pingap".to_string();
-        assert_eq!(
-            b"pingap",
-            ctx.append_log_value(BytesMut::new(), "location").as_ref()
-        );
+        ctx.append_log_value(&mut buf, "location");
+        assert_eq!(b"pingap", buf.as_ref());
 
+        buf = BytesMut::new();
         ctx.timing.connection_duration = 4;
-        assert_eq!(
-            b"4",
-            ctx.append_log_value(BytesMut::new(), "connection_time")
-                .as_ref()
-        );
-        assert_eq!(
-            b"4ms",
-            ctx.append_log_value(BytesMut::new(), "connection_time_human")
-                .as_ref()
-        );
+        ctx.append_log_value(&mut buf, "connection_time");
+        assert_eq!(b"4", buf.as_ref());
 
-        assert_eq!(
-            b"false",
-            ctx.append_log_value(BytesMut::new(), "connection_reused")
-                .as_ref()
-        );
+        buf = BytesMut::new();
+        ctx.append_log_value(&mut buf, "connection_time_human");
+        assert_eq!(b"4ms", buf.as_ref());
+
+        buf = BytesMut::new();
+        ctx.conn.reused = false;
+        ctx.append_log_value(&mut buf, "connection_reused");
+        assert_eq!(b"false", buf.as_ref());
+
+        buf = BytesMut::new();
         ctx.conn.reused = true;
-        assert_eq!(
-            b"true",
-            ctx.append_log_value(BytesMut::new(), "connection_reused")
-                .as_ref()
-        );
+        ctx.append_log_value(&mut buf, "connection_reused");
+        assert_eq!(b"true", buf.as_ref());
 
+        buf = BytesMut::new();
         ctx.conn.tls_version = Some("TLSv1.3".to_string());
-        assert_eq!(
-            b"TLSv1.3",
-            ctx.append_log_value(BytesMut::new(), "tls_version")
-                .as_ref()
-        );
+        ctx.append_log_value(&mut buf, "tls_version");
+        assert_eq!(b"TLSv1.3", buf.as_ref());
 
+        buf = BytesMut::new();
         ctx.conn.tls_cipher =
             Some("ECDHE_ECDSA_WITH_AES_128_GCM_SHA256".to_string());
-        assert_eq!(
-            b"ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
-            ctx.append_log_value(BytesMut::new(), "tls_cipher").as_ref()
-        );
+        ctx.append_log_value(&mut buf, "tls_cipher");
+        assert_eq!(b"ECDHE_ECDSA_WITH_AES_128_GCM_SHA256", buf.as_ref());
 
+        buf = BytesMut::new();
         ctx.timing.tls_handshake = Some(101);
-        assert_eq!(
-            b"101",
-            ctx.append_log_value(BytesMut::new(), "tls_handshake_time")
-                .as_ref()
-        );
-        assert_eq!(
-            b"101ms",
-            ctx.append_log_value(BytesMut::new(), "tls_handshake_time_human")
-                .as_ref()
-        );
+        ctx.append_log_value(&mut buf, "tls_handshake_time");
+        assert_eq!(b"101", buf.as_ref());
+
+        buf = BytesMut::new();
+        ctx.append_log_value(&mut buf, "tls_handshake_time_human");
+        assert_eq!(b"101ms", buf.as_ref());
+
         {
             let features = ctx.features.get_or_insert_default();
             features.compression_stat = Some(CompressionStat {
@@ -1325,45 +1257,35 @@ mod tests {
             })
         }
 
-        assert_eq!(
-            b"5",
-            ctx.append_log_value(BytesMut::new(), "compression_time")
-                .as_ref()
-        );
-        assert_eq!(
-            b"5ms",
-            ctx.append_log_value(BytesMut::new(), "compression_time_human")
-                .as_ref()
-        );
-        assert_eq!(
-            b"2.0",
-            ctx.append_log_value(BytesMut::new(), "compression_ratio")
-                .as_ref()
-        );
+        buf = BytesMut::new();
+        ctx.append_log_value(&mut buf, "compression_time");
+        assert_eq!(b"5", buf.as_ref());
 
+        buf = BytesMut::new();
+        ctx.append_log_value(&mut buf, "compression_time_human");
+        assert_eq!(b"5ms", buf.as_ref());
+
+        buf = BytesMut::new();
+        ctx.append_log_value(&mut buf, "compression_ratio");
+        assert_eq!(b"2.0", buf.as_ref());
+
+        buf = BytesMut::new();
         ctx.timing.cache_lookup = Some(6);
-        assert_eq!(
-            b"6",
-            ctx.append_log_value(BytesMut::new(), "cache_lookup_time")
-                .as_ref()
-        );
-        assert_eq!(
-            b"6ms",
-            ctx.append_log_value(BytesMut::new(), "cache_lookup_time_human")
-                .as_ref()
-        );
+        ctx.append_log_value(&mut buf, "cache_lookup_time");
+        assert_eq!(b"6", buf.as_ref());
 
+        buf = BytesMut::new();
+        ctx.append_log_value(&mut buf, "cache_lookup_time_human");
+        assert_eq!(b"6ms", buf.as_ref());
+
+        buf = BytesMut::new();
         ctx.timing.cache_lock = Some(7);
-        assert_eq!(
-            b"7",
-            ctx.append_log_value(BytesMut::new(), "cache_lock_time")
-                .as_ref()
-        );
-        assert_eq!(
-            b"7ms",
-            ctx.append_log_value(BytesMut::new(), "cache_lock_time_human")
-                .as_ref()
-        );
+        ctx.append_log_value(&mut buf, "cache_lock_time");
+        assert_eq!(b"7", buf.as_ref());
+
+        buf = BytesMut::new();
+        ctx.append_log_value(&mut buf, "cache_lock_time_human");
+        assert_eq!(b"7ms", buf.as_ref());
     }
 
     #[test]
