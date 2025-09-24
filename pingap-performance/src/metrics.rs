@@ -14,7 +14,6 @@
 
 use super::{get_process_system_info, get_processing_accepted, LOG_CATEGORY};
 use async_trait::async_trait;
-use pingap_config::ConfigManager;
 use pingap_core::{BackgroundTask, Error};
 use pingap_location::LocationProvider;
 use pingap_upstream::{
@@ -27,7 +26,6 @@ use tracing::info;
 struct PerformanceMetricsLogTask {
     location_provider: Arc<dyn LocationProvider>,
     upstream_provider: Arc<dyn UpstreamProvider>,
-    config_manager: Arc<ConfigManager>,
 }
 
 /// Joins a vector of strings into a single string separated by ", ".
@@ -78,8 +76,7 @@ impl BackgroundTask for PerformanceMetricsLogTask {
         let upstreams_connected = join_non_empty(connected_vec);
 
         // Get system metrics and request processing stats
-        let system_info =
-            get_process_system_info(self.config_manager.get_current_config());
+        let system_info = get_process_system_info();
         let (processing, accepted) = get_processing_accepted();
         let upstreams_healthy_status =
             get_upstream_healthy_status(self.upstream_provider.clone())
@@ -112,12 +109,10 @@ impl BackgroundTask for PerformanceMetricsLogTask {
 /// Creates a new service that periodically logs performance metrics
 /// Returns a tuple of (service name, service task)
 pub fn new_performance_metrics_log_service(
-    config_manager: Arc<ConfigManager>,
     location_provider: Arc<dyn LocationProvider>,
     upstream_provider: Arc<dyn UpstreamProvider>,
 ) -> Box<dyn BackgroundTask> {
     Box::new(PerformanceMetricsLogTask {
-        config_manager,
         location_provider,
         upstream_provider,
     })

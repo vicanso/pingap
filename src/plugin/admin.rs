@@ -147,7 +147,7 @@ struct BasicInfo {
     pid: String,
     user: String,
     group: String,
-    threads: usize,
+    threads: i64,
     processing: i32,
     accepted: u64,
     memory_mb: usize,
@@ -615,7 +615,7 @@ async fn handle_request_admin(
         })
     } else if path == "/basic" {
         let current_config = plugin.load_config(true).await?;
-        let info = get_process_system_info(plugin.manager.get_current_config());
+        let info = get_process_system_info();
 
         let (processing, accepted) = get_processing_accepted();
 

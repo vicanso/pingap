@@ -79,7 +79,6 @@ pub(crate) fn inject_telemetry_headers(
     ctx: &Ctx,
     upstream_response: &mut ResponseHeader,
 ) {
-    // 优化：使用 and_then 扁平化嵌套的 if let
     if let Some(tracer) =
         ctx.features.as_ref().and_then(|f| f.otel_tracer.as_ref())
     {

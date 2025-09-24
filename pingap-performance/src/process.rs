@@ -15,11 +15,9 @@
 use bytesize::ByteSize;
 use memory_stats::memory_stats;
 use once_cell::sync::Lazy;
-use pingap_config::PingapConfig;
 use serde::{Deserialize, Serialize};
 use std::process;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
-use std::sync::Arc;
 use sysinfo::MemoryRefreshKind;
 use sysinfo::{RefreshKind, System};
 
@@ -71,7 +69,7 @@ pub struct ProcessSystemInfo {
     /// Process ID of the current process
     pub pid: u32,
     /// Number of threads configured across all servers
-    pub threads: usize,
+    pub threads: i64,
     /// Number of open file descriptors (Linux only)
     pub fd_count: usize,
     /// Number of IPv4 TCP connections (Linux only)
@@ -82,53 +80,29 @@ pub struct ProcessSystemInfo {
 
 /// Gathers and returns system information including memory usage, CPU details,
 /// process statistics and network connection counts
-pub fn get_process_system_info(config: Arc<PingapConfig>) -> ProcessSystemInfo {
-    let data = std::fs::read(config.basic.get_pid_file()).unwrap_or_default();
-    let mut pid = std::string::String::from_utf8_lossy(&data)
-        .trim()
-        .parse::<u32>()
-        .unwrap_or_default();
-    if pid == 0 {
-        pid = process::id();
-    }
+pub fn get_process_system_info() -> ProcessSystemInfo {
+    let pid = process::id();
 
     cfg_if::cfg_if! {
         if #[cfg(target_os = "linux")] {
-            let (fd_count, tcp_count, tcp6_count) = if let Ok(p) = procfs::process::Process::new(pid as i32) {
+            let (fd_count, tcp_count, tcp6_count, threads) = if let Ok(p) = procfs::process::Process::new(pid as i32) {
+                let mut threads = -1_i64;
+                if let Ok(stat) = p.stat() {
+                    threads = stat.num_threads;
+                }
                 (
                     p.fd_count().unwrap_or_default(),
                     p.tcp().unwrap_or_default().len(),
                     p.tcp6().unwrap_or_default().len(),
+                    threads,
                 )
             } else {
-                (0, 0, 0)
+                (0, 0, 0, -1_i64)
             };
         } else {
-            let (fd_count, tcp_count, tcp6_count) = (0, 0, 0);
+            let (fd_count, tcp_count, tcp6_count, threads) = (0, 0, 0, -1_i64);
         }
     }
-
-    let cpu_count = num_cpus::get();
-    let default_threads = config.basic.threads.unwrap_or(1);
-    let default_threads = if default_threads == 0 {
-        cpu_count
-    } else {
-        default_threads
-    };
-
-    let threads: usize = config
-        .servers
-        // values of current_config.servers
-        .values()
-        .map(|server| {
-            match server.threads {
-                // default threads if threads is 0
-                Some(0) => default_threads,
-                Some(n) => n,
-                None => default_threads,
-            }
-        })
-        .sum();
 
     let mut memory = "".to_string();
     let mut memory_mb = 0;
@@ -167,7 +141,7 @@ mod tests {
 
     #[test]
     fn test_get_process_system_info() {
-        let info = get_process_system_info(Arc::new(PingapConfig::default()));
+        let info = get_process_system_info();
         assert_eq!(true, info.memory_mb > 0);
         assert_eq!(true, !info.memory.is_empty());
         assert_eq!(true, !info.arch.is_empty());

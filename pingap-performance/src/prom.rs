@@ -16,7 +16,6 @@ use super::{get_process_system_info, Error, Result, LOG_CATEGORY};
 use async_trait::async_trait;
 use humantime::parse_duration;
 use pingap_cache::{CACHE_READING_TIME, CACHE_WRITING_TIME};
-use pingap_config::PingapConfig;
 use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
 use pingap_core::{get_hostname, Ctx};
@@ -331,7 +330,7 @@ impl Prometheus {
     /// - Open file descriptor count
     /// - IPv4 and IPv6 TCP connection counts
     fn gather(&self) -> Vec<prometheus::proto::MetricFamily> {
-        let info = get_process_system_info(Arc::new(PingapConfig::default()));
+        let info = get_process_system_info();
         self.memory.set(info.memory_mb as i64);
         self.fd_count.set(info.fd_count as i64);
         self.tcp_count.set(info.tcp_count as i64);

@@ -62,6 +62,12 @@ pub struct BackendObserveNotification {
     sender: Arc<NotificationSender>,
 }
 
+impl BackendObserveNotification {
+    pub fn new(name: String, sender: Arc<NotificationSender>) -> Self {
+        Self { name, sender }
+    }
+}
+
 #[async_trait]
 impl HealthObserve for BackendObserveNotification {
     async fn observe(&self, backend: &Backend, healthy: bool) {
@@ -81,20 +87,6 @@ impl HealthObserve for BackendObserveNotification {
                 message: info.1,
             })
             .await;
-    }
-}
-
-fn new_observe(
-    name: &str,
-    sender: Option<Arc<NotificationSender>>,
-) -> Option<HealthObserveCallback> {
-    if let Some(sender) = sender {
-        Some(Box::new(BackendObserveNotification {
-            name: name.to_string(),
-            sender: sender.clone(),
-        }))
-    } else {
-        None
     }
 }
 
@@ -289,11 +281,20 @@ where
             .expect("static should not error");
     }
 
+    let observe: Option<HealthObserveCallback> = if let Some(sender) = sender {
+        Some(Box::new(BackendObserveNotification::new(
+            name.to_string(),
+            sender.clone(),
+        )))
+    } else {
+        None
+    };
+
     // Set up health checking for the backends
     let (health_check_conf, hc) = new_health_check(
         name,
         &conf.health_check.clone().unwrap_or_default(),
-        new_observe(name, sender),
+        observe,
     )
     .map_err(|e| Error::Common {
         message: e.to_string(),

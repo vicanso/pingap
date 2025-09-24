@@ -108,54 +108,109 @@ pub struct ServerConf {
 
 impl fmt::Display for ServerConf {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ServerConf {{")?;
-        write!(f, " name: {}, ", self.name)?;
-        write!(f, "admin: {}, ", self.admin)?;
-        write!(f, "addr: {}, ", self.addr)?;
-        write!(f, "access_log: {:?}, ", self.access_log)?;
-        write!(f, "locations: {:?}, ", self.locations)?;
-        if let Some(ref ciphers) = self.tls_cipher_list {
-            write!(f, "tls_cipher_list: {ciphers}, ")?;
-        }
-        if let Some(ref suites) = self.tls_ciphersuites {
-            write!(f, "tls_ciphersuites: {suites}, ")?;
-        }
-        if let Some(ref min_ver) = self.tls_min_version {
-            write!(f, "tls_min_version: {min_ver}, ")?;
-        }
-        if let Some(ref max_ver) = self.tls_max_version {
-            write!(f, "tls_max_version: {max_ver}, ")?;
-        }
-        write!(f, "threads: {:?}, ", self.threads)?;
-        write!(f, "global_certificates: {}, ", self.global_certificates)?;
-        write!(f, "enabled_h2: {}, ", self.enabled_h2)?;
-        write!(f, "tcp_keepalive: {:?}, ", self.tcp_keepalive)?;
-        write!(f, "tcp_fastopen: {:?}, ", self.tcp_fastopen)?;
-        write!(
+        // Helper closure to format optional values consistently
+        let format_opt_usize = |opt: &Option<usize>| {
+            opt.map_or("default".to_string(), |v| v.to_string())
+        };
+        let format_opt_duration = |opt: &Option<Duration>| {
+            opt.map_or("default".to_string(), |v| format!("{v:?}"))
+        };
+
+        // Main Server Identity
+        writeln!(f, "Server Configuration: '{}'", self.name)?;
+        writeln!(f, "  Listen Addresses: {}", self.addr)?;
+
+        // --- General ---
+        writeln!(f, "  - General Settings:")?;
+        writeln!(f, "    Admin Role: {}", self.admin)?;
+        writeln!(
             f,
-            "downstream_read_timeout: {:?}, ",
-            self.downstream_read_timeout
+            "    Access Log: {}",
+            self.access_log.as_deref().unwrap_or("disabled")
         )?;
-        write!(
+        if !self.locations.is_empty() {
+            writeln!(f, "    Locations: {}", self.locations.join(", "))?;
+        }
+        writeln!(f, "    Worker Threads: {}", format_opt_usize(&self.threads))?;
+
+        // --- Protocols & Timeouts ---
+        writeln!(f, "  - Protocols & Timeouts:")?;
+        writeln!(f, "    HTTP/2 Enabled: {}", self.enabled_h2)?;
+        writeln!(
             f,
-            "downstream_write_timeout: {:?}, ",
-            self.downstream_write_timeout
+            "    Downstream Read Timeout: {}",
+            format_opt_duration(&self.downstream_read_timeout)
         )?;
-        if let Some(ref metrics) = self.prometheus_metrics {
-            write!(f, "prometheus_metrics: {metrics}, ")?;
+        writeln!(
+            f,
+            "    Downstream Write Timeout: {}",
+            format_opt_duration(&self.downstream_write_timeout)
+        )?;
+
+        // --- TLS ---
+        writeln!(f, "  - TLS Settings:")?;
+        writeln!(f, "    Global Certificates: {}", self.global_certificates)?;
+        writeln!(
+            f,
+            "    Min Version: {}",
+            self.tls_min_version.clone().unwrap_or_default()
+        )?;
+        writeln!(
+            f,
+            "    Max Version: {}",
+            self.tls_max_version.clone().unwrap_or_default()
+        )?;
+        writeln!(
+            f,
+            "    Cipher List (TLS <1.3): {}",
+            self.tls_cipher_list.clone().unwrap_or_default()
+        )?;
+        writeln!(
+            f,
+            "    Ciphersuites (TLS 1.3): {}",
+            self.tls_ciphersuites.clone().unwrap_or_default()
+        )?;
+
+        // --- TCP ---
+        writeln!(f, "  - TCP Settings:")?;
+        if let Some(keepalive) = &self.tcp_keepalive {
+            // Assuming TcpKeepalive has a readable Debug format
+            writeln!(
+                f,
+                "    Keepalive: idle={:?}, interval={:?}, count={:?}",
+                keepalive.idle, keepalive.interval, keepalive.count
+            )?;
+        } else {
+            writeln!(f, "    Keepalive: disabled")?;
         }
-        if let Some(ref exporter) = self.otlp_exporter {
-            write!(f, "otlp_exporter: {exporter}, ")?;
+        writeln!(f, "    Fast Open: {}", format_opt_usize(&self.tcp_fastopen))?;
+        writeln!(f, "    Reuse Port: {}", self.reuse_port.unwrap_or(false))?;
+
+        // --- Observability ---
+        writeln!(f, "  - Observability:")?;
+        writeln!(
+            f,
+            "    Prometheus Endpoint: {}",
+            self.prometheus_metrics.as_deref().unwrap_or("disabled")
+        )?;
+        writeln!(
+            f,
+            "    OTLP Exporter: {}",
+            self.otlp_exporter.as_deref().unwrap_or("disabled")
+        )?;
+        writeln!(f, "    Server-Timing Header: {}", self.enable_server_timing)?;
+
+        // --- Extensibility ---
+        if let Some(modules) = &self.modules {
+            if !modules.is_empty() {
+                writeln!(f, "  - Enabled Modules:")?;
+                writeln!(f, "    {}", modules.join(", "))?;
+            }
         }
-        if let Some(ref modules) = self.modules {
-            write!(f, "modules: {modules:?}, ")?;
-        }
-        write!(f, "enable_server_timing: {}, ", self.enable_server_timing)?;
-        write!(f, "error_template: {} }}", self.error_template)?;
+
         Ok(())
     }
 }
-
 // Conversion implementation from PingapConfig to Vec<ServerConf>
 pub fn parse_from_conf(conf: PingapConfig) -> Vec<ServerConf> {
     let mut upstreams = vec![];
@@ -255,12 +310,62 @@ mod tests {
 
         #[cfg(target_os = "linux")]
         assert_eq!(
-            r#"ServerConf { name: pingap, admin: false, addr: 127.0.0.1:3000,127.0.0.1:3001, access_log: Some("combined"), locations: ["charts-location"], threads: Some(4), global_certificates: false, enabled_h2: true, tcp_keepalive: Some(TcpKeepalive { idle: 10s, interval: 5s, count: 10, user_timeout: 0ns }), tcp_fastopen: Some(10), downstream_read_timeout: None, downstream_write_timeout: None, enable_server_timing: false, error_template: <html></html> }"#,
+            r#"Server Configuration: 'pingap'
+  Listen Addresses: 127.0.0.1:3000,127.0.0.1:3001
+  - General Settings:
+    Admin Role: false
+    Access Log: combined
+    Locations: charts-location
+    Worker Threads: 4
+  - Protocols & Timeouts:
+    HTTP/2 Enabled: true
+    Downstream Read Timeout: default
+    Downstream Write Timeout: default
+  - TLS Settings:
+    Global Certificates: false
+    Min Version: 
+    Max Version: 
+    Cipher List (TLS <1.3): 
+    Ciphersuites (TLS 1.3): 
+  - TCP Settings:
+    Keepalive: idle=10s, interval=5s, count=10
+    Fast Open: 10
+    Reuse Port: false
+  - Observability:
+    Prometheus Endpoint: disabled
+    OTLP Exporter: disabled
+    Server-Timing Header: false
+"#,
             conf.to_string()
         );
         #[cfg(not(target_os = "linux"))]
         assert_eq!(
-            r#"ServerConf { name: pingap, admin: false, addr: 127.0.0.1:3000,127.0.0.1:3001, access_log: Some("combined"), locations: ["charts-location"], threads: Some(4), global_certificates: false, enabled_h2: true, tcp_keepalive: Some(TcpKeepalive { idle: 10s, interval: 5s, count: 10 }), tcp_fastopen: Some(10), downstream_read_timeout: None, downstream_write_timeout: None, enable_server_timing: false, error_template: <html></html> }"#,
+            r#"Server Configuration: 'pingap'
+  Listen Addresses: 127.0.0.1:3000,127.0.0.1:3001
+  - General Settings:
+    Admin Role: false
+    Access Log: combined
+    Locations: charts-location
+    Worker Threads: 4
+  - Protocols & Timeouts:
+    HTTP/2 Enabled: true
+    Downstream Read Timeout: default
+    Downstream Write Timeout: default
+  - TLS Settings:
+    Global Certificates: false
+    Min Version: 
+    Max Version: 
+    Cipher List (TLS <1.3): 
+    Ciphersuites (TLS 1.3): 
+  - TCP Settings:
+    Keepalive: idle=10s, interval=5s, count=10
+    Fast Open: 10
+    Reuse Port: false
+  - Observability:
+    Prometheus Endpoint: disabled
+    OTLP Exporter: disabled
+    Server-Timing Header: false
+"#,
             conf.to_string()
         );
     }

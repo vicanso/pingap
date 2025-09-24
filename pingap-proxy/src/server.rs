@@ -216,7 +216,10 @@ const META_DEFAULTS: CacheMetaDefaults =
 static HTTP_500_RESPONSE: Lazy<ResponseHeader> =
     Lazy::new(|| error_resp::gen_error_response(500));
 
-pub struct Providers {
+#[derive(Clone)]
+pub struct AppContext {
+    pub logger: Option<Sender<BytesMut>>,
+    pub config_manager: Arc<ConfigManager>,
     pub server_locations_provider: Arc<dyn ServerLocationsProvider>,
     pub location_provider: Arc<dyn LocationProvider>,
     pub upstream_provider: Arc<dyn UpstreamProvider>,
@@ -231,12 +234,7 @@ impl Server {
     /// - TLS settings
     /// - Prometheus metrics (if enabled)
     /// - Threading configuration
-    pub fn new(
-        conf: &ServerConf,
-        access_logger: Option<Sender<BytesMut>>,
-        config_manager: Arc<ConfigManager>,
-        providers: Providers,
-    ) -> Result<Self> {
+    pub fn new(conf: &ServerConf, ctx: AppContext) -> Result<Self> {
         debug!(
             category = LOG_CATEGORY,
             config = conf.to_string(),
@@ -300,13 +298,13 @@ impl Server {
             modules: conf.modules.clone(),
             downstream_read_timeout: conf.downstream_read_timeout,
             downstream_write_timeout: conf.downstream_write_timeout,
-            server_locations_provider: providers.server_locations_provider,
-            location_provider: providers.location_provider,
-            upstream_provider: providers.upstream_provider,
-            plugin_provider: providers.plugin_provider,
-            certificate_provider: providers.certificate_provider,
-            access_logger,
-            config_manager,
+            server_locations_provider: ctx.server_locations_provider,
+            location_provider: ctx.location_provider,
+            upstream_provider: ctx.upstream_provider,
+            plugin_provider: ctx.plugin_provider,
+            certificate_provider: ctx.certificate_provider,
+            access_logger: ctx.logger,
+            config_manager: ctx.config_manager,
         };
         Ok(s)
     }
@@ -357,7 +355,7 @@ impl Server {
     /// - Configures thread pool
     pub fn run(
         self,
-        conf: &Arc<configuration::ServerConf>,
+        conf: Arc<configuration::ServerConf>,
     ) -> Result<ServerServices> {
         let addr = self.addr.clone();
         let tcp_socket_options = self.tcp_socket_options.clone();
@@ -399,7 +397,7 @@ impl Server {
         let cipher_suites = self.tls_ciphersuites.clone();
         let tls_min_version = self.tls_min_version.clone();
         let tls_max_version = self.tls_max_version.clone();
-        let mut lb = http_proxy_service(conf, self);
+        let mut lb = http_proxy_service(&conf, self);
         // use h2c if not tls and enable http2
         if !is_tls && enabled_h2 {
             if let Some(http_logic) = lb.app_logic_mut() {
@@ -1830,23 +1828,23 @@ value = 'proxy_set_headers = ["name:value"]'
 
         let confs = parse_from_conf(pingap_conf);
         let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
-        let providers = Providers {
-            server_locations_provider: Arc::new(TmpServerLocationsLoader {
-                server_locations: Arc::new(vec!["lo".to_string()]),
-            }),
-            location_provider: Arc::new(TmpLocationLoader { location }),
-            upstream_provider: Arc::new(TmpUpstreamLoader { upstream }),
-            plugin_provider: Arc::new(TmpPluginLoader {}),
-            certificate_provider: Arc::new(TmpCertificateLoader {}),
-        };
+
         Server::new(
             &confs[0],
-            None,
-            Arc::new(
-                new_file_config_manager(&file.path().to_string_lossy())
-                    .unwrap(),
-            ),
-            providers,
+            AppContext {
+                logger: None,
+                config_manager: Arc::new(
+                    new_file_config_manager(&file.path().to_string_lossy())
+                        .unwrap(),
+                ),
+                server_locations_provider: Arc::new(TmpServerLocationsLoader {
+                    server_locations: Arc::new(vec!["lo".to_string()]),
+                }),
+                location_provider: Arc::new(TmpLocationLoader { location }),
+                upstream_provider: Arc::new(TmpUpstreamLoader { upstream }),
+                plugin_provider: Arc::new(TmpPluginLoader {}),
+                certificate_provider: Arc::new(TmpCertificateLoader {}),
+            },
         )
         .unwrap()
     }
@@ -1855,7 +1853,7 @@ value = 'proxy_set_headers = ["name:value"]'
     fn test_new_server() {
         let server = new_server();
         let services = server
-            .run(&Arc::new(configuration::ServerConf::default()))
+            .run(Arc::new(configuration::ServerConf::default()))
             .unwrap();
 
         assert_eq!("Pingora HTTP Proxy Service", services.lb.name());

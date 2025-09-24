@@ -65,17 +65,6 @@ impl TinyUfoCache {
     }
 }
 
-/// Creates a new TinyUfoCache instance
-///
-/// This is a convenience function that wraps `TinyUfoCache::new`
-// pub fn new_tiny_ufo_cache(
-//     mode: &str,
-//     total_weight_limit: usize,
-//     estimated_size: usize,
-// ) -> TinyUfoCache {
-//     TinyUfoCache::new(mode, total_weight_limit, estimated_size)
-// }
-
 #[async_trait]
 impl HttpCacheStorage for TinyUfoCache {
     /// Retrieves a cache entry by key and namespace

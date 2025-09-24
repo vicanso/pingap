@@ -42,7 +42,7 @@ use pingap_logger::{new_async_logger, AsyncLoggerTask};
 use pingap_otel::TracerService;
 use pingap_performance::new_performance_metrics_log_service;
 use pingap_plugin::get_plugin_factory;
-use pingap_proxy::{parse_from_conf, Providers, Server, ServerConf};
+use pingap_proxy::{parse_from_conf, AppContext, Server, ServerConf};
 use pingap_upstream::new_upstream_health_check_task;
 use pingora::server;
 use pingora::server::configuration::Opt;
@@ -305,16 +305,17 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     };
     // config::set_config_path(&args.conf);
     let mut my_server = server::Server::new(Some(opt))?;
-    let providers = Providers {
+    let ctx = AppContext {
         server_locations_provider: new_server_locations_provider(),
         location_provider: new_location_provider(),
         upstream_provider: new_upstream_provider(),
         plugin_provider: new_plugin_provider(),
         certificate_provider: new_certificate_provider(),
+        config_manager,
+        logger: None,
     };
-    let ps =
-        Server::new(&server_conf, None, config_manager.clone(), providers)?;
-    let services = ps.run(&my_server.configuration)?;
+    let ps = Server::new(&server_conf, ctx)?;
+    let services = ps.run(my_server.configuration.clone())?;
     my_server.add_service(services.lb);
 
     my_server.bootstrap();
@@ -651,7 +652,6 @@ fn run() -> Result<(), Box<dyn Error>> {
             (
                 "performance_metrics".to_string(),
                 new_performance_metrics_log_service(
-                    config_manager.clone(),
                     new_location_provider(),
                     new_upstream_provider(),
                 ),
@@ -722,26 +722,23 @@ fn run() -> Result<(), Box<dyn Error>> {
         } else {
             None
         };
-        let providers = Providers {
+        let ctx = AppContext {
             server_locations_provider: new_server_locations_provider(),
             location_provider: new_location_provider(),
             upstream_provider: new_upstream_provider(),
             plugin_provider: new_plugin_provider(),
             certificate_provider: certificate_provider.clone(),
+            config_manager: config_manager.clone(),
+            logger: access_logger,
         };
-        let mut ps = Server::new(
-            &server_conf,
-            access_logger,
-            config_manager.clone(),
-            providers,
-        )?;
+        let mut ps = Server::new(&server_conf, ctx)?;
         if enabled_http_challenge && listen_80_port {
             ps.enable_lets_encrypt();
         }
         if let Some(service) = ps.get_prometheus_push_service() {
             simple_background_service.add_task("prometheus_push", service);
         }
-        let services = ps.run(&my_server.configuration)?;
+        let services = ps.run(my_server.configuration.clone())?;
         my_server.add_service(services.lb);
     }
 
