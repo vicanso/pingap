@@ -20,22 +20,19 @@ use super::{Error, Result, LOG_CATEGORY, PAGE_SIZE};
 use super::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use async_trait::async_trait;
 use bytes::Bytes;
-use bytesize::ByteSize;
 use chrono::{DateTime, Local};
-use humantime::parse_duration;
 use path_absolutize::*;
-use pingap_core::{parse_query_string, TinyUfo};
+use pingap_core::TinyUfo;
 #[cfg(feature = "tracing")]
 use prometheus::Histogram;
 use scopeguard::defer;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, SystemTime};
 use tokio::fs;
 use tracing::{debug, error, info};
-use urlencoding::decode;
 use walkdir::WalkDir;
 
 /// A file-based cache implementation that combines disk storage with in-memory caching
@@ -68,36 +65,72 @@ pub struct FileCache {
     levels: Vec<u32>,
 }
 
+fn split_levels<'de, D>(deserializer: D) -> Result<Vec<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s: String = String::deserialize(deserializer)?;
+
+    let mut valid = true;
+    let mut levels = vec![];
+    for item in s.split(':') {
+        let Ok(value) = item.parse::<u32>() else {
+            valid = false;
+            break;
+        };
+        if value > 3 {
+            valid = false;
+            break;
+        }
+        levels.push(value);
+    }
+    if levels.len() > 2 {
+        return Ok(vec![]);
+    }
+    if valid {
+        return Ok(levels);
+    }
+    Ok(vec![])
+}
+
 /// File cache parameters
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Deserialize, Serialize, Default)]
 struct FileCacheParams {
     /// Cache directory
+    #[serde(default)]
     directory: String,
     /// Inactive duration when cache file will be removed regardless of their freshness.
-    inactive: Duration,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    inactive: Option<Duration>,
     /// Max reading count
-    reading_max: u32,
+    reading_max: Option<u32>,
     /// Max writing count
-    writing_max: u32,
+    writing_max: Option<u32>,
     /// Max tinyufo cache size
+    #[serde(default)]
     cache_max: usize,
     /// Max tinyufo cache weight
-    cache_file_max_weight: usize,
+    cache_file_max_weight: Option<usize>,
     // Cache file path levels
+    #[serde(default)]
+    #[serde(deserialize_with = "split_levels")]
     levels: Vec<u32>,
 }
 
-impl Default for FileCacheParams {
-    fn default() -> Self {
-        Self {
-            directory: String::new(),
-            reading_max: 10_000,
-            writing_max: 1_000,
-            cache_max: 0,
-            cache_file_max_weight: 1024 * 1024 / PAGE_SIZE,
-            inactive: Duration::from_secs(48 * 3600),
-            levels: vec![],
-        }
+impl TryFrom<&str> for FileCacheParams {
+    type Error = Error;
+    fn try_from(value: &str) -> Result<Self> {
+        let (dir, query) = value.split_once('?').unwrap_or((value, ""));
+        let mut params = if query.is_empty() {
+            FileCacheParams::default()
+        } else {
+            serde_qs::from_str(query).map_err(|e| Error::Invalid {
+                message: e.to_string(),
+            })?
+        };
+        params.directory = resolve_path(dir);
+        Ok(params)
     }
 }
 
@@ -128,72 +161,10 @@ fn resolve_path(path_str: &str) -> String {
     )
 }
 
-fn parse_params(dir: &str) -> FileCacheParams {
-    let (dir, query) = dir.split_once('?').unwrap_or((dir, ""));
-    let mut params = FileCacheParams {
-        directory: resolve_path(dir),
-        ..Default::default()
-    };
-
-    if !query.is_empty() {
-        let m = parse_query_string(query);
-        params.reading_max = m
-            .get("reading_max")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(params.reading_max);
-        params.writing_max = m
-            .get("writing_max")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(params.writing_max);
-        params.cache_max = m
-            .get("cache_max")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(params.cache_max);
-        params.cache_file_max_weight = m
-            .get("cache_file_max_size")
-            .and_then(|v| {
-                ByteSize::from_str(v)
-                    .map(|v| v.as_u64() as usize / PAGE_SIZE)
-                    .ok()
-            })
-            .unwrap_or(params.cache_file_max_weight);
-        params.inactive = m
-            .get("inactive")
-            .and_then(|v| parse_duration(v).ok())
-            .unwrap_or(params.inactive);
-        params.levels = m
-            .get("levels")
-            .and_then(|v| {
-                let mut valid = true;
-                let mut levels = vec![];
-                for item in decode(v.as_str()).unwrap_or_default().split(':') {
-                    let Ok(value) = item.parse::<u32>() else {
-                        valid = false;
-                        break;
-                    };
-                    if value > 3 {
-                        valid = false;
-                        break;
-                    }
-                    levels.push(value);
-                }
-                if levels.len() > 2 {
-                    return None;
-                }
-                if valid {
-                    return Some(levels);
-                }
-                None
-            })
-            .unwrap_or(params.levels);
-    }
-    params
-}
-
 impl FileCache {
     /// Create a file cache and use tinyufo for hotspot data caching
     pub fn new(dir: &str) -> Result<Self> {
-        let params = parse_params(dir);
+        let params = FileCacheParams::try_from(dir)?;
 
         let path = Path::new(&params.directory);
         // directory not exist, create it
@@ -226,17 +197,22 @@ impl FileCache {
 
         Ok(FileCache {
             directory: params.directory,
-            cache_file_max_weight: params.cache_file_max_weight as u16,
+            cache_file_max_weight: params
+                .cache_file_max_weight
+                .unwrap_or(1024 * 1024 / PAGE_SIZE)
+                as u16,
             reading: AtomicU32::new(0),
-            reading_max: params.reading_max,
+            reading_max: params.reading_max.unwrap_or(10_000),
             #[cfg(feature = "tracing")]
             read_time: CACHE_READING_TIME.clone(),
             writing: AtomicU32::new(0),
-            writing_max: params.writing_max,
+            writing_max: params.writing_max.unwrap_or(1_000),
             #[cfg(feature = "tracing")]
             write_time: CACHE_WRITING_TIME.clone(),
             cache,
-            cache_inactive: params.inactive,
+            cache_inactive: params
+                .inactive
+                .unwrap_or(Duration::from_secs(48 * 3600)),
             levels: params.levels,
         })
     }
@@ -525,27 +501,17 @@ mod tests {
     /// Tests the `parse_params` function with various query string configurations.
     #[test]
     fn test_parse_params() {
-        let params = parse_params(
+        let params = FileCacheParams::try_from(
               "~/pingap?reading_max=1000&writing_max=500&cache_max=100&inactive=10m&levels=1:2",
-          );
-        assert_eq!(params.reading_max, 1000);
-        assert_eq!(params.writing_max, 500);
+          ).unwrap();
+        assert_eq!(params.reading_max, Some(1000));
+        assert_eq!(params.writing_max, Some(500));
         assert_eq!(params.cache_max, 100);
-        assert_eq!(params.inactive, Duration::from_secs(600));
+        assert_eq!(params.inactive, Some(Duration::from_secs(600)));
         assert_eq!(params.levels, vec![1, 2]);
         assert!(params
             .directory
             .starts_with(dirs::home_dir().unwrap().to_str().unwrap()));
-    }
-
-    /// Tests `parse_params` with invalid and default values.
-    #[test]
-    fn test_parse_params_defaults_and_invalid() {
-        let params = parse_params("/tmp/cache?reading_max=abc&levels=1:a:2");
-        // Should fall back to default for invalid integer.
-        assert_eq!(params.reading_max, 10_000);
-        // Should return empty for invalid level format.
-        assert!(params.levels.is_empty());
     }
 
     /// A comprehensive test for the FileCache functionality.

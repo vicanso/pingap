@@ -15,7 +15,7 @@
 use bytesize::ByteSize;
 use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
-use pingap_core::parse_query_string;
+use serde::{Deserialize, Serialize};
 use snafu::Snafu;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -97,10 +97,42 @@ pub fn update_available_memory(available_memory: u64) {
     AVAILABLE_MEMORY.store(available_memory, Ordering::Relaxed);
 }
 
+fn parse_byte_size<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
+where
+    D: serde::de::Deserializer<'de>,
+{
+    let s: String = String::deserialize(deserializer)?;
+    if s.is_empty() {
+        return Ok(None);
+    }
+    let size = ByteSize::from_str(&s)
+        .map_err(|e| serde::de::Error::custom(e.to_string()))?;
+    Ok(Some(size.as_u64() as usize))
+}
+#[derive(Debug, PartialEq, Deserialize, Serialize, Default)]
+struct MemoryCacheParams {
+    #[serde(default)]
+    #[serde(deserialize_with = "parse_byte_size")]
+    max_size: Option<usize>,
+    mode: Option<String>,
+}
+impl TryFrom<&str> for MemoryCacheParams {
+    type Error = Error;
+    fn try_from(value: &str) -> Result<Self> {
+        let params = if let Some((_, query)) = value.split_once('?') {
+            serde_qs::from_str(query).map_err(|e| Error::Invalid {
+                message: e.to_string(),
+            })?
+        } else {
+            MemoryCacheParams::default()
+        };
+        Ok(params)
+    }
+}
+
 fn try_init_memory_backend(value: &str) -> &'static HttpCache {
     MEMORY_BACKEND.get_or_init(|| {
-        let query = parse_query_string(value);
-        let cache_max_size = query.get("max_size");
+        let params = MemoryCacheParams::try_from(value).unwrap_or_default();
         let available_memory =
             AVAILABLE_MEMORY.load(Ordering::Relaxed) as usize;
         let max_memory = if available_memory > 0 {
@@ -110,19 +142,18 @@ fn try_init_memory_backend(value: &str) -> &'static HttpCache {
         };
 
         // Determine cache size from config or use default MAX_MEMORY_SIZE
-        let mut size = if let Some(cache_max_size) = cache_max_size {
-            if let Ok(value) = cache_max_size.parse::<u8>() {
-                max_memory * (value.min(100) as usize) / 100
+        let mut size = if let Some(cache_max_size) = params.max_size {
+            // if memory is less than 10MB, use the percentage of memory
+            if cache_max_size < 10 * 1024 * 1024 {
+                max_memory * cache_max_size.min(100) / 100
             } else {
-                ByteSize::from_str(cache_max_size)
-                    .map(|item| item.as_u64() as usize)
-                    .unwrap_or(max_memory)
+                cache_max_size
             }
         } else {
             max_memory
         };
 
-        let cache_mode = query.get("mode").cloned().unwrap_or_default();
+        let cache_mode = params.mode.unwrap_or_default();
 
         size = size.min(MAX_MEMORY_SIZE);
         info!(
