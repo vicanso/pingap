@@ -599,9 +599,13 @@ pub fn parse_access_log_directive(
     let Some((path, access)) = access_log.split_once(' ') else {
         return default_value;
     };
-    if !access.starts_with('{') {
+
+    if !["combined", "common", "short", "tiny"].contains(&access)
+        && !access.starts_with('{')
+    {
         return default_value;
     }
+
     (Some(access.to_string()), Some(path.to_string()))
 }
 

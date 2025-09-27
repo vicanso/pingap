@@ -16,12 +16,15 @@ bytesize = { workspace = true }
 chrono = { workspace = true }
 flate2 = { workspace = true }
 http = { workspace = true }
+humantime-serde = { workspace = true }
 itoa = { workspace = true }
 once_cell = { workspace = true }
 pingap-core = { version = "0.12.0", path = "../pingap-core" }
 pingap-util = { version = "0.12.0", path = "../pingap-util" }
 pingora = { workspace = true }
 regex = { workspace = true }
+serde = { workspace = true }
+serde_qs = { workspace = true }
 snafu = { workspace = true }
 substring = { workspace = true }
 time = { workspace = true }
@@ -39,6 +42,10 @@ zstd = "0.13.3"
 
 [target.'cfg(unix)'.dependencies]
 syslog = "7.0.0"
+
+
+[package.metadata.cargo-machete]
+ignored = ["humantime-serde"]
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
