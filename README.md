@@ -6,7 +6,7 @@ Before the pingap version is stable, no pull requests will be accepted. If you h
 
 ## Overview
 
-Pingap is a high-performance reverse proxy powered by the `[Cloudflare Pingora](https://github.com/cloudflare/pingora)` . It simplifies operational management by enabling dynamic, zero-downtime configuration hot-reloading through concise TOML files and an intuitive web admin interface.
+Pingap is a high-performance reverse proxy powered by the [`Cloudflare Pingora`](https://github.com/cloudflare/pingora) . It simplifies operational management by enabling dynamic, zero-downtime configuration hot-reloading through concise TOML files and an intuitive web admin interface.
 
 Its core strength lies in a powerful plugin system, offering over a dozen out-of-the-box features for Authentication (JWT, Key Auth), Security (CSRF, IP/Referer/UA Restrictions), Traffic Control (Rate Limiting, Caching), Content Modification (Redirects, Content Substitution), and Observability (Request ID). This makes `Pingap` not just a proxy, but a flexible and extensible application gateway, engineered to effortlessly handle complex scenarios from API protection to modern web application deployments.
 
