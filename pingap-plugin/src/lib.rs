@@ -12,10 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use humantime::parse_duration;
 use pingap_config::PluginConf;
 use pingap_core::PluginStep;
 use snafu::Snafu;
+use std::fmt::Write;
 use std::str::FromStr;
+use std::time::Duration;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -48,31 +51,36 @@ pub enum Error {
 
 /// Helper functions for accessing plugin configuration values
 pub fn get_str_conf(value: &PluginConf, key: &str) -> String {
-    if let Some(value) = value.get(key) {
-        value.as_str().unwrap_or_default().to_string()
-    } else {
-        "".to_string()
-    }
+    value
+        .get(key)
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Helper functions for accessing plugin configuration values
+pub fn get_duration_conf(value: &PluginConf, key: &str) -> Option<Duration> {
+    value
+        .get(key)
+        .and_then(|v| v.as_str())
+        .and_then(|s| parse_duration(s).ok())
 }
 
 pub(crate) fn get_str_slice_conf(value: &PluginConf, key: &str) -> Vec<String> {
-    if let Some(value) = value.get(key) {
-        if let Some(values) = value.as_array() {
-            return values
-                .iter()
-                .map(|item| item.as_str().unwrap_or_default().to_string())
-                .collect();
-        }
-    }
-    vec![]
+    value
+        .get(key)
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| item.as_str())
+                .map(String::from) // same as .map(|s| s.to_string())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub(crate) fn get_bool_conf(value: &PluginConf, key: &str) -> bool {
-    if let Some(value) = value.get(key) {
-        value.as_bool().unwrap_or_default()
-    } else {
-        false
-    }
+    value.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
 }
 
 pub fn get_int_conf(value: &PluginConf, key: &str) -> i64 {
@@ -84,23 +92,21 @@ pub fn get_int_conf_or_default(
     key: &str,
     default_value: i64,
 ) -> i64 {
-    if let Some(value) = value.get(key) {
-        value.as_integer().unwrap_or(default_value)
-    } else {
-        default_value
-    }
+    value
+        .get(key)
+        .and_then(|v| v.as_integer()) // assume PluginConf value can be converted to i64
+        .unwrap_or(default_value)
 }
 
 pub(crate) fn get_step_conf(
     value: &PluginConf,
     default_value: PluginStep,
 ) -> PluginStep {
-    let step = get_str_conf(value, "step");
-    if step.is_empty() {
-        return default_value;
-    }
-
-    PluginStep::from_str(step.as_str()).unwrap_or(default_value)
+    value
+        .get("step")
+        .and_then(|v| v.as_str())
+        .and_then(|s| PluginStep::from_str(s).ok())
+        .unwrap_or(default_value)
 }
 
 /// Generates a unique hash key for a plugin configuration to detect changes.
@@ -111,19 +117,22 @@ pub(crate) fn get_step_conf(
 /// # Returns
 /// A string containing the CRC32 hash of the sorted configuration key-value pairs
 pub fn get_hash_key(conf: &PluginConf) -> String {
-    let mut keys: Vec<String> =
-        conf.keys().map(|item| item.to_string()).collect();
-    keys.sort();
-    let mut lines = vec![];
-    for key in keys {
-        let value = if let Some(value) = conf.get(&key) {
-            value.to_string()
-        } else {
-            "".to_string()
-        };
-        lines.push(format!("{key}:{value}"));
+    let mut items: Vec<_> = conf.iter().collect();
+    // sort by key
+    items.sort_unstable_by_key(|(k, _)| *k);
+
+    // pre-allocate capacity to reduce subsequent memory reallocation.
+    let mut buf = String::with_capacity(256);
+    for (i, (key, value)) in items.iter().enumerate() {
+        if i > 0 {
+            buf.push('\n');
+        }
+        // use write! macro to write the formatted string directly into the buffer, avoid format! to produce temporary String.
+        // because writing to String will not fail, so it can be safely.
+        let _ = write!(&mut buf, "{key}:{value}");
     }
-    let hash = crc32fast::hash(lines.join("\n").as_bytes());
+
+    let hash = crc32fast::hash(buf.as_bytes());
     format!("{hash:X}")
 }
 
