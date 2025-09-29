@@ -743,6 +743,15 @@ pub struct BasicConf {
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub auto_restart_check_interval: Option<Duration>,
+
+    // log compress algorithm: gzip, zstd
+    pub log_compress_algorithm: Option<String>,
+    /// Log compress level
+    pub log_compress_level: Option<u8>,
+    /// Log compress days ago
+    pub log_compress_days_ago: Option<u16>,
+    /// Log compress time point hour
+    pub log_compress_time_point_hour: Option<u8>,
 }
 
 impl BasicConf {

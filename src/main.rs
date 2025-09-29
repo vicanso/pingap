@@ -37,7 +37,10 @@ use pingap_core::BackgroundTaskService;
 #[allow(unused_imports)]
 use pingap_imageoptim::ImageOptim;
 use pingap_logger::parse_access_log_directive;
-use pingap_logger::{new_async_logger, AsyncLoggerTask};
+use pingap_logger::{
+    new_async_logger, new_log_compress_service, AsyncLoggerTask,
+    LogCompressParams,
+};
 #[cfg(feature = "full")]
 use pingap_otel::TracerService;
 use pingap_performance::new_performance_metrics_log_service;
@@ -447,9 +450,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     };
 
     config_manager.set_current_config(config.clone());
+    let mut application_log_paths = vec![];
 
     // Initialize logging system
-    let compression_task =
+    if let Some(log_path) =
         pingap_logger::logger_try_init(pingap_logger::LoggerParams {
             capacity: config
                 .basic
@@ -459,7 +463,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             log: args.log.clone().unwrap_or_default(),
             level: config.basic.log_level.clone().unwrap_or_default(),
             json: config.basic.log_format_json.unwrap_or_default(),
-        })?;
+        })?
+    {
+        application_log_paths.push(log_path);
+    }
 
     // TODO a better way
     // since the cache will be initialized in validate function
@@ -664,9 +671,6 @@ fn run() -> Result<(), Box<dyn Error>> {
     if let Some(task) = new_storage_clear_service() {
         simple_background_service.add_task("storage_clear", task);
     }
-    if let Some(compression_task) = compression_task {
-        simple_background_service.add_task("log_compress", compression_task);
-    }
 
     let enabled_http_challenge = certificates.iter().any(|(_, certificate)| {
         let acme = certificate.acme.clone().unwrap_or_default();
@@ -717,6 +721,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         let access_logger = if let Some(log_path) = log_path {
             let r = new_access_logger(&log_path);
             let (tx, task) = r.recv()??;
+            application_log_paths.push(task.get_dir());
             my_server.add_service(background_service("access_logger", task));
             Some(tx)
         } else {
@@ -740,6 +745,31 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         let services = ps.run(my_server.configuration.clone())?;
         my_server.add_service(services.lb);
+    }
+
+    let basic_config = &config.basic;
+    if !application_log_paths.is_empty()
+        && basic_config.log_compress_algorithm.is_some()
+    {
+        let mut params = LogCompressParams::new(application_log_paths);
+        params.set_compression(
+            basic_config
+                .log_compress_algorithm
+                .clone()
+                .unwrap_or_default(),
+        );
+        params.set_level(basic_config.log_compress_level.unwrap_or_default());
+        params.set_days_ago(
+            basic_config.log_compress_days_ago.unwrap_or_default(),
+        );
+        params.set_time_point_hour(
+            basic_config
+                .log_compress_time_point_hour
+                .unwrap_or_default(),
+        );
+
+        simple_background_service
+            .add_task("log_compress", new_log_compress_service(params));
     }
 
     if args.autorestart || args.autoreload {

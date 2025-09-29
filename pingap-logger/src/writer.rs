@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::file_appender::new_file_appender;
+use super::file_appender::new_rolling_file_writer;
 #[cfg(unix)]
 use super::syslog::new_syslog_writer;
 use super::{Error, LOG_CATEGORY};
@@ -21,16 +21,16 @@ use bytesize::ByteSize;
 use chrono::Timelike;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use pingap_core::parse_query_string;
 use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 #[cfg(windows)]
 use std::os::windows::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Mutex;
 use std::time::Instant;
 use std::time::{Duration, SystemTime};
@@ -126,24 +126,33 @@ fn gzip_compress(file: &Path, level: u8) -> Result<(u64, u64)> {
 }
 
 /// Parameters for log compression configuration
-#[derive(Debug, Clone)]
-struct LogCompressParams {
+#[derive(Debug, Clone, Default)]
+pub struct LogCompressParams {
+    dirs: Vec<String>,
     compression: String,
-    path: PathBuf,
     level: u8,
     days_ago: u16,
     time_point_hour: u8,
 }
 
-impl Default for LogCompressParams {
-    fn default() -> Self {
+impl LogCompressParams {
+    pub fn new(dirs: Vec<String>) -> Self {
         Self {
-            compression: String::new(),
-            path: PathBuf::new(),
-            level: DEFAULT_COMPRESSION_LEVEL,
-            days_ago: DEFAULT_DAYS_AGO,
-            time_point_hour: 0,
+            dirs,
+            ..Default::default()
         }
+    }
+    pub fn set_compression(&mut self, compression: String) {
+        self.compression = compression;
+    }
+    pub fn set_level(&mut self, level: u8) {
+        self.level = level;
+    }
+    pub fn set_days_ago(&mut self, days_ago: u16) {
+        self.days_ago = days_ago;
+    }
+    pub fn set_time_point_hour(&mut self, time_point_hour: u8) {
+        self.time_point_hour = time_point_hour;
     }
 }
 
@@ -177,57 +186,58 @@ async fn do_compress(
             message: "Failed to calculate access time".to_string(),
         })?;
     let compression_exts = [GZIP_EXT.to_string(), ZSTD_EXT.to_string()];
-    for entry in WalkDir::new(&params.path)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let ext = entry
-            .path()
-            .extension()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        if compression_exts.contains(&ext) {
-            continue;
-        }
-        let Ok(metadata) = entry.metadata() else {
-            continue;
-        };
-        let Ok(accessed) = metadata.accessed() else {
-            continue;
-        };
-        if accessed > access_before {
-            continue;
-        }
-        let start = Instant::now();
-        let result = if params.compression == "gzip" {
-            gzip_compress(entry.path(), params.level)
-        } else {
-            zstd_compress(entry.path(), params.level)
-        };
-        let file = entry.path().to_string_lossy().to_string();
-        match result {
-            Err(e) => {
-                error!(
-                    category = LOG_CATEGORY,
-                    error = %e,
-                    file,
-                    "compress log fail"
-                );
-            },
-            Ok((size, original_size)) => {
-                let elapsed = format!("{}ms", start.elapsed().as_millis());
-                info!(
-                    category = LOG_CATEGORY,
-                    file,
-                    elapsed,
-                    original_size = ByteSize::b(original_size).to_string(),
-                    size = ByteSize::b(size).to_string(),
-                    "compress log success",
-                );
-                // ignore remove
-                let _ = fs::remove_file(entry.path());
-            },
+    let unique_paths: HashSet<String> = params.dirs.iter().cloned().collect();
+
+    for path in unique_paths {
+        for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+            let ext = entry
+                .path()
+                .extension()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            if compression_exts.contains(&ext) {
+                continue;
+            }
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            let Ok(accessed) = metadata.accessed() else {
+                continue;
+            };
+            if accessed > access_before {
+                continue;
+            }
+            let start = Instant::now();
+            let result = if params.compression == "gzip" {
+                gzip_compress(entry.path(), params.level)
+            } else {
+                zstd_compress(entry.path(), params.level)
+            };
+            let file = entry.path().to_string_lossy().to_string();
+            match result {
+                Err(e) => {
+                    error!(
+                        category = LOG_CATEGORY,
+                        error = %e,
+                        file,
+                        "compress log fail"
+                    );
+                },
+                Ok((size, original_size)) => {
+                    let elapsed = format!("{}ms", start.elapsed().as_millis());
+                    info!(
+                        category = LOG_CATEGORY,
+                        file,
+                        elapsed,
+                        original_size = ByteSize::b(original_size).to_string(),
+                        size = ByteSize::b(size).to_string(),
+                        "compress log success",
+                    );
+                    // ignore remove
+                    let _ = fs::remove_file(entry.path());
+                },
+            }
         }
     }
     Ok(true)
@@ -252,7 +262,7 @@ impl BackgroundTask for LogCompressTask {
 ///
 /// # Returns
 /// Optional tuple containing service name and task future
-fn new_log_compress_service(
+pub fn new_log_compress_service(
     params: LogCompressParams,
 ) -> Box<dyn BackgroundTask> {
     Box::new(LogCompressTask { params })
@@ -267,33 +277,35 @@ pub struct LoggerParams {
     pub json: bool,
 }
 
-fn new_file_writer(
-    params: &LoggerParams,
-) -> Result<(BoxMakeWriter, Option<Box<dyn BackgroundTask>>)> {
-    let file_appender = new_file_appender(&params.log)?;
-    let mut file = pingap_util::resolve_path(&params.log);
-    let mut compression = "".to_string();
-    let mut level = 0;
-    let mut days_ago = 0;
-    let mut time_point_hour = 0;
-    let mut task = None;
-    if let Some((_, query)) = params.log.split_once('?') {
-        file = file.replace(&format!("?{query}"), "");
-        let m = parse_query_string(query);
+fn new_file_writer(params: &LoggerParams) -> Result<(BoxMakeWriter, String)> {
+    let rolling_file_writer = new_rolling_file_writer(&params.log)?;
+    let file = params
+        .log
+        .split_once('?')
+        .unwrap_or((params.log.as_str(), ""))
+        .0;
+    // let mut compression = "".to_string();
+    // let mut level = 0;
+    // let mut days_ago = 0;
+    // let mut time_point_hour = 0;
+    // let mut task = None;
+    // if let Some((_, query)) = params.log.split_once('?') {
+    //     file = file.replace(&format!("?{query}"), "");
+    //     let m = parse_query_string(query);
 
-        if let Some(value) = m.get("compression") {
-            compression = value.to_string();
-        }
-        if let Some(value) = m.get("level") {
-            level = value.parse::<u8>().unwrap_or_default();
-        }
-        if let Some(value) = m.get("days_ago") {
-            days_ago = value.parse::<u16>().unwrap_or_default();
-        }
-        if let Some(value) = m.get("time_point_hour") {
-            time_point_hour = value.parse::<u8>().unwrap_or_default();
-        }
-    }
+    //     if let Some(value) = m.get("compression") {
+    //         compression = value.to_string();
+    //     }
+    //     if let Some(value) = m.get("level") {
+    //         level = value.parse::<u8>().unwrap_or_default();
+    //     }
+    //     if let Some(value) = m.get("days_ago") {
+    //         days_ago = value.parse::<u16>().unwrap_or_default();
+    //     }
+    //     if let Some(value) = m.get("time_point_hour") {
+    //         time_point_hour = value.parse::<u8>().unwrap_or_default();
+    //     }
+    // }
 
     let filepath = Path::new(&file);
     let dir = if filepath.is_dir() {
@@ -303,27 +315,18 @@ fn new_file_writer(
             message: "parent of file log is invalid".to_string(),
         })?
     };
-    if !compression.is_empty() {
-        task = Some(new_log_compress_service(LogCompressParams {
-            compression,
-            path: dir.to_path_buf(),
-            days_ago,
-            level,
-            time_point_hour,
-        }));
-    }
 
     let writer = if params.capacity < MIN_BUFFER_CAPACITY {
-        BoxMakeWriter::new(file_appender)
+        BoxMakeWriter::new(rolling_file_writer.writer)
     } else {
         // buffer writer for better performance
         let w = io::BufWriter::with_capacity(
             params.capacity as usize,
-            file_appender,
+            rolling_file_writer.writer,
         );
         BoxMakeWriter::new(Mutex::new(w))
     };
-    Ok((writer, task))
+    Ok((writer, dir.to_string_lossy().to_string()))
 }
 
 /// Initializes the logging system with the specified configuration
@@ -332,10 +335,8 @@ fn new_file_writer(
 /// * `params` - Logger configuration parameters
 ///
 /// # Returns
-/// Optional tuple containing compression service name and task future if compression is enabled
-pub fn logger_try_init(
-    params: LoggerParams,
-) -> Result<Option<Box<dyn BackgroundTask>>> {
+/// Optional log path if file log is enabled
+pub fn logger_try_init(params: LoggerParams) -> Result<Option<String>> {
     let level = if params.level.is_empty() {
         std::env::var("RUST_LOG").unwrap_or("INFO".to_string())
     } else {
@@ -363,7 +364,7 @@ pub fn logger_try_init(
             time::format_description::well_known::Rfc3339,
         ))
         .with_target(is_dev);
-    let mut task = None;
+    let mut log_path = None;
     let mut log_type = "stdio";
     let writer = if params.log.is_empty() {
         BoxMakeWriter::new(std::io::stderr)
@@ -380,8 +381,8 @@ pub fn logger_try_init(
         }
     } else {
         log_type = "file";
-        let (w, t) = new_file_writer(&params)?;
-        task = t;
+        let (w, dir) = new_file_writer(&params)?;
+        log_path = Some(dir);
         w
     };
     if params.json {
@@ -403,5 +404,5 @@ pub fn logger_try_init(
         "init tracing subscriber success",
     );
 
-    Ok(task)
+    Ok(log_path)
 }

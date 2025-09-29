@@ -153,6 +153,10 @@ interface Basic {
   upstream_keepalive_pool_size?: number;
   log_buffered_size?: string;
   log_format_json?: boolean;
+  log_compress_algorithm?: string;
+  log_compress_level?: number;
+  log_compress_days_ago?: number;
+  log_compress_time_point_hour?: number;
   log_level?: string;
   auto_restart_check_interval?: string;
   cache_max_size?: number;

@@ -96,6 +96,40 @@ export default function Basic() {
       category: ExFormItemCategory.TEXT,
     },
     {
+      name: "log_compress_algorithm",
+      label: basicI18n("logCompressAlgorithm"),
+      placeholder: basicI18n("logCompressAlgorithmPlaceholder"),
+      defaultValue: basic.log_compress_algorithm,
+      span: 3,
+      category: ExFormItemCategory.SELECT,
+      options: newStringOptions(["gzip", "zstd"], false, true),
+    },
+    {
+      name: "log_compress_level",
+      label: basicI18n("logCompressLevel"),
+      placeholder: basicI18n("logCompressLevelPlaceholder"),
+      defaultValue: basic.log_compress_level,
+      span: 3,
+      category: ExFormItemCategory.NUMBER,
+    },
+    {
+      name: "log_compress_days_ago",
+      label: basicI18n("logCompressDaysAgo"),
+      placeholder: basicI18n("logCompressDaysAgoPlaceholder"),
+      defaultValue: basic.log_compress_days_ago,
+      span: 3,
+      category: ExFormItemCategory.NUMBER,
+    },
+    {
+      name: "log_compress_time_point_hour",
+      label: basicI18n("logCompressTimePointHour"),
+      placeholder: basicI18n("logCompressTimePointHourPlaceholder"),
+      defaultValue: basic.log_compress_time_point_hour,
+      span: 3,
+      category: ExFormItemCategory.NUMBER,
+    },
+
+    {
       name: "grace_period",
       label: basicI18n("gracePeriod"),
       placeholder: basicI18n("gracePeriodPlaceholder"),
@@ -240,7 +274,7 @@ export default function Basic() {
         category="basic"
         items={items}
         schema={schema}
-        defaultShow={9}
+        defaultShow={13}
         onSave={async (value) => update("pingap", "basic", value)}
       />
     </div>

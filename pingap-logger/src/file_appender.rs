@@ -18,9 +18,14 @@ use std::fs;
 use std::path::Path;
 use tracing_appender::rolling::RollingFileAppender;
 
-pub(crate) fn new_file_appender(
+pub struct RollingFileWriter {
+    pub dir: String,
+    pub writer: RollingFileAppender,
+}
+
+pub(crate) fn new_rolling_file_writer(
     log_path: &str,
-) -> Result<RollingFileAppender, Error> {
+) -> Result<RollingFileWriter, Error> {
     let mut file = pingap_util::resolve_path(log_path);
     let mut rolling_type = "".to_string();
     if let Some((_, query)) = log_path.split_once('?') {
@@ -52,11 +57,14 @@ pub(crate) fn new_file_appender(
             .to_string_lossy()
             .to_string()
     };
-    let file_appender = match rolling_type.as_str() {
+    let writer = match rolling_type.as_str() {
         "minutely" => tracing_appender::rolling::minutely(dir, filename),
         "hourly" => tracing_appender::rolling::hourly(dir, filename),
         "never" => tracing_appender::rolling::never(dir, filename),
         _ => tracing_appender::rolling::daily(dir, filename),
     };
-    Ok(file_appender)
+    Ok(RollingFileWriter {
+        dir: dir.to_string_lossy().to_string(),
+        writer,
+    })
 }

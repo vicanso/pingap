@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::file_appender::new_file_appender;
+use super::file_appender::new_rolling_file_writer;
 use super::LOG_CATEGORY;
 use async_trait::async_trait;
 use bytes::BytesMut;
@@ -31,11 +31,17 @@ use tracing_appender::rolling::RollingFileAppender;
 type Result<T> = std::result::Result<T, Error>;
 
 pub struct AsyncLoggerTask {
+    dir: String,
     path: String,
     channel_buffer: usize,
     receiver: Mutex<Option<Receiver<BytesMut>>>,
     writer: Mutex<Option<BufWriter<RollingFileAppender>>>,
     flush_timeout: Duration,
+}
+impl AsyncLoggerTask {
+    pub fn get_dir(&self) -> String {
+        self.dir.clone()
+    }
 }
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, Default)]
@@ -53,18 +59,19 @@ pub async fn new_async_logger(
     let params: AsyncLoggerWriterParams =
         serde_qs::from_str(query).unwrap_or_default();
 
-    let file_appender =
-        new_file_appender(path).map_err(|e| Error::Invalid {
+    let rolling_file_writer =
+        new_rolling_file_writer(path).map_err(|e| Error::Invalid {
             message: e.to_string(),
         })?;
 
-    let buffered_writer = BufWriter::new(file_appender);
+    let buffered_writer = BufWriter::new(rolling_file_writer.writer);
     let channel_buffer = params.channel_buffer.unwrap_or(1000);
     let flush_timeout = params.flush_timeout.unwrap_or(Duration::from_secs(10));
 
     let (tx, rx) = channel::<BytesMut>(channel_buffer);
 
     let task = AsyncLoggerTask {
+        dir: rolling_file_writer.dir,
         channel_buffer,
         path: path.to_string(),
         receiver: Mutex::new(Some(rx)),
