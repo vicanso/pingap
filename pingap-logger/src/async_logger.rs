@@ -24,7 +24,6 @@ use std::io::{BufWriter, Write};
 use std::time::Duration;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Mutex;
-use tokio::time::sleep;
 use tracing::{error, info};
 use tracing_appender::rolling::RollingFileAppender;
 
@@ -99,6 +98,7 @@ impl BackgroundService for AsyncLoggerTask {
             "async logger is running",
         );
         const MAX_BATCH_SIZE: usize = 128;
+        let mut interval = tokio::time::interval(self.flush_timeout);
 
         loop {
             tokio::select! {
@@ -127,7 +127,7 @@ impl BackgroundService for AsyncLoggerTask {
                         }
                     }
                 }
-                _ = sleep(self.flush_timeout) => {
+                _ = interval.tick() => {
                     if let Err(e) = writer.flush() {
                         error!(
                             category = LOG_CATEGORY,
