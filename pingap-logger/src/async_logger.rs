@@ -54,13 +54,16 @@ struct AsyncLoggerWriterParams {
 pub async fn new_async_logger(
     path: &str,
 ) -> Result<(Sender<BytesMut>, AsyncLoggerTask)> {
+    let original_path = path.to_string();
     let (path, query) = path.split_once('?').unwrap_or((path, ""));
     let params: AsyncLoggerWriterParams =
         serde_qs::from_str(query).unwrap_or_default();
 
     let rolling_file_writer =
-        new_rolling_file_writer(path).map_err(|e| Error::Invalid {
-            message: e.to_string(),
+        new_rolling_file_writer(&original_path).map_err(|e| {
+            Error::Invalid {
+                message: e.to_string(),
+            }
         })?;
 
     let buffered_writer = BufWriter::new(rolling_file_writer.writer);

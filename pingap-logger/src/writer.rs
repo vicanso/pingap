@@ -284,28 +284,6 @@ fn new_file_writer(params: &LoggerParams) -> Result<(BoxMakeWriter, String)> {
         .split_once('?')
         .unwrap_or((params.log.as_str(), ""))
         .0;
-    // let mut compression = "".to_string();
-    // let mut level = 0;
-    // let mut days_ago = 0;
-    // let mut time_point_hour = 0;
-    // let mut task = None;
-    // if let Some((_, query)) = params.log.split_once('?') {
-    //     file = file.replace(&format!("?{query}"), "");
-    //     let m = parse_query_string(query);
-
-    //     if let Some(value) = m.get("compression") {
-    //         compression = value.to_string();
-    //     }
-    //     if let Some(value) = m.get("level") {
-    //         level = value.parse::<u8>().unwrap_or_default();
-    //     }
-    //     if let Some(value) = m.get("days_ago") {
-    //         days_ago = value.parse::<u16>().unwrap_or_default();
-    //     }
-    //     if let Some(value) = m.get("time_point_hour") {
-    //         time_point_hour = value.parse::<u8>().unwrap_or_default();
-    //     }
-    // }
 
     let filepath = Path::new(&file);
     let dir = if filepath.is_dir() {

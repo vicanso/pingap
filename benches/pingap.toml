@@ -1,3 +1,6 @@
+[basic]
+upstream_keepalive_pool_size = 2000
+
 [locations.testLocation]
 plugins = ["mockApiTest"]
 upstream = "nginx"
@@ -5,10 +8,7 @@ upstream = "nginx"
 [plugins.mockApiTest]
 category = "mock"
 data = '{"status": "ok", "message": "This is a test response generated successfully.", "source": "nginx-direct-return"}'
-headers = [
-    "content-type:application/json",
-    "cache-control:public, max-age=60",
-]
+headers = ["content-type:application/json", "cache-control:public, max-age=60"]
 path = "/api/test"
 status = 200
 

@@ -32,7 +32,6 @@ strum = { workspace = true }
 TinyUFO = "0.6.0"
 tokio = { workspace = true }
 tracing = { workspace = true }
-url = { workspace = true }
 
 
 [features]

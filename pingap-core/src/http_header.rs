@@ -21,7 +21,6 @@ use pingora::http::RequestHeader;
 use pingora::proxy::Session;
 use snafu::{ResultExt, Snafu};
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::fmt::Write;
 use std::str::FromStr;
 
@@ -341,21 +340,6 @@ pub fn get_cookie_value<'a>(
                     }
                 })
         })
-}
-
-/// Converts a query string (or a full URL containing one) into a `HashMap`.
-///
-/// This function is robust and can handle both partial (`"a=1&b=2"`) and full
-/// (`"http://.../?a=1&b=2"`) inputs.
-pub fn parse_query_string(value: &str) -> HashMap<String, String> {
-    // Isolate the query part of the string.
-    let query_str = value.split('?').nth(1).unwrap_or(value);
-    // Use the `url` crate's dedicated parser, which is robust and handles URL decoding.
-    url::form_urlencoded::parse(query_str.as_bytes())
-        // Convert the borrowed key/value pairs into owned Strings for the HashMap.
-        .map(|(k, v)| (k.into_owned(), v.into_owned()))
-        // Collect the pairs into a HashMap.
-        .collect()
 }
 
 /// Gets the value of a specific query parameter from the request URI.
@@ -809,21 +793,6 @@ mod tests {
             get_cookie_value(session.req_header(), "name"),
             Some("pingap")
         );
-    }
-
-    #[test]
-    fn test_parse_query_string() {
-        let query = "apikey=123&name=pingap";
-        let map = parse_query_string(query);
-        assert_eq!(map.len(), 2);
-        assert_eq!(map["apikey"], "123");
-        assert_eq!(map["name"], "pingap");
-
-        let query = "https://pingap.io/vicanso/pingap?apikey=123&name=pingap";
-        let map = parse_query_string(query);
-        assert_eq!(map.len(), 2);
-        assert_eq!(map["apikey"], "123");
-        assert_eq!(map["name"], "pingap");
     }
 
     #[tokio::test]

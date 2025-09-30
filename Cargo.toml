@@ -62,6 +62,7 @@ rust-embed = { version = "8.7.2", features = [
     "mime-guess",
     "compression",
 ], default-features = false }
+serde_qs = { workspace = true }
 sysinfo = { workspace = true }
 # TODO remove it after using edition 2024
 include-flate = "=0.3.0"

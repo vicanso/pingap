@@ -13,28 +13,51 @@
 // limitations under the License.
 
 use super::Error;
-use pingap_core::parse_query_string;
+use pingap_util::resolve_path;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use tracing_appender::rolling::RollingFileAppender;
+
+type Result<T> = std::result::Result<T, Error>;
 
 pub struct RollingFileWriter {
     pub dir: String,
     pub writer: RollingFileAppender,
 }
 
+#[derive(Debug, PartialEq, Deserialize, Serialize, Default)]
+struct RollingFileWriterParams {
+    #[serde(default)]
+    file: String,
+    #[serde(default)]
+    rolling: String,
+}
+
+impl TryFrom<&str> for RollingFileWriterParams {
+    type Error = Error;
+
+    fn try_from(value: &str) -> Result<Self> {
+        let (file, query) = value.split_once('?').unwrap_or((value, ""));
+
+        let mut params: Self = if !query.is_empty() {
+            serde_qs::from_str(query).map_err(|e| Error::Invalid {
+                message: e.to_string(),
+            })?
+        } else {
+            Self::default()
+        };
+
+        params.file = file.to_string();
+        Ok(params)
+    }
+}
+
 pub(crate) fn new_rolling_file_writer(
     log_path: &str,
-) -> Result<RollingFileWriter, Error> {
-    let mut file = pingap_util::resolve_path(log_path);
-    let mut rolling_type = "".to_string();
-    if let Some((_, query)) = log_path.split_once('?') {
-        file = file.replace(&format!("?{query}"), "");
-        let m = parse_query_string(query);
-        if let Some(value) = m.get("rolling") {
-            rolling_type = value.to_string();
-        }
-    }
+) -> Result<RollingFileWriter> {
+    let params = RollingFileWriterParams::try_from(log_path)?;
+    let file = resolve_path(params.file.as_str());
 
     let filepath = Path::new(&file);
     let dir = if filepath.is_dir() {
@@ -57,7 +80,7 @@ pub(crate) fn new_rolling_file_writer(
             .to_string_lossy()
             .to_string()
     };
-    let writer = match rolling_type.as_str() {
+    let writer = match params.rolling.as_str() {
         "minutely" => tracing_appender::rolling::minutely(dir, filename),
         "hourly" => tracing_appender::rolling::hourly(dir, filename),
         "never" => tracing_appender::rolling::never(dir, filename),
@@ -67,4 +90,88 @@ pub(crate) fn new_rolling_file_writer(
         dir: dir.to_string_lossy().to_string(),
         writer,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RollingFileWriterParams;
+
+    #[test]
+    fn test_try_from_path_only() {
+        let input = "access.log";
+        let params = RollingFileWriterParams::try_from(input).unwrap();
+        assert_eq!(
+            params,
+            RollingFileWriterParams {
+                file: "access.log".to_string(),
+                rolling: "".to_string(), // rolling should be default
+            }
+        );
+    }
+
+    #[test]
+    fn test_try_from_with_empty_query() {
+        let input = "error.log?";
+        let params = RollingFileWriterParams::try_from(input).unwrap();
+        assert_eq!(
+            params,
+            RollingFileWriterParams {
+                file: "error.log".to_string(),
+                rolling: "".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_try_from_with_valid_query() {
+        let input = "app.log?rolling=daily";
+        let params = RollingFileWriterParams::try_from(input).unwrap();
+        assert_eq!(
+            params,
+            RollingFileWriterParams {
+                file: "app.log".to_string(),
+                rolling: "daily".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_try_from_with_extra_params() {
+        // serde_qs should ignore extra parameters
+        let input = "metrics.log?rolling=hourly&format=json";
+        let params = RollingFileWriterParams::try_from(input).unwrap();
+        assert_eq!(
+            params,
+            RollingFileWriterParams {
+                file: "metrics.log".to_string(),
+                rolling: "hourly".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_try_from_empty_input() {
+        let input = "";
+        let params = RollingFileWriterParams::try_from(input).unwrap();
+        assert_eq!(
+            params,
+            RollingFileWriterParams {
+                file: "".to_string(),
+                rolling: "".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_try_from_query_only() {
+        let input = "?rolling=monthly";
+        let params = RollingFileWriterParams::try_from(input).unwrap();
+        assert_eq!(
+            params,
+            RollingFileWriterParams {
+                file: "".to_string(),
+                rolling: "monthly".to_string(),
+            }
+        );
+    }
 }

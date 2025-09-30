@@ -19,7 +19,6 @@ use crate::storage::Storage;
 use crate::PingapConfig;
 use crate::{Category, Error, Observer};
 use arc_swap::ArcSwap;
-use pingap_core::parse_query_string;
 use pingap_util::resolve_path;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::path::Path;
@@ -221,15 +220,11 @@ pub enum ConfigMode {
 static SINGLE_KEY: &str = "pingap.toml";
 
 pub fn new_file_config_manager(path: &str) -> Result<ConfigManager> {
-    let file = if let Some((path, _)) = path.split_once('?') {
-        path.to_string()
-    } else {
-        path.to_string()
-    };
-    let file = resolve_path(&file);
+    let (file, query) = path.split_once('?').unwrap_or((path, ""));
+    let file = resolve_path(file);
     let filepath = Path::new(&file);
     let mode = if filepath.is_dir() {
-        if parse_query_string(path).contains_key("separation") {
+        if query.contains("separation") {
             ConfigMode::MultiByItem
         } else {
             ConfigMode::MultiByType

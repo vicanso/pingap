@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use super::Error;
-use pingap_core::{get_hostname, parse_query_string};
+use pingap_core::get_hostname;
+use serde::{Deserialize, Serialize};
 use std::io;
 use std::str::FromStr;
 use std::sync::Mutex;
@@ -88,23 +89,24 @@ impl io::Write for SyslogWriterGuard<'_, Formatter5424> {
     }
 }
 
+#[derive(Debug, PartialEq, Deserialize, Serialize, Default)]
+struct SyslogWriterParams {
+    format: Option<String>,
+    process: Option<String>,
+    facility: Option<String>,
+}
+
 pub fn new_syslog_writer(value: &str) -> Result<BoxMakeWriter> {
-    let query_map = parse_query_string(value);
+    let (_, query) = value.split_once('?').unwrap_or((value, ""));
+    let params: SyslogWriterParams =
+        serde_qs::from_str(query).unwrap_or_default();
 
-    let format_type = query_map.get("format").cloned().unwrap_or_default();
-    let process = query_map
-        .get("process")
-        .cloned()
-        .unwrap_or("pingap".to_string());
+    let format_type = params.format.unwrap_or_default();
+    let process = params.process.unwrap_or("pingap".to_string());
 
-    let facility = Facility::from_str(
-        query_map
-            .get("facility")
-            .cloned()
-            .unwrap_or_default()
-            .as_str(),
-    )
-    .unwrap_or_default();
+    let facility =
+        Facility::from_str(params.facility.unwrap_or_default().as_str())
+            .unwrap_or_default();
 
     if format_type == "5424" {
         let formatter = syslog::Formatter5424 {

@@ -24,7 +24,6 @@ diff = "0.1.13"
 etcd-client = "0.16.1"
 glob = { workspace = true }
 http = { workspace = true }
-humantime = { workspace = true }
 humantime-serde = { workspace = true }
 pingap-core = { version = "0.12.0", path = "../pingap-core" }
 pingap-discovery = { version = "0.12.0", path = "../pingap-discovery" }
@@ -33,6 +32,7 @@ regex = { workspace = true }
 rustls-pemfile = "2.2.0"
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_qs = { workspace = true }
 snafu = { workspace = true }
 strum = { workspace = true }
 substring = { workspace = true }

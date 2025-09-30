@@ -21,6 +21,7 @@ use pingap_core::{Plugin, PluginProvider, PluginStep, Plugins};
 use pingap_plugin::get_plugin_factory;
 use pingap_proxy::ServerConf;
 use pingap_util::base64_encode;
+use serde::{Deserialize, Serialize};
 use snafu::Snafu;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -32,6 +33,11 @@ mod stats;
 
 /// UUID for the admin server plugin, generated at runtime
 pub static ADMIN_SERVER_PLUGIN: &str = "pingap:admin";
+
+#[derive(Debug, PartialEq, Deserialize, Serialize, Default)]
+struct AdminPluginParams {
+    max_age: Option<String>,
+}
 
 /// Parses admin plugin configuration from an address string.
 ///
@@ -72,13 +78,10 @@ pub fn parse_admin_plugin(
     if path.is_empty() {
         path = "/".to_string();
     }
-    let query =
-        pingap_core::parse_query_string(info.query().unwrap_or_default());
-    let max_age = if let Some(value) = query.get("max_age") {
-        value.to_string()
-    } else {
-        "2d".to_string()
-    };
+    let params: AdminPluginParams =
+        serde_qs::from_str(info.query().unwrap_or_default())
+            .unwrap_or_default();
+    let max_age = params.max_age.unwrap_or("2d".to_string());
 
     let data = format!(
         r#"
@@ -153,8 +156,8 @@ pub fn get_builtin_proxy_plugins() -> Vec<(String, PluginConf)> {
 category = "compression"
 gzip_level = 6
 br_level = 6
-zstd_level = 3
-remark = "Compression for http, support zstd:3, br:6, gzip:6"
+zstd_level = 6
+remark = "Compression for http, support zstd:6, br:6, gzip:6"
 "###,
             )
             .unwrap(),
@@ -166,9 +169,9 @@ remark = "Compression for http, support zstd:3, br:6, gzip:6"
 category = "compression"
 gzip_level = 6
 br_level = 6
-zstd_level = 3
+zstd_level = 6 
 mode = "upstream"
-remark = "Compression for upstream response, support zstd:3, br:6, gzip:6"
+remark = "Compression for upstream response, support zstd:6, br:6, gzip:6"
 "###,
             )
             .unwrap(),

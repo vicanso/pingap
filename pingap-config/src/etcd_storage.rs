@@ -16,8 +16,9 @@ use crate::storage::Storage;
 use crate::{Error, Observer};
 use async_trait::async_trait;
 use etcd_client::{Client, ConnectOptions, GetOptions, WatchOptions};
-use humantime::parse_duration;
 use pingap_util::path_join;
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use substring::Substring;
 use tokio::sync::OnceCell;
 
@@ -33,6 +34,30 @@ pub struct EtcdStorage {
     client: OnceCell<Client>,
 }
 pub const ETCD_PROTOCOL: &str = "etcd://";
+
+#[derive(Debug, PartialEq, Deserialize, Serialize, Default)]
+struct EtcdStorageParams {
+    #[serde(default)]
+    user: String,
+    #[serde(default)]
+    password: String,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    timeout: Option<Duration>,
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    connect_timeout: Option<Duration>,
+}
+
+impl TryFrom<&str> for EtcdStorageParams {
+    type Error = Error;
+    fn try_from(value: &str) -> Result<Self> {
+        let params = serde_qs::from_str(value).map_err(|e| Error::Invalid {
+            message: e.to_string(),
+        })?;
+        Ok(params)
+    }
+}
 
 impl EtcdStorage {
     /// Create a new etcd storage for config.
@@ -55,30 +80,19 @@ impl EtcdStorage {
 
         let addrs: Vec<String> =
             hosts.split(',').map(|item| item.to_string()).collect();
-        let mut user = "".to_string();
-        let mut password = "".to_string();
+        let params = EtcdStorageParams::try_from(query.as_str())?;
         let mut options = ConnectOptions::default();
-        for (key, value) in pingap_core::parse_query_string(&query) {
-            match key.as_str() {
-                "user" => user = value,
-                "password" => password = value,
-                "timeout" => {
-                    if let Ok(d) = parse_duration(&value) {
-                        options = options.with_timeout(d);
-                    }
-                },
-                "connect_timeout" => {
-                    if let Ok(d) = parse_duration(&value) {
-                        options = options.with_connect_timeout(d);
-                    }
-                },
-                _ => {},
-            }
-        }
 
-        if !user.is_empty() && !password.is_empty() {
-            options = options.with_user(user, password);
+        if !params.user.is_empty() && !params.password.is_empty() {
+            options = options.with_user(params.user, params.password);
         };
+        if let Some(timeout) = params.timeout {
+            options = options.with_timeout(timeout);
+        };
+        if let Some(connect_timeout) = params.connect_timeout {
+            options = options.with_connect_timeout(connect_timeout);
+        };
+
         Ok(Self {
             addrs,
             options,
@@ -172,5 +186,24 @@ impl Storage for EtcdStorage {
         Ok(Observer {
             etcd_watch_stream: Some(stream),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_parse_params() {
+        // timeout=10s&connect_timeout=5s&user=abc&password=pwd
+        let params = EtcdStorageParams::try_from(
+            "timeout=10s&connect_timeout=5s&user=abc&password=pwd",
+        )
+        .unwrap();
+        assert_eq!(params.timeout, Some(Duration::from_secs(10)));
+        assert_eq!(params.connect_timeout, Some(Duration::from_secs(5)));
+        assert_eq!(params.user, "abc");
+        assert_eq!(params.password, "pwd");
     }
 }
