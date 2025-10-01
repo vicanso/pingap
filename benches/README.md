@@ -15,6 +15,7 @@ L3 cache:         20 MiB   (L3缓存大小，对性能影响显著)
 ## Adjust linux setting
 
 ```bash
+ulimit -n 65536
 sudo sysctl -w net.core.somaxconn=65535
 sudo sysctl -w net.ipv4.tcp_tw_reuse=1
 sudo sysctl -w net.ipv4.ip_local_port_range="1024 65535"

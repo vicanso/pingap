@@ -20,7 +20,7 @@ use crate::PingapConfig;
 use crate::{Category, Error, Observer};
 use arc_swap::ArcSwap;
 use pingap_util::resolve_path;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use std::path::Path;
 use std::sync::Arc;
 use toml::{map::Map, Value};
@@ -219,12 +219,34 @@ pub enum ConfigMode {
 
 static SINGLE_KEY: &str = "pingap.toml";
 
+fn bool_from_str<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s: &str = Deserialize::deserialize(deserializer)?;
+    // if s is "false", return false, otherwise return true
+    match s {
+        "false" => Ok(false),
+        _ => Ok(true),
+    }
+}
+
+#[derive(Deserialize, Default, Debug)]
+struct ConfigManagerParams {
+    #[serde(default, deserialize_with = "bool_from_str")]
+    separation: bool,
+}
+
 pub fn new_file_config_manager(path: &str) -> Result<ConfigManager> {
     let (file, query) = path.split_once('?').unwrap_or((path, ""));
     let file = resolve_path(file);
     let filepath = Path::new(&file);
     let mode = if filepath.is_dir() {
-        if query.contains("separation") {
+        let params: ConfigManagerParams =
+            serde_qs::from_str(query).map_err(|e| Error::Invalid {
+                message: e.to_string(),
+            })?;
+        if params.separation {
             ConfigMode::MultiByItem
         } else {
             ConfigMode::MultiByType
