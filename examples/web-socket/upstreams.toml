@@ -1,0 +1,6 @@
+[upstreams.wssUpstream]
+addrs = ["ws.postman-echo.com:443"]
+discovery = "dns"
+ipv4_only = true
+sni = "ws.postman-echo.com"
+update_frequency = "30s"

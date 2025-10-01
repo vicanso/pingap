@@ -1,9 +1,0 @@
-[servers.ws]
-addr = "127.0.0.1:6188"
-locations = ["ws"]
-
-[locations.ws]
-upstream = "ws"
-
-[upstreams.ws]
-addrs = ["124.222.224.186:8800"]

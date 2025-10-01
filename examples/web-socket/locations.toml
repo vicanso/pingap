@@ -1,0 +1,2 @@
+[locations.wssLocation]
+upstream = "wssUpstream"

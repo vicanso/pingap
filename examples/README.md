@@ -2,6 +2,9 @@
 
 - [static-serve](./static-serve/README.md)
 - [api-gateway](./api-gateway/README.md)
+- [web-socket](./web-socket/README.md)
+- [grpc-web](./grpc-web/README.md)
+- [transparent-proxy](./transparent-proxy/README.md)
 
 ## Grpc-Web
 
@@ -33,9 +36,3 @@ sudo cargo run -- -c=~/github/pingap/examples/transparent-proxy.toml --admin=127
 curl -kv --resolve '*:443:127.0.0.1' 'https://cn.bing.com/'
 ```
 
-
-## Web Socket
-
-```bash
-cargo run -- -c=~/github/pingap/examples/web-socket.toml --admin=127.0.0.1:3018
-```
