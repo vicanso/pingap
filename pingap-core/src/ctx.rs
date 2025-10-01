@@ -195,6 +195,11 @@ pub struct UpstreamInfo {
     pub connected_count: Option<i32>,
     /// The HTTP status code of upstream response.
     pub status: Option<StatusCode>,
+    pub retries: u8,
+    /// Maximum window for retries
+    pub max_retries: Option<u8>,
+    /// Maximum window for retries
+    pub max_retry_window: Option<Duration>,
 }
 
 /// State related to the current request being processed.

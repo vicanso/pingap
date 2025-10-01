@@ -218,6 +218,10 @@ export default {
     proxyAddHeaders: "Proxy Add Headers",
     proxyAddHeadersPlaceholder:
       "Input the http header name : Input the http header value",
+    maxRetries: "Max Retries",
+    maxRetriesPlaceholder: "Input the max retries to upstream",
+    maxRetryWindow: "Max Retry Window",
+    maxRetryWindowPlaceholder: "Input the max retry window to upstream",
     enableReverseProxyHeaders: "Enable Reverse Proxy Headers",
     weight: "Weight",
     weightPlaceholder: "Input the weight of location",

@@ -534,6 +534,8 @@ impl Server {
 
         // only execute all subsequent operations after successtracingy matching location
         ctx.upstream.location = location.name.clone();
+        ctx.upstream.max_retries = location.max_retries;
+        ctx.upstream.max_retry_window = location.max_retry_window;
         if let Some(captures) = captures {
             ctx.extend_variables(captures);
         }
@@ -1244,6 +1246,28 @@ impl ProxyHttp for Server {
             Some(get_start_time(&ctx.timing.created_at));
 
         Ok(())
+    }
+    fn fail_to_connect(
+        &self,
+        _session: &mut Session,
+        _peer: &HttpPeer,
+        ctx: &mut Self::CTX,
+        mut e: Box<pingora::Error>,
+    ) -> Box<pingora::Error> {
+        let Some(max_retries) = ctx.upstream.max_retries else {
+            return e;
+        };
+        if ctx.upstream.retries >= max_retries {
+            return e;
+        }
+        if let Some(max_retry_window) = ctx.upstream.max_retry_window {
+            if ctx.timing.created_at.elapsed() > max_retry_window {
+                return e;
+            }
+        }
+        ctx.upstream.retries += 1;
+        e.set_retry(true);
+        e
     }
     /// Filters upstream request before sending.
     /// Adds proxy headers and performs any request modifications.

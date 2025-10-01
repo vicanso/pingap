@@ -453,6 +453,14 @@ pub struct LocationConf {
     /// Whether to enable reverse proxy headers
     pub enable_reverse_proxy_headers: Option<bool>,
 
+    /// Maximum number of retries for failed connections
+    pub max_retries: Option<u8>,
+
+    /// Maximum window for retries
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub max_retry_window: Option<Duration>,
+
     /// Optional description/notes about this location
     pub remark: Option<String>,
 }

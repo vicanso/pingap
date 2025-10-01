@@ -149,6 +149,22 @@ export default function Locations() {
       category: ExFormItemCategory.KV_LIST,
     },
     {
+      name: "max_retries",
+      label: locationI18n("maxRetries"),
+      placeholder: locationI18n("maxRetriesPlaceholder"),
+      defaultValue: locationConfig.max_retries,
+      span: 3,
+      category: ExFormItemCategory.NUMBER,
+    },
+    {
+      name: "max_retry_window",
+      label: locationI18n("maxRetryWindow"),
+      placeholder: locationI18n("maxRetryWindowPlaceholder"),
+      defaultValue: locationConfig.max_retry_window,
+      span: 3,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
       name: "enable_reverse_proxy_headers",
       label: locationI18n("enableReverseProxyHeaders"),
       placeholder: "",
@@ -217,7 +233,7 @@ export default function Locations() {
       category: ExFormItemCategory.TEXTAREA,
     },
   ];
-  let defaultShow = 7;
+  let defaultShow = 6;
   if (currentLocation === newLocation) {
     defaultShow++;
     items.unshift({

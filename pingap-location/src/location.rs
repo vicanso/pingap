@@ -22,6 +22,7 @@ use regex::Regex;
 use snafu::{ResultExt, Snafu};
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{debug, error};
 
 const LOG_CATEGORY: &str = "location";
@@ -209,6 +210,12 @@ pub struct Location {
     /// Whether to automatically add standard reverse proxy headers like:
     /// X-Forwarded-For, X-Real-IP, X-Forwarded-Proto, etc.
     pub enable_reverse_proxy_headers: bool,
+
+    /// Maximum window for retries
+    pub max_retries: Option<u8>,
+
+    /// Maximum window for retries
+    pub max_retry_window: Option<Duration>,
 }
 
 /// Formats a vector of header strings into internal HttpHeader representation.
@@ -306,6 +313,8 @@ impl Location {
             enable_reverse_proxy_headers: conf
                 .enable_reverse_proxy_headers
                 .unwrap_or_default(),
+            max_retries: conf.max_retries,
+            max_retry_window: conf.max_retry_window,
         };
         debug!(
             category = LOG_CATEGORY,
