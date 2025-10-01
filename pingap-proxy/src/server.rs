@@ -1163,26 +1163,29 @@ impl ProxyHttp for Server {
     ) -> pingora::Result<Box<HttpPeer>> {
         debug!(category = LOG_CATEGORY, "--> upstream peer");
         defer!(debug!(category = LOG_CATEGORY, "<-- upstream peer"););
-        // let mut location_name = "unknown".to_string();
         let peer = self
             .location_provider
             .get(&ctx.upstream.location)
             .and_then(|location| {
+                let mut name = &location.upstream;
+                // override upstream by other plugin
+                if !ctx.upstream.name.is_empty() {
+                    name = &ctx.upstream.name;
+                }
                 let upstream = get_upstream_with_variables(
-                    &location.upstream,
+                    name,
                     ctx,
                     self.upstream_provider.as_ref(),
                 )?;
-                Some((location, upstream))
+                Some(upstream)
             })
-            .and_then(|(location, up)| {
-                ctx.upstream.connected_count = up.connected();
-                #[cfg(not(feature = "tracing"))]
-                let _location = &location;
+            .and_then(|upstream| {
+                ctx.upstream.connected_count = upstream.connected();
+                ctx.upstream.name = upstream.name.clone();
                 #[cfg(feature = "tracing")]
                 if let Some(features) = &ctx.features {
                     if let Some(tracer) = &features.otel_tracer {
-                        let name = format!("upstream.{}", &location.upstream);
+                        let name = format!("upstream.{}", &upstream.name);
                         let mut span = tracer.new_upstream_span(&name);
                         span.set_attribute(KeyValue::new(
                             "upstream.connected",
@@ -1193,12 +1196,11 @@ impl ProxyHttp for Server {
                         features.upstream_span = Some(span);
                     }
                 }
-                let peer = up
+                let peer = upstream
                     .new_http_peer(session, &ctx.conn.client_ip)
                     .inspect(|peer| {
                         ctx.upstream.address = peer.address().to_string();
                     });
-                ctx.upstream.name = up.name.clone();
                 peer
             })
             .ok_or_else(|| {
