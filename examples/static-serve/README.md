@@ -3,7 +3,12 @@
 静态文件服务，使用`cache`与`compression`插件，为静态文件服务极高效的压缩与缓存服务。
 
 
-## http static file server
+```bash
+pingap -c ~/github/pingap/examples/static-serve --admin=127.0.0.1:3018 --autoreload
+```
+
+
+## 静态文件服务
 
 ```bash
 docker run -d --restart=always \
@@ -14,11 +19,6 @@ docker run -d --restart=always \
   vicanso/static
 ```
 
-## start pingap
-
-```bash
-pingap -c ~/github/pingap/examples/static-serve --admin=127.0.0.1:3018
-```
 
 ## 核心优点
 

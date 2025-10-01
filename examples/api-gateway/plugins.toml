@@ -1,0 +1,18 @@
+[plugins.appKeyAuth]
+category = "key_auth"
+delay = "1s"
+hide_credentials = true
+keys = ["U8nCkeA9U4"]
+query = "key"
+
+[plugins.commonCache]
+category = "cache"
+check_cache_control = true
+directory = "/opt/pingap/cache?levels=2&inactive=7d"
+lock = "3s"
+max_file_size = "1mb"
+
+[plugins.userBasicAuth]
+authorizations = ["cGluZ2FwOjEyMzEyMw=="]
+category = "basic_auth"
+hide_credentials = true

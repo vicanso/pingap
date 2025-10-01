@@ -1,0 +1,27 @@
+[locations.chartsLocation]
+enable_reverse_proxy_headers = true
+path = "/api/charts/"
+plugins = [
+    "userBasicAuth",
+    "pingap:requestId",
+]
+rewrite = "^/api/charts/ /"
+upstream = "chartsUpstream"
+
+[locations.commonLocation]
+enable_reverse_proxy_headers = true
+plugins = [
+    "commonCache",
+    "pingap:compressionUpstream",
+]
+upstream = "commonUpstream"
+
+[locations.ordersLocation]
+enable_reverse_proxy_headers = true
+path = "/api/orders/"
+plugins = [
+    "appKeyAuth",
+    "pingap:compressionUpstream",
+]
+rewrite = "^/api/orders/ /"
+upstream = "ordersUpstream"

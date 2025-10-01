@@ -1,0 +1,7 @@
+[servers.test]
+addr = "127.0.0.1:6118"
+locations = [
+    "chartsLocation",
+    "ordersLocation",
+    "commonLocation",
+]

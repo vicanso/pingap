@@ -1,0 +1,15 @@
+[upstreams.chartsUpstream]
+addrs = [
+    "127.0.0.1:5000",
+    "127.0.0.1:5001",
+]
+health_check = "http://charts/ping"
+
+[upstreams.commonUpstream]
+addrs = ["127.0.0.1:8080"]
+health_check = "http://common/health"
+
+[upstreams.ordersUpstream]
+addrs = ["127.0.0.1:6000"]
+health_check = "http://orders/health"
+total_connection_timeout = "30s"
