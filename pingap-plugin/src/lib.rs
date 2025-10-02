@@ -155,6 +155,7 @@ mod referer_restriction;
 mod request_id;
 mod response_headers;
 mod sub_filter;
+mod traffic_splitting;
 mod ua_restriction;
 
 mod plugin;

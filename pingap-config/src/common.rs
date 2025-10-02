@@ -86,6 +86,8 @@ pub enum PluginCategory {
     Cors,
     /// Accept-Encoding header processing
     AcceptEncoding,
+    /// Traffic splitting
+    TrafficSplitting,
 }
 impl Serialize for PluginCategory {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

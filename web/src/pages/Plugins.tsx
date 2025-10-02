@@ -1046,6 +1046,44 @@ export default function Plugins() {
       );
       break;
     }
+    case PluginCategory.TRAFFIC_SPLITTING: {
+      items.push(
+        {
+          name: "upstream",
+          label: pluginI18n("trafficSplittingUpstream"),
+          placeholder: pluginI18n("trafficSplittingUpstreamPlaceholder"),
+          defaultValue: pluginConfig.upstream as string,
+          span: 3,
+          category: ExFormItemCategory.TEXT,
+        },
+        {
+          name: "weight",
+          label: pluginI18n("trafficSplittingWeight"),
+          placeholder: pluginI18n("trafficSplittingWeightPlaceholder"),
+          defaultValue: pluginConfig.weight as number,
+          span: 3,
+          category: ExFormItemCategory.NUMBER,
+        },
+        {
+          name: "stickiness",
+          label: pluginI18n("trafficSplittingStickiness"),
+          placeholder: pluginI18n("trafficSplittingStickinessPlaceholder"),
+          defaultValue: pluginConfig.stickiness as boolean,
+          span: 3,
+          category: ExFormItemCategory.RADIOS,
+          options: newBooleanOptions(),
+        },
+        {
+          name: "sticky_cookie",
+          label: pluginI18n("trafficSplittingStickyCookie"),
+          placeholder: pluginI18n("trafficSplittingStickyCookiePlaceholder"),
+          defaultValue: pluginConfig.sticky_cookie as string,
+          span: 3,
+          category: ExFormItemCategory.TEXT,
+        },
+      );
+      break;
+    }
     default: {
       break;
     }

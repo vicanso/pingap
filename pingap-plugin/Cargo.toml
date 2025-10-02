@@ -41,6 +41,7 @@ pingap-config = { version = "0.12.0", path = "../pingap-config" }
 pingap-core = { version = "0.12.0", path = "../pingap-core" }
 pingap-util = { version = "0.12.0", path = "../pingap-util" }
 pingora = { workspace = true }
+rand = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

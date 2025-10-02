@@ -522,6 +522,15 @@ export default {
     imageOptimAvifQualityPlaceholder: "Input the avif quality(e.g. 75)",
     imageOptimAvifSpeed: "Avif Speed",
     imageOptimAvifSpeedPlaceholder: "Input the avif speed(e.g. 3)",
+    trafficSplittingUpstream: "Upstream",
+    trafficSplittingUpstreamPlaceholder: "Input the upstream for traffic splitting",
+    trafficSplittingWeight: "Weight",
+    trafficSplittingWeightPlaceholder: "Input the weight of traffic splitting",
+    trafficSplittingStickiness: "Stickiness",
+    trafficSplittingStickinessPlaceholder: "Input the stickiness of traffic splitting",
+    trafficSplittingStickyCookie: "Sticky Cookie",
+    trafficSplittingStickyCookiePlaceholder:
+      "Input the sticky cookie for traffic splitting",
     remark: "Remark",
   },
   storage: {

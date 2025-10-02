@@ -478,6 +478,13 @@ export default {
     imageOptimAvifQualityPlaceholder: "输入avif质量(如 75)",
     imageOptimAvifSpeed: "Avif速度",
     imageOptimAvifSpeedPlaceholder: "输入avif速度(如 3)",
+    trafficSplittingUpstream: "上游服务",
+    trafficSplittingUpstreamPlaceholder: "输入traffic splitting的上游服务",
+    trafficSplittingWeight: "权重",
+    trafficSplittingWeightPlaceholder: "输入traffic splitting的权重",
+    trafficSplittingStickiness: "粘性",
+    trafficSplittingStickinessPlaceholder: "输入traffic splitting的粘性",
+    trafficSplittingStickyCookie: "粘性cookie",
     remark: "备注",
   },
   storage: {
