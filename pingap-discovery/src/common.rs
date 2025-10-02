@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{format_addrs, Result};
-use super::{Discovery, LOG_CATEGORY, STATIC_DISCOVERY};
+use super::{Discovery, LOG_TARGET, STATIC_DISCOVERY};
 use http::Extensions;
 use pingora::lb::discovery;
 use pingora::lb::{Backend, Backends};
@@ -46,7 +46,7 @@ pub fn is_static_discovery(value: &str) -> bool {
 pub fn new_static_discovery(discovery: &Discovery) -> Result<Backends> {
     let start_time = Instant::now();
     info!(
-        category = LOG_CATEGORY,
+        target: LOG_TARGET,
         hosts = discovery.addr.join(","),
         "starting static discovery"
     );
@@ -64,7 +64,7 @@ pub fn new_static_discovery(discovery: &Discovery) -> Result<Backends> {
                 Err(e) => {
                     // Log the error but don't stop the whole process.
                     warn!(
-                        category = LOG_CATEGORY,
+                        target: LOG_TARGET,
                         error = %e,
                         addr = addr_str,
                         "failed to resolve socket address"
@@ -92,7 +92,7 @@ pub fn new_static_discovery(discovery: &Discovery) -> Result<Backends> {
     let resolved_addrs: Vec<String> =
         upstreams.iter().map(|b| b.addr.to_string()).collect();
     info!(
-        category = LOG_CATEGORY,
+        target: LOG_TARGET,
         hosts = discovery.addr.join(","),
         addrs = resolved_addrs.join(","),
         count = upstreams.len(),

@@ -15,7 +15,7 @@
 use super::{
     update_peer_options, Error, HealthCheckSchema, DEFAULT_CHECK_FREQUENCY,
     DEFAULT_CONNECTION_TIMEOUT, DEFAULT_CONSECUTIVE_FAILURE,
-    DEFAULT_CONSECUTIVE_SUCCESS, DEFAULT_READ_TIMEOUT, LOG_CATEGORY,
+    DEFAULT_CONSECUTIVE_SUCCESS, DEFAULT_READ_TIMEOUT, LOG_TARGET,
 };
 use humantime::parse_duration;
 use pingora::http::RequestHeader;
@@ -52,7 +52,7 @@ pub(crate) fn new_http_health_check(
             // 忽略append header fail
             if let Err(e) = req.append_header("Host", &conf.host) {
                 error!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     name,
                     error = e.to_string(),
                     host = conf.host,
@@ -62,7 +62,7 @@ pub(crate) fn new_http_health_check(
             check.req = req;
         },
         Err(e) => error!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             error = e.to_string(),
             "http health check fail"
         ),

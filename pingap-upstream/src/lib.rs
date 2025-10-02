@@ -19,7 +19,7 @@ mod hash_strategy;
 mod peer_tracer;
 mod upstream;
 
-pub(crate) const LOG_CATEGORY: &str = "upstream";
+pub(crate) static LOG_TARGET: &str = "upstream";
 
 pub type Upstreams = AHashMap<String, Arc<Upstream>>;
 

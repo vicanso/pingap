@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::file_appender::new_rolling_file_writer;
-use super::LOG_CATEGORY;
+use super::LOG_TARGET;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use pingap_core::Error;
@@ -94,7 +94,7 @@ impl BackgroundService for AsyncLoggerTask {
             return;
         };
         info!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             path = self.path,
             channel_buffer = self.channel_buffer,
             flush_timeout = format!("{:?}", self.flush_timeout),
@@ -123,7 +123,7 @@ impl BackgroundService for AsyncLoggerTask {
                         msg.extend_from_slice(b"\n");
                         if let Err(e) = writer.write(&msg) {
                             error!(
-                                category = LOG_CATEGORY,
+                                target: LOG_TARGET,
                                 error = %e,
                                 "write fail",
                             );
@@ -133,7 +133,7 @@ impl BackgroundService for AsyncLoggerTask {
                 _ = interval.tick() => {
                     if let Err(e) = writer.flush() {
                         error!(
-                            category = LOG_CATEGORY,
+                            target: LOG_TARGET,
                             error = %e,
                             "flush fail",
                         );
@@ -150,7 +150,7 @@ impl BackgroundService for AsyncLoggerTask {
             msg.extend_from_slice(b"\n");
             if let Err(e) = writer.write_all(&msg) {
                 error!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     error = %e,
                     "write fail",
                 );
@@ -160,7 +160,7 @@ impl BackgroundService for AsyncLoggerTask {
         // flush writer
         if let Err(e) = writer.flush() {
             error!(
-                category = LOG_CATEGORY,
+                target: LOG_TARGET,
                 error = %e,
                 "flush fail",
             );

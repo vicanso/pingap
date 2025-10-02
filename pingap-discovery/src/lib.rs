@@ -17,7 +17,7 @@ use pingap_core::NotificationSender;
 use snafu::Snafu;
 use std::sync::Arc;
 
-pub static LOG_CATEGORY: &str = "discovery";
+pub static LOG_TARGET: &str = "discovery";
 
 #[derive(Debug, Snafu)]
 pub enum Error {

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_process_system_info, get_processing_accepted, LOG_CATEGORY};
+use super::{get_process_system_info, get_processing_accepted, LOG_TARGET};
 use async_trait::async_trait;
 use pingap_core::{BackgroundTask, Error};
 use pingap_location::LocationProvider;
@@ -89,7 +89,7 @@ impl BackgroundTask for PerformanceMetricsLogTask {
 
         // Log all metrics using the tracing framework
         info!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             threads = system_info.threads, // Number of threads
             locations_stats,               // Active location requests
             upstreams_healthy_status,      // Upstream healthy status

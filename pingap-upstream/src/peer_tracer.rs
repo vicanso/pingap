@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::LOG_CATEGORY;
+use crate::LOG_TARGET;
 use pingora::upstreams::peer::Tracing;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
@@ -41,7 +41,7 @@ impl UpstreamPeerTracer {
 impl Tracing for UpstreamPeerTracer {
     fn on_connected(&self) {
         debug!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             name = self.name,
             "upstream peer connected"
         );
@@ -49,7 +49,7 @@ impl Tracing for UpstreamPeerTracer {
     }
     fn on_disconnected(&self) {
         debug!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             name = self.name,
             "upstream peer disconnected"
         );

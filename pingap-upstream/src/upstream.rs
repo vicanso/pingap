@@ -14,7 +14,7 @@
 
 use crate::hash_strategy::HashStrategy;
 use crate::peer_tracer::UpstreamPeerTracer;
-use crate::{UpstreamProvider, Upstreams, LOG_CATEGORY};
+use crate::{UpstreamProvider, Upstreams, LOG_TARGET};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -463,11 +463,7 @@ impl Upstream {
             tracer,
             processing: AtomicI32::new(0),
         };
-        debug!(
-            category = LOG_CATEGORY,
-            name = up.name,
-            "new upstream: {up:?}"
-        );
+        debug!(target: LOG_TARGET, name = up.name, "new upstream: {up:?}");
         Ok(up)
     }
 
@@ -706,14 +702,14 @@ impl BackgroundTask for HealthCheckTask {
                     let result = up.lb.update().await;
                     if let Err(e) = result {
                         error!(
-                            category = LOG_CATEGORY,
+                            target: LOG_TARGET,
                             error = %e,
                             name,
                             "update backends fail"
                         )
                     } else {
                         info!(
-                            category = LOG_CATEGORY,
+                            target: LOG_TARGET,
                             name,
                             elapsed = format!(
                                 "{}ms",
@@ -731,7 +727,7 @@ impl BackgroundTask for HealthCheckTask {
                 let health_check_start_time = Instant::now();
                 up.lb.run_health_check().await;
                 info!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     name,
                     elapsed = format!(
                         "{}ms",

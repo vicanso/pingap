@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::LOG_CATEGORY;
+use super::LOG_TARGET;
 use super::{Error, Result, PAGE_SIZE};
 use crate::get_file_backends;
 use async_trait::async_trait;
@@ -221,7 +221,7 @@ async fn do_file_storage_clear(count: u32) -> Result<bool, ServiceError> {
             return Ok(true);
         };
         info!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             success = stats.success,
             fail = stats.fail,
             description = stats.description,
@@ -368,7 +368,7 @@ impl HandleMiss for ObjectMissHandler {
     async fn finish(self: Box<Self>) -> pingora::Result<MissFinishType> {
         let size = self.body.len(); // FIXME: this just body size, also track meta size
         info!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             key = self.key,
             primary_key = self.primary_key,
             namespace = std::str::from_utf8(&self.namespace).ok(),

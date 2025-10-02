@@ -21,7 +21,7 @@ use snafu::Snafu;
 use std::time::Duration;
 use strum::EnumString;
 use tracing::info;
-static LOG_CATEGORY: &str = "health";
+static LOG_TARGET: &str = "health";
 
 mod grpc;
 mod http;
@@ -109,7 +109,7 @@ pub fn new_health_check(
         check.peer_template.options.connection_timeout =
             Some(Duration::from_secs(3));
         info!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             name,
             options = %check.peer_template.options,
             "new health check"
@@ -118,7 +118,7 @@ pub fn new_health_check(
     } else {
         health_check_conf = health_check.try_into()?;
         info!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             name,
             schema = health_check_conf.schema.to_string(),
             path = health_check_conf.path,

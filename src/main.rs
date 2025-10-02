@@ -555,6 +555,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut my_server = server::Server::new(Some(opt))?;
     let server_conf = new_server_config(&args, &config);
     info!(
+        target: "main",
         pid_file = server_conf.pid_file,
         upgrade_sock = server_conf.upgrade_sock,
         user = server_conf.user,

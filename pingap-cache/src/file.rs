@@ -15,7 +15,7 @@
 use super::http_cache::{
     CacheObject, HttpCacheClearStats, HttpCacheStats, HttpCacheStorage,
 };
-use super::{Error, Result, LOG_CATEGORY, PAGE_SIZE};
+use super::{Error, Result, LOG_TARGET, PAGE_SIZE};
 #[cfg(feature = "tracing")]
 use super::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use async_trait::async_trait;
@@ -173,7 +173,7 @@ impl FileCache {
                 .map_err(|e| Error::Io { source: e })?;
         }
         info!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             dir = params.directory,
             levels = params
                 .levels
@@ -271,7 +271,7 @@ impl HttpCacheStorage for FileCache {
         if let Some(cache) = &self.cache {
             if let Some(obj) = cache.get(&key.to_string()) {
                 debug!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     key, namespace, "get cache from tinyufo"
                 );
                 return Ok(Some(obj));
@@ -312,7 +312,7 @@ impl HttpCacheStorage for FileCache {
             }
         }
         debug!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             key,
             namespace =
                 std::string::String::from_utf8_lossy(namespace).to_string(),
@@ -341,7 +341,7 @@ impl HttpCacheStorage for FileCache {
             let weight = data.get_weight();
             if weight < self.cache_file_max_weight {
                 debug!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     key, namespace, "put cache to tinyufo"
                 );
                 c.put(key.to_string(), data.clone(), weight);
@@ -371,7 +371,7 @@ impl HttpCacheStorage for FileCache {
         self.write_time.observe(elapsed_second(start));
         let _ = result.map_err(|e| Error::Io { source: e })?;
         debug!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             key,
             namespace =
                 std::string::String::from_utf8_lossy(namespace).to_string(),
@@ -395,7 +395,7 @@ impl HttpCacheStorage for FileCache {
     ) -> Result<Option<CacheObject>> {
         if let Some(c) = &self.cache {
             debug!(
-                category = LOG_CATEGORY,
+                target: LOG_TARGET,
                 key, namespace, "remove cache from tinyufo"
             );
             c.remove(&key.to_string());
@@ -408,7 +408,7 @@ impl HttpCacheStorage for FileCache {
             .await
             .map_err(|e| Error::Io { source: e })?;
         debug!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             key, namespace, "remove cache from file"
         );
         Ok(None)
@@ -462,7 +462,7 @@ impl HttpCacheStorage for FileCache {
             match fs::remove_file(path).await {
                 Ok(()) => {
                     info!(
-                        category = LOG_CATEGORY,
+                        target: LOG_TARGET,
                         file, "remove cache file success"
                     );
                     success += 1;
@@ -470,7 +470,7 @@ impl HttpCacheStorage for FileCache {
                 Err(e) => {
                     fail += 1;
                     error!(
-                        category = LOG_CATEGORY,
+                        target: LOG_TARGET,
                         error = %e,
                         file,
                         "remove cache file fail"

@@ -20,7 +20,7 @@ mod server;
 mod server_conf;
 #[cfg(feature = "tracing")]
 mod tracing;
-static LOG_CATEGORY: &str = "proxy";
+static LOG_TARGET: &str = "proxy";
 
 pub(crate) use headers::*;
 pub use server::*;

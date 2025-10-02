@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{now_ms, LOG_CATEGORY};
+use super::{now_ms, LOG_TARGET};
 use std::time::Duration;
 use tinyufo::TinyUfo;
 use tracing::debug;
@@ -73,7 +73,7 @@ impl TtlLruLimit {
 
         if let Some(value) = self.ufo.get(&key) {
             debug!(
-                category = LOG_CATEGORY,
+                target: LOG_TARGET,
                 key,
                 value = format!("{value:?}"),
                 "ttl lru limit"

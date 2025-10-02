@@ -20,7 +20,7 @@ use serde_json::{Map, Value};
 use std::time::Duration;
 use tracing::{error, info};
 
-pub const LOG_CATEGORY: &str = "webhook";
+pub static LOG_TARGET: &str = "webhook";
 
 pub struct WebhookNotificationSender {
     url: String,
@@ -51,7 +51,7 @@ impl WebhookNotificationSender {
     pub async fn send_notification(&self, params: NotificationData) {
         let title = &params.title;
         info!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             notification = params.category,
             title,
             message = params.message,
@@ -148,10 +148,10 @@ impl WebhookNotificationSender {
         {
             Ok(res) => {
                 if res.status().as_u16() < 400 {
-                    info!(category = LOG_CATEGORY, "send webhook success");
+                    info!(target: LOG_TARGET, "send webhook success");
                 } else {
                     error!(
-                        category = LOG_CATEGORY,
+                        target: LOG_TARGET,
                         status = res.status().to_string(),
                         "send webhook fail"
                     );
@@ -159,7 +159,7 @@ impl WebhookNotificationSender {
             },
             Err(e) => {
                 error!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     error = %e,
                     "send webhook fail"
                 );

@@ -24,6 +24,8 @@ use substring::Substring;
 use tracing::{error, info};
 use url::Url;
 
+static LOG_TARGET: &str = "pyroscope";
+
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("Url parse error {source}, {url}"))]
@@ -121,6 +123,7 @@ fn start_pyroscope(
         .build()
         .context(PyroscopeSnafu)?;
     info!(
+        target: LOG_TARGET,
         application_name = application_name,
         sample_rate = sample_rate,
         url = connect_url,

@@ -12,9 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::LOG_TARGET;
 use crate::CertificateProvider;
-
-use super::LOG_CATEGORY;
 use async_trait::async_trait;
 use pingap_core::Error as ServiceError;
 use pingap_core::{
@@ -67,7 +66,7 @@ async fn do_validity_check(
 
         if now > info.not_after - time_offset {
             error!(
-                category = LOG_CATEGORY,
+                target: LOG_TARGET,
                 expired_date = info.not_after.to_string(),
                 name,
                 "certificate will be expired",
@@ -78,7 +77,7 @@ async fn do_validity_check(
 
         if now < info.not_before {
             error!(
-                category = LOG_CATEGORY,
+                target: LOG_TARGET,
                 valid_date = info.not_before.to_string(),
                 name,
                 "certificate is not valid",

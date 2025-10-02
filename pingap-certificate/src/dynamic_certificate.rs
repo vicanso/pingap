@@ -14,7 +14,7 @@
 
 use super::CertificateProvider;
 use super::DynamicCertificates;
-use super::{Error, TlsCertificate, LOG_CATEGORY};
+use super::{Error, TlsCertificate, LOG_TARGET};
 use ahash::AHashMap;
 use async_trait::async_trait;
 use pingap_config::CertificateConf;
@@ -125,17 +125,17 @@ fn ssl_certificate(
 ) {
     // set tls certificate
     if let Err(e) = ext::ssl_use_certificate(ssl, cert) {
-        error!(category = LOG_CATEGORY, error = %e, "ssl use certificate fail");
+        error!(target: LOG_TARGET, error = %e, "ssl use certificate fail");
     }
     // set private key
     if let Err(e) = ext::ssl_use_private_key(ssl, key) {
-        error!(category = LOG_CATEGORY, error = %e, "ssl use private key fail");
+        error!(target: LOG_TARGET, error = %e, "ssl use private key fail");
     }
     // set chain certificate
     if let Some(chain_certificates) = chain_certificates {
         for chain in chain_certificates.iter() {
             if let Err(e) = ext::ssl_add_chain_cert(ssl, chain) {
-                error!(category = LOG_CATEGORY, error = %e, "ssl add chain cert fail");
+                error!(target: LOG_TARGET, error = %e, "ssl add chain cert fail");
             }
         }
     }
@@ -188,17 +188,17 @@ impl GlobalCertificate {
         }
         if let Some(cipher_list) = &params.cipher_list {
             if let Err(e) = tls_settings.set_cipher_list(cipher_list) {
-                error!(category = LOG_CATEGORY, error = %e, name, "set cipher list fail");
+                error!(target: LOG_TARGET, error = %e, name, "set cipher list fail");
             }
         }
         if let Some(cipher_suites) = &params.cipher_suites {
             if let Err(e) = tls_settings.set_ciphersuites(cipher_suites) {
-                error!(category = LOG_CATEGORY, error = %e, name, "set cipher suites fail");
+                error!(target: LOG_TARGET, error = %e, name, "set cipher suites fail");
             }
         }
         if let Some(version) = convert_tls_version(&params.tls_min_version) {
             if let Err(e) = tls_settings.set_min_proto_version(Some(version)) {
-                error!(category = LOG_CATEGORY, error = %e, name, "set tls min proto version fail");
+                error!(target: LOG_TARGET, error = %e, name, "set tls min proto version fail");
             }
             if version == pingora::tls::ssl::SslVersion::TLS1_1 {
                 tls_settings.set_security_level(0);
@@ -209,12 +209,12 @@ impl GlobalCertificate {
         if let Err(e) = tls_settings
             .set_max_proto_version(convert_tls_version(&params.tls_max_version))
         {
-            error!(category = LOG_CATEGORY, error = %e, name, "set tls max proto version fail");
+            error!(target: LOG_TARGET, error = %e, name, "set tls max proto version fail");
         }
 
         if let Some(min_version) = tls_settings.min_proto_version() {
             info!(
-                category = LOG_CATEGORY,
+                target: LOG_TARGET,
                 name,
                 min_version = format!("{min_version:?}"),
                 "tls proto"
@@ -222,7 +222,7 @@ impl GlobalCertificate {
         }
         if let Some(max_version) = tls_settings.max_proto_version() {
             info!(
-                category = LOG_CATEGORY,
+                target: LOG_TARGET,
                 name,
                 max_version = format!("{max_version:?}"),
                 "tls proto"
@@ -249,7 +249,7 @@ impl pingora::listeners::TlsAccept for GlobalCertificate {
             .unwrap_or(DEFAULT_SERVER_NAME);
         // TODO add more debug log
         debug!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             ssl = format!("{ssl:?}"),
             server_name = sni
         );
@@ -259,7 +259,7 @@ impl pingora::listeners::TlsAccept for GlobalCertificate {
 
         let Some(d) = dynamic_certificate else {
             error!(
-                category = LOG_CATEGORY,
+                target: LOG_TARGET,
                 sni,
                 ssl = format!("{ssl:?}"),
                 "no match certificate"
@@ -279,7 +279,7 @@ impl pingora::listeners::TlsAccept for GlobalCertificate {
                     );
                 },
                 Err(err) => {
-                    error!(category = LOG_CATEGORY, error = %err, "get self signed cert fail");
+                    error!(target: LOG_TARGET, error = %err, "get self signed cert fail");
                 },
             };
             return;

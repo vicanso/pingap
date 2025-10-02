@@ -21,7 +21,7 @@ mod file_appender;
 mod syslog;
 mod writer;
 
-const LOG_CATEGORY: &str = "logger";
+const LOG_TARGET: &str = "logger";
 
 #[derive(Debug, Snafu)]
 pub enum Error {

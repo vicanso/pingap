@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_process_system_info, Error, Result, LOG_CATEGORY};
+use super::{get_process_system_info, Error, Result, LOG_TARGET};
 use async_trait::async_trait;
 use humantime::parse_duration;
 use pingap_cache::{CACHE_READING_TIME, CACHE_WRITING_TIME};
@@ -411,7 +411,7 @@ async fn do_push(
         Ok(res) => {
             if res.status().as_u16() >= 400 {
                 error!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     name = params.name,
                     status = res.status().to_string(),
                     "push prometheus fail"
@@ -420,7 +420,7 @@ async fn do_push(
         },
         Err(e) => {
             error!(
-                category = LOG_CATEGORY,
+                target: LOG_TARGET,
                 name = params.name,
                 error = %e,
                 "push prometheus fail"

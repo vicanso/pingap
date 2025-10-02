@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{AcmeDnsTask, Error, LOG_CATEGORY};
+use super::{AcmeDnsTask, Error, LOG_TARGET};
 use async_trait::async_trait;
 use nanoid::nanoid;
 use pingap_config::{Category, ConfigManager};
@@ -36,7 +36,7 @@ impl ManualDnsTask {
 impl AcmeDnsTask for ManualDnsTask {
     async fn add_txt_record(&self, domain: &str, value: &str) -> Result<()> {
         info!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             "set the DNS record {domain} IN TXT {value}",
         );
         let name = nanoid!(8);

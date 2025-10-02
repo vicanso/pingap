@@ -32,7 +32,7 @@ mod tiny;
 pub static PAGE_SIZE: usize = 4096;
 
 /// Category name for cache related logging
-pub static LOG_CATEGORY: &str = "cache";
+pub static LOG_TARGET: &str = "cache";
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -157,7 +157,7 @@ fn try_init_memory_backend(value: &str) -> &'static HttpCache {
 
         size = size.min(MAX_MEMORY_SIZE);
         info!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             size = ByteSize(size as u64).to_string(),
             cache_mode,
             "init memory cache backend success"
@@ -183,7 +183,7 @@ pub fn new_cache_backend(directory: &str) -> Result<&'static HttpCache> {
         message: e.to_string(),
     })?;
     info!(
-        category = LOG_CATEGORY,
+        target: LOG_TARGET,
         inactive = cache.cache.inactive().map(|v| v.as_secs()),
         "init file cache backend success"
     );

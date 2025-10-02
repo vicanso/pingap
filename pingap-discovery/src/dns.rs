@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{format_addrs, Addr, Error, Result};
-use super::{Discovery, DNS_DISCOVERY, LOG_CATEGORY};
+use super::{Discovery, DNS_DISCOVERY, LOG_TARGET};
 use async_trait::async_trait;
 use futures::future::join_all;
 use hickory_resolver::config::{
@@ -203,7 +203,7 @@ impl Dns {
                         .map(|item| item.0.clone())
                         .unwrap_or_default();
                     error!(
-                        category = LOG_CATEGORY,
+                        target: LOG_TARGET,
                         error = %e,
                         host,
                         "dns lookup failed"
@@ -285,7 +285,7 @@ impl ServiceDiscovery for Dns {
                     .collect();
 
                 info!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     hosts = hosts.join(","),
                     addrs = addrs.join(","),
                     elapsed = format!("{}ms", start_time.elapsed().as_millis()),
@@ -309,7 +309,7 @@ impl ServiceDiscovery for Dns {
             },
             Err(e) => {
                 error!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     error = %e,
                     hosts = hosts.join(","),
                     elapsed = format!(

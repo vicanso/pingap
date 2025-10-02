@@ -32,7 +32,7 @@ use std::time::Duration;
 use tracing::{error, info};
 use url::Url;
 
-const LOG_CATEGORY: &str = "otel";
+const LOG_TARGET: &str = "otel";
 /// Default configuration values
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(3);
 const DEFAULT_MAX_ATTRIBUTES: u32 = 16;
@@ -299,7 +299,7 @@ impl BackgroundService for TracerService {
                 // set tracer provider
                 provider::add_provider(&self.name, tracer_provider.clone());
                 info!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     name = self.name,
                     endpoint = self.endpoint,
                     support_jaeger_propagator =
@@ -312,14 +312,14 @@ impl BackgroundService for TracerService {
                 let _ = shutdown.changed().await;
                 if let Err(e) = tracer_provider.shutdown() {
                     error!(
-                        category = LOG_CATEGORY,
+                        target: LOG_TARGET,
                         name = self.name,
                         error = %e,
                         "opentelemetry shutdown fail"
                     );
                 } else {
                     info!(
-                        category = LOG_CATEGORY,
+                        target: LOG_TARGET,
                         name = self.name,
                         "opentelemetry shutdown success"
                     );
@@ -327,7 +327,7 @@ impl BackgroundService for TracerService {
             },
             Err(e) => {
                 error!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     name = self.name,
                     error = %e,
                     "opentelemetry init fail"

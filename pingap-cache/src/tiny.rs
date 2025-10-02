@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::http_cache::{CacheObject, HttpCacheStorage};
-use super::{Result, LOG_CATEGORY};
+use super::{Result, LOG_TARGET};
 use async_trait::async_trait;
 use pingap_core::TinyUfo;
 use strum::EnumString;
@@ -83,7 +83,7 @@ impl HttpCacheStorage for TinyUfoCache {
         namespace: &[u8],
     ) -> Result<Option<CacheObject>> {
         debug!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             key, namespace, "getting cache entry from TinyUfo storage"
         );
         Ok(self.cache.get(&key.to_string()))
@@ -108,7 +108,7 @@ impl HttpCacheStorage for TinyUfoCache {
     ) -> Result<()> {
         let weight = data.get_weight();
         debug!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             key,
             namespace,
             weight = weight,
@@ -134,7 +134,7 @@ impl HttpCacheStorage for TinyUfoCache {
         namespace: &[u8],
     ) -> Result<Option<CacheObject>> {
         debug!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             key, namespace, "removing cache entry from TinyUfo storage"
         );
         Ok(self.cache.remove(&key.to_string()))

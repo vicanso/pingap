@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_value_from_env, AcmeDnsTask, Error, Result, LOG_CATEGORY};
+use super::{get_value_from_env, AcmeDnsTask, Error, Result, LOG_TARGET};
 use crate::dns_ali::AliDnsTask;
 use crate::dns_cf::CfDnsTask;
 use crate::dns_huawei::HuaweiDnsTask;
@@ -155,7 +155,7 @@ async fn do_update_certificates(
             Ok(None) => true,
             Err(e) => {
                 error!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     error = %e,
                     name,
                     "failed to get certificate"
@@ -166,7 +166,7 @@ async fn do_update_certificates(
 
         if !should_renew {
             info!(
-                category = LOG_CATEGORY,
+                target: LOG_TARGET,
                 domains = domains.join(","),
                 name,
                 "certificate still valid"
@@ -183,7 +183,7 @@ async fn do_update_certificates(
         .await
         {
             error!(
-                category = LOG_CATEGORY,
+                target: LOG_TARGET,
                 error = %e,
                 domains = domains.join(","),
                 name,
@@ -244,7 +244,7 @@ async fn handle_successful_renewal(
     sender: Option<Arc<NotificationSender>>,
 ) -> Result<()> {
     info!(
-        category = LOG_CATEGORY,
+        target: LOG_TARGET,
         domains = domains.join(","),
         "renew certificate success"
     );
@@ -273,11 +273,7 @@ async fn handle_successful_renewal(
 
     let (_, error) = try_update_certificates(provider, &config.certificates);
     if !error.is_empty() {
-        error!(
-            category = LOG_CATEGORY,
-            error = error,
-            "parse certificate fail"
-        );
+        error!(target: LOG_TARGET, error = error, "parse certificate fail");
         if let Some(sender) = &sender {
             sender
                 .notify(NotificationData {
@@ -416,7 +412,7 @@ pub async fn handle_lets_encrypt(
             .await
             .map_err(|e| {
                 error!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     error = %e,
                     token,
                     "load http-01 token fail"
@@ -427,10 +423,7 @@ pub async fn handle_lets_encrypt(
                     pingora::Error::new(pingora::ErrorType::InternalError),
                 )
             })?;
-        info!(
-            category = LOG_CATEGORY,
-            token, "let't encrypt http-01 success"
-        );
+        info!(target: LOG_TARGET, token, "let't encrypt http-01 success");
         let body = if let Some(value) = value {
             value.value
         } else {
@@ -470,7 +463,7 @@ async fn new_lets_encrypt(
     // sort domain for comparing later
     domains.sort();
     info!(
-        category = LOG_CATEGORY,
+        target: LOG_TARGET,
         domains = domains.join(","),
         "acme from let's encrypt"
     );
@@ -535,7 +528,7 @@ async fn new_lets_encrypt(
             source: e,
         })?;
         info!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             status = format!("{:?}", authz.status),
             "authorization from let's encrypt"
         );
@@ -573,13 +566,13 @@ async fn new_lets_encrypt(
             };
 
             info!(
-                category = LOG_CATEGORY,
+                target: LOG_TARGET,
                 dns_provider = params.dns_provider,
                 "start add dns txt record for {acme_dns_name}"
             );
             task.add_txt_record(&acme_dns_name, &dns_txt_value).await?;
             info!(
-                category = LOG_CATEGORY,
+                target: LOG_TARGET,
                 dns_provider = params.dns_provider,
                 "add dns txt record success for {acme_dns_name}"
             );
@@ -592,7 +585,7 @@ async fn new_lets_encrypt(
             for i in 0..10 {
                 tokio::time::sleep(Duration::from_secs(10)).await;
                 info!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     "lookup dns txt record of {acme_dns_name}, times:{i}"
                 );
                 if let Ok(response) =
@@ -606,7 +599,7 @@ async fn new_lets_encrypt(
                         .collect();
                     let matched = txt_records.contains(&dns_txt_value);
                     info!(
-                        category = LOG_CATEGORY,
+                        target: LOG_TARGET,
                         "get dns txt records: {:?}, matched: {matched}",
                         txt_records
                     );
@@ -643,7 +636,7 @@ async fn new_lets_encrypt(
                     message: e.to_string(),
                 })?;
             info!(
-                category = LOG_CATEGORY,
+                target: LOG_TARGET,
                 token = challenge.token,
                 "let's encrypt well known path",
             );
@@ -674,7 +667,7 @@ async fn new_lets_encrypt(
         // ignore done error
         if let Err(err) = task.done().await {
             error!(
-                category = LOG_CATEGORY,
+                target: LOG_TARGET,
                 error = err.to_string(),
                 "remove acme dns text record fail"
             );

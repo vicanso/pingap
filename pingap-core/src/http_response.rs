@@ -15,7 +15,7 @@
 use super::{
     get_super_ts, new_internal_error, HttpHeader, HTTP_HEADER_CONTENT_HTML,
     HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_CONTENT_TEXT, HTTP_HEADER_NO_CACHE,
-    HTTP_HEADER_NO_STORE, HTTP_HEADER_TRANSFER_CHUNKED, LOG_CATEGORY,
+    HTTP_HEADER_NO_STORE, HTTP_HEADER_TRANSFER_CHUNKED, LOG_TARGET,
 };
 use bytes::{Bytes, BytesMut};
 use http::header;
@@ -233,11 +233,7 @@ impl HttpResponse {
     {
         // Serialize the value to a JSON byte vector.
         let buf = serde_json::to_vec(value).map_err(|e| {
-            error!(
-                category = LOG_CATEGORY,
-                error = e.to_string(),
-                "to json fail"
-            );
+            error!(target: LOG_TARGET, error = e.to_string(), "to json fail");
             new_internal_error(400, e)
         })?;
         // Build the JSON response.

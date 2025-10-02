@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Discovery, DOCKER_DISCOVERY, LOG_CATEGORY};
+use super::{Discovery, DOCKER_DISCOVERY, LOG_TARGET};
 use super::{Error, Result};
 use async_trait::async_trait;
 use bollard::query_parameters::ListContainersOptions;
@@ -245,7 +245,7 @@ impl ServiceDiscovery for Docker {
                     data.0.iter().map(|item| item.addr.to_string()).collect();
 
                 info!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     names = names.join(","),
                     addrs = addrs.join(","),
                     elapsed = format!(
@@ -258,7 +258,7 @@ impl ServiceDiscovery for Docker {
             },
             Err(e) => {
                 error!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     error = %e,
                     names = names.join(","),
                     elapsed = format!(

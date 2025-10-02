@@ -15,7 +15,7 @@
 use super::file_appender::new_rolling_file_writer;
 #[cfg(unix)]
 use super::syslog::new_syslog_writer;
-use super::{Error, LOG_CATEGORY};
+use super::{Error, LOG_TARGET};
 use async_trait::async_trait;
 use bytesize::ByteSize;
 use chrono::Timelike;
@@ -218,7 +218,7 @@ async fn do_compress(
             match result {
                 Err(e) => {
                     error!(
-                        category = LOG_CATEGORY,
+                        target: LOG_TARGET,
                         error = %e,
                         file,
                         "compress log fail"
@@ -227,7 +227,7 @@ async fn do_compress(
                 Ok((size, original_size)) => {
                     let elapsed = format!("{}ms", start.elapsed().as_millis());
                     info!(
-                        category = LOG_CATEGORY,
+                        target: LOG_TARGET,
                         file,
                         elapsed,
                         original_size = ByteSize::b(original_size).to_string(),
@@ -373,7 +373,7 @@ pub fn logger_try_init(params: LoggerParams) -> Result<Option<String>> {
     }
 
     info!(
-        category = LOG_CATEGORY,
+        target: LOG_TARGET,
         capacity = params.capacity,
         log_type,
         level = level.to_string(),

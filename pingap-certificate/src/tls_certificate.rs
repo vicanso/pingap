@@ -18,7 +18,7 @@ use super::self_signed::{
     SelfSignedCertificate,
 };
 use super::{
-    parse_leaf_chain_certificates, Certificate, Error, Result, LOG_CATEGORY,
+    parse_leaf_chain_certificates, Certificate, Error, Result, LOG_TARGET,
 };
 use pingap_config::CertificateConf;
 use pingap_config::Hashable;
@@ -235,7 +235,7 @@ impl TlsCertificate {
         // Generate new certificate if not found in cache
         let (cert, key, not_after) = new_certificate_with_ca(self, &cn)?;
         info!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             ca_common_name = self.name,
             common_name = cn,
             "create new self signed certificate"

@@ -17,7 +17,7 @@ use super::tracing::{
     initialize_telemetry, inject_telemetry_headers, set_otel_request_attrs,
     set_otel_upstream_attrs, update_otel_cache_attrs,
 };
-use super::{set_append_proxy_headers, ServerConf, LOG_CATEGORY};
+use super::{set_append_proxy_headers, ServerConf, LOG_TARGET};
 use crate::ServerLocationsProvider;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -235,11 +235,7 @@ impl Server {
     /// - Prometheus metrics (if enabled)
     /// - Threading configuration
     pub fn new(conf: &ServerConf, ctx: AppContext) -> Result<Self> {
-        debug!(
-            category = LOG_CATEGORY,
-            config = conf.to_string(),
-            "new server"
-        );
+        debug!(target: LOG_TARGET, config = conf.to_string(), "new server");
         let mut p = None;
         let (access_log, _) =
             parse_access_log_directive(conf.access_log.as_ref());
@@ -334,7 +330,7 @@ impl Server {
                     Ok(service) => Some(service),
                     Err(e) => {
                         error!(
-                            category = LOG_CATEGORY,
+                            target: LOG_TARGET,
                             error = %e,
                             name = self.name,
                             "new prometheus push service fail"
@@ -384,7 +380,7 @@ impl Server {
         };
 
         info!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             name,
             addr,
             threads,
@@ -541,7 +537,7 @@ impl Server {
         }
 
         debug!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             "variables: {:?}",
             ctx.features.as_ref().map(|item| &item.variables)
         );
@@ -667,7 +663,7 @@ impl Server {
         };
 
         debug!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             server = self.name,
             location = location.name,
             "location is matched"
@@ -742,7 +738,7 @@ impl Server {
                 // extract repeated logging and timing logic
                 let mut record_time = |msg: &str| {
                     debug!(
-                        category = LOG_CATEGORY,
+                        target: LOG_TARGET,
                         name,
                         elapsed,
                         step = step.to_string(),
@@ -802,7 +798,7 @@ impl Server {
                 {
                     let elapsed = now.elapsed().as_millis() as u32;
                     debug!(
-                        category = LOG_CATEGORY,
+                        target: LOG_TARGET,
                         name, elapsed, "response plugin modify headers"
                     );
                     ctx.add_plugin_processing_time(name, elapsed);
@@ -838,7 +834,7 @@ impl Server {
                 {
                     let elapsed = now.elapsed().as_millis() as u32;
                     debug!(
-                        category = LOG_CATEGORY,
+                        target: LOG_TARGET,
                         name,
                         elapsed,
                         "upstream response plugin modify headers"
@@ -882,7 +878,7 @@ impl Server {
                         let elapsed = now.elapsed().as_millis() as u32;
                         ctx.add_plugin_processing_time(name, elapsed);
                         debug!(
-                            category = LOG_CATEGORY,
+                            target: LOG_TARGET,
                             name, elapsed, "response body plugin modify body"
                         );
                     },
@@ -924,7 +920,7 @@ impl Server {
                         let elapsed = now.elapsed().as_millis() as u32;
                         ctx.add_plugin_processing_time(name, elapsed);
                         debug!(
-                            category = LOG_CATEGORY,
+                            target: LOG_TARGET,
                             name, elapsed, "response body plugin modify body"
                         );
                     },
@@ -1054,12 +1050,12 @@ fn get_upstream_with_variables(
 impl ProxyHttp for Server {
     type CTX = Ctx;
     fn new_ctx(&self) -> Self::CTX {
-        debug!(category = LOG_CATEGORY, "new ctx");
+        debug!(target: LOG_TARGET, "new ctx");
         Ctx::new()
     }
     fn init_downstream_modules(&self, modules: &mut HttpModules) {
-        debug!(category = LOG_CATEGORY, "--> init downstream modules");
-        defer!(debug!(category = LOG_CATEGORY, "<-- init downstream modules"););
+        debug!(target: LOG_TARGET, "--> init downstream modules");
+        defer!(debug!(target: LOG_TARGET, "<-- init downstream modules"););
         // Add disabled downstream compression module by default
         modules.add_module(ResponseCompressionBuilder::enable(0));
 
@@ -1085,8 +1081,8 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        debug!(category = LOG_CATEGORY, "--> early request filter");
-        defer!(debug!(category = LOG_CATEGORY, "<-- early request filter"););
+        debug!(target: LOG_TARGET, "--> early request filter");
+        defer!(debug!(target: LOG_TARGET, "<-- early request filter"););
 
         self.initialize_context(session, ctx);
         #[cfg(feature = "tracing")]
@@ -1112,8 +1108,8 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        debug!(category = LOG_CATEGORY, "--> request filter");
-        defer!(debug!(category = LOG_CATEGORY, "<-- request filter"););
+        debug!(target: LOG_TARGET, "--> request filter");
+        defer!(debug!(target: LOG_TARGET, "<-- request filter"););
         // try to handle special requests in order
         // admin route
         if let Some(result) = self.handle_admin_request(session, ctx).await {
@@ -1142,8 +1138,8 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        debug!(category = LOG_CATEGORY, "--> proxy upstream filter");
-        defer!(debug!(category = LOG_CATEGORY, "<-- proxy upstream filter"););
+        debug!(target: LOG_TARGET, "--> proxy upstream filter");
+        defer!(debug!(target: LOG_TARGET, "<-- proxy upstream filter"););
         let done = self
             .handle_request_plugin(PluginStep::ProxyUpstream, session, ctx)
             .await?;
@@ -1161,8 +1157,8 @@ impl ProxyHttp for Server {
         session: &mut Session,
         ctx: &mut Ctx,
     ) -> pingora::Result<Box<HttpPeer>> {
-        debug!(category = LOG_CATEGORY, "--> upstream peer");
-        defer!(debug!(category = LOG_CATEGORY, "<-- upstream peer"););
+        debug!(target: LOG_TARGET, "--> upstream peer");
+        defer!(debug!(target: LOG_TARGET, "<-- upstream peer"););
         let peer = self
             .location_provider
             .get(&ctx.upstream.location)
@@ -1234,8 +1230,8 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        debug!(category = LOG_CATEGORY, "--> connected to upstream");
-        defer!(debug!(category = LOG_CATEGORY, "<-- connected to upstream"););
+        debug!(target: LOG_TARGET, "--> connected to upstream");
+        defer!(debug!(target: LOG_TARGET, "<-- connected to upstream"););
         ctx.timing.upstream_connect =
             get_latency(&ctx.timing.created_at, &ctx.timing.upstream_connect);
         if let Some(digest) = digest {
@@ -1282,8 +1278,8 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        debug!(category = LOG_CATEGORY, "--> upstream request filter");
-        defer!(debug!(category = LOG_CATEGORY, "<-- upstream request filter"););
+        debug!(target: LOG_TARGET, "--> upstream request filter");
+        defer!(debug!(target: LOG_TARGET, "<-- upstream request filter"););
         if let Some(location) =
             self.location_provider.get(&ctx.upstream.location)
         {
@@ -1303,8 +1299,8 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        debug!(category = LOG_CATEGORY, "--> request body filter");
-        defer!(debug!(category = LOG_CATEGORY, "<-- request body filter"););
+        debug!(target: LOG_TARGET, "--> request body filter");
+        defer!(debug!(target: LOG_TARGET, "<-- request body filter"););
         if let Some(buf) = body {
             ctx.state.payload_size += buf.len();
             if let Some(location) =
@@ -1328,15 +1324,15 @@ impl ProxyHttp for Server {
         session: &Session,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<CacheKey> {
-        debug!(category = LOG_CATEGORY, "--> cache key callback");
-        defer!(debug!(category = LOG_CATEGORY, "<-- cache key callback"););
+        debug!(target: LOG_TARGET, "--> cache key callback");
+        defer!(debug!(target: LOG_TARGET, "<-- cache key callback"););
         let key = get_cache_key(
             ctx,
             session.req_header().method.as_ref(),
             &session.req_header().uri,
         );
         debug!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             namespace = key.namespace_str(),
             primary = key.primary_key_str(),
             user_tag = key.user_tag(),
@@ -1357,8 +1353,8 @@ impl ProxyHttp for Server {
         resp: &ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<RespCacheable> {
-        debug!(category = LOG_CATEGORY, "--> response cache filter");
-        defer!(debug!(category = LOG_CATEGORY, "<-- response cache filter"););
+        debug!(target: LOG_TARGET, "--> response cache filter");
+        defer!(debug!(target: LOG_TARGET, "<-- response cache filter"););
 
         let (check_cache_control, max_ttl) = ctx.cache.as_ref().map_or(
             (false, None), // ctx.cache is None
@@ -1396,8 +1392,8 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        debug!(category = LOG_CATEGORY, "--> response filter");
-        defer!(debug!(category = LOG_CATEGORY, "<-- response filter"););
+        debug!(target: LOG_TARGET, "--> response filter");
+        defer!(debug!(target: LOG_TARGET, "<-- response filter"););
         if session.cache.enabled() {
             self.handle_cache_headers(session, upstream_response, ctx);
         }
@@ -1420,8 +1416,8 @@ impl ProxyHttp for Server {
         upstream_response: &mut ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<()> {
-        debug!(category = LOG_CATEGORY, "--> upstream response filter");
-        defer!(debug!(category = LOG_CATEGORY, "<-- upstream response filter"););
+        debug!(target: LOG_TARGET, "--> upstream response filter");
+        defer!(debug!(target: LOG_TARGET, "<-- upstream response filter"););
         self.handle_upstream_response_plugin(session, ctx, upstream_response)?;
         #[cfg(feature = "tracing")]
         inject_telemetry_headers(ctx, upstream_response);
@@ -1455,8 +1451,8 @@ impl ProxyHttp for Server {
         end_of_stream: bool,
         ctx: &mut Self::CTX,
     ) -> pingora::Result<Option<std::time::Duration>> {
-        debug!(category = LOG_CATEGORY, "--> upstream response body filter");
-        defer!(debug!(category = LOG_CATEGORY, "<-- upstream response body filter"););
+        debug!(target: LOG_TARGET, "--> upstream response body filter");
+        defer!(debug!(target: LOG_TARGET, "<-- upstream response body filter"););
 
         self.handle_upstream_response_body_plugin(
             session,
@@ -1490,8 +1486,8 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        debug!(category = LOG_CATEGORY, "--> response body filter");
-        defer!(debug!(category = LOG_CATEGORY, "<-- response body filter"););
+        debug!(target: LOG_TARGET, "--> response body filter");
+        defer!(debug!(target: LOG_TARGET, "<-- response body filter"););
         self.handle_response_body_plugin(session, ctx, body, end_of_stream)?;
         Ok(None)
     }
@@ -1512,8 +1508,8 @@ impl ProxyHttp for Server {
     where
         Self::CTX: Send + Sync,
     {
-        debug!(category = LOG_CATEGORY, "--> fail to proxy");
-        defer!(debug!(category = LOG_CATEGORY, "<-- fail to proxy"););
+        debug!(target: LOG_TARGET, "--> fail to proxy");
+        defer!(debug!(target: LOG_TARGET, "<-- fail to proxy"););
         let server_session = session.as_mut();
 
         let code = match e.etype() {
@@ -1563,7 +1559,7 @@ impl ProxyHttp for Server {
             .map(|v| v.clone().to_str().unwrap_or_default().to_string());
 
         error!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             error = %e,
             remote_addr = ctx.conn.remote_addr,
             client_ip = ctx.conn.client_ip,
@@ -1586,7 +1582,7 @@ impl ProxyHttp for Server {
             .await
             .unwrap_or_else(|e| {
                 error!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     error = %e,
                     "send error response to downstream fail"
                 );
@@ -1613,8 +1609,8 @@ impl ProxyHttp for Server {
     ) where
         Self::CTX: Send + Sync,
     {
-        debug!(category = LOG_CATEGORY, "--> logging");
-        defer!(debug!(category = LOG_CATEGORY, "<-- logging"););
+        debug!(target: LOG_TARGET, "--> logging");
+        defer!(debug!(target: LOG_TARGET, "<-- logging"););
         end_request();
         self.processing.fetch_sub(1, Ordering::Relaxed);
         if let Some(location) =

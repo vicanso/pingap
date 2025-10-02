@@ -14,7 +14,7 @@
 
 use snafu::Snafu;
 
-pub static LOG_CATEGORY: &str = "core";
+pub static LOG_TARGET: &str = "core";
 
 #[derive(Debug, Snafu)]
 pub enum Error {

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, LOG_CATEGORY};
+use super::{Error, LOG_TARGET};
 use async_trait::async_trait;
 use futures::future::join_all;
 use pingora::server::ShutdownWatch;
@@ -108,7 +108,7 @@ impl BackgroundService for BackgroundTaskService {
         let task_names: Vec<_> =
             self.tasks.iter().map(|(name, _)| name.as_str()).collect();
         info!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             name = self.name,
             tasks = task_names.join(", "),
             interval = duration_to_string(self.interval),
@@ -128,7 +128,7 @@ impl BackgroundService for BackgroundTaskService {
             tokio::select! {
                 _ = shutdown.changed() => {
                     info!(
-                        category = LOG_CATEGORY,
+                        target: LOG_TARGET,
                         name = self.name,
                         "background service is shutting down"
                     );
@@ -157,7 +157,7 @@ impl BackgroundService for BackgroundTaskService {
                             Ok(true) => {
                                 success_tasks.push(task_name.as_str());
                                 info!(
-                                    category = LOG_CATEGORY,
+                                    target: LOG_TARGET,
                                     name = self.name,
                                     task = task_name,
                                     elapsed = duration_to_string(elapsed),
@@ -170,7 +170,7 @@ impl BackgroundService for BackgroundTaskService {
                             Err(e) => {
                                 failed_tasks.push(task_name.as_str());
                                 error!(
-                                    category = LOG_CATEGORY,
+                                    target: LOG_TARGET,
                                     name = self.name,
                                     task = task_name,
                                     error = %e,
@@ -182,7 +182,7 @@ impl BackgroundService for BackgroundTaskService {
 
                     if !success_tasks.is_empty() || !failed_tasks.is_empty() {
                          info!(
-                            category = LOG_CATEGORY,
+                            target: LOG_TARGET,
                             name = self.name,
                             cycle = count,
                             success_count = success_tasks.len(),
