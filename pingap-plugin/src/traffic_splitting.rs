@@ -19,10 +19,11 @@ use super::{
 use async_trait::async_trait;
 use ctor::ctor;
 use pingap_config::{PluginCategory, PluginConf};
-use pingap_core::get_cookie_value;
+use pingap_core::{get_cookie_value, get_req_header_value};
 use pingap_core::{Ctx, Plugin, PluginStep, RequestPluginResult};
 use pingora::proxy::Session;
 use rand::{rng, Rng};
+use regex::Regex;
 use std::borrow::Cow;
 use std::sync::Arc;
 use tracing::debug;
@@ -30,7 +31,6 @@ use tracing::debug;
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub struct TrafficSplitting {
-    plugin_step: PluginStep,
     hash_value: String,
     /// The upstream traffic targeting
     upstream: String,
@@ -38,8 +38,12 @@ pub struct TrafficSplitting {
     weight: u8,
     /// Whether to use stickiness
     stickiness: bool,
+    /// The sticky header for traffic targeting
+    sticky_header: Option<String>,
     /// The sticky cookie for traffic targeting
-    sticky_cookie: String,
+    sticky_cookie: Option<String>,
+    /// The matcher for traffic targeting
+    matcher: Option<Regex>,
 }
 
 impl TryFrom<&PluginConf> for TrafficSplitting {
@@ -52,22 +56,47 @@ impl TryFrom<&PluginConf> for TrafficSplitting {
                 message: "upstream is not allowed empty".to_string(),
             });
         }
-        let weight = get_int_conf(value, "weight").min(100) as u8;
+        let weight = (get_int_conf(value, "weight").clamp(0, 100)) as u8;
         let stickiness = get_bool_conf(value, "stickiness");
+
         let sticky_cookie = get_str_conf(value, "sticky_cookie");
-        if stickiness && sticky_cookie.is_empty() {
+        let sticky_cookie = if sticky_cookie.is_empty() {
+            None
+        } else {
+            Some(sticky_cookie)
+        };
+        let sticky_header = get_str_conf(value, "sticky_header");
+        let sticky_header = if sticky_header.is_empty() {
+            None
+        } else {
+            Some(sticky_header)
+        };
+        let matcher = get_str_conf(value, "matcher");
+        let matcher = if matcher.is_empty() {
+            None
+        } else {
+            Some(Regex::new(matcher.as_str()).map_err(|e| Error::Invalid {
+                category: PluginCategory::TrafficSplitting.to_string(),
+                message: e.to_string(),
+            })?)
+        };
+
+        if stickiness && sticky_cookie.is_none() && sticky_header.is_none() {
             return Err(Error::Invalid {
                 category: PluginCategory::TrafficSplitting.to_string(),
-                message: "sticky_cookie is not allowed empty".to_string(),
+                message: "sticky_cookie and sticky_header cannot both be empty"
+                    .to_string(),
             });
         }
+
         Ok(Self {
             hash_value: get_hash_key(value),
-            plugin_step: PluginStep::Request,
             upstream,
             weight,
             stickiness,
             sticky_cookie,
+            sticky_header,
+            matcher,
         })
     }
 }
@@ -76,6 +105,15 @@ impl TrafficSplitting {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new traffic splitting plugin");
         TrafficSplitting::try_from(params)
+    }
+    fn get_sticky_value<'a>(&self, session: &'a Session) -> Option<&'a str> {
+        if let Some(sticky_cookie) = &self.sticky_cookie {
+            return get_cookie_value(session.req_header(), sticky_cookie);
+        }
+        if let Some(sticky_header) = &self.sticky_header {
+            return get_req_header_value(session.req_header(), sticky_header);
+        }
+        None
     }
 }
 
@@ -104,15 +142,26 @@ impl Plugin for TrafficSplitting {
         session: &mut Session,
         ctx: &mut Ctx,
     ) -> pingora::Result<RequestPluginResult> {
-        if step != self.plugin_step {
+        if step != PluginStep::Request {
             return Ok(RequestPluginResult::Skipped);
         }
         // if stickiness is enabled, use cookie value to calculate roll value
         // if stickiness is disabled, use random number to calculate roll value
         let roll_value = if self.stickiness {
-            get_cookie_value(session.req_header(), &self.sticky_cookie)
-                .map(|cookie| (crc32fast::hash(cookie.as_bytes()) % 100) as u8)
-                // if cookie not exist, return a value that will never hit
+            self.get_sticky_value(session)
+                .map(|value| {
+                    if let Some(matcher) = &self.matcher {
+                        // if matcher is match, return 0
+                        // then the upstream will be hit
+                        if matcher.is_match(value) {
+                            return 0;
+                        } else {
+                            return u8::MAX;
+                        }
+                    }
+                    (crc32fast::hash(value.as_bytes()) % 100) as u8
+                })
+                // if value not exist, return a value that will never hit
                 .unwrap_or(u8::MAX)
         } else {
             rng().random_range(..100)
@@ -182,8 +231,8 @@ sticky_cookie = "{sticky_cookie}"
         assert_eq!(plugin.upstream, "new-upstream");
         assert_eq!(plugin.weight, 50);
         assert!(plugin.stickiness);
-        assert_eq!(plugin.sticky_cookie, "user-id");
-        assert_eq!(plugin.plugin_step, PluginStep::Request);
+        assert_eq!(plugin.sticky_cookie, Some("user-id".to_string()));
+        assert_eq!(plugin.sticky_header, None);
 
         // Error case: upstream is empty
         let conf = create_plugin_conf("", 50, false, "");
@@ -200,7 +249,7 @@ sticky_cookie = "{sticky_cookie}"
         assert!(result.is_err());
         assert_eq!(
             result.err().unwrap().to_string(),
-            "Plugin traffic_splitting invalid, message: sticky_cookie is not allowed empty"
+            "Plugin traffic_splitting invalid, message: sticky_cookie and sticky_header cannot both be empty"
         );
 
         // Weight should be capped at 100

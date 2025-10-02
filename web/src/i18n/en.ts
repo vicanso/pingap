@@ -531,6 +531,11 @@ export default {
     trafficSplittingStickyCookie: "Sticky Cookie",
     trafficSplittingStickyCookiePlaceholder:
       "Input the sticky cookie for traffic splitting",
+    trafficSplittingStickyHeader: "Sticky Header",
+    trafficSplittingStickyHeaderPlaceholder:
+      "Input the sticky header for traffic splitting",
+    trafficSplittingMatcher: "Matcher",
+    trafficSplittingMatcherPlaceholder: "Input the matcher for traffic splitting",
     remark: "Remark",
   },
   storage: {

@@ -1081,6 +1081,22 @@ export default function Plugins() {
           span: 3,
           category: ExFormItemCategory.TEXT,
         },
+        {
+          name: "sticky_header",
+          label: pluginI18n("trafficSplittingStickyHeader"),
+          placeholder: pluginI18n("trafficSplittingStickyHeaderPlaceholder"),
+          defaultValue: pluginConfig.sticky_header as string,
+          span: 3,
+          category: ExFormItemCategory.TEXT,
+        },
+        {
+          name: "matcher",
+          label: pluginI18n("trafficSplittingMatcher"),
+          placeholder: pluginI18n("trafficSplittingMatcherPlaceholder"),
+          defaultValue: pluginConfig.matcher as string,
+          span: 3,
+          category: ExFormItemCategory.TEXT,
+        },
       );
       break;
     }
