@@ -133,3 +133,181 @@ fn init() {
         Ok(Arc::new(TrafficSplitting::new(params)?))
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use http::header::{COOKIE, HOST};
+    use pingap_config::PluginConf;
+    use pingap_core::{Ctx, RequestPluginResult};
+    use pingora::proxy::Session;
+    use pretty_assertions::assert_eq;
+    use tokio_test::io::Builder;
+
+    async fn create_test_session(headers: &[(&str, &str)]) -> Session {
+        let mut header_builder = Builder::new();
+        header_builder.read(b"GET / HTTP/1.1\r\n");
+        for (key, value) in headers {
+            header_builder.read(format!("{}: {}\r\n", key, value).as_bytes());
+        }
+        header_builder.read(b"\r\n");
+
+        let mut session = Session::new_h1(Box::new(header_builder.build()));
+        session.read_request().await.unwrap();
+        session
+    }
+
+    fn create_plugin_conf(
+        upstream: &str,
+        weight: u8,
+        stickiness: bool,
+        sticky_cookie: &str,
+    ) -> PluginConf {
+        let config = format!(
+            r###"
+upstream = "{upstream}"
+weight = {weight}
+stickiness = {stickiness}
+sticky_cookie = "{sticky_cookie}"
+        "###
+        );
+        toml::from_str::<PluginConf>(&config).unwrap()
+    }
+
+    #[test]
+    fn test_config_parsing() {
+        // Valid configuration
+        let conf = create_plugin_conf("new-upstream", 50, true, "user-id");
+        let plugin = TrafficSplitting::try_from(&conf).unwrap();
+        assert_eq!(plugin.upstream, "new-upstream");
+        assert_eq!(plugin.weight, 50);
+        assert!(plugin.stickiness);
+        assert_eq!(plugin.sticky_cookie, "user-id");
+        assert_eq!(plugin.plugin_step, PluginStep::Request);
+
+        // Error case: upstream is empty
+        let conf = create_plugin_conf("", 50, false, "");
+        let result = TrafficSplitting::try_from(&conf);
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "Plugin traffic_splitting invalid, message: upstream is not allowed empty"
+        );
+
+        // Error case: stickiness is true but sticky_cookie is empty
+        let conf = create_plugin_conf("new-upstream", 50, true, "");
+        let result = TrafficSplitting::try_from(&conf);
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "Plugin traffic_splitting invalid, message: sticky_cookie is not allowed empty"
+        );
+
+        // Weight should be capped at 100
+        let conf = create_plugin_conf("new-upstream", 150, false, "");
+        let plugin = TrafficSplitting::try_from(&conf).unwrap();
+        assert_eq!(plugin.weight, 100);
+    }
+
+    #[tokio::test]
+    async fn test_handle_request_non_sticky() {
+        // 100% weight, should always split
+        let conf = create_plugin_conf("new-upstream", 100, false, "");
+        let plugin = TrafficSplitting::try_from(&conf).unwrap();
+        let mut session =
+            create_test_session(&[(HOST.as_str(), "example.com")]).await;
+        let mut ctx = Ctx::default();
+        let result = plugin
+            .handle_request(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(true, result == RequestPluginResult::Continue);
+        assert_eq!(ctx.upstream.name, "new-upstream");
+
+        // 0% weight, should never split
+        let conf = create_plugin_conf("new-upstream", 0, false, "");
+        let plugin = TrafficSplitting::try_from(&conf).unwrap();
+        let mut session =
+            create_test_session(&[(HOST.as_str(), "example.com")]).await;
+        let mut ctx = Ctx::default();
+        plugin
+            .handle_request(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        assert_eq!(ctx.upstream.name, ""); // Should remain default
+    }
+
+    #[tokio::test]
+    async fn test_handle_request_sticky() {
+        let conf = create_plugin_conf("new-upstream", 50, true, "user-id");
+        let plugin = TrafficSplitting::try_from(&conf).unwrap();
+        let mut ctx = Ctx::default();
+
+        // Case 1: No cookie provided, should not split
+        let mut session_no_cookie =
+            create_test_session(&[(HOST.as_str(), "example.com")]).await;
+        plugin
+            .handle_request(
+                PluginStep::Request,
+                &mut session_no_cookie,
+                &mut ctx,
+            )
+            .await
+            .unwrap();
+        assert_eq!(ctx.upstream.name, "");
+
+        // Case 2: Cookie value hashes to a value that should split
+        // crc32("user-a") % 100 = 17, which is <= 50
+        let mut session_should_split = create_test_session(&[
+            (HOST.as_str(), "example.com"),
+            (COOKIE.as_str(), "user-id=user-a"),
+        ])
+        .await;
+        plugin
+            .handle_request(
+                PluginStep::Request,
+                &mut session_should_split,
+                &mut ctx,
+            )
+            .await
+            .unwrap();
+        assert_eq!(ctx.upstream.name, "new-upstream");
+
+        // Case 3: Cookie value hashes to a value that should NOT split
+        // crc32("user-b") % 100 = 85, which is > 50
+        ctx.upstream.name = String::new(); // Reset context
+        let mut session_should_not_split = create_test_session(&[
+            (HOST.as_str(), "example.com"),
+            (COOKIE.as_str(), "user-id=user-b"),
+        ])
+        .await;
+        plugin
+            .handle_request(
+                PluginStep::Request,
+                &mut session_should_not_split,
+                &mut ctx,
+            )
+            .await
+            .unwrap();
+        assert_eq!(ctx.upstream.name, "");
+    }
+
+    #[tokio::test]
+    async fn test_handle_request_wrong_step() {
+        let conf = create_plugin_conf("new-upstream", 100, false, "");
+        let plugin = TrafficSplitting::try_from(&conf).unwrap();
+        let mut session =
+            create_test_session(&[(HOST.as_str(), "example.com")]).await;
+        let mut ctx = Ctx::default();
+
+        // Call with a step other than `Request`
+        let result = plugin
+            .handle_request(PluginStep::ProxyUpstream, &mut session, &mut ctx)
+            .await
+            .unwrap();
+
+        // Should be skipped and upstream name should not be changed
+        assert_eq!(true, result == RequestPluginResult::Skipped);
+        assert_eq!(ctx.upstream.name, "");
+    }
+}
