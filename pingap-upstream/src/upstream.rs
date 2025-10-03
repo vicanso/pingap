@@ -557,27 +557,16 @@ impl Upstream {
         self.peer_tracer.as_ref().map(|tracer| tracer.connected())
     }
 
-    /// Returns the round-robin load balancer if configured
+    /// Returns the backends of the upstream
     ///
     /// # Returns
-    /// * `Option<Arc<LoadBalancer<RoundRobin>>>` - Round-robin load balancer if used, None otherwise
+    /// * `Option<&Backends>` - The backends of the upstream if available, None otherwise
     #[inline]
-    pub fn as_round_robin(&self) -> Option<&LoadBalancer<RoundRobin>> {
+    fn get_backends(&self) -> Option<&Backends> {
         match &self.lb {
-            SelectionLb::RoundRobin(lb) => Some(lb),
-            _ => None,
-        }
-    }
-
-    /// Returns the consistent hash load balancer if configured
-    ///
-    /// # Returns
-    /// * `Option<Arc<LoadBalancer<Consistent>>>` - Consistent hash load balancer if used, None otherwise
-    #[inline]
-    pub fn as_consistent(&self) -> Option<&LoadBalancer<Consistent>> {
-        match &self.lb {
-            SelectionLb::Consistent { lb, .. } => Some(lb),
-            _ => None,
+            SelectionLb::RoundRobin(lb) => Some(lb.backends()),
+            SelectionLb::Consistent { lb, .. } => Some(lb.backends()),
+            SelectionLb::Transparent => None,
         }
     }
 
@@ -612,21 +601,11 @@ pub fn get_upstream_healthy_status(
         let mut total = 0;
         let mut healthy = 0;
         let mut unhealthy_backends = vec![];
-        if let Some(lb) = v.as_round_robin() {
-            let backends = lb.backends().get_backend();
-            total = backends.len();
-            backends.iter().for_each(|backend| {
-                if lb.backends().ready(backend) {
-                    healthy += 1;
-                } else {
-                    unhealthy_backends.push(backend.to_string());
-                }
-            });
-        } else if let Some(lb) = v.as_consistent() {
-            let backends = lb.backends().get_backend();
-            total = backends.len();
-            backends.iter().for_each(|backend| {
-                if lb.backends().ready(backend) {
+        if let Some(backends) = v.get_backends() {
+            let backend_set = backends.get_backend();
+            total = backend_set.len();
+            backend_set.iter().for_each(|backend| {
+                if backends.ready(backend) {
                     healthy += 1;
                 } else {
                     unhealthy_backends.push(backend.to_string());
@@ -959,20 +938,6 @@ mod tests {
         assert_eq!(value, up.completed());
         assert_eq!(value - 1, up.processing.load(Ordering::Relaxed));
         assert_eq!(true, up.new_http_peer(&session, &None,).is_some());
-        assert_eq!(true, up.as_round_robin().is_some());
-
-        // test consistent hash
-        let tmp_upstream = Upstream::new(
-            "ip",
-            &UpstreamConf {
-                addrs: vec!["127.0.0.1:5001".to_string()],
-                algo: Some("hash:ip".to_string()),
-                ..Default::default()
-            },
-            None,
-        )
-        .unwrap();
-        assert_eq!(true, tmp_upstream.as_consistent().is_some());
     }
 
     #[test]
