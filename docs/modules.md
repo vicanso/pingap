@@ -49,7 +49,6 @@ graph TD
     logger --> util
 
     performance --> cache
-    performance --> config
     performance --> core
     performance --> location
     performance --> upstream
