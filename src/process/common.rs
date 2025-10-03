@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::LOG_CATEGORY;
 use crate::webhook::send_notification;
 use once_cell::sync::Lazy;
 use once_cell::sync::OnceCell;
@@ -24,6 +23,8 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
 use tracing::{error, info};
+
+static LOG_TARGET: &str = "pingap:process";
 
 static START_TIME: Lazy<Duration> =
     Lazy::new(|| Duration::from_secs(pingap_core::now_sec()));
@@ -106,13 +107,13 @@ static PROCESS_RESTARTING: Lazy<AtomicBool> =
 pub async fn restart_now() -> io::Result<process::Output> {
     let restarting = PROCESS_RESTARTING.swap(true, Ordering::Relaxed);
     if restarting {
-        error!(category = LOG_CATEGORY, "pingap is restarting now");
+        error!(target: LOG_TARGET, "pingap is restarting now");
         return Err(std::io::Error::new(
             io::ErrorKind::InvalidInput,
             "Pingap is restarting",
         ));
     }
-    info!(category = LOG_CATEGORY, "pingap will restart");
+    info!(target: LOG_TARGET, "pingap will restart");
     send_notification(NotificationData {
         category: "restart".to_string(),
         message: format!("Restart now, pid:{}", std::process::id()),
@@ -158,7 +159,7 @@ pub async fn restart() {
         match restart_now().await {
             Err(e) => {
                 error!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     error = %e,
                     "restart fail"
                 );
@@ -171,7 +172,7 @@ pub async fn restart() {
                 .await;
             },
             Ok(output) => {
-                info!(category = LOG_CATEGORY, "{output:?}");
+                info!(target: LOG_TARGET, "{output:?}");
             },
         }
     }

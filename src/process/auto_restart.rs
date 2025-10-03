@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{restart, LOG_CATEGORY};
+use super::restart;
 use crate::certificates::try_update_certificates;
 use crate::locations::try_init_locations;
 use crate::plugin;
@@ -38,6 +38,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::interval;
 use tracing::{debug, error, info};
+
+static LOG_TARGET: &str = "pingap:auto_restart";
 
 /// Compares configurations and handles updates through hot reload or full restart
 ///
@@ -66,7 +68,7 @@ async fn diff_and_update_config(
     let (updated_category_list, original_diff_result) =
         current_config.diff(&new_config);
     debug!(
-        category = LOG_CATEGORY,
+        target: LOG_TARGET,
         updated_category_list = updated_category_list.join(","),
         original_diff_result = original_diff_result.join("\n"),
         "current config diff from new config"
@@ -156,12 +158,12 @@ async fn diff_and_update_config(
                     reload_fail_messages
                         .push(format!("upstream reload fail: {error}"));
                     error!(
-                        category = LOG_CATEGORY,
+                        target: LOG_TARGET,
                         error, "reload upstream fail"
                     );
                 },
                 Ok(updated_upstreams) => {
-                    info!(category = LOG_CATEGORY, "reload upstream success");
+                    info!(target: LOG_TARGET, "reload upstream success");
                     send_notification(NotificationData {
                         category: "reload_config".to_string(),
                         level: NotificationLevel::Info,
@@ -179,12 +181,12 @@ async fn diff_and_update_config(
                     reload_fail_messages
                         .push(format!("location reload fail: {error}",));
                     error!(
-                        category = LOG_CATEGORY,
+                        target: LOG_TARGET,
                         error, "reload location fail"
                     );
                 },
                 Ok(updated_locations) => {
-                    info!(category = LOG_CATEGORY, "reload location success");
+                    info!(target: LOG_TARGET, "reload location success");
                     send_notification(NotificationData {
                         category: "reload_config".to_string(),
                         level: NotificationLevel::Info,
@@ -199,7 +201,7 @@ async fn diff_and_update_config(
             let (updated_plugins, error) =
                 plugin::try_init_plugins(&new_config.plugins);
             if !updated_plugins.is_empty() {
-                info!(category = LOG_CATEGORY, "reload plugin success");
+                info!(target: LOG_TARGET, "reload plugin success");
                 send_notification(NotificationData {
                     category: "reload_config".to_string(),
                     level: NotificationLevel::Info,
@@ -209,7 +211,7 @@ async fn diff_and_update_config(
                 .await;
             }
             if !error.is_empty() {
-                error!(category = LOG_CATEGORY, error, "reload plugin fail");
+                error!(target: LOG_TARGET, error, "reload plugin fail");
                 send_notification(NotificationData {
                     category: "reload_config_fail".to_string(),
                     level: NotificationLevel::Error,
@@ -222,7 +224,7 @@ async fn diff_and_update_config(
         if should_reload_certificate {
             let (updated_certificates, errors) =
                 try_update_certificates(&new_config.certificates);
-            info!(category = LOG_CATEGORY, "reload certificate success");
+            info!(target: LOG_TARGET, "reload certificate success");
             send_notification(NotificationData {
                 category: "reload_config".to_string(),
                 level: NotificationLevel::Info,
@@ -232,7 +234,7 @@ async fn diff_and_update_config(
             .await;
             if !errors.is_empty() {
                 error!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     error = errors,
                     "parse certificate fail"
                 );
@@ -255,13 +257,13 @@ async fn diff_and_update_config(
                     reload_fail_messages
                         .push(format!("server reload fail: {error}"));
                     error!(
-                        category = LOG_CATEGORY,
+                        target: LOG_TARGET,
                         error, "reload server fail"
                     );
                 },
                 Ok(updated_servers) => {
                     info!(
-                        category = LOG_CATEGORY,
+                        target: LOG_TARGET,
                         "reload server location success"
                     );
                     send_notification(NotificationData {
@@ -285,7 +287,7 @@ async fn diff_and_update_config(
         let (updated_category_list, original_diff_result) =
             current_config.diff(&hot_reload_config);
         debug!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             updated_category_list = updated_category_list.join(","),
             original_diff_result = original_diff_result.join("\n"),
             "current config diff from hot reload config"
@@ -321,7 +323,7 @@ async fn diff_and_update_config(
     // diff hot reload config and new config
     let (_, new_config_result) = hot_reload_config.diff(&new_config);
     debug!(
-        category = LOG_CATEGORY,
+        target: LOG_TARGET,
         new_config_result = new_config_result.join("\n"),
         "hot reload config diff from new config"
     );
@@ -464,7 +466,7 @@ impl BackgroundService for ConfigObserverService {
         let period_human: humantime::Duration = self.interval.into();
 
         info!(
-            category = LOG_CATEGORY,
+            target: LOG_TARGET,
             name = OBSERVER_NAME,
             interval = period_human.to_string(),
             "background service is running",
@@ -474,7 +476,7 @@ impl BackgroundService for ConfigObserverService {
         let result = self.config_manager.observe().await;
         if let Err(e) = result {
             error!(
-                category = LOG_CATEGORY,
+                target: LOG_TARGET,
                 error = %e,
                 "create storage observe fail"
             );
@@ -497,7 +499,7 @@ impl BackgroundService for ConfigObserverService {
             let current_level = self.current_log_level.load().to_string();
             if current_level != new_level {
                 info!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     current_level, new_level, "reload log level"
                 );
                 if let Err(e) = self
@@ -505,7 +507,7 @@ impl BackgroundService for ConfigObserverService {
                     .modify(|filter| *filter = new_env_filter(new_level))
                 {
                     error!(
-                        category = LOG_CATEGORY,
+                        target: LOG_TARGET,
                         error = %e,
                         "reload log level fail"
                     )
@@ -528,7 +530,7 @@ impl BackgroundService for ConfigObserverService {
                         },
                         Err(e) => {
                             error!(
-                               category = LOG_CATEGORY,
+                               target: LOG_TARGET,
                                error = %e,
                                "observe updated fail"
                             );
@@ -554,7 +556,7 @@ async fn run_diff_and_update_config(
         Ok(new_config) => Some(new_config),
         Err(e) => {
             error!(
-                category = LOG_CATEGORY,
+                target: LOG_TARGET,
                 error = %e,
                 "update config fail",
             );
@@ -590,7 +592,7 @@ impl BackgroundTask for AutoRestart {
             let current_level = self.current_log_level.load().to_string();
             if current_level != new_level {
                 info!(
-                    category = LOG_CATEGORY,
+                    target: LOG_TARGET,
                     current_level, new_level, "reload log level"
                 );
                 if let Err(e) = self
@@ -598,7 +600,7 @@ impl BackgroundTask for AutoRestart {
                     .modify(|filter| *filter = new_env_filter(new_level))
                 {
                     error!(
-                        category = LOG_CATEGORY,
+                        target: LOG_TARGET,
                         error = %e,
                         "reload log level fail"
                     )

@@ -30,6 +30,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::debug;
 
+static LOG_TARGET: &str = "pingap:stats";
+
 type Result<T> = std::result::Result<T, Error>;
 
 /// ServerStats collects and represents comprehensive server metrics including:
@@ -129,7 +131,7 @@ impl Stats {
     ///
     /// Returns a Result containing the Stats plugin instance or an error
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new stats plugin");
+        debug!(target: LOG_TARGET, params = params.to_string(), "new stats plugin");
         Self::try_from(params)
     }
 }

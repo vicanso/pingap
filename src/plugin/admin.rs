@@ -64,6 +64,8 @@ use urlencoding::decode;
 
 type Result<T> = std::result::Result<T, Error>;
 
+static LOG_TARGET: &str = "pingap:admin";
+
 #[derive(RustEmbed)]
 #[folder = "dist/"]
 struct AdminAsset;
@@ -253,7 +255,7 @@ async fn get_request_body(session: &mut Session) -> pingora::Result<BytesMut> {
 
 impl AdminServe {
     pub fn new(params: &PluginConf) -> Result<Self> {
-        debug!(params = params.to_string(), "new admin server plugin");
+        debug!(target: LOG_TARGET, params = params.to_string(), "new admin server plugin");
         let serve = AdminServe::try_from(params)?;
 
         Ok(serve)
@@ -298,11 +300,11 @@ impl AdminServe {
         replace_include: bool,
     ) -> pingora::Result<PingapConfig> {
         let config = self.manager.load_all().await.map_err(|e| {
-            error!("failed to load config: {e}");
+            error!(target: LOG_TARGET, "failed to load config: {e}");
             pingap_core::new_internal_error(400, e)
         })?;
         let config = config.to_pingap_config(replace_include).map_err(|e| {
-            error!("failed to convert config: {e}");
+            error!(target: LOG_TARGET, "failed to convert config: {e}");
             pingap_core::new_internal_error(400, e)
         })?;
         Ok(config)
@@ -352,20 +354,9 @@ impl AdminServe {
         let category = Category::from_str(category)
             .map_err(|e| pingap_core::new_internal_error(400, e))?;
         self.manager.delete(category, name).await.map_err(|e| {
-            error!(error = e.to_string(), "delete config fail");
+            error!(target: LOG_TARGET, error = e.to_string(), "delete config fail");
             pingap_core::new_internal_error(400, e)
         })?;
-        // let mut conf = self.load_config(false).await?;
-        // conf.remove(category, name).map_err(|e| {
-        //     error!(error = e.to_string(), "validate config fail");
-        //     pingap_core::new_internal_error(400, e)
-        // })?;
-        // save_config(&conf, category, Some(name))
-        //     .await
-        //     .map_err(|e| {
-        //         error!(error = e.to_string(), "save config fail");
-        //         pingap_core::new_internal_error(400, e)
-        //     })?;
         Ok(HttpResponse::no_content())
     }
     async fn update_config(
@@ -386,6 +377,7 @@ impl AdminServe {
                 let upstream: UpstreamConf = serde_json::from_slice(&buf)
                     .map_err(|e| {
                         error!(
+                            target: LOG_TARGET,
                             error = e.to_string(),
                             "descrialize upstream fail"
                         );
@@ -395,7 +387,7 @@ impl AdminServe {
                     .update(Category::Upstream, name, &upstream)
                     .await
                     .map_err(|e| {
-                        error!(error = e.to_string(), "update config fail");
+                        error!(target: LOG_TARGET, error = e.to_string(), "update config fail");
                         pingap_core::new_internal_error(400, e)
                     })?;
             },
@@ -403,6 +395,7 @@ impl AdminServe {
                 let location: LocationConf = serde_json::from_slice(&buf)
                     .map_err(|e| {
                         error!(
+                            target: LOG_TARGET,
                             error = e.to_string(),
                             "descrialize location fail"
                         );
@@ -412,7 +405,7 @@ impl AdminServe {
                     .update(Category::Location, name, &location)
                     .await
                     .map_err(|e| {
-                        error!(error = e.to_string(), "update config fail");
+                        error!(target: LOG_TARGET, error = e.to_string(), "update config fail");
                         pingap_core::new_internal_error(400, e)
                     })?;
             },
@@ -420,6 +413,7 @@ impl AdminServe {
                 let server: ServerConf =
                     serde_json::from_slice(&buf).map_err(|e| {
                         error!(
+                            target: LOG_TARGET,
                             error = e.to_string(),
                             "descrialize server fail"
                         );
@@ -429,7 +423,7 @@ impl AdminServe {
                     .update(Category::Server, name, &server)
                     .await
                     .map_err(|e| {
-                        error!(error = e.to_string(), "update config fail");
+                        error!(target: LOG_TARGET, error = e.to_string(), "update config fail");
                         pingap_core::new_internal_error(400, e)
                     })?;
             },
@@ -437,6 +431,7 @@ impl AdminServe {
                 let plugin: PluginConf =
                     serde_json::from_slice(&buf).map_err(|e| {
                         error!(
+                            target: LOG_TARGET,
                             error = e.to_string(),
                             "descrialize plugin fail"
                         );
@@ -446,7 +441,7 @@ impl AdminServe {
                     .update(Category::Plugin, name, &plugin)
                     .await
                     .map_err(|e| {
-                        error!(error = e.to_string(), "update config fail");
+                        error!(target: LOG_TARGET, error = e.to_string(), "update config fail");
                         pingap_core::new_internal_error(400, e)
                     })?;
             },
@@ -454,6 +449,7 @@ impl AdminServe {
                 let certificate: CertificateConf = serde_json::from_slice(&buf)
                     .map_err(|e| {
                         error!(
+                            target: LOG_TARGET,
                             error = e.to_string(),
                             "descrialize certificate fail"
                         );
@@ -463,7 +459,7 @@ impl AdminServe {
                     .update(Category::Certificate, name, &certificate)
                     .await
                     .map_err(|e| {
-                        error!(error = e.to_string(), "update config fail");
+                        error!(target: LOG_TARGET, error = e.to_string(), "update config fail");
                         pingap_core::new_internal_error(400, e)
                     })?;
             },
@@ -471,6 +467,7 @@ impl AdminServe {
                 let storage: StorageConf = serde_json::from_slice(&buf)
                     .map_err(|e| {
                         error!(
+                            target: LOG_TARGET,
                             error = e.to_string(),
                             "descrialize storage fail"
                         );
@@ -480,21 +477,21 @@ impl AdminServe {
                     .update(Category::Storage, name, &storage)
                     .await
                     .map_err(|e| {
-                        error!(error = e.to_string(), "update config fail");
+                        error!(target: LOG_TARGET, error = e.to_string(), "update config fail");
                         pingap_core::new_internal_error(400, e)
                     })?;
             },
             _ => {
                 let basic_conf: BasicConf = serde_json::from_slice(&buf)
                     .map_err(|e| {
-                        error!(error = e.to_string(), "descrialize basic fail");
+                        error!(target: LOG_TARGET, error = e.to_string(), "descrialize basic fail");
                         pingap_core::new_internal_error(400, e)
                     })?;
                 self.manager
                     .update(Category::Basic, "", &basic_conf)
                     .await
                     .map_err(|e| {
-                        error!(error = e.to_string(), "update config fail");
+                        error!(target: LOG_TARGET, error = e.to_string(), "update config fail");
                         pingap_core::new_internal_error(400, e)
                     })?;
             },
@@ -508,15 +505,11 @@ impl AdminServe {
     ) -> pingora::Result<HttpResponse> {
         let buf = get_request_body(session).await?;
         let config = toml::from_slice(&buf).map_err(|e| {
-            error!(error = e.to_string(), "import config fail");
+            error!(target: LOG_TARGET, error = e.to_string(), "import config fail");
             pingap_core::new_internal_error(400, e)
         })?;
-        // let conf = PingapConfig::new(&buf, false).map_err(|e| {
-        //     error!(error = e.to_string(), "import config fail");
-        //     pingap_core::new_internal_error(400, e)
-        // })?;
         self.manager.save_all(&config).await.map_err(|e| {
-            error!(error = e.to_string(), "import config fail");
+            error!(target: LOG_TARGET, error = e.to_string(), "import config fail");
             pingap_core::new_internal_error(400, e)
         })?;
 
@@ -673,7 +666,7 @@ async fn handle_request_admin(
             .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
     } else if path == "/restart" && method == Method::POST {
         if let Err(e) = restart_now().await {
-            error!("Restart fail: {e}");
+            error!(target: LOG_TARGET, error = e.to_string(), "Restart fail");
             HttpResponse::bad_request(e.to_string())
         } else {
             HttpResponse::no_content()

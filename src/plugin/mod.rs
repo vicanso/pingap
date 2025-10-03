@@ -34,6 +34,8 @@ mod stats;
 /// UUID for the admin server plugin, generated at runtime
 pub static ADMIN_SERVER_PLUGIN: &str = "pingap:admin";
 
+static LOG_TARGET: &str = "pingap:plugin";
+
 #[derive(Debug, PartialEq, Deserialize, Serialize, Default)]
 struct AdminPluginParams {
     max_age: Option<String>,
@@ -360,9 +362,9 @@ pub fn try_init_plugins(
                 "".to_string()
             };
             if exists {
-                info!(name, step, category, "plugin will be reloaded");
+                info!(target: LOG_TARGET, name, step, category, "plugin will be reloaded");
             } else {
-                info!(name, step, category, "plugin will be created");
+                info!(target: LOG_TARGET, name, step, category, "plugin will be created");
             }
             updated_plugins.push(name.to_string());
             true
@@ -378,7 +380,7 @@ pub fn try_init_plugins(
             .map(|e| e.to_string())
             .collect::<Vec<_>>()
             .join(";");
-        error!(error, "parse plugins failed");
+        error!(target: LOG_TARGET, error, "parse plugins failed");
         error
     } else {
         "".to_string()

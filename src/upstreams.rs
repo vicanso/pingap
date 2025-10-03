@@ -24,6 +24,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::error;
 
+static LOG_TARGET: &str = "pingap:upstreams";
+
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 struct Provider {
@@ -104,7 +106,7 @@ pub async fn try_update_upstreams(
         // run health check before switch to new upstream
         if let Err(e) = up.run_health_check().await {
             error!(
-                category = "upstream",
+                target: LOG_TARGET,
                 error = %e,
                 upstream = name,
                 "update upstream health check fail"

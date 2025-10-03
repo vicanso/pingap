@@ -98,6 +98,8 @@ locations = ["httpLocation"]
 addrs = ["127.0.0.1:5000"]
 "###;
 
+static LOG_TARGET: &str = "pingap";
+
 /// Command line arguments structure for the pingap.
 /// A reverse proxy like nginx.
 #[derive(Parser, Debug, Default)]
@@ -322,7 +324,7 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     my_server.add_service(services.lb);
 
     my_server.bootstrap();
-    info!("Admin node server is running");
+    info!(target: LOG_TARGET, "Admin node server is running");
     let _ = get_start_time();
 
     // TODO not process exit until pingora supports
@@ -478,7 +480,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     if let Some(sync_path) = args.sync {
         let r = sync_config(config_manager.clone(), sync_path);
         r.recv()??;
-        info!("sync config success");
+        info!(target: LOG_TARGET, "sync config success");
         return Ok(());
     }
 
@@ -497,7 +499,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     // return if test mode
     if args.test {
-        info!("Validate config success");
+        info!(target: LOG_TARGET, "Validate config success");
         return Ok(());
     }
 
@@ -506,7 +508,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .map_or(Duration::from_secs(90), |item| item);
 
     #[cfg(feature = "perf")]
-    info!("Enable feature perf");
+    info!(target: LOG_TARGET, "Enable feature perf");
 
     if let Ok(exec_path) = std::env::current_exe() {
         let mut cmd = process::RestartProcessCommand {
@@ -555,7 +557,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut my_server = server::Server::new(Some(opt))?;
     let server_conf = new_server_config(&args, &config);
     info!(
-        target: "main",
+        target: LOG_TARGET,
         pid_file = server_conf.pid_file,
         upgrade_sock = server_conf.upgrade_sock,
         user = server_conf.user,
@@ -595,12 +597,13 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     info!(
-        "plugins" = get_plugin_factory().supported_plugins().join(","),
+        target: LOG_TARGET,
+        plugins = get_plugin_factory().supported_plugins().join(","),
         "plugins are registered"
     );
     let (_, error) = plugin::try_init_plugins(&config.plugins);
     if !error.is_empty() {
-        error!(error, "init plugins fail",);
+        error!(target: LOG_TARGET, error, "init plugins fail",);
     }
 
     let mut server_conf_list: Vec<ServerConf> = parse_from_conf(config.clone());
@@ -613,6 +616,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             "".to_string()
         };
         info!(
+            target: LOG_TARGET,
             admin_addr = server_conf.addr,
             path, "admin plugin is created"
         );
@@ -697,12 +701,13 @@ fn run() -> Result<(), Box<dyn Error>> {
     let (updated_certificates, errors) = try_update_certificates(&certificates);
     if !updated_certificates.is_empty() {
         info!(
+            target: LOG_TARGET,
             updated_certificates = updated_certificates.join(","),
             "init certificates success"
         );
     }
     if !errors.is_empty() {
-        error!(error = errors, "parse certificate fail");
+        error!(target: LOG_TARGET, error = errors, "parse certificate fail");
     }
 
     // no server listen 80 and lets encrypt domains is not empty
@@ -815,6 +820,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     ));
 
     info!(
+        target: LOG_TARGET,
         daemon = args.daemon,
         upgrade = args.upgrade,
         auto_restart = args.autorestart,
