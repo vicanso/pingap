@@ -453,7 +453,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut application_log_paths = vec![];
 
     // Initialize logging system
-    if let Some(log_path) =
+    let (reload_handle, log_path) =
         pingap_logger::logger_try_init(pingap_logger::LoggerParams {
             capacity: config
                 .basic
@@ -463,8 +463,8 @@ fn run() -> Result<(), Box<dyn Error>> {
             log: args.log.clone().unwrap_or_default(),
             level: config.basic.log_level.clone().unwrap_or_default(),
             json: config.basic.log_format_json.unwrap_or_default(),
-        })?
-    {
+        })?;
+    if let Some(log_path) = log_path {
         application_log_paths.push(log_path);
     }
 
@@ -780,6 +780,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 "observer",
                 new_observer_service(
                     config_manager.clone(),
+                    reload_handle,
                     auto_restart_check_interval,
                     only_hot_reload,
                 ),
@@ -787,6 +788,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         } else {
             let auto_restart_task = new_auto_restart_service(
                 config_manager.clone(),
+                reload_handle,
                 auto_restart_check_interval,
                 only_hot_reload,
             );

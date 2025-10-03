@@ -19,6 +19,7 @@ use crate::plugin;
 use crate::server_locations::try_init_server_locations;
 use crate::upstreams::try_update_upstreams;
 use crate::webhook::{get_webhook_sender, send_notification};
+use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use pingap_config::{
     ConfigManager, PingapConfig, CATEGORY_CERTIFICATE, CATEGORY_LOCATION,
@@ -28,6 +29,8 @@ use pingap_core::{
     BackgroundTask, BackgroundTaskService, Error as ServiceError,
     NotificationData, NotificationLevel,
 };
+use pingap_logger::new_env_filter;
+use pingap_logger::LoggerReloadHandle;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -53,7 +56,7 @@ use tracing::{debug, error, info};
 async fn diff_and_update_config(
     config_manager: Arc<ConfigManager>,
     hot_reload_only: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<PingapConfig, Box<dyn std::error::Error>> {
     let new_toml_config = config_manager.load_all().await?;
     let new_config = new_toml_config.to_pingap_config(true)?;
     new_config.validate()?;
@@ -70,7 +73,7 @@ async fn diff_and_update_config(
     );
     // no update config
     if original_diff_result.is_empty() {
-        return Ok(());
+        return Ok(new_config);
     }
 
     let mut reload_fail_messages = vec![];
@@ -289,7 +292,7 @@ async fn diff_and_update_config(
         );
         // no update config
         if original_diff_result.is_empty() {
-            return Ok(());
+            return Ok(new_config);
         }
         // update current config to be hot reload config
         config_manager.set_current_config(hot_reload_config);
@@ -309,7 +312,7 @@ async fn diff_and_update_config(
                 .await;
             }
         }
-        return Ok(());
+        return Ok(new_config);
     }
     // restart mode
     // update current config to be hot reload config
@@ -348,7 +351,7 @@ async fn diff_and_update_config(
     if should_restart {
         restart().await;
     }
-    Ok(())
+    Ok(new_config)
 }
 
 /// AutoRestart service manages configuration updates on a schedule
@@ -365,11 +368,14 @@ struct AutoRestart {
     /// Tracks if currently performing a hot reload
     running_hot_reload: AtomicBool,
     config_manager: Arc<ConfigManager>,
+    log_reload_handle: LoggerReloadHandle,
+    current_log_level: ArcSwap<String>,
 }
 
 /// Creates a new auto-restart service that checks for config changes periodically
 pub fn new_auto_restart_service(
     config_manager: Arc<ConfigManager>,
+    log_reload_handle: LoggerReloadHandle,
     interval: Duration,
     only_hot_reload: bool,
 ) -> BackgroundTaskService {
@@ -379,11 +385,20 @@ pub fn new_auto_restart_service(
         restart_unit = (interval.as_secs() / unit.as_secs()) as u32;
     }
 
+    let current_log_level = config_manager
+        .get_current_config()
+        .basic
+        .log_level
+        .clone()
+        .unwrap_or_default();
+
     let task = Box::new(AutoRestart {
+        log_reload_handle,
         config_manager,
         running_hot_reload: AtomicBool::new(false),
         only_hot_reload,
         restart_unit,
+        current_log_level: ArcSwap::from_pointee(current_log_level),
     });
     let name = "auto_restart";
     BackgroundTaskService::new_single(name, interval.min(unit), name, task)
@@ -403,6 +418,8 @@ pub fn new_auto_restart_service(
 /// - Graceful shutdown signals
 pub struct ConfigObserverService {
     config_manager: Arc<ConfigManager>,
+    log_reload_handle: LoggerReloadHandle,
+    current_log_level: ArcSwap<String>,
     /// How often to check for changes
     interval: Duration,
     /// If true, only perform hot reloads when changes detected
@@ -415,13 +432,23 @@ const MAX_DELAY: u32 = 60 * 1000;
 
 pub fn new_observer_service(
     config_manager: Arc<ConfigManager>,
+    log_reload_handle: LoggerReloadHandle,
     interval: Duration,
     only_hot_reload: bool,
 ) -> ConfigObserverService {
+    let current_log_level = config_manager
+        .get_current_config()
+        .basic
+        .log_level
+        .clone()
+        .unwrap_or_default();
+
     ConfigObserverService {
         config_manager,
+        log_reload_handle,
         interval,
         only_hot_reload,
+        current_log_level: ArcSwap::from_pointee(current_log_level),
         delay: AtomicU32::new(MIN_DELAY),
     }
 }
@@ -464,7 +491,27 @@ impl BackgroundService for ConfigObserverService {
                 _ = period.tick() => {
                     // fetch and diff update
                     // some change may be restart
-                    run_diff_and_update_config(self.config_manager.clone(), self.only_hot_reload).await;
+                    if let Some(new_config) = run_diff_and_update_config(self.config_manager.clone(), self.only_hot_reload).await {
+                        let new_level =
+                new_config.basic.log_level.clone().unwrap_or_default();
+            let current_level = self.current_log_level.load().to_string();
+            if current_level != new_level {
+                info!(
+                    category = LOG_CATEGORY,
+                    current_level, new_level, "reload log level"
+                );
+                if let Err(e) = self
+                    .log_reload_handle
+                    .modify(|filter| *filter = new_env_filter(new_level))
+                {
+                    error!(
+                        category = LOG_CATEGORY,
+                        error = %e,
+                        "reload log level fail"
+                    )
+                }
+            }
+                    }
                 }
                 result = observer.watch() => {
                     let delay = self.delay.load(Ordering::Relaxed);
@@ -502,16 +549,17 @@ impl BackgroundService for ConfigObserverService {
 async fn run_diff_and_update_config(
     config_manager: Arc<ConfigManager>,
     hot_reload_only: bool,
-) {
-    if let Err(e) =
-        diff_and_update_config(config_manager, hot_reload_only).await
-    {
-        error!(
-            category = LOG_CATEGORY,
-            error = %e,
-            name = OBSERVER_NAME,
-            "update config fail",
-        )
+) -> Option<PingapConfig> {
+    match diff_and_update_config(config_manager, hot_reload_only).await {
+        Ok(new_config) => Some(new_config),
+        Err(e) => {
+            error!(
+                category = LOG_CATEGORY,
+                error = %e,
+                "update config fail",
+            );
+            None
+        },
     }
 }
 
@@ -531,11 +579,32 @@ impl BackgroundTask for AutoRestart {
         };
         self.running_hot_reload
             .store(hot_reload_only, Ordering::Relaxed);
-        run_diff_and_update_config(
+        if let Some(new_config) = run_diff_and_update_config(
             self.config_manager.clone(),
             hot_reload_only,
         )
-        .await;
+        .await
+        {
+            let new_level =
+                new_config.basic.log_level.clone().unwrap_or_default();
+            let current_level = self.current_log_level.load().to_string();
+            if current_level != new_level {
+                info!(
+                    category = LOG_CATEGORY,
+                    current_level, new_level, "reload log level"
+                );
+                if let Err(e) = self
+                    .log_reload_handle
+                    .modify(|filter| *filter = new_env_filter(new_level))
+                {
+                    error!(
+                        category = LOG_CATEGORY,
+                        error = %e,
+                        "reload log level fail"
+                    )
+                }
+            }
+        }
         Ok(true)
     }
 }

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use snafu::Snafu;
+use tracing_subscriber::EnvFilter;
 
 mod access;
 mod async_logger;
@@ -29,6 +30,10 @@ pub enum Error {
     Io { source: std::io::Error },
     #[snafu(display("Invalid {message}"))]
     Invalid { message: String },
+}
+
+pub fn new_env_filter(level: String) -> EnvFilter {
+    EnvFilter::new(level)
 }
 
 pub use access::*;

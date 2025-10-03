@@ -34,8 +34,13 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::Instant;
 use std::time::{Duration, SystemTime};
+use tracing::Subscriber;
 use tracing::{error, info, Level};
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::reload::Handle;
+use tracing_subscriber::reload::Layer;
+use tracing_subscriber::{EnvFilter, Registry};
 use walkdir::WalkDir;
 
 const DEFAULT_COMPRESSION_LEVEL: u8 = 9;
@@ -48,6 +53,8 @@ static GZIP_EXT: &str = "gz";
 static ZSTD_EXT: &str = "zst";
 
 type Result<T, E = Error> = std::result::Result<T, E>;
+
+pub type LoggerReloadHandle = Handle<EnvFilter, Registry>;
 
 /// Compresses a file using zstd compression
 ///
@@ -314,7 +321,9 @@ fn new_file_writer(params: &LoggerParams) -> Result<(BoxMakeWriter, String)> {
 ///
 /// # Returns
 /// Optional log path if file log is enabled
-pub fn logger_try_init(params: LoggerParams) -> Result<Option<String>> {
+pub fn logger_try_init(
+    params: LoggerParams,
+) -> Result<(LoggerReloadHandle, Option<String>)> {
     let level = if params.level.is_empty() {
         std::env::var("RUST_LOG").unwrap_or("INFO".to_string())
     } else {
@@ -334,14 +343,11 @@ pub fn logger_try_init(params: LoggerParams) -> Result<Option<String>> {
     let minutes = ((seconds % 3600) / 60) as i8;
     let is_dev = cfg!(debug_assertions);
 
-    let builder = tracing_subscriber::fmt()
-        .with_max_level(level)
-        .with_ansi(is_dev)
-        .with_timer(tracing_subscriber::fmt::time::OffsetTime::new(
-            time::UtcOffset::from_hms(hours, minutes, 0).unwrap(),
-            time::format_description::well_known::Rfc3339,
-        ))
-        .with_target(is_dev);
+    let initial_filter =
+        EnvFilter::from_default_env().add_directive(level.into());
+    let (filter_layer, reload_handle) = Layer::new(initial_filter);
+    let registry = tracing_subscriber::registry().with(filter_layer);
+
     let mut log_path = None;
     let mut log_type = "stdio";
     let writer = if params.log.is_empty() {
@@ -364,12 +370,46 @@ pub fn logger_try_init(params: LoggerParams) -> Result<Option<String>> {
         w
     };
     if params.json {
-        builder
-            .event_format(tracing_subscriber::fmt::format::json())
-            .with_writer(writer)
-            .init();
+        let fmt_layer = tracing_subscriber::fmt::layer()
+            .with_ansi(false) // JSON 输出通常不需要 ANSI 颜色
+            .with_timer(tracing_subscriber::fmt::time::OffsetTime::new(
+                time::UtcOffset::from_hms(hours, minutes, 0).unwrap(),
+                time::format_description::well_known::Rfc3339,
+            ))
+            .with_target(is_dev)
+            .with_writer(writer) // 使用传入的 writer
+            .json(); // <-- 关键：配置为 JSON 格式
+
+        // 构建一个完整的 Subscriber，并将其 Box 化
+        let subscriber = registry.with(fmt_layer);
+        let boxed_subscriber: Box<dyn Subscriber + Send + Sync> =
+            Box::new(subscriber);
+
+        // 使用 set_global_default 来安装 Box 后的 Subscriber
+        tracing::subscriber::set_global_default(boxed_subscriber).map_err(
+            |e| Error::Invalid {
+                message: e.to_string(),
+            },
+        )?
     } else {
-        builder.with_writer(writer).init();
+        let fmt_layer = tracing_subscriber::fmt::layer()
+            .with_ansi(is_dev) // 文本格式可以带颜色
+            .with_timer(tracing_subscriber::fmt::time::OffsetTime::new(
+                time::UtcOffset::from_hms(hours, minutes, 0).unwrap(),
+                time::format_description::well_known::Rfc3339,
+            ))
+            .with_target(is_dev)
+            .with_writer(writer); // 使用传入的 writer
+
+        let subscriber = registry.with(fmt_layer);
+        let boxed_subscriber: Box<dyn Subscriber + Send + Sync> =
+            Box::new(subscriber);
+
+        tracing::subscriber::set_global_default(boxed_subscriber).map_err(
+            |e| Error::Invalid {
+                message: e.to_string(),
+            },
+        )?
     }
 
     info!(
@@ -382,5 +422,5 @@ pub fn logger_try_init(params: LoggerParams) -> Result<Option<String>> {
         "init tracing subscriber success",
     );
 
-    Ok(log_path)
+    Ok((reload_handle, log_path))
 }
