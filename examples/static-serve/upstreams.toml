@@ -1,3 +1,3 @@
-[upstreams.donwloadsUpstream]
+[upstreams.downloadsUpstream]
 addrs = ["127.0.0.1:8080"]
-health_check = "http://donwloadsUpstream/health"
+health_check = "http://downloadsUpstream/health"

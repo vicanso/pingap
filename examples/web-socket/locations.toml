@@ -1,2 +1,6 @@
+[locations.staticLocation]
+upstream = "static"
+
 [locations.wssLocation]
+path = "/raw"
 upstream = "wssUpstream"

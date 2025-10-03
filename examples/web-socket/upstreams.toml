@@ -1,3 +1,7 @@
+[upstreams.static]
+addrs = ["127.0.0.1:8080"]
+health_check = "http://static/health"
+
 [upstreams.wssUpstream]
 addrs = ["ws.postman-echo.com:443"]
 discovery = "dns"
