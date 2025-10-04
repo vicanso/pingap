@@ -44,14 +44,11 @@ export const KvInputs = React.forwardRef<HTMLInputElement, KvInputsProps>(
       });
     }
     const [inputs, setInputs] = React.useState(arr);
-    const updateKeyValue = (index: number, value: string, isKey: boolean) => {
-      const arr = inputs.slice(0);
-      if (isKey) {
-        arr[index].key = value.trim();
-      } else {
-        arr[index].value = value.trim();
-      }
-      setInputs(arr);
+    const handleValueChange = (arr: {
+      id: string;
+      key: string;
+      value: string;
+    }[]) => {
       const values: string[] = [];
       arr.forEach((item) => {
         const { key, value } = item;
@@ -60,6 +57,16 @@ export const KvInputs = React.forwardRef<HTMLInputElement, KvInputsProps>(
         }
       });
       onValueChange(values);
+    };
+    const updateKeyValue = (index: number, value: string, isKey: boolean) => {
+      const arr = inputs.slice(0);
+      if (isKey) {
+        arr[index].key = value.trim();
+      } else {
+        arr[index].value = value.trim();
+      }
+      setInputs(arr);
+      handleValueChange(arr);
     };
     const updateKey = (index: number, value: string) => {
       updateKeyValue(index, value, true);
@@ -128,6 +135,7 @@ export const KvInputs = React.forwardRef<HTMLInputElement, KvInputsProps>(
                   const arr = inputs.slice(0);
                   arr.splice(index, 1);
                   setInputs(arr);
+                  handleValueChange(arr);
                 }}
                 className="absolute right-2 top-2 h-5 w-5 text-muted-foreground cursor-pointer"
               />
