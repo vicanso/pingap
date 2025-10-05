@@ -665,7 +665,7 @@ impl Server {
         debug!(
             target: LOG_TARGET,
             server = self.name,
-            location = location.name,
+            location = location.name.as_ref(),
             "location is matched"
         );
 
@@ -1163,16 +1163,20 @@ impl ProxyHttp for Server {
             .location_provider
             .get(&ctx.upstream.location)
             .and_then(|location| {
-                let mut name = &location.upstream;
-                // override upstream by other plugin
-                if !ctx.upstream.name.is_empty() {
-                    name = &ctx.upstream.name;
-                }
-                let upstream = get_upstream_with_variables(
-                    name,
-                    ctx,
-                    self.upstream_provider.as_ref(),
-                )?;
+                let upstream = if ctx.upstream.name.is_empty() {
+                    get_upstream_with_variables(
+                        &location.upstream,
+                        ctx,
+                        self.upstream_provider.as_ref(),
+                    )?
+                } else {
+                    // override upstream by other plugin
+                    get_upstream_with_variables(
+                        &ctx.upstream.name,
+                        ctx,
+                        self.upstream_provider.as_ref(),
+                    )?
+                };
                 Some(upstream)
             })
             .and_then(|upstream| {
@@ -1897,7 +1901,7 @@ value = 'proxy_set_headers = ["name:value"]'
             .early_request_filter(&mut session, &mut ctx)
             .await
             .unwrap();
-        assert_eq!("lo", ctx.upstream.location);
+        assert_eq!("lo", ctx.upstream.location.as_ref());
     }
 
     #[tokio::test]
@@ -1913,7 +1917,7 @@ value = 'proxy_set_headers = ["name:value"]'
 
         let mut ctx = Ctx {
             upstream: UpstreamInfo {
-                location: "lo".to_string(),
+                location: "lo".to_string().into(),
                 ..Default::default()
             },
             ..Default::default()

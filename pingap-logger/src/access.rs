@@ -862,7 +862,7 @@ mod tests {
             upstream: UpstreamInfo {
                 reused: true,
                 address: "192.186.1.1:6188".to_string(),
-                location: "test".to_string(),
+                location: "test".to_string().into(),
                 ..Default::default()
             },
             timing: Timing {

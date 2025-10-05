@@ -252,7 +252,7 @@ impl Prometheus {
 
         // upstream
         if !upstream.is_empty() {
-            let upstream_labels = &[upstream.as_str()];
+            let upstream_labels = &[upstream.as_ref()];
             if let Some(count) = ctx.upstream.connected_count {
                 self.upstream_connections
                     .with_label_values(upstream_labels)
@@ -906,8 +906,8 @@ mod tests {
                     ..Default::default()
                 }),
                 upstream: pingap_core::UpstreamInfo {
-                    name: "upstream".to_string(),
-                    location: "lo".to_string(),
+                    name: "upstream".into(),
+                    location: "lo".into(),
                     reused: true,
                     ..Default::default()
                 },

@@ -147,7 +147,7 @@ impl SelectionLb {
 /// Represents a group of backend servers and their configuration for load balancing and connection management
 pub struct Upstream {
     /// Unique identifier for this upstream group
-    pub name: String,
+    pub name: Arc<str>,
 
     /// Hash key used to detect configuration changes
     pub key: String,
@@ -444,7 +444,7 @@ impl Upstream {
             .as_ref()
             .map(|peer_tracer| Tracer(Box::new(peer_tracer.to_owned())));
         let up = Self {
-            name: name.to_string(),
+            name: name.into(),
             key,
             tls,
             sni,
@@ -463,7 +463,11 @@ impl Upstream {
             tracer,
             processing: AtomicI32::new(0),
         };
-        debug!(target: LOG_TARGET, name = up.name, "new upstream: {up:?}");
+        debug!(
+            target: LOG_TARGET,
+            name = up.name.as_ref(),
+            "new upstream: {up:?}"
+        );
         Ok(up)
     }
 
@@ -818,13 +822,16 @@ mod tests {
 
     impl UpstreamProvider for TmpProvider {
         fn get(&self, name: &str) -> Option<Arc<Upstream>> {
-            if name == self.upstream.name {
+            if name == self.upstream.name.as_ref() {
                 return Some(self.upstream.clone());
             }
             None
         }
         fn list(&self) -> Vec<(String, Arc<Upstream>)> {
-            vec![(self.upstream.name.clone(), self.upstream.clone())]
+            vec![(
+                self.upstream.name.as_ref().to_string(),
+                self.upstream.clone(),
+            )]
         }
     }
 

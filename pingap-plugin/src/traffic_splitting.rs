@@ -33,7 +33,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 pub struct TrafficSplitting {
     hash_value: String,
     /// The upstream traffic targeting
-    upstream: String,
+    upstream: Arc<str>,
     /// The weight of traffic targeting
     weight: u8,
     /// Whether to use stickiness
@@ -91,7 +91,7 @@ impl TryFrom<&PluginConf> for TrafficSplitting {
 
         Ok(Self {
             hash_value: get_hash_key(value),
-            upstream,
+            upstream: upstream.into(),
             weight,
             stickiness,
             sticky_cookie,
@@ -228,7 +228,7 @@ sticky_cookie = "{sticky_cookie}"
         // Valid configuration
         let conf = create_plugin_conf("new-upstream", 50, true, "user-id");
         let plugin = TrafficSplitting::try_from(&conf).unwrap();
-        assert_eq!(plugin.upstream, "new-upstream");
+        assert_eq!(plugin.upstream.as_ref(), "new-upstream");
         assert_eq!(plugin.weight, 50);
         assert!(plugin.stickiness);
         assert_eq!(plugin.sticky_cookie, Some("user-id".to_string()));
@@ -271,7 +271,7 @@ sticky_cookie = "{sticky_cookie}"
             .await
             .unwrap();
         assert_eq!(true, result == RequestPluginResult::Continue);
-        assert_eq!(ctx.upstream.name, "new-upstream");
+        assert_eq!(ctx.upstream.name.as_ref(), "new-upstream");
 
         // 0% weight, should never split
         let conf = create_plugin_conf("new-upstream", 0, false, "");
@@ -283,7 +283,7 @@ sticky_cookie = "{sticky_cookie}"
             .handle_request(PluginStep::Request, &mut session, &mut ctx)
             .await
             .unwrap();
-        assert_eq!(ctx.upstream.name, ""); // Should remain default
+        assert_eq!(ctx.upstream.name.as_ref(), ""); // Should remain default
     }
 
     #[tokio::test]
@@ -303,7 +303,7 @@ sticky_cookie = "{sticky_cookie}"
             )
             .await
             .unwrap();
-        assert_eq!(ctx.upstream.name, "");
+        assert_eq!(ctx.upstream.name.as_ref(), "");
 
         // Case 2: Cookie value hashes to a value that should split
         // crc32("user-a") % 100 = 17, which is <= 50
@@ -320,11 +320,11 @@ sticky_cookie = "{sticky_cookie}"
             )
             .await
             .unwrap();
-        assert_eq!(ctx.upstream.name, "new-upstream");
+        assert_eq!(ctx.upstream.name.as_ref(), "new-upstream");
 
         // Case 3: Cookie value hashes to a value that should NOT split
         // crc32("user-b") % 100 = 85, which is > 50
-        ctx.upstream.name = String::new(); // Reset context
+        ctx.upstream.name = String::new().into(); // Reset context
         let mut session_should_not_split = create_test_session(&[
             (HOST.as_str(), "example.com"),
             (COOKIE.as_str(), "user-id=user-b"),
@@ -338,7 +338,7 @@ sticky_cookie = "{sticky_cookie}"
             )
             .await
             .unwrap();
-        assert_eq!(ctx.upstream.name, "");
+        assert_eq!(ctx.upstream.name.as_ref(), "");
     }
 
     #[tokio::test]
@@ -357,6 +357,6 @@ sticky_cookie = "{sticky_cookie}"
 
         // Should be skipped and upstream name should not be changed
         assert_eq!(true, result == RequestPluginResult::Skipped);
-        assert_eq!(ctx.upstream.name, "");
+        assert_eq!(ctx.upstream.name.as_ref(), "");
     }
 }

@@ -77,7 +77,7 @@ fn bench_logger_format(c: &mut Criterion) {
             },
             upstream: UpstreamInfo {
                 address: "192.168.1.1:5000".to_string(),
-                location: "".to_string(),
+                location: "".to_string().into(),
                 reused: true,
                 connected_count: Some(10),
                 ..Default::default()

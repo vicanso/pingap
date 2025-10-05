@@ -153,7 +153,7 @@ impl HostSelector {
 #[derive(Debug)]
 pub struct Location {
     /// Unique identifier for this location configuration
-    pub name: String,
+    pub name: Arc<str>,
 
     /// Hash key used for configuration versioning and change detection
     pub key: String,
@@ -292,7 +292,7 @@ impl Location {
         let path = conf.path.clone().unwrap_or_default();
 
         let location = Location {
-            name: name.to_string(),
+            name: name.into(),
             key,
             path_selector: PathSelector::new(&path)?,
             path,
@@ -513,7 +513,7 @@ impl Location {
             if let Err(e) =
                 new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri))
             {
-                error!(category = LOG_CATEGORY, error = %e, location = self.name, "new path parse fail");
+                error!(category = LOG_CATEGORY, error = %e, location = self.name.as_ref(), "new path parse fail");
             }
             return true;
         }

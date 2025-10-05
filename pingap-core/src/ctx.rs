@@ -182,9 +182,9 @@ impl Default for Timing {
 #[derive(Default)]
 pub struct UpstreamInfo {
     /// The location (route) that directed the request to this upstream.
-    pub location: String,
+    pub location: Arc<str>,
     /// The name of the upstream server or group.
-    pub name: String,
+    pub name: Arc<str>,
     /// The address of the upstream server.
     pub address: String,
     /// Indicates if the connection to the upstream was reused.
@@ -1209,7 +1209,7 @@ mod tests {
         assert_eq!(b"120ms", buf.as_ref());
 
         buf = BytesMut::new();
-        ctx.upstream.location = "pingap".to_string();
+        ctx.upstream.location = "pingap".to_string().into();
         ctx.append_log_value(&mut buf, "location");
         assert_eq!(b"pingap", buf.as_ref());
 
