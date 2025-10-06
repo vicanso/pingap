@@ -219,6 +219,9 @@ impl Upstream {
     pub fn is_transparent(&self) -> bool {
         matches!(self.lb, SelectionLb::Transparent)
     }
+    pub fn processing(&self) -> i32 {
+        self.processing.load(Ordering::Relaxed)
+    }
 }
 
 // Creates new backend servers based on discovery method (DNS/Docker/Static)
@@ -239,22 +242,6 @@ fn new_backends(
         category: category.to_string(),
         message: e.to_string(),
     })
-}
-
-/// Get the processing and connected status of all upstreams
-///
-/// # Returns
-/// * `HashMap<String, (i32, Option<i32>)>` - Processing and connected status of all upstreams
-pub fn get_upstreams_processing_connected(
-    upstream_provider: Arc<dyn UpstreamProvider>,
-) -> HashMap<String, (i32, Option<i32>)> {
-    let mut processing_connected = HashMap::new();
-    upstream_provider.list().iter().for_each(|(k, v)| {
-        let count = v.processing.load(Ordering::Relaxed);
-        let connected = v.connected();
-        processing_connected.insert(k.to_string(), (count, connected));
-    });
-    processing_connected
 }
 
 fn update_health_check_params<S>(
@@ -566,7 +553,7 @@ impl Upstream {
     /// # Returns
     /// * `Option<&Backends>` - The backends of the upstream if available, None otherwise
     #[inline]
-    fn get_backends(&self) -> Option<&Backends> {
+    pub fn get_backends(&self) -> Option<&Backends> {
         match &self.lb {
             SelectionLb::RoundRobin(lb) => Some(lb.backends()),
             SelectionLb::Consistent { lb, .. } => Some(lb.backends()),
@@ -589,43 +576,6 @@ pub struct UpstreamHealthyStatus {
     pub healthy: u32,
     pub total: u32,
     pub unhealthy_backends: Vec<String>,
-}
-
-/// Get the healthy status of all upstreams
-///
-/// # Returns
-/// * `HashMap<String, UpstreamHealthyStatus>` - Healthy status of all upstreams
-///
-/// This function iterates through all upstreams and checks their health status.
-pub fn get_upstream_healthy_status(
-    upstream_provider: Arc<dyn UpstreamProvider>,
-) -> HashMap<String, UpstreamHealthyStatus> {
-    let mut healthy_status = HashMap::new();
-    upstream_provider.list().iter().for_each(|(k, v)| {
-        let mut total = 0;
-        let mut healthy = 0;
-        let mut unhealthy_backends = vec![];
-        if let Some(backends) = v.get_backends() {
-            let backend_set = backends.get_backend();
-            total = backend_set.len();
-            backend_set.iter().for_each(|backend| {
-                if backends.ready(backend) {
-                    healthy += 1;
-                } else {
-                    unhealthy_backends.push(backend.to_string());
-                }
-            });
-        }
-        healthy_status.insert(
-            k.to_string(),
-            UpstreamHealthyStatus {
-                healthy,
-                total: total as u32,
-                unhealthy_backends,
-            },
-        );
-    });
-    healthy_status
 }
 
 pub fn new_ahash_upstreams(
@@ -728,9 +678,7 @@ impl BackgroundTask for HealthCheckTask {
                 self.unhealthy_upstreams.load().clone();
             let mut notify_healthy_upstreams = vec![];
             let mut unhealthy_upstreams = vec![];
-            for (name, status) in
-                get_upstream_healthy_status(self.upstream_provider.clone())
-                    .iter()
+            for (name, status) in self.upstream_provider.healthy_status().iter()
             {
                 if status.healthy == 0 {
                     unhealthy_upstreams.push(name.to_string());
@@ -802,10 +750,7 @@ mod tests {
         new_backends, new_load_balancer, Upstream, UpstreamConf,
         UpstreamProvider,
     };
-    use crate::{
-        get_upstream_healthy_status, get_upstreams_processing_connected,
-        new_ahash_upstreams,
-    };
+    use crate::new_ahash_upstreams;
     use pingap_discovery::Discovery;
     use pingora::protocols::ALPN;
     use pingora::proxy::Session;
@@ -961,9 +906,9 @@ mod tests {
         tmp_upstream.processing = AtomicI32::new(10);
         let upstream = Arc::new(tmp_upstream);
 
-        let stat = get_upstreams_processing_connected(Arc::new(TmpProvider {
-            upstream,
-        }));
+        let upstream_provider = Arc::new(TmpProvider { upstream });
+
+        let stat = upstream_provider.processing_connected();
 
         assert_eq!(1, stat.len());
         assert_eq!(10, stat.get("test").unwrap().0);
@@ -980,9 +925,10 @@ mod tests {
             None,
         )
         .unwrap();
-        let status = get_upstream_healthy_status(Arc::new(TmpProvider {
+        let upstream_provider = Arc::new(TmpProvider {
             upstream: Arc::new(tmp_upstream),
-        }));
+        });
+        let status = upstream_provider.healthy_status();
         assert_eq!(1, status.len());
         // no health check, so is healthy
         assert_eq!(1, status.get("test").unwrap().healthy);
@@ -997,9 +943,10 @@ mod tests {
             None,
         )
         .unwrap();
-        let status = get_upstream_healthy_status(Arc::new(TmpProvider {
+        let upstream_provider = Arc::new(TmpProvider {
             upstream: Arc::new(tmp_upstream),
-        }));
+        });
+        let status = upstream_provider.healthy_status();
         assert_eq!(1, status.len());
         // no health check, so is healthy
         assert_eq!(1, status.get("ip").unwrap().healthy);

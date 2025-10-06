@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use ahash::AHashMap;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 mod hash_strategy;
@@ -38,6 +39,55 @@ pub trait UpstreamProvider: Send + Sync {
     /// # Returns
     /// * `Vec<(String, Arc<Upstream>)>` - The list of upstreams
     fn list(&self) -> Vec<(String, Arc<Upstream>)>;
+
+    /// Get the healthy status of all upstreams
+    ///
+    /// # Returns
+    /// * `HashMap<String, UpstreamHealthyStatus>` - Healthy status of all upstreams
+    ///
+    /// This function iterates through all upstreams and checks their health status.
+    fn healthy_status(&self) -> HashMap<String, UpstreamHealthyStatus> {
+        let mut healthy_status = HashMap::new();
+        self.list().iter().for_each(|(k, v)| {
+            let mut total = 0;
+            let mut healthy = 0;
+            let mut unhealthy_backends = vec![];
+            if let Some(backends) = v.get_backends() {
+                let backend_set = backends.get_backend();
+                total = backend_set.len();
+                backend_set.iter().for_each(|backend| {
+                    if backends.ready(backend) {
+                        healthy += 1;
+                    } else {
+                        unhealthy_backends.push(backend.to_string());
+                    }
+                });
+            }
+            healthy_status.insert(
+                k.to_string(),
+                UpstreamHealthyStatus {
+                    healthy,
+                    total: total as u32,
+                    unhealthy_backends,
+                },
+            );
+        });
+        healthy_status
+    }
+
+    /// Get the processing and connected status of all upstreams
+    ///
+    /// # Returns
+    /// * `HashMap<String, (i32, Option<i32>)>` - Processing and connected status of all upstreams
+    fn processing_connected(&self) -> HashMap<String, (i32, Option<i32>)> {
+        let mut processing_connected = HashMap::new();
+        self.list().iter().for_each(|(k, v)| {
+            let count = v.processing();
+            let connected = v.connected();
+            processing_connected.insert(k.to_string(), (count, connected));
+        });
+        processing_connected
+    }
 }
 
 pub use hash_strategy::HashStrategy;
