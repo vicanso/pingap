@@ -22,14 +22,14 @@ pingap-config = { version = "0.12.0", path = "../pingap-config" }
 pingap-core = { version = "0.12.0", path = "../pingap-core" }
 pingap-util = { version = "0.12.0", path = "../pingap-util" }
 pingora = { workspace = true }
-rcgen = { version = "0.13.2", features = ["pem", "x509-parser"] }
+rcgen = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 snafu = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
-x509-parser = "0.17.0"
+x509-parser = { workspace = true }
 
 
 [dev-dependencies]

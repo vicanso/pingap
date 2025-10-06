@@ -21,14 +21,14 @@ chrono = { workspace = true }
 hex = { workspace = true }
 hickory-resolver = { workspace = true }
 hmac = { workspace = true }
-instant-acme = "0.8.2"
+instant-acme = { workspace = true }
 nanoid = { workspace = true }
 pingap-certificate = { version = "0.12.0", path = "../pingap-certificate" }
 pingap-config = { version = "0.12.0", path = "../pingap-config" }
 pingap-core = { version = "0.12.0", path = "../pingap-core" }
 pingora = { workspace = true }
 reqwest = { workspace = true }
-rustls = "0.23.31"
+rustls = { workspace = true }
 scopeguard = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -16,20 +16,18 @@ bytes = { workspace = true }
 coarsetime = { workspace = true }
 ctor = { workspace = true }
 futures = { workspace = true }
-hostname = "0.4.1"
+hostname = { workspace = true }
 http = { workspace = true }
 itoa = { workspace = true }
 once_cell = { workspace = true }
-opentelemetry = { version = "0.30.0", default-features = false, features = [
-    "trace",
-], optional = true }
+opentelemetry = { workspace = true, optional = true }
 pingora = { workspace = true }
 pingora-limits = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 snafu = { workspace = true }
 strum = { workspace = true }
-TinyUFO = "0.6.0"
+TinyUFO = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 

@@ -16,7 +16,7 @@ path = "src/lib.rs"
 
 [dependencies]
 async-trait = { workspace = true }
-bollard = "0.19.2"
+bollard = { workspace = true }
 futures = { workspace = true }
 hickory-resolver = { workspace = true }
 http = { workspace = true }

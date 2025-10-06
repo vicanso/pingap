@@ -195,10 +195,17 @@ pub struct UpstreamInfo {
     pub connected_count: Option<i32>,
     /// The HTTP status code of upstream response.
     pub status: Option<StatusCode>,
+    /// The number of retries for failed connections.
     pub retries: u8,
-    /// Maximum window for retries
+    /// Maximum number of retries for failed connections.
     pub max_retries: Option<u8>,
-    /// Maximum window for retries
+    /// The maximum total time window allowed for an operation and all of its subsequent retries.
+    ///
+    /// The timer starts from the beginning of the **initial attempt**. Once this time window
+    /// is exceeded, no more retries will be initiated, even if the maximum number of
+    /// retries (`max_retries`) has not been reached.
+    ///
+    /// If set to `None`, there is no time limit for the retry process.
     pub max_retry_window: Option<Duration>,
 }
 

@@ -18,20 +18,20 @@ path = "src/lib.rs"
 ahash = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
-bstr = "1.12.0"
+bstr = { workspace = true }
 bytes = { workspace = true }
 bytesize = { workspace = true }
 chrono = { workspace = true }
 cookie = { workspace = true }
 ctor = { workspace = true }
 crc32fast = { workspace = true }
-dashmap = "6.1.0"
-fancy-regex = "0.16.1"
+dashmap = { workspace = true }
+fancy-regex = { workspace = true }
 glob = { workspace = true }
 hex = { workspace = true }
 http = { workspace = true }
-hmac-sha256 = "1.1.12"
-hmac-sha512 = { version = "1.1.7", default-features = false }
+hmac-sha256 = { workspace = true }
+hmac-sha512 = { workspace = true, default-features = false }
 humantime = { workspace = true }
 mime_guess = { workspace = true }
 nanoid = { workspace = true }
@@ -45,7 +45,7 @@ rand = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha2 = { version = "0.10.8", default-features = false }
+sha2 = { workspace = true }
 smallvec = { workspace = true }
 snafu = { workspace = true }
 substring = { workspace = true }

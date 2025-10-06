@@ -20,8 +20,8 @@ async-trait = { workspace = true }
 base64 = { workspace = true }
 bytesize = { workspace = true }
 crc32fast = { workspace = true }
-diff = "0.1.13"
-etcd-client = "0.16.1"
+diff = { workspace = true }
+etcd-client = { workspace = true }
 glob = { workspace = true }
 http = { workspace = true }
 humantime-serde = { workspace = true }
@@ -29,7 +29,7 @@ pingap-core = { version = "0.12.0", path = "../pingap-core" }
 pingap-discovery = { version = "0.12.0", path = "../pingap-discovery" }
 pingap-util = { version = "0.12.0", path = "../pingap-util" }
 regex = { workspace = true }
-rustls-pemfile = "2.2.0"
+rustls-pemfile = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_qs = { workspace = true }

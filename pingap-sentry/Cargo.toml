@@ -14,4 +14,4 @@ name = "pingap_sentry"
 path = "src/lib.rs"
 
 [dependencies]
-sentry-core = { version = "0.36.0", default-features = false }
+sentry-core = { workspace = true }
