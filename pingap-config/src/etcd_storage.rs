@@ -20,7 +20,6 @@ use pingap_util::path_join;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use substring::Substring;
-use tokio::sync::OnceCell;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -31,7 +30,6 @@ pub struct EtcdStorage {
     addrs: Vec<String>,
     // Connection options (timeout, auth, etc)
     options: ConnectOptions,
-    client: OnceCell<Client>,
 }
 pub const ETCD_PROTOCOL: &str = "etcd://";
 
@@ -97,23 +95,19 @@ impl EtcdStorage {
             addrs,
             options,
             path,
-            client: OnceCell::new(),
         })
     }
 
     /// Connect to etcd server.
     async fn connect(&self) -> Result<Client> {
-        let c = self
-            .client
-            .get_or_try_init(|| async {
-                Client::connect(&self.addrs, Some(self.options.clone()))
-                    .await
-                    .map_err(|e| Error::Etcd {
-                        source: Box::new(e),
-                    })
+        // TODO
+        // 使用client.clone()会导致第二次请求时失败
+        // 暂时未明确为什么不可复用，后续再优化
+        Client::connect(&self.addrs, Some(self.options.clone()))
+            .await
+            .map_err(|e| Error::Etcd {
+                source: Box::new(e),
             })
-            .await?;
-        Ok(c.clone())
     }
     fn get_path(&self, key: &str) -> String {
         path_join(&self.path, key)
@@ -123,7 +117,7 @@ impl EtcdStorage {
 #[async_trait]
 impl Storage for EtcdStorage {
     async fn fetch(&self, key: &str) -> Result<String> {
-        let mut c = self.connect().await?;
+        let mut c = self.connect().await?.kv_client();
         let key = self.get_path(key);
         let mut opts = GetOptions::new();
         if !key.ends_with(".toml") {
@@ -147,7 +141,7 @@ impl Storage for EtcdStorage {
 
     async fn save(&self, key: &str, value: &str) -> Result<()> {
         let key = self.get_path(key);
-        let mut c = self.connect().await?;
+        let mut c = self.connect().await?.kv_client();
         c.put(key, value, None).await.map_err(|e| Error::Etcd {
             source: Box::new(e),
         })?;
@@ -156,7 +150,7 @@ impl Storage for EtcdStorage {
 
     async fn delete(&self, key: &str) -> Result<()> {
         let key = self.get_path(key);
-        let mut c = self.connect().await?;
+        let mut c = self.connect().await?.kv_client();
         c.delete(key, None).await.map_err(|e| Error::Etcd {
             source: Box::new(e),
         })?;
@@ -173,7 +167,7 @@ impl Storage for EtcdStorage {
     async fn observe(&self) -> Result<Observer> {
         // 逻辑并不完善，有可能因为变更处理中途又发生其它变更导致缺失
         // 因此还需配合fetch的形式比对
-        let mut c = self.connect().await?;
+        let mut c = self.connect().await?.watch_client();
         let (_, stream) = c
             .watch(
                 self.path.as_bytes(),
