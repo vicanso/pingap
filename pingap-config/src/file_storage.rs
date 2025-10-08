@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::storage::Storage;
+use crate::storage::{History, Storage};
 use crate::Error;
 use async_trait::async_trait;
 use glob::glob;
+use pingap_core::now_sec;
 use pingap_util::resolve_path;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -26,6 +27,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub struct FileStorage {
     path: PathBuf,
+    history_path: Option<PathBuf>,
 }
 
 impl FileStorage {
@@ -45,7 +47,18 @@ impl FileStorage {
         }
         Ok(Self {
             path: path.to_path_buf(),
+            history_path: None,
         })
+    }
+    pub fn with_history_path(&mut self, history_path: &str) -> Result<()> {
+        let filepath = resolve_path(history_path);
+        let path = Path::new(&filepath);
+        std::fs::create_dir_all(path).map_err(|e| Error::Io {
+            source: e,
+            file: filepath.clone(),
+        })?;
+        self.history_path = Some(path.to_path_buf());
+        Ok(())
     }
     fn get_target_path(&self, key: &str) -> PathBuf {
         if self.path.is_file() {
@@ -53,6 +66,22 @@ impl FileStorage {
         } else {
             self.path.join(key)
         }
+    }
+    fn convert_history_key(&self, key: &str) -> String {
+        key.replace("/", "-")
+    }
+    async fn save_history(&self, key: &str) -> Result<()> {
+        let Some(history_path) = &self.history_path else {
+            return Ok(());
+        };
+        let value = self.fetch(key).await?;
+        let name = format!("{}-{}", self.convert_history_key(key), now_sec());
+        let file = history_path.join(name).clone();
+        fs::write(&file, value).await.map_err(|e| Error::Io {
+            source: e,
+            file: file.to_string_lossy().to_string(),
+        })?;
+        Ok(())
     }
 }
 
@@ -79,6 +108,9 @@ async fn read_all_toml_files(dir: &str) -> Result<Vec<u8>> {
 
 #[async_trait]
 impl Storage for FileStorage {
+    fn support_history(&self) -> bool {
+        self.history_path.is_some()
+    }
     async fn fetch(&self, key: &str) -> Result<String> {
         let target_path = self.get_target_path(key);
         let value = if target_path.is_file() {
@@ -98,6 +130,7 @@ impl Storage for FileStorage {
     }
 
     async fn save(&self, key: &str, value: &str) -> Result<()> {
+        self.save_history(key).await?;
         let file = self.get_target_path(key);
         if let Some(parent) = file.parent() {
             fs::create_dir_all(parent).await.map_err(|e| Error::Io {
@@ -122,6 +155,52 @@ impl Storage for FileStorage {
                 file: file.to_string_lossy().to_string(),
             }),
         }
+    }
+    async fn fetch_history(&self, key: &str) -> Result<Option<Vec<History>>> {
+        let Some(history_path) = &self.history_path else {
+            return Ok(None);
+        };
+
+        let file = history_path
+            .join(self.convert_history_key(key))
+            .to_string_lossy()
+            .to_string();
+
+        let mut history = vec![];
+
+        for entry in glob(&format!("{file}*")).map_err(|e| Error::Pattern {
+            source: e,
+            path: file,
+        })? {
+            let f = entry.map_err(|e| Error::Glob { source: e })?;
+            let Some(filename) = f.file_name() else {
+                continue;
+            };
+            let Some(created_at) = filename
+                .to_string_lossy()
+                .split('-')
+                .next_back()
+                .and_then(|s| s.parse::<u64>().ok())
+            else {
+                continue;
+            };
+            history.push(History {
+                created_at,
+                data: f.to_path_buf().to_string_lossy().to_string(),
+            });
+        }
+        history.sort_by_key(|h| h.created_at);
+        history.reverse();
+        history.truncate(10);
+        for item in history.iter_mut() {
+            let data = fs::read(&item.data).await.map_err(|e| Error::Io {
+                source: e,
+                file: item.data.clone(),
+            })?;
+            item.data = String::from_utf8_lossy(&data).trim().to_string();
+        }
+
+        Ok(Some(history))
     }
 }
 

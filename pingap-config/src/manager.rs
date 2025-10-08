@@ -235,27 +235,32 @@ where
 struct ConfigManagerParams {
     #[serde(default, deserialize_with = "bool_from_str")]
     separation: bool,
+    #[serde(default)]
+    enable_history: bool,
 }
 
 pub fn new_file_config_manager(path: &str) -> Result<ConfigManager> {
     let (file, query) = path.split_once('?').unwrap_or((path, ""));
     let file = resolve_path(file);
     let filepath = Path::new(&file);
-    let mode = if filepath.is_dir() {
+    let (mode, enable_history) = if filepath.is_dir() {
         let params: ConfigManagerParams =
             serde_qs::from_str(query).map_err(|e| Error::Invalid {
                 message: e.to_string(),
             })?;
         if params.separation {
-            ConfigMode::MultiByItem
+            (ConfigMode::MultiByItem, params.enable_history)
         } else {
-            ConfigMode::MultiByType
+            (ConfigMode::MultiByType, false)
         }
     } else {
-        ConfigMode::Single
+        (ConfigMode::Single, false)
     };
 
-    let storage = FileStorage::new(&file)?;
+    let mut storage = FileStorage::new(&file)?;
+    if enable_history {
+        storage.with_history_path(&format!("{file}-history"))?;
+    }
     Ok(ConfigManager::new(Arc::new(storage), mode))
 }
 

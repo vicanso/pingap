@@ -381,7 +381,7 @@ impl AdminServe {
                         error!(
                             target: LOG_TARGET,
                             error = e.to_string(),
-                            "descrialize upstream fail"
+                            "parse upstream config fail"
                         );
                         pingap_core::new_internal_error(400, e)
                     })?;
@@ -399,7 +399,7 @@ impl AdminServe {
                         error!(
                             target: LOG_TARGET,
                             error = e.to_string(),
-                            "descrialize location fail"
+                            "parse location config fail"
                         );
                         pingap_core::new_internal_error(400, e)
                     })?;
@@ -417,7 +417,7 @@ impl AdminServe {
                         error!(
                             target: LOG_TARGET,
                             error = e.to_string(),
-                            "descrialize server fail"
+                            "parse server config fail"
                         );
                         pingap_core::new_internal_error(400, e)
                     })?;
@@ -435,7 +435,7 @@ impl AdminServe {
                         error!(
                             target: LOG_TARGET,
                             error = e.to_string(),
-                            "descrialize plugin fail"
+                            "parse plugin config fail"
                         );
                         pingap_core::new_internal_error(400, e)
                     })?;
@@ -453,7 +453,7 @@ impl AdminServe {
                         error!(
                             target: LOG_TARGET,
                             error = e.to_string(),
-                            "descrialize certificate fail"
+                            "parse certificate config fail"
                         );
                         pingap_core::new_internal_error(400, e)
                     })?;
@@ -471,7 +471,7 @@ impl AdminServe {
                         error!(
                             target: LOG_TARGET,
                             error = e.to_string(),
-                            "descrialize storage fail"
+                            "parse storage config fail"
                         );
                         pingap_core::new_internal_error(400, e)
                     })?;
@@ -486,7 +486,7 @@ impl AdminServe {
             _ => {
                 let basic_conf: BasicConf = serde_json::from_slice(&buf)
                     .map_err(|e| {
-                        error!(target: LOG_TARGET, error = e.to_string(), "descrialize basic fail");
+                        error!(target: LOG_TARGET, error = e.to_string(), "parse basic config fail");
                         pingap_core::new_internal_error(400, e)
                     })?;
                 self.manager
