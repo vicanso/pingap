@@ -241,7 +241,7 @@ impl Storage for EtcdStorage {
                 let value_str = item.value_str().ok()?;
                 let created_at = key_str
                     .split('-')
-                    .last()
+                    .next_back()
                     .and_then(|s| s.parse::<u64>().ok())?;
                 Some(History {
                     data: value_str.to_string(),
