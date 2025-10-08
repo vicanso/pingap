@@ -90,6 +90,7 @@ export default {
     locationSubTitle: "按权重排序",
   },
   basic: {
+    title: "基础配置",
     name: "名称",
     namePlaceholder: "输入应用名称",
     threads: "线程数",

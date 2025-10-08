@@ -1162,6 +1162,15 @@ export default function Plugins() {
           </SelectTrigger>
           <SelectContent>{selectItems}</SelectContent>
         </Select>
+        {currentPlugin !== newPlugin && (
+          <History
+            category="plugin"
+            name={currentPlugin}
+            onRestore={async (data) => {
+              await update("plugin", currentPlugin, data);
+            }}
+          />
+        )}
       </div>
       <ExForm
         category="plugin"
@@ -1186,16 +1195,6 @@ export default function Plugins() {
           handleSelectPlugin(name);
         }}
       />
-      {currentPlugin !== newPlugin && (
-        <History
-          className="mt-4"
-          category="plugin"
-          name={currentPlugin}
-          onRestore={async (data) => {
-            await update("plugin", currentPlugin, data);
-          }}
-        />
-      )}
     </div>
   );
 }

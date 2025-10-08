@@ -384,6 +384,15 @@ export default function Upstreams() {
           </SelectTrigger>
           <SelectContent>{selectItems}</SelectContent>
         </Select>
+        {currentUpstream !== newUpstream && (
+          <History
+            category="upstream"
+            name={currentUpstream}
+            onRestore={async (data) => {
+              await update("upstream", currentUpstream, data);
+            }}
+          />
+        )}
       </div>
       <ExForm
         category="upstream"
@@ -402,15 +411,6 @@ export default function Upstreams() {
           handleSelectUpstream(name);
         }}
       />
-      {currentUpstream !== newUpstream && (
-        <History
-          category="upstream"
-          name={currentUpstream}
-          onRestore={async (data) => {
-            await update("upstream", currentUpstream, data);
-          }}
-        />
-      )}
     </div>
   );
 }

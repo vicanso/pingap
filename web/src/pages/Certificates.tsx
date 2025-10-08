@@ -228,6 +228,15 @@ export default function Certificates() {
           </SelectTrigger>
           <SelectContent>{selectItems}</SelectContent>
         </Select>
+        {currentCertificate !== newCertificate && (
+          <History
+            category="certificate"
+            name={currentCertificate}
+            onRestore={async (data) => {
+              await update("certificate", currentCertificate, data);
+            }}
+          />
+        )}
       </div>
       <ExForm
         category="certificate"
@@ -246,15 +255,6 @@ export default function Certificates() {
           handleSelectCertificate(name);
         }}
       />
-      {currentCertificate !== newCertificate && (
-        <History
-          category="certificate"
-          name={currentCertificate}
-          onRestore={async (data) => {
-            await update("certificate", currentCertificate, data);
-          }}
-        />
-      )}
     </div>
   );
 }

@@ -22,12 +22,11 @@ import {
   ItemFooter,
 } from "@/components/ui/item";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { cn } from "@/lib/utils";
+import { History as HistoryIcon } from "lucide-react";
 
 export default function HistoryPage(props: {
   category: string;
   name: string;
-  className?: string;
   onRestore: (data: Record<string, unknown>) => Promise<void>;
 }) {
   const [getHistory] = useConfigState(
@@ -54,7 +53,7 @@ export default function HistoryPage(props: {
   };
   const historyI18n = useI18n("history");
   if (!basicInfo.support_history) {
-    return <div></div>;
+    return <></>;
   }
   const handleRestore = async (data: Record<string, unknown>) => {
     try {
@@ -94,13 +93,14 @@ export default function HistoryPage(props: {
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger asChild>
         <Button
+          variant="outline"
+          size="icon"
+          className="cursor-pointer ml-2"
           onClick={() => {
             fetchHistory();
           }}
-          className={cn("w-full cursor-pointer", props.className)}
-          variant="outline"
         >
-          {historyI18n("show")}
+          <HistoryIcon />
         </Button>
       </SheetTrigger>
       <SheetContent>

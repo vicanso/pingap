@@ -157,6 +157,15 @@ export default function Storages() {
           </SelectTrigger>
           <SelectContent>{selectItems}</SelectContent>
         </Select>
+        {currentStorage !== newStorage && (
+          <History
+            category="storage"
+            name={currentStorage}
+            onRestore={async (data) => {
+              await update("storage", currentStorage, data);
+            }}
+          />
+        )}
       </div>
       <ExForm
         category="storage"
@@ -173,16 +182,6 @@ export default function Storages() {
           handleSelectStorage(name);
         }}
       />
-      {currentStorage !== newStorage && (
-        <History
-          category="storage"
-          className="mt-4"
-          name={currentStorage}
-          onRestore={async (data) => {
-            await update("storage", currentStorage, data);
-          }}
-        />
-      )}
     </div>
   );
 }

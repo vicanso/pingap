@@ -350,6 +350,15 @@ export default function Servers() {
           </SelectTrigger>
           <SelectContent>{selectItems}</SelectContent>
         </Select>
+        {currentServer !== newServer && (
+          <History
+            category="server"
+            name={currentServer}
+            onRestore={async (data) => {
+              await update("server", currentServer, data);
+            }}
+          />
+        )}
       </div>
       <ExForm
         category="server"
@@ -368,15 +377,6 @@ export default function Servers() {
           handleSelectServer(name);
         }}
       />
-      {currentServer !== newServer && (
-        <History
-          category="server"
-          name={currentServer}
-          onRestore={async (data) => {
-            await update("server", currentServer, data);
-          }}
-        />
-      )}
     </div>
   );
 }

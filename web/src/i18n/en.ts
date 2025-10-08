@@ -91,6 +91,7 @@ export default {
     locationSubTitle: "Sort by weight",
   },
   basic: {
+    title: "Basic",
     name: "Name",
     namePlaceholder: "Input the name of pingap process",
     threads: "Threads",

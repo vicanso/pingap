@@ -12,6 +12,8 @@ import { newZodBytes, newZodDuration, newZodNumber } from "@/helpers/util";
 import useBasicState from "@/states/basic";
 import { useShallow } from "zustand/react/shallow";
 import History from "@/pages/History";
+import { Label } from "@/components/ui/label";
+
 export default function Basic() {
   const basicI18n = useI18n("basic");
   const [basicInfo] = useBasicState(useShallow((state) => [state.data]));
@@ -275,6 +277,14 @@ export default function Basic() {
   });
   return (
     <div className="grow overflow-auto p-4">
+      <div className="flex flex-row gap-2 mb-2">
+        <Label>{basicI18n("title")}</Label>
+        <History
+          category="basic"
+          name=""
+          onRestore={async (data) => update("pingap", "basic", data)}
+        />
+      </div>
       <ExForm
         key={version}
         category="basic"
@@ -282,11 +292,6 @@ export default function Basic() {
         schema={schema}
         defaultShow={13}
         onSave={async (value) => update("pingap", "basic", value)}
-      />
-      <History
-        category="basic"
-        name=""
-        onRestore={async (data) => update("pingap", "basic", data)}
       />
     </div>
   );

@@ -289,6 +289,15 @@ export default function Locations() {
           </SelectTrigger>
           <SelectContent>{selectItems}</SelectContent>
         </Select>
+        {currentLocation !== newLocation && (
+          <History
+            category="location"
+            name={currentLocation}
+            onRestore={async (data) => {
+              await update("location", currentLocation, data);
+            }}
+          />
+        )}
       </div>
       <ExForm
         category="location"
@@ -307,15 +316,6 @@ export default function Locations() {
           handleSelectLocation(name);
         }}
       />
-      {currentLocation !== newLocation && (
-        <History
-          category="location"
-          name={currentLocation}
-          onRestore={async (data) => {
-            await update("location", currentLocation, data);
-          }}
-        />
-      )}
     </div>
   );
 }
