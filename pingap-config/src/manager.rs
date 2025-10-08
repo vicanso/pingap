@@ -15,7 +15,7 @@
 use crate::convert_pingap_config;
 use crate::etcd_storage::EtcdStorage;
 use crate::file_storage::FileStorage;
-use crate::storage::Storage;
+use crate::storage::{History, Storage};
 use crate::PingapConfig;
 use crate::{Category, Error, Observer};
 use arc_swap::ArcSwap;
@@ -27,7 +27,7 @@ use toml::{map::Map, Value};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-fn format_category(category: &Category) -> &str {
+pub fn format_category(category: &Category) -> &str {
     match category {
         Category::Basic => "basic",
         Category::Server => "servers",
@@ -440,6 +440,20 @@ impl ConfigManager {
             to_string_pretty(&config)?
         };
         self.storage.save(&key, &value).await
+    }
+    pub fn support_history(&self) -> bool {
+        self.storage.support_history()
+    }
+    pub async fn history(
+        &self,
+        category: Category,
+        name: &str,
+    ) -> Result<Option<Vec<History>>> {
+        if !self.storage.support_history() {
+            return Ok(None);
+        }
+        let key = self.get_key(&category, name);
+        self.storage.fetch_history(&key).await
     }
 }
 

@@ -12,13 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::storage::Storage;
+use crate::storage::{History, Storage};
 use crate::{Error, Observer};
 use async_trait::async_trait;
 use etcd_client::{
     Client, ConnectOptions, GetOptions, KeyValue, SortOrder, SortTarget,
     WatchOptions,
 };
+use pingap_core::now_sec;
 use pingap_util::path_join;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -152,10 +153,10 @@ impl EtcdStorage {
         let Some(latest) = latest else {
             return Ok(());
         };
-        let history_key = path_join(
-            &self.get_history_path(key),
-            latest.mod_revision().to_string().as_str(),
-        );
+
+        let name = format!("{}-{}", latest.mod_revision(), now_sec());
+
+        let history_key = path_join(&self.get_history_path(key), &name);
         let mut c = self.connect().await?.kv_client();
         c.put(history_key, latest.value(), None)
             .await
@@ -217,7 +218,7 @@ impl Storage for EtcdStorage {
     fn support_history(&self) -> bool {
         self.enable_history
     }
-    async fn fetch_history(&self, key: &str) -> Result<Option<Vec<String>>> {
+    async fn fetch_history(&self, key: &str) -> Result<Option<Vec<History>>> {
         let key = self.get_history_path(key);
         let mut c = self.connect().await?.kv_client();
         let opts = GetOptions::new()
@@ -225,7 +226,7 @@ impl Storage for EtcdStorage {
             .with_sort(SortTarget::Create, SortOrder::Descend)
             .with_limit(10);
 
-        let arr = c
+        let kvs = c
             .get(key.as_bytes(), Some(opts))
             .await
             .map_err(|e| Error::Etcd {
@@ -233,11 +234,23 @@ impl Storage for EtcdStorage {
             })?
             .take_kvs();
 
-        Ok(Some(
-            arr.iter()
-                .map(|item| item.value_str().unwrap_or_default().to_string())
-                .collect(),
-        ))
+        let histories = kvs
+            .iter()
+            .filter_map(|item| {
+                let key_str = item.key_str().ok()?;
+                let value_str = item.value_str().ok()?;
+                let created_at = key_str
+                    .split('-')
+                    .last()
+                    .and_then(|s| s.parse::<u64>().ok())?;
+                Some(History {
+                    data: value_str.to_string(),
+                    created_at,
+                })
+            })
+            .collect();
+
+        Ok(Some(histories))
     }
     /// Sets up a watch on the config path to observe changes
     /// Note: May miss changes if processing takes too long between updates

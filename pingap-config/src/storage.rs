@@ -17,6 +17,12 @@ use async_trait::async_trait;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
+#[derive(Debug, Clone)]
+pub struct History {
+    pub data: String,
+    pub created_at: u64,
+}
+
 #[async_trait]
 pub trait Storage: Send + Sync {
     /// fetch from storage
@@ -33,7 +39,7 @@ pub trait Storage: Send + Sync {
     fn support_history(&self) -> bool {
         false
     }
-    async fn fetch_history(&self, _key: &str) -> Result<Option<Vec<String>>> {
+    async fn fetch_history(&self, _key: &str) -> Result<Option<Vec<History>>> {
         Ok(None)
     }
     /// Sets up a watch on the config path to observe changes
