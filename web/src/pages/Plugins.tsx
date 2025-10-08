@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import History from "@/pages/History";
 
 function getPluginConfig(
   name: string,
@@ -39,12 +40,13 @@ export default function Plugins() {
   const pluginI18n = useI18n("plugin");
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [config, initialized, update, remove] = useConfigState(
+  const [config, initialized, update, remove, version] = useConfigState(
     useShallow((state) => [
       state.data,
       state.initialized,
       state.update,
       state.remove,
+      state.version,
     ]),
   );
 
@@ -976,7 +978,7 @@ export default function Plugins() {
           span: 6,
           category: ExFormItemCategory.RADIOS,
           options: newStringOptions(["upstream", "response"], true),
-        }
+        },
       );
       break;
     }
@@ -1118,9 +1120,9 @@ export default function Plugins() {
   const schema = z.object({
     step: z.string().optional(),
   });
-  let key = currentPlugin;
+  let key = `${currentPlugin}-${version}`;
   if (currentPlugin == newPlugin) {
-    key = `new-plugin-${category}`;
+    key = `new-plugin-${category}-${version}`;
   }
   const onRemove = async () => {
     return remove("plugin", currentPlugin).then(() => {
@@ -1184,6 +1186,16 @@ export default function Plugins() {
           handleSelectPlugin(name);
         }}
       />
+      {currentPlugin !== newPlugin && (
+        <History
+          className="mt-4"
+          category="plugin"
+          name={currentPlugin}
+          onRestore={async (data) => {
+            await update("plugin", currentPlugin, data);
+          }}
+        />
+      )}
     </div>
   );
 }

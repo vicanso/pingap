@@ -44,11 +44,13 @@ export const KvInputs = React.forwardRef<HTMLInputElement, KvInputsProps>(
       });
     }
     const [inputs, setInputs] = React.useState(arr);
-    const handleValueChange = (arr: {
-      id: string;
-      key: string;
-      value: string;
-    }[]) => {
+    const handleValueChange = (
+      arr: {
+        id: string;
+        key: string;
+        value: string;
+      }[],
+    ) => {
       const values: string[] = [];
       arr.forEach((item) => {
         const { key, value } = item;

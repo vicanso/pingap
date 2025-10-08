@@ -180,6 +180,11 @@ interface Config {
   storages?: Record<string, Storage>;
 }
 
+export interface History {
+  created_at: number;
+  data: Record<string, unknown>;
+}
+
 interface ConfigState {
   data: Config;
   originalToml: string;
@@ -197,6 +202,7 @@ interface ConfigState {
   remove: (category: string, name: string) => Promise<void>;
   getIncludeOptions: () => string[];
   getCertificateInfos: () => Promise<Record<string, CertificateInfo>>;
+  getHistory: (category: string, name: string) => Promise<History[]>;
 }
 
 const useConfigState = create<ConfigState>()((set, get) => ({
@@ -239,20 +245,20 @@ const useConfigState = create<ConfigState>()((set, get) => ({
       updateData[key] = data[key];
     });
     await request.post(`/configs/${category}/${name}`, updateData);
+    await get().fetch();
     set({
       version: random(),
     });
-    await get().fetch();
   },
   importToml: async (data: string) => {
     await request.post(`/configs/import`, data);
   },
   remove: async (category: string, name: string) => {
     await request.delete(`/configs/${category}/${name}`);
+    await get().fetch();
     set({
       version: random(),
     });
-    await get().fetch();
   },
   getIncludeOptions: (category?: string) => {
     const storages = get().data.storages || {};
@@ -273,6 +279,12 @@ const useConfigState = create<ConfigState>()((set, get) => ({
     const { data } =
       await request.get<Record<string, CertificateInfo>>(`/certificates`);
     return data;
+  },
+  getHistory: async (category: string, name: string) => {
+    const { data } = await request.get<{ history: History[] }>(
+      `/config-history/${category}/${name}`,
+    );
+    return data.history;
   },
 }));
 

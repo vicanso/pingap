@@ -225,8 +225,7 @@ export default {
     dnsDomain: "Dns域",
     dnsDomainPlaceholder: "输入服务发现使用的dns域",
     dnsSearch: "Dns搜索",
-    dnsSearchPlaceholder:
-      "输入服务发现使用的dns搜索, 多个域名以`,`分隔",
+    dnsSearchPlaceholder: "输入服务发现使用的dns搜索, 多个域名以`,`分隔",
     algo: "负载均衡算法",
     algoPlaceholder: "输入负载均衡算法(如hash:ip)",
     healthCheck: "健康检查",
@@ -485,7 +484,8 @@ export default {
     trafficSplittingStickiness: "粘性",
     trafficSplittingStickinessPlaceholder: "输入traffic splitting的粘性",
     trafficSplittingStickyHeader: "粘性header",
-    trafficSplittingStickyHeaderPlaceholder: "输入traffic splitting的粘性header",
+    trafficSplittingStickyHeaderPlaceholder:
+      "输入traffic splitting的粘性header",
     trafficSplittingMatcher: "匹配器",
     trafficSplittingMatcherPlaceholder: "输入traffic splitting的匹配器",
     trafficSplittingStickyCookie: "粘性cookie",
@@ -502,5 +502,13 @@ export default {
     secretPlaceholder: "输入加密数据的密钥",
     value: "数据",
     remark: "备注",
+  },
+  history: {
+    title: "历史记录",
+    description: "此配置的历史记录",
+    show: "查看历史记录",
+    noHistory: "暂无历史记录",
+    restore: "恢复",
+    restoreSuccess: "恢复成功",
   },
 };

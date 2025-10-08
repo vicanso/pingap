@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import History from "@/pages/History";
 
 function getUpstreamConfig(name: string, upstreams?: Record<string, Upstream>) {
   if (!upstreams) {
@@ -38,7 +39,7 @@ export default function Upstreams() {
   const i18n = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [config, initialized, update, remove, getIncludeOptions] =
+  const [config, initialized, update, remove, getIncludeOptions, version] =
     useConfigState(
       useShallow((state) => [
         state.data,
@@ -46,6 +47,7 @@ export default function Upstreams() {
         state.update,
         state.remove,
         state.getIncludeOptions,
+        state.version,
       ]),
     );
   const newUpstream = "*";
@@ -385,7 +387,7 @@ export default function Upstreams() {
       </div>
       <ExForm
         category="upstream"
-        key={currentUpstream}
+        key={`${currentUpstream}-${version}`}
         items={items}
         schema={schema}
         defaultShow={defaultShow}
@@ -400,6 +402,15 @@ export default function Upstreams() {
           handleSelectUpstream(name);
         }}
       />
+      {currentUpstream !== newUpstream && (
+        <History
+          category="upstream"
+          name={currentUpstream}
+          onRestore={async (data) => {
+            await update("upstream", currentUpstream, data);
+          }}
+        />
+      )}
     </div>
   );
 }

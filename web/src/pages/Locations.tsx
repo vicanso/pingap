@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import History from "@/pages/History";
 
 function getLocationConfig(name: string, locations?: Record<string, Location>) {
   if (!locations) {
@@ -34,7 +35,7 @@ export default function Locations() {
   const i18n = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [config, initialized, update, remove, getIncludeOptions] =
+  const [config, initialized, update, remove, getIncludeOptions, version] =
     useConfigState(
       useShallow((state) => [
         state.data,
@@ -42,6 +43,7 @@ export default function Locations() {
         state.update,
         state.remove,
         state.getIncludeOptions,
+        state.version,
       ]),
     );
 
@@ -290,7 +292,7 @@ export default function Locations() {
       </div>
       <ExForm
         category="location"
-        key={currentLocation}
+        key={`${currentLocation}-${version}`}
         items={items}
         schema={schema}
         defaultShow={defaultShow}
@@ -305,6 +307,15 @@ export default function Locations() {
           handleSelectLocation(name);
         }}
       />
+      {currentLocation !== newLocation && (
+        <History
+          category="location"
+          name={currentLocation}
+          onRestore={async (data) => {
+            await update("location", currentLocation, data);
+          }}
+        />
+      )}
     </div>
   );
 }

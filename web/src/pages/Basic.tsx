@@ -11,12 +11,17 @@ import {
 import { newZodBytes, newZodDuration, newZodNumber } from "@/helpers/util";
 import useBasicState from "@/states/basic";
 import { useShallow } from "zustand/react/shallow";
-
+import History from "@/pages/History";
 export default function Basic() {
   const basicI18n = useI18n("basic");
   const [basicInfo] = useBasicState(useShallow((state) => [state.data]));
-  const [config, initialized, update] = useConfigState(
-    useShallow((state) => [state.data, state.initialized, state.update]),
+  const [config, initialized, update, version] = useConfigState(
+    useShallow((state) => [
+      state.data,
+      state.initialized,
+      state.update,
+      state.version,
+    ]),
   );
   if (!initialized) {
     return <LoadingPage />;
@@ -271,11 +276,17 @@ export default function Basic() {
   return (
     <div className="grow overflow-auto p-4">
       <ExForm
+        key={version}
         category="basic"
         items={items}
         schema={schema}
         defaultShow={13}
         onSave={async (value) => update("pingap", "basic", value)}
+      />
+      <History
+        category="basic"
+        name=""
+        onRestore={async (data) => update("pingap", "basic", data)}
       />
     </div>
   );

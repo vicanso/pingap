@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import History from "@/pages/History";
 
 function getServerConfig(name: string, servers?: Record<string, Server>) {
   if (!servers) {
@@ -34,7 +35,7 @@ export default function Servers() {
   const serverI18n = useI18n("server");
   const i18n = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [config, initialized, update, remove, getIncludeOptions] =
+  const [config, initialized, update, remove, getIncludeOptions, version] =
     useConfigState(
       useShallow((state) => [
         state.data,
@@ -42,6 +43,7 @@ export default function Servers() {
         state.update,
         state.remove,
         state.getIncludeOptions,
+        state.version,
       ]),
     );
   const [basicInfo] = useBasicState(useShallow((state) => [state.data]));
@@ -351,7 +353,7 @@ export default function Servers() {
       </div>
       <ExForm
         category="server"
-        key={currentServer}
+        key={`${currentServer}-${version}`}
         items={items}
         schema={schema}
         defaultShow={defaultShow}
@@ -366,6 +368,15 @@ export default function Servers() {
           handleSelectServer(name);
         }}
       />
+      {currentServer !== newServer && (
+        <History
+          category="server"
+          name={currentServer}
+          onRestore={async (data) => {
+            await update("server", currentServer, data);
+          }}
+        />
+      )}
     </div>
   );
 }

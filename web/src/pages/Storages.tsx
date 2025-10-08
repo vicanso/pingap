@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import History from "@/pages/History";
 
 function getStorageConfig(name: string, storages?: Record<string, Storage>) {
   if (!storages) {
@@ -27,12 +28,13 @@ function getStorageConfig(name: string, storages?: Record<string, Storage>) {
 export default function Storages() {
   const storageI18n = useI18n("storage");
   const [searchParams, setSearchParams] = useSearchParams();
-  const [config, initialized, update, remove] = useConfigState(
+  const [config, initialized, update, remove, version] = useConfigState(
     useShallow((state) => [
       state.data,
       state.initialized,
       state.update,
       state.remove,
+      state.version,
     ]),
   );
 
@@ -158,7 +160,7 @@ export default function Storages() {
       </div>
       <ExForm
         category="storage"
-        key={currentStorage}
+        key={`${currentStorage}-${version}`}
         items={items}
         schema={schema}
         onRemove={currentStorage === newStorage ? undefined : onRemove}
@@ -171,6 +173,16 @@ export default function Storages() {
           handleSelectStorage(name);
         }}
       />
+      {currentStorage !== newStorage && (
+        <History
+          category="storage"
+          className="mt-4"
+          name={currentStorage}
+          onRestore={async (data) => {
+            await update("storage", currentStorage, data);
+          }}
+        />
+      )}
     </div>
   );
 }

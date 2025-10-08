@@ -523,11 +523,13 @@ export default {
     imageOptimAvifSpeed: "Avif Speed",
     imageOptimAvifSpeedPlaceholder: "Input the avif speed(e.g. 3)",
     trafficSplittingUpstream: "Upstream",
-    trafficSplittingUpstreamPlaceholder: "Input the upstream for traffic splitting",
+    trafficSplittingUpstreamPlaceholder:
+      "Input the upstream for traffic splitting",
     trafficSplittingWeight: "Weight",
     trafficSplittingWeightPlaceholder: "Input the weight of traffic splitting",
     trafficSplittingStickiness: "Stickiness",
-    trafficSplittingStickinessPlaceholder: "Input the stickiness of traffic splitting",
+    trafficSplittingStickinessPlaceholder:
+      "Input the stickiness of traffic splitting",
     trafficSplittingStickyCookie: "Sticky Cookie",
     trafficSplittingStickyCookiePlaceholder:
       "Input the sticky cookie for traffic splitting",
@@ -535,7 +537,8 @@ export default {
     trafficSplittingStickyHeaderPlaceholder:
       "Input the sticky header for traffic splitting",
     trafficSplittingMatcher: "Matcher",
-    trafficSplittingMatcherPlaceholder: "Input the matcher for traffic splitting",
+    trafficSplittingMatcherPlaceholder:
+      "Input the matcher for traffic splitting",
     remark: "Remark",
   },
   storage: {
@@ -549,5 +552,13 @@ export default {
     secretPlaceholder: "Input the secret for encrypt value",
     value: "Value",
     remark: "Remark",
+  },
+  history: {
+    title: "History",
+    description: "The history of the config",
+    show: "Show History",
+    noHistory: "No history",
+    restore: "Restore",
+    restoreSuccess: "Configuration restored successfully",
   },
 };

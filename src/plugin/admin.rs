@@ -29,9 +29,9 @@ use http::Method;
 use http::{header, HeaderValue, StatusCode};
 use humantime::parse_duration;
 use pingap_config::{
-    self, BasicConf, Category, CertificateConf, ConfigManager, LocationConf,
-    PluginCategory, PluginConf, ServerConf, StorageConf, UpstreamConf,
-    CATEGORY_CERTIFICATE, CATEGORY_STORAGE,
+    self, format_category, BasicConf, Category, CertificateConf, ConfigManager,
+    LocationConf, PluginCategory, PluginConf, ServerConf, StorageConf,
+    UpstreamConf, CATEGORY_CERTIFICATE, CATEGORY_STORAGE,
 };
 use pingap_config::{
     PingapConfig, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
@@ -51,6 +51,7 @@ use regex::Regex;
 use rust_embed::EmbeddedFile;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -165,6 +166,7 @@ struct BasicInfo {
     tcp6_count: usize,
     supported_plugins: Vec<String>,
     upstream_healthy_status: HashMap<String, UpstreamHealthyStatus>,
+    support_history: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -606,6 +608,44 @@ async fn handle_request_admin(
             )
             .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
         })
+    } else if path.starts_with("/config-history") {
+        let category = Category::from_str(category).map_err(|e| {
+            error!(target: LOG_TARGET, error = e.to_string(), "get config category fail");
+            pingap_core::new_internal_error(400, e)
+        })?;
+        let name = params[3].to_string();
+        let arr = plugin.manager.history(category.clone(), &name).await.map_err(|e| {
+            error!(target: LOG_TARGET, error = e.to_string(), "get config history fail");
+            pingap_core::new_internal_error(400, e)
+        })?.unwrap_or_default();
+
+        let mut history = vec![];
+        for item in arr {
+            let data:toml::Table = toml::from_str(&item.data).map_err(|e| {
+                error!(target: LOG_TARGET, error = e.to_string(), "get config history fail");
+                pingap_core::new_internal_error(400, e)
+            })?;
+            let key = format_category(&category);
+            let Some(data) = data.get(key).cloned() else {
+                continue;
+            };
+            let data = if name.is_empty() {
+                data
+            } else {
+                let Some(data) = data.get(&name).cloned() else {
+                    continue;
+                };
+                data
+            };
+            history.push(json!({
+                "created_at": item.created_at,
+                "data": data,
+            }));
+        }
+        HttpResponse::try_from_json(&json!({
+            "history": history,
+        }))
+        .unwrap_or(HttpResponse::unknown_error("Json serde fail"))
     } else if path == "/basic" {
         let current_config = plugin.load_config(true).await?;
         let info = get_process_system_info();
@@ -641,6 +681,7 @@ async fn handle_request_admin(
             tcp6_count: info.tcp6_count,
             supported_plugins: get_plugin_factory().supported_plugins(),
             upstream_healthy_status: new_upstream_provider().healthy_status(),
+            support_history: plugin.manager.support_history(),
         };
         basic_info.features.push("default".to_string());
 

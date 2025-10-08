@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import History from "@/pages/History";
 
 function getCertificateConfig(
   name: string,
@@ -36,12 +37,13 @@ export default function Certificates() {
   const certificateI18n = useI18n("certificate");
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [config, initialized, update, remove] = useConfigState(
+  const [config, initialized, update, remove, version] = useConfigState(
     useShallow((state) => [
       state.data,
       state.initialized,
       state.update,
       state.remove,
+      state.version,
     ]),
   );
   const newCertificate = "*";
@@ -140,7 +142,11 @@ export default function Certificates() {
       defaultValue: certificateConfig.dns_provider || "manual",
       span: 3,
       category: ExFormItemCategory.RADIOS,
-      options: newStringOptions(["manual", "ali", "cf", "huawei", "tencent",], true, false),
+      options: newStringOptions(
+        ["manual", "ali", "cf", "huawei", "tencent"],
+        true,
+        false,
+      ),
     },
     {
       name: "dns_service_url",
@@ -225,7 +231,7 @@ export default function Certificates() {
       </div>
       <ExForm
         category="certificate"
-        key={currentCertificate}
+        key={`${currentCertificate}-${version}`}
         items={items}
         schema={schema}
         defaultShow={defaultShow}
@@ -240,6 +246,15 @@ export default function Certificates() {
           handleSelectCertificate(name);
         }}
       />
+      {currentCertificate !== newCertificate && (
+        <History
+          category="certificate"
+          name={currentCertificate}
+          onRestore={async (data) => {
+            await update("certificate", currentCertificate, data);
+          }}
+        />
+      )}
     </div>
   );
 }
