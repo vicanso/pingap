@@ -30,6 +30,12 @@ pub trait Storage: Send + Sync {
     fn support_observer(&self) -> bool {
         false
     }
+    fn support_history(&self) -> bool {
+        false
+    }
+    async fn fetch_history(&self, _key: &str) -> Result<Option<Vec<String>>> {
+        Ok(None)
+    }
     /// Sets up a watch on the config path to observe changes
     /// Note: May miss changes if processing takes too long between updates
     /// Should be used with periodic full fetches to ensure consistency

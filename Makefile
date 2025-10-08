@@ -26,7 +26,7 @@ dev:
 	bacon run --  --features=full -- -c=~/tmp/pingap?separation --admin=pingap:123123@127.0.0.1:3018 --autoreload
 
 devetcd:
-	bacon run -- -- -c="etcd://127.0.0.1:2379/pingap?timeout=10s&connect_timeout=5s" --admin=127.0.0.1:3018 --autoreload
+	bacon run -- -- -c="etcd://127.0.0.1:2379/pingap?timeout=10s&connect_timeout=5s&enable_history=true" --admin=127.0.0.1:3018 --autoreload
 
 mermaid:
 	cargo run --bin generate-mermaid

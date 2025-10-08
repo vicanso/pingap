@@ -15,7 +15,10 @@
 use crate::storage::Storage;
 use crate::{Error, Observer};
 use async_trait::async_trait;
-use etcd_client::{Client, ConnectOptions, GetOptions, WatchOptions};
+use etcd_client::{
+    Client, ConnectOptions, GetOptions, KeyValue, SortOrder, SortTarget,
+    WatchOptions,
+};
 use pingap_util::path_join;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -26,10 +29,14 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 pub struct EtcdStorage {
     // Base path for all config entries in etcd
     path: String,
+    // History path for all config entries in etcd
+    history_path: String,
     // List of etcd server addresses
     addrs: Vec<String>,
     // Connection options (timeout, auth, etc)
     options: ConnectOptions,
+    // Enable history
+    enable_history: bool,
 }
 pub const ETCD_PROTOCOL: &str = "etcd://";
 
@@ -45,6 +52,8 @@ struct EtcdStorageParams {
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     connect_timeout: Option<Duration>,
+    #[serde(default)]
+    enable_history: bool,
 }
 
 impl TryFrom<&str> for EtcdStorageParams {
@@ -90,11 +99,18 @@ impl EtcdStorage {
         if let Some(connect_timeout) = params.connect_timeout {
             options = options.with_connect_timeout(connect_timeout);
         };
+        let history_path = if path.ends_with("/") {
+            format!("{}-history", path.substring(0, path.len() - 1))
+        } else {
+            format!("{path}-history")
+        };
 
         Ok(Self {
             addrs,
             options,
             path,
+            history_path,
+            enable_history: params.enable_history,
         })
     }
 
@@ -111,6 +127,42 @@ impl EtcdStorage {
     }
     fn get_path(&self, key: &str) -> String {
         path_join(&self.path, key)
+    }
+    fn get_history_path(&self, key: &str) -> String {
+        path_join(&self.history_path, key)
+    }
+    async fn fetch_latest(&self, key: &str) -> Result<Option<KeyValue>> {
+        let key = self.get_path(key);
+        let mut c = self.connect().await?.kv_client();
+        let arr = c
+            .get(key.as_bytes(), None)
+            .await
+            .map_err(|e| Error::Etcd {
+                source: Box::new(e),
+            })?
+            .take_kvs();
+        Ok(arr.first().cloned())
+    }
+
+    async fn save_history(&self, key: &str) -> Result<()> {
+        if !self.enable_history {
+            return Ok(());
+        }
+        let latest = self.fetch_latest(key).await?;
+        let Some(latest) = latest else {
+            return Ok(());
+        };
+        let history_key = path_join(
+            &self.get_history_path(key),
+            latest.mod_revision().to_string().as_str(),
+        );
+        let mut c = self.connect().await?.kv_client();
+        c.put(history_key, latest.value(), None)
+            .await
+            .map_err(|e| Error::Etcd {
+                source: Box::new(e),
+            })?;
+        Ok(())
     }
 }
 
@@ -140,6 +192,7 @@ impl Storage for EtcdStorage {
     }
 
     async fn save(&self, key: &str, value: &str) -> Result<()> {
+        self.save_history(key).await?;
         let key = self.get_path(key);
         let mut c = self.connect().await?.kv_client();
         c.put(key, value, None).await.map_err(|e| Error::Etcd {
@@ -160,6 +213,31 @@ impl Storage for EtcdStorage {
     /// Indicates that this storage supports watching for changes
     fn support_observer(&self) -> bool {
         true
+    }
+    fn support_history(&self) -> bool {
+        self.enable_history
+    }
+    async fn fetch_history(&self, key: &str) -> Result<Option<Vec<String>>> {
+        let key = self.get_history_path(key);
+        let mut c = self.connect().await?.kv_client();
+        let opts = GetOptions::new()
+            .with_prefix()
+            .with_sort(SortTarget::Create, SortOrder::Descend)
+            .with_limit(10);
+
+        let arr = c
+            .get(key.as_bytes(), Some(opts))
+            .await
+            .map_err(|e| Error::Etcd {
+                source: Box::new(e),
+            })?
+            .take_kvs();
+
+        Ok(Some(
+            arr.iter()
+                .map(|item| item.value_str().unwrap_or_default().to_string())
+                .collect(),
+        ))
     }
     /// Sets up a watch on the config path to observe changes
     /// Note: May miss changes if processing takes too long between updates
