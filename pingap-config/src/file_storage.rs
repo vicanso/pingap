@@ -75,6 +75,9 @@ impl FileStorage {
             return Ok(());
         };
         let value = self.fetch(key).await?;
+        if value.is_empty() {
+            return Ok(());
+        }
         let name = format!("{}-{}", self.convert_history_key(key), now_sec());
         let file = history_path.join(name).clone();
         fs::write(&file, value).await.map_err(|e| Error::Io {
