@@ -208,7 +208,7 @@ export default function Certificates() {
 
   return (
     <div className="grow overflow-auto p-4">
-      <div className="flex flex-row gap-2 mb-2">
+      <div className="flex flex-row items-center gap-2 mb-2">
         <Label>{certificateI18n("certificate")}:</Label>
         <Select
           value={currentCertificate}

@@ -21,7 +21,6 @@ import {
   ItemHeader,
   ItemFooter,
 } from "@/components/ui/item";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { History as HistoryIcon } from "lucide-react";
 
 export default function HistoryPage(props: {
@@ -103,13 +102,15 @@ export default function HistoryPage(props: {
           <HistoryIcon />
         </Button>
       </SheetTrigger>
-      <SheetContent>
-        <ScrollArea>
+      <SheetContent className="!p-0 flex flex-col">
+        <div className="p-6 pb-4 flex-shrink-0">
           <SheetHeader>
             <SheetTitle>{historyI18n("title")}</SheetTitle>
             <SheetDescription>{historyI18n("description")}</SheetDescription>
           </SheetHeader>
-          <div className="grid flex-1 auto-rows-min gap-6 px-4">
+        </div>
+        <div className="flex-1 overflow-y-auto px-6">
+          <div className="grid auto-rows-min gap-6 pb-6">
             {fetching && <LoadingPage />}
             {!fetching && items.length === 0 && (
               <div className="text-muted-foreground">
@@ -118,7 +119,7 @@ export default function HistoryPage(props: {
             )}
             {!fetching && items}
           </div>
-        </ScrollArea>
+        </div>
       </SheetContent>
     </Sheet>
   );

@@ -11,8 +11,6 @@ build-web:
 	&& npm install && npm run  build \
 	&& cp -rf dist ../
 
-# update-shadcn:
-# 	for file in src/components/ui/*.tsx; do npx shadcn@latest add -y -o $(basename "$file" .tsx); done
 
 bench-all:
 	cargo bench -p pingap-core

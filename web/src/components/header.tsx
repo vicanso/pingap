@@ -355,13 +355,13 @@ export function MainHeader({
   return (
     <header
       className={cn(
-        "border-b bg-background/95 backdrop-blur-sm supports-backdrop-filter:bg-background/60",
+        "flex h-16 shrink-0 items-center gap-2 border-b bg-background/95 backdrop-blur-sm supports-backdrop-filter:bg-background/60 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12",
         className,
       )}
     >
-      <div className="ml-2 flex h-11 items-center">
-        <SidebarTrigger className="cursor-pointer" />
-        <div className="flex flex-1 items-center space-x-2 justify-end mr-2">
+      <div className="flex items-center gap-2 px-4 flex-1">
+        <SidebarTrigger className="cursor-pointer -ml-1" />
+        <div className="flex flex-1 items-center space-x-2 justify-end">
           <Popover>
             <PopoverTrigger asChild>
               <Button variant="ghost" size="icon" className="cursor-pointer">

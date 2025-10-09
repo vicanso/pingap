@@ -68,51 +68,49 @@ export default function Root() {
         setOpen(open);
       }}
     >
-      <div className="flex min-h-screen w-full">
-        {/* Sidebar Component */}
-        <Sidebar collapsible="icon">
-          <SidebarHeader>
-            {/* Logo or app name can go here */}
-            <div className="text-lg font-bold border-b flex items-center">
+      {/* Sidebar Component */}
+      <Sidebar collapsible="icon">
+        <SidebarHeader>
+          {/* Logo or app name can go here */}
+          <div className="text-lg font-bold border-b flex items-center">
+            <Button
+              size="icon"
+              variant="ghost"
+              className="cursor-pointer"
+              onClick={() => {
+                goToHome();
+              }}
+            >
+              <img src={logoData} />
+            </Button>
+            {open && (
               <Button
-                size="icon"
-                variant="ghost"
-                className="cursor-pointer"
-                onClick={() => {
+                variant="link"
+                className="px-0 cursor-pointer"
+                onClick={(e) => {
+                  e.preventDefault();
                   goToHome();
                 }}
               >
-                <img src={logoData} />
+                Pingap
+                {!initialized && (
+                  <LoaderCircle className="ml-2 h-4 w-4 inline animate-spin" />
+                )}
+                <span>{basicInfo.version}</span>
               </Button>
-              {open && (
-                <Button
-                  variant="link"
-                  className="px-0 cursor-pointer"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    goToHome();
-                  }}
-                >
-                  Pingap
-                  {!initialized && (
-                    <LoaderCircle className="ml-2 h-4 w-4 inline animate-spin" />
-                  )}
-                  <span>{basicInfo.version}</span>
-                </Button>
-              )}
-            </div>
-          </SidebarHeader>
-          <MainSidebar sidebarOpen={open} />
-        </Sidebar>
-
-        {/* Main Content - Using SidebarInset for proper spacing */}
-        <SidebarInset className="w-[var(--sidebar-width)]">
-          <MainHeader />
-          <div className="flex flex-1 flex-col gap-4">
-            <Outlet />
+            )}
           </div>
-        </SidebarInset>
-      </div>
+        </SidebarHeader>
+        <MainSidebar sidebarOpen={open} />
+      </Sidebar>
+
+      {/* Main Content - Using SidebarInset for proper spacing */}
+      <SidebarInset>
+        <MainHeader />
+        <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
+          <Outlet />
+        </div>
+      </SidebarInset>
     </SidebarProvider>
   );
 }

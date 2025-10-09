@@ -277,7 +277,7 @@ export default function Basic() {
   });
   return (
     <div className="grow overflow-auto p-4">
-      <div className="flex flex-row gap-2 mb-2">
+      <div className="flex flex-row items-center gap-2 mb-2">
         <Label>{basicI18n("title")}</Label>
         <History
           category="basic"
@@ -293,6 +293,6 @@ export default function Basic() {
         defaultShow={13}
         onSave={async (value) => update("pingap", "basic", value)}
       />
-    </div>
+    </div >
   );
 }

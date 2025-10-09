@@ -33,6 +33,7 @@ flowchart LR
   - Simple, human-readable TOML configuration files.
   - Full-featured Web UI for intuitive, real-time management.
   - Supports both file and etcd as configuration backends.
+  - Supports configuration history record, can restore to the history version with one click.
 
 - 🧩 Powerful Extensibility
   - A rich plugin system to handle common gateway tasks.

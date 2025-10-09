@@ -366,7 +366,7 @@ export default function Upstreams() {
 
   return (
     <div className="grow overflow-auto p-4">
-      <div className="flex flex-row gap-2 mb-2">
+      <div className="flex flex-row items-center gap-2">
         <Label>{upstreamI18n("upstream")}:</Label>
         <Select
           value={currentUpstream}

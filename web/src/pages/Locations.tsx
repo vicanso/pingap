@@ -271,7 +271,7 @@ export default function Locations() {
 
   return (
     <div className="grow overflow-auto p-4">
-      <div className="flex flex-row gap-2 mb-2">
+      <div className="flex flex-row items-center gap-2 mb-2">
         <Label>{locationI18n("location")}:</Label>
         <Select
           value={currentLocation}

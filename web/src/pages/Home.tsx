@@ -266,7 +266,7 @@ export default function Home() {
             )}
           </CardTitle>
           <Link to={item.path} className="absolute top-3 right-3">
-            <Button variant="ghost" size="icon">
+            <Button variant="ghost" size="icon" className="cursor-pointer">
               <FilePlus2 className="w-5 h-5" />
             </Button>
           </Link>

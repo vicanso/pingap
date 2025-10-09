@@ -555,7 +555,7 @@ export function ExForm({
     showButton = (
       <Button
         variant="ghost"
-        className="absolute right-0 top-[-20px]"
+        className="absolute right-0 top-[-20px] cursor-pointer"
         title={tips}
         onClick={(e) => {
           if (showCount > defaultShow) {
@@ -593,7 +593,7 @@ export function ExForm({
           {onSave && (
             <div className="grid-cols-1">
               <Button
-                className="w-full"
+                className="w-full cursor-pointer"
                 type="submit"
                 disabled={updatedCount === 0}
               >
@@ -608,7 +608,7 @@ export function ExForm({
             <div className="grid-cols-1">
               <Popover>
                 <PopoverTrigger asChild>
-                  <Button variant="secondary" type="reset" className="w-full">
+                  <Button variant="secondary" type="reset" className="w-full cursor-pointer">
                     {processing && (
                       <LoaderCircle className="mr-2 h-4 w-4 inline animate-spin" />
                     )}
