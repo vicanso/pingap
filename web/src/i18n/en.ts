@@ -104,7 +104,7 @@ export default {
     upstreamKeepalivePoolSizePlaceholder:
       "Input the pool size of upstream keepavlie(default: 128)",
     logLevel: "Log Level",
-    logLevelPlaceholder: "Select the log level of pingap",
+    logLevelPlaceholder: "Select the log level of pingap : Input custom log filter",
     logBufferedSize: "Log Buffered Size",
     logBufferedSizePlaceholder: "Input the buffer size for log(e.g. 64kb, 1mb)",
     logFormatJson: "Json Log Format",

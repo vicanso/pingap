@@ -1,7 +1,6 @@
 import { LoadingPage } from "@/components/loading";
 import { useI18n } from "@/i18n";
 import useConfigState, { Certificate } from "@/states/config";
-import React from "react";
 import { ExForm, ExFormItem } from "@/components/ex-form";
 import { z } from "zod";
 import {
@@ -11,7 +10,6 @@ import {
 } from "@/constants";
 import { omitEmptyArrayString } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
-import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   Select,
@@ -50,18 +48,13 @@ export default function Certificates() {
   const certificates = Object.keys(config.certificates || {});
   certificates.sort();
   certificates.unshift(newCertificate);
-  const [currentCertificate, setCurrentCertificate] = React.useState(
-    searchParams.get("name") || newCertificate,
-  );
-  useEffect(() => {
-    setCurrentCertificate(searchParams.get("name") || newCertificate);
-  }, [searchParams]);
+  const currentCertificate = searchParams.get("name") || newCertificate;
+
   if (!initialized) {
     return <LoadingPage />;
   }
 
   const handleSelectCertificate = (name: string) => {
-    setCurrentCertificate(name);
     if (name === newCertificate) {
       searchParams.delete("name");
     } else {

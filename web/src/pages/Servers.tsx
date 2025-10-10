@@ -4,7 +4,6 @@ import useConfigState, { getLocationWeight, Server } from "@/states/config";
 import { ExForm, ExFormItem } from "@/components/ex-form";
 import { z } from "zod";
 import { useI18n } from "@/i18n";
-import React from "react";
 import {
   ExFormItemCategory,
   newStringOptions,
@@ -12,7 +11,6 @@ import {
 } from "@/constants";
 import { newZodDuration, omitEmptyArrayString } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
-import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   Select,
@@ -53,12 +51,8 @@ export default function Servers() {
   servers.sort();
   servers.unshift(newServer);
 
-  const [currentServer, setCurrentServer] = React.useState(
-    searchParams.get("name") || newServer,
-  );
-  useEffect(() => {
-    setCurrentServer(searchParams.get("name") || newServer);
-  }, [searchParams]);
+  const currentServer = searchParams.get("name") || newServer;
+
   if (!initialized) {
     return <LoadingPage />;
   }
@@ -75,7 +69,6 @@ export default function Servers() {
   });
 
   const handleSelectServer = (name: string) => {
-    setCurrentServer(name);
     if (name === newServer) {
       searchParams.delete("name");
     } else {

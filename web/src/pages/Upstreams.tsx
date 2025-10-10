@@ -1,7 +1,6 @@
 import { LoadingPage } from "@/components/loading";
 import { useI18n } from "@/i18n";
 import useConfigState, { Upstream } from "@/states/config";
-import React from "react";
 import { ExForm, ExFormItem } from "@/components/ex-form";
 import { z } from "zod";
 import {
@@ -15,7 +14,6 @@ import {
   omitEmptyArrayString,
 } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
-import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   Select,
@@ -54,18 +52,13 @@ export default function Upstreams() {
   const upstreams = Object.keys(config.upstreams || {});
   upstreams.sort();
   upstreams.unshift(newUpstream);
-  const [currentUpstream, setCurrentUpstream] = React.useState(
-    searchParams.get("name") || newUpstream,
-  );
-  useEffect(() => {
-    setCurrentUpstream(searchParams.get("name") || newUpstream);
-  }, [searchParams]);
+  const currentUpstream = searchParams.get("name") || newUpstream;
+
   if (!initialized) {
     return <LoadingPage />;
   }
 
   const handleSelectUpstream = (name: string) => {
-    setCurrentUpstream(name);
     if (name === newUpstream) {
       searchParams.delete("name");
     } else {

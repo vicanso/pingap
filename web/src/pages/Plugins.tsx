@@ -12,7 +12,6 @@ import {
   getPluginSteps,
 } from "@/constants";
 import { useSearchParams } from "react-router-dom";
-import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
 import useBasicState from "@/states/basic";
 import { omitEmptyArrayString } from "@/helpers/util";
@@ -57,23 +56,17 @@ export default function Plugins() {
   plugins.sort();
   plugins.unshift(newPlugin);
 
-  const [currentPlugin, setCurrentPlugin] = React.useState(
-    searchParams.get("name") || newPlugin,
-  );
+  const currentPlugin = searchParams.get("name") || newPlugin;
   const pluginConfig = getPluginConfig(currentPlugin, config.plugins);
   const [currentCategory, setCurrentCategory] = React.useState(
     (pluginConfig.category as string) || "",
   );
 
-  useEffect(() => {
-    setCurrentPlugin(searchParams.get("name") || newPlugin);
-  }, [searchParams]);
   if (!initialized) {
     return <LoadingPage />;
   }
 
   const handleSelectPlugin = (name: string) => {
-    setCurrentPlugin(name);
     const conf = getPluginConfig(name, config.plugins);
     setCurrentCategory(conf.category as string);
     if (name === newPlugin) {

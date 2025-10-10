@@ -1,7 +1,6 @@
 import { LoadingPage } from "@/components/loading";
 import { useI18n } from "@/i18n";
 import useConfigState, { Location } from "@/states/config";
-import React from "react";
 import { ExForm, ExFormItem } from "@/components/ex-form";
 import { z } from "zod";
 import {
@@ -11,7 +10,6 @@ import {
 } from "@/constants";
 import { newZodBytes, omitEmptyArrayString } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
-import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   Select,
@@ -51,12 +49,7 @@ export default function Locations() {
   const locations = Object.keys(config.locations || {});
   locations.sort();
   locations.unshift(newLocation);
-  const [currentLocation, setCurrentLocation] = React.useState(
-    searchParams.get("name") || newLocation,
-  );
-  useEffect(() => {
-    setCurrentLocation(searchParams.get("name") || newLocation);
-  }, [searchParams]);
+  const currentLocation = searchParams.get("name") || newLocation;
 
   if (!initialized) {
     return <LoadingPage />;
@@ -65,7 +58,6 @@ export default function Locations() {
   const upstreams = Object.keys(config.upstreams || {});
 
   const handleSelectLocation = (name: string) => {
-    setCurrentLocation(name);
     if (name === newLocation) {
       searchParams.delete("name");
     } else {

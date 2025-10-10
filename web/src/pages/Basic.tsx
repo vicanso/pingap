@@ -78,7 +78,7 @@ export default function Basic() {
       placeholder: basicI18n("logLevelPlaceholder"),
       defaultValue: basic.log_level,
       span: 3,
-      category: ExFormItemCategory.SELECT,
+      category: ExFormItemCategory.INPUT_SELECT,
       options: newStringOptions(
         ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"],
         false,

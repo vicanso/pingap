@@ -494,25 +494,28 @@ impl BackgroundService for ConfigObserverService {
                     // fetch and diff update
                     // some change may be restart
                     if let Some(new_config) = run_diff_and_update_config(self.config_manager.clone(), self.only_hot_reload).await {
-                        let new_level =
-                new_config.basic.log_level.clone().unwrap_or_default();
-            let current_level = self.current_log_level.load().to_string();
-            if current_level != new_level {
-                info!(
-                    target: LOG_TARGET,
-                    current_level, new_level, "reload log level"
-                );
-                if let Err(e) = self
-                    .log_reload_handle
-                    .modify(|filter| *filter = new_env_filter(new_level))
-                {
-                    error!(
-                        target: LOG_TARGET,
-                        error = %e,
-                        "reload log level fail"
-                    )
-                }
-            }
+                        let new_level = new_config
+                            .basic
+                            .log_level
+                            .clone()
+                            .unwrap_or_default();
+                        let current_level = self.current_log_level.load().to_string();
+                        if current_level != new_level {
+                            info!(
+                                target: LOG_TARGET,
+                                current_level, new_level, "reload log level"
+                            );
+                            if let Err(e) = self
+                                .log_reload_handle
+                                .modify(|filter| *filter = new_env_filter(new_level))
+                            {
+                                error!(
+                                    target: LOG_TARGET,
+                                    error = %e,
+                                    "reload log level fail"
+                                )
+                            }
+                        }
                     }
                 }
                 result = observer.watch() => {

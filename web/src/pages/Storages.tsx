@@ -3,10 +3,8 @@ import useConfigState, { Storage } from "@/states/config";
 import { ExForm, ExFormItem } from "@/components/ex-form";
 import { z } from "zod";
 import { useI18n } from "@/i18n";
-import React from "react";
 import { ExFormItemCategory, newStringOptions } from "@/constants";
 import { useSearchParams } from "react-router-dom";
-import { useEffect } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   Select,
@@ -43,20 +41,13 @@ export default function Storages() {
   storages.sort();
   storages.unshift(newStorage);
 
-  const [currentStorage, setCurrentStorage] = React.useState(
-    searchParams.get("name") || newStorage,
-  );
-
-  useEffect(() => {
-    setCurrentStorage(searchParams.get("name") || newStorage);
-  }, [searchParams]);
+  const currentStorage = searchParams.get("name") || newStorage;
 
   if (!initialized) {
     return <LoadingPage />;
   }
 
   const handleSelectStorage = (name: string) => {
-    setCurrentStorage(name);
     if (name === newStorage) {
       searchParams.delete("name");
     } else {

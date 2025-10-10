@@ -612,12 +612,12 @@ impl Server {
             )
             .await
             {
-                Ok(true) => Some(Ok(true)),   // 已处理 ACME 请求
-                Ok(false) => Some(Ok(false)), // 明确表示未处理，进入标准流程（虽然通常ACME处理后会是true）
+                Ok(true) => Some(Ok(true)),   // handle ACME request
+                Ok(false) => Some(Ok(false)), // not handle ACME request, continue
                 Err(e) => Some(Err(e)),
             };
         }
-        None // 未启用 Let's Encrypt，继续
+        None // not enable ACME, continue
     }
     #[inline]
     #[cfg(feature = "tracing")]
