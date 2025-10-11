@@ -51,7 +51,6 @@ pub fn new_env_filter(level: &str) -> EnvFilter {
         };
     }
     initial_filter
-    // EnvFilter::new(level)
 }
 
 pub use access::*;

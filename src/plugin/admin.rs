@@ -29,9 +29,9 @@ use http::Method;
 use http::{header, HeaderValue, StatusCode};
 use humantime::parse_duration;
 use pingap_config::{
-    self, format_category, BasicConf, Category, CertificateConf, ConfigManager,
+    format_category, BasicConf, Category, CertificateConf, ConfigManager,
     LocationConf, PluginCategory, PluginConf, ServerConf, StorageConf,
-    UpstreamConf, CATEGORY_CERTIFICATE, CATEGORY_STORAGE,
+    UpstreamConf, Validate, CATEGORY_CERTIFICATE, CATEGORY_STORAGE,
 };
 use pingap_config::{
     PingapConfig, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
@@ -50,7 +50,7 @@ use pingora::proxy::Session;
 use regex::Regex;
 use rust_embed::EmbeddedFile;
 use rust_embed::RustEmbed;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
@@ -361,6 +361,40 @@ impl AdminServe {
         })?;
         Ok(HttpResponse::no_content())
     }
+    async fn handle_update_config<T>(
+        &self,
+        name: &str,
+        buf: &[u8],
+        category: Category,
+    ) -> pingora::Result<()>
+    where
+        T: DeserializeOwned + Serialize + Send + Sync + Validate,
+    {
+        let conf: T = serde_json::from_slice(buf).map_err(|e| {
+            error!(
+                target: LOG_TARGET,
+                error = e.to_string(),
+                "parse {} config fail",
+                category.to_string()
+            );
+            pingap_core::new_internal_error(400, e)
+        })?;
+        conf.validate().map_err(|e| {
+            error!(target: LOG_TARGET, error = e.to_string(), "validate config fail");
+            pingap_core::new_internal_error(400, e)
+        })?;
+
+        self.manager
+            .update(category, name, &conf)
+            .await
+            .map_err(|e| {
+                error!(target: LOG_TARGET, error = e.to_string(), "update config fail");
+                pingap_core::new_internal_error(400, e)
+            })?;
+
+        Ok(())
+    }
+
     async fn update_config(
         &self,
         session: &mut Session,
@@ -376,126 +410,60 @@ impl AdminServe {
         let buf = get_request_body(session).await?;
         match category {
             CATEGORY_UPSTREAM => {
-                let upstream: UpstreamConf = serde_json::from_slice(&buf)
-                    .map_err(|e| {
-                        error!(
-                            target: LOG_TARGET,
-                            error = e.to_string(),
-                            "parse upstream config fail"
-                        );
-                        pingap_core::new_internal_error(400, e)
-                    })?;
-                self.manager
-                    .update(Category::Upstream, name, &upstream)
-                    .await
-                    .map_err(|e| {
-                        error!(target: LOG_TARGET, error = e.to_string(), "update config fail");
-                        pingap_core::new_internal_error(400, e)
-                    })?;
+                self.handle_update_config::<UpstreamConf>(
+                    name,
+                    &buf,
+                    Category::Upstream,
+                )
+                .await?;
             },
             CATEGORY_LOCATION => {
-                let location: LocationConf = serde_json::from_slice(&buf)
-                    .map_err(|e| {
-                        error!(
-                            target: LOG_TARGET,
-                            error = e.to_string(),
-                            "parse location config fail"
-                        );
-                        pingap_core::new_internal_error(400, e)
-                    })?;
-                self.manager
-                    .update(Category::Location, name, &location)
-                    .await
-                    .map_err(|e| {
-                        error!(target: LOG_TARGET, error = e.to_string(), "update config fail");
-                        pingap_core::new_internal_error(400, e)
-                    })?;
+                self.handle_update_config::<LocationConf>(
+                    name,
+                    &buf,
+                    Category::Location,
+                )
+                .await?;
             },
             CATEGORY_SERVER => {
-                let server: ServerConf =
-                    serde_json::from_slice(&buf).map_err(|e| {
-                        error!(
-                            target: LOG_TARGET,
-                            error = e.to_string(),
-                            "parse server config fail"
-                        );
-                        pingap_core::new_internal_error(400, e)
-                    })?;
-                self.manager
-                    .update(Category::Server, name, &server)
-                    .await
-                    .map_err(|e| {
-                        error!(target: LOG_TARGET, error = e.to_string(), "update config fail");
-                        pingap_core::new_internal_error(400, e)
-                    })?;
+                self.handle_update_config::<ServerConf>(
+                    name,
+                    &buf,
+                    Category::Server,
+                )
+                .await?;
             },
             CATEGORY_PLUGIN => {
-                let plugin: PluginConf =
-                    serde_json::from_slice(&buf).map_err(|e| {
-                        error!(
-                            target: LOG_TARGET,
-                            error = e.to_string(),
-                            "parse plugin config fail"
-                        );
-                        pingap_core::new_internal_error(400, e)
-                    })?;
-                self.manager
-                    .update(Category::Plugin, name, &plugin)
-                    .await
-                    .map_err(|e| {
-                        error!(target: LOG_TARGET, error = e.to_string(), "update config fail");
-                        pingap_core::new_internal_error(400, e)
-                    })?;
+                self.handle_update_config::<PluginConf>(
+                    name,
+                    &buf,
+                    Category::Plugin,
+                )
+                .await?;
             },
             CATEGORY_CERTIFICATE => {
-                let certificate: CertificateConf = serde_json::from_slice(&buf)
-                    .map_err(|e| {
-                        error!(
-                            target: LOG_TARGET,
-                            error = e.to_string(),
-                            "parse certificate config fail"
-                        );
-                        pingap_core::new_internal_error(400, e)
-                    })?;
-                self.manager
-                    .update(Category::Certificate, name, &certificate)
-                    .await
-                    .map_err(|e| {
-                        error!(target: LOG_TARGET, error = e.to_string(), "update config fail");
-                        pingap_core::new_internal_error(400, e)
-                    })?;
+                self.handle_update_config::<CertificateConf>(
+                    name,
+                    &buf,
+                    Category::Certificate,
+                )
+                .await?;
             },
             CATEGORY_STORAGE => {
-                let storage: StorageConf = serde_json::from_slice(&buf)
-                    .map_err(|e| {
-                        error!(
-                            target: LOG_TARGET,
-                            error = e.to_string(),
-                            "parse storage config fail"
-                        );
-                        pingap_core::new_internal_error(400, e)
-                    })?;
-                self.manager
-                    .update(Category::Storage, name, &storage)
-                    .await
-                    .map_err(|e| {
-                        error!(target: LOG_TARGET, error = e.to_string(), "update config fail");
-                        pingap_core::new_internal_error(400, e)
-                    })?;
+                self.handle_update_config::<StorageConf>(
+                    name,
+                    &buf,
+                    Category::Storage,
+                )
+                .await?;
             },
             _ => {
-                let basic_conf: BasicConf = serde_json::from_slice(&buf)
-                    .map_err(|e| {
-                        error!(target: LOG_TARGET, error = e.to_string(), "parse basic config fail");
-                        pingap_core::new_internal_error(400, e)
-                    })?;
-                self.manager
-                    .update(Category::Basic, "", &basic_conf)
-                    .await
-                    .map_err(|e| {
-                        error!(target: LOG_TARGET, error = e.to_string(), "update config fail");
-                        pingap_core::new_internal_error(400, e)
-                    })?;
+                self.handle_update_config::<BasicConf>(
+                    name,
+                    &buf,
+                    Category::Basic,
+                )
+                .await?;
             },
         };
 

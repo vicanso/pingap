@@ -38,6 +38,10 @@ pub const CATEGORY_PLUGIN: &str = "plugin";
 pub const CATEGORY_CERTIFICATE: &str = "certificate";
 pub const CATEGORY_STORAGE: &str = "storage";
 
+pub trait Validate {
+    fn validate(&self) -> Result<()>;
+}
+
 #[derive(PartialEq, Debug, Default, Clone, EnumString, strum::Display)]
 #[strum(serialize_all = "snake_case")]
 pub enum PluginCategory {
@@ -166,12 +170,12 @@ fn validate_cert(value: &str) -> Result<()> {
     Ok(())
 }
 
-impl CertificateConf {
+impl Validate for CertificateConf {
     /// Validates the certificate configuration:
     /// - Validates private key can be parsed if present
     /// - Validates certificate can be parsed if present  
     /// - Validates certificate chain can be parsed if present
-    pub fn validate(&self) -> Result<()> {
+    fn validate(&self) -> Result<()> {
         // Validate private key
         let tls_key = self.tls_key.clone().unwrap_or_default();
         if !tls_key.is_empty() {
@@ -298,6 +302,26 @@ pub struct UpstreamConf {
     pub remark: Option<String>,
 }
 
+impl Validate for UpstreamConf {
+    /// Validates the upstream configuration:
+    /// 1. The address list can't be empty
+    /// 2. For static discovery, addresses must be valid socket addresses
+    /// 3. Health check URL must be valid if specified
+    /// 4. TCP probe count must not exceed maximum (16)
+    fn validate(&self) -> Result<()> {
+        // Validate address list
+        self.validate_addresses()?;
+
+        // Validate health check URL if specified
+        self.validate_health_check()?;
+
+        // Validate TCP probe count
+        self.validate_tcp_probe_count()?;
+
+        Ok(())
+    }
+}
+
 impl UpstreamConf {
     /// Determines the appropriate service discovery mechanism:
     /// - Returns configured discovery if set
@@ -326,25 +350,7 @@ impl UpstreamConf {
         }
     }
 
-    /// Validates the upstream configuration:
-    /// 1. The address list can't be empty
-    /// 2. For static discovery, addresses must be valid socket addresses
-    /// 3. Health check URL must be valid if specified
-    /// 4. TCP probe count must not exceed maximum (16)
-    pub fn validate(&self, name: &str) -> Result<()> {
-        // Validate address list
-        self.validate_addresses(name)?;
-
-        // Validate health check URL if specified
-        self.validate_health_check()?;
-
-        // Validate TCP probe count
-        self.validate_tcp_probe_count()?;
-
-        Ok(())
-    }
-
-    fn validate_addresses(&self, name: &str) -> Result<()> {
+    fn validate_addresses(&self) -> Result<()> {
         if self.addrs.is_empty() {
             return Err(Error::Invalid {
                 message: "upstream addrs is empty".to_string(),
@@ -370,7 +376,7 @@ impl UpstreamConf {
             // Validate socket address
             addr_to_check.to_socket_addrs().map_err(|e| Error::Io {
                 source: e,
-                file: format!("{}(upstream:{name})", parts[0]),
+                file: addr_to_check,
             })?;
         }
 
@@ -404,6 +410,13 @@ impl UpstreamConf {
             }
         }
 
+        Ok(())
+    }
+}
+
+impl Validate for LocationConf {
+    fn validate(&self) -> Result<()> {
+        self.validate_with_upstream(None)?;
         Ok(())
     }
 }
@@ -473,7 +486,10 @@ impl LocationConf {
     /// 2. Validates header names and values are valid HTTP headers
     /// 3. Validates upstream exists if specified
     /// 4. Validates rewrite pattern is valid regex if specified
-    fn validate(&self, name: &str, upstream_names: &[String]) -> Result<()> {
+    fn validate_with_upstream(
+        &self,
+        upstream_names: Option<&[String]>,
+    ) -> Result<()> {
         // Helper function to validate HTTP headers
         let validate = |headers: &Option<Vec<String>>| -> Result<()> {
             if let Some(headers) = headers {
@@ -484,21 +500,19 @@ impl LocationConf {
                         .map(|(k, v)| (k.trim(), v.trim()));
                     if arr.is_none() {
                         return Err(Error::Invalid {
-                            message: format!(
-                                "header {header} is invalid(location:{name})"
-                            ),
+                            message: format!("header {header} is invalid"),
                         });
                     }
                     let (header_name, header_value) = arr.unwrap();
 
                     // Validate header name is valid
                     HeaderName::from_bytes(header_name.as_bytes()).map_err(|err| Error::Invalid {
-                        message: format!("header name({header_name}) is invalid, error: {err}(location:{name})"),
+                        message: format!("header name({header_name}) is invalid, error: {err}"),
                     })?;
 
                     // Validate header value is valid
                     HeaderValue::from_str(header_value).map_err(|err| Error::Invalid {
-                        message: format!("header value({header_value}) is invalid, error: {err}(location:{name})"),
+                        message: format!("header value({header_value}) is invalid, error: {err}"),
                     })?;
                 }
             }
@@ -506,16 +520,16 @@ impl LocationConf {
         };
 
         // Validate upstream exists if specified
-        let upstream = self.upstream.clone().unwrap_or_default();
-        if !upstream.is_empty()
-            && !upstream.starts_with("$")
-            && !upstream_names.contains(&upstream)
-        {
-            return Err(Error::Invalid {
-                message: format!(
-                    "upstream({upstream}) is not found(location:{name})"
-                ),
-            });
+        if let Some(upstream_names) = upstream_names {
+            let upstream = self.upstream.clone().unwrap_or_default();
+            if !upstream.is_empty()
+                && !upstream.starts_with("$")
+                && !upstream_names.contains(&upstream)
+            {
+                return Err(Error::Invalid {
+                    message: format!("upstream({upstream}) is not found"),
+                });
+            }
         }
 
         // Validate headers
@@ -664,26 +678,33 @@ pub struct ServerConf {
     pub remark: Option<String>,
 }
 
+impl Validate for ServerConf {
+    fn validate(&self) -> Result<()> {
+        self.validate_with_locations(&[])?;
+        Ok(())
+    }
+}
+
 impl ServerConf {
     /// Validate the options of server config.
     /// 1. Parse listen addr to socket addr.
     /// 2. Check the locations are exists.
     /// 3. Parse access log layout success.
-    fn validate(&self, name: &str, location_names: &[String]) -> Result<()> {
+    fn validate_with_locations(&self, location_names: &[String]) -> Result<()> {
         for addr in self.addr.split(',') {
             let _ = addr.to_socket_addrs().map_err(|e| Error::Io {
                 source: e,
                 file: self.addr.clone(),
             })?;
         }
-        if let Some(locations) = &self.locations {
-            for item in locations {
-                if !location_names.contains(item) {
-                    return Err(Error::Invalid {
-                        message: format!(
-                            "location({item}) is not found(server:{name})"
-                        ),
-                    });
+        if !location_names.is_empty() {
+            if let Some(locations) = &self.locations {
+                for item in locations {
+                    if !location_names.contains(item) {
+                        return Err(Error::Invalid {
+                            message: format!("location({item}) is not found"),
+                        });
+                    }
                 }
             }
         }
@@ -764,6 +785,12 @@ pub struct BasicConf {
     pub log_compress_time_point_hour: Option<u8>,
 }
 
+impl Validate for BasicConf {
+    fn validate(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
 impl BasicConf {
     /// Returns the path to the PID file
     /// - If pid_file is explicitly configured, uses that value
@@ -788,6 +815,12 @@ pub struct StorageConf {
     pub value: String,
     pub secret: Option<String>,
     pub remark: Option<String>,
+}
+
+impl Validate for StorageConf {
+    fn validate(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 pub trait Hashable: Hash {
@@ -821,6 +854,12 @@ fn format_toml(value: &Value) -> String {
 }
 
 pub type PluginConf = Map<String, Value>;
+
+impl Validate for PluginConf {
+    fn validate(&self) -> Result<()> {
+        Ok(())
+    }
+}
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct PingapConfig {
@@ -1055,16 +1094,16 @@ impl PingapConfig {
     pub fn validate(&self) -> Result<()> {
         let mut upstream_names = vec![];
         for (name, upstream) in self.upstreams.iter() {
-            upstream.validate(name)?;
+            upstream.validate()?;
             upstream_names.push(name.to_string());
         }
         let mut location_names = vec![];
         for (name, location) in self.locations.iter() {
-            location.validate(name, &upstream_names)?;
+            location.validate_with_upstream(Some(&upstream_names))?;
             location_names.push(name.to_string());
         }
         let mut listen_addr_list = vec![];
-        for (name, server) in self.servers.iter() {
+        for server in self.servers.values() {
             for addr in server.addr.split(',') {
                 if listen_addr_list.contains(&addr.to_string()) {
                     return Err(Error::Invalid {
@@ -1073,7 +1112,7 @@ impl PingapConfig {
                 }
                 listen_addr_list.push(addr.to_string());
             }
-            server.validate(name, &location_names)?;
+            server.validate_with_locations(&location_names)?;
         }
         // TODO: validate plugins
         // for (name, plugin) in self.plugins.iter() {
@@ -1325,7 +1364,7 @@ impl PingapConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_cert, CertificateConf, Hashable};
+    use super::{validate_cert, CertificateConf, Hashable, Validate};
     use super::{LocationConf, PluginCategory, ServerConf, UpstreamConf};
     use pingap_core::PluginStep;
     use pingap_util::base64_encode;
@@ -1400,7 +1439,7 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
     fn test_upstream_conf() {
         let mut conf = UpstreamConf::default();
 
-        let result = conf.validate("test");
+        let result = conf.validate();
         assert_eq!(true, result.is_err());
         assert_eq!(
             "Invalid error upstream addrs is empty",
@@ -1409,7 +1448,7 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
 
         conf.addrs = vec!["127.0.0.1".to_string(), "github".to_string()];
         conf.discovery = Some("static".to_string());
-        let result = conf.validate("test");
+        let result = conf.validate();
         assert_eq!(true, result.is_err());
         assert_eq!(
             true,
@@ -1421,7 +1460,7 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
 
         conf.addrs = vec!["127.0.0.1".to_string(), "github.com".to_string()];
         conf.health_check = Some("http:///".to_string());
-        let result = conf.validate("test");
+        let result = conf.validate();
         assert_eq!(true, result.is_err());
         assert_eq!(
             "Url parse error empty host, http:///",
@@ -1429,7 +1468,7 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
         );
 
         conf.health_check = Some("http://github.com/".to_string());
-        let result = conf.validate("test");
+        let result = conf.validate();
         assert_eq!(true, result.is_ok());
     }
 
@@ -1439,36 +1478,36 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
         let upstream_names = vec!["upstream1".to_string()];
 
         conf.upstream = Some("upstream2".to_string());
-        let result = conf.validate("lo", &upstream_names);
+        let result = conf.validate_with_upstream(Some(&upstream_names));
         assert_eq!(true, result.is_err());
         assert_eq!(
-            "Invalid error upstream(upstream2) is not found(location:lo)",
+            "Invalid error upstream(upstream2) is not found",
             result.expect_err("").to_string()
         );
 
         conf.upstream = Some("upstream1".to_string());
         conf.proxy_set_headers = Some(vec!["X-Request-Id".to_string()]);
-        let result = conf.validate("lo", &upstream_names);
+        let result = conf.validate_with_upstream(Some(&upstream_names));
         assert_eq!(true, result.is_err());
         assert_eq!(
-            "Invalid error header X-Request-Id is invalid(location:lo)",
+            "Invalid error header X-Request-Id is invalid",
             result.expect_err("").to_string()
         );
 
         conf.proxy_set_headers = Some(vec!["请求:响应".to_string()]);
-        let result = conf.validate("lo", &upstream_names);
+        let result = conf.validate_with_upstream(Some(&upstream_names));
         assert_eq!(true, result.is_err());
         assert_eq!(
-            "Invalid error header name(请求) is invalid, error: invalid HTTP header name(location:lo)",
+            "Invalid error header name(请求) is invalid, error: invalid HTTP header name",
             result.expect_err("").to_string()
         );
 
         conf.proxy_set_headers = Some(vec!["X-Request-Id: abcd".to_string()]);
-        let result = conf.validate("lo", &upstream_names);
+        let result = conf.validate_with_upstream(Some(&upstream_names));
         assert_eq!(true, result.is_ok());
 
         conf.rewrite = Some(r"foo(bar".to_string());
-        let result = conf.validate("lo", &upstream_names);
+        let result = conf.validate_with_upstream(Some(&upstream_names));
         assert_eq!(true, result.is_err());
         assert_eq!(
             true,
@@ -1479,7 +1518,7 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
         );
 
         conf.rewrite = Some(r"^/api /".to_string());
-        let result = conf.validate("lo", &upstream_names);
+        let result = conf.validate_with_upstream(Some(&upstream_names));
         assert_eq!(true, result.is_ok());
     }
 
@@ -1518,7 +1557,7 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
         let mut conf = ServerConf::default();
         let location_names = vec!["lo".to_string()];
 
-        let result = conf.validate("test", &location_names);
+        let result = conf.validate_with_locations(&location_names);
         assert_eq!(true, result.is_err());
         assert_eq!(
             "Io error invalid socket address, ",
@@ -1527,15 +1566,15 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
 
         conf.addr = "127.0.0.1:3001".to_string();
         conf.locations = Some(vec!["lo1".to_string()]);
-        let result = conf.validate("test", &location_names);
+        let result = conf.validate_with_locations(&location_names);
         assert_eq!(true, result.is_err());
         assert_eq!(
-            "Invalid error location(lo1) is not found(server:test)",
+            "Invalid error location(lo1) is not found",
             result.expect_err("").to_string()
         );
 
         conf.locations = Some(vec!["lo".to_string()]);
-        let result = conf.validate("test", &location_names);
+        let result = conf.validate_with_locations(&location_names);
         assert_eq!(true, result.is_ok());
     }
 
