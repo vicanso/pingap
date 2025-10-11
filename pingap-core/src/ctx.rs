@@ -1336,8 +1336,8 @@ mod tests {
                 .unwrap(),
         }));
         digest.ssl_digest = Some(Arc::new(SslDigest {
-            version: "1.3",
-            cipher: "123",
+            version: "1.3".into(),
+            cipher: "123".into(),
             organization: Some("cloudflare".to_string()),
             serial_number: Some(
                 "0x00000000000000000000000000000abc".to_string(),

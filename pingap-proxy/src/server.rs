@@ -1414,7 +1414,7 @@ impl ProxyHttp for Server {
         Ok(())
     }
 
-    fn upstream_response_filter(
+    async fn upstream_response_filter(
         &self,
         session: &mut Session,
         upstream_response: &mut ResponseHeader,
@@ -1714,8 +1714,8 @@ mod tests {
                     .unwrap(),
             })],
             ssl_digest: Some(Arc::new(SslDigest {
-                cipher: "123",
-                version: "1.3",
+                cipher: "123".into(),
+                version: "1.3".into(),
                 organization: None,
                 serial_number: None,
                 cert_digest: vec![],
