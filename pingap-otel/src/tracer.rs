@@ -32,7 +32,7 @@ use std::time::Duration;
 use tracing::{error, info};
 use url::Url;
 
-const LOG_TARGET: &str = "otel";
+const LOG_TARGET: &str = "pingap::otel";
 /// Default configuration values
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(3);
 const DEFAULT_MAX_ATTRIBUTES: u32 = 16;

@@ -30,7 +30,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::debug;
 
-static LOG_TARGET: &str = "pingap:stats";
+static LOG_TARGET: &str = "main::stats";
 
 type Result<T> = std::result::Result<T, Error>;
 

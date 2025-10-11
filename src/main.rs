@@ -98,7 +98,7 @@ locations = ["httpLocation"]
 addrs = ["127.0.0.1:5000"]
 "###;
 
-static LOG_TARGET: &str = "pingap";
+static LOG_TARGET: &str = "main";
 
 /// Command line arguments structure for the pingap.
 /// A reverse proxy like nginx.

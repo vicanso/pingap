@@ -39,7 +39,7 @@ use std::time::Duration;
 use tokio::time::interval;
 use tracing::{debug, error, info};
 
-static LOG_TARGET: &str = "pingap:auto_restart";
+static LOG_TARGET: &str = "main::auto_restart";
 
 /// Compares configurations and handles updates through hot reload or full restart
 ///
@@ -507,7 +507,7 @@ impl BackgroundService for ConfigObserverService {
                             );
                             if let Err(e) = self
                                 .log_reload_handle
-                                .modify(|filter| *filter = new_env_filter(new_level))
+                                .modify(|filter| *filter = new_env_filter(&new_level))
                             {
                                 error!(
                                     target: LOG_TARGET,
@@ -600,7 +600,7 @@ impl BackgroundTask for AutoRestart {
                 );
                 if let Err(e) = self
                     .log_reload_handle
-                    .modify(|filter| *filter = new_env_filter(new_level))
+                    .modify(|filter| *filter = new_env_filter(&new_level))
                 {
                     error!(
                         target: LOG_TARGET,

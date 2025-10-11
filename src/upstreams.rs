@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::error;
 
-static LOG_TARGET: &str = "pingap:upstreams";
+static LOG_TARGET: &str = "main::upstreams";
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 

@@ -101,7 +101,7 @@ export default {
     upstreamKeepalivePoolSize: "上游保持连接池大小",
     upstreamKeepalivePoolSizePlaceholder: "输入上游保持连接池大小(默认值: 128)",
     logLevel: "日志级别",
-    logLevelPlaceholder: "选择应用日志级别 : 输入自定义日志过滤方式",
+    logLevelPlaceholder: "选择应用日志级别 : 输入自定义日志过滤方式(例如：global_level,target_a=level_a,target_b=level_b）",
     logBufferedSize: "日志缓存大小",
     logBufferedSizePlaceholder: "输入日志缓存大小(如64kb, 1mb)",
     logFormatJson: "日志Json格式化",

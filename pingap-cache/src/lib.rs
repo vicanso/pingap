@@ -32,7 +32,7 @@ mod tiny;
 pub static PAGE_SIZE: usize = 4096;
 
 /// Category name for cache related logging
-pub static LOG_TARGET: &str = "cache";
+pub static LOG_TARGET: &str = "pingap::cache";
 
 #[derive(Debug, Snafu)]
 pub enum Error {

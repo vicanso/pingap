@@ -20,7 +20,7 @@ use serde_json::{Map, Value};
 use std::time::Duration;
 use tracing::{error, info};
 
-pub static LOG_TARGET: &str = "webhook";
+pub static LOG_TARGET: &str = "pingap::webhook";
 
 pub struct WebhookNotificationSender {
     url: String,

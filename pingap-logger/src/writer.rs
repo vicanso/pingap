@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::file_appender::new_rolling_file_writer;
+use super::new_env_filter;
 #[cfg(unix)]
 use super::syslog::new_syslog_writer;
 use super::{Error, LOG_TARGET};
@@ -35,7 +36,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 use std::time::{Duration, SystemTime};
 use tracing::Subscriber;
-use tracing::{error, info, Level};
+use tracing::{error, info};
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::reload::Handle;
@@ -330,21 +331,12 @@ pub fn logger_try_init(
         params.level.clone()
     };
 
-    let level = match level.to_lowercase().as_str() {
-        "trace" => Level::TRACE,
-        "debug" => Level::DEBUG,
-        "warn" => Level::WARN,
-        "error" => Level::ERROR,
-        _ => Level::INFO,
-    };
-
     let seconds = chrono::Local::now().offset().local_minus_utc();
     let hours = (seconds / 3600) as i8;
     let minutes = ((seconds % 3600) / 60) as i8;
     let is_dev = cfg!(debug_assertions);
 
-    let initial_filter =
-        EnvFilter::from_default_env().add_directive(level.into());
+    let initial_filter = new_env_filter(&level);
     let (filter_layer, reload_handle) = Layer::new(initial_filter);
     let registry = tracing_subscriber::registry().with(filter_layer);
 

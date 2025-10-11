@@ -65,7 +65,7 @@ use urlencoding::decode;
 
 type Result<T> = std::result::Result<T, Error>;
 
-static LOG_TARGET: &str = "pingap:admin";
+static LOG_TARGET: &str = "main::admin";
 
 #[derive(RustEmbed)]
 #[folder = "dist/"]

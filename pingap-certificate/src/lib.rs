@@ -27,7 +27,7 @@ mod self_signed;
 mod tls_certificate;
 mod validity_checker;
 
-pub static LOG_TARGET: &str = "certificate";
+pub static LOG_TARGET: &str = "pingap::certificate";
 
 #[derive(Debug, Snafu)]
 pub enum Error {

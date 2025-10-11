@@ -18,7 +18,7 @@ use snafu::Snafu;
 use substring::Substring;
 
 /// Category name for ACME-related logging
-pub static LOG_TARGET: &str = "acme";
+pub static LOG_TARGET: &str = "pingap::acme";
 
 /// Errors that can occur during ACME operations
 #[derive(Debug, Snafu)]

@@ -34,7 +34,7 @@ mod stats;
 /// UUID for the admin server plugin, generated at runtime
 pub static ADMIN_SERVER_PLUGIN: &str = "pingap:admin";
 
-static LOG_TARGET: &str = "pingap:plugin";
+static LOG_TARGET: &str = "main::plugin";
 
 #[derive(Debug, PartialEq, Deserialize, Serialize, Default)]
 struct AdminPluginParams {

@@ -24,7 +24,7 @@ use substring::Substring;
 use tracing::{error, info};
 use url::Url;
 
-static LOG_TARGET: &str = "pyroscope";
+static LOG_TARGET: &str = "pingap::pyroscope";
 
 #[derive(Debug, Snafu)]
 pub enum Error {

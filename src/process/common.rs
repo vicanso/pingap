@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
 use tracing::{error, info};
 
-static LOG_TARGET: &str = "pingap:process";
+static LOG_TARGET: &str = "main::process";
 
 static START_TIME: Lazy<Duration> =
     Lazy::new(|| Duration::from_secs(pingap_core::now_sec()));

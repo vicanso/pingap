@@ -20,7 +20,7 @@ mod hash_strategy;
 mod peer_tracer;
 mod upstream;
 
-pub(crate) static LOG_TARGET: &str = "upstream";
+pub(crate) static LOG_TARGET: &str = "pingap::upstream";
 
 pub type Upstreams = AHashMap<String, Arc<Upstream>>;
 

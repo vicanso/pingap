@@ -21,7 +21,7 @@ use snafu::Snafu;
 use std::time::Duration;
 use strum::EnumString;
 use tracing::info;
-static LOG_TARGET: &str = "health";
+static LOG_TARGET: &str = "pingap::health";
 
 mod grpc;
 mod http;

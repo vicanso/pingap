@@ -13,6 +13,8 @@
 // limitations under the License.
 
 use snafu::Snafu;
+use tracing::error;
+use tracing_subscriber::filter::Directive;
 use tracing_subscriber::EnvFilter;
 
 mod access;
@@ -22,7 +24,7 @@ mod file_appender;
 mod syslog;
 mod writer;
 
-const LOG_TARGET: &str = "logger";
+const LOG_TARGET: &str = "pingap::logger";
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -32,8 +34,24 @@ pub enum Error {
     Invalid { message: String },
 }
 
-pub fn new_env_filter(level: String) -> EnvFilter {
-    EnvFilter::new(level)
+pub fn new_env_filter(level: &str) -> EnvFilter {
+    let mut initial_filter = EnvFilter::from_default_env();
+    for item in level.split(",") {
+        match item.parse::<Directive>() {
+            Ok(directive) => {
+                initial_filter = initial_filter.add_directive(directive);
+            },
+            Err(e) => {
+                error!(
+                    target: LOG_TARGET,
+                    error = e.to_string(),
+                    "parse directive fail"
+                );
+            },
+        };
+    }
+    initial_filter
+    // EnvFilter::new(level)
 }
 
 pub use access::*;
