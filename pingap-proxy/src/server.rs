@@ -1678,7 +1678,7 @@ impl ProxyHttp for Server {
             } else {
                 let msg = std::string::String::from_utf8(buf.into())
                     .unwrap_or_default();
-                info!("{msg}");
+                info!(target: LOG_TARGET, "{msg}");
             }
         }
     }
