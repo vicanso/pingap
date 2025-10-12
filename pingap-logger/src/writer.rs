@@ -70,7 +70,8 @@ fn zstd_compress(file: &Path, level: u8) -> Result<(u64, u64)> {
         DEFAULT_COMPRESSION_LEVEL
     } else {
         level
-    };
+    }
+    .min(22);
     let zst_file = file.with_extension(ZSTD_EXT);
     let mut original_file =
         fs::File::open(file).map_err(|e| Error::Io { source: e })?;
@@ -117,7 +118,7 @@ fn gzip_compress(file: &Path, level: u8) -> Result<(u64, u64)> {
     let level = if level == 0 {
         Compression::best()
     } else {
-        Compression::new(level as u32)
+        Compression::new(level.min(9) as u32)
     };
     let mut encoder = GzEncoder::new(&file, level);
     let original_size = io::copy(&mut original_file, &mut encoder)

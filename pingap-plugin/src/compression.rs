@@ -139,9 +139,9 @@ impl TryFrom<&PluginConf> for Compression {
         }
 
         // Get compression levels from configuration
-        let gzip_level = get_int_conf(value, "gzip_level") as u32;
-        let br_level = get_int_conf(value, "br_level") as u32;
-        let zstd_level = get_int_conf(value, "zstd_level") as u32;
+        let gzip_level = get_int_conf(value, "gzip_level").min(9) as u32;
+        let br_level = get_int_conf(value, "br_level").min(11) as u32;
+        let zstd_level = get_int_conf(value, "zstd_level").min(22) as u32;
         let mode = get_str_conf(value, "mode");
 
         // Enable compression if any algorithm has a non-zero level
