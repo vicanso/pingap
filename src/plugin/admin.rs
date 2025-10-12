@@ -408,6 +408,7 @@ impl AdminServe {
             ));
         }
         let buf = get_request_body(session).await?;
+
         match category {
             CATEGORY_UPSTREAM => {
                 self.handle_update_config::<UpstreamConf>(
@@ -459,7 +460,7 @@ impl AdminServe {
             },
             _ => {
                 self.handle_update_config::<BasicConf>(
-                    name,
+                    "",
                     &buf,
                     Category::Basic,
                 )
