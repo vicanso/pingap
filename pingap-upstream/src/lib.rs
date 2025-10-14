@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use ahash::AHashMap;
+use snafu::Snafu;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -20,7 +21,13 @@ mod hash_strategy;
 mod peer_tracer;
 mod upstream;
 
-pub(crate) static LOG_TARGET: &str = "pingap::upstream";
+static LOG_TARGET: &str = "pingap::upstream";
+
+#[derive(Debug, Snafu)]
+pub enum Error {
+    #[snafu(display("Common error, category: {category}, {message}"))]
+    Common { message: String, category: String },
+}
 
 pub type Upstreams = AHashMap<String, Arc<Upstream>>;
 
@@ -47,8 +54,9 @@ pub trait UpstreamProvider: Send + Sync {
     ///
     /// This function iterates through all upstreams and checks their health status.
     fn healthy_status(&self) -> HashMap<String, UpstreamHealthyStatus> {
-        let mut healthy_status = HashMap::new();
-        self.list().iter().for_each(|(k, v)| {
+        let upstreams = self.list();
+        let mut healthy_status = HashMap::with_capacity(upstreams.len());
+        upstreams.iter().for_each(|(k, v)| {
             let mut total = 0;
             let mut healthy = 0;
             let mut unhealthy_backends = vec![];
@@ -80,8 +88,9 @@ pub trait UpstreamProvider: Send + Sync {
     /// # Returns
     /// * `HashMap<String, (i32, Option<i32>)>` - Processing and connected status of all upstreams
     fn processing_connected(&self) -> HashMap<String, (i32, Option<i32>)> {
-        let mut processing_connected = HashMap::new();
-        self.list().iter().for_each(|(k, v)| {
+        let upstreams = self.list();
+        let mut processing_connected = HashMap::with_capacity(upstreams.len());
+        upstreams.iter().for_each(|(k, v)| {
             let count = v.processing();
             let connected = v.connected();
             processing_connected.insert(k.to_string(), (count, connected));

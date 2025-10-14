@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use super::Error;
 use crate::hash_strategy::HashStrategy;
 use crate::peer_tracer::UpstreamPeerTracer;
 use crate::{UpstreamProvider, Upstreams, LOG_TARGET};
@@ -43,18 +44,12 @@ use pingora::protocols::ALPN;
 use pingora::proxy::Session;
 use pingora::upstreams::peer::{HttpPeer, Tracer};
 use serde::{Deserialize, Serialize};
-use snafu::Snafu;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info};
 
-#[derive(Debug, Snafu)]
-pub enum Error {
-    #[snafu(display("Common error, category: {category}, {message}"))]
-    Common { message: String, category: String },
-}
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub struct BackendObserveNotification {
@@ -95,8 +90,6 @@ impl HealthObserve for BackendObserveNotification {
 // - Consistent: Uses consistent hashing to map requests to backends
 // - Transparent: Passes requests through without load balancing
 enum SelectionLb {
-    // Instead of storing Arc<LoadBalancer<S>>, we store Arc<dyn LoadBalancerTrait>.
-    // This avoids the need for `as_round_robin`, `as_consistent`, etc.
     RoundRobin(LoadBalancer<RoundRobin>),
     Consistent {
         lb: LoadBalancer<Consistent>,
@@ -480,11 +473,11 @@ impl Upstream {
         // Select a backend based on the load balancing strategy
         let upstream = match &self.lb {
             // For round-robin, use empty key since selection is sequential
-            SelectionLb::RoundRobin(lb) => lb.select(b"", 256),
+            SelectionLb::RoundRobin(lb) => lb.select(b"", 4),
             // For consistent hashing, generate hash value from request details
             SelectionLb::Consistent { lb, hash } => {
                 let value = hash.get_value(session, client_ip);
-                lb.select(value.as_bytes(), 256)
+                lb.select(value.as_bytes(), 4)
             },
             // For transparent mode, no backend selection needed
             SelectionLb::Transparent => None,

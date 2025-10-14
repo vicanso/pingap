@@ -13,6 +13,7 @@ description = "Proxy for pingap"
 [dependencies]
 ahash = { workspace = true }
 async-trait = { workspace = true }
+bstr = { workspace = true }
 bytes = { workspace = true }
 cfg-if = { workspace = true }
 http = { workspace = true }

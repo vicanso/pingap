@@ -3778,6 +3778,7 @@ version = "0.12.0"
 dependencies = [
  "ahash",
  "async-trait",
+ "bstr",
  "bytes",
  "cfg-if",
  "criterion",

@@ -20,6 +20,7 @@ use super::tracing::{
 use super::{set_append_proxy_headers, ServerConf, LOG_TARGET};
 use crate::ServerLocationsProvider;
 use async_trait::async_trait;
+use bstr::ByteSlice;
 use bytes::Bytes;
 use bytes::BytesMut;
 use http::StatusCode;
@@ -1676,8 +1677,7 @@ impl ProxyHttp for Server {
             if let Some(logger) = &self.access_logger {
                 let _ = logger.try_send(buf);
             } else {
-                let msg = std::string::String::from_utf8(buf.into())
-                    .unwrap_or_default();
+                let msg = buf.as_bstr();
                 info!(target: LOG_TARGET, "{msg}");
             }
         }
