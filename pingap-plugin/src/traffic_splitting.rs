@@ -167,8 +167,8 @@ impl Plugin for TrafficSplitting {
             rng().random_range(..100)
         };
 
-        // if roll_value is less than or equal to weight, hit, need to switch upstream
-        if roll_value <= self.weight {
+        // if roll_value is less than weight, hit, need to switch upstream
+        if roll_value < self.weight {
             ctx.upstream.name = self.upstream.clone();
         }
 
