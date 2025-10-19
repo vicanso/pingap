@@ -3840,6 +3840,7 @@ dependencies = [
  "derive_more",
  "futures",
  "futures-util",
+ "http",
  "pingap-config",
  "pingap-core",
  "pingap-discovery",

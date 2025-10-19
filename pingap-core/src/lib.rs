@@ -14,7 +14,7 @@
 
 use snafu::Snafu;
 
-pub static LOG_TARGET: &str = "pingap::core";
+static LOG_TARGET: &str = "pingap::core";
 
 #[derive(Debug, Snafu)]
 pub enum Error {

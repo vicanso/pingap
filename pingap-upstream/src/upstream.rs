@@ -21,8 +21,11 @@ use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use derive_more::Debug;
 use futures_util::FutureExt;
+use http::StatusCode;
 use pingap_config::Hashable;
 use pingap_config::UpstreamConf;
+use pingap_core::Rate;
+use pingap_core::UpstreamInstance;
 use pingap_core::{
     BackgroundTask, BackgroundTaskService, Error as ServiceError,
 };
@@ -197,24 +200,10 @@ pub struct Upstream {
 
     /// Counter for number of requests currently being processed by this upstream
     processing: AtomicI32,
-}
 
-impl Upstream {
-    pub async fn run_health_check(&self) -> Result<()> {
-        self.lb.update().await.map_err(|e| Error::Common {
-            category: "run_health_check".to_string(),
-            message: e.to_string(),
-        })?;
-        self.lb.run_health_check().await;
-
-        Ok(())
-    }
-    pub fn is_transparent(&self) -> bool {
-        matches!(self.lb, SelectionLb::Transparent)
-    }
-    pub fn processing(&self) -> i32 {
-        self.processing.load(Ordering::Relaxed)
-    }
+    /// Backend stats, success and fail count
+    #[debug("backend_stats")]
+    backend_stats: Option<Rate>,
 }
 
 // Creates new backend servers based on discovery method (DNS/Docker/Static)
@@ -442,6 +431,7 @@ impl Upstream {
             peer_tracer,
             tracer,
             processing: AtomicI32::new(0),
+            backend_stats: None,
         };
         debug!(
             target: LOG_TARGET,
@@ -554,13 +544,43 @@ impl Upstream {
         }
     }
 
+    pub async fn run_health_check(&self) -> Result<()> {
+        self.lb.update().await.map_err(|e| Error::Common {
+            category: "run_health_check".to_string(),
+            message: e.to_string(),
+        })?;
+        self.lb.run_health_check().await;
+
+        Ok(())
+    }
+    pub fn is_transparent(&self) -> bool {
+        matches!(self.lb, SelectionLb::Transparent)
+    }
+    pub fn processing(&self) -> i32 {
+        self.processing.load(Ordering::Relaxed)
+    }
+}
+
+impl UpstreamInstance for Upstream {
     /// Decrements and returns the number of requests being processed
     ///
     /// # Returns
     /// * `i32` - Previous count of requests being processed
-    #[inline]
-    pub fn completed(&self) -> i32 {
+    fn completed(&self) -> i32 {
         self.processing.fetch_add(-1, Ordering::Relaxed)
+    }
+    fn on_transport_failure(&self, _address: &str) {
+        let Some(_backend_stats) = &self.backend_stats else {
+            return;
+        };
+        // self.backend_stats
+        //     .as_ref()
+        //     .map(|stats| stats.on_transport_failure());
+    }
+    fn on_response(&self, _address: &str, _status: StatusCode) {
+        // self.backend_stats
+        //     .as_ref()
+        //     .map(|stats| stats.on_response(status));
     }
 }
 
@@ -744,6 +764,7 @@ mod tests {
         UpstreamProvider,
     };
     use crate::new_ahash_upstreams;
+    use pingap_core::UpstreamInstance;
     use pingap_discovery::Discovery;
     use pingora::protocols::ALPN;
     use pingora::proxy::Session;

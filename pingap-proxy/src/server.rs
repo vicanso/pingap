@@ -1178,6 +1178,7 @@ impl ProxyHttp for Server {
                         self.upstream_provider.as_ref(),
                     )?
                 };
+                ctx.upstream.upstream_instance = Some(upstream.clone());
                 Some(upstream)
             })
             .and_then(|upstream| {
@@ -1253,10 +1254,13 @@ impl ProxyHttp for Server {
     fn fail_to_connect(
         &self,
         _session: &mut Session,
-        _peer: &HttpPeer,
+        peer: &HttpPeer,
         ctx: &mut Self::CTX,
         mut e: Box<pingora::Error>,
     ) -> Box<pingora::Error> {
+        if let Some(upstream_instance) = &ctx.upstream.upstream_instance {
+            upstream_instance.on_transport_failure(&peer.address().to_string());
+        }
         let Some(max_retries) = ctx.upstream.max_retries else {
             return e;
         };
@@ -1444,6 +1448,12 @@ impl ProxyHttp for Server {
             &ctx.timing.created_at,
             &ctx.timing.upstream_processing,
         );
+
+        if let Some(upstream_instance) = &ctx.upstream.upstream_instance {
+            upstream_instance
+                .on_response(&ctx.upstream.address, upstream_response.status);
+        }
+
         Ok(())
     }
 
@@ -1624,12 +1634,8 @@ impl ProxyHttp for Server {
             location.sub_processing();
         }
         // get from cache does not connect to upstream
-        if let Some(upstream) = get_upstream_with_variables(
-            &ctx.upstream.name,
-            ctx,
-            self.upstream_provider.as_ref(),
-        ) {
-            ctx.upstream.processing_count = Some(upstream.completed());
+        if let Some(upstream_instance) = &ctx.upstream.upstream_instance {
+            ctx.upstream.processing_count = Some(upstream_instance.completed());
         }
         if ctx.state.status.is_none() {
             if let Some(header) = session.response_written() {

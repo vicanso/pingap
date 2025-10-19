@@ -178,9 +178,17 @@ impl Default for Timing {
     }
 }
 
+/// Trait for upstream instance, used to handle the upstream instance lifecycle.
+pub trait UpstreamInstance: Send + Sync {
+    fn on_transport_failure(&self, address: &str);
+    fn on_response(&self, address: &str, status: StatusCode);
+    fn completed(&self) -> i32;
+}
+
 /// Information about the upstream (backend) server.
 #[derive(Default)]
 pub struct UpstreamInfo {
+    pub upstream_instance: Option<Arc<dyn UpstreamInstance>>,
     /// The location (route) that directed the request to this upstream.
     pub location: Arc<str>,
     /// The name of the upstream server or group.
