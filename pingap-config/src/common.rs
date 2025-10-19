@@ -16,12 +16,16 @@ use super::{Error, Result};
 use bytesize::ByteSize;
 use http::{HeaderName, HeaderValue};
 use pingap_discovery::{is_static_discovery, DNS_DISCOVERY};
+use pingap_util::resolve_path;
 use regex::Regex;
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::HashSet;
+use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Cursor;
+use std::io::{BufReader, Read};
 use std::net::ToSocketAddrs;
+use std::path::Path;
 use std::time::Duration;
 use std::{collections::HashMap, str::FromStr};
 use strum::EnumString;
@@ -168,6 +172,55 @@ fn validate_cert(value: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+// Generate hash key for certificate configuration
+// Add the content of the certificate and key files to the hash key
+impl Hashable for CertificateConf {
+    fn hash_key(&self) -> String {
+        let mut hasher = DefaultHasher::new();
+
+        // 1. Hash the struct's own fields first.
+        // This includes the paths themselves, so changes to paths affect the hash.
+        self.hash(&mut hasher);
+
+        // 2. Iterate through the optional certificate and key file paths.
+        for path_str in [&self.tls_cert, &self.tls_key].into_iter().flatten() {
+            let file_path = resolve_path(path_str);
+            let path = Path::new(&file_path);
+            if !path.is_file() {
+                continue;
+            }
+
+            match File::open(path) {
+                Ok(file) => {
+                    let mut reader = BufReader::new(file);
+                    let mut buffer = [0; 8192];
+
+                    loop {
+                        match reader.read(&mut buffer) {
+                            Ok(0) => break, // End of file reached successfully.
+                            Ok(bytes_read) => {
+                                // Hash the chunk that was read.
+                                hasher.write(&buffer[..bytes_read]);
+                            },
+                            Err(e) => {
+                                hasher.write(b"Error reading file content:");
+                                hasher.write(e.to_string().as_bytes());
+                                break;
+                            },
+                        }
+                    }
+                },
+                Err(e) => {
+                    hasher.write(b"Error opening file:");
+                    hasher.write(e.to_string().as_bytes());
+                },
+            }
+        }
+
+        format!("{:x}", hasher.finish())
+    }
 }
 
 impl Validate for CertificateConf {
@@ -830,7 +883,6 @@ pub trait Hashable: Hash {
         format!("{:x}", hasher.finish())
     }
 }
-impl Hashable for CertificateConf {}
 impl Hashable for UpstreamConf {}
 impl Hashable for LocationConf {}
 
