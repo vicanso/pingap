@@ -91,7 +91,14 @@ pub fn resolve_path(path: &str) -> String {
 /// # Returns
 /// true if the string appears to be PEM-formatted, false otherwise
 pub fn is_pem(value: &str) -> bool {
-    value.starts_with("-----")
+    let value = value.trim();
+    if let (Some(begin_idx), Some(end_idx)) =
+        (value.find("-----BEGIN "), value.find("-----END "))
+    {
+        begin_idx < end_idx && value.ends_with("-----")
+    } else {
+        false
+    }
 }
 
 /// Converts various certificate/key formats into bytes.

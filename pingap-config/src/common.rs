@@ -16,7 +16,7 @@ use super::{Error, Result};
 use bytesize::ByteSize;
 use http::{HeaderName, HeaderValue};
 use pingap_discovery::{is_static_discovery, DNS_DISCOVERY};
-use pingap_util::resolve_path;
+use pingap_util::{is_pem, resolve_path};
 use regex::Regex;
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::HashSet;
@@ -185,8 +185,11 @@ impl Hashable for CertificateConf {
         self.hash(&mut hasher);
 
         // 2. Iterate through the optional certificate and key file paths.
-        for path_str in [&self.tls_cert, &self.tls_key].into_iter().flatten() {
-            let file_path = resolve_path(path_str);
+        for value in [&self.tls_cert, &self.tls_key].into_iter().flatten() {
+            if is_pem(value) {
+                continue;
+            }
+            let file_path = resolve_path(value);
             let path = Path::new(&file_path);
             if !path.is_file() {
                 continue;
