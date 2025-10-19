@@ -280,6 +280,7 @@ export default {
     verifyCert: "Verify Certificate",
     ipv4Only: "Ipv4 Only",
     enableTracer: "Enable Tracer",
+    enableBackendStats: "Enable Backend Stats",
     tcpFastOpen: "Tcp Fast Open",
     tcpRecvBuf: "Tcp Recv Buf",
     tcpRecvBufPlaceholder: "Input the tcp receive buffer limit size",

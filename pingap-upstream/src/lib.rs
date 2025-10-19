@@ -17,6 +17,7 @@ use snafu::Snafu;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+mod backend_stats;
 mod hash_strategy;
 mod peer_tracer;
 mod upstream;
@@ -83,19 +84,18 @@ pub trait UpstreamProvider: Send + Sync {
         healthy_status
     }
 
-    /// Get the processing and connected status of all upstreams
+    /// Get the stats of all upstreams
     ///
     /// # Returns
-    /// * `HashMap<String, (i32, Option<i32>)>` - Processing and connected status of all upstreams
-    fn processing_connected(&self) -> HashMap<String, (i32, Option<i32>)> {
+    /// * `HashMap<String, UpstreamStats>` - Stats of all upstreams
+    fn get_all_stats(&self) -> HashMap<String, UpstreamStats> {
         let upstreams = self.list();
-        let mut processing_connected = HashMap::with_capacity(upstreams.len());
+        let mut stats_list = HashMap::with_capacity(upstreams.len());
         upstreams.iter().for_each(|(k, v)| {
-            let count = v.processing();
-            let connected = v.connected();
-            processing_connected.insert(k.to_string(), (count, connected));
+            v.update_backend_stats();
+            stats_list.insert(k.to_string(), v.stats());
         });
-        processing_connected
+        stats_list
     }
 }
 

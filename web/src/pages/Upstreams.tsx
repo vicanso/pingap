@@ -256,6 +256,15 @@ export default function Upstreams() {
       options: newBooleanOptions(),
     },
     {
+      name: "enable_backend_stats",
+      label: upstreamI18n("enableBackendStats"),
+      placeholder: "",
+      defaultValue: upstreamConfig.enable_backend_stats,
+      span: 2,
+      category: ExFormItemCategory.RADIOS,
+      options: newBooleanOptions(),
+    },
+    {
       name: "tcp_fast_open",
       label: upstreamI18n("tcpFastOpen"),
       placeholder: "",

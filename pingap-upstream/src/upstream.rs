@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::Error;
+use crate::backend_stats::{BackendStats, WindowStats};
 use crate::hash_strategy::HashStrategy;
 use crate::peer_tracer::UpstreamPeerTracer;
 use crate::{UpstreamProvider, Upstreams, LOG_TARGET};
@@ -24,7 +25,6 @@ use futures_util::FutureExt;
 use http::StatusCode;
 use pingap_config::Hashable;
 use pingap_config::UpstreamConf;
-use pingap_core::Rate;
 use pingap_core::UpstreamInstance;
 use pingap_core::{
     BackgroundTask, BackgroundTaskService, Error as ServiceError,
@@ -203,7 +203,7 @@ pub struct Upstream {
 
     /// Backend stats, success and fail count
     #[debug("backend_stats")]
-    backend_stats: Option<Rate>,
+    backend_stats: Option<BackendStats>,
 }
 
 // Creates new backend servers based on discovery method (DNS/Docker/Static)
@@ -359,6 +359,13 @@ fn new_load_balancer(
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct UpstreamStats {
+    pub processing: i32,
+    pub connected: Option<i32>,
+    pub backend_stats: HashMap<String, WindowStats>,
+}
+
 impl Upstream {
     /// Creates a new Upstream instance from the provided configuration
     ///
@@ -431,7 +438,11 @@ impl Upstream {
             peer_tracer,
             tracer,
             processing: AtomicI32::new(0),
-            backend_stats: None,
+            backend_stats: if conf.enable_backend_stats.unwrap_or_default() {
+                Some(BackendStats::new())
+            } else {
+                None
+            },
         };
         debug!(
             target: LOG_TARGET,
@@ -522,15 +533,6 @@ impl Upstream {
         })
     }
 
-    /// Returns the current number of active connections to this upstream
-    ///
-    /// # Returns
-    /// * `Option<i32>` - Number of active connections if tracking is enabled, None otherwise
-    #[inline]
-    pub fn connected(&self) -> Option<i32> {
-        self.peer_tracer.as_ref().map(|tracer| tracer.connected())
-    }
-
     /// Returns the backends of the upstream
     ///
     /// # Returns
@@ -556,8 +558,28 @@ impl Upstream {
     pub fn is_transparent(&self) -> bool {
         matches!(self.lb, SelectionLb::Transparent)
     }
-    pub fn processing(&self) -> i32 {
-        self.processing.load(Ordering::Relaxed)
+    pub fn connected(&self) -> Option<i32> {
+        self.peer_tracer.as_ref().map(|tracer| tracer.connected())
+    }
+    pub fn update_backend_stats(&self) {
+        let Some(backend_stats) = &self.backend_stats else {
+            return;
+        };
+        backend_stats.update();
+    }
+    pub fn stats(&self) -> UpstreamStats {
+        UpstreamStats {
+            processing: self.processing.load(Ordering::Relaxed),
+            connected: self
+                .peer_tracer
+                .as_ref()
+                .map(|tracer| tracer.connected()),
+            backend_stats: self
+                .backend_stats
+                .as_ref()
+                .map(|backend_stats| backend_stats.get_all_stats())
+                .unwrap_or_default(),
+        }
     }
 }
 
@@ -569,18 +591,19 @@ impl UpstreamInstance for Upstream {
     fn completed(&self) -> i32 {
         self.processing.fetch_add(-1, Ordering::Relaxed)
     }
-    fn on_transport_failure(&self, _address: &str) {
-        let Some(_backend_stats) = &self.backend_stats else {
+    fn on_transport_failure(&self, address: &str) {
+        let Some(backend_stats) = &self.backend_stats else {
             return;
         };
-        // self.backend_stats
-        //     .as_ref()
-        //     .map(|stats| stats.on_transport_failure());
+        debug!(target: LOG_TARGET, address, "on_transport_failure");
+        backend_stats.on_transport_failure(address);
     }
-    fn on_response(&self, _address: &str, _status: StatusCode) {
-        // self.backend_stats
-        //     .as_ref()
-        //     .map(|stats| stats.on_response(status));
+    fn on_response(&self, address: &str, status: StatusCode) {
+        let Some(backend_stats) = &self.backend_stats else {
+            return;
+        };
+        debug!(target: LOG_TARGET, address, status = status.to_string(), "on_response");
+        backend_stats.on_response(address, status);
     }
 }
 
@@ -922,10 +945,10 @@ mod tests {
 
         let upstream_provider = Arc::new(TmpProvider { upstream });
 
-        let stat = upstream_provider.processing_connected();
+        let stat = upstream_provider.get_all_stats();
 
         assert_eq!(1, stat.len());
-        assert_eq!(10, stat.get("test").unwrap().0);
+        assert_eq!(10, stat.get("test").unwrap().processing);
     }
 
     #[test]

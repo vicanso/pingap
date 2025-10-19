@@ -247,6 +247,7 @@ export default {
     verifyCert: "证书校验",
     ipv4Only: "仅使用ipv4",
     enableTracer: "启用跟踪器",
+    enableBackendStats: "启用后端统计",
     tcpFastOpen: "Tcp快速开启",
     tcpRecvBuf: "tcp接收缓存",
     tcpRecvBufPlaceholder: "输入tcp接收缓存限制大小",

@@ -20,6 +20,7 @@ export interface Upstream {
   health_check?: string;
   ipv4_only?: boolean;
   enable_tracer?: boolean;
+  enable_backend_stats?: boolean;
   connection_timeout?: string;
   total_connection_timeout?: string;
   read_timeout?: string;

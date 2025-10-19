@@ -3837,6 +3837,7 @@ dependencies = [
  "async-trait",
  "bytesize",
  "criterion",
+ "dashmap",
  "derive_more",
  "futures",
  "futures-util",

@@ -299,6 +299,9 @@ pub struct UpstreamConf {
     /// Enable request tracing
     pub enable_tracer: Option<bool>,
 
+    /// Enable backend stats
+    pub enable_backend_stats: Option<bool>,
+
     /// Application Layer Protocol Negotiation for TLS
     pub alpn: Option<String>,
 
