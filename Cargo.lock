@@ -3629,6 +3629,7 @@ dependencies = [
  "bytesize",
  "criterion",
  "http",
+ "once_cell",
  "pingap-config",
  "pingap-core",
  "pingora",

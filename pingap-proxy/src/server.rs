@@ -30,6 +30,7 @@ use pingap_certificate::CertificateProvider;
 use pingap_certificate::{GlobalCertificate, TlsSettingParams};
 use pingap_config::ConfigManager;
 use pingap_core::BackgroundTask;
+use pingap_core::LocationInstance;
 use pingap_core::PluginProvider;
 use pingap_core::{
     get_cache_key, CompressionStat, Ctx, PluginStep, RequestPluginResult,
@@ -531,6 +532,7 @@ impl Server {
 
         // only execute all subsequent operations after successtracingy matching location
         ctx.upstream.location = location.name.clone();
+        ctx.upstream.location_instance = Some(location.clone());
         ctx.upstream.max_retries = location.max_retries;
         ctx.upstream.max_retry_window = location.max_retry_window;
         if let Some(captures) = captures {
@@ -555,9 +557,7 @@ impl Server {
             .map_err(|e| new_internal_error(413, e))?;
 
         // limit processing
-        let (accepted, processing) = location
-            .add_processing()
-            .map_err(|e| new_internal_error(429, e))?;
+        let (accepted, processing) = location.on_request()?;
         ctx.state.location_accepted_count = accepted;
         ctx.state.location_processing_count = processing;
 
@@ -651,8 +651,7 @@ impl Server {
         session: &mut Session,
         ctx: &mut Ctx,
     ) -> pingora::Result<bool> {
-        let Some(location) = self.location_provider.get(&ctx.upstream.location)
-        else {
+        let Some(location) = &ctx.upstream.location_instance else {
             let header = session.req_header();
             let host = pingap_core::get_host(header).unwrap_or_default();
             let body = Bytes::from(format!(
@@ -666,7 +665,7 @@ impl Server {
         debug!(
             target: LOG_TARGET,
             server = self.name,
-            location = location.name.as_ref(),
+            location = location.name(),
             "location is matched"
         );
 
@@ -1160,13 +1159,16 @@ impl ProxyHttp for Server {
     ) -> pingora::Result<Box<HttpPeer>> {
         debug!(target: LOG_TARGET, "--> upstream peer");
         defer!(debug!(target: LOG_TARGET, "<-- upstream peer"););
-        let peer = self
-            .location_provider
-            .get(&ctx.upstream.location)
+
+        let peer = ctx
+            .upstream
+            .location_instance
+            .clone()
+            .as_ref()
             .and_then(|location| {
                 let upstream = if ctx.upstream.name.is_empty() {
                     get_upstream_with_variables(
-                        &location.upstream,
+                        location.upstream(),
                         ctx,
                         self.upstream_provider.as_ref(),
                     )?
@@ -1289,11 +1291,7 @@ impl ProxyHttp for Server {
     {
         debug!(target: LOG_TARGET, "--> upstream request filter");
         defer!(debug!(target: LOG_TARGET, "<-- upstream request filter"););
-        if let Some(location) =
-            self.location_provider.get(&ctx.upstream.location)
-        {
-            set_append_proxy_headers(session, ctx, upstream_response, location);
-        }
+        set_append_proxy_headers(session, ctx, upstream_response);
         Ok(())
     }
     /// Filters request body chunks before sending upstream.
@@ -1312,12 +1310,14 @@ impl ProxyHttp for Server {
         defer!(debug!(target: LOG_TARGET, "<-- request body filter"););
         if let Some(buf) = body {
             ctx.state.payload_size += buf.len();
-            if let Some(location) =
-                self.location_provider.get(&ctx.upstream.location)
-            {
-                location
-                    .client_body_size_limit(ctx.state.payload_size)
-                    .map_err(|e| new_internal_error(413, e))?;
+            if let Some(location) = &ctx.upstream.location_instance {
+                let size = location.client_body_size_limit();
+                if size > 0 && ctx.state.payload_size > size {
+                    return Err(new_internal_error(
+                        413,
+                        format!("Request Entity Too Large, max:{size}"),
+                    ));
+                }
             }
         }
         Ok(())
@@ -1628,10 +1628,8 @@ impl ProxyHttp for Server {
         defer!(debug!(target: LOG_TARGET, "<-- logging"););
         end_request();
         self.processing.fetch_sub(1, Ordering::Relaxed);
-        if let Some(location) =
-            self.location_provider.get(&ctx.upstream.location)
-        {
-            location.sub_processing();
+        if let Some(location) = &ctx.upstream.location_instance {
+            location.on_response();
         }
         // get from cache does not connect to upstream
         if let Some(upstream_instance) = &ctx.upstream.upstream_instance {
@@ -1921,9 +1919,11 @@ value = 'proxy_set_headers = ["name:value"]'
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
+        let location = server.location_provider.get("lo").unwrap();
         let mut ctx = Ctx {
             upstream: UpstreamInfo {
                 location: "lo".to_string().into(),
+                location_instance: Some(location.clone()),
                 ..Default::default()
             },
             ..Default::default()

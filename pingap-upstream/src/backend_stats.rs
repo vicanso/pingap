@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::UpstreamProvider;
+use async_trait::async_trait;
 use dashmap::DashMap;
 use http::StatusCode;
-use pingap_core::now_sec;
+use pingap_core::{now_sec, BackgroundTask, Error};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -155,4 +157,26 @@ impl BackendStats {
             })
             .collect()
     }
+}
+
+struct BackendStatsTask {
+    provider: Arc<dyn UpstreamProvider>,
+}
+
+#[async_trait]
+impl BackgroundTask for BackendStatsTask {
+    async fn execute(&self, _count: u32) -> Result<bool, Error> {
+        for (_, upstream) in self.provider.list().iter() {
+            upstream.update_backend_stats();
+        }
+        Ok(true)
+    }
+}
+
+pub fn new_upstream_backend_stats_task(
+    upstream_provider: Arc<dyn UpstreamProvider>,
+) -> Box<dyn BackgroundTask> {
+    Box::new(BackendStatsTask {
+        provider: upstream_provider,
+    })
 }

@@ -14,8 +14,13 @@
 
 use super::regex::RegexCapture;
 use ahash::AHashMap;
+use http::HeaderName;
+use http::HeaderValue;
+use once_cell::sync::Lazy;
 use pingap_config::Hashable;
 use pingap_config::LocationConf;
+use pingap_core::new_internal_error;
+use pingap_core::LocationInstance;
 use pingap_core::{convert_headers, HttpHeader};
 use pingora::http::RequestHeader;
 use regex::Regex;
@@ -147,6 +152,22 @@ impl HostSelector {
     }
 }
 
+// proxy_set_header X-Real-IP $remote_addr;
+// proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+// proxy_set_header X-Forwarded-Proto $scheme;
+// proxy_set_header X-Forwarded-Host $host;
+// proxy_set_header X-Forwarded-Port $server_port;
+static DEFAULT_PROXY_SET_HEADERS: Lazy<Vec<HttpHeader>> = Lazy::new(|| {
+    convert_headers(&[
+        "x-real-ip:$remote_addr".to_string(),
+        "x-forwarded-for:$proxy_add_x_forwarded_for".to_string(),
+        "x-forwarded-proto:$scheme".to_string(),
+        "x-forwarded-host:$host".to_string(),
+        "x-forwarded-port:$server_port".to_string(),
+    ])
+    .unwrap()
+});
+
 /// Location represents a routing configuration for handling HTTP requests.
 /// It defines rules for matching requests based on paths and hosts, and specifies
 /// how these requests should be processed and proxied.
@@ -159,7 +180,7 @@ pub struct Location {
     pub key: String,
 
     /// Target upstream server where requests will be proxied to
-    pub upstream: String,
+    upstream: String,
 
     /// Original path pattern string used for matching requests
     path: String,
@@ -176,13 +197,16 @@ pub struct Location {
     /// - replacement string with optional capture group references
     reg_rewrite: Option<(Regex, String)>,
 
+    /// Headers to set or append on proxied requests
+    pub headers: Option<Vec<(HeaderName, HeaderValue, bool)>>,
+
     /// Additional headers to append to proxied requests
     /// These are added without removing existing headers
-    pub proxy_add_headers: Option<Vec<HttpHeader>>,
+    // pub proxy_add_headers: Option<Vec<HttpHeader>>,
 
     /// Headers to set on proxied requests
     /// These override any existing headers with the same name
-    pub proxy_set_headers: Option<Vec<HttpHeader>>,
+    // pub proxy_set_headers: Option<Vec<HttpHeader>>,
 
     /// Ordered list of plugin names to execute during request/response processing
     pub plugins: Option<Vec<String>>,
@@ -209,7 +233,7 @@ pub struct Location {
 
     /// Whether to automatically add standard reverse proxy headers like:
     /// X-Forwarded-For, X-Real-IP, X-Forwarded-Proto, etc.
-    pub enable_reverse_proxy_headers: bool,
+    // pub enable_reverse_proxy_headers: bool,
 
     /// Maximum window for retries
     pub max_retries: Option<u8>,
@@ -290,6 +314,26 @@ impl Location {
             .collect::<Result<Vec<_>>>()?;
 
         let path = conf.path.clone().unwrap_or_default();
+        let mut headers: Vec<(HeaderName, HeaderValue, bool)> = vec![];
+        if conf.enable_reverse_proxy_headers.unwrap_or_default() {
+            for (name, value) in DEFAULT_PROXY_SET_HEADERS.iter() {
+                headers.push((name.clone(), value.clone(), false));
+            }
+        }
+        if let Some(proxy_set_headers) =
+            format_headers(&conf.proxy_set_headers)?
+        {
+            for (name, value) in proxy_set_headers.iter() {
+                headers.push((name.clone(), value.clone(), false));
+            }
+        }
+        if let Some(proxy_add_headers) =
+            format_headers(&conf.proxy_add_headers)?
+        {
+            for (name, value) in proxy_add_headers.iter() {
+                headers.push((name.clone(), value.clone(), true));
+            }
+        }
 
         let location = Location {
             name: name.into(),
@@ -304,15 +348,20 @@ impl Location {
             processing: AtomicI32::new(0),
             max_processing: conf.max_processing.unwrap_or_default(),
             grpc_web: conf.grpc_web.unwrap_or_default(),
-            proxy_add_headers: format_headers(&conf.proxy_add_headers)?,
-            proxy_set_headers: format_headers(&conf.proxy_set_headers)?,
+            headers: if headers.is_empty() {
+                None
+            } else {
+                Some(headers)
+            },
+            // proxy_add_headers: format_headers(&conf.proxy_add_headers)?,
+            // proxy_set_headers: format_headers(&conf.proxy_set_headers)?,
             client_max_body_size: conf
                 .client_max_body_size
                 .unwrap_or_default()
                 .as_u64() as usize,
-            enable_reverse_proxy_headers: conf
-                .enable_reverse_proxy_headers
-                .unwrap_or_default(),
+            // enable_reverse_proxy_headers: conf
+            //     .enable_reverse_proxy_headers
+            //     .unwrap_or_default(),
             max_retries: conf.max_retries,
             max_retry_window: conf.max_retry_window,
         };
@@ -362,58 +411,6 @@ impl Location {
         Ok(())
     }
 
-    /// Sets the maximum allowed size of the client request body.
-    /// If the size in a request exceeds the configured value, the 413 (Request Entity Too Large) error
-    /// is returned to the client.
-    #[inline]
-    pub fn client_body_size_limit(&self, payload_size: usize) -> Result<()> {
-        if self.client_max_body_size == 0 {
-            return Ok(());
-        }
-        if payload_size > self.client_max_body_size {
-            return Err(Error::BodyTooLarge {
-                max: self.client_max_body_size,
-            });
-        }
-        Ok(())
-    }
-
-    /// Increments the processing and accepted request counters for this location.
-    ///
-    /// This method is called when a new request starts being processed by this location.
-    /// It performs two atomic operations:
-    /// 1. Increments the total accepted requests counter
-    /// 2. Increments the currently processing requests counter
-    ///
-    /// # Returns
-    /// * `Result<(u64, i32)>` - A tuple containing:
-    ///   - The new total number of accepted requests (u64)
-    ///   - The new number of currently processing requests (i32)
-    ///
-    /// # Errors
-    /// Returns `Error::TooManyRequest` if the number of currently processing requests
-    /// would exceed the configured `max_processing` limit (when non-zero).
-    #[inline]
-    pub fn add_processing(&self) -> Result<(u64, i32)> {
-        let accepted = self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
-        let processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
-        if self.max_processing != 0 && processing > self.max_processing {
-            return Err(Error::TooManyRequest {
-                max: self.max_processing,
-            });
-        }
-        Ok((accepted, processing))
-    }
-
-    /// Decrements the processing request counter for this location.
-    ///
-    /// This method is called when a request finishes being processed.
-    /// It performs an atomic decrement of the currently processing requests counter.
-    #[inline]
-    pub fn sub_processing(&self) {
-        self.processing.fetch_sub(1, Ordering::Relaxed);
-    }
-
     /// Checks if a request matches this location's path and host rules
     /// Returns a tuple containing:
     /// - bool: Whether the request matched both path and host rules
@@ -457,6 +454,56 @@ impl Location {
         (matched, capture_values)
     }
 
+    pub fn stats(&self) -> LocationStats {
+        LocationStats {
+            processing: self.processing.load(Ordering::Relaxed),
+            accepted: self.accepted.load(Ordering::Relaxed),
+        }
+    }
+}
+
+impl LocationInstance for Location {
+    fn name(&self) -> &str {
+        self.name.as_ref()
+    }
+    fn headers(&self) -> Option<&Vec<(HeaderName, HeaderValue, bool)>> {
+        self.headers.as_ref()
+    }
+    fn client_body_size_limit(&self) -> usize {
+        self.client_max_body_size
+    }
+    fn upstream(&self) -> &str {
+        self.upstream.as_ref()
+    }
+    fn on_response(&self) {
+        self.processing.fetch_sub(1, Ordering::Relaxed);
+    }
+    /// Increments the processing and accepted request counters for this location.
+    ///
+    /// This method is called when a new request starts being processed by this location.
+    /// It performs two atomic operations:
+    /// 1. Increments the total accepted requests counter
+    /// 2. Increments the currently processing requests counter
+    ///
+    /// # Returns
+    /// * `Result<(u64, i32)>` - A tuple containing:
+    ///   - The new total number of accepted requests (u64)
+    ///   - The new number of currently processing requests (i32)
+    ///
+    /// # Errors
+    /// Returns `Error::TooManyRequest` if the number of currently processing requests
+    /// would exceed the configured `max_processing` limit (when non-zero).
+    fn on_request(&self) -> pingora::Result<(u64, i32)> {
+        let accepted = self.accepted.fetch_add(1, Ordering::Relaxed) + 1;
+        let processing = self.processing.fetch_add(1, Ordering::Relaxed) + 1;
+        if self.max_processing != 0 && processing > self.max_processing {
+            let err = Error::TooManyRequest {
+                max: self.max_processing,
+            };
+            return Err(new_internal_error(429, err));
+        }
+        Ok((accepted, processing))
+    }
     /// Applies URL rewriting rules if configured for this location.
     ///
     /// This method performs path rewriting based on regex patterns and replacement rules.
@@ -482,7 +529,7 @@ impl Location {
     /// - Logs debug information about path rewrites
     /// - Logs errors if the new path cannot be parsed as a valid URI
     #[inline]
-    pub fn rewrite(
+    fn rewrite(
         &self,
         header: &mut RequestHeader,
         variables: Option<&AHashMap<String, String>>,
@@ -518,12 +565,6 @@ impl Location {
             return true;
         }
         false
-    }
-    pub fn stats(&self) -> LocationStats {
-        LocationStats {
-            processing: self.processing.load(Ordering::Relaxed),
-            accepted: self.accepted.load(Ordering::Relaxed),
-        }
     }
 }
 
@@ -693,32 +734,6 @@ mod tests {
         assert_eq!("/api/me?abc=1", req_header.uri.to_string());
     }
 
-    #[test]
-    fn test_client_body_size_limit() {
-        let upstream_name = "charts";
-
-        let lo = Location::new(
-            "lo",
-            &LocationConf {
-                upstream: Some(upstream_name.to_string()),
-                rewrite: Some("^/users/(.*)$ /$1".to_string()),
-                plugins: Some(vec!["test:mock".to_string()]),
-                client_max_body_size: Some(ByteSize(10)),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-
-        let result = lo.client_body_size_limit(2);
-        assert_eq!(true, result.is_ok());
-
-        let result = lo.client_body_size_limit(20);
-        assert_eq!(
-            "Request Entity Too Large, max:10",
-            result.err().unwrap().to_string()
-        );
-    }
-
     #[tokio::test]
     async fn test_get_content_length() {
         let headers = ["Content-Length: 123"].join("\r\n");
@@ -728,24 +743,6 @@ mod tests {
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         assert_eq!(get_content_length(session.req_header()), Some(123));
-    }
-
-    #[test]
-    fn test_location_processing() {
-        let lo = Location::new(
-            "lo",
-            &LocationConf {
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        let value = lo.add_processing().unwrap();
-        assert_eq!(1, value.0);
-        assert_eq!(1, value.1);
-
-        lo.sub_processing();
-        assert_eq!(1, lo.accepted.load(Ordering::Relaxed));
-        assert_eq!(0, lo.processing.load(Ordering::Relaxed));
     }
 
     #[test]

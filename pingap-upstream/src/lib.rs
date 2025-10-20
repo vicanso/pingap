@@ -92,12 +92,12 @@ pub trait UpstreamProvider: Send + Sync {
         let upstreams = self.list();
         let mut stats_list = HashMap::with_capacity(upstreams.len());
         upstreams.iter().for_each(|(k, v)| {
-            v.update_backend_stats();
             stats_list.insert(k.to_string(), v.stats());
         });
         stats_list
     }
 }
 
+pub use backend_stats::new_upstream_backend_stats_task;
 pub use hash_strategy::HashStrategy;
 pub use upstream::*;

@@ -17,6 +17,7 @@ use ahash::AHashMap;
 use bytes::BytesMut;
 use http::StatusCode;
 use http::Uri;
+use http::{HeaderName, HeaderValue};
 #[cfg(feature = "tracing")]
 use opentelemetry::{
     global::{BoxedSpan, BoxedTracer, ObjectSafeSpan},
@@ -24,6 +25,7 @@ use opentelemetry::{
     Context,
 };
 use pingora::cache::CacheKey;
+use pingora::http::RequestHeader;
 use pingora::protocols::Digest;
 use pingora::protocols::TimingDigest;
 use pingora::proxy::Session;
@@ -185,10 +187,39 @@ pub trait UpstreamInstance: Send + Sync {
     fn completed(&self) -> i32;
 }
 
+/// Trait for location instance
+pub trait LocationInstance: Send + Sync {
+    /// Get location's name
+    fn name(&self) -> &str;
+    /// Get the upstream of location
+    fn upstream(&self) -> &str;
+    /// Rewrite the request url
+    fn rewrite(
+        &self,
+        header: &mut RequestHeader,
+        variables: Option<&AHashMap<String, String>>,
+    ) -> bool;
+    /// Returns the proxy header to upstream
+    fn headers(&self) -> Option<&Vec<(HeaderName, HeaderValue, bool)>>;
+    /// Returns the client body size limit
+    fn client_body_size_limit(&self) -> usize;
+    /// Called when the request is received from the client
+    /// Returns
+    /// `Result<(u64, i32)>` - A tuple containing:
+    ///   - The new total number of accepted requests (u64)
+    ///   - The new number of currently processing requests (i32)
+    fn on_request(&self) -> pingora::Result<(u64, i32)>;
+    /// Called when the response is received from the upstream
+    fn on_response(&self);
+}
+
 /// Information about the upstream (backend) server.
 #[derive(Default)]
 pub struct UpstreamInfo {
+    /// Upstream instance
     pub upstream_instance: Option<Arc<dyn UpstreamInstance>>,
+    /// Location instance
+    pub location_instance: Option<Arc<dyn LocationInstance>>,
     /// The location (route) that directed the request to this upstream.
     pub location: Arc<str>,
     /// The name of the upstream server or group.

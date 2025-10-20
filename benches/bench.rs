@@ -5,6 +5,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use http::{HeaderName, HeaderValue, StatusCode};
 use nanoid::nanoid;
 use pingap_config::LocationConf;
+use pingap_core::LocationInstance;
 use pingap_core::{
     convert_headers, get_super_ts, CompressionStat, ConnectionInfo, Ctx,
     Features, HttpResponse, RequestState, Timing, UpstreamInfo,

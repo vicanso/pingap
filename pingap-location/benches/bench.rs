@@ -1,5 +1,6 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use pingap_config::LocationConf;
+use pingap_core::LocationInstance;
 use pingap_location::Location;
 use pingora::http::RequestHeader;
 
