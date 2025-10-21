@@ -281,6 +281,8 @@ export default {
     ipv4Only: "Ipv4 Only",
     enableTracer: "Enable Tracer",
     enableBackendStats: "Enable Backend Stats",
+    backendFailureStatusCode: "Backend Failure Status Code",
+    backendFailureStatusCodePlaceholder: "Input the backend failure status code(e.g. 400,500,502,503,504)",
     tcpFastOpen: "Tcp Fast Open",
     tcpRecvBuf: "Tcp Recv Buf",
     tcpRecvBufPlaceholder: "Input the tcp receive buffer limit size",

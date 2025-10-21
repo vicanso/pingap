@@ -302,6 +302,10 @@ pub struct UpstreamConf {
     /// Enable backend stats
     pub enable_backend_stats: Option<bool>,
 
+    /// Failure status codes for backend stats
+    /// Format: "400,500,502,503,504"
+    pub backend_failure_status_code: Option<String>,
+
     /// Application Layer Protocol Negotiation for TLS
     pub alpn: Option<String>,
 

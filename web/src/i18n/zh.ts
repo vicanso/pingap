@@ -248,6 +248,8 @@ export default {
     ipv4Only: "仅使用ipv4",
     enableTracer: "启用跟踪器",
     enableBackendStats: "启用后端统计",
+    backendFailureStatusCode: "后端失败状态码",
+    backendFailureStatusCodePlaceholder: "输入后端失败状态码(如400,500,502,503,504)",
     tcpFastOpen: "Tcp快速开启",
     tcpRecvBuf: "tcp接收缓存",
     tcpRecvBufPlaceholder: "输入tcp接收缓存限制大小",

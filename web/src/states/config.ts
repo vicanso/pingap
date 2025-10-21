@@ -21,6 +21,7 @@ export interface Upstream {
   ipv4_only?: boolean;
   enable_tracer?: boolean;
   enable_backend_stats?: boolean;
+  backend_failure_status_code?: string;
   connection_timeout?: string;
   total_connection_timeout?: string;
   read_timeout?: string;

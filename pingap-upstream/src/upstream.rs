@@ -416,6 +416,13 @@ impl Upstream {
         } else {
             None
         };
+        let failure_status_codes = conf
+            .backend_failure_status_code
+            .clone()
+            .unwrap_or_default()
+            .split(",")
+            .flat_map(|code| code.trim().parse::<u16>().ok())
+            .collect::<Vec<u16>>();
         let tracer = peer_tracer
             .as_ref()
             .map(|peer_tracer| Tracer(Box::new(peer_tracer.to_owned())));
@@ -439,7 +446,7 @@ impl Upstream {
             tracer,
             processing: AtomicI32::new(0),
             backend_stats: if conf.enable_backend_stats.unwrap_or_default() {
-                Some(BackendStats::new())
+                Some(BackendStats::new(failure_status_codes))
             } else {
                 None
             },
@@ -450,6 +457,11 @@ impl Upstream {
             "new upstream: {up:?}"
         );
         Ok(up)
+    }
+
+    #[inline]
+    fn accept_backend(&self, _backend: &Backend, healthy: bool) -> bool {
+        healthy
     }
 
     /// Creates and configures a new HTTP peer for handling requests
@@ -474,11 +486,17 @@ impl Upstream {
         // Select a backend based on the load balancing strategy
         let upstream = match &self.lb {
             // For round-robin, use empty key since selection is sequential
-            SelectionLb::RoundRobin(lb) => lb.select(b"", 4),
+            SelectionLb::RoundRobin(lb) => {
+                lb.select_with(b"", 4, |backend, healthy| {
+                    self.accept_backend(backend, healthy)
+                })
+            },
             // For consistent hashing, generate hash value from request details
             SelectionLb::Consistent { lb, hash } => {
                 let value = hash.get_value(session, client_ip);
-                lb.select(value.as_bytes(), 4)
+                lb.select_with(value.as_bytes(), 4, |backend, healthy| {
+                    self.accept_backend(backend, healthy)
+                })
             },
             // For transparent mode, no backend selection needed
             SelectionLb::Transparent => None,
@@ -565,7 +583,15 @@ impl Upstream {
         let Some(backend_stats) = &self.backend_stats else {
             return;
         };
-        backend_stats.update();
+        let Some(backends) = self.get_backends() else {
+            return;
+        };
+        let backend_addresses = backends
+            .get_backend()
+            .iter()
+            .map(|backend| backend.to_string())
+            .collect::<Vec<String>>();
+        backend_stats.update(backend_addresses);
     }
     pub fn stats(&self) -> UpstreamStats {
         UpstreamStats {

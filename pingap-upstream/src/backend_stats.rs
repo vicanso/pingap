@@ -17,14 +17,19 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use http::StatusCode;
 use pingap_core::{now_sec, BackgroundTask, Error};
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 
 #[derive(Debug, Default)]
 struct StatsSlot {
+    // total requests count
     total_requests: AtomicU64,
+    // failed requests count
     failed_requests: AtomicU64,
+    // consecutive failures count
+    // TODO 连续失败多少次则熔断
+    consecutive_failures: AtomicU32,
 }
 
 impl StatsSlot {
@@ -114,12 +119,22 @@ impl Backend {
 }
 
 pub struct BackendStats {
+    failure_status_codes: Option<HashSet<StatusCode>>,
     backends: DashMap<String, Arc<Backend>>,
 }
 
 impl BackendStats {
-    pub fn new() -> Self {
+    pub fn new(failure_status_codes: Vec<u16>) -> Self {
+        let failure_status_codes = failure_status_codes
+            .iter()
+            .flat_map(|code| StatusCode::from_u16(*code).ok())
+            .collect::<HashSet<StatusCode>>();
         Self {
+            failure_status_codes: if failure_status_codes.is_empty() {
+                None
+            } else {
+                Some(failure_status_codes)
+            },
             backends: DashMap::new(),
         }
     }
@@ -138,11 +153,23 @@ impl BackendStats {
         let backend = self.get_backend(address);
         let (current, _) = backend.get_slots();
         current.total_requests.fetch_add(1, Ordering::Relaxed);
-        if status.is_server_error() {
+        let failure = self.failure_status_codes.as_ref().map_or_else(
+            || status.is_server_error(),
+            |codes| codes.contains(&status),
+        );
+
+        // Update failure counters based on the determined 'failure' status
+        if failure {
             current.failed_requests.fetch_add(1, Ordering::Relaxed);
+            current.consecutive_failures.fetch_add(1, Ordering::Relaxed);
+        } else {
+            current.consecutive_failures.store(0, Ordering::Relaxed);
         }
     }
-    pub fn update(&self) {
+    pub fn update(&self, backend_addresses: Vec<String>) {
+        self.backends.retain(|backend_addr, _stats| {
+            backend_addresses.contains(backend_addr)
+        });
         for backend in self.backends.iter() {
             backend.toggle_and_reset_slot();
         }

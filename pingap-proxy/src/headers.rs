@@ -135,8 +135,6 @@ mod tests {
                 .unwrap()
         );
 
-        println!("{:?}", header.headers);
-
         assert_eq!(
             "123,456",
             header

@@ -265,6 +265,14 @@ export default function Upstreams() {
       options: newBooleanOptions(),
     },
     {
+      name: "backend_failure_status_code",
+      label: upstreamI18n("backendFailureStatusCode"),
+      placeholder: upstreamI18n("backendFailureStatusCodePlaceholder"),
+      defaultValue: upstreamConfig.backend_failure_status_code,
+      span: 2,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
       name: "tcp_fast_open",
       label: upstreamI18n("tcpFastOpen"),
       placeholder: "",
