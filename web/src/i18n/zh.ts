@@ -250,6 +250,8 @@ export default {
     enableBackendStats: "启用后端统计",
     backendFailureStatusCode: "后端失败状态码",
     backendFailureStatusCodePlaceholder: "输入后端失败状态码(如400,500,502,503,504)",
+    backendStatsInterval: "后端统计间隔",
+    backendStatsIntervalPlaceholder: "输入后端统计间隔(如60s)",
     tcpFastOpen: "Tcp快速开启",
     tcpRecvBuf: "tcp接收缓存",
     tcpRecvBufPlaceholder: "输入tcp接收缓存限制大小",

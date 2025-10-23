@@ -273,6 +273,14 @@ export default function Upstreams() {
       category: ExFormItemCategory.TEXT,
     },
     {
+      name: "backend_stats_interval",
+      label: upstreamI18n("backendStatsInterval"),
+      placeholder: upstreamI18n("backendStatsIntervalPlaceholder"),
+      defaultValue: upstreamConfig.backend_stats_interval,
+      span: 2,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
       name: "tcp_fast_open",
       label: upstreamI18n("tcpFastOpen"),
       placeholder: "",

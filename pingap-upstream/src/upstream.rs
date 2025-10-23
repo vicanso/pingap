@@ -359,7 +359,7 @@ fn new_load_balancer(
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct UpstreamStats {
     pub processing: i32,
     pub connected: Option<i32>,
@@ -446,7 +446,11 @@ impl Upstream {
             tracer,
             processing: AtomicI32::new(0),
             backend_stats: if conf.enable_backend_stats.unwrap_or_default() {
-                Some(BackendStats::new(failure_status_codes))
+                Some(BackendStats::new(
+                    conf.backend_stats_interval
+                        .unwrap_or_else(|| Duration::from_secs(60)),
+                    failure_status_codes,
+                ))
             } else {
                 None
             },
@@ -579,21 +583,11 @@ impl Upstream {
     pub fn connected(&self) -> Option<i32> {
         self.peer_tracer.as_ref().map(|tracer| tracer.connected())
     }
-    pub fn update_backend_stats(&self) {
-        let Some(backend_stats) = &self.backend_stats else {
-            return;
-        };
-        let Some(backends) = self.get_backends() else {
-            return;
-        };
-        let backend_addresses = backends
-            .get_backend()
-            .iter()
-            .map(|backend| backend.to_string())
-            .collect::<Vec<String>>();
-        backend_stats.update(backend_addresses);
-    }
+
     pub fn stats(&self) -> UpstreamStats {
+        let Some(backends) = self.get_backends() else {
+            return UpstreamStats::default();
+        };
         UpstreamStats {
             processing: self.processing.load(Ordering::Relaxed),
             connected: self
@@ -603,7 +597,7 @@ impl Upstream {
             backend_stats: self
                 .backend_stats
                 .as_ref()
-                .map(|backend_stats| backend_stats.get_all_stats())
+                .map(|backend_stats| backend_stats.get_all_stats(backends))
                 .unwrap_or_default(),
         }
     }

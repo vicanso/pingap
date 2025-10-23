@@ -283,6 +283,8 @@ export default {
     enableBackendStats: "Enable Backend Stats",
     backendFailureStatusCode: "Backend Failure Status Code",
     backendFailureStatusCodePlaceholder: "Input the backend failure status code(e.g. 400,500,502,503,504)",
+    backendStatsInterval: "Backend Stats Interval",
+    backendStatsIntervalPlaceholder: "Input the backend stats interval(e.g. 60s)",
     tcpFastOpen: "Tcp Fast Open",
     tcpRecvBuf: "Tcp Recv Buf",
     tcpRecvBufPlaceholder: "Input the tcp receive buffer limit size",

@@ -46,9 +46,7 @@ use pingap_otel::TracerService;
 use pingap_performance::new_performance_metrics_log_service;
 use pingap_plugin::get_plugin_factory;
 use pingap_proxy::{parse_from_conf, AppContext, Server, ServerConf};
-use pingap_upstream::{
-    new_upstream_backend_stats_task, new_upstream_health_check_task,
-};
+use pingap_upstream::new_upstream_health_check_task;
 use pingora::server;
 use pingora::server::configuration::Opt;
 use pingora::services::background::background_service;
@@ -669,10 +667,6 @@ fn run() -> Result<(), Box<dyn Error>> {
                     new_location_provider(),
                     new_upstream_provider(),
                 ),
-            ),
-            (
-                "upstream_backend_stats".to_string(),
-                new_upstream_backend_stats_task(new_upstream_provider()),
             ),
         ],
     );

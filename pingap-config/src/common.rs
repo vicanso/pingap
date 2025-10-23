@@ -306,6 +306,11 @@ pub struct UpstreamConf {
     /// Format: "400,500,502,503,504"
     pub backend_failure_status_code: Option<String>,
 
+    /// Interval for backend stats, default is 60 seconds
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub backend_stats_interval: Option<Duration>,
+
     /// Application Layer Protocol Negotiation for TLS
     pub alpn: Option<String>,
 
