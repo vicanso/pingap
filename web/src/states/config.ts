@@ -22,6 +22,9 @@ export interface Upstream {
   enable_tracer?: boolean;
   enable_backend_stats?: boolean;
   backend_failure_status_code?: string;
+  circuit_break_max_consecutive_failures?: number;
+  circuit_break_max_failure_percent?: number;
+  circuit_break_min_requests_threshold?: number;
   backend_stats_interval?: string;
   connection_timeout?: string;
   total_connection_timeout?: string;

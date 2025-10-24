@@ -306,6 +306,17 @@ pub struct UpstreamConf {
     /// Format: "400,500,502,503,504"
     pub backend_failure_status_code: Option<String>,
 
+    /// Maximum number of consecutive failures required to trip the circuit breaker
+    pub circuit_break_max_consecutive_failures: Option<u32>,
+
+    /// Maximum failure rate (percentage, 0 to 100) required to trip the circuit breaker
+    pub circuit_break_max_failure_percent: Option<u16>,
+
+    /// Minimum total number of requests (within the statistics window) required
+    /// before the failure rate is considered significant for circuit breaking.
+    /// Prevents tripping the breaker when traffic is very low.
+    pub circuit_break_min_requests_threshold: Option<u64>,
+
     /// Interval for backend stats, default is 60 seconds
     #[serde(default)]
     #[serde(with = "humantime_serde")]

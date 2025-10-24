@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::Error;
+use crate::backend_stats::CircuitBreakerConfig;
 use crate::backend_stats::{BackendStats, WindowStats};
 use crate::hash_strategy::HashStrategy;
 use crate::peer_tracer::UpstreamPeerTracer;
@@ -204,6 +205,9 @@ pub struct Upstream {
     /// Backend stats, success and fail count
     #[debug("backend_stats")]
     backend_stats: Option<BackendStats>,
+
+    /// Circuit breaker configuration
+    circuit_breaker_config: Option<CircuitBreakerConfig>,
 }
 
 // Creates new backend servers based on discovery method (DNS/Docker/Static)
@@ -426,6 +430,27 @@ impl Upstream {
         let tracer = peer_tracer
             .as_ref()
             .map(|peer_tracer| Tracer(Box::new(peer_tracer.to_owned())));
+        let circuit_break_max_consecutive_failures = conf
+            .circuit_break_max_consecutive_failures
+            .unwrap_or_default();
+        let circuit_break_max_failure_percent =
+            conf.circuit_break_max_failure_percent.unwrap_or_default();
+        let circuit_breaker_config = if circuit_break_max_consecutive_failures
+            > 0
+            || circuit_break_max_failure_percent > 0
+        {
+            Some(CircuitBreakerConfig {
+                max_consecutive_failures:
+                    circuit_break_max_consecutive_failures,
+                max_failure_percent: circuit_break_max_failure_percent as f64,
+                min_requests_threshold: conf
+                    .circuit_break_min_requests_threshold
+                    .unwrap_or(10),
+            })
+        } else {
+            None
+        };
+
         let up = Self {
             name: name.into(),
             key,
@@ -454,6 +479,7 @@ impl Upstream {
             } else {
                 None
             },
+            circuit_breaker_config,
         };
         debug!(
             target: LOG_TARGET,
@@ -464,8 +490,25 @@ impl Upstream {
     }
 
     #[inline]
-    fn accept_backend(&self, _backend: &Backend, healthy: bool) -> bool {
-        healthy
+    fn accept_backend(&self, backend: &Backend, healthy: bool) -> bool {
+        // 1. If the backend is marked unhealthy by the health check, always reject it.
+        if !healthy {
+            return false;
+        }
+
+        // 2. If circuit breaking is not configured, accept any healthy backend.
+        //    Use `if let` to check both Optionals concisely.
+        if let (Some(cb_config), Some(stats)) =
+            (&self.circuit_breaker_config, &self.backend_stats)
+        {
+            // 3. If circuit breaking is configured, check its status.
+            //    `should_circuit_break` returns true if the circuit SHOULD break (reject).
+            //    Therefore, we accept the backend ONLY IF `should_circuit_break` is false.
+            !stats.should_circuit_break(&backend.addr.to_string(), cb_config) // Negate the result
+        } else {
+            // Circuit breaking is disabled, accept the healthy backend.
+            true
+        }
     }
 
     /// Creates and configures a new HTTP peer for handling requests
