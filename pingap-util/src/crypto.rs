@@ -22,6 +22,9 @@ use once_cell::sync::Lazy;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
+// TODO update aes_gcm_siv to use the new Nonce type
+
+#[allow(deprecated)]
 static PINGAP_NONCE: Lazy<&Nonce> =
     Lazy::new(|| Nonce::from_slice(b"pingap nonce"));
 
