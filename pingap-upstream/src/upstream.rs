@@ -504,20 +504,11 @@ impl Upstream {
         if !healthy {
             return false;
         }
-
-        // 2. If circuit breaking is not configured, accept any healthy backend.
-        //    Use `if let` to check both Optionals concisely.
-        if let Some(circuit_breaker_states) = &self.circuit_breaker_states {
-            // 3. If circuit breaking is configured, check its status.
-            //    `should_circuit_break` returns true if the circuit SHOULD break (reject).
-            //    Therefore, we accept the backend ONLY IF `should_circuit_break` is false.
-            // !stats.should_circuit_break(&backend.addr.to_string(), cb_config) // Negate the result
-            circuit_breaker_states
-                .is_backend_acceptable(&backend.addr.to_string())
-        } else {
-            // Circuit breaking is disabled, accept the healthy backend.
-            true
-        }
+        // if circuit breaking is not configured, accept any healthy backend.
+        let Some(states) = &self.circuit_breaker_states else {
+            return true;
+        };
+        states.is_backend_acceptable(&backend.addr.to_string())
     }
 
     /// Creates and configures a new HTTP peer for handling requests
