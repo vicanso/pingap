@@ -13,7 +13,9 @@
 // limitations under the License.
 
 use super::Error;
-use crate::backend_stats::CircuitBreakerConfig;
+use crate::backend_circuit_state::{
+    BackendCircuitStates, CircuitBreakerConfig,
+};
 use crate::backend_stats::{BackendStats, WindowStats};
 use crate::hash_strategy::HashStrategy;
 use crate::peer_tracer::UpstreamPeerTracer;
@@ -206,8 +208,9 @@ pub struct Upstream {
     #[debug("backend_stats")]
     backend_stats: Option<BackendStats>,
 
-    /// Circuit breaker configuration
-    circuit_breaker_config: Option<CircuitBreakerConfig>,
+    /// Circuit breaker states
+    #[debug("circuit_breaker_states")]
+    circuit_breaker_states: Option<BackendCircuitStates>,
 }
 
 // Creates new backend servers based on discovery method (DNS/Docker/Static)
@@ -435,18 +438,24 @@ impl Upstream {
             .unwrap_or_default();
         let circuit_break_max_failure_percent =
             conf.circuit_break_max_failure_percent.unwrap_or_default();
-        let circuit_breaker_config = if circuit_break_max_consecutive_failures
+        let circuit_breaker_states = if circuit_break_max_consecutive_failures
             > 0
             || circuit_break_max_failure_percent > 0
         {
-            Some(CircuitBreakerConfig {
+            Some(BackendCircuitStates::new(CircuitBreakerConfig {
                 max_consecutive_failures:
                     circuit_break_max_consecutive_failures,
                 max_failure_percent: circuit_break_max_failure_percent as f64,
                 min_requests_threshold: conf
                     .circuit_break_min_requests_threshold
                     .unwrap_or(10),
-            })
+                half_open_consecutive_success_threshold: conf
+                    .circuit_break_half_open_consecutive_success_threshold
+                    .unwrap_or(5),
+                open_duration: conf
+                    .circuit_break_open_duration
+                    .unwrap_or(Duration::from_secs(10)),
+            }))
         } else {
             None
         };
@@ -479,7 +488,7 @@ impl Upstream {
             } else {
                 None
             },
-            circuit_breaker_config,
+            circuit_breaker_states,
         };
         debug!(
             target: LOG_TARGET,
@@ -498,13 +507,13 @@ impl Upstream {
 
         // 2. If circuit breaking is not configured, accept any healthy backend.
         //    Use `if let` to check both Optionals concisely.
-        if let (Some(cb_config), Some(stats)) =
-            (&self.circuit_breaker_config, &self.backend_stats)
-        {
+        if let Some(circuit_breaker_states) = &self.circuit_breaker_states {
             // 3. If circuit breaking is configured, check its status.
             //    `should_circuit_break` returns true if the circuit SHOULD break (reject).
             //    Therefore, we accept the backend ONLY IF `should_circuit_break` is false.
-            !stats.should_circuit_break(&backend.addr.to_string(), cb_config) // Negate the result
+            // !stats.should_circuit_break(&backend.addr.to_string(), cb_config) // Negate the result
+            circuit_breaker_states
+                .is_backend_acceptable(&backend.addr.to_string())
         } else {
             // Circuit breaking is disabled, accept the healthy backend.
             true
@@ -660,13 +669,27 @@ impl UpstreamInstance for Upstream {
         };
         debug!(target: LOG_TARGET, address, "on_transport_failure");
         backend_stats.on_transport_failure(address);
+        if let Some(circuit_breaker_states) = &self.circuit_breaker_states {
+            circuit_breaker_states.update_state_after_request(
+                address,
+                false,
+                backend_stats,
+            );
+        }
     }
     fn on_response(&self, address: &str, status: StatusCode) {
         let Some(backend_stats) = &self.backend_stats else {
             return;
         };
         debug!(target: LOG_TARGET, address, status = status.to_string(), "on_response");
-        backend_stats.on_response(address, status);
+        let is_request_success = backend_stats.on_response(address, status);
+        if let Some(circuit_breaker_states) = &self.circuit_breaker_states {
+            circuit_breaker_states.update_state_after_request(
+                address,
+                is_request_success,
+                backend_stats,
+            );
+        }
     }
 }
 

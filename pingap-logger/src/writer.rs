@@ -364,21 +364,19 @@ pub fn logger_try_init(
     };
     if params.json {
         let fmt_layer = tracing_subscriber::fmt::layer()
-            .with_ansi(false) // JSON 输出通常不需要 ANSI 颜色
+            .with_ansi(false)
             .with_timer(tracing_subscriber::fmt::time::OffsetTime::new(
                 time::UtcOffset::from_hms(hours, minutes, 0).unwrap(),
                 time::format_description::well_known::Rfc3339,
             ))
             .with_target(is_dev)
-            .with_writer(writer) // 使用传入的 writer
-            .json(); // <-- 关键：配置为 JSON 格式
-
-        // 构建一个完整的 Subscriber，并将其 Box 化
+            .with_writer(writer)
+            .json();
         let subscriber = registry.with(fmt_layer);
         let boxed_subscriber: Box<dyn Subscriber + Send + Sync> =
             Box::new(subscriber);
 
-        // 使用 set_global_default 来安装 Box 后的 Subscriber
+        // set as global default
         tracing::subscriber::set_global_default(boxed_subscriber).map_err(
             |e| Error::Invalid {
                 message: e.to_string(),
@@ -386,13 +384,13 @@ pub fn logger_try_init(
         )?
     } else {
         let fmt_layer = tracing_subscriber::fmt::layer()
-            .with_ansi(is_dev) // 文本格式可以带颜色
+            .with_ansi(is_dev) // text format with color if dev
             .with_timer(tracing_subscriber::fmt::time::OffsetTime::new(
                 time::UtcOffset::from_hms(hours, minutes, 0).unwrap(),
                 time::format_description::well_known::Rfc3339,
             ))
             .with_target(is_dev)
-            .with_writer(writer); // 使用传入的 writer
+            .with_writer(writer);
 
         let subscriber = registry.with(fmt_layer);
         let boxed_subscriber: Box<dyn Subscriber + Send + Sync> =

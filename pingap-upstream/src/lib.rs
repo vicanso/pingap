@@ -17,11 +17,11 @@ use snafu::Snafu;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+mod backend_circuit_state;
 mod backend_stats;
 mod hash_strategy;
 mod peer_tracer;
 mod upstream;
-
 static LOG_TARGET: &str = "pingap::upstream";
 
 #[derive(Debug, Snafu)]

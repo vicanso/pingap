@@ -20,36 +20,6 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
-use tracing::warn;
-
-use crate::LOG_TARGET;
-
-#[derive(Debug, Clone, Copy)]
-pub struct CircuitBreakerConfig {
-    /// The maximum number of consecutive failures required to trip the circuit breaker.
-    /// If set to 0, circuit breaking based on consecutive failures is disabled.
-    pub max_consecutive_failures: u32,
-
-    /// The maximum failure rate (percentage, 0.0 to 100.0) required to trip the circuit breaker.
-    /// If set to > 100.0, circuit breaking based on failure rate is disabled.
-    pub max_failure_percent: f64,
-
-    /// The minimum total number of requests (within the statistics window) required
-    /// before the failure rate is considered significant for circuit breaking.
-    /// Prevents tripping the breaker when traffic is very low.
-    pub min_requests_threshold: u64,
-}
-
-impl Default for CircuitBreakerConfig {
-    fn default() -> Self {
-        // Provides a reasonable set of default values
-        Self {
-            max_consecutive_failures: 5, // Trip after 5 consecutive failures
-            max_failure_percent: 50.0,   // Trip if failure rate exceeds 50%
-            min_requests_threshold: 10, // Only consider failure rate if >= 10 requests in the window
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct WindowStats {
@@ -58,11 +28,26 @@ pub struct WindowStats {
     pub total_requests: u64,
 }
 
+pub struct ConsecutiveCounters {
+    /// The counter of consecutive failures
+    pub failures: AtomicU32,
+    /// The counter of consecutive successes
+    pub successes: AtomicU32,
+}
+impl ConsecutiveCounters {
+    pub fn new() -> Self {
+        Self {
+            failures: AtomicU32::new(0),
+            successes: AtomicU32::new(0),
+        }
+    }
+}
+
 pub struct BackendStats {
     failure_status_codes: Option<HashSet<StatusCode>>,
     interval: Duration,
     rate: Rate,
-    consecutive_failures: DashMap<String, AtomicU32>,
+    consecutive_counters: DashMap<String, ConsecutiveCounters>,
 }
 
 const FAILURE_KEY: &str = "failure";
@@ -91,37 +76,40 @@ impl BackendStats {
             } else {
                 Some(failure_status_codes)
             },
-            consecutive_failures: DashMap::new(),
+            consecutive_counters: DashMap::new(),
         }
     }
-
     pub fn on_transport_failure(&self, address: &str) {
         let key = make_key(FAILURE_KEY, address);
         self.rate.observe(&key, 1);
     }
-    pub fn on_response(&self, address: &str, status: StatusCode) {
+    pub fn on_response(&self, address: &str, status: StatusCode) -> bool {
         let total_key = make_key(TOTAL_KEY, address);
         self.rate.observe(&total_key, 1);
         let failure = self.failure_status_codes.as_ref().map_or_else(
             || status.is_server_error(),
             |codes| codes.contains(&status),
         );
-        // Update failure counters based on the determined 'failure' status
-        let consecutive_failure = self
-            .consecutive_failures
+        // Update success / failure counters based on the determined status
+        let counters = self
+            .consecutive_counters
             .entry(address.to_string())
-            .or_insert_with(|| AtomicU32::new(0));
+            .or_insert_with(ConsecutiveCounters::new);
         if failure {
+            counters.successes.store(0, Ordering::Relaxed);
             let failure_key = make_key(FAILURE_KEY, address);
             self.rate.observe(&failure_key, 1);
-            consecutive_failure.fetch_add(1, Ordering::Relaxed);
+            counters.failures.fetch_add(1, Ordering::Relaxed);
         } else {
-            consecutive_failure.store(0, Ordering::Relaxed);
+            counters.successes.fetch_add(1, Ordering::Relaxed);
+            counters.failures.store(0, Ordering::Relaxed);
         }
+        failure
     }
 
     #[inline]
-    fn get_window_stats(&self, address: &str, interval: f64) -> WindowStats {
+    pub(crate) fn get_window_stats(&self, address: &str) -> WindowStats {
+        let interval = self.interval.as_secs_f64();
         let total_key = make_key(TOTAL_KEY, address);
         let failure_key = make_key(FAILURE_KEY, address);
         let rps = self.rate.rate(&total_key);
@@ -138,76 +126,36 @@ impl BackendStats {
             rps,
         }
     }
+    pub fn get_consecutive_successes(&self, address: &str) -> u32 {
+        self.consecutive_counters
+            .get(address)
+            .map(|entry| entry.successes.load(Ordering::Relaxed))
+            .unwrap_or(0)
+    }
+    pub fn get_consecutive_failures(&self, address: &str) -> u32 {
+        self.consecutive_counters
+            .get(address)
+            .map(|entry| entry.failures.load(Ordering::Relaxed))
+            .unwrap_or(0)
+    }
 
     pub fn get_all_stats(
         &self,
         backends: &Backends,
     ) -> HashMap<String, WindowStats> {
-        let interval = self.interval.as_secs_f64();
         let backends = backends
             .get_backend()
             .iter()
             .map(|backend| backend.addr.to_string())
             .collect::<HashSet<String>>();
-        self.consecutive_failures
+        self.consecutive_counters
             .retain(|key, _| backends.contains(key));
         backends
             .into_iter()
             .map(|address| {
-                let stats = self.get_window_stats(&address, interval);
+                let stats = self.get_window_stats(&address);
                 (address, stats)
             })
             .collect()
-    }
-    /// Determines if the specified backend address should be circuit-broken based on
-    /// current statistics and the provided configuration.
-    ///
-    /// # Arguments
-    /// * `address` - The address of the backend to check.
-    /// * `config` - The circuit breaker configuration parameters.
-    ///
-    /// # Returns
-    /// * `true` - If the backend meets the conditions to be circuit-broken.
-    /// * `false` - If the backend is currently considered healthy.
-    pub fn should_circuit_break(
-        &self,
-        address: &str,
-        config: &CircuitBreakerConfig,
-    ) -> bool {
-        if config.max_consecutive_failures > 0 {
-            let consecutive_failures_count = self
-                .consecutive_failures
-                .get(address)
-                .map(|entry| entry.load(Ordering::Relaxed))
-                .unwrap_or(0);
-            if consecutive_failures_count >= config.max_consecutive_failures {
-                warn!(
-                    target = LOG_TARGET,
-                    address,
-                    count = consecutive_failures_count,
-                    threshold = config.max_consecutive_failures,
-                    "circuit breaking due to consecutive failures"
-                );
-                return true;
-            }
-        }
-        if config.max_failure_percent <= 100.0 {
-            let stats =
-                self.get_window_stats(address, self.interval.as_secs_f64());
-            if stats.total_requests < config.min_requests_threshold {
-                return false;
-            }
-            if stats.failure_rate_percent >= config.max_failure_percent {
-                warn!(
-                    target = LOG_TARGET,
-                    address,
-                    failure_rate = stats.failure_rate_percent,
-                    threshold = config.max_failure_percent,
-                    "circuit breaking due to consecutive failures"
-                );
-                return true;
-            }
-        }
-        false
     }
 }

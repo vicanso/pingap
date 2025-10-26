@@ -317,6 +317,14 @@ pub struct UpstreamConf {
     /// Prevents tripping the breaker when traffic is very low.
     pub circuit_break_min_requests_threshold: Option<u64>,
 
+    /// The number of consecutive successes required to reset the circuit breaker to closed.
+    pub circuit_break_half_open_consecutive_success_threshold: Option<u32>,
+
+    /// The duration of the open state of the circuit breaker.
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub circuit_break_open_duration: Option<Duration>,
+
     /// Interval for backend stats, default is 60 seconds
     #[serde(default)]
     #[serde(with = "humantime_serde")]

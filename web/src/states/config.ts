@@ -25,6 +25,8 @@ export interface Upstream {
   circuit_break_max_consecutive_failures?: number;
   circuit_break_max_failure_percent?: number;
   circuit_break_min_requests_threshold?: number;
+  circuit_break_half_open_consecutive_success_threshold?: number;
+  circuit_break_open_duration?: string;
   backend_stats_interval?: string;
   connection_timeout?: string;
   total_connection_timeout?: string;

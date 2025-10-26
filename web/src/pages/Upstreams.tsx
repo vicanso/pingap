@@ -305,6 +305,22 @@ export default function Upstreams() {
       category: ExFormItemCategory.NUMBER,
     },
     {
+      name: "circuit_break_half_open_consecutive_success_threshold",
+      label: upstreamI18n("circuitBreakHalfOpenConsecutiveSuccessThreshold"),
+      placeholder: upstreamI18n("circuitBreakHalfOpenConsecutiveSuccessThresholdPlaceholder"),
+      defaultValue: upstreamConfig.circuit_break_half_open_consecutive_success_threshold,
+      span: 2,
+      category: ExFormItemCategory.NUMBER,
+    },
+    {
+      name: "circuit_break_open_duration",
+      label: upstreamI18n("circuitBreakOpenDuration"),
+      placeholder: upstreamI18n("circuitBreakOpenDurationPlaceholder"),
+      defaultValue: upstreamConfig.circuit_break_open_duration,
+      span: 2,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
       name: "tcp_fast_open",
       label: upstreamI18n("tcpFastOpen"),
       placeholder: "",
