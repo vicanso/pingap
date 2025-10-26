@@ -236,22 +236,30 @@ impl Plugin for Compression {
         session: &mut Session,
         ctx: &mut Ctx,
     ) -> pingora::Result<RequestPluginResult> {
-        if step == PluginStep::EarlyRequest
-            && self.mode == UPSTREAM_RESPONSE_COMPRESS_MODE
-        {
-            let (zstd_level, br_level, gzip_level) =
-                self.get_compress_level(session);
-            let key = if zstd_level > 0 {
-                ZSTD
-            } else if br_level > 0 {
-                BR
-            } else if gzip_level > 0 {
-                GZIP
-            } else {
-                ""
-            };
-            if !key.is_empty() {
-                ctx.push_cache_key(key.to_string());
+        if step == PluginStep::EarlyRequest {
+            if self.mode == UPSTREAM_RESPONSE_COMPRESS_MODE {
+                let (zstd_level, br_level, gzip_level) =
+                    self.get_compress_level(session);
+                let key = if zstd_level > 0 {
+                    ZSTD
+                } else if br_level > 0 {
+                    BR
+                } else if gzip_level > 0 {
+                    GZIP
+                } else {
+                    ""
+                };
+                if !key.is_empty() {
+                    ctx.push_cache_key(key.to_string());
+                }
+            }
+            if self.decompression.unwrap_or_default() {
+                if let Some(c) = session
+                    .downstream_modules_ctx
+                    .get_mut::<ResponseCompression>()
+                {
+                    c.adjust_decompression(true);
+                }
             }
         }
         // Early return conditions
@@ -283,11 +291,6 @@ impl Plugin for Compression {
         else {
             return Ok(RequestPluginResult::Skipped);
         };
-
-        // Configure decompression if specified
-        if let Some(decompression) = self.decompression {
-            c.adjust_decompression(decompression);
-        }
 
         // Configure compression levels for each supported algorithm
         if zstd_level > 0 {

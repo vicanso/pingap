@@ -246,7 +246,7 @@ impl BackendCircuitStates {
                         probes_sent: 0,
                     };
                 },
-                _ => {}, // Open 状态
+                _ => {}, // Open state
             }
         }
     }
