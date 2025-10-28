@@ -663,7 +663,7 @@ impl UpstreamInstance for Upstream {
         if let Some(circuit_breaker_states) = &self.circuit_breaker_states {
             circuit_breaker_states.update_state_after_request(
                 address,
-                false,
+                true,
                 backend_stats,
             );
         }
@@ -673,11 +673,11 @@ impl UpstreamInstance for Upstream {
             return;
         };
         debug!(target: LOG_TARGET, address, status = status.to_string(), "on_response");
-        let is_request_success = backend_stats.on_response(address, status);
+        let is_request_failure = backend_stats.on_response(address, status);
         if let Some(circuit_breaker_states) = &self.circuit_breaker_states {
             circuit_breaker_states.update_state_after_request(
                 address,
-                is_request_success,
+                is_request_failure,
                 backend_stats,
             );
         }

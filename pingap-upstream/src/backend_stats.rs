@@ -83,19 +83,21 @@ impl BackendStats {
         let key = make_key(FAILURE_KEY, address);
         self.rate.observe(&key, 1);
     }
+    /// Returns true if the response is a success, false otherwise
     pub fn on_response(&self, address: &str, status: StatusCode) -> bool {
         let total_key = make_key(TOTAL_KEY, address);
         self.rate.observe(&total_key, 1);
-        let failure = self.failure_status_codes.as_ref().map_or_else(
-            || status.is_server_error(),
-            |codes| codes.contains(&status),
-        );
+        let is_request_failure =
+            self.failure_status_codes.as_ref().map_or_else(
+                || status.is_server_error(),
+                |codes| codes.contains(&status),
+            );
         // Update success / failure counters based on the determined status
         let counters = self
             .consecutive_counters
             .entry(address.to_string())
             .or_insert_with(ConsecutiveCounters::new);
-        if failure {
+        if is_request_failure {
             counters.successes.store(0, Ordering::Relaxed);
             let failure_key = make_key(FAILURE_KEY, address);
             self.rate.observe(&failure_key, 1);
@@ -104,7 +106,7 @@ impl BackendStats {
             counters.successes.fetch_add(1, Ordering::Relaxed);
             counters.failures.store(0, Ordering::Relaxed);
         }
-        failure
+        is_request_failure
     }
 
     #[inline]

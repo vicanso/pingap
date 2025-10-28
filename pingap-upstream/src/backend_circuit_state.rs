@@ -64,6 +64,15 @@ struct BreakerStateData {
     probes_sent: u32,
 }
 
+impl BreakerStateData {
+    fn new(open_duration: Duration) -> Self {
+        Self {
+            open_until: Instant::now() + open_duration,
+            probes_sent: 0,
+        }
+    }
+}
+
 /// The complete state of a single backend
 struct BackendCircuitState {
     /// The atomic state machine (99.9% of the time only read this)
@@ -174,12 +183,12 @@ impl BackendCircuitStates {
     pub fn update_state_after_request(
         &self,
         address: &str,
-        is_request_success: bool,
+        is_request_failure: bool,
         stats: &BackendStats,
     ) {
         let state = self.get_or_create_backend_circuit_state(address);
 
-        if is_request_success {
+        if !is_request_failure {
             // --- 99.9% 的情况：请求成功 ---
 
             // 1. 只读原子状态（无锁）
@@ -231,20 +240,14 @@ impl BackendCircuitStates {
                         state
                             .current_state
                             .store(STATE_HALF_OPEN, Ordering::Relaxed);
-                        *data = BreakerStateData {
-                            open_until: Instant::now()
-                                + self.config.open_duration,
-                            probes_sent: 0,
-                        };
+                        *data =
+                            BreakerStateData::new(self.config.open_duration);
                     }
                 },
                 STATE_HALF_OPEN => {
                     // current state is HalfOpen, set to Open if request fail
                     state.current_state.store(STATE_OPEN, Ordering::Relaxed);
-                    *data = BreakerStateData {
-                        open_until: Instant::now() + self.config.open_duration,
-                        probes_sent: 0,
-                    };
+                    *data = BreakerStateData::new(self.config.open_duration);
                 },
                 _ => {}, // Open state
             }
