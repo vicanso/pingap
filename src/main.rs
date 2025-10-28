@@ -100,10 +100,13 @@ addrs = ["127.0.0.1:5000"]
 
 static LOG_TARGET: &str = "main";
 
+const LONG_VERSION: &str =
+    concat!(env!("CARGO_PKG_VERSION"), " (", env!("VERGEN_GIT_SHA"), ")");
+
 /// Command line arguments structure for the pingap.
 /// A reverse proxy like nginx.
 #[derive(Parser, Debug, Default)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about, long_version = LONG_VERSION, long_about = None)]
 struct Args {
     /// The config file or directory path
     #[arg(short, long)]

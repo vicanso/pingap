@@ -140,6 +140,8 @@ struct ErrorResponse {
     message: String,
 }
 
+const GIT_HASH: &str = env!("VERGEN_GIT_SHA");
+
 #[derive(Serialize, Deserialize)]
 struct BasicInfo {
     start_time: u64,
@@ -167,6 +169,7 @@ struct BasicInfo {
     supported_plugins: Vec<String>,
     upstream_healthy_status: HashMap<String, UpstreamHealthyStatus>,
     support_history: bool,
+    git_hash: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -651,6 +654,7 @@ async fn handle_request_admin(
             supported_plugins: get_plugin_factory().supported_plugins(),
             upstream_healthy_status: new_upstream_provider().healthy_status(),
             support_history: plugin.manager.support_history(),
+            git_hash: GIT_HASH.to_string(),
         };
         basic_info.features.push("default".to_string());
 

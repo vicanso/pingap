@@ -376,6 +376,10 @@ export default function Home() {
       value: basicInfo.rustc_version,
     },
     {
+      name: "git",
+      value: basicInfo.git_hash,
+    },
+    {
       name: "configHash",
       value: basicInfo.config_hash,
     },

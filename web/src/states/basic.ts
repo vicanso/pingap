@@ -11,6 +11,7 @@ interface Basic {
   start_time: number;
   version: string;
   rustc_version: string;
+  git_hash: string;
   memory: string;
   arch: string;
   kernel: string;
@@ -46,6 +47,7 @@ const useBasicState = create<ConfigState>()((set) => ({
     start_time: 0,
     version: "",
     rustc_version: "",
+    git_hash: "",
     memory: "",
     arch: "",
     kernel: "",

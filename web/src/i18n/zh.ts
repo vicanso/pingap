@@ -82,6 +82,7 @@ export default {
     enabledTracing: "启用追踪",
     enabledFull: "启用所有特性",
     rustc: "Rust编译器版本",
+    git: "Git Hash",
     machineCpu: "机器CPU",
     machineMemory: "机器内存",
     yes: "是",

@@ -83,6 +83,7 @@ export default {
     enabledTracing: "Enable Tracing",
     enabledFull: "Enable Full Features",
     rustc: "Rustc",
+    git: "Git Hash",
     machineCpu: "Machine CPU",
     machineMemory: "Machine Memory",
     yes: "Yes",
