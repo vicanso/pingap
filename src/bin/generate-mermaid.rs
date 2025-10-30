@@ -17,6 +17,7 @@ pub struct Package {
     name: String,
 }
 
+#[allow(clippy::unwrap_used)]
 fn main() {
     let prefix = "pingap-";
     let mut deps = HashMap::new();

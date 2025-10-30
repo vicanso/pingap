@@ -15,6 +15,11 @@ rust-version = "1.83"
 default-run = "pingap"
 build = "build.rs"
 
+[lints.clippy]
+# Set the unwrap_used lint level to deny
+unwrap_used = "deny"
+
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]

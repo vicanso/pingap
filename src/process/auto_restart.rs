@@ -473,17 +473,17 @@ impl BackgroundService for ConfigObserverService {
         );
         let mut period = interval(self.interval);
 
-        let result = self.config_manager.observe().await;
-        if let Err(e) = result {
-            error!(
-                target: LOG_TARGET,
-                error = %e,
-                "create storage observe fail"
-            );
-            return;
-        }
-
-        let mut observer = result.unwrap();
+        let mut observer = match self.config_manager.observe().await {
+            Ok(observer) => observer,
+            Err(e) => {
+                error!(
+                    target: LOG_TARGET,
+                    error = %e,
+                    "create storage observe fail"
+                );
+                return;
+            },
+        };
 
         loop {
             tokio::select! {

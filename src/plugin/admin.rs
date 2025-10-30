@@ -271,7 +271,8 @@ impl AdminServe {
         }
         let path = req_header.uri.path();
         if path.len() <= 1
-            || Regex::new(r#".(js|css|png)$"#).unwrap().is_match(path)
+            || Regex::new(r#".(js|css|png)$"#)
+                .map_or(true, |r| r.is_match(path))
         {
             return true;
         }

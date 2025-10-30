@@ -298,6 +298,10 @@ export default function Home() {
       </Card>
     );
   });
+  let git_hash = basicInfo.git_hash;
+  if (git_hash.length > 7) {
+    git_hash = git_hash.slice(0, 7);
+  }
   const basicInfos = [
     {
       name: "pid",
@@ -377,7 +381,7 @@ export default function Home() {
     },
     {
       name: "git",
-      value: basicInfo.git_hash,
+      value: git_hash,
     },
     {
       name: "configHash",

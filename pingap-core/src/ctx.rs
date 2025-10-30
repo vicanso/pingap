@@ -841,22 +841,20 @@ impl Ctx {
     #[inline]
     pub fn push_cache_key(&mut self, key: String) {
         let cache_info = self.cache.get_or_insert_default();
-        if let Some(cache_keys) = &mut cache_info.keys {
-            cache_keys.push(key);
-        } else {
-            cache_info.keys = Some(vec![key]);
-        }
+        cache_info
+            .keys
+            .get_or_insert_with(|| Vec::with_capacity(2))
+            .push(key);
     }
 
     /// Extends the cache key components with a vector of keys.
     #[inline]
     pub fn extend_cache_keys(&mut self, keys: Vec<String>) {
         let cache_info = self.cache.get_or_insert_default();
-        if let Some(cache_keys) = &mut cache_info.keys {
-            cache_keys.extend(keys);
-        } else {
-            cache_info.keys = Some(keys);
-        }
+        cache_info
+            .keys
+            .get_or_insert_with(|| Vec::with_capacity(keys.len() + 2))
+            .extend(keys);
     }
     /// Updates the upstream timing from the digest.
     #[inline]

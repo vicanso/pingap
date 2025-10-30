@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_test::io::Builder;
 
+#[allow(clippy::unwrap_used)]
 fn bench_insert_bytes_header(c: &mut Criterion) {
     c.bench_function("bytes header", |b| {
         let arr = vec![
@@ -46,6 +47,7 @@ fn bench_insert_bytes_header(c: &mut Criterion) {
     });
 }
 
+#[allow(clippy::unwrap_used)]
 fn bench_insert_header_name(c: &mut Criterion) {
     c.bench_function("header name", |b| {
         let arr = vec![
@@ -76,6 +78,7 @@ fn bench_insert_header_name(c: &mut Criterion) {
     });
 }
 
+#[allow(clippy::unwrap_used)]
 fn bench_new_response_header(c: &mut Criterion) {
     c.bench_function("new response header for http response", |b| {
         let resp = HttpResponse {
@@ -100,6 +103,7 @@ fn bench_new_response_header(c: &mut Criterion) {
     });
 }
 
+#[allow(clippy::unwrap_used)]
 fn bench_get_header_value(c: &mut Criterion) {
     c.bench_function("get header value", |b| {
         let mut req_header =
@@ -127,6 +131,7 @@ fn bench_get_header_value(c: &mut Criterion) {
     });
 }
 
+#[allow(clippy::unwrap_used)]
 fn bench_location_filter(c: &mut Criterion) {
     let mut group = c.benchmark_group("location filter");
     let upstream_name = "charts";
@@ -181,6 +186,7 @@ fn bench_location_filter(c: &mut Criterion) {
     group.finish();
 }
 
+#[allow(clippy::unwrap_used)]
 fn bench_location_rewrite_path(c: &mut Criterion) {
     let upstream_name = "charts";
 
@@ -211,6 +217,7 @@ fn bench_get_super_ts(c: &mut Criterion) {
     });
 }
 
+#[allow(clippy::unwrap_used)]
 fn get_logger_session(
 ) -> std::sync::mpsc::Receiver<Option<pingora::proxy::Session>> {
     let (tx, rx) = std::sync::mpsc::sync_channel(0);
@@ -270,6 +277,7 @@ fn bench_map(c: &mut Criterion) {
     });
 }
 
+#[allow(clippy::unwrap_used)]
 fn bench_logger_format(c: &mut Criterion) {
     let r = get_logger_session();
     let session = r.recv().unwrap().unwrap();
@@ -331,6 +339,7 @@ fn bench_logger_format(c: &mut Criterion) {
     });
 }
 
+#[allow(clippy::unwrap_used)]
 fn bench_get_location(c: &mut Criterion) {
     let mut map: AHashMap<String, Arc<Location>> = AHashMap::new();
     let id = nanoid!(6);
@@ -350,7 +359,7 @@ fn bench_get_location(c: &mut Criterion) {
 
     let locations: ArcSwap<AHashMap<String, Arc<Location>>> =
         ArcSwap::from_pointee(map);
-    locations.load().get(&id).unwrap();
+    let _ = locations.load().get(&id);
     c.bench_function("get location", |b| {
         b.iter(|| {
             let _ = locations.load().get(&id).cloned();

@@ -104,7 +104,7 @@ pub fn parse_admin_plugin(
             ..Default::default()
         },
         ADMIN_SERVER_PLUGIN.to_string(),
-        toml::from_str::<PluginConf>(&data).unwrap(),
+        toml::from_str::<PluginConf>(&data).unwrap_or_default(),
     ))
 }
 
@@ -162,7 +162,7 @@ zstd_level = 6
 remark = "Compression for http, support zstd:6, br:6, gzip:6"
 "###,
             )
-            .unwrap(),
+            .unwrap_or_default(),
         ),
         (
             "pingap:compressionUpstream".to_string(),
@@ -176,7 +176,7 @@ mode = "upstream"
 remark = "Compression for upstream response, support zstd:6, br:6, gzip:6"
 "###,
             )
-            .unwrap(),
+            .unwrap_or_default(),
         ),
         (
             "pingap:ping".to_string(),
@@ -187,7 +187,7 @@ path = "/ping"
 remark = "Ping pong"
 "###,
             )
-            .unwrap(),
+            .unwrap_or_default(),
         ),
         (
             "pingap:stats".to_string(),
@@ -198,7 +198,7 @@ path = "/stats"
 remark = "Get stats of server"
 "###,
             )
-            .unwrap(),
+            .unwrap_or_default(),
         ),
         (
             "pingap:requestId".to_string(),
@@ -208,7 +208,7 @@ category = "request_id"
 remark = "Generate a request id for service"
 "###,
             )
-            .unwrap(),
+            .unwrap_or_default(),
         ),
         (
             "pingap:acceptEncodingAdjustment".to_string(),
@@ -220,7 +220,7 @@ only_one_encoding = true
 remark = "Adjust the accept encoding order and choose one encoding"
 "###,
             )
-            .unwrap(),
+            .unwrap_or_default(),
         ),
     ]
 }
