@@ -7,7 +7,6 @@ import {
 } from "@/components/ui/sidebar";
 import { MainSidebar } from "@/components/sidebar-nav";
 import { MainHeader } from "@/components/header";
-import { useTheme } from "@/components/theme-provider";
 import Logo from "@/assets/pingap.png";
 import useBasicState from "@/states/basic";
 import { useShallow } from "zustand/react/shallow";
