@@ -9,7 +9,6 @@ import { MainSidebar } from "@/components/sidebar-nav";
 import { MainHeader } from "@/components/header";
 import { useTheme } from "@/components/theme-provider";
 import Logo from "@/assets/pingap.png";
-import LogoLight from "@/assets/pingap-light.png";
 import useBasicState from "@/states/basic";
 import { useShallow } from "zustand/react/shallow";
 import useConfigState from "@/states/config";
@@ -51,15 +50,7 @@ export default function Root() {
     }
   }, []);
 
-  const { theme } = useTheme();
 
-  let logoData = Logo;
-  if (
-    theme === "light" ||
-    document.documentElement.className.includes("light")
-  ) {
-    logoData = LogoLight;
-  }
   return (
     <SidebarProvider
       open={open}
@@ -81,7 +72,7 @@ export default function Root() {
                 goToHome();
               }}
             >
-              <img src={logoData} />
+              <img width={24} src={Logo} />
             </Button>
             {open && (
               <Button
