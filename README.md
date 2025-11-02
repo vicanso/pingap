@@ -211,6 +211,10 @@ Requests/sec: 147260.15
 Transfer/sec:     19.24MB
 ```
 
+<div align="center">
+  <img width="200" src="./asset/qrcode.jpg" alt="Pingap qrcode" />
+</div>
+
 ## 📦 Rust version
 
 Our current MSRV is 1.83
