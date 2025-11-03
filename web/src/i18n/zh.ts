@@ -376,6 +376,8 @@ export default {
     compressionBrLevelPlaceholder: "输入brotli压缩级别(1-11)",
     compressionZstdLevel: "Zstd压缩级别",
     compressionZstdLevelPlaceholder: "输入zstd压缩级别(1-22)",
+    compressionMinLength: "最小长度",
+    compressionMinLengthPlaceholder: "输入响应体最小长度(如100)",
     compressionDecompression: "是否支持解压缩",
     compressionMode: "模式",
     acceptEncodingList: "支持的压缩编码",

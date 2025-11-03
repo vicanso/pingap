@@ -484,6 +484,14 @@ export default function Plugins() {
           category: ExFormItemCategory.NUMBER,
         },
         {
+          name: "min_length",
+          label: pluginI18n("compressionMinLength"),
+          placeholder: pluginI18n("compressionMinLengthPlaceholder"),
+          defaultValue: pluginConfig.min_length as number,
+          span: 2,
+          category: ExFormItemCategory.NUMBER,
+        },
+        {
           name: "decompression",
           label: pluginI18n("compressionDecompression"),
           placeholder: "",

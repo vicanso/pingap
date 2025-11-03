@@ -107,6 +107,8 @@ pub struct Compression {
     plugin_step: PluginStep,
     // Response mode or upstream response mode
     mode: String,
+    // Minimum length of the response body to be compressed, only for upstream response mode
+    min_length: u64,
     // Unique identifier for caching and tracking plugin instances
     hash_value: String,
 }
@@ -147,6 +149,8 @@ impl TryFrom<&PluginConf> for Compression {
         // Enable compression if any algorithm has a non-zero level
         let support_compression = gzip_level + br_level + zstd_level > 0;
 
+        let min_length = get_int_conf(value, "min_length") as u64;
+
         let params = Self {
             hash_value,
             gzip_level,
@@ -155,6 +159,7 @@ impl TryFrom<&PluginConf> for Compression {
             decompression,
             support_compression,
             mode,
+            min_length,
             // Plugin runs during early request phase
             plugin_step: PluginStep::EarlyRequest,
         };
@@ -331,6 +336,20 @@ impl Plugin for Compression {
         if zstd_level == 0 && br_level == 0 && gzip_level == 0 {
             return Ok(ResponsePluginResult::Unchanged);
         }
+        if self.min_length > 0 {
+            let is_too_small = upstream_response
+                .headers
+                .get(CONTENT_LENGTH)
+                .and_then(|header| header.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok())
+                .map(|content_length| content_length < self.min_length)
+                .unwrap_or(false);
+
+            if is_too_small {
+                return Ok(ResponsePluginResult::Unchanged);
+            }
+        }
+
         debug!(
             zstd_level,
             br_level, gzip_level, "upstream response body compression level"
@@ -342,7 +361,6 @@ impl Plugin for Compression {
             TRANSFER_ENCODING,
             HTTP_HEADER_TRANSFER_CHUNKED.1.clone(),
         );
-        // let feature = ctx.features.get_or_insert_default();
         let (handler, encoding) = if zstd_level > 0 {
             (
                 Box::new(Compressor::new(Algorithm::Zstd, zstd_level)?),

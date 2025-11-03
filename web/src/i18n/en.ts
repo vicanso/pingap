@@ -418,6 +418,8 @@ export default {
     compressionBrLevelPlaceholder: "Input the brotli level(1-11)",
     compressionZstdLevel: "Zstd Level",
     compressionZstdLevelPlaceholder: "Input the zstd level(1-22)",
+    compressionMinLength: "Min Length",
+    compressionMinLengthPlaceholder: "Input the min length of response body to be compressed",
     compressionDecompression: "Support Decompression",
     compressionMode: "Mode",
     acceptEncodingList: "Accept Encoding",
