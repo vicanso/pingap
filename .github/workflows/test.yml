@@ -59,6 +59,7 @@ jobs:
           cargo install cargo-msrv --version 0.18.4
           cargo msrv list
       - name: Run cargo cov
+        if: matrix.toolchain == 'stable'
         run: |
           cargo install cargo-llvm-cov
           cargo llvm-cov
