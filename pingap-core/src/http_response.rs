@@ -174,6 +174,7 @@ impl HttpResponse {
     pub fn bad_request(body: impl Into<Bytes>) -> Self {
         Self::builder(StatusCode::BAD_REQUEST)
             .body(body)
+            .header(HTTP_HEADER_CONTENT_TEXT.clone())
             .no_store()
             .finish()
     }
@@ -182,6 +183,7 @@ impl HttpResponse {
     pub fn not_found(body: impl Into<Bytes>) -> Self {
         Self::builder(StatusCode::NOT_FOUND)
             .body(body)
+            .header(HTTP_HEADER_CONTENT_TEXT.clone())
             .no_store()
             .finish()
     }
@@ -190,6 +192,7 @@ impl HttpResponse {
     pub fn unknown_error(body: impl Into<Bytes>) -> Self {
         Self::builder(StatusCode::INTERNAL_SERVER_ERROR)
             .body(body)
+            .header(HTTP_HEADER_CONTENT_TEXT.clone())
             .no_store()
             .finish()
     }
