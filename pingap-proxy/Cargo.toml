@@ -20,7 +20,6 @@ http = { workspace = true }
 humantime = { workspace = true, optional = true }
 itoa = { workspace = true }
 num_cpus = { workspace = true }
-once_cell = { workspace = true }
 pingap-acme = { version = "0.12.0", path = "../pingap-acme" }
 pingap-certificate = { version = "0.12.0", path = "../pingap-certificate" }
 pingap-config = { version = "0.12.0", path = "../pingap-config" }

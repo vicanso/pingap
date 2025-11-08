@@ -18,15 +18,15 @@ use aes_gcm_siv::{
     aead::{Aead, KeyInit},
     Aes256GcmSiv, Nonce,
 };
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 // TODO update aes_gcm_siv to use the new Nonce type
 
 #[allow(deprecated)]
-static PINGAP_NONCE: Lazy<&Nonce> =
-    Lazy::new(|| Nonce::from_slice(b"pingap nonce"));
+static PINGAP_NONCE: LazyLock<&Nonce> =
+    LazyLock::new(|| Nonce::from_slice(b"pingap nonce"));
 
 /// Generates a 32-byte key from the input string.
 /// If the input is longer than 32 bytes, it's truncated.

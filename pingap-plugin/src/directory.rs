@@ -22,7 +22,6 @@ use ctor::ctor;
 use glob::glob;
 use http::{header, HeaderValue, StatusCode};
 use humantime::parse_duration;
-use once_cell::sync::Lazy;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     convert_headers, HttpChunkResponse, HttpHeader, HttpResponse,
@@ -39,6 +38,7 @@ use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::time::UNIX_EPOCH;
 use substring::Substring;
 use tokio::fs;
@@ -344,10 +344,11 @@ impl Directory {
     }
 }
 
-static IGNORE_RESPONSE: Lazy<HttpResponse> = Lazy::new(|| HttpResponse {
-    status: StatusCode::from_u16(999).unwrap(),
-    ..Default::default()
-});
+static IGNORE_RESPONSE: LazyLock<HttpResponse> =
+    LazyLock::new(|| HttpResponse {
+        status: StatusCode::from_u16(999).unwrap(),
+        ..Default::default()
+    });
 
 /// Generates HTML directory listing page for a given directory
 ///

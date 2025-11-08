@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use once_cell::sync::OnceCell;
 use pingap_core::{NotificationData, NotificationSender};
 use pingap_webhook::WebhookNotificationSender;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
-static WEBHOOK_NOTIFICATION_SENDER: OnceCell<Arc<NotificationSender>> =
-    OnceCell::new();
+static WEBHOOK_NOTIFICATION_SENDER: OnceLock<Arc<NotificationSender>> =
+    OnceLock::new();
 
 pub fn init_webhook_notification_sender(
     url: String,

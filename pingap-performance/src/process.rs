@@ -14,15 +14,15 @@
 
 use bytesize::ByteSize;
 use memory_stats::memory_stats;
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::process;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::sync::LazyLock;
 use sysinfo::MemoryRefreshKind;
 use sysinfo::{RefreshKind, System};
 
-static ACCEPTED: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
-static PROCESSING: Lazy<AtomicI32> = Lazy::new(|| AtomicI32::new(0));
+static ACCEPTED: LazyLock<AtomicU64> = LazyLock::new(|| AtomicU64::new(0));
+static PROCESSING: LazyLock<AtomicI32> = LazyLock::new(|| AtomicI32::new(0));
 
 /// Increments the request acceptance and processing counters.
 /// This should be called when a new request is received to track request metrics.

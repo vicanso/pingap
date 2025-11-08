@@ -14,12 +14,12 @@
 
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
-use once_cell::sync::Lazy;
 use pingap_config::Error;
 use pingap_config::{Hashable, LocationConf};
 use pingap_location::{Location, LocationProvider, LocationStats, Locations};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -49,7 +49,7 @@ impl LocationProvider for Provider {
     }
 }
 
-static LOCATION_PROVIDER: Lazy<Arc<Provider>> = Lazy::new(|| {
+static LOCATION_PROVIDER: LazyLock<Arc<Provider>> = LazyLock::new(|| {
     Arc::new(Provider {
         locations: ArcSwap::from_pointee(AHashMap::new()),
     })

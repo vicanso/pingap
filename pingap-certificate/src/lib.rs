@@ -16,10 +16,9 @@ use ahash::AHashMap;
 use pingora::tls::x509::X509;
 use serde::{Deserialize, Serialize};
 use snafu::Snafu;
-use std::{
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
-    sync::Arc,
-};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::Arc;
+use std::sync::LazyLock;
 
 mod chain;
 mod dynamic_certificate;
@@ -162,10 +161,9 @@ impl Certificate {
     /// # Returns
     /// * `String` - The issuer's Common Name or empty string if not found
     pub fn get_issuer_common_name(&self) -> String {
-        static CN_REGEX: once_cell::sync::Lazy<regex::Regex> =
-            once_cell::sync::Lazy::new(|| {
-                regex::Regex::new(r"CN=(?P<CN>[\S ]+?)($|,)").unwrap()
-            });
+        static CN_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
+            regex::Regex::new(r"CN=(?P<CN>[\S ]+?)($|,)").unwrap()
+        });
 
         CN_REGEX
             .captures(&self.issuer)

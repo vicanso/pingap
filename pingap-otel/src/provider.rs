@@ -14,10 +14,10 @@
 
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
-use once_cell::sync::Lazy;
 use opentelemetry::global::{BoxedTracer, ObjectSafeTracerProvider};
 use opentelemetry::{trace, InstrumentationScope};
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 /// A wrapper around a TracerProvider that implements the ObjectSafeTracerProvider trait.
 /// This allows for dynamic dispatch and storage of different tracer provider implementations.
@@ -60,8 +60,8 @@ impl trace::TracerProvider for InstanceTracerProvider {
 /// Uses ArcSwap for atomic updates and AHashMap for efficient lookups.
 type TracerProviders = AHashMap<String, InstanceTracerProvider>;
 
-static TRACER_PROVIDER_MAP: Lazy<ArcSwap<TracerProviders>> =
-    Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
+static TRACER_PROVIDER_MAP: LazyLock<ArcSwap<TracerProviders>> =
+    LazyLock::new(|| ArcSwap::from_pointee(AHashMap::new()));
 
 /// Adds or updates a named tracer provider in the global provider map.
 ///

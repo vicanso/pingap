@@ -14,7 +14,6 @@
 
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
-use once_cell::sync::Lazy;
 use pingap_certificate::{
     parse_certificates, CertificateProvider, DynamicCertificates,
     DEFAULT_SERVER_NAME,
@@ -22,6 +21,7 @@ use pingap_certificate::{
 use pingap_config::CertificateConf;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 struct Provider {
     certificates: ArcSwap<DynamicCertificates>,
@@ -54,7 +54,7 @@ impl CertificateProvider for Provider {
     }
 }
 
-static CERTIFICATE_PROVIDER: Lazy<Arc<Provider>> = Lazy::new(|| {
+static CERTIFICATE_PROVIDER: LazyLock<Arc<Provider>> = LazyLock::new(|| {
     Arc::new(Provider {
         certificates: ArcSwap::from_pointee(AHashMap::new()),
     })

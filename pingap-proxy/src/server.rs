@@ -24,7 +24,6 @@ use bstr::ByteSlice;
 use bytes::Bytes;
 use bytes::BytesMut;
 use http::StatusCode;
-use once_cell::sync::Lazy;
 use pingap_acme::handle_lets_encrypt;
 use pingap_certificate::CertificateProvider;
 use pingap_certificate::{GlobalCertificate, TlsSettingParams};
@@ -76,6 +75,7 @@ use scopeguard::defer;
 use snafu::Snafu;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, error, info};
@@ -215,8 +215,8 @@ pub struct ServerServices {
 const META_DEFAULTS: CacheMetaDefaults =
     CacheMetaDefaults::new(|_| Some(Duration::from_secs(1)), 1, 1);
 
-static HTTP_500_RESPONSE: Lazy<ResponseHeader> =
-    Lazy::new(|| error_resp::gen_error_response(500));
+static HTTP_500_RESPONSE: LazyLock<ResponseHeader> =
+    LazyLock::new(|| error_resp::gen_error_response(500));
 
 #[derive(Clone)]
 pub struct AppContext {

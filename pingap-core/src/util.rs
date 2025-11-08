@@ -14,9 +14,9 @@
 
 use coarsetime::{Clock, Updater};
 use ctor::ctor;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 
-static COARSE_CLOCK_UPDATER: Lazy<Updater> = Lazy::new(|| {
+static COARSE_CLOCK_UPDATER: LazyLock<Updater> = LazyLock::new(|| {
     let interval = std::env::var("PINGAP_COARSE_CLOCK_INTERVAL")
         .unwrap_or("10".to_string())
         .parse::<u64>()
@@ -27,7 +27,7 @@ static COARSE_CLOCK_UPDATER: Lazy<Updater> = Lazy::new(|| {
 
 /// Initialize the time cache
 fn init_time_cache() {
-    Lazy::force(&COARSE_CLOCK_UPDATER);
+    LazyLock::force(&COARSE_CLOCK_UPDATER);
 }
 
 // 2022-05-07: 1651852800
@@ -47,7 +47,7 @@ pub fn get_super_ts() -> u32 {
     now_sec().saturating_sub(super_ts_secs) as u32
 }
 
-static HOST_NAME: Lazy<String> = Lazy::new(|| {
+static HOST_NAME: LazyLock<String> = LazyLock::new(|| {
     hostname::get()
         .ok()
         .as_deref()

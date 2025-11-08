@@ -15,7 +15,6 @@
 use crate::process::get_admin_addr;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
-use once_cell::sync::Lazy;
 use pingap_config::PluginConf;
 use pingap_core::{Plugin, PluginProvider, PluginStep, Plugins};
 use pingap_plugin::get_plugin_factory;
@@ -26,6 +25,7 @@ use snafu::Snafu;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use tracing::{error, info};
 
 mod admin;
@@ -235,7 +235,7 @@ impl Provider {
     }
 }
 
-static PLUGIN_PROVIDER: Lazy<Arc<Provider>> = Lazy::new(|| {
+static PLUGIN_PROVIDER: LazyLock<Arc<Provider>> = LazyLock::new(|| {
     Arc::new(Provider {
         plugins: ArcSwap::from_pointee(AHashMap::new()),
     })

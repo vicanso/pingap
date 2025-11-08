@@ -14,10 +14,10 @@
 
 use super::{get_str_conf, Error};
 use dashmap::DashMap;
-use once_cell::sync::Lazy;
 use pingap_config::PluginConf;
 use pingap_core::Plugin;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -77,7 +77,8 @@ impl Default for PluginFactory {
     }
 }
 
-static PLUGIN_FACTORY: Lazy<PluginFactory> = Lazy::new(PluginFactory::new);
+static PLUGIN_FACTORY: LazyLock<PluginFactory> =
+    LazyLock::new(PluginFactory::new);
 
 pub fn get_plugin_factory() -> &'static PluginFactory {
     &PLUGIN_FACTORY

@@ -15,12 +15,12 @@
 use bytes::BytesMut;
 use chrono::format::SecondsFormat;
 use chrono::{Local, Utc};
-use once_cell::sync::Lazy;
 use pingap_core::{format_duration, get_hostname, Ctx, HOST_NAME_TAG};
 use pingap_util::format_byte_size;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::Regex;
+use std::sync::LazyLock;
 use std::time::Instant;
 use substring::Substring;
 
@@ -283,7 +283,7 @@ fn get_resp_header_value<'a>(
     resp_header.headers.get(key).map(|v| v.as_bytes())
 }
 
-static LOG_CAPACITY: Lazy<usize> = Lazy::new(|| {
+static LOG_CAPACITY: LazyLock<usize> = LazyLock::new(|| {
     std::env::var("PINGAP_ACCESS_LOG_CAPACITY")
         .unwrap_or_default()
         .parse::<usize>()

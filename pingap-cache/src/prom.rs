@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use super::Error;
-use once_cell::sync::Lazy;
 use prometheus::{Histogram, HistogramOpts, Opts};
+use std::sync::LazyLock;
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 fn new_histogram(
@@ -36,7 +36,7 @@ fn new_histogram(
     Ok(histogram)
 }
 
-pub static CACHE_READING_TIME: Lazy<Box<Histogram>> = Lazy::new(|| {
+pub static CACHE_READING_TIME: LazyLock<Box<Histogram>> = LazyLock::new(|| {
     Box::new(
         new_histogram(
             "",
@@ -47,7 +47,7 @@ pub static CACHE_READING_TIME: Lazy<Box<Histogram>> = Lazy::new(|| {
         .unwrap(),
     )
 });
-pub static CACHE_WRITING_TIME: Lazy<Box<Histogram>> = Lazy::new(|| {
+pub static CACHE_WRITING_TIME: LazyLock<Box<Histogram>> = LazyLock::new(|| {
     Box::new(
         new_histogram(
             "",

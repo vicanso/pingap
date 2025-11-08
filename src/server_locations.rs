@@ -14,11 +14,11 @@
 
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
-use once_cell::sync::Lazy;
 use pingap_core::Error;
 use pingap_proxy::{ServerLocations, ServerLocationsProvider};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -38,11 +38,12 @@ impl ServerLocationsProvider for Provider {
     }
 }
 
-static SERVER_LOCATIONS_PROVIDER: Lazy<Arc<Provider>> = Lazy::new(|| {
-    Arc::new(Provider {
-        server_locations: ArcSwap::from_pointee(AHashMap::new()),
-    })
-});
+static SERVER_LOCATIONS_PROVIDER: LazyLock<Arc<Provider>> =
+    LazyLock::new(|| {
+        Arc::new(Provider {
+            server_locations: ArcSwap::from_pointee(AHashMap::new()),
+        })
+    });
 
 /// Creates a new instance of the server locations provider
 ///

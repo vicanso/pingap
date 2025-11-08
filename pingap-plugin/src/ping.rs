@@ -17,12 +17,12 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use ctor::ctor;
 use http::StatusCode;
-use once_cell::sync::Lazy;
 use pingap_config::PluginConf;
 use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult};
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use tracing::debug;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -41,7 +41,7 @@ pub struct Ping {
 }
 
 /// Response for ping requests containing "pong"
-static PONG_RESPONSE: Lazy<HttpResponse> = Lazy::new(|| HttpResponse {
+static PONG_RESPONSE: LazyLock<HttpResponse> = LazyLock::new(|| HttpResponse {
     status: StatusCode::OK,
     body: Bytes::from_static(b"pong"),
     ..Default::default()

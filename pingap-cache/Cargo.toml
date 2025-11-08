@@ -25,7 +25,6 @@ chrono = { workspace = true }
 dirs = { workspace = true }
 http = { workspace = true }
 humantime-serde = { workspace = true }
-once_cell = { workspace = true }
 path-absolutize = { workspace = true }
 pingap-core = { version = "0.12.0", path = "../pingap-core" }
 pingora = { workspace = true }

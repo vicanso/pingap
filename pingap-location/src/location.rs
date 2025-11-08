@@ -16,7 +16,6 @@ use super::regex::RegexCapture;
 use ahash::AHashMap;
 use http::HeaderName;
 use http::HeaderValue;
-use once_cell::sync::Lazy;
 use pingap_config::Hashable;
 use pingap_config::LocationConf;
 use pingap_core::new_internal_error;
@@ -27,6 +26,7 @@ use regex::Regex;
 use snafu::{ResultExt, Snafu};
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::time::Duration;
 use tracing::{debug, error};
 
@@ -157,16 +157,17 @@ impl HostSelector {
 // proxy_set_header X-Forwarded-Proto $scheme;
 // proxy_set_header X-Forwarded-Host $host;
 // proxy_set_header X-Forwarded-Port $server_port;
-static DEFAULT_PROXY_SET_HEADERS: Lazy<Vec<HttpHeader>> = Lazy::new(|| {
-    convert_headers(&[
-        "x-real-ip:$remote_addr".to_string(),
-        "x-forwarded-for:$proxy_add_x_forwarded_for".to_string(),
-        "x-forwarded-proto:$scheme".to_string(),
-        "x-forwarded-host:$host".to_string(),
-        "x-forwarded-port:$server_port".to_string(),
-    ])
-    .unwrap()
-});
+static DEFAULT_PROXY_SET_HEADERS: LazyLock<Vec<HttpHeader>> =
+    LazyLock::new(|| {
+        convert_headers(&[
+            "x-real-ip:$remote_addr".to_string(),
+            "x-forwarded-for:$proxy_add_x_forwarded_for".to_string(),
+            "x-forwarded-proto:$scheme".to_string(),
+            "x-forwarded-host:$host".to_string(),
+            "x-forwarded-port:$server_port".to_string(),
+        ])
+        .unwrap()
+    });
 
 /// Location represents a routing configuration for handling HTTP requests.
 /// It defines rules for matching requests based on paths and hosts, and specifies

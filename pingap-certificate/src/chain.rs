@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::parse_leaf_chain_certificates;
-use once_cell::sync::Lazy;
 use pingora::tls::x509::X509;
+use std::sync::LazyLock;
 
 // Let's Encrypt chain certificates
 const E5: &[u8] = include_bytes!("../assets/e5.pem");
@@ -45,14 +45,14 @@ fn parse_chain_certificate(data: &[u8]) -> Option<X509> {
 }
 
 // Initialize static certificates
-static E5_CERTIFICATE: Lazy<Option<X509>> =
-    Lazy::new(|| parse_chain_certificate(E5));
-static E6_CERTIFICATE: Lazy<Option<X509>> =
-    Lazy::new(|| parse_chain_certificate(E6));
-static R10_CERTIFICATE: Lazy<Option<X509>> =
-    Lazy::new(|| parse_chain_certificate(R10));
-static R11_CERTIFICATE: Lazy<Option<X509>> =
-    Lazy::new(|| parse_chain_certificate(R11));
+static E5_CERTIFICATE: LazyLock<Option<X509>> =
+    LazyLock::new(|| parse_chain_certificate(E5));
+static E6_CERTIFICATE: LazyLock<Option<X509>> =
+    LazyLock::new(|| parse_chain_certificate(E6));
+static R10_CERTIFICATE: LazyLock<Option<X509>> =
+    LazyLock::new(|| parse_chain_certificate(R10));
+static R11_CERTIFICATE: LazyLock<Option<X509>> =
+    LazyLock::new(|| parse_chain_certificate(R11));
 
 /// Returns a Let's Encrypt chain certificate based on the provided certificate name
 ///

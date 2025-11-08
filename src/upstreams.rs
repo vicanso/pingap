@@ -14,7 +14,6 @@
 
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
-use once_cell::sync::Lazy;
 use pingap_config::UpstreamConf;
 use pingap_core::{Error, NotificationSender};
 use pingap_upstream::{
@@ -22,6 +21,7 @@ use pingap_upstream::{
 };
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use tracing::error;
 
 static LOG_TARGET: &str = "main::upstreams";
@@ -52,7 +52,7 @@ impl UpstreamProvider for Provider {
     }
 }
 
-static UPSTREAM_PROVIDER: Lazy<Arc<Provider>> = Lazy::new(|| {
+static UPSTREAM_PROVIDER: LazyLock<Arc<Provider>> = LazyLock::new(|| {
     Arc::new(Provider {
         upstreams: ArcSwap::from_pointee(AHashMap::new()),
     })

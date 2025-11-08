@@ -24,7 +24,6 @@ use ctor::ctor;
 use fancy_regex::Regex;
 use http::{Method, StatusCode};
 use humantime::parse_duration;
-use once_cell::sync::{Lazy, OnceCell};
 use pingap_cache::{new_cache_backend, HttpCache};
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
@@ -41,6 +40,8 @@ use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::LazyLock;
+use std::sync::OnceLock;
 use std::time::Duration;
 use tracing::{debug, error};
 
@@ -48,21 +49,21 @@ type Result<T> = std::result::Result<T, Error>;
 
 // Singleton instances using OnceCell for thread-safe lazy initialization
 // Predictor: Determines if a response should be cached based on patterns/rules
-static PREDICTOR: OnceCell<Predictor<32>> = OnceCell::new();
+static PREDICTOR: OnceLock<Predictor<32>> = OnceLock::new();
 // EvictionManager: Handles removing entries when cache is full using LRU strategy
-static EVICTION_MANAGER: OnceCell<Manager> = OnceCell::new();
+static EVICTION_MANAGER: OnceLock<Manager> = OnceLock::new();
 // CacheLock: Prevents multiple requests from generating the same cache entry simultaneously
-static CACHE_LOCK_ONE_SECOND: Lazy<
+static CACHE_LOCK_ONE_SECOND: LazyLock<
     Box<dyn CacheKeyLock + std::marker::Send + Sync + 'static>,
-> = Lazy::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(1)));
+> = LazyLock::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(1)));
 
-static CACHE_LOCK_TWO_SECONDS: Lazy<
+static CACHE_LOCK_TWO_SECONDS: LazyLock<
     Box<dyn CacheKeyLock + std::marker::Send + Sync + 'static>,
-> = Lazy::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(2)));
+> = LazyLock::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(2)));
 
-static CACHE_LOCK_THREE_SECONDS: Lazy<
+static CACHE_LOCK_THREE_SECONDS: LazyLock<
     Box<dyn CacheKeyLock + std::marker::Send + Sync + 'static>,
-> = Lazy::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(3)));
+> = LazyLock::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(3)));
 
 pub struct Cache {
     // Determines when this plugin runs in the request/response lifecycle
@@ -305,8 +306,8 @@ impl Cache {
     }
 }
 
-static METHOD_PURGE: Lazy<Method> =
-    Lazy::new(|| Method::from_bytes(b"PURGE").unwrap());
+static METHOD_PURGE: LazyLock<Method> =
+    LazyLock::new(|| Method::from_bytes(b"PURGE").unwrap());
 
 #[async_trait]
 impl Plugin for Cache {

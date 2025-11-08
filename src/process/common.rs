@@ -13,23 +13,23 @@
 // limitations under the License.
 
 use crate::webhook::send_notification;
-use once_cell::sync::Lazy;
-use once_cell::sync::OnceCell;
 use pingap_core::{NotificationData, NotificationLevel};
 use std::io;
 use std::path::PathBuf;
 use std::process;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::LazyLock;
+use std::sync::OnceLock;
 use std::time::Duration;
 use tracing::{error, info};
 
 static LOG_TARGET: &str = "main::process";
 
-static START_TIME: Lazy<Duration> =
-    Lazy::new(|| Duration::from_secs(pingap_core::now_sec()));
+static START_TIME: LazyLock<Duration> =
+    LazyLock::new(|| Duration::from_secs(pingap_core::now_sec()));
 
-static ADMIN_ADDR: OnceCell<String> = OnceCell::new();
+static ADMIN_ADDR: OnceLock<String> = OnceLock::new();
 
 /// Sets the admin address for the application.
 /// This address is used for administrative access and can only be set once.
@@ -72,7 +72,7 @@ impl RestartProcessCommand {
     }
 }
 
-static CMD: OnceCell<RestartProcessCommand> = OnceCell::new();
+static CMD: OnceLock<RestartProcessCommand> = OnceLock::new();
 
 /// Sets the command configuration used for process restarts.
 /// This configuration is stored statically and can only be set once.
@@ -83,9 +83,10 @@ pub fn set_restart_process_command(data: RestartProcessCommand) {
     CMD.get_or_init(|| data);
 }
 
-static PROCESS_RESTAR_COUNT: Lazy<AtomicU8> = Lazy::new(|| AtomicU8::new(0));
-static PROCESS_RESTARTING: Lazy<AtomicBool> =
-    Lazy::new(|| AtomicBool::new(false));
+static PROCESS_RESTAR_COUNT: LazyLock<AtomicU8> =
+    LazyLock::new(|| AtomicU8::new(0));
+static PROCESS_RESTARTING: LazyLock<AtomicBool> =
+    LazyLock::new(|| AtomicBool::new(false));
 
 /// Initiates an immediate process restart.
 ///

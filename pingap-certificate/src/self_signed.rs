@@ -15,13 +15,13 @@
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use once_cell::sync::Lazy;
 use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
 use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::x509::X509;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 const VALIDITY_CHECK_INTERVAL: u32 = 24 * 60; // 24 hours in minutes
 const CERTIFICATE_EXPIRY_DAYS: u64 = 2;
@@ -43,8 +43,9 @@ pub struct SelfSignedCertificate {
 }
 
 type SelfSignedCertificateMap = AHashMap<String, Arc<SelfSignedCertificate>>;
-static SELF_SIGNED_CERTIFICATE_MAP: Lazy<ArcSwap<SelfSignedCertificateMap>> =
-    Lazy::new(|| ArcSwap::from_pointee(AHashMap::new()));
+static SELF_SIGNED_CERTIFICATE_MAP: LazyLock<
+    ArcSwap<SelfSignedCertificateMap>,
+> = LazyLock::new(|| ArcSwap::from_pointee(AHashMap::new()));
 
 /// Checks the validity of self-signed certificates and performs cleanup.
 ///

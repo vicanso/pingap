@@ -19,7 +19,6 @@ futures = { workspace = true }
 hostname = { workspace = true }
 http = { workspace = true }
 itoa = { workspace = true }
-once_cell = { workspace = true }
 opentelemetry = { workspace = true, optional = true }
 pingora = { workspace = true }
 pingora-limits = { workspace = true }

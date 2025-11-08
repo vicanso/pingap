@@ -12,32 +12,43 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use once_cell::sync::OnceCell;
 use pingap_config::ConfigManager;
 use pingap_config::{new_config_manager, Error};
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 type Result<T> = std::result::Result<T, Error>;
 
-static CONFIG_MANAGER: OnceCell<Arc<ConfigManager>> = OnceCell::new();
+static CONFIG_MANAGER: OnceLock<Result<Arc<ConfigManager>>> = OnceLock::new();
 
 pub fn try_init_config_manager(value: &str) -> Result<Arc<ConfigManager>> {
-    CONFIG_MANAGER
-        .get_or_try_init(|| {
-            let manager =
-                new_config_manager(value).map_err(|e| Error::Invalid {
-                    message: e.to_string(),
-                })?;
-            Ok(Arc::new(manager))
+    let result_ref = CONFIG_MANAGER.get_or_init(|| {
+        new_config_manager(value)
+            .map(Arc::new)
+            .map_err(|e| Error::Invalid {
+                message: e.to_string(),
+            })
+    });
+    result_ref
+        .as_ref()
+        .map(|arc_cm| arc_cm.clone())
+        .map_err(|e| Error::Invalid {
+            message: e.to_string(),
         })
-        .cloned()
 }
 
 pub fn get_config_manager() -> Result<Arc<ConfigManager>> {
     CONFIG_MANAGER
         .get()
-        .ok_or(Error::Invalid {
+        .ok_or_else(|| Error::Invalid {
             message: "config manager not initialized".to_string(),
         })
-        .cloned()
+        .and_then(|result_ref| {
+            result_ref
+                .as_ref()
+                .map(|arc_cm| arc_cm.clone())
+                .map_err(|e| Error::Invalid {
+                    message: e.to_string(),
+                })
+        })
 }

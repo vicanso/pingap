@@ -17,7 +17,6 @@ path = "src/lib.rs"
 ahash = { workspace = true }
 arc-swap = { workspace = true }
 async-trait = { workspace = true }
-once_cell = { workspace = true }
 pingap-config = { version = "0.12.0", path = "../pingap-config" }
 pingap-core = { version = "0.12.0", path = "../pingap-core" }
 pingap-util = { version = "0.12.0", path = "../pingap-util" }

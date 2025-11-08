@@ -19,7 +19,6 @@ use async_trait::async_trait;
 use bstr::ByteSlice;
 use bytes::{Bytes, BytesMut};
 use ctor::ctor;
-use once_cell::sync::Lazy;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, ModifyResponseBody, Plugin, ResponseBodyPluginResult,
@@ -31,6 +30,7 @@ use regex::bytes::RegexBuilder;
 use regex::Regex;
 use std::borrow::Cow;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 const PLUGIN_ID: &str = "_sub_filter_";
 
@@ -56,7 +56,7 @@ pub struct SubFilter {
 
 // Regular expression for parsing filter rules in the format:
 // subs_filter|sub_filter 'pattern' 'replacement' [flags]
-static SUBS_FILTER_REGEX: Lazy<Regex> = Lazy::new(|| {
+static SUBS_FILTER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(subs_filter|sub_filter)\s+'([^']+)'\s+'([^']+)'(?:\s+([ig]+))?",
     )
