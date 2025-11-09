@@ -60,7 +60,7 @@ static SUBS_FILTER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(subs_filter|sub_filter)\s+'([^']+)'\s+'([^']+)'(?:\s+([ig]+))?",
     )
-    .unwrap()
+    .expect("Failed to compile subs filter regex")
 });
 
 /// Parameters for configuring a single substitution filter rule

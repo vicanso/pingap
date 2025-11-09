@@ -36,3 +36,7 @@ pretty_assertions = "1.4.1"
 tempfile = "3.21.0"
 tokio-test = "0.4.4"
 nanoid = "0.4.0"
+
+[lints.clippy]
+# Set the unwrap_used lint level to deny
+unwrap_used = "deny"

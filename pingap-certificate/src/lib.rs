@@ -49,11 +49,24 @@ fn parse_ip_addr(data: &[u8]) -> Result<IpAddr> {
     Ok(match data.len() {
         4 => IpAddr::V4(Ipv4Addr::from(
             // Should not fail due to len check
-            TryInto::<[u8; 4]>::try_into(data).unwrap(),
+            TryInto::<[u8; 4]>::try_into(data).map_err(|e| Error::Invalid {
+                category: "ip_parse".to_string(),
+                // 这个错误在逻辑上不应该发生，但我们还是处理它
+                message: format!(
+                    "internal slice conversion error (4 bytes): {e}"
+                ),
+            })?,
         )),
         16 => IpAddr::V6(Ipv6Addr::from(
             // Should not fail due to len check
-            TryInto::<[u8; 16]>::try_into(data).unwrap(),
+            TryInto::<[u8; 16]>::try_into(data).map_err(|e| {
+                Error::Invalid {
+                    category: "ip_parse".to_string(),
+                    message: format!(
+                        "internal slice conversion error (16 bytes): {e}"
+                    ),
+                }
+            })?,
         )),
         len => {
             return Err(Error::Invalid {
@@ -161,11 +174,14 @@ impl Certificate {
     /// # Returns
     /// * `String` - The issuer's Common Name or empty string if not found
     pub fn get_issuer_common_name(&self) -> String {
-        static CN_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| {
-            regex::Regex::new(r"CN=(?P<CN>[\S ]+?)($|,)").unwrap()
+        static CN_REGEX: LazyLock<Option<regex::Regex>> = LazyLock::new(|| {
+            regex::Regex::new(r"CN=(?P<CN>[\S ]+?)($|,)").ok()
         });
+        let Some(regex) = CN_REGEX.as_ref() else {
+            return "".to_string();
+        };
 
-        CN_REGEX
+        regex
             .captures(&self.issuer)
             .and_then(|caps| caps.name("CN"))
             .map(|m| m.as_str().to_string())

@@ -4,6 +4,7 @@ use pingap_core::LocationInstance;
 use pingap_location::Location;
 use pingora::http::RequestHeader;
 
+#[allow(clippy::unwrap_used)]
 fn bench_match_host_path(c: &mut Criterion) {
     let mut group = c.benchmark_group("match host path");
 
@@ -62,6 +63,7 @@ fn bench_match_host_path(c: &mut Criterion) {
     group.finish();
 }
 
+#[allow(clippy::unwrap_used)]
 fn bench_path_rewrite(c: &mut Criterion) {
     c.bench_function("rewrite", |b| {
         let lo = Location::new(

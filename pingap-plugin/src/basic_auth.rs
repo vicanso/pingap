@@ -129,6 +129,21 @@ impl TryFrom<&PluginConf> for BasicAuth {
                 message: "basic authorizations can't be empty".to_string(),
             });
         }
+        let miss_authorization_headers = if let Ok(value) =
+            HeaderValue::from_str(
+                r###"Basic realm="Access to the staging site""###,
+            ) {
+            Some(vec![(http::header::WWW_AUTHENTICATE, value)])
+        } else {
+            None
+        };
+        let unauthorized_headers = if let Ok(value) = HeaderValue::from_str(
+            r###"Basic realm="Access to the staging site""###,
+        ) {
+            Some(vec![(http::header::WWW_AUTHENTICATE, value)])
+        } else {
+            None
+        };
 
         let params = Self {
             hash_value,
@@ -138,25 +153,13 @@ impl TryFrom<&PluginConf> for BasicAuth {
             authorizations,
             miss_authorization_resp: HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
-                headers: Some(vec![(
-                    http::header::WWW_AUTHENTICATE,
-                    HeaderValue::from_str(
-                        r###"Basic realm="Access to the staging site""###,
-                    )
-                    .unwrap(),
-                )]),
+                headers: miss_authorization_headers,
                 body: Bytes::from_static(b"Authorization is missing"),
                 ..Default::default()
             },
             unauthorized_resp: HttpResponse {
                 status: StatusCode::UNAUTHORIZED,
-                headers: Some(vec![(
-                    http::header::WWW_AUTHENTICATE,
-                    HeaderValue::from_str(
-                        r###"Basic realm="Access to the staging site""###,
-                    )
-                    .unwrap(),
-                )]),
+                headers: unauthorized_headers,
                 body: Bytes::from_static(b"Invalid user or password"),
                 ..Default::default()
             },

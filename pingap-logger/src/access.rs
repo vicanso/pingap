@@ -132,7 +132,16 @@ impl From<&str> for Parser {
             "tiny" => TINY,
             _ => value,
         };
-        let reg = Regex::new(r"(\{[a-zA-Z_<>\-~:$]+*\})").unwrap();
+        let Ok(reg) = Regex::new(r"(\{[a-zA-Z_<>\-~:$]+*\})") else {
+            return Parser {
+                needs_timestamp: false,
+                capacity: 0,
+                tags: vec![Tag {
+                    category: TagCategory::Fill,
+                    data: Some(value.to_string()),
+                }],
+            };
+        };
         let mut current = 0;
         let mut end = 0;
         let mut tags = vec![];

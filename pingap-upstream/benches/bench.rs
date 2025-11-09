@@ -1,6 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use pingap_upstream::HashStrategy;
 
+#[allow(clippy::unwrap_used)]
 fn new_get_session(
     headers: Vec<String>,
     url: String,
@@ -32,6 +33,7 @@ fn new_get_session(
     rx
 }
 
+#[allow(clippy::unwrap_used)]
 fn bench_hash_strategy(c: &mut Criterion) {
     let mut g = c.benchmark_group("hash strategy");
     let session = new_get_session(

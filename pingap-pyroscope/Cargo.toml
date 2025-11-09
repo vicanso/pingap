@@ -22,3 +22,7 @@ snafu = { workspace = true }
 substring = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
+
+[lints.clippy]
+# Set the unwrap_used lint level to deny
+unwrap_used = "deny"

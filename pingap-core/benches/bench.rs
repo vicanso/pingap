@@ -9,6 +9,7 @@ use pingap_core::{format_duration, Ctx};
 use pingora::http::RequestHeader;
 use std::hint::black_box;
 
+#[allow(clippy::unwrap_used)]
 fn bench_remove_query_from_header(c: &mut Criterion) {
     c.bench_function("remove query from header", |b| {
         let req =
@@ -22,6 +23,7 @@ fn bench_remove_query_from_header(c: &mut Criterion) {
     });
 }
 
+#[allow(clippy::unwrap_used)]
 fn bench_get_host(c: &mut Criterion) {
     c.bench_function("get uri host", |b| {
         let mut req =
@@ -35,6 +37,7 @@ fn bench_get_host(c: &mut Criterion) {
     });
 }
 
+#[allow(clippy::unwrap_used)]
 fn bench_convert_header_value(c: &mut Criterion) {
     c.bench_function("convert header value", |b| {
         let value = HeaderValue::from_static("123123");

@@ -10,6 +10,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 use tokio_test::io::Builder;
 
+#[allow(clippy::unwrap_used)]
 fn get_logger_session() -> mpsc::Receiver<Option<Session>> {
     let (tx, rx) = mpsc::sync_channel(0);
     std::thread::spawn(move || {
@@ -43,6 +44,7 @@ fn get_logger_session() -> mpsc::Receiver<Option<Session>> {
     rx
 }
 
+#[allow(clippy::unwrap_used)]
 fn bench_logger_format(c: &mut Criterion) {
     let session = get_logger_session().recv().unwrap().unwrap();
     c.bench_function("logger format", |b| {

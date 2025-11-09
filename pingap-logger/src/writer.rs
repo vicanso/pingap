@@ -362,13 +362,16 @@ pub fn logger_try_init(
         log_path = Some(dir);
         w
     };
+    let timer = tracing_subscriber::fmt::time::OffsetTime::new(
+        time::UtcOffset::from_hms(hours, minutes, 0)
+            .unwrap_or(time::UtcOffset::UTC),
+        time::format_description::well_known::Rfc3339,
+    );
+
     if params.json {
         let fmt_layer = tracing_subscriber::fmt::layer()
             .with_ansi(false)
-            .with_timer(tracing_subscriber::fmt::time::OffsetTime::new(
-                time::UtcOffset::from_hms(hours, minutes, 0).unwrap(),
-                time::format_description::well_known::Rfc3339,
-            ))
+            .with_timer(timer)
             .with_target(is_dev)
             .with_writer(writer)
             .json();
@@ -385,10 +388,7 @@ pub fn logger_try_init(
     } else {
         let fmt_layer = tracing_subscriber::fmt::layer()
             .with_ansi(is_dev) // text format with color if dev
-            .with_timer(tracing_subscriber::fmt::time::OffsetTime::new(
-                time::UtcOffset::from_hms(hours, minutes, 0).unwrap(),
-                time::format_description::well_known::Rfc3339,
-            ))
+            .with_timer(timer)
             .with_target(is_dev)
             .with_writer(writer);
 

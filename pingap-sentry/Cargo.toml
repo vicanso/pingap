@@ -15,3 +15,7 @@ path = "src/lib.rs"
 
 [dependencies]
 sentry-core = { workspace = true }
+
+[lints.clippy]
+# Set the unwrap_used lint level to deny
+unwrap_used = "deny"

@@ -54,8 +54,14 @@ impl BackgroundService for AgentService {
         match start_pyroscope(&self.url) {
             Ok(agent_running) => {
                 let _ = shutdown.changed().await;
-                let agent_ready = agent_running.stop().unwrap();
-                agent_ready.shutdown();
+                match agent_running.stop() {
+                    Ok(agent_ready) => {
+                        agent_ready.shutdown();
+                    },
+                    Err(e) => {
+                        error!("stop pyroscope error: {}", e);
+                    },
+                }
             },
             Err(e) => {
                 error!("start pyroscope error: {}", e);

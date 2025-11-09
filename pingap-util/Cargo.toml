@@ -37,3 +37,7 @@ criterion = { version = "0.7.0", features = ["html_reports"] }
 [[bench]]
 name = "bench"
 harness = false
+
+[lints.clippy]
+# Set the unwrap_used lint level to deny
+unwrap_used = "deny"

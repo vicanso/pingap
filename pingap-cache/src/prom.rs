@@ -44,7 +44,7 @@ pub static CACHE_READING_TIME: LazyLock<Box<Histogram>> = LazyLock::new(|| {
             "pingap cache storage read time(second)",
             &[0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0],
         )
-        .unwrap(),
+        .expect("Failed to register CACHE_READING_TIME histogram metric"),
     )
 });
 pub static CACHE_WRITING_TIME: LazyLock<Box<Histogram>> = LazyLock::new(|| {
@@ -55,6 +55,6 @@ pub static CACHE_WRITING_TIME: LazyLock<Box<Histogram>> = LazyLock::new(|| {
             "pingap cache storage write time(second)",
             &[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0],
         )
-        .unwrap(),
+        .expect("Failed to register CACHE_WRITING_TIME histogram metric"),
     )
 });

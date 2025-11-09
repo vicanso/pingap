@@ -216,8 +216,11 @@ fn get_cacheable_and_headers_from_meta(
     let cacheable = !value.contains("text/html");
 
     // Build basic headers (Content-Type)
-    let content_type = HeaderValue::from_str(&value).unwrap();
-    let mut headers = vec![(header::CONTENT_TYPE, content_type)];
+    let mut headers = if let Ok(value) = HeaderValue::from_str(&value) {
+        vec![(header::CONTENT_TYPE, value)]
+    } else {
+        vec![]
+    };
 
     // Get file size (platform-specific implementation)
     #[cfg(unix)]
@@ -233,7 +236,9 @@ fn get_cacheable_and_headers_from_meta(
             .as_secs();
         if value > 0 {
             let etag = format!(r###"W/"{size:x}-{value:x}""###);
-            headers.push((header::ETAG, HeaderValue::from_str(&etag).unwrap()));
+            if let Ok(value) = HeaderValue::from_str(&etag) {
+                headers.push((header::ETAG, value));
+            }
         }
     }
     (cacheable, size, headers)
@@ -346,7 +351,8 @@ impl Directory {
 
 static IGNORE_RESPONSE: LazyLock<HttpResponse> =
     LazyLock::new(|| HttpResponse {
-        status: StatusCode::from_u16(999).unwrap(),
+        status: StatusCode::from_u16(999)
+            .expect("Failed to create status code"),
         ..Default::default()
     });
 

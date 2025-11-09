@@ -36,7 +36,7 @@ where
 
     fn make_writer(&'a self) -> Self::Writer {
         SyslogWriterGuard {
-            guard: self.logger.lock().unwrap(),
+            guard: self.logger.lock().expect("Failed to lock syslog writer"),
         }
     }
 }

@@ -585,12 +585,11 @@ impl LocationConf {
                     let arr = header
                         .split_once(':')
                         .map(|(k, v)| (k.trim(), v.trim()));
-                    if arr.is_none() {
+                    let Some((header_name, header_value)) = arr else {
                         return Err(Error::Invalid {
                             message: format!("header {header} is invalid"),
                         });
-                    }
-                    let (header_name, header_value) = arr.unwrap();
+                    };
 
                     // Validate header name is valid
                     HeaderName::from_bytes(header_name.as_bytes()).map_err(|err| Error::Invalid {

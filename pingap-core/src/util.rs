@@ -22,7 +22,9 @@ static COARSE_CLOCK_UPDATER: LazyLock<Updater> = LazyLock::new(|| {
         .parse::<u64>()
         .unwrap_or(10)
         .clamp(1, 500);
-    Updater::new(interval).start().unwrap()
+    Updater::new(interval)
+        .start()
+        .expect("Failed to start coarse clock updater")
 });
 
 /// Initialize the time cache

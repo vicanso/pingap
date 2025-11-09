@@ -39,3 +39,7 @@ tempfile = "3.21.0"
 tokio-test = "0.4.4"
 criterion = { version = "0.7.0", features = ["html_reports"] }
 toml = { workspace = true }
+
+[lints.clippy]
+# Set the unwrap_used lint level to deny
+unwrap_used = "deny"

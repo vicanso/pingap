@@ -166,7 +166,7 @@ static DEFAULT_PROXY_SET_HEADERS: LazyLock<Vec<HttpHeader>> =
             "x-forwarded-host:$host".to_string(),
             "x-forwarded-port:$server_port".to_string(),
         ])
-        .unwrap()
+        .expect("Failed to convert default proxy set headers")
     });
 
 /// Location represents a routing configuration for handling HTTP requests.

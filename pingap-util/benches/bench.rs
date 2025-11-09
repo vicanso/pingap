@@ -27,6 +27,7 @@ fn bench_format_byte_size(c: &mut Criterion) {
     g.finish();
 }
 
+#[allow(clippy::unwrap_used)]
 fn bench_ip_rules(c: &mut Criterion) {
     let mut g = c.benchmark_group("ip rules");
     g.bench_function("ip", |b| {

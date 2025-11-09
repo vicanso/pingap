@@ -306,8 +306,9 @@ impl Cache {
     }
 }
 
-static METHOD_PURGE: LazyLock<Method> =
-    LazyLock::new(|| Method::from_bytes(b"PURGE").unwrap());
+static METHOD_PURGE: LazyLock<Method> = LazyLock::new(|| {
+    Method::from_bytes(b"PURGE").expect("Failed to create PURGE method")
+});
 
 #[async_trait]
 impl Plugin for Cache {
