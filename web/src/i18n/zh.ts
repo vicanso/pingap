@@ -482,6 +482,8 @@ export default {
     combinedAuthAuthRemove: "删除",
     subFilterPath: "路径",
     subFilterPathPlaceholder: "输入子过滤器的路径(如 ^/api/)",
+    subFilterStatusCodes: "状态码",
+    subFilterStatusCodesPlaceholder: "输入子过滤器的状态码(如 200,201,202)",
     subFilterFilters: "过滤规则",
     subFilterFiltersPlaceholder:
       "输入子过滤器的规则(如 subs_filter 'http://pingap.io' 'https://pingap.io/api' ig)",

@@ -527,6 +527,8 @@ export default {
     combinedAuthAuthRemove: "Remove",
     subFilterPath: "Path",
     subFilterPathPlaceholder: "Input the path for sub filter(e.g. ^/api/)",
+    subFilterStatusCodes: "Status Codes",
+    subFilterStatusCodesPlaceholder: "Input the status codes for sub filter(e.g. 200,201,202)",
     subFilterFilters: "Filters",
     subFilterFiltersPlaceholder:
       "Input the filters for sub filter(e.g. subs_filter 'http://pingap.io' 'https://pingap.io/api' ig)",

@@ -43,7 +43,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 pub struct SubFilter {
     /// Regex pattern that matches against request paths
     /// Only requests with matching paths will be processed by this filter
-    path: Regex,
+    path: Option<Regex>,
 
     /// The content replacement engine that handles both regex and literal replacements
     /// Contains a collection of filter rules that will be applied in sequence
@@ -52,6 +52,12 @@ pub struct SubFilter {
     /// Unique identifier for this plugin instance
     /// Used for tracking and managing multiple instances of the plugin
     hash_value: String,
+
+    /// Status codes to apply the filter to
+    /// If None, the filter will be applied to all status codes
+    /// If Some, the filter will be applied to the specified status codes
+    /// The status codes are in the format of "200,201,202,..."
+    status_codes: Option<Vec<u16>>,
 }
 
 // Regular expression for parsing filter rules in the format:
@@ -197,13 +203,17 @@ impl TryFrom<&PluginConf> for SubFilter {
     /// # Returns
     /// * `Result<Self>` - Configured SubFilter instance or error if configuration is invalid
     fn try_from(value: &PluginConf) -> Result<Self> {
-        let path =
-            Regex::new(get_str_conf(value, "path").as_str()).map_err(|e| {
-                Error::Invalid {
+        let path_value = get_str_conf(value, "path");
+        let path = if path_value.is_empty() {
+            None
+        } else {
+            let regex = Regex::new(get_str_conf(value, "path").as_str())
+                .map_err(|e| Error::Invalid {
                     category: PluginCategory::SubFilter.to_string(),
                     message: e.to_string(),
-                }
-            })?;
+                })?;
+            Some(regex)
+        };
         let filters = get_str_slice_conf(value, "filters")
             .iter()
             .map(|s| {
@@ -213,6 +223,17 @@ impl TryFrom<&PluginConf> for SubFilter {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
+        let status_codes = get_str_conf(value, "status_codes");
+        let status_codes = if !status_codes.is_empty() {
+            Some(
+                status_codes
+                    .split(",")
+                    .flat_map(|s| s.trim().parse::<u16>().ok())
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        };
         let hash_value = get_hash_key(value);
 
         Ok(Self {
@@ -222,6 +243,7 @@ impl TryFrom<&PluginConf> for SubFilter {
                 buffer: BytesMut::new(),
             },
             hash_value,
+            status_codes,
         })
     }
 }
@@ -261,8 +283,19 @@ impl Plugin for SubFilter {
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<ResponsePluginResult> {
+        if let Some(status_codes) = &self.status_codes {
+            if !status_codes.contains(&upstream_response.status.as_u16()) {
+                return Ok(ResponsePluginResult::Unchanged);
+            }
+        }
+        // default is matched
+        let mut is_matched = true;
         // If request path matches, modify the response
-        if self.path.is_match(session.req_header().uri.path()) {
+        if let Some(regex) = &self.path {
+            is_matched = regex.is_match(session.req_header().uri.path());
+        }
+
+        if is_matched {
             // Remove content-length since we're modifying the body
             upstream_response.remove_header(&http::header::CONTENT_LENGTH);
             // Switch to chunked transfer encoding

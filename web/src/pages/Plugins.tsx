@@ -990,7 +990,15 @@ export default function Plugins() {
           label: pluginI18n("subFilterPath"),
           placeholder: pluginI18n("subFilterPathPlaceholder"),
           defaultValue: pluginConfig.path as string,
-          span: 6,
+          span: 3,
+          category: ExFormItemCategory.TEXT,
+        },
+        {
+          name: "status_codes",
+          label: pluginI18n("subFilterStatusCodes"),
+          placeholder: pluginI18n("subFilterStatusCodesPlaceholder"),
+          defaultValue: pluginConfig.status_codes as string,
+          span: 3,
           category: ExFormItemCategory.TEXT,
         },
         {
