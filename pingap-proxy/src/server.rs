@@ -654,12 +654,11 @@ impl Server {
         let Some(location) = &ctx.upstream.location_instance else {
             let header = session.req_header();
             let host = pingap_core::get_host(header).unwrap_or_default();
-            let body = Bytes::from(format!(
-                "Location not found, host:{host} path:{}",
+            let message = format!(
+                "No matching location, host:{host} path:{}",
                 header.uri.path()
-            ));
-            HttpResponse::unknown_error(body).send(session).await?;
-            return Ok(true);
+            );
+            return Err(pingap_core::new_internal_error(500, message));
         };
 
         debug!(
@@ -1509,10 +1508,9 @@ impl ProxyHttp for Server {
 
     /// Handles proxy failures and generates appropriate error responses.
     /// Error handling for:
-    /// - Upstream connection failures (502)
+    /// - Upstream connection failures (502, 504)
     /// - Client timeouts (408)
     /// - Client disconnections (499)
-    /// - Internal server errors (500)
     /// Generates error pages using configured template
     async fn fail_to_proxy(
         &self,
