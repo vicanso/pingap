@@ -29,15 +29,15 @@ use pingap_certificate::CertificateProvider;
 use pingap_certificate::{GlobalCertificate, TlsSettingParams};
 use pingap_config::ConfigManager;
 use pingap_core::BackgroundTask;
+#[cfg(feature = "tracing")]
+use pingap_core::HttpResponse;
 use pingap_core::LocationInstance;
 use pingap_core::PluginProvider;
 use pingap_core::{
     get_cache_key, CompressionStat, Ctx, PluginStep, RequestPluginResult,
     ResponseBodyPluginResult, ResponsePluginResult,
 };
-use pingap_core::{
-    get_digest_detail, HttpResponse, HTTP_HEADER_NAME_X_REQUEST_ID,
-};
+use pingap_core::{get_digest_detail, HTTP_HEADER_NAME_X_REQUEST_ID};
 use pingap_core::{new_internal_error, Plugin};
 use pingap_location::{Location, LocationProvider};
 use pingap_logger::{parse_access_log_directive, Parser};
