@@ -3840,6 +3840,7 @@ dependencies = [
  "humantime",
  "mime_guess",
  "nanoid",
+ "path-absolutize",
  "pingap-cache",
  "pingap-config",
  "pingap-core",

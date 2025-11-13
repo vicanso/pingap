@@ -22,12 +22,13 @@ use ctor::ctor;
 use glob::glob;
 use http::{header, HeaderValue, StatusCode};
 use humantime::parse_duration;
+use path_absolutize::Absolutize;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     convert_headers, HttpChunkResponse, HttpHeader, HttpResponse,
     RequestPluginResult,
 };
-use pingap_core::{Ctx, Plugin, PluginStep};
+use pingap_core::{Ctx, Plugin, PluginStep, HTTP_HEADER_CONTENT_TEXT};
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::fs::Metadata;
@@ -468,7 +469,28 @@ impl Plugin for Directory {
             Err(_) => source_str.to_string(),
         };
         // convert to relative path
-        let file = self.path.join(filename.substring(1, filename.len()));
+        let file = match self
+            .path
+            .join(filename.substring(1, filename.len()))
+            .absolutize()
+        {
+            Ok(file) => file.to_path_buf(),
+            Err(e) => {
+                return Ok(RequestPluginResult::Respond(
+                    HttpResponse::unknown_error(e.to_string()),
+                ))
+            },
+        };
+        if !file.starts_with(&self.path) {
+            let message =
+                format!("You do not have permission to access this resource, file: {path_str}");
+            let resp = HttpResponse::builder(StatusCode::FORBIDDEN)
+                .body(message)
+                .header(HTTP_HEADER_CONTENT_TEXT.clone())
+                .no_store()
+                .finish();
+            return Ok(RequestPluginResult::Respond(resp));
+        }
         debug!(file = format!("{file:?}"), "static file serve");
         if self.autoindex && file.is_dir() {
             let resp = match get_autoindex_html(&file) {
