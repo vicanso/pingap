@@ -136,7 +136,7 @@ fn try_init_memory_backend(value: &str) -> &'static HttpCache {
         let available_memory =
             AVAILABLE_MEMORY.load(Ordering::Relaxed) as usize;
         let max_memory = if available_memory > 0 {
-            available_memory / 2
+            available_memory / 4
         } else {
             ByteSize::mb(256).as_u64() as usize
         };
