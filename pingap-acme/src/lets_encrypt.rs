@@ -518,150 +518,162 @@ async fn new_lets_encrypt(
         });
     }
 
-    let mut authorizations = order.authorizations();
-
     let mut dns_tasks = vec![];
 
-    while let Some(result) = authorizations.next().await {
-        let mut authz = result.map_err(|e| Error::Instant {
-            category: "authorizations".to_string(),
-            source: e,
-        })?;
-        info!(
-            target: LOG_TARGET,
-            status = format!("{:?}", authz.status),
-            "authorization from let's encrypt"
-        );
-        match authz.status {
-            instant_acme::AuthorizationStatus::Pending => {},
-            instant_acme::AuthorizationStatus::Valid => continue,
-            _ => todo!(),
-        }
-
-        let mut challenge = if params.dns_challenge {
-            let challenge =
-                authz.challenge(ChallengeType::Dns01).ok_or_else(|| {
-                    Error::NotFound {
-                        message: "Dns01 challenge not found".to_string(),
-                    }
-                })?;
-            let mut identifier = challenge.identifier().to_string();
-            if identifier.starts_with("*.") {
-                identifier =
-                    identifier.substring(2, identifier.len()).to_string();
+    let result = (async {
+        let mut authorizations = order.authorizations();
+        while let Some(result) = authorizations.next().await {
+            let mut authz = result.map_err(|e| Error::Instant {
+                category: "authorizations".to_string(),
+                source: e,
+            })?;
+            info!(
+                target: LOG_TARGET,
+                status = format!("{:?}", authz.status),
+                "authorization from let's encrypt"
+            );
+            match authz.status {
+                instant_acme::AuthorizationStatus::Pending => {},
+                instant_acme::AuthorizationStatus::Valid => continue,
+                _ => todo!(),
             }
-            let dns_txt_value = challenge.key_authorization().dns_value();
-            let acme_dns_name = format!("_acme-challenge.{identifier}");
-            let task: Box<dyn AcmeDnsTask> = match params.dns_provider.as_str()
-            {
-                "ali" => Box::new(AliDnsTask::new(&params.dns_service_url)?),
-                "cf" => Box::new(CfDnsTask::new(&params.dns_service_url)?),
-                "tencent" => {
-                    Box::new(TencentDnsTask::new(&params.dns_service_url)?)
-                },
-                "huawei" => {
-                    Box::new(HuaweiDnsTask::new(&params.dns_service_url)?)
-                },
-                _ => Box::new(ManualDnsTask::new(config_manager.clone())),
-            };
 
-            info!(
-                target: LOG_TARGET,
-                dns_provider = params.dns_provider,
-                "start add dns txt record for {acme_dns_name}"
-            );
-            task.add_txt_record(&acme_dns_name, &dns_txt_value).await?;
-            info!(
-                target: LOG_TARGET,
-                dns_provider = params.dns_provider,
-                "add dns txt record success for {acme_dns_name}"
-            );
-            let resolver = Resolver::builder_with_config(
-                ResolverConfig::default(),
-                TokioConnectionProvider::default(),
-            )
-            .build();
-            // dns txt record may take a while to propagate, so we need to retry
-            for i in 0..10 {
-                tokio::time::sleep(Duration::from_secs(10)).await;
+            let mut challenge = if params.dns_challenge {
+                let challenge = authz
+                    .challenge(ChallengeType::Dns01)
+                    .ok_or_else(|| Error::NotFound {
+                        message: "Dns01 challenge not found".to_string(),
+                    })?;
+                let mut identifier = challenge.identifier().to_string();
+                if identifier.starts_with("*.") {
+                    identifier =
+                        identifier.substring(2, identifier.len()).to_string();
+                }
+                let dns_txt_value = challenge.key_authorization().dns_value();
+                let acme_dns_name = format!("_acme-challenge.{identifier}");
+                let task: Box<dyn AcmeDnsTask> = match params
+                    .dns_provider
+                    .as_str()
+                {
+                    "ali" => {
+                        Box::new(AliDnsTask::new(&params.dns_service_url)?)
+                    },
+                    "cf" => Box::new(CfDnsTask::new(&params.dns_service_url)?),
+                    "tencent" => {
+                        Box::new(TencentDnsTask::new(&params.dns_service_url)?)
+                    },
+                    "huawei" => {
+                        Box::new(HuaweiDnsTask::new(&params.dns_service_url)?)
+                    },
+                    _ => Box::new(ManualDnsTask::new(config_manager.clone())),
+                };
+
                 info!(
                     target: LOG_TARGET,
-                    "lookup dns txt record of {acme_dns_name}, times:{i}"
+                    dns_provider = params.dns_provider,
+                    "start add dns txt record for {acme_dns_name}"
                 );
-                if let Ok(response) =
-                    resolver.lookup(&acme_dns_name, RecordType::TXT).await
-                {
-                    let txt_records: Vec<String> = response
-                        .record_iter()
-                        .filter_map(|record| {
-                            record.data().as_txt().map(|data| data.to_string())
-                        })
-                        .collect();
-                    let matched = txt_records.contains(&dns_txt_value);
+                task.add_txt_record(&acme_dns_name, &dns_txt_value).await?;
+                info!(
+                    target: LOG_TARGET,
+                    dns_provider = params.dns_provider,
+                    "add dns txt record success for {acme_dns_name}"
+                );
+                let resolver = Resolver::builder_with_config(
+                    ResolverConfig::default(),
+                    TokioConnectionProvider::default(),
+                )
+                .build();
+                // dns txt record may take a while to propagate, so we need to retry
+                for i in 0..10 {
+                    tokio::time::sleep(Duration::from_secs(10)).await;
                     info!(
                         target: LOG_TARGET,
-                        "get dns txt records: {:?}, matched: {matched}",
-                        txt_records
+                        "lookup dns txt record of {acme_dns_name}, times:{i}"
                     );
-                    if matched {
-                        break;
+                    if let Ok(response) =
+                        resolver.lookup(&acme_dns_name, RecordType::TXT).await
+                    {
+                        let txt_records: Vec<String> = response
+                            .record_iter()
+                            .filter_map(|record| {
+                                record
+                                    .data()
+                                    .as_txt()
+                                    .map(|data| data.to_string())
+                            })
+                            .collect();
+                        let matched = txt_records.contains(&dns_txt_value);
+                        info!(
+                            target: LOG_TARGET,
+                            "get dns txt records: {:?}, matched: {matched}",
+                            txt_records
+                        );
+                        if matched {
+                            break;
+                        }
                     }
                 }
-            }
-            dns_tasks.push(task);
-            challenge
-        } else {
-            let challenge =
-                authz.challenge(ChallengeType::Http01).ok_or_else(|| {
-                    Error::NotFound {
+                dns_tasks.push(task);
+                challenge
+            } else {
+                let challenge = authz
+                    .challenge(ChallengeType::Http01)
+                    .ok_or_else(|| Error::NotFound {
                         message: "Http01 challenge not found".to_string(),
-                    }
-                })?;
+                    })?;
 
-            let key_auth = challenge.key_authorization();
-            config_manager
-                .update(
-                    Category::Storage,
-                    &challenge.token,
-                    &StorageConf {
-                        value: key_auth.as_str().to_string(),
-                        category: "config".to_string(),
-                        secret: None,
-                        remark: Some("let's encrypt http-01 token".to_string()),
-                    },
-                )
-                .await
-                .map_err(|e| Error::Fail {
-                    category: "save_token".to_string(),
-                    message: e.to_string(),
-                })?;
-            info!(
-                target: LOG_TARGET,
-                token = challenge.token,
-                "let's encrypt well known path",
-            );
-            challenge
-        };
-        challenge.set_ready().await.map_err(|e| Error::Instant {
-            category: "set_challenge_ready".to_string(),
-            source: e,
-        })?;
-    }
+                let key_auth = challenge.key_authorization();
+                config_manager
+                    .update(
+                        Category::Storage,
+                        &challenge.token,
+                        &StorageConf {
+                            value: key_auth.as_str().to_string(),
+                            category: "config".to_string(),
+                            secret: None,
+                            remark: Some(
+                                "let's encrypt http-01 token".to_string(),
+                            ),
+                        },
+                    )
+                    .await
+                    .map_err(|e| Error::Fail {
+                        category: "save_token".to_string(),
+                        message: e.to_string(),
+                    })?;
+                info!(
+                    target: LOG_TARGET,
+                    token = challenge.token,
+                    "let's encrypt well known path",
+                );
+                challenge
+            };
+            challenge.set_ready().await.map_err(|e| Error::Instant {
+                category: "set_challenge_ready".to_string(),
+                source: e,
+            })?;
+        }
 
-    let retry = RetryPolicy::default().timeout(Duration::from_secs(60));
+        let status = order
+            .poll_ready(
+                &RetryPolicy::default().timeout(Duration::from_secs(60)),
+            )
+            .await
+            .map_err(|e| Error::Instant {
+                category: "poll_ready".to_string(),
+                source: e,
+            })?;
 
-    let status =
-        order.poll_ready(&retry).await.map_err(|e| Error::Instant {
-            category: "poll_ready".to_string(),
-            source: e,
-        })?;
-
-    if status != OrderStatus::Ready {
-        return Err(Error::Fail {
-            category: "poll_ready".to_string(),
-            message: format!("unexpected order status: {status:?}"),
-        });
-    }
+        if status != OrderStatus::Ready {
+            return Err(Error::Fail {
+                category: "poll_ready".to_string(),
+                message: format!("unexpected order status: {status:?}"),
+            });
+        }
+        Ok(())
+    })
+    .await;
 
     for task in dns_tasks.iter() {
         // ignore done error
@@ -673,20 +685,22 @@ async fn new_lets_encrypt(
             );
         }
     }
+    result?;
 
     let private_key_pem =
         order.finalize().await.map_err(|e| Error::Instant {
             category: "finalize".to_string(),
             source: e,
         })?;
-    let cert_chain_pem =
-        order
-            .poll_certificate(&retry)
-            .await
-            .map_err(|e| Error::Instant {
-                category: "poll_certificate".to_string(),
-                source: e,
-            })?;
+    let cert_chain_pem = order
+        .poll_certificate(
+            &RetryPolicy::default().timeout(Duration::from_secs(60)),
+        )
+        .await
+        .map_err(|e| Error::Instant {
+            category: "poll_certificate".to_string(),
+            source: e,
+        })?;
 
     Ok((cert_chain_pem, private_key_pem))
 }

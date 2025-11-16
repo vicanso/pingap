@@ -15,6 +15,7 @@
 use super::{AcmeDnsTask, Error};
 use async_trait::async_trait;
 use serde::Deserialize;
+use tldextract::{TldExtractor, TldOption};
 use tokio::sync::Mutex;
 use url::Url;
 
@@ -49,12 +50,22 @@ async fn get_zone_id(
     api_token: &str,
     domain_name: &str,
 ) -> Result<String> {
+    let tld_result = TldExtractor::new(TldOption::default())
+        .extract_naive(domain_name)
+        .map_err(new_error)?;
     let client = reqwest::Client::new();
     let url = format!("{endpoint}/client/v4/zones");
+    let domain = tld_result.domain.unwrap_or_default();
+    let suffix = tld_result.suffix.unwrap_or_default();
+    let domain = if domain.is_empty() || suffix.is_empty() {
+        domain_name.to_string()
+    } else {
+        format!("{domain}.{suffix}")
+    };
 
     let response = client
         .get(url)
-        .query(&[("name", domain_name)])
+        .query(&[("name", &domain)])
         .bearer_auth(api_token)
         .send()
         .await
@@ -80,7 +91,7 @@ async fn get_zone_id(
     api_response
         .result
         .into_iter()
-        .find(|zone| zone.name == domain_name)
+        .find(|zone| zone.name == domain)
         .map(|zone| zone.id)
         .ok_or(new_error(format!(
             "not found zone id for domain '{domain_name}'"

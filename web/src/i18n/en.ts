@@ -328,9 +328,9 @@ export default {
     isDefault: "Default Certificate",
     dnsChallenge: "Dns 01 Challenge",
     dnsProvider: "Dns Provider",
-    dnsServiceUrl: "Dns Service Url",
+    dnsServiceUrl: "Dns Api Service Url",
     dnsServiceUrlPlaceholder:
-      "Input dns service url for update dns txt challenge",
+      "Input dns api service url for update dns txt challenge",
     isCa: "Certificate Authority",
     bufferDays: "Buffer Days",
     bufferDaysPlaceholder: "Input the buffer days for certificate",
