@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       matrix:
-        toolchain: [1.83.0, 1.84.0, 1.89.0, 1.90.0, stable]
+        toolchain: [1.84.0, 1.89.0, 1.90.0, stable]
     services:
       etcd:
         image: quay.io/coreos/etcd:v3.5.5
