@@ -151,6 +151,8 @@ jobs:
           ./.github/workflows/upload_asset.sh ./pingap-linux-gnu-${{ matrix.platform.tag }}-full.tar.gz $GITHUB_TOKEN
 
   windows:
+    # Temporarily disabled
+    if: false
     runs-on: windows-latest
     name: ${{ matrix.target }}
     env:

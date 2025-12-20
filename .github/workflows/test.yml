@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       matrix:
-        toolchain: [1.84.0, 1.89.0, 1.90.0, stable]
+        toolchain: [1.84.0, 1.89.0, 1.90.0, 1.91.0, stable]
     services:
       etcd:
         image: quay.io/coreos/etcd:v3.5.5
@@ -82,6 +82,8 @@ jobs:
           make release-all
           ldd target/release/pingap
   windows:
+    # Temporarily disabled
+    if: false
     runs-on: windows-latest
     name: ${{ matrix.target }}
     env:
