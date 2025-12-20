@@ -18,11 +18,11 @@ use http::{HeaderName, HeaderValue};
 use pingap_discovery::{is_static_discovery, DNS_DISCOVERY};
 use pingap_util::{is_pem, resolve_path};
 use regex::Regex;
+use rustls_pki_types::pem::PemObject;
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::HashSet;
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::io::Cursor;
 use std::io::{BufReader, Read};
 use std::net::ToSocketAddrs;
 use std::path::Path;
@@ -155,12 +155,11 @@ fn validate_cert(value: &str) -> Result<()> {
             message: e.to_string(),
         })?;
     for buf in buf_list {
-        let mut cursor = Cursor::new(buf);
         // Parse all certificates in the buffer
-        let certs = rustls_pemfile::certs(&mut cursor)
+        let certs = rustls_pki_types::CertificateDer::pem_slice_iter(&buf)
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| Error::Invalid {
-                message: format!("Failed to parse certificate: {e}"),
+            .map_err(|_| Error::Invalid {
+                message: "Failed to parse certificate".to_string(),
             })?;
 
         // Ensure at least one valid certificate was found
@@ -240,12 +239,11 @@ impl Validate for CertificateConf {
                     message: e.to_string(),
                 }
             })?;
-            let mut key = Cursor::new(buf_list[0].clone());
-            let _ = rustls_pemfile::private_key(&mut key).map_err(|e| {
-                Error::Invalid {
-                    message: e.to_string(),
-                }
-            })?;
+            let buf = &buf_list[0];
+            let _ = rustls_pki_types::PrivateKeyDer::from_pem_slice(buf)
+                .map_err(|_| Error::Invalid {
+                    message: "Failed to parse private key".to_string(),
+                })?;
         }
 
         // Validate main certificate

@@ -29,7 +29,7 @@ pingap-core = { version = "0.12.0", path = "../pingap-core" }
 pingap-discovery = { version = "0.12.0", path = "../pingap-discovery" }
 pingap-util = { version = "0.12.0", path = "../pingap-util" }
 regex = { workspace = true }
-rustls-pemfile = { workspace = true }
+rustls-pki-types = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_qs = { workspace = true }

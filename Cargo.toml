@@ -221,7 +221,7 @@ opentelemetry_sdk = { version = "0.30.0", features = [
     "rt-tokio",
 ], default-features = false }
 path-absolutize = "3.1.1"
-pingora = { git = "https://github.com/cloudflare/pingora", rev = "d6060edc83dc601fd81f854b5728718b7dc0fd69", default-features = false, features = [
+pingora = { git = "https://github.com/cloudflare/pingora", rev = "94e9de6382a2608e4b7eed7f1880065018a0d3b1", default-features = false, features = [
     # pingora = { version = "0.6.0", default-features = false, features = [
     "lb",
     "openssl",
@@ -239,7 +239,7 @@ reqwest = { version = "0.12.24", default-features = false, features = [
     "default-tls",
 ] }
 rustls = "0.23.32"
-rustls-pemfile = "2.2.0"
+rustls-pki-types = "1.13.2"
 rustc_version_runtime = "0.3.0"
 scopeguard = "1.2.0"
 sentry-core = { version = "0.36.0", default-features = false }
