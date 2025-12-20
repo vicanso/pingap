@@ -933,6 +933,7 @@ mod tests {
     use bytes::Bytes;
     use bytes::BytesMut;
     use pingora::protocols::tls::SslDigest;
+    use pingora::protocols::tls::SslDigestExtension;
     use pretty_assertions::assert_eq;
     use std::{sync::Arc, time::Duration};
 
@@ -1380,6 +1381,7 @@ mod tests {
                 "0x00000000000000000000000000000abc".to_string(),
             ),
             cert_digest: vec![],
+            extension: SslDigestExtension::default(),
         }));
         let detail = get_digest_detail(&digest);
         assert_eq!(detail.connection_reused, true);

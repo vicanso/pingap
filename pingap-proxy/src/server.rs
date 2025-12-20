@@ -1697,6 +1697,7 @@ mod tests {
     use pingap_location::LocationStats;
     use pingora::http::ResponseHeader;
     use pingora::protocols::tls::SslDigest;
+    use pingora::protocols::tls::SslDigestExtension;
     use pingora::protocols::{Digest, TimingDigest};
     use pingora::proxy::{ProxyHttp, Session};
     use pingora::server::configuration;
@@ -1721,6 +1722,7 @@ mod tests {
                 organization: None,
                 serial_number: None,
                 cert_digest: vec![],
+                extension: SslDigestExtension::default(),
             })),
             ..Default::default()
         };
