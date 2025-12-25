@@ -198,7 +198,7 @@ pub trait LocationInstance: Send + Sync {
         &self,
         header: &mut RequestHeader,
         variables: Option<&AHashMap<String, String>>,
-    ) -> bool;
+    ) -> (bool, Option<AHashMap<String, String>>);
     /// Returns the proxy header to upstream
     fn headers(&self) -> Option<&Vec<(HeaderName, HeaderValue, bool)>>;
     /// Returns the client body size limit
