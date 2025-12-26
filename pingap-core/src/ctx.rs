@@ -197,7 +197,7 @@ pub trait LocationInstance: Send + Sync {
     fn rewrite(
         &self,
         header: &mut RequestHeader,
-        variables: Option<&AHashMap<String, String>>,
+        variables: Option<AHashMap<String, String>>,
     ) -> (bool, Option<AHashMap<String, String>>);
     /// Returns the proxy header to upstream
     fn headers(&self) -> Option<&Vec<(HeaderName, HeaderValue, bool)>>;
@@ -467,8 +467,11 @@ impl Ctx {
     #[inline]
     pub fn extend_variables(&mut self, values: AHashMap<String, String>) {
         let features = self.features.get_or_insert_default();
-        let variables = features.variables.get_or_insert_with(AHashMap::new);
-        variables.extend(values);
+        if let Some(variables) = features.variables.as_mut() {
+            variables.extend(values);
+        } else {
+            features.variables = Some(values);
+        }
     }
 
     /// Returns the value of a variable by key.

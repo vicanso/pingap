@@ -668,8 +668,12 @@ impl Server {
             "location is matched"
         );
 
-        let variables =
-            ctx.features.as_ref().and_then(|f| f.variables.as_ref());
+        let variables = if let Some(features) = &mut ctx.features {
+            features.variables.take()
+        } else {
+            None
+        };
+
         let (_, capture_variables) =
             location.rewrite(session.req_header_mut(), variables);
         if let Some(capture_variables) = capture_variables {

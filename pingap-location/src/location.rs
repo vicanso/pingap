@@ -533,18 +533,20 @@ impl LocationInstance for Location {
     fn rewrite(
         &self,
         header: &mut RequestHeader,
-        variables: Option<&AHashMap<String, String>>,
+        mut variables: Option<AHashMap<String, String>>,
     ) -> (bool, Option<AHashMap<String, String>>) {
         let Some((re, value)) = &self.reg_rewrite else {
-            return (false, None);
+            return (false, variables);
         };
+
         let mut replace_value = value.to_string();
-        // replace variables for rewrite value
-        if let Some(variables) = variables {
-            for (k, v) in variables.iter() {
+
+        if let Some(vars) = &variables {
+            for (k, v) in vars.iter() {
                 replace_value = replace_value.replace(k, v);
             }
         }
+
         let path = header.uri.path();
 
         let mut new_path = if re.to_string() == ".*" {
@@ -552,15 +554,15 @@ impl LocationInstance for Location {
         } else {
             re.replace(path, replace_value).to_string()
         };
+
         if path == new_path {
-            return (false, None);
+            return (false, variables);
         }
-        let mut capture_variables = None;
+
         if let Some(captures) = re.captures(path) {
             for name in re.capture_names().flatten() {
                 if let Some(match_value) = captures.name(name) {
-                    let values =
-                        capture_variables.get_or_insert_with(AHashMap::new);
+                    let values = variables.get_or_insert_with(AHashMap::new);
                     values.insert(
                         name.to_string(),
                         match_value.as_str().to_string(),
@@ -574,13 +576,15 @@ impl LocationInstance for Location {
             new_path = format!("{new_path}?{query}");
         }
         debug!(category = LOG_CATEGORY, new_path, "rewrite path");
+
         // set new uri
         if let Err(e) =
             new_path.parse::<http::Uri>().map(|uri| header.set_uri(uri))
         {
             error!(category = LOG_CATEGORY, error = %e, location = self.name.as_ref(), "new path parse fail");
         }
-        (true, capture_variables)
+
+        (true, variables)
     }
 }
 
@@ -734,19 +738,23 @@ mod tests {
             "lo",
             &LocationConf {
                 upstream: Some(upstream_name.to_string()),
-                rewrite: Some("^/users/(.*)$ /$1".to_string()),
+                rewrite: Some("^/users/(?<upstream>.*?)/(.*)$ /$2".to_string()),
                 ..Default::default()
             },
         )
         .unwrap();
         let mut req_header =
-            RequestHeader::build("GET", b"/users/me?abc=1", None).unwrap();
-        assert_eq!(true, lo.rewrite(&mut req_header, None).0);
+            RequestHeader::build("GET", b"/users/rest/me?abc=1", None).unwrap();
+        let (matched, variables) = lo.rewrite(&mut req_header, None);
+        assert_eq!(true, matched);
+        assert_eq!(r#"Some({"upstream": "rest"})"#, format!("{:?}", variables));
         assert_eq!("/me?abc=1", req_header.uri.to_string());
 
         let mut req_header =
             RequestHeader::build("GET", b"/api/me?abc=1", None).unwrap();
-        assert_eq!(false, lo.rewrite(&mut req_header, None).0);
+        let (matched, variables) = lo.rewrite(&mut req_header, None);
+        assert_eq!(false, matched);
+        assert_eq!(None, variables);
         assert_eq!("/api/me?abc=1", req_header.uri.to_string());
     }
 
