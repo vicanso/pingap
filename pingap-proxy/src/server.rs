@@ -1535,6 +1535,7 @@ impl ProxyHttp for Server {
 
         let code = match e.etype() {
             pingora::HTTPStatus(code) => *code,
+            // spellchecker:off
             _ => match e.esource() {
                 pingora::ErrorSource::Upstream => 502,
                 pingora::ErrorSource::Downstream => match e.etype() {
@@ -1546,6 +1547,7 @@ impl ProxyHttp for Server {
                 pingora::ErrorSource::Internal
                 | pingora::ErrorSource::Unset => 500,
             },
+            // spellchecker:on
         };
         let mut resp = match code {
             502 => error_resp::HTTP_502_RESPONSE.clone(),
