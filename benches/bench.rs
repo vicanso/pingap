@@ -1,14 +1,14 @@
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use bytes::Bytes;
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use http::{HeaderName, HeaderValue, StatusCode};
 use nanoid::nanoid;
 use pingap_config::LocationConf;
 use pingap_core::LocationInstance;
 use pingap_core::{
-    convert_headers, get_super_ts, CompressionStat, ConnectionInfo, Ctx,
-    Features, HttpResponse, RequestState, Timing, UpstreamInfo,
+    CompressionStat, ConnectionInfo, Ctx, Features, HttpResponse, RequestState,
+    Timing, UpstreamInfo, convert_headers, get_super_ts,
 };
 use pingap_location::Location;
 use pingap_logger::Parser;
@@ -218,8 +218,8 @@ fn bench_get_super_ts(c: &mut Criterion) {
 }
 
 #[allow(clippy::unwrap_used)]
-fn get_logger_session(
-) -> std::sync::mpsc::Receiver<Option<pingora::proxy::Session>> {
+fn get_logger_session()
+-> std::sync::mpsc::Receiver<Option<pingora::proxy::Session>> {
     let (tx, rx) = std::sync::mpsc::sync_channel(0);
     std::thread::spawn(move || {
         match tokio::runtime::Runtime::new() {
@@ -234,7 +234,9 @@ fn get_logger_session(
                         "X-Forwarded-For: 1.1.1.1, 2.2.2.2",
                     ]
                     .join("\r\n");
-                    let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+                    let input_header = format!(
+                        "GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n"
+                    );
                     let mock_io =
                         Builder::new().read(input_header.as_bytes()).build();
 

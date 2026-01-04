@@ -19,7 +19,7 @@ use crate::backend_circuit_state::{
 use crate::backend_stats::{BackendStats, WindowStats};
 use crate::hash_strategy::HashStrategy;
 use crate::peer_tracer::UpstreamPeerTracer;
-use crate::{UpstreamProvider, Upstreams, LOG_TARGET};
+use crate::{LOG_TARGET, UpstreamProvider, Upstreams};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
@@ -34,25 +34,25 @@ use pingap_core::{
 };
 use pingap_core::{NotificationData, NotificationLevel, NotificationSender};
 use pingap_discovery::{
-    is_dns_discovery, is_docker_discovery, is_static_discovery,
-    new_dns_discover_backends, new_docker_discover_backends,
-    new_static_discovery, Discovery, TRANSPARENT_DISCOVERY,
+    Discovery, TRANSPARENT_DISCOVERY, is_dns_discovery, is_docker_discovery,
+    is_static_discovery, new_dns_discover_backends,
+    new_docker_discover_backends, new_static_discovery,
 };
 use pingap_health::new_health_check;
+use pingora::lb::Backend;
 use pingora::lb::health_check::{HealthObserve, HealthObserveCallback};
 use pingora::lb::selection::{
     BackendIter, BackendSelection, Consistent, RoundRobin,
 };
-use pingora::lb::Backend;
 use pingora::lb::{Backends, LoadBalancer};
-use pingora::protocols::l4::ext::TcpKeepalive;
 use pingora::protocols::ALPN;
+use pingora::protocols::l4::ext::TcpKeepalive;
 use pingora::proxy::Session;
 use pingora::upstreams::peer::{HttpPeer, Tracer};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info};
 
@@ -860,8 +860,8 @@ pub fn new_upstream_health_check_task(
 #[cfg(test)]
 mod tests {
     use super::{
-        new_backends, new_load_balancer, Upstream, UpstreamConf,
-        UpstreamProvider,
+        Upstream, UpstreamConf, UpstreamProvider, new_backends,
+        new_load_balancer,
     };
     use crate::new_ahash_upstreams;
     use pingap_core::UpstreamInstance;
@@ -870,8 +870,8 @@ mod tests {
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
-    use std::sync::atomic::{AtomicI32, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicI32, Ordering};
     use std::time::Duration;
     use tokio_test::io::Builder;
 

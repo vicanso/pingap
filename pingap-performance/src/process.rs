@@ -16,8 +16,8 @@ use bytesize::ByteSize;
 use memory_stats::memory_stats;
 use serde::{Deserialize, Serialize};
 use std::process;
-use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use sysinfo::MemoryRefreshKind;
 use sysinfo::{RefreshKind, System};
 

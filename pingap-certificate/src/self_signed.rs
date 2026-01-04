@@ -19,9 +19,9 @@ use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
 use pingora::tls::pkey::{PKey, Private};
 use pingora::tls::x509::X509;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 const VALIDITY_CHECK_INTERVAL: u32 = 24 * 60; // 24 hours in minutes
 const CERTIFICATE_EXPIRY_DAYS: u64 = 2;

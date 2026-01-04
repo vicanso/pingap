@@ -13,22 +13,22 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_hash_key, get_plugin_factory, get_step_conf,
-    get_str_conf, get_str_slice_conf, Error,
+    Error, get_bool_conf, get_hash_key, get_plugin_factory, get_step_conf,
+    get_str_conf, get_str_slice_conf,
 };
 use async_trait::async_trait;
 use bytesize::ByteSize;
 use ctor::ctor;
 use glob::glob;
-use http::{header, HeaderValue, StatusCode};
+use http::{HeaderValue, StatusCode, header};
 use humantime::parse_duration;
 use path_absolutize::Absolutize;
 use pingap_config::{PluginCategory, PluginConf};
+use pingap_core::{Ctx, HTTP_HEADER_CONTENT_TEXT, Plugin, PluginStep};
 use pingap_core::{
-    convert_headers, HttpChunkResponse, HttpHeader, HttpResponse,
-    RequestPluginResult,
+    HttpChunkResponse, HttpHeader, HttpResponse, RequestPluginResult,
+    convert_headers,
 };
-use pingap_core::{Ctx, Plugin, PluginStep, HTTP_HEADER_CONTENT_TEXT};
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::fs::Metadata;
@@ -478,12 +478,13 @@ impl Plugin for Directory {
             Err(e) => {
                 return Ok(RequestPluginResult::Respond(
                     HttpResponse::unknown_error(e.to_string()),
-                ))
+                ));
             },
         };
         if !file.starts_with(&self.path) {
-            let message =
-                format!("You do not have permission to access this resource, file: {path_str}");
+            let message = format!(
+                "You do not have permission to access this resource, file: {path_str}"
+            );
             let resp = HttpResponse::builder(StatusCode::FORBIDDEN)
                 .body(message)
                 .header(HTTP_HEADER_CONTENT_TEXT.clone())
@@ -635,7 +636,10 @@ download = true
             )
             .unwrap(),
         );
-        assert_eq!("Plugin directory invalid, message: Directory serve plugin should be executed at request or proxy upstream step", result.err().unwrap().to_string());
+        assert_eq!(
+            "Plugin directory invalid, message: Directory serve plugin should be executed at request or proxy upstream step",
+            result.err().unwrap().to_string()
+        );
     }
 
     #[tokio::test]

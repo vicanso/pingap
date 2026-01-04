@@ -22,19 +22,19 @@ use crate::webhook::{get_webhook_sender, send_notification};
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use pingap_config::{
-    ConfigManager, PingapConfig, CATEGORY_CERTIFICATE, CATEGORY_LOCATION,
-    CATEGORY_PLUGIN, CATEGORY_UPSTREAM,
+    CATEGORY_CERTIFICATE, CATEGORY_LOCATION, CATEGORY_PLUGIN,
+    CATEGORY_UPSTREAM, ConfigManager, PingapConfig,
 };
 use pingap_core::{
     BackgroundTask, BackgroundTaskService, Error as ServiceError,
     NotificationData, NotificationLevel,
 };
-use pingap_logger::new_env_filter;
 use pingap_logger::LoggerReloadHandle;
+use pingap_logger::new_env_filter;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 use tokio::time::interval;
 use tracing::{debug, error, info};

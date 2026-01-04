@@ -17,7 +17,7 @@ use arc_swap::ArcSwap;
 use pingap_config::UpstreamConf;
 use pingap_core::{Error, NotificationSender};
 use pingap_upstream::{
-    new_ahash_upstreams, Upstream, UpstreamProvider, Upstreams,
+    Upstream, UpstreamProvider, Upstreams, new_ahash_upstreams,
 };
 use std::collections::HashMap;
 use std::sync::Arc;

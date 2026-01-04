@@ -13,15 +13,15 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf, Error,
+    Error, get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf,
 };
 use async_trait::async_trait;
 use ctor::ctor;
 use http::StatusCode;
 use pingap_config::PluginConf;
 use pingap_core::{
-    convert_headers, get_host, Ctx, HttpResponse, Plugin, PluginStep,
-    RequestPluginResult,
+    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
+    convert_headers, get_host,
 };
 use pingora::proxy::Session;
 use std::borrow::Cow;

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::LOG_TARGET;
-use super::{Error, Result, PAGE_SIZE};
+use super::{Error, PAGE_SIZE, Result};
 use crate::get_file_backends;
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};

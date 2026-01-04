@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf, Error,
+    Error, get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf,
 };
 use async_trait::async_trait;
 use ctor::ctor;

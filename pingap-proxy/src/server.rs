@@ -17,7 +17,7 @@ use super::tracing::{
     initialize_telemetry, inject_telemetry_headers, set_otel_request_attrs,
     set_otel_upstream_attrs, update_otel_cache_attrs,
 };
-use super::{set_append_proxy_headers, ServerConf, LOG_TARGET};
+use super::{LOG_TARGET, ServerConf, set_append_proxy_headers};
 use crate::ServerLocationsProvider;
 use async_trait::async_trait;
 use bstr::ByteSlice;
@@ -34,20 +34,20 @@ use pingap_core::HttpResponse;
 use pingap_core::LocationInstance;
 use pingap_core::PluginProvider;
 use pingap_core::{
-    get_cache_key, CompressionStat, Ctx, PluginStep, RequestPluginResult,
-    ResponseBodyPluginResult, ResponsePluginResult,
+    CompressionStat, Ctx, PluginStep, RequestPluginResult,
+    ResponseBodyPluginResult, ResponsePluginResult, get_cache_key,
 };
-use pingap_core::{get_digest_detail, HTTP_HEADER_NAME_X_REQUEST_ID};
-use pingap_core::{new_internal_error, Plugin};
+use pingap_core::{HTTP_HEADER_NAME_X_REQUEST_ID, get_digest_detail};
+use pingap_core::{Plugin, new_internal_error};
 use pingap_location::{Location, LocationProvider};
-use pingap_logger::{parse_access_log_directive, Parser};
+use pingap_logger::{Parser, parse_access_log_directive};
 #[cfg(feature = "tracing")]
-use pingap_otel::{trace::Span, KeyValue};
-use pingap_performance::{accept_request, end_request};
+use pingap_otel::{KeyValue, trace::Span};
 #[cfg(feature = "tracing")]
 use pingap_performance::{
-    new_prometheus, new_prometheus_push_service, Prometheus,
+    Prometheus, new_prometheus, new_prometheus_push_service,
 };
+use pingap_performance::{accept_request, end_request};
 use pingap_upstream::{Upstream, UpstreamProvider};
 use pingora::apps::HttpServerOptions;
 use pingora::cache::cache_control::DirectiveValue;
@@ -59,23 +59,23 @@ use pingora::cache::{
 };
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::listeners::TcpSocketOptions;
+use pingora::modules::http::HttpModules;
 use pingora::modules::http::compression::{
     ResponseCompression, ResponseCompressionBuilder,
 };
 use pingora::modules::http::grpc_web::{GrpcWeb, GrpcWebBridge};
-use pingora::modules::http::HttpModules;
-use pingora::protocols::http::error_resp;
 use pingora::protocols::Digest;
-use pingora::proxy::{http_proxy_service, FailToProxy, HttpProxy};
+use pingora::protocols::http::error_resp;
+use pingora::proxy::{FailToProxy, HttpProxy, http_proxy_service};
 use pingora::proxy::{ProxyHttp, Session};
 use pingora::server::configuration;
 use pingora::services::listening::Service;
 use pingora::upstreams::peer::{HttpPeer, Peer};
 use scopeguard::defer;
 use snafu::Snafu;
-use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, error, info};
@@ -1702,7 +1702,7 @@ mod tests {
     use crate::server_conf::parse_from_conf;
     use ahash::AHashMap;
     use pingap_certificate::{DynamicCertificates, TlsCertificate};
-    use pingap_config::{new_file_config_manager, PingapConfig};
+    use pingap_config::{PingapConfig, new_file_config_manager};
     use pingap_core::{CacheInfo, Ctx, UpstreamInfo};
     use pingap_location::LocationStats;
     use pingora::http::ResponseHeader;

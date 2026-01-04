@@ -14,7 +14,7 @@
 
 use super::CertificateProvider;
 use super::DynamicCertificates;
-use super::{Error, TlsCertificate, LOG_TARGET};
+use super::{Error, LOG_TARGET, TlsCertificate};
 use ahash::AHashMap;
 use async_trait::async_trait;
 use pingap_config::CertificateConf;

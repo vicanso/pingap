@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use super::{
-    get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf, Error,
+    Error, get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf,
 };
 use async_trait::async_trait;
 use ctor::ctor;
@@ -20,8 +20,8 @@ use http::header::HeaderName;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::ModifiedMode;
 use pingap_core::{
-    convert_header, convert_header_value, Ctx, HttpHeader, Plugin,
-    ResponsePluginResult,
+    Ctx, HttpHeader, Plugin, ResponsePluginResult, convert_header,
+    convert_header_value,
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;

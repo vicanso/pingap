@@ -14,9 +14,9 @@
 
 use crate::backend_stats::BackendStats;
 use dashmap::DashMap;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy)]

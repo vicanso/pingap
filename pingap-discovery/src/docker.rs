@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Discovery, DOCKER_DISCOVERY, LOG_TARGET};
+use super::{DOCKER_DISCOVERY, Discovery, LOG_TARGET};
 use super::{Error, Result};
 use async_trait::async_trait;
 use bollard::query_parameters::ListContainersOptions;

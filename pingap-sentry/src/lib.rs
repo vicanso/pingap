@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use sentry_core::types::{Dsn, ParseDsnError};
 use sentry_core::ClientOptions;
+use sentry_core::types::{Dsn, ParseDsnError};
 use std::str::FromStr;
 
 pub fn new_sentry_options(dsn: &str) -> Result<ClientOptions, ParseDsnError> {

@@ -13,16 +13,16 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_hash_key, get_int_conf, get_plugin_factory,
-    get_str_conf, Error,
+    Error, get_bool_conf, get_hash_key, get_int_conf, get_plugin_factory,
+    get_str_conf,
 };
 use async_trait::async_trait;
 use ctor::ctor;
 use pingap_config::{PluginCategory, PluginConf};
-use pingap_core::{get_cookie_value, get_req_header_value};
 use pingap_core::{Ctx, Plugin, PluginStep, RequestPluginResult};
+use pingap_core::{get_cookie_value, get_req_header_value};
 use pingora::proxy::Session;
-use rand::{rng, Rng};
+use rand::{Rng, rng};
 use regex::Regex;
 use std::borrow::Cow;
 use std::sync::Arc;

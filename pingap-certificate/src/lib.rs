@@ -72,7 +72,7 @@ fn parse_ip_addr(data: &[u8]) -> Result<IpAddr> {
             return Err(Error::Invalid {
                 category: "ip_parse".to_string(),
                 message: format!("invalid ip address length: {len}"),
-            })
+            });
         },
     })
 }

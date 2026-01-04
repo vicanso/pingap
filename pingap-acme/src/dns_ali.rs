@@ -14,15 +14,15 @@
 
 use super::{AcmeDnsTask, Error};
 use async_trait::async_trait;
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::Utc;
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha1::Sha1;
 use std::collections::BTreeMap;
 use tokio::sync::Mutex;
-use url::form_urlencoded::byte_serialize;
 use url::Url;
+use url::form_urlencoded::byte_serialize;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 

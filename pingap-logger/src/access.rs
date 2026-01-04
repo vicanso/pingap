@@ -15,7 +15,7 @@
 use bytes::BytesMut;
 use chrono::format::SecondsFormat;
 use chrono::{Local, Utc};
-use pingap_core::{format_duration, get_hostname, Ctx, HOST_NAME_TAG};
+use pingap_core::{Ctx, HOST_NAME_TAG, format_duration, get_hostname};
 use pingap_util::format_byte_size;
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
@@ -621,8 +621,8 @@ pub fn parse_access_log_directive(
 #[cfg(test)]
 mod tests {
     use super::{
-        format_extra_tag, get_resp_header_value, parse_access_log_directive,
-        Parser, Tag, TagCategory,
+        Parser, Tag, TagCategory, format_extra_tag, get_resp_header_value,
+        parse_access_log_directive,
     };
     use http::Method;
     use pingap_core::{

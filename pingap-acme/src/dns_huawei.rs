@@ -16,7 +16,7 @@ use super::{AcmeDnsTask, Error};
 use async_trait::async_trait;
 use chrono::Utc;
 use hmac::{Hmac, Mac};
-use reqwest::header::{HeaderMap, HeaderName, CONTENT_TYPE, HOST};
+use reqwest::header::{CONTENT_TYPE, HOST, HeaderMap, HeaderName};
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -93,7 +93,8 @@ async fn huawei_cloud_api_request(
         .join(";");
     let hashed_request_payload = sha256_hex(payload_str.as_bytes());
     let canonical_request = format!(
-        "{http_method}\n{canonical_uri}\n{canonical_query_string}\n{canonical_headers}\n{signed_headers}\n{hashed_request_payload}");
+        "{http_method}\n{canonical_uri}\n{canonical_query_string}\n{canonical_headers}\n{signed_headers}\n{hashed_request_payload}"
+    );
     let algorithm = "SDK-HMAC-SHA256";
     let hashed_canonical_request = sha256_hex(canonical_request.as_bytes());
     let string_to_sign =
@@ -166,7 +167,9 @@ async fn get_huawei_zone_id(
             .collect::<Vec<&str>>()
             .join(";");
         let hashed_payload = sha256_hex("".as_bytes());
-        format!("GET\n{uri_for_signature}\n{query}\n{canonical_headers}\n{signed_headers}\n{hashed_payload}")
+        format!(
+            "GET\n{uri_for_signature}\n{query}\n{canonical_headers}\n{signed_headers}\n{hashed_payload}"
+        )
     };
     let algorithm = "SDK-HMAC-SHA256";
     let hashed_canonical_request =
@@ -253,7 +256,9 @@ async fn add_huawei_dns_record(
             .collect::<Vec<&str>>()
             .join(";");
         let hashed_payload = sha256_hex(payload_str.as_bytes());
-        format!("POST\n{uri_for_signature}\n\n{canonical_headers}\n{signed_headers}\n{hashed_payload}")
+        format!(
+            "POST\n{uri_for_signature}\n\n{canonical_headers}\n{signed_headers}\n{hashed_payload}"
+        )
     };
 
     let algorithm = "SDK-HMAC-SHA256";

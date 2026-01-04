@@ -18,9 +18,9 @@ use std::io;
 use std::path::PathBuf;
 use std::process;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::LazyLock;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
 use tracing::{error, info};
 

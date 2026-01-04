@@ -17,12 +17,12 @@ use serde::{Deserialize, Serialize};
 use snafu::Snafu;
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use tracing::info;
 
 mod file;
@@ -194,7 +194,7 @@ pub fn new_cache_backend(directory: &str) -> Result<&'static HttpCache> {
     Ok(cache_ref)
 }
 
-pub use http_cache::{new_storage_clear_service, HttpCache};
+pub use http_cache::{HttpCache, new_storage_clear_service};
 
 #[cfg(feature = "tracing")]
 mod prom;

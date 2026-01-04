@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Import necessary modules and types from supervisors and external crates.
-use super::{get_hostname, Ctx};
+use super::{Ctx, get_hostname};
 use bytes::BytesMut;
 use http::header;
 use http::{HeaderName, HeaderValue};
@@ -358,11 +358,7 @@ pub fn get_query_value<'a>(
             // Split the pair into key and value.
             let (k, v) = item.split_once('=')?;
             // If the key matches, return the value.
-            if k == name {
-                Some(v)
-            } else {
-                None
-            }
+            if k == name { Some(v) } else { None }
         })
 }
 

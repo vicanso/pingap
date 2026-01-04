@@ -13,12 +13,11 @@
 // limitations under the License.
 
 use pingap_core::OtelTracer;
-use pingap_core::{get_client_ip, Ctx};
+use pingap_core::{Ctx, get_client_ip};
 use pingap_otel::HeaderExtractor;
 use pingap_otel::{
-    global,
+    KeyValue, global,
     trace::{Span, SpanKind, Tracer},
-    KeyValue,
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;

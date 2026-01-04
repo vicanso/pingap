@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{real_now_ms, Plugin};
+use crate::{Plugin, real_now_ms};
 use ahash::AHashMap;
 use bytes::BytesMut;
 use http::StatusCode;
@@ -20,9 +20,9 @@ use http::Uri;
 use http::{HeaderName, HeaderValue};
 #[cfg(feature = "tracing")]
 use opentelemetry::{
+    Context,
     global::{BoxedSpan, BoxedTracer, ObjectSafeSpan},
     trace::{SpanKind, TraceContextExt, Tracer},
-    Context,
 };
 use pingora::cache::CacheKey;
 use pingora::http::RequestHeader;

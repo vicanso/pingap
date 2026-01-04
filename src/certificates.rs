@@ -15,8 +15,8 @@
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use pingap_certificate::{
-    parse_certificates, CertificateProvider, DynamicCertificates,
-    DEFAULT_SERVER_NAME,
+    CertificateProvider, DEFAULT_SERVER_NAME, DynamicCertificates,
+    parse_certificates,
 };
 use pingap_config::CertificateConf;
 use std::collections::HashMap;

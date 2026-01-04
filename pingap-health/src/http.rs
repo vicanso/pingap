@@ -13,9 +13,10 @@
 // limitations under the License.
 
 use super::{
-    update_peer_options, Error, HealthCheckSchema, DEFAULT_CHECK_FREQUENCY,
-    DEFAULT_CONNECTION_TIMEOUT, DEFAULT_CONSECUTIVE_FAILURE,
-    DEFAULT_CONSECUTIVE_SUCCESS, DEFAULT_READ_TIMEOUT, LOG_TARGET,
+    DEFAULT_CHECK_FREQUENCY, DEFAULT_CONNECTION_TIMEOUT,
+    DEFAULT_CONSECUTIVE_FAILURE, DEFAULT_CONSECUTIVE_SUCCESS,
+    DEFAULT_READ_TIMEOUT, Error, HealthCheckSchema, LOG_TARGET,
+    update_peer_options,
 };
 use humantime::parse_duration;
 use pingora::http::RequestHeader;

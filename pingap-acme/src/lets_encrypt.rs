@@ -12,24 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_value_from_env, AcmeDnsTask, Error, Result, LOG_TARGET};
+use super::{AcmeDnsTask, Error, LOG_TARGET, Result, get_value_from_env};
 use crate::dns_ali::AliDnsTask;
 use crate::dns_cf::CfDnsTask;
 use crate::dns_huawei::HuaweiDnsTask;
 use crate::dns_manual::ManualDnsTask;
 use crate::dns_tencent::TencentDnsTask;
 use async_trait::async_trait;
+use hickory_resolver::Resolver;
 use hickory_resolver::config::ResolverConfig;
 use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_resolver::proto::rr::RecordType;
-use hickory_resolver::Resolver;
 use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
     OrderStatus, RetryPolicy,
 };
 use pingap_certificate::CertificateProvider;
 use pingap_certificate::{
-    parse_certificates, parse_leaf_chain_certificates, Certificate,
+    Certificate, parse_certificates, parse_leaf_chain_certificates,
 };
 use pingap_config::{
     Category, CertificateConf, ConfigManager, PingapConfig, StorageConf,
@@ -44,9 +44,9 @@ use pingora::http::StatusCode;
 use pingora::proxy::Session;
 use scopeguard::defer;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Once;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use substring::Substring;
 use tracing::{error, info};

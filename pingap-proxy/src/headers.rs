@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use pingap_core::{convert_header_value, Ctx};
+use pingap_core::{Ctx, convert_header_value};
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
 

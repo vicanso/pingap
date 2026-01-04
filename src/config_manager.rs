@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use pingap_config::ConfigManager;
-use pingap_config::{new_config_manager, Error};
+use pingap_config::{Error, new_config_manager};
 use std::sync::Arc;
 use std::sync::OnceLock;
 

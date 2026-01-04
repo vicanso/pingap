@@ -15,7 +15,7 @@
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use opentelemetry::global::{BoxedTracer, ObjectSafeTracerProvider};
-use opentelemetry::{trace, InstrumentationScope};
+use opentelemetry::{InstrumentationScope, trace};
 use std::sync::Arc;
 use std::sync::LazyLock;
 

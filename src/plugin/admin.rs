@@ -21,28 +21,28 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use bytes::{BufMut, BytesMut};
 use ctor::ctor;
-use flate2::write::GzEncoder;
 use flate2::Compression;
-use hex::encode;
+use flate2::write::GzEncoder;
 use hex::ToHex;
+use hex::encode;
 use http::Method;
-use http::{header, HeaderValue, StatusCode};
+use http::{HeaderValue, StatusCode, header};
 use humantime::parse_duration;
 use pingap_config::{
-    format_category, BasicConf, Category, CertificateConf, ConfigManager,
-    LocationConf, PluginCategory, PluginConf, ServerConf, StorageConf,
-    UpstreamConf, Validate, CATEGORY_CERTIFICATE, CATEGORY_STORAGE,
+    BasicConf, CATEGORY_CERTIFICATE, CATEGORY_STORAGE, Category,
+    CertificateConf, ConfigManager, LocationConf, PluginCategory, PluginConf,
+    ServerConf, StorageConf, UpstreamConf, Validate, format_category,
 };
 use pingap_config::{
-    PingapConfig, CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER,
-    CATEGORY_UPSTREAM,
+    CATEGORY_LOCATION, CATEGORY_PLUGIN, CATEGORY_SERVER, CATEGORY_UPSTREAM,
+    PingapConfig,
 };
 use pingap_core::{
     Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult, TtlLruLimit,
 };
 use pingap_performance::get_process_system_info;
 use pingap_performance::get_processing_accepted;
-use pingap_plugin::{get_plugin_factory, Error};
+use pingap_plugin::{Error, get_plugin_factory};
 use pingap_upstream::UpstreamHealthyStatus;
 use pingap_util::base64_decode;
 use pingora::http::RequestHeader;
@@ -50,7 +50,7 @@ use pingora::proxy::Session;
 use regex::Regex;
 use rust_embed::EmbeddedFile;
 use rust_embed::RustEmbed;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;

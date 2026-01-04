@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{
-    get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf, Error,
+    Error, get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -21,7 +21,7 @@ use ctor::ctor;
 use http::StatusCode;
 use pingap_config::PluginConf;
 use pingap_core::{
-    get_client_ip, Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
+    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult, get_client_ip,
 };
 use pingap_util::IpRules;
 use pingora::proxy::Session;

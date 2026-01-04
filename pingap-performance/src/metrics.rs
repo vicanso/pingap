@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_process_system_info, get_processing_accepted, LOG_TARGET};
+use super::{LOG_TARGET, get_process_system_info, get_processing_accepted};
 use async_trait::async_trait;
 use pingap_core::{BackgroundTask, Error};
 use pingap_location::LocationProvider;

@@ -14,7 +14,7 @@
 
 use async_trait::async_trait;
 use pingap_core::{
-    get_hostname, Notification, NotificationData, NotificationLevel,
+    Notification, NotificationData, NotificationLevel, get_hostname,
 };
 use serde_json::{Map, Value};
 use std::time::Duration;

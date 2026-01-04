@@ -14,11 +14,11 @@
 
 use super::chain::get_lets_encrypt_chain_certificate;
 use super::self_signed::{
-    add_self_signed_certificate, get_self_signed_certificate,
-    SelfSignedCertificate,
+    SelfSignedCertificate, add_self_signed_certificate,
+    get_self_signed_certificate,
 };
 use super::{
-    parse_leaf_chain_certificates, Certificate, Error, Result, LOG_TARGET,
+    Certificate, Error, LOG_TARGET, Result, parse_leaf_chain_certificates,
 };
 use pingap_config::CertificateConf;
 use pingap_config::Hashable;

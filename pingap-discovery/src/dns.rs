@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{format_addrs, Addr, Error, Result};
-use super::{Discovery, DNS_DISCOVERY, LOG_TARGET};
+use super::{Addr, Error, Result, format_addrs};
+use super::{DNS_DISCOVERY, Discovery, LOG_TARGET};
 use async_trait::async_trait;
 use futures::future::join_all;
+use hickory_resolver::Name;
+use hickory_resolver::Resolver;
 use hickory_resolver::config::{
     LookupIpStrategy, NameServerConfigGroup, ResolverConfig, ResolverOpts,
 };
 use hickory_resolver::lookup_ip::LookupIp;
 use hickory_resolver::name_server::TokioConnectionProvider;
 use hickory_resolver::system_conf::read_system_conf;
-use hickory_resolver::Name;
-use hickory_resolver::Resolver;
 use http::Extensions;
 use pingap_core::NotificationSender;
 use pingap_core::{NotificationData, NotificationLevel};
@@ -363,7 +363,7 @@ pub fn new_dns_discover_backends(discovery: &Discovery) -> Result<Backends> {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_dns_discovery, new_dns_discover_backends, Dns};
+    use super::{Dns, is_dns_discovery, new_dns_discover_backends};
     use crate::Discovery;
     use pretty_assertions::assert_eq;
 

@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_hash_key, get_plugin_factory, get_str_conf, Error};
+use super::{Error, get_hash_key, get_plugin_factory, get_str_conf};
 use async_trait::async_trait;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::{Bytes, BytesMut};
 use ctor::ctor;
 use http::StatusCode;
@@ -25,7 +25,7 @@ use pingap_core::{
     ResponseBodyPluginResult, ResponsePluginResult,
 };
 use pingap_core::{
-    HttpResponse, HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_TRANSFER_CHUNKED,
+    HTTP_HEADER_CONTENT_JSON, HTTP_HEADER_TRANSFER_CHUNKED, HttpResponse,
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;

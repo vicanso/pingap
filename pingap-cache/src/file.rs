@@ -15,9 +15,9 @@
 use super::http_cache::{
     CacheObject, HttpCacheClearStats, HttpCacheStats, HttpCacheStorage,
 };
-use super::{Error, Result, LOG_TARGET, PAGE_SIZE};
 #[cfg(feature = "tracing")]
 use super::{CACHE_READING_TIME, CACHE_WRITING_TIME};
+use super::{Error, LOG_TARGET, PAGE_SIZE, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::{DateTime, Local};
@@ -496,7 +496,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::fs::File;
     use std::time::{Duration, SystemTime};
-    use tempfile::{tempdir, TempDir};
+    use tempfile::{TempDir, tempdir};
 
     /// Tests the `parse_params` function with various query string configurations.
     #[test]
@@ -509,9 +509,11 @@ mod tests {
         assert_eq!(params.cache_max, 100);
         assert_eq!(params.inactive, Some(Duration::from_secs(600)));
         assert_eq!(params.levels, vec![1, 2]);
-        assert!(params
-            .directory
-            .starts_with(dirs::home_dir().unwrap().to_str().unwrap()));
+        assert!(
+            params
+                .directory
+                .starts_with(dirs::home_dir().unwrap().to_str().unwrap())
+        );
     }
 
     /// A comprehensive test for the FileCache functionality.
@@ -545,12 +547,14 @@ mod tests {
         assert_eq!(obj, cached_obj);
 
         // Verify it exists in the TinyUfo cache.
-        assert!(cache
-            .cache
-            .as_ref()
-            .unwrap()
-            .get(&key.to_string())
-            .is_some());
+        assert!(
+            cache
+                .cache
+                .as_ref()
+                .unwrap()
+                .get(&key.to_string())
+                .is_some()
+        );
 
         // --- Test fallback from file ---
         // Create a new cache instance to simulate a fresh start with no in-memory cache.
@@ -561,23 +565,27 @@ mod tests {
         assert_eq!(obj, file_obj);
 
         // 5. After reading from the file, it should now be populated in the new instance's in-memory cache.
-        assert!(fresh_cache
-            .cache
-            .as_ref()
-            .unwrap()
-            .get(&key.to_string())
-            .is_some());
+        assert!(
+            fresh_cache
+                .cache
+                .as_ref()
+                .unwrap()
+                .get(&key.to_string())
+                .is_some()
+        );
 
         // 6. Test REMOVE.
         fresh_cache.remove(key, namespace).await.unwrap();
 
         // Verify it's gone from both in-memory and file caches.
-        assert!(fresh_cache
-            .cache
-            .as_ref()
-            .unwrap()
-            .get(&key.to_string())
-            .is_none());
+        assert!(
+            fresh_cache
+                .cache
+                .as_ref()
+                .unwrap()
+                .get(&key.to_string())
+                .is_none()
+        );
         assert!(
             fresh_cache.get(key, namespace).await.unwrap().is_none(),
             "Get after remove should be a miss"

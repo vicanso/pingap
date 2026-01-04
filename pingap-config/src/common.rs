@@ -15,7 +15,7 @@
 use super::{Error, Result};
 use bytesize::ByteSize;
 use http::{HeaderName, HeaderValue};
-use pingap_discovery::{is_static_discovery, DNS_DISCOVERY};
+use pingap_discovery::{DNS_DISCOVERY, is_static_discovery};
 use pingap_util::{is_pem, resolve_path};
 use regex::Regex;
 use rustls_pki_types::pem::PemObject;
@@ -31,7 +31,7 @@ use std::{collections::HashMap, str::FromStr};
 use strum::EnumString;
 use tempfile::tempfile_in;
 use toml::Table;
-use toml::{map::Map, Value};
+use toml::{Value, map::Map};
 use url::Url;
 
 pub const CATEGORY_BASIC: &str = "basic";
@@ -1246,8 +1246,10 @@ impl PingapConfig {
                     if let Some(locations) = &server.locations {
                         if locations.contains(&name.to_string()) {
                             return Err(Error::Invalid {
-                               message: format!("location({name}) is in used by server({server_name})"),
-                           });
+                                message: format!(
+                                    "location({name}) is in used by server({server_name})"
+                                ),
+                            });
                         }
                     }
                 }
@@ -1447,7 +1449,7 @@ impl PingapConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_cert, CertificateConf, Hashable, Validate};
+    use super::{CertificateConf, Hashable, Validate, validate_cert};
     use super::{LocationConf, PluginCategory, ServerConf, UpstreamConf};
     use pingap_core::PluginStep;
     use pingap_util::base64_encode;

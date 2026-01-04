@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{format_addrs, Result};
 use super::{Discovery, LOG_TARGET, STATIC_DISCOVERY};
+use super::{Result, format_addrs};
 use http::Extensions;
 use pingora::lb::discovery;
 use pingora::lb::{Backend, Backends};
@@ -105,8 +105,8 @@ pub fn new_static_discovery(discovery: &Discovery) -> Result<Backends> {
 }
 #[cfg(test)]
 mod tests {
-    use super::new_static_discovery;
     use super::Discovery;
+    use super::new_static_discovery;
     use pretty_assertions::assert_eq;
 
     #[tokio::test]

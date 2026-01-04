@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use super::{
-    get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf, Error,
+    Error, get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf,
 };
 use async_trait::async_trait;
 use bstr::ByteSlice;
@@ -21,13 +21,13 @@ use bytes::{Bytes, BytesMut};
 use ctor::ctor;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
-    Ctx, ModifyResponseBody, Plugin, ResponseBodyPluginResult,
-    ResponsePluginResult, HTTP_HEADER_TRANSFER_CHUNKED,
+    Ctx, HTTP_HEADER_TRANSFER_CHUNKED, ModifyResponseBody, Plugin,
+    ResponseBodyPluginResult, ResponsePluginResult,
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
-use regex::bytes::RegexBuilder;
 use regex::Regex;
+use regex::bytes::RegexBuilder;
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::LazyLock;

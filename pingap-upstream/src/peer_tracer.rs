@@ -14,8 +14,8 @@
 
 use crate::LOG_TARGET;
 use pingora::upstreams::peer::Tracing;
-use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
 use tracing::debug;
 
 // UpstreamPeerTracer tracks active connections to upstream servers

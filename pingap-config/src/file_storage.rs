@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::storage::{History, Storage};
 use crate::Error;
+use crate::storage::{History, Storage};
 use async_trait::async_trait;
 use glob::glob;
 use pingap_core::now_sec;

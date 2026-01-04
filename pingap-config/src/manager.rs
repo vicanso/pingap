@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::PingapConfig;
 use crate::convert_pingap_config;
 use crate::etcd_storage::EtcdStorage;
 use crate::file_storage::FileStorage;
 use crate::storage::{History, Storage};
-use crate::PingapConfig;
 use crate::{Category, Error, Observer};
 use arc_swap::ArcSwap;
 use pingap_util::resolve_path;
-use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 use std::path::Path;
 use std::sync::Arc;
-use toml::{map::Map, Value};
+use toml::{Value, map::Map};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 

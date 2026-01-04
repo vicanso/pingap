@@ -35,4 +35,4 @@ pub const LOG_TARGET: &str = "pingap::performance";
 #[cfg(feature = "tracing")]
 mod prom;
 #[cfg(feature = "tracing")]
-pub use prom::{new_prometheus, new_prometheus_push_service, Prometheus};
+pub use prom::{Prometheus, new_prometheus, new_prometheus_push_service};

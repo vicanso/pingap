@@ -13,8 +13,8 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf,
-    get_str_slice_conf, Error,
+    Error, get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf,
+    get_str_slice_conf,
 };
 use async_trait::async_trait;
 use bstr::ByteSlice;
@@ -24,15 +24,15 @@ use ctor::ctor;
 use fancy_regex::Regex;
 use http::{Method, StatusCode};
 use humantime::parse_duration;
-use pingap_cache::{new_cache_backend, HttpCache};
+use pingap_cache::{HttpCache, new_cache_backend};
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
-    get_cache_key, get_client_ip, Ctx, HttpResponse, Plugin, PluginStep,
-    RequestPluginResult,
+    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult, get_cache_key,
+    get_client_ip,
 };
 use pingap_util::IpRules;
-use pingora::cache::eviction::simple_lru::Manager;
 use pingora::cache::eviction::EvictionManager;
+use pingora::cache::eviction::simple_lru::Manager;
 use pingora::cache::key::CacheHashKey;
 use pingora::cache::lock::{CacheKeyLock, CacheLock};
 use pingora::cache::predictor::{CacheablePredictor, Predictor};

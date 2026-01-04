@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use http::StatusCode;
 use pingap_core::{
     CompressionStat, ConnectionInfo, Ctx, Features, RequestState, Timing,
@@ -26,7 +26,9 @@ fn get_logger_session() -> mpsc::Receiver<Option<Session>> {
                         "X-Forwarded-For: 1.1.1.1, 2.2.2.2",
                     ]
                     .join("\r\n");
-                    let input_header = format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+                    let input_header = format!(
+                        "GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n"
+                    );
                     let mock_io =
                         Builder::new().read(input_header.as_bytes()).build();
 

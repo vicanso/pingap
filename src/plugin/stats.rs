@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_hash_key, get_step_conf, get_str_conf, Plugin};
+use super::{Plugin, get_hash_key, get_step_conf, get_str_conf};
 use crate::process::get_start_time;
 use async_trait::async_trait;
 use bytes::Bytes;
 use ctor::ctor;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
-    get_hostname, Ctx, HttpResponse, PluginStep, RequestPluginResult,
+    Ctx, HttpResponse, PluginStep, RequestPluginResult, get_hostname,
 };
 use pingap_performance::{get_process_system_info, get_processing_accepted};
-use pingap_plugin::{get_plugin_factory, Error};
+use pingap_plugin::{Error, get_plugin_factory};
 use pingora::proxy::Session;
 use serde::Serialize;
 use std::borrow::Cow;

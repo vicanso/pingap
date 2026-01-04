@@ -16,9 +16,9 @@ use async_trait::async_trait;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
 use pyroscope::{
-    pyroscope::PyroscopeAgentRunning, PyroscopeAgent, PyroscopeError,
+    PyroscopeAgent, PyroscopeError, pyroscope::PyroscopeAgentRunning,
 };
-use pyroscope_pprofrs::{pprof_backend, PprofConfig};
+use pyroscope_pprofrs::{PprofConfig, pprof_backend};
 use snafu::{ResultExt, Snafu};
 use substring::Substring;
 use tracing::{error, info};

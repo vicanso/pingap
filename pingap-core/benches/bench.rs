@@ -1,11 +1,11 @@
 use bytes::BytesMut;
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use http::HeaderValue;
+use pingap_core::{Ctx, format_duration};
 use pingap_core::{
     convert_header, get_host, get_super_ts, now_ms, real_now_ms,
     remove_query_from_header,
 };
-use pingap_core::{format_duration, Ctx};
 use pingora::http::RequestHeader;
 use std::hint::black_box;
 

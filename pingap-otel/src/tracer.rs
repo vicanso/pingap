@@ -22,9 +22,9 @@ use opentelemetry::{
 };
 use opentelemetry_otlp::{Compression, WithExportConfig, WithTonicConfig};
 use opentelemetry_sdk::{
+    Resource,
     propagation::{BaggagePropagator, TraceContextPropagator},
     trace::{BatchConfigBuilder, RandomIdGenerator, Sampler},
-    Resource,
 };
 
 use pingora::{server::ShutdownWatch, services::background::BackgroundService};

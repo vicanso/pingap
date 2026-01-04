@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{get_process_system_info, Error, Result, LOG_TARGET};
+use super::{Error, LOG_TARGET, Result, get_process_system_info};
 use async_trait::async_trait;
 use humantime::parse_duration;
 use pingap_cache::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
-use pingap_core::{get_hostname, Ctx};
+use pingap_core::{Ctx, get_hostname};
 use pingora::proxy::Session;
 use prometheus::core::Collector;
 use prometheus::{
@@ -638,7 +638,9 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         "pingap_http_response_time",
         "pingap http response time(second)",
         &["location"],
-        &[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
+        &[
+            0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0
+        ]
     )?;
     let http_sent = register_metric!(
         r,

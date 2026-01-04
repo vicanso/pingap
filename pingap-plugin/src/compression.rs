@@ -13,21 +13,21 @@
 // limitations under the License.
 
 use super::{
-    get_bool_conf, get_hash_key, get_int_conf, get_plugin_factory,
-    get_str_conf, Error,
+    Error, get_bool_conf, get_hash_key, get_int_conf, get_plugin_factory,
+    get_str_conf,
 };
 use async_trait::async_trait;
 use ctor::ctor;
+use http::HeaderValue;
 use http::header::{
     ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
     TRANSFER_ENCODING,
 };
-use http::HeaderValue;
 use pingap_config::PluginConf;
 use pingap_core::HTTP_HEADER_TRANSFER_CHUNKED;
 use pingap_core::{
-    new_internal_error, Ctx, ModifyResponseBody, Plugin, PluginStep,
-    RequestPluginResult, ResponseBodyPluginResult, ResponsePluginResult,
+    Ctx, ModifyResponseBody, Plugin, PluginStep, RequestPluginResult,
+    ResponseBodyPluginResult, ResponsePluginResult, new_internal_error,
 };
 use pingora::http::ResponseHeader;
 use pingora::modules::http::compression::ResponseCompression;
@@ -426,10 +426,10 @@ mod tests {
     use super::*;
     use pingap_config::PluginConf;
     use pingap_core::{Ctx, PluginStep, RequestPluginResult};
+    use pingora::modules::http::HttpModules;
     use pingora::modules::http::compression::{
         ResponseCompression, ResponseCompressionBuilder,
     };
-    use pingora::modules::http::HttpModules;
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use tokio_test::io::Builder;

@@ -38,14 +38,14 @@ use pingap_core::BackgroundTaskService;
 use pingap_imageoptim::ImageOptim;
 use pingap_logger::parse_access_log_directive;
 use pingap_logger::{
-    new_async_logger, new_log_compress_service, AsyncLoggerTask,
-    LogCompressParams,
+    AsyncLoggerTask, LogCompressParams, new_async_logger,
+    new_log_compress_service,
 };
 #[cfg(feature = "full")]
 use pingap_otel::TracerService;
 use pingap_performance::new_performance_metrics_log_service;
 use pingap_plugin::get_plugin_factory;
-use pingap_proxy::{parse_from_conf, AppContext, Server, ServerConf};
+use pingap_proxy::{AppContext, Server, ServerConf, parse_from_conf};
 use pingap_upstream::new_upstream_health_check_task;
 use pingora::server;
 use pingora::server::configuration::Opt;

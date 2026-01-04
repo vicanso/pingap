@@ -1,5 +1,5 @@
-use criterion::{criterion_group, criterion_main, Criterion};
-use pingap_util::{format_byte_size, IpRules};
+use criterion::{Criterion, criterion_group, criterion_main};
+use pingap_util::{IpRules, format_byte_size};
 
 fn bench_format_byte_size(c: &mut Criterion) {
     let mut g = c.benchmark_group("format byte size");

@@ -25,7 +25,7 @@ use pingap_core::{
 };
 use pingap_core::{ModifyResponseBody, ResponseBodyPluginResult};
 use pingap_plugin::{
-    get_hash_key, get_int_conf, get_plugin_factory, get_str_conf, Error,
+    Error, get_hash_key, get_int_conf, get_plugin_factory, get_str_conf,
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;

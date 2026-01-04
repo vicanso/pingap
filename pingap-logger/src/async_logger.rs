@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::file_appender::new_rolling_file_writer;
 use super::LOG_TARGET;
+use super::file_appender::new_rolling_file_writer;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use pingap_core::Error;
@@ -22,8 +22,8 @@ use pingora::services::background::BackgroundService;
 use serde::{Deserialize, Serialize};
 use std::io::{BufWriter, Write};
 use std::time::Duration;
-use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Mutex;
+use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tracing::{error, info};
 use tracing_appender::rolling::RollingFileAppender;
 

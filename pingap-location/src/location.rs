@@ -18,15 +18,15 @@ use http::HeaderName;
 use http::HeaderValue;
 use pingap_config::Hashable;
 use pingap_config::LocationConf;
-use pingap_core::new_internal_error;
 use pingap_core::LocationInstance;
-use pingap_core::{convert_headers, HttpHeader};
+use pingap_core::new_internal_error;
+use pingap_core::{HttpHeader, convert_headers};
 use pingora::http::RequestHeader;
 use regex::Regex;
 use snafu::{ResultExt, Snafu};
-use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 use std::time::Duration;
 use tracing::{debug, error};
 

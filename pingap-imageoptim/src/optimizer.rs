@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use image::ImageEncoder;
 use image::codecs::avif;
 use image::codecs::webp;
-use image::ImageEncoder;
-use image::{load, ImageFormat, RgbaImage};
+use image::{ImageFormat, RgbaImage, load};
 use lodepng::Bitmap;
 use rgb::{ComponentBytes, RGBA8};
 use snafu::{ResultExt, Snafu};
