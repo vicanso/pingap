@@ -1207,12 +1207,11 @@ impl ProxyHttp for Server {
                         features.upstream_span = Some(span);
                     }
                 }
-                let peer = upstream
+                upstream
                     .new_http_peer(session, &ctx.conn.client_ip)
                     .inspect(|peer| {
                         ctx.upstream.address = peer.address().to_string();
-                    });
-                peer
+                    })
             })
             .ok_or_else(|| {
                 new_internal_error(
