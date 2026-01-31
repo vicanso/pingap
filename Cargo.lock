@@ -584,9 +584,9 @@ checksum = "5dd9dc738b7a8311c7ade152424974d8115f2cdad61e8dab8dac9f2362298510"
 
 [[package]]
 name = "bytemuck"
-version = "1.24.0"
+version = "1.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fbdf580320f38b612e485521afda1ee26d10cc9884efaaa750d383e13e3c5f4"
+checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
 
 [[package]]
 name = "byteorder"
@@ -623,9 +623,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.2.54"
+version = "1.2.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6354c81bbfd62d9cfa9cb3c773c2b7b2a3a482d569de977fd0e961f6e7c00583"
+checksum = "47b26a0954ae34af09b50f0de26458fa95369a0d478d8236d3f93082b219bd29"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -740,9 +740,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.5.54"
+version = "4.5.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6e6ff9dcd79cff5cd969a17a545d79e84ab086e444102a591e288a8aa3ce394"
+checksum = "a75ca66430e33a14957acc24c5077b503e7d374151b2b4b3a10c83b4ceb4be0e"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -750,9 +750,9 @@ dependencies = [
 
 [[package]]
 name = "clap_builder"
-version = "4.5.54"
+version = "4.5.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa42cf4d2b7a41bc8f663a7cab4031ebafa1bf3875705bfaf8466dc60ab52c00"
+checksum = "793207c7fa6300a0608d1080b858e5fdbe713cdc1c8db9fb17777d8a13e63df0"
 dependencies = [
  "anstream",
  "anstyle",
@@ -762,9 +762,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.5.49"
+version = "4.5.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a0b5487afeab2deb2ff4e03a807ad1a03ac532ff5a2cee5d86884440c7f7671"
+checksum = "a92793da1a46a5f2a02a6f4c46c6496b28c43638adea8306fcb0caa1634f24e5"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -1367,7 +1367,7 @@ dependencies = [
  "prost 0.14.3",
  "tokio",
  "tokio-stream",
- "tonic 0.14.2",
+ "tonic 0.14.3",
  "tonic-build",
  "tonic-prost",
  "tonic-prost-build",
@@ -1429,9 +1429,9 @@ dependencies = [
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.8"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8591b0bcc8a98a64310a2fae1bb3e9b8564dd10e381e6e28010fde8e8e8568db"
+checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "findshlibs"
@@ -2026,9 +2026,9 @@ dependencies = [
 
 [[package]]
 name = "iana-time-zone"
-version = "0.1.64"
+version = "0.1.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33e57f83510bb73707521ebaffa789ec8caf86f9657cad665b092b581d40e9fb"
+checksum = "e31bc9ad994ba00e440a8aa5c9ef0ec67d5cb5e5cb0cc7f8b744a35b389cc470"
 dependencies = [
  "android_system_properties",
  "core-foundation-sys",
@@ -2574,9 +2574,9 @@ checksum = "6373607a59f0be73a39b6fe456b8192fcc3585f602af20751600e974dd455e77"
 
 [[package]]
 name = "local-ip-address"
-version = "0.6.9"
+version = "0.6.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92488bc8a0f99ee9f23577bdd06526d49657df8bd70504c61f812337cdad01ab"
+checksum = "79ef8c257c92ade496781a32a581d43e3d512cf8ce714ecf04ea80f93ed0ff4a"
 dependencies = [
  "libc",
  "neli",
@@ -2753,9 +2753,9 @@ dependencies = [
 
 [[package]]
 name = "moka"
-version = "0.12.12"
+version = "0.12.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3dec6bd31b08944e08b58fd99373893a6c17054d6f3ea5006cc894f4f4eee2a"
+checksum = "b4ac832c50ced444ef6be0767a008b02c106a909ba79d1d830501e94b96f6b7e"
 dependencies = [
  "crossbeam-channel",
  "crossbeam-epoch",
@@ -2829,9 +2829,9 @@ dependencies = [
 
 [[package]]
 name = "neli"
-version = "0.7.3"
+version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e23bebbf3e157c402c4d5ee113233e5e0610cc27453b2f07eefce649c7365dcc"
+checksum = "22f9786d56d972959e1408b6a93be6af13b9c1392036c5c1fafa08a1b0c6ee87"
 dependencies = [
  "bitflags 2.10.0",
  "byteorder",
@@ -3279,9 +3279,9 @@ checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "openssl-src"
-version = "300.5.4+3.5.4"
+version = "300.5.5+3.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a507b3792995dae9b0df8a1c1e3771e8418b7c2d9f0baeba32e6fe8b06c7cb72"
+checksum = "3f1787d533e03597a7934fd0a765f0d28e94ecc5fb7789f8053b1e699a56f709"
 dependencies = [
  "cc",
 ]
@@ -3756,7 +3756,7 @@ dependencies = [
  "strum 0.27.2",
  "tempfile",
  "tokio-test",
- "tonic 0.14.2",
+ "tonic 0.14.3",
  "tonic-health",
  "tracing",
  "url",
@@ -4057,7 +4057,8 @@ dependencies = [
 [[package]]
 name = "pingora"
 version = "0.7.0"
-source = "git+https://github.com/cloudflare/pingora?rev=ad449bf373a696116f60c89f1e7d62c00f7cb09a#ad449bf373a696116f60c89f1e7d62c00f7cb09a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01e8f7e45ee3a0c90e154ba7f2ec12ea33c398913d45d23b01429e90e1b394c7"
 dependencies = [
  "pingora-cache",
  "pingora-core",
@@ -4070,7 +4071,8 @@ dependencies = [
 [[package]]
 name = "pingora-cache"
 version = "0.7.0"
-source = "git+https://github.com/cloudflare/pingora?rev=ad449bf373a696116f60c89f1e7d62c00f7cb09a#ad449bf373a696116f60c89f1e7d62c00f7cb09a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bcea698ba4fef0863caf2feaf0f699ee29d82c19f9c54bc55c8f29e8609c773c"
 dependencies = [
  "ahash",
  "async-trait",
@@ -4106,7 +4108,8 @@ dependencies = [
 [[package]]
 name = "pingora-core"
 version = "0.7.0"
-source = "git+https://github.com/cloudflare/pingora?rev=ad449bf373a696116f60c89f1e7d62c00f7cb09a#ad449bf373a696116f60c89f1e7d62c00f7cb09a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5aced35d346b7c6559234b5ec493d638471d3234b0152f18c59390bbdafac2a7"
 dependencies = [
  "ahash",
  "async-trait",
@@ -4157,12 +4160,14 @@ dependencies = [
 [[package]]
 name = "pingora-error"
 version = "0.7.0"
-source = "git+https://github.com/cloudflare/pingora?rev=ad449bf373a696116f60c89f1e7d62c00f7cb09a#ad449bf373a696116f60c89f1e7d62c00f7cb09a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b761e30ae329162ddddbbb41d2bf8a3e48d52c70a0d5ff51ccb964acf0bd505"
 
 [[package]]
 name = "pingora-header-serde"
 version = "0.7.0"
-source = "git+https://github.com/cloudflare/pingora?rev=ad449bf373a696116f60c89f1e7d62c00f7cb09a#ad449bf373a696116f60c89f1e7d62c00f7cb09a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "640aa945c00ad51c7d06a434c41dbad560bf51dbf6f00e5d614102e7794aae67"
 dependencies = [
  "bytes",
  "http",
@@ -4177,7 +4182,8 @@ dependencies = [
 [[package]]
 name = "pingora-http"
 version = "0.7.0"
-source = "git+https://github.com/cloudflare/pingora?rev=ad449bf373a696116f60c89f1e7d62c00f7cb09a#ad449bf373a696116f60c89f1e7d62c00f7cb09a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fbf2ce52fefeb2ed795a3d5fa4b556cfa33a7592691677e8837c6a58d0358215"
 dependencies = [
  "bytes",
  "http",
@@ -4187,7 +4193,8 @@ dependencies = [
 [[package]]
 name = "pingora-ketama"
 version = "0.7.0"
-source = "git+https://github.com/cloudflare/pingora?rev=ad449bf373a696116f60c89f1e7d62c00f7cb09a#ad449bf373a696116f60c89f1e7d62c00f7cb09a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5566ee2f3ca3ba478792d765d6b28aaf1ebae4a7f302c7eb814c83f4d793c1f1"
 dependencies = [
  "crc32fast",
 ]
@@ -4204,7 +4211,8 @@ dependencies = [
 [[package]]
 name = "pingora-load-balancing"
 version = "0.7.0"
-source = "git+https://github.com/cloudflare/pingora?rev=ad449bf373a696116f60c89f1e7d62c00f7cb09a#ad449bf373a696116f60c89f1e7d62c00f7cb09a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e7ff0d87ab5924c1af03fc1b766aef398e75cfe0273019f68b7c2978002ca97"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -4225,7 +4233,8 @@ dependencies = [
 [[package]]
 name = "pingora-lru"
 version = "0.7.0"
-source = "git+https://github.com/cloudflare/pingora?rev=ad449bf373a696116f60c89f1e7d62c00f7cb09a#ad449bf373a696116f60c89f1e7d62c00f7cb09a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3aa964c4e12e6328388b7059c93aac37b052be7962bbb70dd239b515532be4bf"
 dependencies = [
  "arrayvec",
  "hashbrown 0.16.1",
@@ -4236,7 +4245,8 @@ dependencies = [
 [[package]]
 name = "pingora-openssl"
 version = "0.7.0"
-source = "git+https://github.com/cloudflare/pingora?rev=ad449bf373a696116f60c89f1e7d62c00f7cb09a#ad449bf373a696116f60c89f1e7d62c00f7cb09a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92713d25950fd4bf4fdca86dc3603884d13282242fdb436dac4f8389a7105556"
 dependencies = [
  "foreign-types",
  "libc",
@@ -4248,7 +4258,8 @@ dependencies = [
 [[package]]
 name = "pingora-pool"
 version = "0.7.0"
-source = "git+https://github.com/cloudflare/pingora?rev=ad449bf373a696116f60c89f1e7d62c00f7cb09a#ad449bf373a696116f60c89f1e7d62c00f7cb09a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1a89f8d8d48caadb7f711227e0754bac6495dd2d4ee03137cc2c6d46c3b0a9d"
 dependencies = [
  "crossbeam-queue",
  "log",
@@ -4262,7 +4273,8 @@ dependencies = [
 [[package]]
 name = "pingora-proxy"
 version = "0.7.0"
-source = "git+https://github.com/cloudflare/pingora?rev=ad449bf373a696116f60c89f1e7d62c00f7cb09a#ad449bf373a696116f60c89f1e7d62c00f7cb09a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0884d6158a828f53f4069861493a4225ed2a26c8d739a875350fa0c97109edf"
 dependencies = [
  "async-trait",
  "bytes",
@@ -4296,7 +4308,8 @@ dependencies = [
 [[package]]
 name = "pingora-runtime"
 version = "0.7.0"
-source = "git+https://github.com/cloudflare/pingora?rev=ad449bf373a696116f60c89f1e7d62c00f7cb09a#ad449bf373a696116f60c89f1e7d62c00f7cb09a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c107d6eaf57c98285b91c487a1972bcb08405f39f9e73a5c28525620f7010956"
 dependencies = [
  "once_cell",
  "rand 0.8.5",
@@ -4307,7 +4320,8 @@ dependencies = [
 [[package]]
 name = "pingora-timeout"
 version = "0.7.0"
-source = "git+https://github.com/cloudflare/pingora?rev=ad449bf373a696116f60c89f1e7d62c00f7cb09a#ad449bf373a696116f60c89f1e7d62c00f7cb09a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64451dc4613770411814209b8c1659945682f0258305bae51c1e44cb9b887d30"
 dependencies = [
  "once_cell",
  "parking_lot",
@@ -6303,9 +6317,9 @@ dependencies = [
 
 [[package]]
 name = "tonic"
-version = "0.14.2"
+version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb7613188ce9f7df5bfe185db26c5814347d110db17920415cf2fbcad85e7203"
+checksum = "a286e33f82f8a1ee2df63f4fa35c0becf4a85a0cb03091a15fd7bf0b402dc94a"
 dependencies = [
  "async-trait",
  "axum",
@@ -6332,9 +6346,9 @@ dependencies = [
 
 [[package]]
 name = "tonic-build"
-version = "0.14.2"
+version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c40aaccc9f9eccf2cd82ebc111adc13030d23e887244bc9cfa5d1d636049de3"
+checksum = "27aac809edf60b741e2d7db6367214d078856b8a5bff0087e94ff330fb97b6fc"
 dependencies = [
  "prettyplease",
  "proc-macro2",
@@ -6344,33 +6358,33 @@ dependencies = [
 
 [[package]]
 name = "tonic-health"
-version = "0.14.2"
+version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a82868bf299e0a1d2e8dce0dc33a46c02d6f045b2c1f1d6cc8dc3d0bf1812ef"
+checksum = "8dbde2c702c4be12b9b2f6f7e6c824a84a7b7be177070cada8ee575a581af359"
 dependencies = [
  "prost 0.14.3",
  "tokio",
  "tokio-stream",
- "tonic 0.14.2",
+ "tonic 0.14.3",
  "tonic-prost",
 ]
 
 [[package]]
 name = "tonic-prost"
-version = "0.14.2"
+version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66bd50ad6ce1252d87ef024b3d64fe4c3cf54a86fb9ef4c631fdd0ded7aeaa67"
+checksum = "d6c55a2d6a14174563de34409c9f92ff981d006f56da9c6ecd40d9d4a31500b0"
 dependencies = [
  "bytes",
  "prost 0.14.3",
- "tonic 0.14.2",
+ "tonic 0.14.3",
 ]
 
 [[package]]
 name = "tonic-prost-build"
-version = "0.14.2"
+version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4a16cba4043dc3ff43fcb3f96b4c5c154c64cbd18ca8dce2ab2c6a451d058a2"
+checksum = "a4556786613791cfef4ed134aa670b61a85cfcacf71543ef33e8d801abae988f"
 dependencies = [
  "prettyplease",
  "proc-macro2",
@@ -6654,9 +6668,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.19.0"
+version = "1.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2e054861b4bd027cd373e18e8d8d8e6548085000e41290d95ce0c373a654b4a"
+checksum = "ee48d38b119b0cd71fe4141b30f5ba9c7c5d9f4e7a3a8b4a674e4b6ef789976f"
 dependencies = [
  "getrandom 0.3.4",
  "js-sys",
@@ -7483,18 +7497,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.33"
+version = "0.8.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "668f5168d10b9ee831de31933dc111a459c97ec93225beb307aed970d1372dfd"
+checksum = "7456cf00f0685ad319c5b1693f291a650eaf345e941d082fc4e03df8a03996ac"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.33"
+version = "0.8.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c7962b26b0a8685668b671ee4b54d007a67d4eaf05fda79ac0ecf41e32270f1"
+checksum = "1328722bbf2115db7e19d69ebcc15e795719e2d66b60827c6a69a117365e37a0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7569,9 +7583,9 @@ checksum = "40990edd51aae2c2b6907af74ffb635029d5788228222c4bb811e9351c0caad3"
 
 [[package]]
 name = "zmij"
-version = "1.0.16"
+version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dfcd145825aace48cff44a8844de64bf75feec3080e0aa5cdbde72961ae51a65"
+checksum = "1966f8ac2c1f76987d69a74d0e0f929241c10e78136434e3be70ff7f58f64214"
 
 [[package]]
 name = "zstd"
