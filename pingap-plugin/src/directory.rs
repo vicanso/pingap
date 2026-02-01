@@ -41,13 +41,88 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::time::UNIX_EPOCH;
-use substring::Substring;
 use tokio::fs;
-use tokio::io::AsyncReadExt;
-use tracing::{debug, error};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tracing::debug;
 use urlencoding::decode;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
+
+/// Represents a parsed HTTP Range header
+#[derive(Debug, Clone, Copy)]
+struct ByteRange {
+    start: u64,
+    end: u64,
+}
+
+impl ByteRange {
+    /// Returns the length of bytes in this range (inclusive)
+    fn len(&self) -> u64 {
+        self.end - self.start + 1
+    }
+}
+
+/// Parses HTTP Range header value
+///
+/// # Arguments
+/// * `range_header` - Range header value (e.g., "bytes=0-499")
+/// * `file_size` - Total size of the file
+///
+/// # Returns
+/// * `Some(ByteRange)` - Valid parsed range
+/// * `None` - Invalid or unsupported range format
+///
+/// # Supported formats
+/// - `bytes=start-end` (e.g., bytes=0-499)
+/// - `bytes=start-` (e.g., bytes=500- means from 500 to end)
+/// - `bytes=-suffix` (e.g., bytes=-500 means last 500 bytes)
+fn parse_range_header(range_header: &str, file_size: u64) -> Option<ByteRange> {
+    // Only support single range for now (not multipart/byteranges)
+    let range_header = range_header.trim();
+    if !range_header.starts_with("bytes=") {
+        return None;
+    }
+
+    let range_spec = &range_header[6..]; // Skip "bytes="
+
+    // Handle multiple ranges - for now just take the first one
+    let range_spec = range_spec.split(',').next()?.trim();
+
+    if let Some(suffix_str) = range_spec.strip_prefix('-') {
+        let suffix: u64 = suffix_str.parse().ok()?;
+        if suffix == 0 || suffix > file_size {
+            return None;
+        }
+        Some(ByteRange {
+            start: file_size - suffix,
+            end: file_size - 1,
+        })
+    } else {
+        // Normal range: bytes=start-end or bytes=start-
+        let parts: Vec<&str> = range_spec.split('-').collect();
+        if parts.len() != 2 {
+            return None;
+        }
+
+        let start: u64 = parts[0].parse().ok()?;
+        if start >= file_size {
+            return None;
+        }
+
+        let end = if parts[1].is_empty() {
+            // Open-ended range: bytes=500-
+            file_size - 1
+        } else {
+            parts[1].parse::<u64>().ok()?.min(file_size - 1)
+        };
+
+        if end < start {
+            return None;
+        }
+
+        Some(ByteRange { start, end })
+    }
+}
 
 // Static HTML template for directory listing view
 // Includes basic styling and JavaScript for date formatting
@@ -190,6 +265,7 @@ async fn get_data(
 /// * `file` - PathBuf of the file being served
 /// * `meta` - File metadata for size and modification time
 /// * `charset` - Optional character set to append to text/* content types
+/// * `support_range` - Whether to add Accept-Ranges header
 ///
 /// # Returns
 /// * `(bool, usize, Vec<HttpHeader>)` where:
@@ -200,6 +276,7 @@ fn get_cacheable_and_headers_from_meta(
     file: &PathBuf,
     meta: &Metadata,
     charset: &Option<String>,
+    support_range: bool,
 ) -> (bool, usize, Vec<HttpHeader>) {
     // Guess MIME type from file extension
     let result = mime_guess::from_path(file);
@@ -242,6 +319,14 @@ fn get_cacheable_and_headers_from_meta(
             }
         }
     }
+
+    // Add Accept-Ranges header to indicate support for range requests
+    if support_range {
+        if let Ok(value) = HeaderValue::from_str("bytes") {
+            headers.push((header::ACCEPT_RANGES, value));
+        }
+    }
+
     (cacheable, size, headers)
 }
 
@@ -331,6 +416,13 @@ impl TryFrom<&PluginConf> for Directory {
     }
 }
 
+struct StreamOptions {
+    headers: Vec<HttpHeader>,
+    status: StatusCode,
+    cacheable: bool,
+    chunk_size: usize,
+}
+
 impl Directory {
     /// Creates a new Directory plugin instance from configuration
     ///
@@ -347,6 +439,42 @@ impl Directory {
     pub fn new(params: &PluginConf) -> Result<Self> {
         debug!(params = params.to_string(), "new serve static file plugin");
         Self::try_from(params)
+    }
+
+    fn apply_custom_headers(&self, file: &Path, headers: &mut Vec<HttpHeader>) {
+        if self.download
+            && let Some(filename) =
+                file.file_name().map(|item| item.to_string_lossy())
+        {
+            if let Ok(val) = HeaderValue::from_str(&format!(
+                r#"attachment; filename="{filename}""#
+            )) {
+                headers.push((header::CONTENT_DISPOSITION, val));
+            }
+        }
+        if let Some(arr) = &self.headers {
+            headers.extend(arr.clone());
+        }
+    }
+    async fn send_streaming_response(
+        &self,
+        session: &mut Session,
+        ctx: &mut Ctx,
+        mut reader: impl tokio::io::AsyncRead + Unpin,
+        opt: StreamOptions,
+    ) -> pingora::Result<RequestPluginResult> {
+        let mut resp = HttpChunkResponse::new(&mut reader);
+        resp.chunk_size = opt.chunk_size;
+
+        if opt.cacheable {
+            resp.max_age = self.max_age;
+        }
+        resp.cache_private = self.cache_private;
+        resp.headers = Some(opt.headers);
+
+        ctx.state.status = Some(opt.status);
+        resp.send(session).await?;
+        Ok(RequestPluginResult::Respond(IGNORE_RESPONSE.clone()))
     }
 }
 
@@ -464,16 +592,11 @@ impl Plugin for Directory {
         } else {
             path_str
         };
-        let filename = match decode(source_str) {
-            Ok(decoded_value) => decoded_value.into_owned(),
-            Err(_) => source_str.to_string(),
-        };
-        // convert to relative path
-        let file = match self
-            .path
-            .join(filename.substring(1, filename.len()))
-            .absolutize()
-        {
+
+        let decoded = decode(source_str).unwrap_or(Cow::Borrowed(source_str));
+        let relative_path = decoded.strip_prefix('/').unwrap_or(&decoded);
+
+        let file = match self.path.join(relative_path).absolutize() {
             Ok(file) => file.to_path_buf(),
             Err(e) => {
                 return Ok(RequestPluginResult::Respond(
@@ -492,7 +615,9 @@ impl Plugin for Directory {
                 .finish();
             return Ok(RequestPluginResult::Respond(resp));
         }
+
         debug!(file = format!("{file:?}"), "static file serve");
+
         if self.autoindex && file.is_dir() {
             let resp = match get_autoindex_html(&file) {
                 Ok(html) => HttpResponse::html(html),
@@ -501,72 +626,134 @@ impl Plugin for Directory {
             return Ok(RequestPluginResult::Respond(resp));
         }
 
-        // Content-Disposition: attachment; filename="example.pdf"
-
-        let resp = match get_data(&file).await {
-            Ok((meta, mut f)) => {
-                let (cacheable, size, mut headers) =
-                    get_cacheable_and_headers_from_meta(
-                        &file,
-                        &meta,
-                        &self.charset,
-                    );
-                if self.download {
-                    if let Ok(value) = HeaderValue::from_str(&format!(
-                        r###"attachment; filename="{}""###,
-                        file.file_name().unwrap_or_default().to_string_lossy()
-                    )) {
-                        headers.push((header::CONTENT_DISPOSITION, value));
-                    }
-                }
-                if let Some(arr) = &self.headers {
-                    headers.extend(arr.clone());
-                }
-                let chunk_size = self.chunk_size.unwrap_or_default().max(4096);
-                if size <= chunk_size {
-                    let mut buffer = vec![0; size];
-                    match f.read(&mut buffer).await {
-                        Ok(_) => HttpResponse {
-                            status: StatusCode::OK,
-                            max_age: self.max_age,
-                            cache_private: self.cache_private,
-                            headers: Some(headers),
-                            body: buffer.into(),
-                            ..Default::default()
-                        },
-                        Err(e) => {
-                            error!(error = e.to_string(), "read data fail");
-                            HttpResponse::bad_request(e.to_string())
-                        },
-                    }
-                } else {
-                    headers.push((
-                        header::CONTENT_LENGTH,
-                        HeaderValue::from(size),
-                    ));
-                    let mut resp = HttpChunkResponse::new(&mut f);
-                    resp.chunk_size = chunk_size;
-                    if cacheable {
-                        resp.max_age = self.max_age;
-                    }
-                    resp.cache_private = self.cache_private;
-                    resp.headers = Some(headers);
-                    ctx.state.status = Some(StatusCode::OK);
-                    resp.send(session).await?;
-                    // TODO better way to handle chunk response
-                    IGNORE_RESPONSE.clone()
-                }
-            },
+        let (meta, mut f) = match get_data(&file).await {
+            Ok(data) => data,
             Err(err) => {
-                if err.kind() == std::io::ErrorKind::NotFound {
+                let resp = if err.kind() == std::io::ErrorKind::NotFound {
                     HttpResponse::not_found("Not Found")
                 } else {
-                    HttpResponse::unknown_error("Get file data fail")
-                }
+                    HttpResponse::unknown_error("File access error")
+                };
+                return Ok(RequestPluginResult::Respond(resp));
             },
         };
 
-        Ok(RequestPluginResult::Respond(resp))
+        // generate response headers
+        let (cacheable, size, mut headers) =
+            get_cacheable_and_headers_from_meta(
+                &file,
+                &meta,
+                &self.charset,
+                true,
+            );
+        self.apply_custom_headers(&file, &mut headers);
+
+        let range_header = session
+            .req_header()
+            .headers
+            .get(header::RANGE)
+            .and_then(|v| v.to_str().ok());
+        let chunk_size = self.chunk_size.unwrap_or(4096).max(4096);
+
+        // handle range request
+        if let Some(range_str) = range_header {
+            if let Some(range) = parse_range_header(range_str, size as u64) {
+                let range_len = range.len() as usize;
+                if let Ok(val) = HeaderValue::from_str(&format!(
+                    "bytes {}-{}/{}",
+                    range.start, range.end, size
+                )) {
+                    headers.push((header::CONTENT_RANGE, val));
+                }
+                if let Err(e) =
+                    f.seek(std::io::SeekFrom::Start(range.start)).await
+                {
+                    return Ok(RequestPluginResult::Respond(
+                        HttpResponse::unknown_error(e.to_string()),
+                    ));
+                }
+
+                if range_len <= chunk_size {
+                    let mut buffer = vec![0; range_len];
+                    return match f.read_exact(&mut buffer).await {
+                        Ok(_) => {
+                            Ok(RequestPluginResult::Respond(HttpResponse {
+                                status: StatusCode::PARTIAL_CONTENT,
+                                headers: Some(headers),
+                                body: buffer.into(),
+                                ..Default::default()
+                            }))
+                        },
+                        Err(e) => Ok(RequestPluginResult::Respond(
+                            HttpResponse::unknown_error(e.to_string()),
+                        )),
+                    };
+                } else {
+                    headers.push((
+                        header::CONTENT_LENGTH,
+                        HeaderValue::from(range_len),
+                    ));
+                    let limited_reader = f.take(range.len());
+                    return self
+                        .send_streaming_response(
+                            session,
+                            ctx,
+                            limited_reader,
+                            StreamOptions {
+                                headers,
+                                status: StatusCode::PARTIAL_CONTENT,
+                                cacheable,
+                                chunk_size,
+                            },
+                        )
+                        .await;
+                }
+            } else {
+                if let Ok(val) =
+                    HeaderValue::from_str(&format!("bytes */{size}"))
+                {
+                    headers.push((header::CONTENT_RANGE, val));
+                }
+                return Ok(RequestPluginResult::Respond(HttpResponse {
+                    status: StatusCode::RANGE_NOT_SATISFIABLE,
+                    headers: Some(headers),
+                    ..Default::default()
+                }));
+            }
+        }
+
+        // handle normal request
+        if size <= chunk_size {
+            let mut buffer = vec![0; size];
+            match f.read_exact(&mut buffer).await {
+                Ok(_) => Ok(RequestPluginResult::Respond(HttpResponse {
+                    status: StatusCode::OK,
+                    max_age: self.max_age,
+                    cache_private: self.cache_private,
+                    headers: Some(headers),
+                    body: buffer.into(),
+                    ..Default::default()
+                })),
+                Err(e) => Ok(RequestPluginResult::Respond(
+                    HttpResponse::bad_request(e.to_string()),
+                )),
+            }
+        } else {
+            // stream response
+            headers.push((header::CONTENT_LENGTH, HeaderValue::from(size)));
+            self.send_streaming_response(
+                session,
+                ctx,
+                f,
+                StreamOptions {
+                    headers,
+                    status: StatusCode::OK,
+                    cacheable,
+                    chunk_size,
+                },
+            )
+            .await
+        }
     }
 }
 
@@ -732,6 +919,7 @@ download = true
             &file,
             &meta,
             &Some("utf-8".to_string()),
+            false,
         );
         assert_eq!(false, cacheable);
         assert_eq!(
@@ -740,5 +928,40 @@ download = true
                 r###"("content-type", "text/html; charset=utf-8")"###
             )
         );
+    }
+
+    #[test]
+    fn test_parse_range_header() {
+        // Test normal range
+        let range = parse_range_header("bytes=0-499", 1000).unwrap();
+        assert_eq!(0, range.start);
+        assert_eq!(499, range.end);
+
+        // Test open-ended range
+        let range = parse_range_header("bytes=500-", 1000).unwrap();
+        assert_eq!(500, range.start);
+        assert_eq!(999, range.end);
+
+        // Test suffix range (last N bytes)
+        let range = parse_range_header("bytes=-500", 1000).unwrap();
+        assert_eq!(500, range.start);
+        assert_eq!(999, range.end);
+
+        // Test range beyond file size
+        let range = parse_range_header("bytes=0-1999", 1000).unwrap();
+        assert_eq!(0, range.start);
+        assert_eq!(999, range.end);
+
+        // Test invalid start position
+        assert!(parse_range_header("bytes=1000-", 1000).is_none());
+
+        // Test invalid format
+        assert!(parse_range_header("invalid", 1000).is_none());
+        assert!(parse_range_header("bytes=", 1000).is_none());
+
+        // Test multipart range (only first part used)
+        let range = parse_range_header("bytes=0-100,200-300", 1000).unwrap();
+        assert_eq!(0, range.start);
+        assert_eq!(100, range.end);
     }
 }
