@@ -442,14 +442,15 @@ impl Directory {
     }
 
     fn apply_custom_headers(&self, file: &Path, headers: &mut Vec<HttpHeader>) {
-        if self.download
-            && let Some(filename) =
+        if self.download {
+            if let Some(filename) =
                 file.file_name().map(|item| item.to_string_lossy())
-        {
-            if let Ok(val) = HeaderValue::from_str(&format!(
-                r#"attachment; filename="{filename}""#
-            )) {
-                headers.push((header::CONTENT_DISPOSITION, val));
+            {
+                if let Ok(val) = HeaderValue::from_str(&format!(
+                    r#"attachment; filename="{filename}""#
+                )) {
+                    headers.push((header::CONTENT_DISPOSITION, val));
+                }
             }
         }
         if let Some(arr) = &self.headers {
