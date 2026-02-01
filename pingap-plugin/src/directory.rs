@@ -875,8 +875,12 @@ download = true
             format!("{:?}", headers[0])
         );
         assert_eq!(
-            r#"("content-disposition", "attachment; filename=\"index.html\"")"#,
+            r#"("accept-ranges", "bytes")"#,
             format!("{:?}", headers[2])
+        );
+        assert_eq!(
+            r#"("content-disposition", "attachment; filename=\"index.html\"")"#,
+            format!("{:?}", headers[3])
         );
         assert_eq!(true, !resp.body.is_empty());
 
