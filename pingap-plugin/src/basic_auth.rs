@@ -249,6 +249,7 @@ mod tests {
 
     #[test]
     fn test_basic_auth_params() {
+        // spellchecker:off
         let params = BasicAuth::try_from(
             &toml::from_str::<PluginConf>(
                 r###"
@@ -262,7 +263,9 @@ delay = "10s"
             .unwrap(),
         )
         .unwrap();
+        // spellchecker:on
         assert_eq!("request", params.plugin_step.to_string());
+        // spellchecker:off
         assert_eq!(
             "Basic MTIz,Basic NDU2",
             params
@@ -272,6 +275,7 @@ delay = "10s"
                 .collect::<Vec<_>>()
                 .join(","),
         );
+        // spellchecker:on
         assert_eq!(Duration::from_secs(10), params.delay.unwrap());
         assert_eq!("AC7E9E03", params.config_key());
 
@@ -293,6 +297,7 @@ authorizations = [
 
     #[tokio::test]
     async fn test_basic_auth() {
+        // spellchecker:off
         let auth = BasicAuth::new(
             &toml::from_str::<PluginConf>(
                 r###"
@@ -305,9 +310,12 @@ hide_credentials = true
             .unwrap(),
         )
         .unwrap();
+        // spellchecker:on
 
         // auth success
+        // spellchecker:off
         let headers = ["Authorization: Basic YWRtaW46MTIzMTIz"].join("\r\n");
+        // spellchecker:on
         let input_header =
             format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
@@ -328,7 +336,9 @@ hide_credentials = true
         );
 
         // auth fail
+        // spellchecker:off
         let headers = ["Authorization: Basic YWRtaW46MTIzMTIa"].join("\r\n");
+        // spellchecker:on
         let input_header =
             format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
         let mock_io = Builder::new().read(input_header.as_bytes()).build();
