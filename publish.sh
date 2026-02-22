@@ -19,6 +19,7 @@ CRATES=(
     "pingap-pyroscope"
     "pingap-sentry"
     "pingap-webhook"
+    "pingap-imageoptim"
 )
 
 for crate in "${CRATES[@]}"; do
