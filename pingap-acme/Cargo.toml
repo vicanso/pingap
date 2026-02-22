@@ -1,6 +1,6 @@
 [package]
 name = "pingap-acme"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2024"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -23,9 +23,9 @@ hickory-resolver = { workspace = true }
 hmac = { workspace = true }
 instant-acme = { workspace = true }
 nanoid = { workspace = true }
-pingap-certificate = { version = "0.12.0", path = "../pingap-certificate" }
-pingap-config = { version = "0.12.0", path = "../pingap-config" }
-pingap-core = { version = "0.12.0", path = "../pingap-core" }
+pingap-certificate = { version = "0.13.0", path = "../pingap-certificate" }
+pingap-config = { version = "0.13.0", path = "../pingap-config" }
+pingap-core = { version = "0.13.0", path = "../pingap-core" }
 pingora = { workspace = true }
 reqwest = { workspace = true }
 rustls = { workspace = true }

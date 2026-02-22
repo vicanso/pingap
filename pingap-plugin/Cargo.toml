@@ -1,6 +1,6 @@
 [package]
 name = "pingap-plugin"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2024"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -36,10 +36,10 @@ humantime = { workspace = true }
 mime_guess = { workspace = true }
 nanoid = { workspace = true }
 path-absolutize = { workspace = true }
-pingap-cache = { version = "0.12.0", path = "../pingap-cache" }
-pingap-config = { version = "0.12.0", path = "../pingap-config" }
-pingap-core = { version = "0.12.0", path = "../pingap-core" }
-pingap-util = { version = "0.12.0", path = "../pingap-util" }
+pingap-cache = { version = "0.13.0", path = "../pingap-cache" }
+pingap-config = { version = "0.13.0", path = "../pingap-config" }
+pingap-core = { version = "0.13.0", path = "../pingap-core" }
+pingap-util = { version = "0.13.0", path = "../pingap-util" }
 pingora = { workspace = true }
 rand = { workspace = true }
 regex = { workspace = true }

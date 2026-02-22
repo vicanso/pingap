@@ -1,6 +1,6 @@
 [package]
 name = "pingap-proxy"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2024"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -20,16 +20,16 @@ http = { workspace = true }
 humantime = { workspace = true, optional = true }
 itoa = { workspace = true }
 num_cpus = { workspace = true }
-pingap-acme = { version = "0.12.0", path = "../pingap-acme" }
-pingap-certificate = { version = "0.12.0", path = "../pingap-certificate" }
-pingap-config = { version = "0.12.0", path = "../pingap-config" }
-pingap-core = { version = "0.12.0", path = "../pingap-core" }
-pingap-location = { version = "0.12.0", path = "../pingap-location" }
-pingap-logger = { version = "0.12.0", path = "../pingap-logger" }
-pingap-otel = { version = "0.12.0", path = "../pingap-otel", optional = true }
-pingap-performance = { version = "0.12.0", path = "../pingap-performance" }
-pingap-upstream = { version = "0.12.0", path = "../pingap-upstream" }
-pingap-util = { version = "0.12.0", path = "../pingap-util" }
+pingap-acme = { version = "0.13.0", path = "../pingap-acme" }
+pingap-certificate = { version = "0.13.0", path = "../pingap-certificate" }
+pingap-config = { version = "0.13.0", path = "../pingap-config" }
+pingap-core = { version = "0.13.0", path = "../pingap-core" }
+pingap-location = { version = "0.13.0", path = "../pingap-location" }
+pingap-logger = { version = "0.13.0", path = "../pingap-logger" }
+pingap-otel = { version = "0.13.0", path = "../pingap-otel", optional = true }
+pingap-performance = { version = "0.13.0", path = "../pingap-performance" }
+pingap-upstream = { version = "0.13.0", path = "../pingap-upstream" }
+pingap-util = { version = "0.13.0", path = "../pingap-util" }
 pingora = { workspace = true }
 scopeguard = { workspace = true }
 snafu = { workspace = true }

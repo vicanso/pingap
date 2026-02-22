@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.13.0](https://github.com/vicanso/pingap/compare/v0.12.8..v0.13.0) - 2026-02-22
+
+### ⛰️  Features
+
+- Add support for HTTP range requests and partial content responses ([#161](https://github.com/orhun/git-cliff/issues/161)) - ([aec8506](https://github.com/vicanso/pingap/commit/aec8506c2fe0f84f9c9dcb460634d39e9e33cfd0))
+
+### 🐛 Bug Fixes
+
+- Fix test for rust 1.85 - ([23818f0](https://github.com/vicanso/pingap/commit/23818f08553c5471929eeb18889e34eaf4810cdc))
+- Fix test - ([a7240bf](https://github.com/vicanso/pingap/commit/a7240bf548b5ae387e7c4ef8d1fd613dd8b4395f))
+- Fix typos - ([99052d9](https://github.com/vicanso/pingap/commit/99052d943210f38d1f6b85eab42e4bf1b060cccc))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update pingora 0.7.0 - ([b0dc0a5](https://github.com/vicanso/pingap/commit/b0dc0a55401ab8f97db0b65dcefcc2b22e24beff))
+- Update pingora - ([0f96c5b](https://github.com/vicanso/pingap/commit/0f96c5b216992e35bf20e8ae48d6cafd91edd375))
+- Adjust cargo clippy - ([2558e7a](https://github.com/vicanso/pingap/commit/2558e7ae0a0b7b6ad5ef11063810272c2760d517))
+- Cargo fmt - ([9af7cc4](https://github.com/vicanso/pingap/commit/9af7cc4e86971b08bbe8b367faf421d746885f51))
+- Update msrv to 1.85 - ([08368dc](https://github.com/vicanso/pingap/commit/08368dc8c2823e195e04942f1af73a41a8de5df0))
+- Add `query` feature of reqwest - ([c371ce2](https://github.com/vicanso/pingap/commit/c371ce2d3b7a8f4131a544ff8c1c1f51094449f6))
+- Update pingora and reqwest - ([7103835](https://github.com/vicanso/pingap/commit/7103835cc2716b05eb21479961b9806113319d7b))
+
 ## [0.12.0](https://github.com/vicanso/pingap/compare/v0.11.2..v0.12.0) - 2025-08-30
 
 ### ⛰️  Features

@@ -3509,7 +3509,7 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pingap"
-version = "0.12.8"
+version = "0.13.0"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -3572,7 +3572,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-acme"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -3607,7 +3607,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-cache"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3637,7 +3637,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-certificate"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -3662,7 +3662,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-config"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -3697,7 +3697,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-core"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "TinyUFO",
  "ahash",
@@ -3726,7 +3726,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-discovery"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "bollard",
@@ -3745,7 +3745,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-health"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "http",
@@ -3764,7 +3764,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-imageoptim"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "bytemuck",
@@ -3792,7 +3792,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-location"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "ahash",
  "bytesize",
@@ -3811,7 +3811,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-logger"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3844,7 +3844,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-otel"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -3862,7 +3862,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-performance"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "bytesize",
@@ -3892,7 +3892,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-plugin"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "ahash",
  "async-trait",
@@ -3940,7 +3940,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-proxy"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "ahash",
  "async-trait",
@@ -3974,7 +3974,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-pyroscope"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "pingora",
@@ -3988,14 +3988,14 @@ dependencies = [
 
 [[package]]
 name = "pingap-sentry"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "sentry-core",
 ]
 
 [[package]]
 name = "pingap-upstream"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -4012,7 +4012,7 @@ dependencies = [
  "pingap-discovery",
  "pingap-health",
  "pingora",
- "pingora-runtime 0.6.0",
+ "pingora-runtime",
  "pretty_assertions",
  "serde",
  "snafu",
@@ -4023,7 +4023,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-util"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aes-gcm-siv",
  "ahash",
@@ -4044,7 +4044,7 @@ dependencies = [
 
 [[package]]
 name = "pingap-webhook"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "async-trait",
  "local-ip-address",
@@ -4137,7 +4137,7 @@ dependencies = [
  "pingora-http",
  "pingora-openssl",
  "pingora-pool",
- "pingora-runtime 0.7.0",
+ "pingora-runtime",
  "pingora-timeout",
  "prometheus",
  "rand 0.8.5",
@@ -4201,9 +4201,9 @@ dependencies = [
 
 [[package]]
 name = "pingora-limits"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b93c897e8cc04ff0d077ee2a655142910618222aeefc83f7f99f5b9fc59ccb13"
+checksum = "c952fa1c197d5cecae4a6df55a198a41118a8f68fe6ee45edbbe365b65e70a29"
 dependencies = [
  "ahash",
 ]
@@ -4225,7 +4225,7 @@ dependencies = [
  "pingora-error",
  "pingora-http",
  "pingora-ketama",
- "pingora-runtime 0.7.0",
+ "pingora-runtime",
  "rand 0.8.5",
  "tokio",
 ]
@@ -4290,18 +4290,6 @@ dependencies = [
  "pingora-http",
  "rand 0.8.5",
  "regex",
- "tokio",
-]
-
-[[package]]
-name = "pingora-runtime"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ccc165021cf55a39b9e760121b22c4260b17a0b2c530d5b93092fc5bc765b94"
-dependencies = [
- "once_cell",
- "rand 0.8.5",
- "thread_local",
  "tokio",
 ]
 

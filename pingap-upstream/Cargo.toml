@@ -1,6 +1,6 @@
 [package]
 name = "pingap-upstream"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2024"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -23,10 +23,10 @@ derive_more = { workspace = true }
 futures = { workspace = true }
 futures-util = { workspace = true }
 http = { workspace = true }
-pingap-config = { version = "0.12.0", path = "../pingap-config" }
-pingap-core = { version = "0.12.0", path = "../pingap-core" }
-pingap-discovery = { version = "0.12.0", path = "../pingap-discovery" }
-pingap-health = { version = "0.12.0", path = "../pingap-health" }
+pingap-config = { version = "0.13.0", path = "../pingap-config" }
+pingap-core = { version = "0.13.0", path = "../pingap-core" }
+pingap-discovery = { version = "0.13.0", path = "../pingap-discovery" }
+pingap-health = { version = "0.13.0", path = "../pingap-health" }
 pingora = { workspace = true }
 pingora-runtime = { workspace = true }
 serde = { workspace = true }

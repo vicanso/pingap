@@ -1,6 +1,6 @@
 [package]
 name = "pingap-performance"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2024"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -25,10 +25,10 @@ humantime = { workspace = true }
 http = { workspace = true }
 memory-stats = { workspace = true }
 num_cpus = { workspace = true }
-pingap-cache = { version = "0.12.0", path = "../pingap-cache" }
-pingap-core = { version = "0.12.0", path = "../pingap-core" }
-pingap-location = { version = "0.12.0", path = "../pingap-location" }
-pingap-upstream = { version = "0.12.0", path = "../pingap-upstream" }
+pingap-cache = { version = "0.13.0", path = "../pingap-cache" }
+pingap-core = { version = "0.13.0", path = "../pingap-core" }
+pingap-location = { version = "0.13.0", path = "../pingap-location" }
+pingap-upstream = { version = "0.13.0", path = "../pingap-upstream" }
 pingora = { workspace = true }
 prometheus = { workspace = true, optional = true }
 reqwest = { workspace = true }
