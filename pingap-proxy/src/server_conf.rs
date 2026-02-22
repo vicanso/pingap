@@ -17,7 +17,7 @@ use pingora::protocols::l4::ext::TcpKeepalive;
 use std::fmt;
 use std::time::Duration;
 
-static ERROR_TEMPLATE: &str = include_str!("../../error.html");
+static ERROR_TEMPLATE: &str = include_str!("error.html");
 
 // ServerConf struct represents the configuration for a server instance
 #[derive(Debug, Default)]

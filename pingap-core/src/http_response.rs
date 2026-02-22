@@ -543,7 +543,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_http_chunk_response() {
-        let file = include_bytes!("../../error.html");
+        let file = include_bytes!("http_response.rs");
         let mut f = NamedTempFile::new().unwrap();
         f.write_all(file).unwrap();
         let mut f = fs::OpenOptions::new().read(true).open(f).await.unwrap();
