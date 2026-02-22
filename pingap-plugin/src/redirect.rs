@@ -48,9 +48,6 @@ pub struct Redirect {
     // Whether to redirect HTTP requests to HTTPS
     // true = force HTTPS, false = force HTTP
     http_to_https: bool,
-    // Plugin execution step (must be Request)
-    // Response step is invalid as redirects must be handled before request processing
-    plugin_step: PluginStep,
     // Unique hash value for plugin instance
     // Used for plugin identification and caching
     hash_value: String,
@@ -87,7 +84,6 @@ impl Redirect {
             hash_value,
             prefix,
             http_to_https: get_bool_conf(params, "http_to_https"),
-            plugin_step: PluginStep::Request,
         })
     }
 }
@@ -128,8 +124,8 @@ impl Plugin for Redirect {
         session: &mut Session,
         ctx: &mut Ctx,
     ) -> pingora::Result<RequestPluginResult> {
-        // Early return if not in request phase
-        if step != self.plugin_step {
+        // Early return if not in good phase
+        if step != PluginStep::Request && step != PluginStep::ProxyUpstream {
             return Ok(RequestPluginResult::Skipped);
         }
 
@@ -235,5 +231,73 @@ prefix = "/api"
             r###"Some([("location", "https://github.com/api/vicanso/pingap?size=1")])"###,
             format!("{:?}", resp.headers)
         );
+    }
+
+    #[tokio::test]
+    async fn test_redirect_proxy_upstream_step() {
+        let redirect = Redirect::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+http_to_https = true
+prefix = "/api"
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let headers = ["Host: github.com"].join("\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let result = redirect
+            .handle_request(
+                PluginStep::ProxyUpstream,
+                &mut session,
+                &mut Ctx::default(),
+            )
+            .await
+            .unwrap();
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
+        assert_eq!(StatusCode::TEMPORARY_REDIRECT, resp.status);
+        assert_eq!(
+            r###"Some([("location", "https://github.com/api/vicanso/pingap?size=1")])"###,
+            format!("{:?}", resp.headers)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_redirect_proxy_upstream_step_skips_when_no_redirect_needed() {
+        let redirect = Redirect::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+http_to_https = false
+prefix = "/api"
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let headers = ["Host: github.com"].join("\r\n");
+        let input_header = format!(
+            "GET /api/vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n"
+        );
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let result = redirect
+            .handle_request(
+                PluginStep::ProxyUpstream,
+                &mut session,
+                &mut Ctx::default(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(result, RequestPluginResult::Skipped));
     }
 }
