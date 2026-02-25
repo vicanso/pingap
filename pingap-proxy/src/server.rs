@@ -613,8 +613,8 @@ impl Server {
             )
             .await
             {
-                Ok(true) => Some(Ok(true)),   // handle ACME request
-                Ok(false) => Some(Ok(false)), // not handle ACME request, continue
+                Ok(true) => Some(Ok(true)), // handle ACME request
+                Ok(false) => None,          // not ACME request, continue
                 Err(e) => Some(Err(e)),
             };
         }
@@ -2066,5 +2066,51 @@ value = 'proxy_set_headers = ["name:value"]'
             )
             .unwrap();
         assert_eq!(false, result.is_cacheable());
+    }
+
+    fn create_session(path: &str) -> Session {
+        let headers = ["Host: example.com"].join("\r\n");
+        let input_header =
+            format!("GET {} HTTP/1.1\r\n{headers}\r\n\r\n", path);
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        Session::new_h1(Box::new(mock_io))
+    }
+
+    #[tokio::test]
+    async fn test_handle_acme_challenge_not_enabled() {
+        let server = new_server();
+
+        let mut session = create_session("/");
+        session.read_request().await.unwrap();
+
+        let result = server
+            .handle_acme_challenge(&mut session, &mut Ctx::default())
+            .await;
+        assert!(
+            result.is_none(),
+            "When ACME not enabled, should return None"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handle_acme_challenge_non_challenge_returns_none() {
+        let mut server = new_server();
+        server.enable_lets_encrypt();
+
+        let test_paths = ["/", "/api", "/test.html", "/normal/path"];
+
+        for path in test_paths {
+            let mut session = create_session(path);
+            session.read_request().await.unwrap();
+
+            let result = server
+                .handle_acme_challenge(&mut session, &mut Ctx::default())
+                .await;
+            assert!(
+                result.is_none(),
+                "Path '{}' should return None to continue processing (bug returns Some(Ok(false)))",
+                path
+            );
+        }
     }
 }
