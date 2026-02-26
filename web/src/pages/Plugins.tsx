@@ -776,6 +776,36 @@ export default function Plugins() {
       );
       break;
     }
+    case PluginCategory.GEO_RESTRICTION: {
+      items.push(
+        {
+          name: "type",
+          label: pluginI18n("geoRestrictionMode"),
+          placeholder: "",
+          defaultValue: pluginConfig.type as string,
+          span: 6,
+          category: ExFormItemCategory.RADIOS,
+          options: newStringOptions(["allow", "deny", "reporting"], true),
+        },
+        {
+          name: "country_codes",
+          label: pluginI18n("geoRestrictionCountryCodes"),
+          placeholder: pluginI18n("geoRestrictionCountryCodesPlaceholder"),
+          defaultValue: pluginConfig.country_codes as string[],
+          span: 6,
+          category: ExFormItemCategory.TEXTS,
+        },
+        {
+          name: "message",
+          label: pluginI18n("geoRestrictionMessage"),
+          placeholder: pluginI18n("geoRestrictionMessagePlaceholder"),
+          defaultValue: pluginConfig.message as string,
+          span: 6,
+          category: ExFormItemCategory.TEXT,
+        },
+      );
+      break;
+    }
     case PluginCategory.REFERER_RESTRICTION: {
       items.push(
         {

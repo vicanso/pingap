@@ -14,7 +14,12 @@ description = "Plugin for pingap"
 name = "pingap_plugin"
 path = "src/lib.rs"
 
+[features]
+geo = []
+
 [dependencies]
+# Newer versions require 1.89.0
+tor-geoip = { version = "0.39", default-features = false, features = ["embedded-db"] }
 ahash = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
