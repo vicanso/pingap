@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use crate::Error;
+use crate::hcl::convert_hcl_to_toml;
 use crate::storage::{History, Storage};
 use async_trait::async_trait;
 use glob::glob;
@@ -88,23 +89,48 @@ impl FileStorage {
     }
 }
 
-async fn read_all_toml_files(dir: &str) -> Result<Vec<u8>> {
+async fn read_all_config_files(dir: &str) -> Result<Vec<u8>> {
     let mut data = vec![];
-    for entry in
-        glob(&format!("{dir}/**/*.toml")).map_err(|e| Error::Pattern {
-            source: e,
-            path: dir.to_string(),
-        })?
-    {
-        let f = entry.map_err(|e| Error::Glob { source: e })?;
-        let mut buf = fs::read(&f).await.map_err(|e| Error::Io {
-            source: e,
-            file: f.to_string_lossy().to_string(),
-        })?;
-        debug!(filename = format!("{f:?}"), "read toml file");
-        // Append file contents and newline
-        data.append(&mut buf);
-        data.push(0x0a);
+    // Collect .toml files first
+    let toml_files: std::result::Result<Vec<_>, _> =
+        glob(&format!("{dir}/**/*.toml"))
+            .map_err(|e| Error::Pattern {
+                source: e,
+                path: dir.to_string(),
+            })?
+            .collect();
+    let toml_files = toml_files.map_err(|e| Error::Glob { source: e })?;
+
+    if !toml_files.is_empty() {
+        // .toml files found, use only .toml
+        for f in toml_files {
+            let mut buf = fs::read(&f).await.map_err(|e| Error::Io {
+                source: e,
+                file: f.to_string_lossy().to_string(),
+            })?;
+            debug!(filename = format!("{f:?}"), "read toml file");
+            data.append(&mut buf);
+            data.push(0x0a);
+        }
+    } else {
+        // No .toml files, fall back to .hcl
+        for entry in
+            glob(&format!("{dir}/**/*.hcl")).map_err(|e| Error::Pattern {
+                source: e,
+                path: dir.to_string(),
+            })?
+        {
+            let f = entry.map_err(|e| Error::Glob { source: e })?;
+            let buf = fs::read(&f).await.map_err(|e| Error::Io {
+                source: e,
+                file: f.to_string_lossy().to_string(),
+            })?;
+            debug!(filename = format!("{f:?}"), "read hcl file");
+            let hcl_str = String::from_utf8_lossy(&buf);
+            let toml_str = convert_hcl_to_toml(&hcl_str)?;
+            data.extend_from_slice(toml_str.as_bytes());
+            data.push(0x0a);
+        }
     }
     Ok(data)
 }
@@ -116,20 +142,28 @@ impl Storage for FileStorage {
     }
     async fn fetch(&self, key: &str) -> Result<String> {
         let target_path = self.get_target_path(key);
-        let value = if target_path.is_file() {
-            match fs::read(&target_path).await {
+        if target_path.is_file() {
+            let data = match fs::read(&target_path).await {
                 Ok(data) => Ok(data),
                 Err(e) if e.kind() == ErrorKind::NotFound => Ok(Vec::new()),
                 Err(e) => Err(Error::Io {
                     source: e,
                     file: target_path.to_string_lossy().to_string(),
                 }),
+            }?;
+            // Convert HCL to TOML if the file has .hcl extension
+            let is_hcl =
+                target_path.extension().is_some_and(|ext| ext == "hcl");
+            if is_hcl {
+                let hcl_str = String::from_utf8_lossy(&data);
+                return convert_hcl_to_toml(&hcl_str);
             }
+            Ok(String::from_utf8_lossy(&data).trim().to_string())
         } else {
-            read_all_toml_files(&target_path.to_string_lossy()).await
-        }?;
-
-        Ok(String::from_utf8_lossy(&value).trim().to_string())
+            let value =
+                read_all_config_files(&target_path.to_string_lossy()).await?;
+            Ok(String::from_utf8_lossy(&value).trim().to_string())
+        }
     }
 
     async fn save(&self, key: &str, value: &str) -> Result<()> {

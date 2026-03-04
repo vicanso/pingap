@@ -25,6 +25,7 @@ use tracing::debug;
 mod common;
 mod etcd_storage;
 mod file_storage;
+pub mod hcl;
 mod manager;
 mod storage;
 
@@ -144,23 +145,49 @@ pub fn new_config_manager(value: &str) -> Result<ConfigManager> {
     }
 }
 
-pub async fn read_all_toml_files(dir: &str) -> Result<Vec<u8>> {
+pub async fn read_all_config_files(dir: &str) -> Result<Vec<u8>> {
     let mut data = vec![];
-    for entry in
-        glob(&format!("{dir}/**/*.toml")).map_err(|e| Error::Pattern {
-            source: e,
-            path: dir.to_string(),
-        })?
-    {
-        let f = entry.map_err(|e| Error::Glob { source: e })?;
-        let mut buf = fs::read(&f).await.map_err(|e| Error::Io {
-            source: e,
-            file: f.to_string_lossy().to_string(),
-        })?;
-        debug!(filename = format!("{f:?}"), "read toml file");
-        // Append file contents and newline
-        data.append(&mut buf);
-        data.push(0x0a);
+    // Collect .toml files first
+    let toml_files: std::result::Result<Vec<_>, _> =
+        glob(&format!("{dir}/**/*.toml"))
+            .map_err(|e| Error::Pattern {
+                source: e,
+                path: dir.to_string(),
+            })?
+            .collect();
+    let toml_files =
+        toml_files.map_err(|e| Error::Glob { source: e })?;
+
+    if !toml_files.is_empty() {
+        // .toml files found, use only .toml
+        for f in toml_files {
+            let mut buf = fs::read(&f).await.map_err(|e| Error::Io {
+                source: e,
+                file: f.to_string_lossy().to_string(),
+            })?;
+            debug!(filename = format!("{f:?}"), "read toml file");
+            data.append(&mut buf);
+            data.push(0x0a);
+        }
+    } else {
+        // No .toml files, fall back to .hcl
+        for entry in glob(&format!("{dir}/**/*.hcl")).map_err(
+            |e| Error::Pattern {
+                source: e,
+                path: dir.to_string(),
+            },
+        )? {
+            let f = entry.map_err(|e| Error::Glob { source: e })?;
+            let buf = fs::read(&f).await.map_err(|e| Error::Io {
+                source: e,
+                file: f.to_string_lossy().to_string(),
+            })?;
+            debug!(filename = format!("{f:?}"), "read hcl file");
+            let hcl_str = String::from_utf8_lossy(&buf);
+            let toml_str = hcl::convert_hcl_to_toml(&hcl_str)?;
+            data.extend_from_slice(toml_str.as_bytes());
+            data.push(0x0a);
+        }
     }
     Ok(data)
 }
