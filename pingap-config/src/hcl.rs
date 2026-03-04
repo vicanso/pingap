@@ -229,8 +229,7 @@ fn process_server_block(body: hcl::Body) -> Result<ParsedServerBlock> {
                         if let Some(label) = block.labels.first() {
                             let name = label.as_str().to_string();
                             location_names.push(name.clone());
-                            let parsed =
-                                process_location_block(block.body)?;
+                            let parsed = process_location_block(block.body)?;
                             locations.insert(
                                 name,
                                 TomlValue::Table(parsed.location),
@@ -250,8 +249,7 @@ fn process_server_block(body: hcl::Body) -> Result<ParsedServerBlock> {
                         if let Some(label) = block.labels.first() {
                             let name = label.as_str().to_string();
                             let table = body_attrs_to_toml(block.body)?;
-                            certificates
-                                .insert(name, TomlValue::Table(table));
+                            certificates.insert(name, TomlValue::Table(table));
                         }
                     },
                     _ => {},
@@ -386,8 +384,7 @@ pub fn convert_hcl_to_toml(input: &str) -> Result<String> {
                     message: "location block requires a name label".to_string(),
                 })?;
                 let parsed = process_location_block(block.body)?;
-                all_locations
-                    .insert(name, TomlValue::Table(parsed.location));
+                all_locations.insert(name, TomlValue::Table(parsed.location));
                 all_upstreams.extend(parsed.upstreams);
                 all_plugins.extend(parsed.plugins);
             },
@@ -848,10 +845,7 @@ server "test" {
             "~/Downloads",
             plugin.get("path").unwrap().as_str().unwrap()
         );
-        assert_eq!(
-            "request",
-            plugin.get("step").unwrap().as_str().unwrap()
-        );
+        assert_eq!("request", plugin.get("step").unwrap().as_str().unwrap());
 
         // nested upstream extracted to top-level
         let upstream = config.upstreams.get("api").unwrap();

@@ -22,7 +22,7 @@ use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{Ctx, Plugin, PluginStep, RequestPluginResult};
 use pingap_core::{get_cookie_value, get_req_header_value};
 use pingora::proxy::Session;
-use rand::{Rng, rng};
+use rand::{RngExt, rng};
 use regex::Regex;
 use std::borrow::Cow;
 use std::sync::Arc;

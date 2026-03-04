@@ -259,7 +259,7 @@ impl Storage for EtcdStorage {
         // 逻辑并不完善，有可能因为变更处理中途又发生其它变更导致缺失
         // 因此还需配合fetch的形式比对
         let mut c = self.connect().await?.watch_client();
-        let (_, stream) = c
+        let stream = c
             .watch(
                 self.path.as_bytes(),
                 Some(WatchOptions::default().with_prefix()),

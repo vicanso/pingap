@@ -581,7 +581,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         if !sentry_dsn.is_empty() {
             match pingap_sentry::new_sentry_options(&sentry_dsn) {
                 Ok(opts) => {
-                    my_server.sentry = Some(opts);
+                    my_server.set_sentry_config(opts);
                 },
                 Err(e) => {
                     error!(error = e.to_string(), "sentry init fail");

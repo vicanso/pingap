@@ -155,8 +155,7 @@ pub async fn read_all_config_files(dir: &str) -> Result<Vec<u8>> {
                 path: dir.to_string(),
             })?
             .collect();
-    let toml_files =
-        toml_files.map_err(|e| Error::Glob { source: e })?;
+    let toml_files = toml_files.map_err(|e| Error::Glob { source: e })?;
 
     if !toml_files.is_empty() {
         // .toml files found, use only .toml
@@ -171,12 +170,12 @@ pub async fn read_all_config_files(dir: &str) -> Result<Vec<u8>> {
         }
     } else {
         // No .toml files, fall back to .hcl
-        for entry in glob(&format!("{dir}/**/*.hcl")).map_err(
-            |e| Error::Pattern {
+        for entry in
+            glob(&format!("{dir}/**/*.hcl")).map_err(|e| Error::Pattern {
                 source: e,
                 path: dir.to_string(),
-            },
-        )? {
+            })?
+        {
             let f = entry.map_err(|e| Error::Glob { source: e })?;
             let buf = fs::read(&f).await.map_err(|e| Error::Io {
                 source: e,
