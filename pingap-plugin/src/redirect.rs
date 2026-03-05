@@ -268,11 +268,9 @@ status = {status_conf}
             .unwrap();
 
             let headers = ["Host: github.com"].join("\r\n");
-            let input_header = format!(
-                "GET /vicanso/pingap HTTP/1.1\r\n{headers}\r\n\r\n"
-            );
-            let mock_io =
-                Builder::new().read(input_header.as_bytes()).build();
+            let input_header =
+                format!("GET /vicanso/pingap HTTP/1.1\r\n{headers}\r\n\r\n");
+            let mock_io = Builder::new().read(input_header.as_bytes()).build();
             let mut session = Session::new_h1(Box::new(mock_io));
             session.read_request().await.unwrap();
             let result = redirect
