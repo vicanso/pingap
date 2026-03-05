@@ -384,6 +384,8 @@ export default {
     mockDataPlaceholder: "Input the data for mock response",
     redirectPrefix: "Prefix",
     redirectPrefixPlaceholder: "Input prefix url append to redirect url",
+    redirectStatus: "Status",
+    redirectStatusPlaceholder: "Input the status for redirect(e.g. 301, 302, 307, 308)",
     redirectHttps: "Https",
     cacheDirectory: "Directory",
     cacheDirectoryPlaceholder: "Input the directory of cache",

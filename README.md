@@ -217,7 +217,7 @@ Transfer/sec:     19.24MB
 
 ## 📦 Rust version
 
-Our current MSRV is 1.85
+Our current MSRV is 1.88
 
 ## 📄 License
 

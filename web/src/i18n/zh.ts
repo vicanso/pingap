@@ -344,6 +344,8 @@ export default {
     mockDataPlaceholder: "输入响应数据",
     redirectPrefix: "前缀",
     redirectPrefixPlaceholder: "输入要添加至url的前缀",
+    redirectStatus: "状态码",
+    redirectStatusPlaceholder: "输入重定向响应的状态码(如301, 302, 307, 308)",
     redirectHttps: "https",
     cacheDirectory: "目录",
     cacheDirectoryPlaceholder: "输入缓存使用的目录",

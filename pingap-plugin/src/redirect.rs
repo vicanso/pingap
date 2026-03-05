@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf,
+    Error, get_bool_conf, get_hash_key, get_int_conf, get_plugin_factory,
+    get_str_conf,
 };
 use async_trait::async_trait;
 use ctor::ctor;
@@ -40,6 +41,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 /// # Configuration
 /// - `http_to_https`: Boolean flag to control redirect direction
 /// - `prefix`: Optional path prefix to add to redirected URLs
+/// - `status`: HTTP status code for the redirect (301, 302, 307, 308). Defaults to 307.
 /// - `step`: Must be set to "request" as redirects are pre-processing only
 pub struct Redirect {
     // Path prefix to add to redirected URLs (e.g., "/api")
@@ -48,6 +50,8 @@ pub struct Redirect {
     // Whether to redirect HTTP requests to HTTPS
     // true = force HTTPS, false = force HTTP
     http_to_https: bool,
+    // HTTP status code for the redirect response
+    status: StatusCode,
     // Plugin execution step (must be Request)
     // Response step is invalid as redirects must be handled before request processing
     plugin_step: PluginStep,
@@ -83,10 +87,17 @@ impl Redirect {
         } else if !prefix.starts_with("/") {
             prefix = format!("/{prefix}");
         }
+        let status = match get_int_conf(params, "status") as u16 {
+            301 => StatusCode::MOVED_PERMANENTLY,
+            302 => StatusCode::FOUND,
+            308 => StatusCode::PERMANENT_REDIRECT,
+            _ => StatusCode::TEMPORARY_REDIRECT,
+        };
         Ok(Self {
             hash_value,
             prefix,
             http_to_https: get_bool_conf(params, "http_to_https"),
+            status,
             plugin_step: PluginStep::Request,
         })
     }
@@ -170,7 +181,7 @@ impl Plugin for Redirect {
         // Using 307 instead of 301/302 to preserve HTTP method
         // This is important for POST/PUT/DELETE requests
         Ok(RequestPluginResult::Respond(HttpResponse {
-            status: StatusCode::TEMPORARY_REDIRECT,
+            status: self.status,
             headers: Some(convert_headers(&[location]).unwrap_or_default()),
             ..Default::default()
         }))
@@ -235,5 +246,47 @@ prefix = "/api"
             r###"Some([("location", "https://github.com/api/vicanso/pingap?size=1")])"###,
             format!("{:?}", resp.headers)
         );
+    }
+
+    #[tokio::test]
+    async fn test_redirect_with_status() {
+        for (status_conf, expected_status) in [
+            (301, StatusCode::MOVED_PERMANENTLY),
+            (302, StatusCode::FOUND),
+            (307, StatusCode::TEMPORARY_REDIRECT),
+            (308, StatusCode::PERMANENT_REDIRECT),
+        ] {
+            let redirect = Redirect::new(
+                &toml::from_str::<PluginConf>(&format!(
+                    r###"
+http_to_https = true
+status = {status_conf}
+"###,
+                ))
+                .unwrap(),
+            )
+            .unwrap();
+
+            let headers = ["Host: github.com"].join("\r\n");
+            let input_header = format!(
+                "GET /vicanso/pingap HTTP/1.1\r\n{headers}\r\n\r\n"
+            );
+            let mock_io =
+                Builder::new().read(input_header.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let result = redirect
+                .handle_request(
+                    PluginStep::Request,
+                    &mut session,
+                    &mut Ctx::default(),
+                )
+                .await
+                .unwrap();
+            let RequestPluginResult::Respond(resp) = result else {
+                panic!("result is not Respond for status {status_conf}");
+            };
+            assert_eq!(expected_status, resp.status);
+        }
     }
 }
