@@ -45,7 +45,7 @@ url = { workspace = true }
 
 
 [package.metadata.cargo-machete]
-ignored = ["humantime-serde"]
+ignored = ["humantime-serde", "hcl-rs"]
 
 
 [dev-dependencies]
