@@ -223,10 +223,9 @@ fn bool_from_str<'de, D>(deserializer: D) -> Result<bool, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let s: &str = Deserialize::deserialize(deserializer)?;
-    // if s is "false", return false, otherwise return true
+    let s: Option<&str> = Deserialize::deserialize(deserializer)?;
     match s {
-        "false" => Ok(false),
+        Some("false") => Ok(false),
         _ => Ok(true),
     }
 }
