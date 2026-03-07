@@ -524,10 +524,10 @@ impl Ctx {
     // which might indicate an error or uninitialized state.
     #[inline]
     fn get_time_field(&self, field: Option<i32>) -> Option<u32> {
-        if let Some(value) = field {
-            if value >= 0 {
-                return Some(value as u32);
-            }
+        if let Some(value) = field
+            && value >= 0
+        {
+            return Some(value as u32);
         }
         None
     }
@@ -707,27 +707,24 @@ impl Ctx {
                 append_time!(self.timing.tls_handshake, human)
             },
             "compression_time" => {
-                if let Some(feature) = &self.features {
-                    if let Some(value) = &feature.compression_stat {
-                        append_time!(Some(value.duration.as_millis() as u64))
-                    }
+                if let Some(feature) = &self.features
+                    && let Some(value) = &feature.compression_stat
+                {
+                    append_time!(Some(value.duration.as_millis() as u64))
                 }
             },
             "compression_time_human" => {
-                if let Some(feature) = &self.features {
-                    if let Some(value) = &feature.compression_stat {
-                        append_time!(
-                            Some(value.duration.as_millis() as u64),
-                            human
-                        )
-                    }
+                if let Some(feature) = &self.features
+                    && let Some(value) = &feature.compression_stat
+                {
+                    append_time!(Some(value.duration.as_millis() as u64), human)
                 }
             },
             "compression_ratio" => {
-                if let Some(feature) = &self.features {
-                    if let Some(value) = &feature.compression_stat {
-                        buf.extend(format!("{:.1}", value.ratio()).as_bytes());
-                    }
+                if let Some(feature) = &self.features
+                    && let Some(value) = &feature.compression_stat
+                {
+                    buf.extend(format!("{:.1}", value.ratio()).as_bytes());
                 }
             },
             "cache_lookup_time" => {
@@ -809,22 +806,22 @@ impl Ctx {
         }
 
         // Aggregate and add plugin timings.
-        if let Some(features) = &self.features {
-            if let Some(times) = &features.plugin_processing_times {
-                let mut plugin_time: u32 = 0;
-                for (name, time) in times {
-                    if *time == 0 {
-                        continue;
-                    }
-                    plugin_time += time;
-                    let mut plugin_name = String::with_capacity(7 + name.len());
-                    plugin_name.push_str("plugin.");
-                    plugin_name.push_str(name);
-                    add_timing!(&plugin_name, time);
+        if let Some(features) = &self.features
+            && let Some(times) = &features.plugin_processing_times
+        {
+            let mut plugin_time: u32 = 0;
+            for (name, time) in times {
+                if *time == 0 {
+                    continue;
                 }
-                if plugin_time > 0 {
-                    add_timing!("plugin", plugin_time);
-                }
+                plugin_time += time;
+                let mut plugin_name = String::with_capacity(7 + name.len());
+                plugin_name.push_str("plugin.");
+                plugin_name.push_str(name);
+                add_timing!(&plugin_name, time);
+            }
+            if plugin_time > 0 {
+                add_timing!("plugin", plugin_time);
             }
         }
 

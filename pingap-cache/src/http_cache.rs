@@ -200,7 +200,7 @@ pub trait HttpCacheStorage: Sync + Send {
 async fn do_file_storage_clear(count: u32) -> Result<bool, ServiceError> {
     // Add 1 every loop
     let offset = 60;
-    if count % offset != 0 {
+    if !count.is_multiple_of(offset) {
         return Ok(false);
     }
 

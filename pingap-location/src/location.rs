@@ -268,12 +268,10 @@ fn format_headers(
 fn get_content_length(header: &RequestHeader) -> Option<usize> {
     if let Some(content_length) =
         header.headers.get(http::header::CONTENT_LENGTH)
-    {
-        if let Ok(size) =
+        && let Ok(size) =
             content_length.to_str().unwrap_or_default().parse::<usize>()
-        {
-            return Some(size);
-        }
+    {
+        return Some(size);
     }
     None
 }

@@ -727,10 +727,10 @@ impl BackgroundTask for HealthCheckTask {
             runtime.spawn(async move {
                 let check_frequency_matched = |frequency: u64| -> bool {
                     let mut count = (frequency / interval) as u32;
-                    if frequency % interval != 0 {
+                    if !frequency.is_multiple_of(interval) {
                         count += 1;
                     }
-                    check_count % count == 0
+                    check_count.is_multiple_of(count)
                 };
 
                 // get update frequency(update service)

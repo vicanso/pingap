@@ -397,12 +397,13 @@ impl Server {
         let tls_max_version = self.tls_max_version.clone();
         let mut lb = http_proxy_service(&conf, self);
         // use h2c if not tls and enable http2
-        if !is_tls && enabled_h2 {
-            if let Some(http_logic) = lb.app_logic_mut() {
-                let mut http_server_options = HttpServerOptions::default();
-                http_server_options.h2c = true;
-                http_logic.server_options = Some(http_server_options);
-            }
+        if !is_tls
+            && enabled_h2
+            && let Some(http_logic) = lb.app_logic_mut()
+        {
+            let mut http_server_options = HttpServerOptions::default();
+            http_server_options.h2c = true;
+            http_logic.server_options = Some(http_server_options);
         }
         lb.threads = threads;
         // support listen multi address
@@ -956,16 +957,16 @@ impl Server {
         }
 
         // set cache max ttl
-        if let Some(d) = max_ttl {
-            if c.fresh_duration().unwrap_or_default() > d {
-                // 更新 s-maxage 的值
-                let s_maxage_value =
-                    itoa::Buffer::new().format(d.as_secs()).as_bytes().to_vec();
-                c.directives.insert(
-                    "s-maxage".to_string(),
-                    Some(DirectiveValue(s_maxage_value)),
-                );
-            }
+        if let Some(d) = max_ttl
+            && c.fresh_duration().unwrap_or_default() > d
+        {
+            // 更新 s-maxage 的值
+            let s_maxage_value =
+                itoa::Buffer::new().format(d.as_secs()).as_bytes().to_vec();
+            c.directives.insert(
+                "s-maxage".to_string(),
+                Some(DirectiveValue(s_maxage_value)),
+            );
         }
 
         Ok(())
@@ -1194,18 +1195,17 @@ impl ProxyHttp for Server {
                 ctx.upstream.connected_count = upstream.connected();
                 ctx.upstream.name = upstream.name.clone();
                 #[cfg(feature = "tracing")]
-                if let Some(features) = &ctx.features {
-                    if let Some(tracer) = &features.otel_tracer {
-                        let name = format!("upstream.{}", &upstream.name);
-                        let mut span = tracer.new_upstream_span(&name);
-                        span.set_attribute(KeyValue::new(
-                            "upstream.connected",
-                            ctx.upstream.connected_count.unwrap_or_default()
-                                as i64,
-                        ));
-                        let features = ctx.features.get_or_insert_default();
-                        features.upstream_span = Some(span);
-                    }
+                if let Some(features) = &ctx.features
+                    && let Some(tracer) = &features.otel_tracer
+                {
+                    let name = format!("upstream.{}", &upstream.name);
+                    let mut span = tracer.new_upstream_span(&name);
+                    span.set_attribute(KeyValue::new(
+                        "upstream.connected",
+                        ctx.upstream.connected_count.unwrap_or_default() as i64,
+                    ));
+                    let features = ctx.features.get_or_insert_default();
+                    features.upstream_span = Some(span);
                 }
                 upstream
                     .new_http_peer(session, &ctx.conn.client_ip)
@@ -1275,10 +1275,10 @@ impl ProxyHttp for Server {
         if ctx.upstream.retries >= max_retries {
             return e;
         }
-        if let Some(max_retry_window) = ctx.upstream.max_retry_window {
-            if ctx.timing.created_at.elapsed() > max_retry_window {
-                return e;
-            }
+        if let Some(max_retry_window) = ctx.upstream.max_retry_window
+            && ctx.timing.created_at.elapsed() > max_retry_window
+        {
+            return e;
         }
         ctx.upstream.retries += 1;
         e.set_retry(true);
@@ -1642,35 +1642,31 @@ impl ProxyHttp for Server {
         if let Some(upstream_instance) = &ctx.upstream.upstream_instance {
             ctx.upstream.processing_count = Some(upstream_instance.completed());
         }
-        if ctx.state.status.is_none() {
-            if let Some(header) = session.response_written() {
-                ctx.state.status = Some(header.status);
-            }
+        if ctx.state.status.is_none()
+            && let Some(header) = session.response_written()
+        {
+            ctx.state.status = Some(header.status);
         }
         #[cfg(feature = "tracing")]
         // enable open telemetry and proxy upstream fail
-        if let Some(features) = ctx.features.as_mut() {
-            if let Some(ref mut span) = features.upstream_span.as_mut() {
-                span.end();
-            }
+        if let Some(features) = ctx.features.as_mut()
+            && let Some(ref mut span) = features.upstream_span.as_mut()
+        {
+            span.end();
         }
 
         if let Some(c) =
             session.downstream_modules_ctx.get::<ResponseCompression>()
+            && c.is_enabled()
+            && let Some((algorithm, in_bytes, out_bytes, took)) = c.get_info()
         {
-            if c.is_enabled() {
-                if let Some((algorithm, in_bytes, out_bytes, took)) =
-                    c.get_info()
-                {
-                    let features = ctx.features.get_or_insert_default();
-                    features.compression_stat = Some(CompressionStat {
-                        algorithm: algorithm.to_string(),
-                        in_bytes,
-                        out_bytes,
-                        duration: took,
-                    });
-                }
-            }
+            let features = ctx.features.get_or_insert_default();
+            features.compression_stat = Some(CompressionStat {
+                algorithm: algorithm.to_string(),
+                in_bytes,
+                out_bytes,
+                duration: took,
+            });
         }
         #[cfg(feature = "tracing")]
         if let Some(prom) = &self.prometheus {

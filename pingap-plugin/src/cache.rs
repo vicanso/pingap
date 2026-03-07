@@ -358,12 +358,11 @@ impl Plugin for Cache {
         }
 
         // Check if request matches skip pattern (if configured)
-        if let Some(skip) = &self.skip {
-            if let Some(value) = req_header.uri.path_and_query() {
-                if skip.is_match(value.as_str()).unwrap_or_default() {
-                    return Ok(RequestPluginResult::Skipped);
-                }
-            }
+        if let Some(skip) = &self.skip
+            && let Some(value) = req_header.uri.path_and_query()
+            && skip.is_match(value.as_str()).unwrap_or_default()
+        {
+            return Ok(RequestPluginResult::Skipped);
         }
 
         // Build cache key components including configured headers
@@ -445,11 +444,11 @@ impl Plugin for Cache {
         }
 
         // Track cache statistics if available
-        if let Some(stats) = self.http_cache.stats() {
-            if let Some(cache_info) = ctx.cache.as_mut() {
-                cache_info.reading_count = Some(stats.reading);
-                cache_info.writing_count = Some(stats.writing);
-            }
+        if let Some(stats) = self.http_cache.stats()
+            && let Some(cache_info) = ctx.cache.as_mut()
+        {
+            cache_info.reading_count = Some(stats.reading);
+            cache_info.writing_count = Some(stats.writing);
         }
 
         Ok(RequestPluginResult::Continue)

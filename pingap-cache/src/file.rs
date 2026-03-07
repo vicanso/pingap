@@ -268,14 +268,14 @@ impl HttpCacheStorage for FileCache {
         namespace: &[u8],
     ) -> Result<Option<CacheObject>> {
         // Early return if found in cache
-        if let Some(cache) = &self.cache {
-            if let Some(obj) = cache.get(&key.to_string()) {
-                debug!(
-                    target: LOG_TARGET,
-                    key, namespace, "get cache from tinyufo"
-                );
-                return Ok(Some(obj));
-            }
+        if let Some(cache) = &self.cache
+            && let Some(obj) = cache.get(&key.to_string())
+        {
+            debug!(
+                target: LOG_TARGET,
+                key, namespace, "get cache from tinyufo"
+            );
+            return Ok(Some(obj));
         }
 
         #[cfg(feature = "tracing")]
@@ -305,11 +305,11 @@ impl HttpCacheStorage for FileCache {
             Err(e) => Err(Error::Io { source: e }),
         }?;
         // cache get from file, but not in tinyufo, put it to tinyufo
-        if let Some(cache) = &self.cache {
-            if let Some(obj) = &obj {
-                let weight = obj.get_weight();
-                cache.put(key.to_string(), obj.clone(), weight);
-            }
+        if let Some(cache) = &self.cache
+            && let Some(obj) = &obj
+        {
+            let weight = obj.get_weight();
+            cache.put(key.to_string(), obj.clone(), weight);
         }
         debug!(
             target: LOG_TARGET,

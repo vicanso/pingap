@@ -278,12 +278,12 @@ pub fn get_client_ip(session: &Session) -> String {
     // 1. Check `X-Forwarded-For`.
     if let Some(value) = session.get_header(HTTP_HEADER_X_FORWARDED_FOR) {
         // Efficiently take the first IP without creating an intermediate Vec.
-        if let Ok(s) = value.to_str() {
-            if let Some(ip) = s.split(',').next() {
-                let trimmed_ip = ip.trim();
-                if !trimmed_ip.is_empty() {
-                    return trimmed_ip.to_string();
-                }
+        if let Ok(s) = value.to_str()
+            && let Some(ip) = s.split(',').next()
+        {
+            let trimmed_ip = ip.trim();
+            if !trimmed_ip.is_empty() {
+                return trimmed_ip.to_string();
             }
         }
     }

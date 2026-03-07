@@ -70,10 +70,10 @@ pub fn resolve_path(path: &str) -> String {
         return "".to_string();
     }
     let mut p = path.to_string();
-    if p.starts_with('~') {
-        if let Some(home) = dirs::home_dir() {
-            p = home.to_string_lossy().to_string() + p.substring(1, p.len());
-        };
+    if p.starts_with('~')
+        && let Some(home) = dirs::home_dir()
+    {
+        p = home.to_string_lossy().to_string() + p.substring(1, p.len());
     }
     if let Ok(p) = Path::new(&p).absolutize() {
         p.to_string_lossy().to_string()

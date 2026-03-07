@@ -94,11 +94,10 @@ async fn diff_and_update_config(
         for (name, server) in new_config.servers.iter() {
             if let Some(clone_server_conf) =
                 hot_reload_config.servers.get_mut(name)
+                && server.locations != clone_server_conf.locations
             {
-                if server.locations != clone_server_conf.locations {
-                    clone_server_conf.locations.clone_from(&server.locations);
-                    should_reload_server_location = true;
-                }
+                clone_server_conf.locations.clone_from(&server.locations);
+                should_reload_server_location = true;
             }
         }
 
@@ -578,7 +577,7 @@ impl BackgroundTask for AutoRestart {
         let hot_reload_only = if self.only_hot_reload {
             true
         } else if count > 0 && self.restart_unit > 1 {
-            count % self.restart_unit != 0 // Only do full restart when count divides evenly
+            !count.is_multiple_of(self.restart_unit) // Only do full restart when count divides evenly
         } else {
             true
         };

@@ -485,14 +485,14 @@ impl UpstreamConf {
     fn validate_tcp_probe_count(&self) -> Result<()> {
         const MAX_TCP_PROBE_COUNT: usize = 16;
 
-        if let Some(count) = self.tcp_probe_count {
-            if count > MAX_TCP_PROBE_COUNT {
-                return Err(Error::Invalid {
-                    message: format!(
-                        "tcp probe count should be <= {MAX_TCP_PROBE_COUNT}"
-                    ),
-                });
-            }
+        if let Some(count) = self.tcp_probe_count
+            && count > MAX_TCP_PROBE_COUNT
+        {
+            return Err(Error::Invalid {
+                message: format!(
+                    "tcp probe count should be <= {MAX_TCP_PROBE_COUNT}"
+                ),
+            });
         }
 
         Ok(())
@@ -781,14 +781,14 @@ impl ServerConf {
                 file: self.addr.clone(),
             })?;
         }
-        if !location_names.is_empty() {
-            if let Some(locations) = &self.locations {
-                for item in locations {
-                    if !location_names.contains(item) {
-                        return Err(Error::Invalid {
-                            message: format!("location({item}) is not found"),
-                        });
-                    }
+        if !location_names.is_empty()
+            && let Some(locations) = &self.locations
+        {
+            for item in locations {
+                if !location_names.contains(item) {
+                    return Err(Error::Invalid {
+                        message: format!("location({item}) is not found"),
+                    });
                 }
             }
         }
@@ -1026,10 +1026,10 @@ impl PingapConfig {
             }
         };
 
-        if let Some(table) = value_to_serialize.as_table() {
-            if table.is_empty() {
-                return Ok((path, "".to_string()));
-            }
+        if let Some(table) = value_to_serialize.as_table()
+            && table.is_empty()
+        {
+            return Ok((path, "".to_string()));
         }
 
         let mut wrapper = Map::new();
@@ -1070,13 +1070,12 @@ fn convert_include_toml(
     if !replace_includes {
         return m.to_string();
     }
-    if let Some(includes) = m.remove("includes") {
-        if let Some(includes) = get_include_toml(data, includes) {
-            if let Ok(includes) = toml::from_str::<Table>(&includes) {
-                for (key, value) in includes.iter() {
-                    m.insert(key.to_string(), value.clone());
-                }
-            }
+    if let Some(includes) = m.remove("includes")
+        && let Some(includes) = get_include_toml(data, includes)
+        && let Ok(includes) = toml::from_str::<Table>(&includes)
+    {
+        for (key, value) in includes.iter() {
+            m.insert(key.to_string(), value.clone());
         }
     }
     m.to_string()
@@ -1229,28 +1228,28 @@ impl PingapConfig {
         match category {
             CATEGORY_UPSTREAM => {
                 for (location_name, location) in self.locations.iter() {
-                    if let Some(upstream) = &location.upstream {
-                        if upstream == name {
-                            return Err(Error::Invalid {
-                                message: format!(
-                                    "upstream({name}) is in used by location({location_name})",
-                                ),
-                            });
-                        }
+                    if let Some(upstream) = &location.upstream
+                        && upstream == name
+                    {
+                        return Err(Error::Invalid {
+                            message: format!(
+                                "upstream({name}) is in used by location({location_name})",
+                            ),
+                        });
                     }
                 }
                 self.upstreams.remove(name);
             },
             CATEGORY_LOCATION => {
                 for (server_name, server) in self.servers.iter() {
-                    if let Some(locations) = &server.locations {
-                        if locations.contains(&name.to_string()) {
-                            return Err(Error::Invalid {
-                                message: format!(
-                                    "location({name}) is in used by server({server_name})"
-                                ),
-                            });
-                        }
+                    if let Some(locations) = &server.locations
+                        && locations.contains(&name.to_string())
+                    {
+                        return Err(Error::Invalid {
+                            message: format!(
+                                "location({name}) is in used by server({server_name})"
+                            ),
+                        });
                     }
                 }
                 self.locations.remove(name);
@@ -1260,14 +1259,14 @@ impl PingapConfig {
             },
             CATEGORY_PLUGIN => {
                 for (location_name, location) in self.locations.iter() {
-                    if let Some(plugins) = &location.plugins {
-                        if plugins.contains(&name.to_string()) {
-                            return Err(Error::Invalid {
-                                message: format!(
-                                    "proxy plugin({name}) is in used by location({location_name})"
-                                ),
-                            });
-                        }
+                    if let Some(plugins) = &location.plugins
+                        && plugins.contains(&name.to_string())
+                    {
+                        return Err(Error::Invalid {
+                            message: format!(
+                                "proxy plugin({name}) is in used by location({location_name})"
+                            ),
+                        });
                     }
                 }
                 self.plugins.remove(name);

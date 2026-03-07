@@ -296,12 +296,12 @@ impl Plugin for JwtAuth {
             &URL_SAFE_NO_PAD.decode(arr[1]).unwrap_or_default(),
         )
         .unwrap_or_default();
-        if let Some(exp) = value.get("exp") {
-            if exp.as_u64().unwrap_or_default() < pingap_core::now_sec() {
-                let mut resp = self.unauthorized_resp.clone();
-                resp.body = Bytes::from_static(b"Jwt authorization is expired");
-                return Ok(RequestPluginResult::Respond(resp));
-            }
+        if let Some(exp) = value.get("exp")
+            && exp.as_u64().unwrap_or_default() < pingap_core::now_sec()
+        {
+            let mut resp = self.unauthorized_resp.clone();
+            resp.body = Bytes::from_static(b"Jwt authorization is expired");
+            return Ok(RequestPluginResult::Respond(resp));
         }
 
         Ok(RequestPluginResult::Continue)

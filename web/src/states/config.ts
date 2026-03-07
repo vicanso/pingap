@@ -197,10 +197,11 @@ interface ConfigState {
   data: Config;
   originalToml: string;
   fullToml: string;
+  hcl: string,
   initialized: boolean;
   version: string;
   fetch: () => Promise<Config>;
-  fetchToml: () => Promise<void>;
+  fetchFullConfig: () => Promise<void>;
   update: (
     category: string,
     name: string,
@@ -219,6 +220,7 @@ const useConfigState = create<ConfigState>()((set, get) => ({
   },
   fullToml: "",
   originalToml: "",
+  hcl: "",
   version: random(),
   initialized: false,
   fetch: async () => {
@@ -229,14 +231,16 @@ const useConfigState = create<ConfigState>()((set, get) => ({
     });
     return data;
   },
-  fetchToml: async () => {
+  fetchFullConfig: async () => {
     const { data } = await request.get<{
       full: string;
+      hcl: string;
       original: string;
-    }>("/configs/toml");
+    }>("/configs/full");
     set({
       fullToml: data.full,
       originalToml: data.original,
+      hcl: data.hcl,
     });
     return;
   },

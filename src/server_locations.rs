@@ -77,10 +77,9 @@ pub fn try_init_server_locations(
             });
             let mut not_modified = false;
             if let Some(current_locations) = SERVER_LOCATIONS_PROVIDER.get(name)
+                && current_locations.join(",") == items.join(",")
             {
-                if current_locations.join(",") == items.join(",") {
-                    not_modified = true;
-                }
+                not_modified = true;
             }
             if !not_modified {
                 updated_servers.push(name.to_string());

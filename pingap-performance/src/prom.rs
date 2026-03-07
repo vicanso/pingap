@@ -316,10 +316,10 @@ impl Prometheus {
         }
 
         // compression stats
-        if let Some(features) = &ctx.features {
-            if let Some(compression_stat) = &features.compression_stat {
-                self.compression_ratio.observe(compression_stat.ratio());
-            }
+        if let Some(features) = &ctx.features
+            && let Some(compression_stat) = &features.compression_stat
+        {
+            self.compression_ratio.observe(compression_stat.ratio());
         }
     }
 
@@ -387,7 +387,7 @@ async fn do_push(
     offset: u32,
     params: &PrometheusPushParams,
 ) -> Result<bool, ServiceError> {
-    if count % offset != 0 {
+    if !count.is_multiple_of(offset) {
         return Ok(false);
     }
     // http push metrics
@@ -458,10 +458,10 @@ pub fn new_prometheus_push_service(
     let mut interval = Duration::from_secs(60);
     // push interval
     for (key, value) in info.query_pairs().into_iter() {
-        if key == "interval" {
-            if let Ok(v) = parse_duration(&value) {
-                interval = v;
-            }
+        if key == "interval"
+            && let Ok(v) = parse_duration(&value)
+        {
+            interval = v;
         }
     }
     let mut url = info.to_string();

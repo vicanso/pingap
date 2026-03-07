@@ -16,17 +16,18 @@ export default function Config() {
   const { t } = useTranslation();
   const [importing, setImporting] = React.useState(false);
   const [newToml, setNewToml] = React.useState("");
-  const [fetchToml, importToml, fullToml, originalToml] = useConfigState(
+  const [fetchFullConfig, importToml, fullToml, originalToml, hcl] = useConfigState(
     useShallow((state) => [
-      state.fetchToml,
+      state.fetchFullConfig,
       state.importToml,
       state.fullToml,
       state.originalToml,
+      state.hcl,
     ]),
   );
   useAsync(async () => {
     try {
-      await fetchToml();
+      await fetchFullConfig();
     } catch (err) {
       toast(t("fetchFail"), {
         description: formatError(err),
@@ -37,13 +38,23 @@ export default function Config() {
   const copyToml = async () => {
     try {
       await navigator.clipboard.writeText(originalToml);
-      toast(t("copyTomlSuccess"));
+      toast(t("copyConfigSuccess"));
     } catch (err) {
-      toast(t("copyTomlFail"), {
+      toast(t("copyConfigFail"), {
         description: formatError(err),
       });
     }
   };
+  const copyHcl = async () => {
+    try {
+      await navigator.clipboard.writeText(hcl);
+      toast(t("copyConfigFail"));
+    } catch (err) {
+      toast(t("copyConfigFail"), {
+        description: formatError(err),
+      });
+    }
+  }
   const handleImportToml = async (value: string) => {
     if (importing) {
       return;
@@ -62,9 +73,9 @@ export default function Config() {
   };
 
   const different = fullToml != originalToml;
-  let tabClass = "grid-cols-2";
+  let tabClass = "grid-cols-3";
   if (different) {
-    tabClass = "grid-cols-3";
+    tabClass = "grid-cols-4";
   }
   let importText = t("import");
   if (importing) {
@@ -76,6 +87,7 @@ export default function Config() {
         <TabsList className={cn("grid w-full", tabClass)}>
           <TabsTrigger value="original">{t("original")}</TabsTrigger>
           {different && <TabsTrigger value="full">{t("full")}</TabsTrigger>}
+          <TabsTrigger value="hcl">HCL</TabsTrigger>
           <TabsTrigger value="import">{t("import")}</TabsTrigger>
         </TabsList>
         <TabsContent value="full">
@@ -100,6 +112,22 @@ export default function Config() {
               <pre className="whitespace-pre-wrap">{originalToml}</pre>
             </Card>
           )}
+        </TabsContent>
+        <TabsContent value="hcl">
+          <Card className="p-4">
+            <Button
+              className="absolute right-10"
+              variant="ghost"
+              size="icon"
+              onClick={async (e) => {
+                e.preventDefault();
+                copyHcl();
+              }}
+            >
+              <ClipboardCopy />
+            </Button>
+            <pre className="whitespace-pre-wrap">{hcl}</pre>
+          </Card>
         </TabsContent>
         <TabsContent value="import">
           <Card className="p-4">

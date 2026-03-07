@@ -24,16 +24,16 @@ pub fn set_append_proxy_headers(
     ctx: &Ctx,
     header: &mut RequestHeader,
 ) {
-    if let Some(location) = &ctx.upstream.location_instance {
-        if let Some(headers) = location.headers() {
-            for (k, v, append) in headers {
-                let value = convert_header_value(v, session, ctx)
-                    .unwrap_or_else(|| v.clone());
-                if *append {
-                    let _ = header.append_header(k, value);
-                } else {
-                    let _ = header.insert_header(k, value);
-                }
+    if let Some(location) = &ctx.upstream.location_instance
+        && let Some(headers) = location.headers()
+    {
+        for (k, v, append) in headers {
+            let value = convert_header_value(v, session, ctx)
+                .unwrap_or_else(|| v.clone());
+            if *append {
+                let _ = header.append_header(k, value);
+            } else {
+                let _ = header.insert_header(k, value);
             }
         }
     }

@@ -407,13 +407,13 @@ pub(crate) fn get_int_conf(value: &PluginConf, key: &str) -> i64 {
 }
 
 pub(crate) fn get_str_slice_conf(value: &PluginConf, key: &str) -> Vec<String> {
-    if let Some(value) = value.get(key) {
-        if let Some(values) = value.as_array() {
-            return values
-                .iter()
-                .map(|item| item.as_str().unwrap_or_default().to_string())
-                .collect();
-        }
+    if let Some(value) = value.get(key)
+        && let Some(values) = value.as_array()
+    {
+        return values
+            .iter()
+            .map(|item| item.as_str().unwrap_or_default().to_string())
+            .collect();
     }
     vec![]
 }

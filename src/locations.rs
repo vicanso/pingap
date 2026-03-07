@@ -66,11 +66,11 @@ pub fn try_init_locations(
     let mut locations = AHashMap::new();
     let mut updated_locations = vec![];
     for (name, conf) in location_configs.iter() {
-        if let Some(found) = LOCATION_PROVIDER.get(name) {
-            if found.key == conf.hash_key() {
-                locations.insert(name.to_string(), found);
-                continue;
-            }
+        if let Some(found) = LOCATION_PROVIDER.get(name)
+            && found.key == conf.hash_key()
+        {
+            locations.insert(name.to_string(), found);
+            continue;
         }
         updated_locations.push(name.clone());
         let lo = Location::new(name, conf).map_err(|e| Error::Invalid {

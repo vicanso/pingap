@@ -141,6 +141,9 @@ struct Args {
     /// Output template configuration
     #[arg(long)]
     template: bool,
+    /// Convert configuration to HCL format and output
+    #[arg(long)]
+    to_hcl: bool,
     /// Default threads for each server
     #[arg(long)]
     threads: Option<usize>,
@@ -455,6 +458,15 @@ fn run() -> Result<(), Box<dyn Error>> {
     };
 
     config_manager.set_current_config(config.clone());
+
+    // Convert config to HCL and output
+    if args.to_hcl {
+        let toml_str = toml::to_string_pretty(&config)?;
+        let hcl_str = pingap_config::hcl::convert_toml_to_hcl(&toml_str)?;
+        println!("{hcl_str}");
+        return Ok(());
+    }
+
     let mut application_log_paths = vec![];
 
     // Initialize logging system

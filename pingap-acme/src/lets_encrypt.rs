@@ -125,7 +125,7 @@ async fn do_update_certificates(
         return Ok(false);
     }
     const UPDATE_INTERVAL: u32 = 10;
-    if count % UPDATE_INTERVAL != 0 {
+    if !count.is_multiple_of(UPDATE_INTERVAL) {
         return Ok(false);
     }
     let config = config_manager.get_current_config();

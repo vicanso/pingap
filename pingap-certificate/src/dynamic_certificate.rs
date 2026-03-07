@@ -186,15 +186,15 @@ impl GlobalCertificate {
         if params.enabled_h2 {
             tls_settings.enable_h2();
         }
-        if let Some(cipher_list) = &params.cipher_list {
-            if let Err(e) = tls_settings.set_cipher_list(cipher_list) {
-                error!(target: LOG_TARGET, error = %e, name, "set cipher list fail");
-            }
+        if let Some(cipher_list) = &params.cipher_list
+            && let Err(e) = tls_settings.set_cipher_list(cipher_list)
+        {
+            error!(target: LOG_TARGET, error = %e, name, "set cipher list fail");
         }
-        if let Some(cipher_suites) = &params.cipher_suites {
-            if let Err(e) = tls_settings.set_ciphersuites(cipher_suites) {
-                error!(target: LOG_TARGET, error = %e, name, "set cipher suites fail");
-            }
+        if let Some(cipher_suites) = &params.cipher_suites
+            && let Err(e) = tls_settings.set_ciphersuites(cipher_suites)
+        {
+            error!(target: LOG_TARGET, error = %e, name, "set cipher suites fail");
         }
         if let Some(version) = convert_tls_version(&params.tls_min_version) {
             if let Err(e) = tls_settings.set_min_proto_version(Some(version)) {

@@ -284,10 +284,10 @@ fn get_cacheable_and_headers_from_meta(
     let mut value = binding.to_string();
 
     // Add charset for text/* content types
-    if let Some(charset) = charset {
-        if value.starts_with("text/") {
-            value = format!("{value}; charset={charset}");
-        }
+    if let Some(charset) = charset
+        && value.starts_with("text/")
+    {
+        value = format!("{value}; charset={charset}");
     }
 
     // HTML files are not cacheable to ensure fresh content
@@ -321,10 +321,8 @@ fn get_cacheable_and_headers_from_meta(
     }
 
     // Add Accept-Ranges header to indicate support for range requests
-    if support_range {
-        if let Ok(value) = HeaderValue::from_str("bytes") {
-            headers.push((header::ACCEPT_RANGES, value));
-        }
+    if support_range && let Ok(value) = HeaderValue::from_str("bytes") {
+        headers.push((header::ACCEPT_RANGES, value));
     }
 
     (cacheable, size, headers)
@@ -442,16 +440,14 @@ impl Directory {
     }
 
     fn apply_custom_headers(&self, file: &Path, headers: &mut Vec<HttpHeader>) {
-        if self.download {
-            if let Some(filename) =
+        if self.download
+            && let Some(filename) =
                 file.file_name().map(|item| item.to_string_lossy())
-            {
-                if let Ok(val) = HeaderValue::from_str(&format!(
-                    r#"attachment; filename="{filename}""#
-                )) {
-                    headers.push((header::CONTENT_DISPOSITION, val));
-                }
-            }
+            && let Ok(val) = HeaderValue::from_str(&format!(
+                r#"attachment; filename="{filename}""#
+            ))
+        {
+            headers.push((header::CONTENT_DISPOSITION, val));
         }
         if let Some(arr) = &self.headers {
             headers.extend(arr.clone());

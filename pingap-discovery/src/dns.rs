@@ -134,10 +134,10 @@ impl Dns {
         let (mut config, mut options) =
             read_system_conf().map_err(|e| Error::Resolve { source: e })?;
 
-        if let Some(domain) = &self.domain {
-            if let Ok(name) = Name::from_str(domain) {
-                config.set_domain(name);
-            }
+        if let Some(domain) = &self.domain
+            && let Ok(name) = Name::from_str(domain)
+        {
+            config.set_domain(name);
         }
 
         if let Some(search) = &self.search {
@@ -291,19 +291,19 @@ impl ServiceDiscovery for Dns {
                     elapsed = format!("{}ms", start_time.elapsed().as_millis()),
                     "dns discover success"
                 );
-                if !failed_hosts.is_empty() {
-                    if let Some(sender) = &self.sender {
-                        sender
-                            .notify(NotificationData {
-                                category: "service_discover_fail".to_string(),
-                                level: NotificationLevel::Warn,
-                                message: format!(
-                                    "dns discovery resolve failed: {failed_hosts:?}"
-                                ),
-                                ..Default::default()
-                            })
-                            .await;
-                    }
+                if !failed_hosts.is_empty()
+                    && let Some(sender) = &self.sender
+                {
+                    sender
+                        .notify(NotificationData {
+                            category: "service_discover_fail".to_string(),
+                            level: NotificationLevel::Warn,
+                            message: format!(
+                                "dns discovery resolve failed: {failed_hosts:?}"
+                            ),
+                            ..Default::default()
+                        })
+                        .await;
                 }
                 return Ok((upstreams, enablement));
             },

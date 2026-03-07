@@ -67,7 +67,7 @@ static SELF_SIGNED_CERTIFICATE_MAP: LazyLock<
 async fn do_self_signed_certificate_validity(
     count: u32,
 ) -> Result<bool, ServiceError> {
-    if count % VALIDITY_CHECK_INTERVAL != 0 {
+    if !count.is_multiple_of(VALIDITY_CHECK_INTERVAL) {
         return Ok(false);
     }
     let mut m = AHashMap::new();

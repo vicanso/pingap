@@ -169,19 +169,19 @@ impl Plugin for ImageOptim {
             return Ok(RequestPluginResult::Skipped);
         }
 
-        if let Some(accept) = session.get_header(http::header::ACCEPT) {
-            if let Ok(accept_str) = accept.to_str() {
-                let mut accept_images: Vec<_> = self
-                    .output_mimes
-                    .iter()
-                    .filter(|mime| accept_str.contains(*mime))
-                    .cloned()
-                    .collect();
+        if let Some(accept) = session.get_header(http::header::ACCEPT)
+            && let Ok(accept_str) = accept.to_str()
+        {
+            let mut accept_images: Vec<_> = self
+                .output_mimes
+                .iter()
+                .filter(|mime| accept_str.contains(*mime))
+                .cloned()
+                .collect();
 
-                if !accept_images.is_empty() {
-                    accept_images.sort();
-                    ctx.extend_cache_keys(accept_images);
-                }
+            if !accept_images.is_empty() {
+                accept_images.sort();
+                ctx.extend_cache_keys(accept_images);
             }
         }
         Ok(RequestPluginResult::Continue)
@@ -228,12 +228,10 @@ impl Plugin for ImageOptim {
         // Remove content-length since we're modifying the body
         if let Some(value) =
             upstream_response.remove_header(&http::header::CONTENT_LENGTH)
-        {
-            if let Ok(size) =
+            && let Ok(size) =
                 value.to_str().unwrap_or_default().parse::<usize>()
-            {
-                capacity = size;
-            }
+        {
+            capacity = size;
         }
         // Switch to chunked transfer encoding
         let _ = upstream_response.insert_header(

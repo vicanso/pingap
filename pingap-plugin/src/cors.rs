@@ -247,10 +247,10 @@ impl Plugin for Cors {
         }
 
         // Check if request path matches CORS rules
-        if let Some(reg) = &self.path {
-            if !reg.is_match(session.req_header().uri.path()) {
-                return Ok(RequestPluginResult::Skipped);
-            }
+        if let Some(reg) = &self.path
+            && !reg.is_match(session.req_header().uri.path())
+        {
+            return Ok(RequestPluginResult::Skipped);
         }
 
         // Handle CORS preflight (OPTIONS) requests
@@ -283,10 +283,10 @@ impl Plugin for Cors {
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<ResponsePluginResult> {
         // Skip if path doesn't match CORS rules
-        if let Some(reg) = &self.path {
-            if !reg.is_match(session.req_header().uri.path()) {
-                return Ok(ResponsePluginResult::Unchanged);
-            }
+        if let Some(reg) = &self.path
+            && !reg.is_match(session.req_header().uri.path())
+        {
+            return Ok(ResponsePluginResult::Unchanged);
         }
 
         // Only add CORS headers if request has Origin header

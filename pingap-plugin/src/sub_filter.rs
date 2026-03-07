@@ -283,10 +283,10 @@ impl Plugin for SubFilter {
         ctx: &mut Ctx,
         upstream_response: &mut ResponseHeader,
     ) -> pingora::Result<ResponsePluginResult> {
-        if let Some(status_codes) = &self.status_codes {
-            if !status_codes.contains(&upstream_response.status.as_u16()) {
-                return Ok(ResponsePluginResult::Unchanged);
-            }
+        if let Some(status_codes) = &self.status_codes
+            && !status_codes.contains(&upstream_response.status.as_u16())
+        {
+            return Ok(ResponsePluginResult::Unchanged);
         }
         // default is matched
         let mut is_matched = true;

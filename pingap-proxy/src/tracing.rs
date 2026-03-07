@@ -123,32 +123,32 @@ pub(crate) fn set_otel_upstream_attrs(ctx: &mut Ctx) {
 
 #[inline]
 pub(crate) fn set_otel_request_attrs(session: &Session, ctx: &mut Ctx) {
-    if let Some(features) = ctx.features.as_mut() {
-        if let Some(ref mut tracer) = features.otel_tracer.as_mut() {
-            let ip = ctx
-                .conn
-                .client_ip
-                .get_or_insert_with(|| get_client_ip(session));
-            let mut attrs = vec![
-                KeyValue::new("http.client_ip", ip.to_string()),
-                KeyValue::new(
-                    "http.status_code",
-                    ctx.state.status.unwrap_or_default().as_u16() as i64,
-                ),
-                KeyValue::new(
-                    "http.response.body.size",
-                    session.body_bytes_sent() as i64,
-                ),
-            ];
-            if !ctx.upstream.location.is_empty() {
-                attrs.push(KeyValue::new(
-                    "http.location",
-                    ctx.upstream.location.clone(),
-                ));
-            }
-
-            tracer.http_request_span.set_attributes(attrs);
-            tracer.http_request_span.end()
+    if let Some(features) = ctx.features.as_mut()
+        && let Some(ref mut tracer) = features.otel_tracer.as_mut()
+    {
+        let ip = ctx
+            .conn
+            .client_ip
+            .get_or_insert_with(|| get_client_ip(session));
+        let mut attrs = vec![
+            KeyValue::new("http.client_ip", ip.to_string()),
+            KeyValue::new(
+                "http.status_code",
+                ctx.state.status.unwrap_or_default().as_u16() as i64,
+            ),
+            KeyValue::new(
+                "http.response.body.size",
+                session.body_bytes_sent() as i64,
+            ),
+        ];
+        if !ctx.upstream.location.is_empty() {
+            attrs.push(KeyValue::new(
+                "http.location",
+                ctx.upstream.location.clone(),
+            ));
         }
+
+        tracer.http_request_span.set_attributes(attrs);
+        tracer.http_request_span.end()
     }
 }

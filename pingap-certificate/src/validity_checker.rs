@@ -45,7 +45,7 @@ async fn do_validity_check(
     provider: Arc<dyn CertificateProvider>,
     sender: Option<Arc<NotificationSender>>,
 ) -> Result<bool, ServiceError> {
-    if count % CHECK_INTERVAL_MINUTES != 0 {
+    if !count.is_multiple_of(CHECK_INTERVAL_MINUTES) {
         return Ok(false);
     }
 
@@ -87,20 +87,20 @@ async fn do_validity_check(
         }
     }
 
-    if !name_list.is_empty() {
-        if let Some(sender) = &sender {
-            sender
-                .notify(NotificationData {
-                    level: NotificationLevel::Warn,
-                    category: "tls_validity".to_string(),
-                    message: format!(
-                        "certificate {} will be expired",
-                        name_list.join(",")
-                    ),
-                    ..Default::default()
-                })
-                .await;
-        }
+    if !name_list.is_empty()
+        && let Some(sender) = &sender
+    {
+        sender
+            .notify(NotificationData {
+                level: NotificationLevel::Warn,
+                category: "tls_validity".to_string(),
+                message: format!(
+                    "certificate {} will be expired",
+                    name_list.join(",")
+                ),
+                ..Default::default()
+            })
+            .await;
     }
     Ok(true)
 }

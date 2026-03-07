@@ -201,11 +201,11 @@ impl fmt::Display for ServerConf {
         writeln!(f, "    Server-Timing Header: {}", self.enable_server_timing)?;
 
         // --- Extensibility ---
-        if let Some(modules) = &self.modules {
-            if !modules.is_empty() {
-                writeln!(f, "  - Enabled Modules:")?;
-                writeln!(f, "    {}", modules.join(", "))?;
-            }
+        if let Some(modules) = &self.modules
+            && !modules.is_empty()
+        {
+            writeln!(f, "  - Enabled Modules:")?;
+            writeln!(f, "    {}", modules.join(", "))?;
         }
 
         Ok(())

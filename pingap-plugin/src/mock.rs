@@ -124,10 +124,10 @@ impl MockResponse {
         }
 
         // Add headers if specified
-        if !headers.is_empty() {
-            if let Ok(headers) = convert_headers(&headers) {
-                resp.headers = Some(headers);
-            }
+        if !headers.is_empty()
+            && let Ok(headers) = convert_headers(&headers)
+        {
+            resp.headers = Some(headers);
         }
 
         Ok(MockResponse {

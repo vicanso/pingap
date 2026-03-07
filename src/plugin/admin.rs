@@ -28,6 +28,7 @@ use hex::encode;
 use http::Method;
 use http::{HeaderValue, StatusCode, header};
 use humantime::parse_duration;
+use pingap_config::hcl::convert_toml_to_hcl;
 use pingap_config::{
     BasicConf, CATEGORY_CERTIFICATE, CATEGORY_STORAGE, Category,
     CertificateConf, ConfigManager, LocationConf, PluginCategory, PluginConf,
@@ -173,7 +174,8 @@ struct BasicInfo {
 }
 
 #[derive(Serialize, Deserialize)]
-struct TomlJson {
+struct FullConfigJson {
+    pub hcl: String,
     pub full: String,
     pub original: String,
 }
@@ -320,13 +322,16 @@ impl AdminServe {
         category: &str,
     ) -> pingora::Result<HttpResponse> {
         let conf = self.load_config(false).await?;
-        if category == "toml" {
+        println!("category:{}", category);
+        if category == "full" {
             let full_conf = self.load_config(true).await?;
             let mut full_toml = toml::to_string_pretty(&full_conf)
                 .map_err(|e| pingap_core::new_internal_error(400, e))?;
             if let Ok(value) = pingap_util::toml_omit_empty_value(&full_toml) {
                 full_toml = value;
             };
+            let hcl = convert_toml_to_hcl(&full_toml)
+                .map_err(|e| pingap_core::new_internal_error(400, e))?;
             let mut original_toml = toml::to_string_pretty(&conf)
                 .map_err(|e| pingap_core::new_internal_error(400, e))?;
             if let Ok(value) =
@@ -334,7 +339,8 @@ impl AdminServe {
             {
                 original_toml = value;
             };
-            return HttpResponse::try_from_json(&TomlJson {
+            return HttpResponse::try_from_json(&FullConfigJson {
+                hcl,
                 full: full_toml,
                 original: original_toml,
             });

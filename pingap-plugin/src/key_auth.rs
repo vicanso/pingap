@@ -282,12 +282,11 @@ impl Plugin for KeyAuth {
         if self.hide_credentials {
             if let Some(name) = &self.header {
                 session.req_header_mut().remove_header(name);
-            } else if let Some(name) = &self.query {
-                if let Err(e) =
+            } else if let Some(name) = &self.query
+                && let Err(e) =
                     remove_query_from_header(session.req_header_mut(), name)
-                {
-                    error!(error = e.to_string(), "remove query fail");
-                }
+            {
+                error!(error = e.to_string(), "remove query fail");
             }
         }
         // Return None to allow the request to proceed

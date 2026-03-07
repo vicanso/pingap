@@ -258,13 +258,12 @@ impl Plugin for Compression {
                     ctx.push_cache_key(key.to_string());
                 }
             }
-            if self.decompression.unwrap_or_default() {
-                if let Some(c) = session
+            if self.decompression.unwrap_or_default()
+                && let Some(c) = session
                     .downstream_modules_ctx
                     .get_mut::<ResponseCompression>()
-                {
-                    c.adjust_decompression(true);
-                }
+            {
+                c.adjust_decompression(true);
             }
         }
         // Early return conditions

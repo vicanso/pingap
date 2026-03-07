@@ -83,12 +83,12 @@ impl TryFrom<&CertificateConf> for TlsCertificate {
         let mut chain_certificates = None;
         if x509_certificates.len() > 1 {
             chain_certificates = Some(x509_certificates[1..].to_vec());
-        } else if category == LETS_ENCRYPT {
-            if let Some(chain_certificate) = get_lets_encrypt_chain_certificate(
+        } else if category == LETS_ENCRYPT
+            && let Some(chain_certificate) = get_lets_encrypt_chain_certificate(
                 info.get_issuer_common_name().as_str(),
-            ) {
-                chain_certificates = Some(vec![chain_certificate]);
-            }
+            )
+        {
+            chain_certificates = Some(vec![chain_certificate]);
         }
 
         let key = PKey::private_key_from_pem(&info.get_key()).map_err(|e| {

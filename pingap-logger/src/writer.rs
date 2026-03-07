@@ -178,7 +178,7 @@ async fn do_compress(
     params: &LogCompressParams,
 ) -> Result<bool, ServiceError> {
     const OFFSET: u32 = 60;
-    if count % OFFSET != 0
+    if !count.is_multiple_of(OFFSET)
         || params.time_point_hour != chrono::Local::now().hour() as u8
     {
         return Ok(false);
