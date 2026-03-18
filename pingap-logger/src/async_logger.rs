@@ -62,7 +62,7 @@ pub async fn new_async_logger(
     let rolling_file_writer =
         new_rolling_file_writer(&original_path).map_err(|e| {
             Error::Invalid {
-                message: e.to_string(),
+                message: format!("{}: {}", original_path, e.to_string()),
             }
         })?;
 
