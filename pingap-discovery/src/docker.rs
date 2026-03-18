@@ -15,8 +15,9 @@
 use super::{DOCKER_DISCOVERY, Discovery, LOG_TARGET};
 use super::{Error, Result};
 use async_trait::async_trait;
-use bollard::query_parameters::ListContainersOptions;
+use bollard::query_parameters::{EventsOptionsBuilder, ListContainersOptions};
 use bollard::secret::ContainerSummary;
+use futures::StreamExt;
 use http::Extensions;
 use pingap_core::{NotificationData, NotificationLevel, NotificationSender};
 use pingora::lb::discovery::ServiceDiscovery;
@@ -24,15 +25,27 @@ use pingora::lb::{Backend, Backends};
 use pingora::protocols::l4::socket::SocketAddr;
 use std::collections::{BTreeSet, HashMap};
 use std::net::ToSocketAddrs;
-use std::sync::Arc;
-use std::time::SystemTime;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
 use tracing::{debug, error, info};
 
+const CONTAINER_EVENTS: &[&str] = &[
+    "start",
+    "stop",
+    "die",
+    "kill",
+    "pause",
+    "unpause",
+    "destroy",
+    "health_status",
+];
+
+const EVENT_DEBOUNCE: Duration = Duration::from_millis(500);
+const EVENT_RECONNECT_DELAY: Duration = Duration::from_secs(5);
+
+type CachedAddrs = Vec<(std::net::SocketAddr, usize)>;
+
 /// Container represents a Docker container with service discovery configuration
-/// - label: The container label used for filtering
-/// - weight: Load balancing weight for this container
-/// - port: The port number to use for the service
-/// - addrs: List of resolved addresses for this container
 #[derive(Debug, Clone)]
 struct Container {
     label: String,
@@ -54,8 +67,6 @@ impl Container {
         }
     }
 
-    /// Parses an address string into its components: weight, label, and port
-    /// Returns a tuple of (weight, label, port)
     fn parse_addr(addr: &str) -> (usize, String, u16) {
         let parts: Vec<_> = addr.split(' ').collect();
         let weight = parts.get(1).and_then(|w| w.parse().ok()).unwrap_or(1);
@@ -69,8 +80,9 @@ impl Container {
     }
 }
 
-/// Docker service discovery implementation
-struct Docker {
+/// Shared Docker discovery state accessible from both the event watcher
+/// background task and the ServiceDiscovery impl.
+struct DockerState {
     ipv4_only: bool,
     docker: bollard::Docker,
     containers: Vec<Container>,
@@ -82,42 +94,7 @@ pub fn is_docker_discovery(value: &str) -> bool {
     value == DOCKER_DISCOVERY
 }
 
-impl Docker {
-    /// Creates a new Docker service discovery instance
-    /// - addrs: List of container specifications in the format "label:port weight"
-    /// - ipv4_only: Whether to only use IPv4 addresses
-    fn new(addrs: &[String], ipv4_only: bool) -> Result<Self> {
-        let docker = bollard::Docker::connect_with_local_defaults()
-            .map_err(|e| Error::Docker { source: e })?;
-
-        let containers =
-            addrs.iter().map(|addr| Container::new(addr)).collect();
-
-        Ok(Self {
-            docker,
-            containers,
-            ipv4_only,
-            sender: None,
-        })
-    }
-
-    /// Sets the notification sender
-    ///
-    /// # Arguments
-    /// * `sender` - The notification sender
-    ///
-    /// # Returns
-    /// * `Self` - The docker discovery instance
-    pub fn with_sender(
-        mut self,
-        sender: Option<Arc<NotificationSender>>,
-    ) -> Self {
-        self.sender = sender;
-        self
-    }
-
-    /// Extracts port information from a container
-    /// Returns a tuple of (private_port, public_port)
+impl DockerState {
     fn get_container_ports(
         container: &ContainerSummary,
         default_port: u16,
@@ -132,7 +109,6 @@ impl Docker {
         Some((port_info.private_port, port_info.public_port.unwrap_or(0)))
     }
 
-    /// Lists all containers matching the configured labels
     async fn list_containers(&self) -> Result<Vec<Container>> {
         let mut containers = self.containers.clone();
 
@@ -168,7 +144,6 @@ impl Docker {
         Ok(containers)
     }
 
-    /// Lists containers that match a specific label
     async fn list_containers_by_label(
         &self,
         label: &String,
@@ -184,7 +159,6 @@ impl Docker {
             .map_err(|e| Error::Docker { source: e })
     }
 
-    /// Returns the list of container labels being monitored
     fn labels(&self) -> Vec<String> {
         self.containers
             .iter()
@@ -192,13 +166,9 @@ impl Docker {
             .collect()
     }
 
-    /// Performs the service discovery by querying Docker for containers
-    /// Returns a tuple of (upstreams, health_status)
-    async fn run_discover(
-        &self,
-    ) -> Result<(BTreeSet<Backend>, HashMap<u64, bool>)> {
-        let mut upstreams = BTreeSet::new();
-        let mut backends = vec![];
+    /// Resolves all matching containers to a list of (SocketAddr, weight) pairs.
+    async fn resolve_addrs(&self) -> Result<CachedAddrs> {
+        let mut addrs = Vec::new();
 
         debug!(
             names = format!("{:?}", self.labels()),
@@ -216,19 +186,198 @@ impl Docker {
                     if self.ipv4_only && !socket_addr.is_ipv4() {
                         continue;
                     }
-                    backends.push(Backend {
-                        addr: SocketAddr::Inet(socket_addr),
-                        weight: container.weight,
-                        ext: Extensions::new(),
-                    });
+                    addrs.push((socket_addr, container.weight));
                 }
             }
         }
 
-        upstreams.extend(backends);
-        // no readiness
-        let enablement = HashMap::new();
-        Ok((upstreams, enablement))
+        Ok(addrs)
+    }
+}
+
+fn addrs_to_backends(
+    addrs: &CachedAddrs,
+) -> (BTreeSet<Backend>, HashMap<u64, bool>) {
+    let upstreams: BTreeSet<Backend> = addrs
+        .iter()
+        .map(|(addr, weight)| Backend {
+            addr: SocketAddr::Inet(*addr),
+            weight: *weight,
+            ext: Extensions::new(),
+        })
+        .collect();
+    (upstreams, HashMap::new())
+}
+
+/// Docker service discovery with event-based real-time updates.
+///
+/// A background task watches Docker container events (start, stop, die, etc.)
+/// and refreshes the cached address list immediately, with debouncing to batch
+/// rapid successive events. The `discover()` method reads from this cache,
+/// falling back to direct discovery if the cache is not yet populated.
+struct Docker {
+    state: Arc<DockerState>,
+    cached: Arc<Mutex<Option<CachedAddrs>>>,
+    watcher_init: std::sync::Once,
+}
+
+impl Docker {
+    fn new(
+        addrs: &[String],
+        ipv4_only: bool,
+        sender: Option<Arc<NotificationSender>>,
+    ) -> Result<Self> {
+        let docker = bollard::Docker::connect_with_local_defaults()
+            .map_err(|e| Error::Docker { source: e })?;
+
+        let containers =
+            addrs.iter().map(|addr| Container::new(addr)).collect();
+
+        let state = Arc::new(DockerState {
+            docker,
+            containers,
+            ipv4_only,
+            sender,
+        });
+
+        let cached = Arc::new(Mutex::new(None));
+
+        Ok(Self {
+            state,
+            cached,
+            watcher_init: std::sync::Once::new(),
+        })
+    }
+
+    fn read_cache(&self) -> Option<CachedAddrs> {
+        self.cached.lock().ok()?.clone()
+    }
+
+    /// Ensures the background event watcher is spawned exactly once.
+    /// Must be called from within a Tokio runtime context.
+    fn ensure_watcher_started(&self) {
+        let state = self.state.clone();
+        let cached = self.cached.clone();
+        self.watcher_init.call_once(move || {
+            tokio::spawn(watch_docker_events(state, cached));
+        });
+    }
+}
+
+/// Refreshes the cached address list by querying Docker for matching containers.
+async fn refresh_cache(
+    state: &DockerState,
+    cached: &Mutex<Option<CachedAddrs>>,
+) {
+    let now = SystemTime::now();
+    let names = state.labels();
+    match state.resolve_addrs().await {
+        Ok(addrs) => {
+            let addr_strs: Vec<String> =
+                addrs.iter().map(|(a, _)| a.to_string()).collect();
+            info!(
+                target: LOG_TARGET,
+                names = names.join(","),
+                addrs = addr_strs.join(","),
+                elapsed =
+                    format!("{}ms", now.elapsed().unwrap_or_default().as_millis()),
+                "docker discover refreshed via event"
+            );
+            if let Ok(mut guard) = cached.lock() {
+                *guard = Some(addrs);
+            }
+        },
+        Err(e) => {
+            error!(
+                target: LOG_TARGET,
+                error = %e,
+                names = names.join(","),
+                "docker discover refresh failed"
+            );
+            if let Some(sender) = &state.sender {
+                let msg = format!(
+                    "docker discovery {:?}, error: {e}",
+                    state.labels(),
+                );
+                sender
+                    .notify(NotificationData {
+                        category: "service_discover_fail".to_string(),
+                        level: NotificationLevel::Warn,
+                        message: msg,
+                        ..Default::default()
+                    })
+                    .await;
+            }
+        },
+    }
+}
+
+/// Background task: watches Docker container events and refreshes the
+/// cached address list in real time. Reconnects automatically on stream
+/// errors with a delay.
+async fn watch_docker_events(
+    state: Arc<DockerState>,
+    cached: Arc<Mutex<Option<CachedAddrs>>>,
+) {
+    refresh_cache(&state, &cached).await;
+
+    loop {
+        let mut filters = HashMap::new();
+        filters.insert("type".to_string(), vec!["container".to_string()]);
+        filters.insert(
+            "event".to_string(),
+            CONTAINER_EVENTS.iter().map(|s| s.to_string()).collect(),
+        );
+
+        let options = EventsOptionsBuilder::default().filters(&filters).build();
+
+        let mut stream = state.docker.events(Some(options));
+
+        info!(
+            target: LOG_TARGET,
+            names = ?state.labels(),
+            "docker event watcher started"
+        );
+
+        'events: while let Some(result) = stream.next().await {
+            match result {
+                Ok(event) => {
+                    info!(
+                        target: LOG_TARGET,
+                        action = ?event.action,
+                        names = ?state.labels(),
+                        "docker container event received"
+                    );
+                    // Debounce: drain events arriving within a short window
+                    // before refreshing, to batch rapid successive events
+                    // (e.g. scaling up multiple containers at once).
+                    let deadline = tokio::time::Instant::now() + EVENT_DEBOUNCE;
+                    loop {
+                        match tokio::time::timeout_at(deadline, stream.next())
+                            .await
+                        {
+                            Err(_) => break,
+                            Ok(Some(Ok(_))) => continue,
+                            _ => {
+                                refresh_cache(&state, &cached).await;
+                                break 'events;
+                            },
+                        }
+                    }
+                    refresh_cache(&state, &cached).await;
+                },
+                Err(e) => {
+                    error!(
+                        target: LOG_TARGET,
+                        error = %e,
+                        "docker event stream error, will reconnect"
+                    );
+                    break;
+                },
+            }
+        }
+
+        tokio::time::sleep(EVENT_RECONNECT_DELAY).await;
     }
 }
 
@@ -237,24 +386,50 @@ impl ServiceDiscovery for Docker {
     async fn discover(
         &self,
     ) -> pingora::Result<(BTreeSet<Backend>, HashMap<u64, bool>)> {
-        let now = SystemTime::now();
-        let names: Vec<String> = self.labels();
-        match self.run_discover().await {
-            Ok(data) => {
-                let addrs: Vec<String> =
-                    data.0.iter().map(|item| item.addr.to_string()).collect();
+        self.ensure_watcher_started();
 
+        let now = SystemTime::now();
+        let names: Vec<String> = self.state.labels();
+
+        // Fast path: return data from the event-driven cache.
+        if let Some(addrs) = self.read_cache() {
+            let result = addrs_to_backends(&addrs);
+            let addr_strs: Vec<String> =
+                result.0.iter().map(|b| b.addr.to_string()).collect();
+            info!(
+                target: LOG_TARGET,
+                names = names.join(","),
+                addrs = addr_strs.join(","),
+                elapsed = format!(
+                    "{}ms",
+                    now.elapsed().unwrap_or_default().as_millis()
+                ),
+                "docker discover from cache"
+            );
+            return Ok(result);
+        }
+
+        // Slow path: cache not yet populated (first call before the
+        // background watcher has completed its initial discovery).
+        match self.state.resolve_addrs().await {
+            Ok(addrs) => {
+                if let Ok(mut guard) = self.cached.lock() {
+                    *guard = Some(addrs.clone());
+                }
+                let result = addrs_to_backends(&addrs);
+                let addr_strs: Vec<String> =
+                    result.0.iter().map(|b| b.addr.to_string()).collect();
                 info!(
                     target: LOG_TARGET,
                     names = names.join(","),
-                    addrs = addrs.join(","),
+                    addrs = addr_strs.join(","),
                     elapsed = format!(
                         "{}ms",
                         now.elapsed().unwrap_or_default().as_millis()
                     ),
                     "docker discover success"
                 );
-                return Ok(data);
+                Ok(result)
             },
             Err(e) => {
                 error!(
@@ -267,35 +442,32 @@ impl ServiceDiscovery for Docker {
                     ),
                     "docker discover fail"
                 );
-                if let Some(sender) = &self.sender {
+                if let Some(sender) = &self.state.sender {
                     sender
                         .notify(NotificationData {
                             category: "service_discover_fail".to_string(),
                             level: NotificationLevel::Warn,
                             message: format!(
                                 "docker discovery {:?}, error: {e}",
-                                self.labels(),
+                                self.state.labels(),
                             ),
                             ..Default::default()
                         })
                         .await;
                 }
-                return Err(e.into());
+                Err(e.into())
             },
         }
     }
 }
 
-/// Creates a new Docker service discovery backend
-///
-/// # Arguments
-/// * `discovery` - The discovery configuration
-///
-/// # Returns
-/// * `Result<Backends>` - Configured service discovery backend
+/// Creates a new Docker service discovery backend with event-based updates.
 pub fn new_docker_discover_backends(discovery: &Discovery) -> Result<Backends> {
-    let docker = Docker::new(&discovery.addr, discovery.ipv4_only)?;
-    let backends =
-        Backends::new(Box::new(docker.with_sender(discovery.sender.clone())));
+    let docker = Docker::new(
+        &discovery.addr,
+        discovery.ipv4_only,
+        discovery.sender.clone(),
+    )?;
+    let backends = Backends::new(Box::new(docker));
     Ok(backends)
 }

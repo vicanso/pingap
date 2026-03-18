@@ -477,15 +477,15 @@ impl UpstreamConf {
                     .map_or(host_port.as_str(), |(h, _)| h)
             };
 
-            if let Ok(ip) = host.parse::<IpAddr>() {
-                if !is_valid_upstream_ip(ip) {
-                    return Err(Error::Invalid {
-                        message: format!(
-                            "upstream addr({host}) is an invalid IP \
+            if let Ok(ip) = host.parse::<IpAddr>()
+                && !is_valid_upstream_ip(ip)
+            {
+                return Err(Error::Invalid {
+                    message: format!(
+                        "upstream addr({host}) is an invalid IP \
                              (unspecified, broadcast, multicast, or link-local)"
-                        ),
-                    });
-                }
+                    ),
+                });
             }
 
             // Add default port 80 if not specified
@@ -1616,10 +1616,7 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
                 "{addr} should be rejected as invalid upstream IP"
             );
             assert!(
-                result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("invalid IP"),
+                result.unwrap_err().to_string().contains("invalid IP"),
                 "{addr} error should mention invalid IP"
             );
         }
