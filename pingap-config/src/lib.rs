@@ -145,6 +145,44 @@ pub fn new_config_manager(value: &str) -> Result<ConfigManager> {
     }
 }
 
+/// Build a detailed error message when a config file cannot be read due to
+/// permission issues, including the file's owner/group/mode so the operator
+/// knows exactly what to fix.
+fn permission_error_message(
+    path: &std::path::Path,
+    source: std::io::Error,
+) -> Error {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if source.kind() == std::io::ErrorKind::PermissionDenied
+            && let Ok(meta) = std::fs::metadata(path)
+        {
+            let mode = meta.mode() & 0o7777;
+            let uid = meta.uid();
+            let gid = meta.gid();
+            return Error::Invalid {
+                message: format!(
+                    "Config file '{}' is not readable: permission denied \
+                         (owner uid:{} gid:{}, mode:{:04o}). \
+                         Please ensure the pingap process user can read this file, \
+                         e.g.: chown <pingap-user>:<pingap-group> '{}' or chmod o+r '{}'",
+                    path.display(),
+                    uid,
+                    gid,
+                    mode,
+                    path.display(),
+                    path.display(),
+                ),
+            };
+        }
+    }
+    Error::Io {
+        source,
+        file: path.to_string_lossy().to_string(),
+    }
+}
+
 pub async fn read_all_config_files(dir: &str) -> Result<Vec<u8>> {
     let mut data = vec![];
     // Collect .toml files first
@@ -160,10 +198,9 @@ pub async fn read_all_config_files(dir: &str) -> Result<Vec<u8>> {
     if !toml_files.is_empty() {
         // .toml files found, use only .toml
         for f in toml_files {
-            let mut buf = fs::read(&f).await.map_err(|e| Error::Io {
-                source: e,
-                file: f.to_string_lossy().to_string(),
-            })?;
+            let mut buf = fs::read(&f)
+                .await
+                .map_err(|e| permission_error_message(&f, e))?;
             debug!(filename = format!("{f:?}"), "read toml file");
             data.append(&mut buf);
             data.push(0x0a);
@@ -177,10 +214,9 @@ pub async fn read_all_config_files(dir: &str) -> Result<Vec<u8>> {
             })?
         {
             let f = entry.map_err(|e| Error::Glob { source: e })?;
-            let buf = fs::read(&f).await.map_err(|e| Error::Io {
-                source: e,
-                file: f.to_string_lossy().to_string(),
-            })?;
+            let buf = fs::read(&f)
+                .await
+                .map_err(|e| permission_error_message(&f, e))?;
             debug!(filename = format!("{f:?}"), "read hcl file");
             let hcl_str = String::from_utf8_lossy(&buf);
             let toml_str = hcl::convert_hcl_to_toml(&hcl_str)?;

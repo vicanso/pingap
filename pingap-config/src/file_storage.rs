@@ -14,6 +14,7 @@
 
 use crate::Error;
 use crate::hcl::convert_hcl_to_toml;
+use crate::permission_error_message;
 use crate::storage::{History, Storage};
 use async_trait::async_trait;
 use glob::glob;
@@ -104,10 +105,9 @@ async fn read_all_config_files(dir: &str) -> Result<Vec<u8>> {
     if !toml_files.is_empty() {
         // .toml files found, use only .toml
         for f in toml_files {
-            let mut buf = fs::read(&f).await.map_err(|e| Error::Io {
-                source: e,
-                file: f.to_string_lossy().to_string(),
-            })?;
+            let mut buf = fs::read(&f)
+                .await
+                .map_err(|e| permission_error_message(&f, e))?;
             debug!(filename = format!("{f:?}"), "read toml file");
             data.append(&mut buf);
             data.push(0x0a);
@@ -121,10 +121,9 @@ async fn read_all_config_files(dir: &str) -> Result<Vec<u8>> {
             })?
         {
             let f = entry.map_err(|e| Error::Glob { source: e })?;
-            let buf = fs::read(&f).await.map_err(|e| Error::Io {
-                source: e,
-                file: f.to_string_lossy().to_string(),
-            })?;
+            let buf = fs::read(&f)
+                .await
+                .map_err(|e| permission_error_message(&f, e))?;
             debug!(filename = format!("{f:?}"), "read hcl file");
             let hcl_str = String::from_utf8_lossy(&buf);
             let toml_str = convert_hcl_to_toml(&hcl_str)?;
@@ -146,10 +145,7 @@ impl Storage for FileStorage {
             let data = match fs::read(&target_path).await {
                 Ok(data) => Ok(data),
                 Err(e) if e.kind() == ErrorKind::NotFound => Ok(Vec::new()),
-                Err(e) => Err(Error::Io {
-                    source: e,
-                    file: target_path.to_string_lossy().to_string(),
-                }),
+                Err(e) => Err(permission_error_message(&target_path, e)),
             }?;
             // Convert HCL to TOML if the file has .hcl extension
             let is_hcl =
