@@ -24,7 +24,7 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{BufReader, Read};
-use std::net::ToSocketAddrs;
+use std::net::{IpAddr, ToSocketAddrs};
 use std::path::Path;
 use std::time::Duration;
 use std::{collections::HashMap, str::FromStr};
@@ -387,6 +387,22 @@ pub struct UpstreamConf {
     pub remark: Option<String>,
 }
 
+fn is_valid_upstream_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ipv4) => {
+            !ipv4.is_unspecified()
+                && !ipv4.is_broadcast()
+                && !ipv4.is_multicast()
+                && !ipv4.is_link_local()
+        },
+        IpAddr::V6(ipv6) => {
+            !ipv6.is_unspecified()
+                && !ipv6.is_multicast()
+                && (ipv6.segments()[0] & 0xffc0) != 0xfe80
+        },
+    }
+}
+
 impl Validate for UpstreamConf {
     /// Validates the upstream configuration:
     /// 1. The address list can't be empty
@@ -450,6 +466,27 @@ impl UpstreamConf {
         for addr in &self.addrs {
             let parts: Vec<_> = addr.split_whitespace().collect();
             let host_port = parts[0].to_string();
+
+            let host = if host_port.starts_with('[') {
+                host_port
+                    .find(']')
+                    .map_or(host_port.as_str(), |i| &host_port[1..i])
+            } else {
+                host_port
+                    .split_once(':')
+                    .map_or(host_port.as_str(), |(h, _)| h)
+            };
+
+            if let Ok(ip) = host.parse::<IpAddr>() {
+                if !is_valid_upstream_ip(ip) {
+                    return Err(Error::Invalid {
+                        message: format!(
+                            "upstream addr({host}) is an invalid IP \
+                             (unspecified, broadcast, multicast, or link-local)"
+                        ),
+                    });
+                }
+            }
 
             // Add default port 80 if not specified
             let addr_to_check = if !host_port.contains(':') {
@@ -1554,6 +1591,53 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
         conf.health_check = Some("http://github.com/".to_string());
         let result = conf.validate();
         assert_eq!(true, result.is_ok());
+    }
+
+    #[test]
+    fn test_upstream_invalid_ip() {
+        let invalid_addrs = vec![
+            "0.0.0.0:80",
+            "255.255.255.255:80",
+            "224.0.0.1:80",
+            "169.254.1.1:80",
+            "[::]:80",
+            "[ff02::1]:80",
+            "[fe80::1]:80",
+        ];
+        for addr in invalid_addrs {
+            let conf = UpstreamConf {
+                addrs: vec![addr.to_string()],
+                discovery: Some("static".to_string()),
+                ..Default::default()
+            };
+            let result = conf.validate();
+            assert!(
+                result.is_err(),
+                "{addr} should be rejected as invalid upstream IP"
+            );
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("invalid IP"),
+                "{addr} error should mention invalid IP"
+            );
+        }
+
+        let valid_addrs =
+            vec!["127.0.0.1:80", "192.168.1.1:80", "10.0.0.1:8080"];
+        for addr in valid_addrs {
+            let conf = UpstreamConf {
+                addrs: vec![addr.to_string()],
+                discovery: Some("static".to_string()),
+                ..Default::default()
+            };
+            let result = conf.validate();
+            assert!(
+                result.is_ok(),
+                "{addr} should be accepted as valid upstream IP"
+            );
+        }
     }
 
     #[test]

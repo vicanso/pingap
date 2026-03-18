@@ -322,7 +322,6 @@ impl AdminServe {
         category: &str,
     ) -> pingora::Result<HttpResponse> {
         let conf = self.load_config(false).await?;
-        println!("category:{}", category);
         if category == "full" {
             let full_conf = self.load_config(true).await?;
             let mut full_toml = toml::to_string_pretty(&full_conf)
