@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.13.1](https://github.com/vicanso/pingap/compare/v0.13.0..v0.13.1) - 2026-03-19
+
+### ⛰️  Features
+
+- Add support for toml to hcl conversion - ([94dcc7d](https://github.com/vicanso/pingap/commit/94dcc7d8448df74b8e66efd4f24b3d14639518a1))
+- Support custom status code in redirect plugin - ([d871b78](https://github.com/vicanso/pingap/commit/d871b7810135d66bb28f4c216ca6cdc0360dc659))
+- Support hcl configuration files ([#15](https://github.com/orhun/git-cliff/issues/15)) - ([30b5bdc](https://github.com/vicanso/pingap/commit/30b5bdc50204e782a3b989a4d04589c9c5606909))
+
+### 🐛 Bug Fixes
+
+- Include file path in error message when log file generation fails ([#163](https://github.com/orhun/git-cliff/issues/163)) - ([59ce01e](https://github.com/vicanso/pingap/commit/59ce01e532a9740974d49995abdda721480edd07))
+- Cargo machete ignore hcl-rs - ([66a3a8d](https://github.com/vicanso/pingap/commit/66a3a8d23bbc34aad6ee09deb217d1477d2a3634))
+- Cargo machete ignore hcl-rs - ([f3a7da9](https://github.com/vicanso/pingap/commit/f3a7da9a4a1b038faaf2dc36e317041982955ee3))
+- Fix covert bool from query string - ([6fd2501](https://github.com/vicanso/pingap/commit/6fd2501088f7cb082bebc57866c245271c89b670))
+- Fix fmt - ([21216a7](https://github.com/vicanso/pingap/commit/21216a7ba1b591402db1304c41ee1b9b5c928273))
+
+### 🚜 Refactor
+
+- Use Docker events for service discovery instead of polling ([#175](https://github.com/orhun/git-cliff/issues/175)) - ([9800578](https://github.com/vicanso/pingap/commit/98005782d6c5e69442b94818f4141a6d1dd1ca89))
+- Restrict upstream configuration to disallow broadcast addresses ([#169](https://github.com/orhun/git-cliff/issues/169)) - ([dce4f80](https://github.com/vicanso/pingap/commit/dce4f80b8e8efa34a4e8574c4512ee968aa2f7cb))
+- Improve error message for missing read permissions ([#168](https://github.com/orhun/git-cliff/issues/168)) - ([ca902c0](https://github.com/vicanso/pingap/commit/ca902c058b71f2517430944da47dbaae3e993c4c))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update dependencies - ([90920a0](https://github.com/vicanso/pingap/commit/90920a0344ec96b2a0a83f2bebe24e33d7aab7fd))
+
 ## [0.13.0](https://github.com/vicanso/pingap/compare/v0.12.8..v0.13.0) - 2026-02-22
 
 ### ⛰️  Features

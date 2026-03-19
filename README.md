@@ -122,17 +122,55 @@ make build-web
 
 ## 📝 Configuration
 
-```toml
-[upstreams.charts]
-addrs = ["127.0.0.1:5000"]
+```hcl
+server "test" {
+  addr = "127.0.0.1:6118"
 
-[locations.lo]
-upstream = "charts"
-path = "/"
+  location "github-api" {
+    path = "/api"
+    proxy_set_headers = ["Host:api.github.com"]
+    rewrite = "^/api/(?<path>.+)$ /$1"
+
+    upstream "api" {
+      addrs     = ["api.github.com:443"]
+      discovery = "dns"
+      sni       = "api.github.com"
+    }
+  }
+
+  location "static" {
+    plugin "staticServe" {
+      category = "directory"
+      path     = "~/Downloads"
+      step     = "request"
+    }
+  }
+}
+```
+
+```toml
+[upstreams.api]
+addrs = ["api.github.com:443"]
+discovery = "dns"
+sni = "api.github.com"
+
+[plugins.staticServe]
+category = "directory"
+path = "~/Downloads"
+step = "request"
+
+[locations.github-api]
+upstream = "api"
+path = "/api"
+proxy_set_headers = ["Host:api.github.com"]
+rewrite = "^/api/(?<path>.+)$ /$1"
+
+[locations.static]
+plugins = ["staticServe"]
 
 [servers.test]
-addr = "0.0.0.0:6188"
-locations = ["lo"]
+addr = "127.0.0.1:6118"
+locations = ["github-api", "static"]
 ```
 
 You can find the relevant instructions here: [https://pingap.io/pingap-en/docs/config](https://pingap.io/pingap-en/docs/config).
