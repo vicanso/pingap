@@ -62,7 +62,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use sysinfo::System;
 
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 mod certificates;
 mod config_manager;
@@ -723,6 +723,26 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
     if !errors.is_empty() {
         error!(target: LOG_TARGET, error = errors, "parse certificate fail");
+    }
+
+    let has_certificates = !certificate_provider.list().is_empty();
+    let has_tls_server = server_conf_list.iter().any(|s| s.global_certificates);
+    if has_certificates && !has_tls_server {
+        warn!(
+            target: LOG_TARGET,
+            "Certificates are configured but no server has global_certificates enabled. \
+            HTTPS will not be available. Add `global_certificates = true` to your server configuration."
+        );
+    }
+    let has_443_without_tls = server_conf_list
+        .iter()
+        .any(|s| s.addr.contains(":443") && !s.global_certificates);
+    if has_443_without_tls {
+        warn!(
+            target: LOG_TARGET,
+            "Server is listening on port 443 but global_certificates is not enabled. \
+            TLS will not be enabled for this server. Add `global_certificates = true` to enable HTTPS."
+        );
     }
 
     // no server listen 80 and lets encrypt domains is not empty
