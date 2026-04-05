@@ -105,11 +105,15 @@ async fn read_all_config_files(dir: &str) -> Result<Vec<u8>> {
     if !toml_files.is_empty() {
         // .toml files found, use only .toml
         for f in toml_files {
-            let mut buf = fs::read(&f)
+            let buf = fs::read(&f)
                 .await
                 .map_err(|e| permission_error_message(&f, e))?;
+            toml::from_str::<toml::Value>(&String::from_utf8_lossy(&buf))
+                .map_err(|e| Error::Invalid {
+                    message: format!("{}: {e}", f.display()),
+                })?;
             debug!(filename = format!("{f:?}"), "read toml file");
-            data.append(&mut buf);
+            data.extend_from_slice(&buf);
             data.push(0x0a);
         }
     } else {
@@ -154,7 +158,15 @@ impl Storage for FileStorage {
                 let hcl_str = String::from_utf8_lossy(&data);
                 return convert_hcl_to_toml(&hcl_str);
             }
-            Ok(String::from_utf8_lossy(&data).trim().to_string())
+            let content = String::from_utf8_lossy(&data);
+            if !content.trim().is_empty() {
+                toml::from_str::<toml::Value>(content.as_ref()).map_err(
+                    |e| Error::Invalid {
+                        message: format!("{}: {e}", target_path.display()),
+                    },
+                )?;
+            }
+            Ok(content.trim().to_string())
         } else {
             let value =
                 read_all_config_files(&target_path.to_string_lossy()).await?;

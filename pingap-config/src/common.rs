@@ -1155,8 +1155,10 @@ pub(crate) fn convert_pingap_config(
     let mut includes = HashMap::new();
     for (name, value) in data.storages.unwrap_or_default() {
         let toml = format_toml(&value);
-        let storage: StorageConf = toml::from_str(toml.as_str())
-            .map_err(|e| Error::De { source: e })?;
+        let storage: StorageConf =
+            toml::from_str(toml.as_str()).map_err(|e| Error::Invalid {
+                message: format!("storage({name}): {e}"),
+            })?;
         includes.insert(name.clone(), storage.value.clone());
         conf.storages.insert(name, storage);
     }
@@ -1164,34 +1166,45 @@ pub(crate) fn convert_pingap_config(
     for (name, value) in data.upstreams.unwrap_or_default() {
         let toml = convert_include_toml(&includes, replace_include, value);
 
-        let upstream: UpstreamConf = toml::from_str(toml.as_str())
-            .map_err(|e| Error::De { source: e })?;
+        let upstream: UpstreamConf =
+            toml::from_str(toml.as_str()).map_err(|e| Error::Invalid {
+                message: format!("upstream({name}): {e}"),
+            })?;
         conf.upstreams.insert(name, upstream);
     }
     for (name, value) in data.locations.unwrap_or_default() {
         let toml = convert_include_toml(&includes, replace_include, value);
 
-        let location: LocationConf = toml::from_str(toml.as_str())
-            .map_err(|e| Error::De { source: e })?;
+        let location: LocationConf =
+            toml::from_str(toml.as_str()).map_err(|e| Error::Invalid {
+                message: format!("location({name}): {e}"),
+            })?;
         conf.locations.insert(name, location);
     }
     for (name, value) in data.servers.unwrap_or_default() {
         let toml = convert_include_toml(&includes, replace_include, value);
 
-        let server: ServerConf = toml::from_str(toml.as_str())
-            .map_err(|e| Error::De { source: e })?;
+        let server: ServerConf =
+            toml::from_str(toml.as_str()).map_err(|e| Error::Invalid {
+                message: format!("server({name}): {e}"),
+            })?;
         conf.servers.insert(name, server);
     }
     for (name, value) in data.plugins.unwrap_or_default() {
         let plugin: PluginConf = toml::from_str(format_toml(&value).as_str())
-            .map_err(|e| Error::De { source: e })?;
+            .map_err(|e| Error::Invalid {
+            message: format!("plugin({name}): {e}"),
+        })?;
         conf.plugins.insert(name, plugin);
     }
 
     for (name, value) in data.certificates.unwrap_or_default() {
         let certificate: CertificateConf =
-            toml::from_str(format_toml(&value).as_str())
-                .map_err(|e| Error::De { source: e })?;
+            toml::from_str(format_toml(&value).as_str()).map_err(|e| {
+                Error::Invalid {
+                    message: format!("certificate({name}): {e}"),
+                }
+            })?;
         conf.certificates.insert(name, certificate);
     }
 

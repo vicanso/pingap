@@ -198,11 +198,15 @@ pub async fn read_all_config_files(dir: &str) -> Result<Vec<u8>> {
     if !toml_files.is_empty() {
         // .toml files found, use only .toml
         for f in toml_files {
-            let mut buf = fs::read(&f)
+            let buf = fs::read(&f)
                 .await
                 .map_err(|e| permission_error_message(&f, e))?;
+            toml::from_str::<toml::Value>(&String::from_utf8_lossy(&buf))
+                .map_err(|e| Error::Invalid {
+                    message: format!("{}: {e}", f.display()),
+                })?;
             debug!(filename = format!("{f:?}"), "read toml file");
-            data.append(&mut buf);
+            data.extend_from_slice(&buf);
             data.push(0x0a);
         }
     } else {
