@@ -84,6 +84,7 @@ toml = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
 urlencoding = { workspace = true }
+kdl = { workspace = true }
 
 [build-dependencies]
 vergen = { version = "9.0.6", features = ["build"] }
@@ -262,6 +263,7 @@ tldextract = "0.6.0"
 tokio = { version = "1.50.0", default-features = false, features = ["fs"] }
 toml = "0.9.7"
 hcl-rs = "0.19"
+kdl = "6.5.0"
 tonic = "0.14.5"
 tonic-health = "0.14.5"
 tracing = "0.1.44"

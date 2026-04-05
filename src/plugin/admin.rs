@@ -29,6 +29,7 @@ use http::Method;
 use http::{HeaderValue, StatusCode, header};
 use humantime::parse_duration;
 use pingap_config::hcl::convert_toml_to_hcl;
+use pingap_config::kdl::convert_toml_to_kdl;
 use pingap_config::{
     BasicConf, CATEGORY_CERTIFICATE, CATEGORY_STORAGE, Category,
     CertificateConf, ConfigManager, LocationConf, PluginCategory, PluginConf,
@@ -176,6 +177,7 @@ struct BasicInfo {
 #[derive(Serialize, Deserialize)]
 struct FullConfigJson {
     pub hcl: String,
+    pub kdl: String,
     pub full: String,
     pub original: String,
 }
@@ -331,6 +333,8 @@ impl AdminServe {
             };
             let hcl = convert_toml_to_hcl(&full_toml)
                 .map_err(|e| pingap_core::new_internal_error(400, e))?;
+            let kdl = convert_toml_to_kdl(&full_toml)
+                .map_err(|e| pingap_core::new_internal_error(400, e))?;
             let mut original_toml = toml::to_string_pretty(&conf)
                 .map_err(|e| pingap_core::new_internal_error(400, e))?;
             if let Ok(value) =
@@ -340,6 +344,7 @@ impl AdminServe {
             };
             return HttpResponse::try_from_json(&FullConfigJson {
                 hcl,
+                kdl,
                 full: full_toml,
                 original: original_toml,
             });

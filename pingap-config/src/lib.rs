@@ -26,6 +26,7 @@ mod common;
 mod etcd_storage;
 mod file_storage;
 pub mod hcl;
+pub mod kdl;
 mod manager;
 mod storage;
 
@@ -210,22 +211,50 @@ pub async fn read_all_config_files(dir: &str) -> Result<Vec<u8>> {
             data.push(0x0a);
         }
     } else {
-        // No .toml files, fall back to .hcl
-        for entry in
-            glob(&format!("{dir}/**/*.hcl")).map_err(|e| Error::Pattern {
-                source: e,
-                path: dir.to_string(),
-            })?
-        {
-            let f = entry.map_err(|e| Error::Glob { source: e })?;
-            let buf = fs::read(&f)
-                .await
-                .map_err(|e| permission_error_message(&f, e))?;
-            debug!(filename = format!("{f:?}"), "read hcl file");
-            let hcl_str = String::from_utf8_lossy(&buf);
-            let toml_str = hcl::convert_hcl_to_toml(&hcl_str)?;
-            data.extend_from_slice(toml_str.as_bytes());
-            data.push(0x0a);
+        // No .toml files, check for .hcl
+        let hcl_files: std::result::Result<Vec<_>, _> =
+            glob(&format!("{dir}/**/*.hcl"))
+                .map_err(|e| Error::Pattern {
+                    source: e,
+                    path: dir.to_string(),
+                })?
+                .collect();
+        let hcl_files = hcl_files.map_err(|e| Error::Glob { source: e })?;
+
+        if !hcl_files.is_empty() {
+            for f in hcl_files {
+                let buf = fs::read(&f)
+                    .await
+                    .map_err(|e| permission_error_message(&f, e))?;
+                debug!(filename = format!("{f:?}"), "read hcl file");
+                let hcl_str = String::from_utf8_lossy(&buf);
+                let toml_str = hcl::convert_hcl_to_toml(&hcl_str)?;
+                data.extend_from_slice(toml_str.as_bytes());
+                data.push(0x0a);
+            }
+        } else {
+            // No .hcl files, fall back to .kdl
+            for entry in glob(&format!("{dir}/**/*.kdl")).map_err(|e| {
+                Error::Pattern {
+                    source: e,
+                    path: dir.to_string(),
+                }
+            })? {
+                let f = entry.map_err(|e| Error::Glob { source: e })?;
+                let buf = fs::read(&f)
+                    .await
+                    .map_err(|e| permission_error_message(&f, e))?;
+                debug!(filename = format!("{f:?}"), "read kdl file");
+                let kdl_str = String::from_utf8_lossy(&buf);
+                let toml_str =
+                    kdl::convert_kdl_to_toml(&kdl_str).map_err(|e| {
+                        Error::Invalid {
+                            message: format!("{}: {e}", f.display()),
+                        }
+                    })?;
+                data.extend_from_slice(toml_str.as_bytes());
+                data.push(0x0a);
+            }
         }
     }
     Ok(data)

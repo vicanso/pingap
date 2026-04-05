@@ -16,7 +16,6 @@ use super::{DOCKER_DISCOVERY, Discovery, LOG_TARGET};
 use super::{Error, Result};
 use async_trait::async_trait;
 use bollard::query_parameters::{EventsOptionsBuilder, ListContainersOptions};
-use bollard::secret::ContainerSummary;
 use futures::StreamExt;
 use http::Extensions;
 use pingap_core::{NotificationData, NotificationLevel, NotificationSender};
@@ -96,7 +95,7 @@ pub fn is_docker_discovery(value: &str) -> bool {
 
 impl DockerState {
     fn get_container_ports(
-        container: &ContainerSummary,
+        container: &bollard::models::ContainerSummary,
         default_port: u16,
     ) -> Option<(u16, u16)> {
         let ports = container.ports.as_ref()?;
@@ -113,10 +112,9 @@ impl DockerState {
         let mut containers = self.containers.clone();
 
         for container in containers.iter_mut() {
-            let result =
+            let summaries: Vec<bollard::models::ContainerSummary> =
                 self.list_containers_by_label(&container.label).await?;
-
-            container.addrs = result
+            container.addrs = summaries
                 .iter()
                 .filter_map(|item| {
                     let (private_port, public_port) =
@@ -147,7 +145,7 @@ impl DockerState {
     async fn list_containers_by_label(
         &self,
         label: &String,
-    ) -> Result<Vec<ContainerSummary>> {
+    ) -> Result<Vec<bollard::models::ContainerSummary>> {
         let mut filters = HashMap::new();
         filters.insert("label".to_string(), vec![label.to_string()]);
         self.docker

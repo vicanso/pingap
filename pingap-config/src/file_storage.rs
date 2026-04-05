@@ -14,6 +14,7 @@
 
 use crate::Error;
 use crate::hcl::convert_hcl_to_toml;
+use crate::kdl::convert_kdl_to_toml;
 use crate::permission_error_message;
 use crate::storage::{History, Storage};
 use async_trait::async_trait;
@@ -117,22 +118,49 @@ async fn read_all_config_files(dir: &str) -> Result<Vec<u8>> {
             data.push(0x0a);
         }
     } else {
-        // No .toml files, fall back to .hcl
-        for entry in
-            glob(&format!("{dir}/**/*.hcl")).map_err(|e| Error::Pattern {
-                source: e,
-                path: dir.to_string(),
-            })?
-        {
-            let f = entry.map_err(|e| Error::Glob { source: e })?;
-            let buf = fs::read(&f)
-                .await
-                .map_err(|e| permission_error_message(&f, e))?;
-            debug!(filename = format!("{f:?}"), "read hcl file");
-            let hcl_str = String::from_utf8_lossy(&buf);
-            let toml_str = convert_hcl_to_toml(&hcl_str)?;
-            data.extend_from_slice(toml_str.as_bytes());
-            data.push(0x0a);
+        // No .toml files, check for .hcl
+        let hcl_files: std::result::Result<Vec<_>, _> =
+            glob(&format!("{dir}/**/*.hcl"))
+                .map_err(|e| Error::Pattern {
+                    source: e,
+                    path: dir.to_string(),
+                })?
+                .collect();
+        let hcl_files = hcl_files.map_err(|e| Error::Glob { source: e })?;
+
+        if !hcl_files.is_empty() {
+            for f in hcl_files {
+                let buf = fs::read(&f)
+                    .await
+                    .map_err(|e| permission_error_message(&f, e))?;
+                debug!(filename = format!("{f:?}"), "read hcl file");
+                let hcl_str = String::from_utf8_lossy(&buf);
+                let toml_str = convert_hcl_to_toml(&hcl_str)?;
+                data.extend_from_slice(toml_str.as_bytes());
+                data.push(0x0a);
+            }
+        } else {
+            // No .hcl files, fall back to .kdl
+            for entry in glob(&format!("{dir}/**/*.kdl")).map_err(|e| {
+                Error::Pattern {
+                    source: e,
+                    path: dir.to_string(),
+                }
+            })? {
+                let f = entry.map_err(|e| Error::Glob { source: e })?;
+                let buf = fs::read(&f)
+                    .await
+                    .map_err(|e| permission_error_message(&f, e))?;
+                debug!(filename = format!("{f:?}"), "read kdl file");
+                let kdl_str = String::from_utf8_lossy(&buf);
+                let toml_str = convert_kdl_to_toml(&kdl_str).map_err(|e| {
+                    Error::Invalid {
+                        message: format!("{}: {e}", f.display()),
+                    }
+                })?;
+                data.extend_from_slice(toml_str.as_bytes());
+                data.push(0x0a);
+            }
         }
     }
     Ok(data)
@@ -151,12 +179,17 @@ impl Storage for FileStorage {
                 Err(e) if e.kind() == ErrorKind::NotFound => Ok(Vec::new()),
                 Err(e) => Err(permission_error_message(&target_path, e)),
             }?;
-            // Convert HCL to TOML if the file has .hcl extension
-            let is_hcl =
-                target_path.extension().is_some_and(|ext| ext == "hcl");
-            if is_hcl {
+            let ext = target_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
+            if ext == "hcl" {
                 let hcl_str = String::from_utf8_lossy(&data);
                 return convert_hcl_to_toml(&hcl_str);
+            }
+            if ext == "kdl" {
+                let kdl_str = String::from_utf8_lossy(&data);
+                return convert_kdl_to_toml(&kdl_str);
             }
             let content = String::from_utf8_lossy(&data);
             if !content.trim().is_empty() {
@@ -260,42 +293,33 @@ mod tests {
     async fn test_dir_storage() {
         let dir = tempdir().unwrap();
         let storage = FileStorage::new(&dir.path().to_string_lossy()).unwrap();
-        // save config
-        storage
-            .save("servers.toml", "server configs")
-            .await
-            .unwrap();
-        storage
-            .save("locations.toml", "location configs")
-            .await
-            .unwrap();
+        // save config (must be valid TOML since fetch validates syntax)
+        storage.save("servers.toml", "[servers]").await.unwrap();
+        storage.save("locations.toml", "[locations]").await.unwrap();
 
         let data = storage.fetch("servers.toml").await.unwrap();
-        assert_eq!("server configs", data);
+        assert_eq!("[servers]", data);
 
-        // fetch all
+        // fetch all (concatenated)
         let data = storage.fetch("").await.unwrap();
-        assert_eq!(
-            r#"location configs
-server configs"#,
-            data
-        );
+        assert_eq!("[locations]\n[servers]", data);
 
         storage.delete("servers.toml").await.unwrap();
         let data = storage.fetch("servers.toml").await.unwrap();
         assert_eq!("", data);
 
         let data = storage.fetch("").await.unwrap();
-        assert_eq!("location configs", data);
+        assert_eq!("[locations]", data);
     }
 
     #[tokio::test]
     async fn test_file_storage() {
         let file = tempfile::NamedTempFile::new().unwrap();
         let storage = FileStorage::new(&file.path().to_string_lossy()).unwrap();
-        storage.save("pingap.toml", "pingap config").await.unwrap();
+        // must be valid TOML since fetch validates syntax
+        storage.save("pingap.toml", "[basic]").await.unwrap();
         let data = storage.fetch("pingap.toml").await.unwrap();
-        assert_eq!("pingap config", data);
+        assert_eq!("[basic]", data);
 
         storage.delete("pingap.toml").await.unwrap();
         let data = storage.fetch("pingap.toml").await.unwrap();

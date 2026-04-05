@@ -144,6 +144,9 @@ struct Args {
     /// Convert configuration to HCL format and output
     #[arg(long)]
     to_hcl: bool,
+    /// Convert configuration to KDL format and output
+    #[arg(long)]
+    to_kdl: bool,
     /// Default threads for each server
     #[arg(long)]
     threads: Option<usize>,
@@ -464,6 +467,14 @@ fn run() -> Result<(), Box<dyn Error>> {
         let toml_str = toml::to_string_pretty(&config)?;
         let hcl_str = pingap_config::hcl::convert_toml_to_hcl(&toml_str)?;
         println!("{hcl_str}");
+        return Ok(());
+    }
+
+    // Convert config to KDL and output
+    if args.to_kdl {
+        let toml_str = toml::to_string_pretty(&config)?;
+        let kdl_str = pingap_config::kdl::convert_toml_to_kdl(&toml_str)?;
+        println!("{kdl_str}");
         return Ok(());
     }
 

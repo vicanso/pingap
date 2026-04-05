@@ -1,0 +1,16 @@
+server "test" {
+    addr "127.0.0.1:6118"
+
+    location "github-api" path="/api" {
+        proxy_set_headers "Host:api.github.com"
+        rewrite "^/api/(?<path>.+)$ /$1"
+
+        upstream "api" sni="api.github.com" discovery="dns" {
+            addrs "api.github.com:443"
+        }
+    }
+
+    location "static" {
+        plugin "staticServe" category="directory" path="~/Downloads" step="request"
+    }
+}
