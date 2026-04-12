@@ -615,7 +615,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     my_server.bootstrap();
 
     #[cfg(feature = "pyro")]
-    if let Some(url) = &conf.basic.pyroscope {
+    if let Some(url) = &config.basic.pyroscope {
         my_server.add_service(background_service(
             "pyro_agent",
             pingap_pyroscope::new_agent_service(url),

@@ -15,10 +15,11 @@
 use async_trait::async_trait;
 use pingora::server::ShutdownWatch;
 use pingora::services::background::BackgroundService;
+use pyroscope::backend::{BackendConfig, PprofConfig, pprof_backend};
 use pyroscope::{
-    PyroscopeAgent, PyroscopeError, pyroscope::PyroscopeAgentRunning,
+    PyroscopeAgent, PyroscopeError,
+    pyroscope::{PyroscopeAgentBuilder, PyroscopeAgentRunning},
 };
-use pyroscope_pprofrs::{PprofConfig, pprof_backend};
 use snafu::{ResultExt, Snafu};
 use substring::Substring;
 use tracing::{error, info};
@@ -114,20 +115,27 @@ fn start_pyroscope(
         connect_url = connect_url.replace(&format!("?{query}"), "");
     }
 
-    let mut agent = PyroscopeAgent::builder(&connect_url, &application_name);
+    let mut builder = PyroscopeAgentBuilder::new(
+        &connect_url,
+        &application_name,
+        sample_rate,
+        "pprof-rs",
+        "",
+        pprof_backend(
+            PprofConfig { sample_rate },
+            BackendConfig {
+                report_thread_id: true,
+                report_thread_name: true,
+                report_pid: true,
+            },
+        ),
+    )
+    .tags(tags.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect());
+
     if !user.is_empty() {
-        agent = agent.basic_auth(user, password);
+        builder = builder.basic_auth(&user, &password);
     }
-    let client = agent
-        .backend(pprof_backend(
-            PprofConfig::new()
-                .sample_rate(sample_rate)
-                .report_thread_id()
-                .report_thread_name(),
-        ))
-        .tags(tags.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect())
-        .build()
-        .context(PyroscopeSnafu)?;
+    let client = builder.build().context(PyroscopeSnafu)?;
     info!(
         target: LOG_TARGET,
         application_name = application_name,
