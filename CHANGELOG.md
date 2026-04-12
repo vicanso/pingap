@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.13.2](https://github.com/vicanso/pingap/compare/v0.13.1..v0.13.2) - 2026-04-12
+
+### ⛰️  Features
+
+- Add kdl configuration provider and parser ([#184](https://github.com/orhun/git-cliff/issues/184)) - ([79ea335](https://github.com/vicanso/pingap/commit/79ea335eec6ea781bffef0dfdae4621c8d5f5b26))
+
+### 🐛 Bug Fixes
+
+- Update aws-lc ([#180](https://github.com/orhun/git-cliff/issues/180)) - ([47297de](https://github.com/vicanso/pingap/commit/47297de42f5e80bf5a77e49acde2fd4f38c39755))
+- Update rustls-webpki ([#181](https://github.com/orhun/git-cliff/issues/181)) - ([ebd09b2](https://github.com/vicanso/pingap/commit/ebd09b2135e7717226b9614880e134e3721ff496))
+- Fix cargo machete - ([b0229ec](https://github.com/vicanso/pingap/commit/b0229ec296dabe9986630c35dee0271d10012cc6))
+- Correct config loading path and enhance toml validation ([#163](https://github.com/orhun/git-cliff/issues/163)) - ([be0d2bd](https://github.com/vicanso/pingap/commit/be0d2bd4610612ba59a91a1f4230a843d0220bd3))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update pyroscope - ([ab6e97b](https://github.com/vicanso/pingap/commit/ab6e97bf8e8e8a33668bbddb8c0e0b003fcaa983))
+- Update image lib - ([1f1d060](https://github.com/vicanso/pingap/commit/1f1d060b24ad7fd93e8b9e3b24110aea974cbae1))
+
 ## [0.13.1](https://github.com/vicanso/pingap/compare/v0.13.0..v0.13.1) - 2026-03-19
 
 ### ⛰️  Features
