@@ -680,10 +680,8 @@ impl Ctx {
             },
 
             // Other fields
-            "location" => {
-                if !self.upstream.location.is_empty() {
-                    buf.extend(self.upstream.location.as_bytes())
-                }
+            "location" if !self.upstream.location.is_empty() => {
+                buf.extend(self.upstream.location.as_bytes())
             },
             "connection_reused" => {
                 if self.conn.reused {
