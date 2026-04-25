@@ -125,11 +125,9 @@ async fn diff_and_update_config(
                 CATEGORY_LOCATION => should_reload_location = true,
                 CATEGORY_UPSTREAM => should_reload_upstream = true,
                 CATEGORY_PLUGIN => should_reload_plugin = true,
-                CATEGORY_CERTIFICATE => {
-                    // acme should be reload by let's encrypt service
-                    if !exists_acme {
-                        should_reload_certificate = true;
-                    }
+                // acme should be reload by let's encrypt service
+                CATEGORY_CERTIFICATE if !exists_acme => {
+                    should_reload_certificate = true;
                 },
                 _ => {},
             };
