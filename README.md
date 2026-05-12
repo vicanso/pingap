@@ -91,6 +91,26 @@ docker-compose up -d
 
 Your Pingap instance is now running! You can access the web admin interface at http://localhost/pingap with the credentials you set.
 
+### Install the binary via curl
+
+For Linux and macOS, you can install the latest pre-built binary to `/usr/local/bin/pingap` with one command:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/vicanso/pingap/main/install.sh | sh
+```
+
+Optional environment variables:
+
+- `PINGAP_FULL=1` — install the `-full` build (all optional features enabled)
+- `PINGAP_LIBC=gnu` — on Linux, use the glibc build instead of the default musl static build
+
+```bash
+# Full-featured build
+curl -sSL https://raw.githubusercontent.com/vicanso/pingap/main/install.sh | PINGAP_FULL=1 sh
+```
+
+Supported targets: `Linux x86_64/arm64`, `Darwin x86_64/arm64`. See the [releases page](https://github.com/vicanso/pingap/releases) for all available assets.
+
 For more detailed instructions, including running from a binary, check out our [Documentation](https://pingap.io/pingap-en/docs/getting_started).
 
 

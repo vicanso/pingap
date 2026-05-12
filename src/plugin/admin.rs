@@ -172,6 +172,7 @@ struct BasicInfo {
     upstream_healthy_status: HashMap<String, UpstreamHealthyStatus>,
     support_history: bool,
     git_hash: String,
+    now: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -284,14 +285,28 @@ impl AdminServe {
             pingap_core::get_req_header_value(req_header, "Authorization")
                 .unwrap_or_default();
         if value.is_empty() {
+            error!(target: LOG_TARGET, path, "auth validate fail: missing authorization header");
             return false;
         }
         let Some((token, ts)) = value.split_once(':') else {
+            error!(target: LOG_TARGET, path, "auth validate fail: malformed authorization, expect token:ts");
             return false;
         };
-        let offset = pingap_core::now_sec() as i64
-            - ts.parse::<i64>().unwrap_or_default();
-        if offset.abs() > self.max_age.as_secs() as i64 {
+        let now = pingap_core::now_sec() as i64;
+        let parsed_ts = ts.parse::<i64>().unwrap_or_default();
+        let offset = now - parsed_ts;
+        let max_age = self.max_age.as_secs() as i64;
+        if offset.abs() > max_age {
+            error!(
+                target: LOG_TARGET,
+                path,
+                ts,
+                parsed_ts,
+                now,
+                offset,
+                max_age,
+                "auth validate fail: timestamp out of max_age window"
+            );
             return false;
         }
 
@@ -303,6 +318,13 @@ impl AdminServe {
                 return true;
             }
         }
+        error!(
+            target: LOG_TARGET,
+            path,
+            ts,
+            authorizations = self.authorizations.len(),
+            "auth validate fail: token hash mismatch"
+        );
         false
     }
     async fn load_config(
@@ -666,6 +688,7 @@ async fn handle_request_admin(
             upstream_healthy_status: new_upstream_provider().healthy_status(),
             support_history: plugin.manager.support_history(),
             git_hash: GIT_HASH.to_string(),
+            now: pingap_core::now_sec(),
         };
         basic_info.features.push("default".to_string());
 

@@ -91,6 +91,26 @@ docker-compose up -d
 您的 Pingap 实例现已运行！您可以使用您设置的凭证，通过 http://localhost/pingap 访问 Web 管理界面。
 
 
+### 通过 curl 安装二进制
+
+Linux 与 macOS 用户可以用一条命令将最新的预编译二进制安装到 `/usr/local/bin/pingap`：
+
+```bash
+curl -sSL https://raw.githubusercontent.com/vicanso/pingap/main/install.sh | sh
+```
+
+可选环境变量：
+
+- `PINGAP_FULL=1` —— 安装 `-full` 构建（启用所有可选特性）
+- `PINGAP_LIBC=gnu` —— Linux 上使用 glibc 构建（默认是静态链接的 musl 构建）
+
+```bash
+# 安装完整特性版本
+curl -sSL https://raw.githubusercontent.com/vicanso/pingap/main/install.sh | PINGAP_FULL=1 sh
+```
+
+支持的平台：`Linux x86_64/arm64`、`Darwin x86_64/arm64`。所有可用的构建产物见 [releases 页面](https://github.com/vicanso/pingap/releases)。
+
 要了解更多详细说明，包括如何通过二进制文件运行，请查阅我们的[文档](https://pingap.io/pingap-zh/docs/getting_started)。
 
 
