@@ -21,7 +21,7 @@ use crate::dns_tencent::TencentDnsTask;
 use async_trait::async_trait;
 use hickory_resolver::Resolver;
 use hickory_resolver::config::ResolverConfig;
-use hickory_resolver::name_server::TokioConnectionProvider;
+use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use hickory_resolver::proto::rr::RecordType;
 use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
@@ -581,9 +581,13 @@ async fn new_lets_encrypt(
                 );
                 let resolver = Resolver::builder_with_config(
                     ResolverConfig::default(),
-                    TokioConnectionProvider::default(),
+                    TokioRuntimeProvider::default(),
                 )
-                .build();
+                .build()
+                .map_err(|e| Error::Fail {
+                    category: "build_resolver".to_string(),
+                    message: e.to_string(),
+                })?;
                 // dns txt record may take a while to propagate, so we need to retry
                 for i in 0..10 {
                     tokio::time::sleep(Duration::from_secs(10)).await;
@@ -595,12 +599,13 @@ async fn new_lets_encrypt(
                         resolver.lookup(&acme_dns_name, RecordType::TXT).await
                     {
                         let txt_records: Vec<String> = response
-                            .record_iter()
-                            .filter_map(|record| {
-                                record
-                                    .data()
-                                    .as_txt()
-                                    .map(|data| data.to_string())
+                            .answers()
+                            .iter()
+                            .filter_map(|record| match &record.data {
+                                hickory_resolver::proto::rr::RData::TXT(
+                                    txt,
+                                ) => Some(txt.to_string()),
+                                _ => None,
                             })
                             .collect();
                         let matched = txt_records.contains(&dns_txt_value);

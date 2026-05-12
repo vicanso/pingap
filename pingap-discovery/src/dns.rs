@@ -16,13 +16,13 @@ use super::{Addr, Error, Result, format_addrs};
 use super::{DNS_DISCOVERY, Discovery, LOG_TARGET};
 use async_trait::async_trait;
 use futures::future::join_all;
-use hickory_resolver::Name;
 use hickory_resolver::Resolver;
 use hickory_resolver::config::{
-    LookupIpStrategy, NameServerConfigGroup, ResolverConfig, ResolverOpts,
+    LookupIpStrategy, NameServerConfig, ResolverConfig, ResolverOpts,
 };
 use hickory_resolver::lookup_ip::LookupIp;
-use hickory_resolver::name_server::TokioConnectionProvider;
+use hickory_resolver::net::runtime::TokioRuntimeProvider;
+use hickory_resolver::proto::rr::Name;
 use hickory_resolver::system_conf::read_system_conf;
 use http::Extensions;
 use pingap_core::NotificationSender;
@@ -132,7 +132,9 @@ impl Dns {
     /// * `Result<(ResolverConfig, ResolverOpts)>` - Resolver configuration and options
     fn read_system_conf(&self) -> Result<(ResolverConfig, ResolverOpts)> {
         let (mut config, mut options) =
-            read_system_conf().map_err(|e| Error::Resolve { source: e })?;
+            read_system_conf().map_err(|e| Error::Resolve {
+                source: e.into(),
+            })?;
 
         if let Some(domain) = &self.domain
             && let Ok(name) = Name::from_str(domain)
@@ -148,12 +150,11 @@ impl Dns {
         }
 
         if let Some(name_server) = &self.name_server {
-            let ips = name_server
+            let name_servers = name_server
                 .split(',')
                 .filter_map(|s| s.trim().parse::<IpAddr>().ok())
+                .map(NameServerConfig::udp_and_tcp)
                 .collect::<Vec<_>>();
-            let name_servers =
-                NameServerConfigGroup::from_ips_clear(&ips, 53, true);
             config = ResolverConfig::from_parts(
                 config.domain().cloned(),
                 config.search().to_vec(),
@@ -175,11 +176,12 @@ impl Dns {
     /// # Returns
     /// * `Result<(Vec<LookupIp>, Vec<String>)>` - List of DNS lookup results and unhealthy backends
     async fn tokio_lookup_ip(&self) -> Result<(Vec<LookupIp>, Vec<String>)> {
-        let provider = TokioConnectionProvider::default();
+        let provider = TokioRuntimeProvider::default();
         let (config, options) = self.read_system_conf()?;
         let mut builder = Resolver::builder_with_config(config, provider);
         *builder.options_mut() = options;
-        let resolver = builder.build();
+        let resolver =
+            builder.build().map_err(|e| Error::Resolve { source: e })?;
 
         let mut lookup_ips = Vec::new();
         let mut failed_hosts = Vec::new();

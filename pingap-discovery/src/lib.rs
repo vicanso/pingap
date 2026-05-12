@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use hickory_resolver::ResolveError;
+use hickory_resolver::net::NetError;
 use pingap_core::NotificationSender;
 use snafu::Snafu;
 use std::sync::Arc;
@@ -27,7 +27,7 @@ pub enum Error {
         content: String,
     },
     #[snafu(display("Resolve error {source}"))]
-    Resolve { source: ResolveError },
+    Resolve { source: NetError },
     #[snafu(display("{message}"))]
     Invalid { message: String },
     #[snafu(display("Docker error {source}"))]
