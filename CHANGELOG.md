@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.13.3](https://github.com/vicanso/pingap/compare/v0.13.2..v0.13.3) - 2026-05-12
+
+### 🐛 Bug Fixes
+
+- Update hickory-proto version ([#202](https://github.com/orhun/git-cliff/issues/202)) - ([df1598d](https://github.com/vicanso/pingap/commit/df1598d660c749542096f0f53b731b0c4b694019))
+- Fix clippy - ([e6cde08](https://github.com/vicanso/pingap/commit/e6cde0803d3ff0d2e51bad5ce0a029af56871980))
+- Fix clippy - ([6941496](https://github.com/vicanso/pingap/commit/6941496cd05e981692eb4f8e1a11e0d60e794c94))
+- Correct validation of name constraints for URI names ([#190](https://github.com/orhun/git-cliff/issues/190)) - ([21bad9f](https://github.com/vicanso/pingap/commit/21bad9ffb62e17d63c4b5f0eafea2a3d4b547055))
+
+### 🚜 Refactor
+
+- Adjust hickory resolver - ([a678ec6](https://github.com/vicanso/pingap/commit/a678ec6ab3d30b6b3882a4d2aa6129c6af98d996))
+- Add install script - ([7be5b87](https://github.com/vicanso/pingap/commit/7be5b8745198c9c86258d030957cbc8169b9aad1))
+
 ## [0.13.2](https://github.com/vicanso/pingap/compare/v0.13.1..v0.13.2) - 2026-04-12
 
 ### ⛰️  Features

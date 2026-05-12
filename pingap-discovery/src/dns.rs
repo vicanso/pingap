@@ -131,10 +131,8 @@ impl Dns {
     /// # Returns
     /// * `Result<(ResolverConfig, ResolverOpts)>` - Resolver configuration and options
     fn read_system_conf(&self) -> Result<(ResolverConfig, ResolverOpts)> {
-        let (mut config, mut options) =
-            read_system_conf().map_err(|e| Error::Resolve {
-                source: e.into(),
-            })?;
+        let (mut config, mut options) = read_system_conf()
+            .map_err(|e| Error::Resolve { source: e.into() })?;
 
         if let Some(domain) = &self.domain
             && let Ok(name) = Name::from_str(domain)
