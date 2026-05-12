@@ -131,6 +131,9 @@ impl Dns {
     /// # Returns
     /// * `Result<(ResolverConfig, ResolverOpts)>` - Resolver configuration and options
     fn read_system_conf(&self) -> Result<(ResolverConfig, ResolverOpts)> {
+        // read_system_conf returns ProtoError on macOS and NetError on other
+        // unix targets — `.into()` is required on macOS and a no-op elsewhere.
+        #[allow(clippy::useless_conversion)]
         let (mut config, mut options) = read_system_conf()
             .map_err(|e| Error::Resolve { source: e.into() })?;
 
