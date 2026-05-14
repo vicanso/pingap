@@ -614,6 +614,16 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
     my_server.bootstrap();
 
+    // Re-spawn the coarse clock updater inside the post-fork process. The
+    // #[ctor] init starts the updater in the parent, but pingora's daemonize
+    // forks before service runtimes start, and fork only carries the calling
+    // thread — so the updater must be re-spawned here for daemon mode. In
+    // non-daemon mode this is a no-op (pid matches).
+    my_server.add_service(background_service(
+        "clock_updater",
+        pingap_core::ClockUpdaterService,
+    ));
+
     #[cfg(feature = "pyro")]
     if let Some(url) = &config.basic.pyroscope {
         my_server.add_service(background_service(

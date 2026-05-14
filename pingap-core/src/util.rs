@@ -14,22 +14,41 @@
 
 use coarsetime::{Clock, Updater};
 use ctor::ctor;
-use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{LazyLock, Mutex};
 
-static COARSE_CLOCK_UPDATER: LazyLock<Updater> = LazyLock::new(|| {
+static CLOCK_UPDATER_PID: AtomicU32 = AtomicU32::new(0);
+static CLOCK_UPDATER: Mutex<Option<Updater>> = Mutex::new(None);
+
+/// Ensures the coarse clock background updater is running for the current
+/// process. Idempotent and fork-safe: if the updater was started in a parent
+/// process and we're now in a child after fork (e.g. pingora's daemonize),
+/// the parent's `Updater` handle is dropped (its thread doesn't exist here)
+/// and a fresh updater thread is spawned for this process.
+pub fn ensure_clock_updater() {
+    let pid = std::process::id();
+    if CLOCK_UPDATER_PID.load(Ordering::Acquire) == pid {
+        return;
+    }
+    let mut guard = CLOCK_UPDATER.lock().expect("clock updater mutex poisoned");
+    if CLOCK_UPDATER_PID.load(Ordering::Acquire) == pid {
+        return;
+    }
+    // Drop the parent's handle without joining — fork only carries the calling
+    // thread, so the parent's updater thread does not exist in this process.
+    // JoinHandle's Drop detaches rather than joining, which is what we want.
+    let _ = guard.take();
+
     let interval = std::env::var("PINGAP_COARSE_CLOCK_INTERVAL")
-        .unwrap_or("10".to_string())
+        .unwrap_or_else(|_| "10".to_string())
         .parse::<u64>()
         .unwrap_or(10)
         .clamp(1, 500);
-    Updater::new(interval)
+    let updater = Updater::new(interval)
         .start()
-        .expect("Failed to start coarse clock updater")
-});
-
-/// Initialize the time cache
-fn init_time_cache() {
-    LazyLock::force(&COARSE_CLOCK_UPDATER);
+        .expect("Failed to start coarse clock updater");
+    *guard = Some(updater);
+    CLOCK_UPDATER_PID.store(pid, Ordering::Release);
 }
 
 // 2022-05-07: 1651852800
@@ -81,31 +100,31 @@ pub fn real_now_ms() -> u64 {
 
 #[ctor]
 fn init() {
-    init_time_cache();
+    ensure_clock_updater();
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        get_hostname, get_super_ts, init_time_cache, now_ms, real_now_ms,
+        ensure_clock_updater, get_hostname, get_super_ts, now_ms, real_now_ms,
     };
     use pretty_assertions::assert_eq;
 
     #[test]
     fn test_super_ts() {
-        init_time_cache();
+        ensure_clock_updater();
         assert_eq!(true, get_super_ts() > 104017048);
     }
 
     #[test]
     fn test_now_ms() {
-        init_time_cache();
+        ensure_clock_updater();
         assert_eq!(true, now_ms() > 1755870295813);
     }
 
     #[test]
     fn test_real_now_ms() {
-        init_time_cache();
+        ensure_clock_updater();
         assert_eq!(true, real_now_ms() > 1755870295813);
     }
 

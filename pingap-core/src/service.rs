@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, LOG_TARGET};
+use super::{Error, LOG_TARGET, ensure_clock_updater};
 use async_trait::async_trait;
 use futures::future::join_all;
 use pingora::server::ShutdownWatch;
@@ -21,6 +21,25 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 use tokio::time::interval;
 use tracing::{error, info};
+
+/// Re-spawns the coarse clock background updater inside the runtime that hosts
+/// this service. Required for daemon mode: pingora forks before starting its
+/// service runtimes, and `fork()` only carries the calling thread, so the
+/// updater thread spawned in the parent doesn't exist in the child.
+pub struct ClockUpdaterService;
+
+#[async_trait]
+impl BackgroundService for ClockUpdaterService {
+    async fn start(&self, mut shutdown: ShutdownWatch) {
+        ensure_clock_updater();
+        info!(
+            target: LOG_TARGET,
+            pid = std::process::id(),
+            "coarse clock updater is running"
+        );
+        let _ = shutdown.changed().await;
+    }
+}
 
 fn duration_to_string(duration: Duration) -> String {
     let secs = duration.as_secs_f64();

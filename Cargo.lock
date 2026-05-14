@@ -3802,7 +3802,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pingap"
-version = "0.13.3"
+version = "0.13.4"
 dependencies = [
  "ahash",
  "arc-swap",
