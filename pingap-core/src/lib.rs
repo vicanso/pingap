@@ -106,8 +106,11 @@ mod tests {
     #[test]
     fn test_new_get_session() {
         let session = new_get_session(
-            vec!["user-agent: pingap/0.1.1".to_string()],
-            "https://github.com".to_string(),
+            vec![
+                "Host: github.com".to_string(),
+                "user-agent: pingap/0.1.1".to_string(),
+            ],
+            "/".to_string(),
         )
         .recv()
         .unwrap()
