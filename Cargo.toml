@@ -253,7 +253,7 @@ sha1 = "0.11.0"
 sha2 = { version = "0.11.0", default-features = false }
 strum = { version = "0.28.0", features = ["derive"] }
 substring = "1.4.5"
-sysinfo = { version = "0.39.3", features = [
+sysinfo = { version = "0.38.4", features = [
     "system",
 ], default-features = false }
 tempfile = "3.27.0"
@@ -263,7 +263,7 @@ tldextract = "0.6.0"
 tokio = { version = "1.52.3", default-features = false, features = ["fs"] }
 toml = "1.1.2"
 hcl-rs = "0.19"
-kdl = "6.7.1"
+kdl = "6.5.0"
 tonic = "0.14.6"
 tonic-health = "0.14.6"
 tracing = "0.1.44"
