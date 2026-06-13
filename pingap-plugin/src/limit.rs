@@ -329,7 +329,7 @@ impl Plugin for Limiter {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory()
         .register("limit", |params| Ok(Arc::new(Limiter::new(params)?)));

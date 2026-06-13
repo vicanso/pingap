@@ -333,7 +333,7 @@ impl Plugin for SubFilter {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory()
         .register("sub_filter", |params| Ok(Arc::new(SubFilter::new(params)?)));

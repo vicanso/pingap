@@ -176,7 +176,7 @@ impl Plugin for TrafficSplitting {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory().register("traffic_splitting", |params| {
         Ok(Arc::new(TrafficSplitting::new(params)?))

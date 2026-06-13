@@ -413,7 +413,7 @@ fn is_compressible_content_type(content_type: &HeaderValue) -> bool {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory().register("compression", |params| {
         Ok(Arc::new(Compression::new(params)?))

@@ -30,7 +30,7 @@ pingap-core = { version = "0.13.1", path = "../pingap-core" }
 pingap-location = { version = "0.13.1", path = "../pingap-location" }
 pingap-upstream = { version = "0.13.1", path = "../pingap-upstream" }
 pingora = { workspace = true }
-prometheus = { workspace = true, optional = true }
+prometheus = { workspace = true, features = ["protobuf"], optional = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 smallvec = { workspace = true }

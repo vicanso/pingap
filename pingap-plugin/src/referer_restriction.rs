@@ -209,7 +209,7 @@ impl Plugin for RefererRestriction {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory().register("referer_restriction", |params| {
         Ok(Arc::new(RefererRestriction::new(params)?))

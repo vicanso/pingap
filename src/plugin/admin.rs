@@ -783,7 +783,7 @@ impl Plugin for AdminServe {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory()
         .register("admin", |params| Ok(Arc::new(AdminServe::new(params)?)));

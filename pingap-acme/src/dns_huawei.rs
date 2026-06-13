@@ -15,7 +15,7 @@
 use super::{AcmeDnsTask, Error};
 use async_trait::async_trait;
 use chrono::Utc;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use reqwest::header::{CONTENT_TYPE, HOST, HeaderMap, HeaderName};
 use serde::Deserialize;
 use serde_json::json;

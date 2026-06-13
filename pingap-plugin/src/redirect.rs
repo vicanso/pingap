@@ -188,7 +188,7 @@ impl Plugin for Redirect {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory()
         .register("redirect", |params| Ok(Arc::new(Redirect::new(params)?)));

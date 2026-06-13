@@ -278,7 +278,7 @@ impl Plugin for ImageOptim {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory().register("image_optim", |params| {
         Ok(Arc::new(ImageOptim::new(params)?))

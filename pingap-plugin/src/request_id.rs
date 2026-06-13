@@ -218,7 +218,7 @@ impl Plugin for RequestId {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory()
         .register("request_id", |params| Ok(Arc::new(RequestId::new(params)?)));

@@ -315,7 +315,7 @@ impl Plugin for Csrf {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory()
         .register("csrf", |params| Ok(Arc::new(Csrf::new(params)?)));

@@ -230,7 +230,7 @@ impl Plugin for BasicAuth {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     let factory = get_plugin_factory();
     factory

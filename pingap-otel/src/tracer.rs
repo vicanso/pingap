@@ -285,6 +285,10 @@ impl BackgroundService for TracerService {
                     Box<dyn TextMapPropagator + Send + Sync>,
                 > = vec![Box::new(TraceContextPropagator::new())];
                 if self.config.support_jaeger_propagator {
+                    // The Jaeger propagation format is deprecated upstream in
+                    // favor of W3C TraceContext, but we keep it as an opt-in
+                    // for interop with existing Jaeger deployments.
+                    #[allow(deprecated)]
                     propagators.push(Box::new(
                         opentelemetry_jaeger_propagator::Propagator::new(),
                     ));

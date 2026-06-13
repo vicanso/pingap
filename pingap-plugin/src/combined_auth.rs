@@ -293,7 +293,7 @@ impl Plugin for CombinedAuth {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory().register("combined_auth", |params| {
         Ok(Arc::new(CombinedAuth::new(params)?))

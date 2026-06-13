@@ -202,7 +202,7 @@ impl Plugin for Stats {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory()
         .register("stats", |params| Ok(Arc::new(Stats::new(params)?)));

@@ -209,7 +209,7 @@ impl Plugin for UaRestriction {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory().register("ua_restriction", |params| {
         Ok(Arc::new(UaRestriction::new(params)?))

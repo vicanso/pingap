@@ -455,7 +455,7 @@ impl Plugin for Cache {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory()
         .register("cache", |params| Ok(Arc::new(Cache::new(params)?)));

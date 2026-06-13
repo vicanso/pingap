@@ -186,7 +186,7 @@ impl Plugin for MockResponse {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory()
         .register("mock", |params| Ok(Arc::new(MockResponse::new(params)?)));

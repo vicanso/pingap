@@ -189,7 +189,7 @@ impl KeyAuth {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory()
         .register("key_auth", |params| Ok(Arc::new(KeyAuth::new(params)?)));

@@ -131,12 +131,6 @@ fn new_certificate_with_ca(
     let binding = info.get_cert();
     let ca_pem = std::string::String::from_utf8_lossy(&binding);
 
-    let ca_params = rcgen::CertificateParams::from_ca_cert_pem(&ca_pem)
-        .map_err(|e| Error::Invalid {
-            message: e.to_string(),
-            category: ERROR_CA.to_string(),
-        })?;
-
     let binding = info.get_key();
     let ca_key = std::string::String::from_utf8_lossy(&binding);
 
@@ -145,15 +139,49 @@ fn new_certificate_with_ca(
             message: e.to_string(),
             category: ERROR_CA.to_string(),
         })?;
-    let not_before = time::OffsetDateTime::now_utc() - time::Duration::days(1);
-    let two_years_from_now =
-        time::OffsetDateTime::now_utc() + time::Duration::days(365 * 2);
-    let not_after = ca_params.not_after.min(two_years_from_now);
-    let ca_cert =
-        ca_params.self_signed(&ca_kp).map_err(|e| Error::Invalid {
+
+    // rcgen 0.14's `Issuer` no longer exposes the CA's validity bound or
+    // distinguished name, so read them straight from the CA certificate via
+    // x509-parser before handing the PEM to `Issuer::from_ca_cert_pem`.
+    let (_, ca_pem_block) = x509_parser::pem::parse_x509_pem(ca_pem.as_bytes())
+        .map_err(|e| Error::Invalid {
             message: e.to_string(),
             category: ERROR_CA.to_string(),
         })?;
+    let ca_x509 = ca_pem_block.parse_x509().map_err(|e| Error::Invalid {
+        message: e.to_string(),
+        category: ERROR_CA.to_string(),
+    })?;
+    let ca_organization = ca_x509
+        .subject()
+        .iter_organization()
+        .next()
+        .and_then(|attr| attr.as_str().ok())
+        .map(str::to_string);
+    let ca_organizational_unit = ca_x509
+        .subject()
+        .iter_organizational_unit()
+        .next()
+        .and_then(|attr| attr.as_str().ok())
+        .map(str::to_string);
+    let ca_not_after_ts = ca_x509.validity().not_after.timestamp();
+
+    let not_before = time::OffsetDateTime::now_utc() - time::Duration::days(1);
+    let two_years_from_now =
+        time::OffsetDateTime::now_utc() + time::Duration::days(365 * 2);
+    let ca_not_after =
+        time::OffsetDateTime::from_unix_timestamp(ca_not_after_ts)
+            .unwrap_or(two_years_from_now);
+    let not_after = ca_not_after.min(two_years_from_now);
+
+    // `Issuer` takes ownership of the CA key pair and captures the CA's
+    // distinguished name as the issuer of the certificates it signs.
+    let issuer = rcgen::Issuer::from_ca_cert_pem(&ca_pem, ca_kp).map_err(
+        |e| Error::Invalid {
+            message: e.to_string(),
+            category: ERROR_CA.to_string(),
+        },
+    )?;
 
     let mut params = rcgen::CertificateParams::new(vec![cn.to_string()])
         .map_err(|e| Error::Invalid {
@@ -162,20 +190,12 @@ fn new_certificate_with_ca(
         })?;
     let mut dn = rcgen::DistinguishedName::new();
     dn.push(rcgen::DnType::CommonName, cn.to_string());
-    if let Some(organ) = ca_cert
-        .params()
-        .distinguished_name
-        .get(&rcgen::DnType::OrganizationName)
-    {
-        dn.push(rcgen::DnType::OrganizationName, organ.clone());
-    };
-    if let Some(unit) = ca_cert
-        .params()
-        .distinguished_name
-        .get(&rcgen::DnType::OrganizationalUnitName)
-    {
-        dn.push(rcgen::DnType::OrganizationalUnitName, unit.clone());
-    };
+    if let Some(organ) = ca_organization {
+        dn.push(rcgen::DnType::OrganizationName, organ);
+    }
+    if let Some(unit) = ca_organizational_unit {
+        dn.push(rcgen::DnType::OrganizationalUnitName, unit);
+    }
 
     params.distinguished_name = dn;
     params.not_before = not_before;
@@ -186,7 +206,7 @@ fn new_certificate_with_ca(
         category: ERROR_CA.to_string(),
     })?;
 
-    let cert = params.signed_by(&cert_key, &ca_cert, &ca_kp).map_err(|e| {
+    let cert = params.signed_by(&cert_key, &issuer).map_err(|e| {
         Error::Invalid {
             message: e.to_string(),
             category: ERROR_CA.to_string(),

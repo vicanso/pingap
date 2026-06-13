@@ -152,7 +152,7 @@ impl Plugin for AcceptEncoding {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     let factory = get_plugin_factory();
     factory.register("accept_encoding", |params| {

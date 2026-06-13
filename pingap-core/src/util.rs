@@ -98,7 +98,7 @@ pub fn real_now_ms() -> u64 {
     Clock::now_since_epoch().as_millis()
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     ensure_clock_updater();
 }

@@ -315,7 +315,7 @@ impl Plugin for ResponseHeaders {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory().register("response_headers", |params| {
         Ok(Arc::new(ResponseHeaders::new(params)?))

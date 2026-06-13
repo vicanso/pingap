@@ -100,7 +100,7 @@ impl Plugin for Ping {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory()
         .register("ping", |params| Ok(Arc::new(Ping::new(params)?)));

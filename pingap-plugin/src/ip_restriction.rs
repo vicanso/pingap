@@ -178,7 +178,7 @@ impl Plugin for IpRestriction {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory().register("ip_restriction", |params| {
         Ok(Arc::new(IpRestriction::new(params)?))

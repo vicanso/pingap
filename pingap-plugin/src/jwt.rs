@@ -421,7 +421,7 @@ impl ModifyResponseBody for Sign {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory()
         .register("jwt", |params| Ok(Arc::new(JwtAuth::new(params)?)));

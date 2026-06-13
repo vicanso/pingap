@@ -306,7 +306,7 @@ impl Plugin for Cors {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory()
         .register("cors", |params| Ok(Arc::new(Cors::new(params)?)));

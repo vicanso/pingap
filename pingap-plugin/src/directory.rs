@@ -754,7 +754,7 @@ impl Plugin for Directory {
     }
 }
 
-#[ctor]
+#[ctor(unsafe)]
 fn init() {
     get_plugin_factory()
         .register("directory", |params| Ok(Arc::new(Directory::new(params)?)));
