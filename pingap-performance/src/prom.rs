@@ -179,7 +179,10 @@ impl Prometheus {
     /// This method performs multiple metric updates but uses efficient
     /// atomic operations to minimize overhead.
     pub fn after(&self, session: &Session, ctx: &Ctx) {
-        let location = &ctx.upstream.location;
+        // `location` is an `Arc<str>`; bind it as `&str` so the prometheus 0.14
+        // generic `with_label_values<V: AsRef<str>>` infers `V = &str` uniformly
+        // when it is mixed with `&str` literals in multi-label arrays below.
+        let location: &str = &ctx.upstream.location;
         let upstream = &ctx.upstream.name;
         let elapsed = ctx.timing.created_at.elapsed().as_millis();
         let response_time = elapsed as f64 / SECOND;
