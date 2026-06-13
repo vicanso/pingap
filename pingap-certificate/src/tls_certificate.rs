@@ -176,12 +176,13 @@ fn new_certificate_with_ca(
 
     // `Issuer` takes ownership of the CA key pair and captures the CA's
     // distinguished name as the issuer of the certificates it signs.
-    let issuer = rcgen::Issuer::from_ca_cert_pem(&ca_pem, ca_kp).map_err(
-        |e| Error::Invalid {
-            message: e.to_string(),
-            category: ERROR_CA.to_string(),
-        },
-    )?;
+    let issuer =
+        rcgen::Issuer::from_ca_cert_pem(&ca_pem, ca_kp).map_err(|e| {
+            Error::Invalid {
+                message: e.to_string(),
+                category: ERROR_CA.to_string(),
+            }
+        })?;
 
     let mut params = rcgen::CertificateParams::new(vec![cn.to_string()])
         .map_err(|e| Error::Invalid {
@@ -206,12 +207,13 @@ fn new_certificate_with_ca(
         category: ERROR_CA.to_string(),
     })?;
 
-    let cert = params.signed_by(&cert_key, &issuer).map_err(|e| {
-        Error::Invalid {
-            message: e.to_string(),
-            category: ERROR_CA.to_string(),
-        }
-    })?;
+    let cert =
+        params
+            .signed_by(&cert_key, &issuer)
+            .map_err(|e| Error::Invalid {
+                message: e.to_string(),
+                category: ERROR_CA.to_string(),
+            })?;
 
     let cert =
         X509::from_pem(cert.pem().as_bytes()).map_err(|e| Error::Invalid {
