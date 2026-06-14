@@ -12,12 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, get_bool_conf, get_hash_key, get_int_conf, get_plugin_factory,
-    get_str_conf,
-};
+use super::{Error, get_bool_conf, get_hash_key, get_int_conf, get_str_conf};
 use async_trait::async_trait;
-use ctor::ctor;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{Ctx, Plugin, PluginStep, RequestPluginResult};
 use pingap_core::{get_cookie_value, get_req_header_value};
@@ -176,12 +172,7 @@ impl Plugin for TrafficSplitting {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
-    get_plugin_factory().register("traffic_splitting", |params| {
-        Ok(Arc::new(TrafficSplitting::new(params)?))
-    });
-}
+register_plugin!("traffic_splitting", TrafficSplitting);
 
 #[cfg(test)]
 mod tests {

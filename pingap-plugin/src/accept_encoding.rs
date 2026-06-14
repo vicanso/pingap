@@ -12,17 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf,
-};
+use super::{Error, get_bool_conf, get_hash_key, get_str_conf};
 use async_trait::async_trait;
-use ctor::ctor;
 use pingap_config::PluginConf;
 use pingap_core::{Ctx, Plugin, PluginStep, RequestPluginResult};
 use pingora::proxy::Session;
 use smallvec::SmallVec;
 use std::borrow::Cow;
-use std::sync::Arc;
 use tracing::debug;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -152,13 +148,7 @@ impl Plugin for AcceptEncoding {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
-    let factory = get_plugin_factory();
-    factory.register("accept_encoding", |params| {
-        Ok(Arc::new(AcceptEncoding::new(params)?))
-    });
-}
+register_plugin!("accept_encoding", AcceptEncoding);
 
 #[cfg(test)]
 mod tests {

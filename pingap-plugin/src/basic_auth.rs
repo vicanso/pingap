@@ -13,12 +13,10 @@
 // limitations under the License.
 
 use super::{
-    Error, get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf,
-    get_str_slice_conf,
+    Error, get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
-use ctor::ctor;
 use http::HeaderValue;
 use http::StatusCode;
 use humantime::parse_duration;
@@ -27,7 +25,6 @@ use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult};
 use pingap_util::base64_decode;
 use pingora::proxy::Session;
 use std::borrow::Cow;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::debug;
@@ -230,12 +227,7 @@ impl Plugin for BasicAuth {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
-    let factory = get_plugin_factory();
-    factory
-        .register("basic_auth", |params| Ok(Arc::new(BasicAuth::new(params)?)));
-}
+register_plugin!("basic_auth", BasicAuth);
 
 #[cfg(test)]
 mod tests {

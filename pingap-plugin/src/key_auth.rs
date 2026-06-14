@@ -13,12 +13,10 @@
 // limitations under the License.
 
 use super::{
-    Error, get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf,
-    get_str_slice_conf,
+    Error, get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
-use ctor::ctor;
 use http::{HeaderName, StatusCode};
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
@@ -29,7 +27,6 @@ use pingap_core::{
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, error};
@@ -189,11 +186,7 @@ impl KeyAuth {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
-    get_plugin_factory()
-        .register("key_auth", |params| Ok(Arc::new(KeyAuth::new(params)?)));
-}
+register_plugin!("key_auth", KeyAuth);
 
 #[async_trait]
 impl Plugin for KeyAuth {

@@ -12,12 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, get_hash_key, get_int_conf, get_plugin_factory, get_step_conf,
-    get_str_conf,
-};
+use super::{Error, get_hash_key, get_int_conf, get_step_conf, get_str_conf};
 use async_trait::async_trait;
-use ctor::ctor;
 use http::HeaderName;
 use nanoid::nanoid;
 use pingap_config::{PluginCategory, PluginConf};
@@ -27,7 +23,6 @@ use pingap_core::{
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::str::FromStr;
-use std::sync::Arc;
 use tracing::debug;
 use uuid::Uuid;
 
@@ -218,11 +213,7 @@ impl Plugin for RequestId {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
-    get_plugin_factory()
-        .register("request_id", |params| Ok(Arc::new(RequestId::new(params)?)));
-}
+register_plugin!("request_id", RequestId);
 
 #[cfg(test)]
 mod tests {

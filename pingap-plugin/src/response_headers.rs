@@ -11,11 +11,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use super::{
-    Error, get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf,
-};
+use super::{Error, get_hash_key, get_str_conf, get_str_slice_conf};
 use async_trait::async_trait;
-use ctor::ctor;
 use http::header::HeaderName;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::ModifiedMode;
@@ -27,7 +24,6 @@ use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::str::FromStr;
-use std::sync::Arc;
 use tracing::debug;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -315,12 +311,7 @@ impl Plugin for ResponseHeaders {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
-    get_plugin_factory().register("response_headers", |params| {
-        Ok(Arc::new(ResponseHeaders::new(params)?))
-    });
-}
+register_plugin!("response_headers", ResponseHeaders);
 
 #[cfg(test)]
 mod tests {

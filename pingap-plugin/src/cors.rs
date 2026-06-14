@@ -12,11 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf,
-};
+use super::{Error, get_bool_conf, get_hash_key, get_str_conf};
 use async_trait::async_trait;
-use ctor::ctor;
 use http::{HeaderValue, header};
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
@@ -28,7 +25,6 @@ use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use regex::Regex;
 use std::borrow::Cow;
-use std::sync::Arc;
 use std::time::Duration;
 use tracing::debug;
 
@@ -306,11 +302,7 @@ impl Plugin for Cors {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
-    get_plugin_factory()
-        .register("cors", |params| Ok(Arc::new(Cors::new(params)?)));
-}
+register_plugin!("cors", Cors);
 
 #[cfg(test)]
 mod tests {

@@ -13,12 +13,11 @@
 // limitations under the License.
 
 use super::{
-    Error, get_bool_conf, get_hash_key, get_plugin_factory, get_step_conf,
-    get_str_conf, get_str_slice_conf,
+    Error, get_bool_conf, get_hash_key, get_step_conf, get_str_conf,
+    get_str_slice_conf,
 };
 use async_trait::async_trait;
 use bytesize::ByteSize;
-use ctor::ctor;
 use glob::glob;
 use http::{HeaderValue, StatusCode, header};
 use humantime::parse_duration;
@@ -38,7 +37,6 @@ use std::os::unix::fs::MetadataExt;
 use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::Arc;
 use std::sync::LazyLock;
 use std::time::UNIX_EPOCH;
 use tokio::fs;
@@ -754,11 +752,7 @@ impl Plugin for Directory {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
-    get_plugin_factory()
-        .register("directory", |params| Ok(Arc::new(Directory::new(params)?)));
-}
+register_plugin!("directory", Directory);
 
 #[cfg(test)]
 mod tests {

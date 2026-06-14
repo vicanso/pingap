@@ -12,11 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_plugin_factory, get_str_conf};
+use super::{Error, get_hash_key, get_str_conf};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cookie::Cookie;
-use ctor::ctor;
 use http::{HeaderValue, Method, StatusCode, header};
 use humantime::parse_duration;
 use nanoid::nanoid;
@@ -30,7 +29,6 @@ use pingap_util::base64_encode;
 use pingora::proxy::Session;
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
-use std::sync::Arc;
 use tracing::debug;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -315,11 +313,7 @@ impl Plugin for Csrf {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
-    get_plugin_factory()
-        .register("csrf", |params| Ok(Arc::new(Csrf::new(params)?)));
-}
+register_plugin!("csrf", Csrf);
 
 #[cfg(test)]
 mod tests {

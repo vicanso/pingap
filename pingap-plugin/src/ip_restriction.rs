@@ -12,12 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf,
-};
+use super::{Error, get_hash_key, get_str_conf, get_str_slice_conf};
 use async_trait::async_trait;
 use bytes::Bytes;
-use ctor::ctor;
 use http::StatusCode;
 use pingap_config::PluginConf;
 use pingap_core::{
@@ -26,7 +23,6 @@ use pingap_core::{
 use pingap_util::IpRules;
 use pingora::proxy::Session;
 use std::borrow::Cow;
-use std::sync::Arc;
 use tracing::debug;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -178,12 +174,7 @@ impl Plugin for IpRestriction {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
-    get_plugin_factory().register("ip_restriction", |params| {
-        Ok(Arc::new(IpRestriction::new(params)?))
-    });
-}
+register_plugin!("ip_restriction", IpRestriction);
 
 #[cfg(test)]
 mod tests {

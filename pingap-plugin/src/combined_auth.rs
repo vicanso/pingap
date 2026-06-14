@@ -13,13 +13,11 @@
 // limitations under the License.
 
 use super::{
-    Error, get_hash_key, get_int_conf, get_plugin_factory, get_str_conf,
-    get_str_slice_conf,
+    Error, get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf,
 };
 use ahash::AHashMap;
 use async_trait::async_trait;
 use bytes::Bytes;
-use ctor::ctor;
 use hex::ToHex;
 use http::StatusCode;
 use pingap_config::PluginConf;
@@ -31,7 +29,6 @@ use pingap_core::{get_client_ip, get_query_value, now_sec};
 use pingora::proxy::Session;
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
-use std::sync::Arc;
 use tracing::debug;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -293,12 +290,7 @@ impl Plugin for CombinedAuth {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
-    get_plugin_factory().register("combined_auth", |params| {
-        Ok(Arc::new(CombinedAuth::new(params)?))
-    });
-}
+register_plugin!("combined_auth", CombinedAuth);
 
 #[cfg(test)]
 mod tests {

@@ -13,11 +13,10 @@
 // limitations under the License.
 
 use super::{
-    Error, get_hash_key, get_int_conf, get_int_conf_or_default,
-    get_plugin_factory, get_step_conf, get_str_conf,
+    Error, get_hash_key, get_int_conf, get_int_conf_or_default, get_step_conf,
+    get_str_conf,
 };
 use async_trait::async_trait;
-use ctor::ctor;
 use http::StatusCode;
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
@@ -29,7 +28,6 @@ use pingap_core::{
 };
 use pingora::proxy::Session;
 use std::borrow::Cow;
-use std::sync::Arc;
 use std::time::Duration;
 use tracing::debug;
 
@@ -329,11 +327,7 @@ impl Plugin for Limiter {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
-    get_plugin_factory()
-        .register("limit", |params| Ok(Arc::new(Limiter::new(params)?)));
-}
+register_plugin!("limit", Limiter);
 
 #[cfg(test)]
 mod tests {

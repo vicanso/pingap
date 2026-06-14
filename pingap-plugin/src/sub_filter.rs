@@ -12,13 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf,
-};
+use super::{Error, get_hash_key, get_str_conf, get_str_slice_conf};
 use async_trait::async_trait;
 use bstr::ByteSlice;
 use bytes::{Bytes, BytesMut};
-use ctor::ctor;
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, HTTP_HEADER_TRANSFER_CHUNKED, ModifyResponseBody, Plugin,
@@ -29,7 +26,6 @@ use pingora::proxy::Session;
 use regex::Regex;
 use regex::bytes::RegexBuilder;
 use std::borrow::Cow;
-use std::sync::Arc;
 use std::sync::LazyLock;
 
 const PLUGIN_ID: &str = "_sub_filter_";
@@ -333,11 +329,7 @@ impl Plugin for SubFilter {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
-    get_plugin_factory()
-        .register("sub_filter", |params| Ok(Arc::new(SubFilter::new(params)?)));
-}
+register_plugin!("sub_filter", SubFilter);
 
 #[cfg(test)]
 mod tests {

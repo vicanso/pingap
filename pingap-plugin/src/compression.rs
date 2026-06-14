@@ -12,12 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, get_bool_conf, get_hash_key, get_int_conf, get_plugin_factory,
-    get_str_conf,
-};
+use super::{Error, get_bool_conf, get_hash_key, get_int_conf, get_str_conf};
 use async_trait::async_trait;
-use ctor::ctor;
 use http::HeaderValue;
 use http::header::{
     ACCEPT_ENCODING, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE,
@@ -35,7 +31,6 @@ use pingora::protocols::http::compression::{Algorithm, Encode};
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::str::FromStr;
-use std::sync::Arc;
 use tracing::debug;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -413,12 +408,7 @@ fn is_compressible_content_type(content_type: &HeaderValue) -> bool {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
-    get_plugin_factory().register("compression", |params| {
-        Ok(Arc::new(Compression::new(params)?))
-    });
-}
+register_plugin!("compression", Compression);
 
 #[cfg(test)]
 mod tests {

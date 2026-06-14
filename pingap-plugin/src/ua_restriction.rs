@@ -12,19 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{
-    Error, get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf,
-};
+use super::{Error, get_hash_key, get_str_conf, get_str_slice_conf};
 use async_trait::async_trait;
 use bytes::Bytes;
-use ctor::ctor;
 use http::StatusCode;
 use pingap_config::PluginConf;
 use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult};
 use pingora::proxy::Session;
 use regex::Regex;
 use std::borrow::Cow;
-use std::sync::Arc;
 use tracing::debug;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -209,12 +205,7 @@ impl Plugin for UaRestriction {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
-    get_plugin_factory().register("ua_restriction", |params| {
-        Ok(Arc::new(UaRestriction::new(params)?))
-    });
-}
+register_plugin!("ua_restriction", UaRestriction);
 
 #[cfg(test)]
 mod tests {

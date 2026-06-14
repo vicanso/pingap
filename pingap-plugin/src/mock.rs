@@ -13,11 +13,9 @@
 // limitations under the License.
 
 use super::{
-    Error, get_hash_key, get_int_conf, get_plugin_factory, get_str_conf,
-    get_str_slice_conf,
+    Error, get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf,
 };
 use async_trait::async_trait;
-use ctor::ctor;
 use http::StatusCode;
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
@@ -26,7 +24,6 @@ use pingap_core::{
 };
 use pingora::proxy::Session;
 use std::borrow::Cow;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::debug;
@@ -186,11 +183,7 @@ impl Plugin for MockResponse {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
-    get_plugin_factory()
-        .register("mock", |params| Ok(Arc::new(MockResponse::new(params)?)));
-}
+register_plugin!("mock", MockResponse);
 
 #[cfg(test)]
 mod tests {

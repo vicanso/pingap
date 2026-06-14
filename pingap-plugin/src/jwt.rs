@@ -12,11 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_plugin_factory, get_str_conf};
+use super::{Error, get_hash_key, get_str_conf};
 use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::{Bytes, BytesMut};
-use ctor::ctor;
 use http::StatusCode;
 use humantime::parse_duration;
 use pingap_config::{PluginCategory, PluginConf};
@@ -31,7 +30,6 @@ use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
-use std::sync::Arc;
 use std::time::Duration;
 use substring::Substring;
 use tokio::time::sleep;
@@ -421,11 +419,7 @@ impl ModifyResponseBody for Sign {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
-    get_plugin_factory()
-        .register("jwt", |params| Ok(Arc::new(JwtAuth::new(params)?)));
-}
+register_plugin!("jwt", JwtAuth);
 
 #[cfg(test)]
 mod tests {

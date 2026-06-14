@@ -12,16 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_plugin_factory, get_str_conf};
+use super::{Error, get_hash_key, get_str_conf};
 use async_trait::async_trait;
 use bytes::Bytes;
-use ctor::ctor;
 use http::StatusCode;
 use pingap_config::PluginConf;
 use pingap_core::{Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult};
 use pingora::proxy::Session;
 use std::borrow::Cow;
-use std::sync::Arc;
 use std::sync::LazyLock;
 use tracing::debug;
 
@@ -100,11 +98,7 @@ impl Plugin for Ping {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
-    get_plugin_factory()
-        .register("ping", |params| Ok(Arc::new(Ping::new(params)?)));
-}
+register_plugin!("ping", Ping);
 
 #[cfg(test)]
 mod tests {

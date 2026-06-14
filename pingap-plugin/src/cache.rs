@@ -13,14 +13,12 @@
 // limitations under the License.
 
 use super::{
-    Error, get_bool_conf, get_hash_key, get_plugin_factory, get_str_conf,
-    get_str_slice_conf,
+    Error, get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf,
 };
 use async_trait::async_trait;
 use bstr::ByteSlice;
 use bytes::Bytes;
 use bytesize::ByteSize;
-use ctor::ctor;
 use fancy_regex::Regex;
 use http::{Method, StatusCode};
 use humantime::parse_duration;
@@ -39,7 +37,6 @@ use pingora::cache::predictor::{CacheablePredictor, Predictor};
 use pingora::proxy::Session;
 use std::borrow::Cow;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -455,11 +452,7 @@ impl Plugin for Cache {
     }
 }
 
-#[ctor(unsafe)]
-fn init() {
-    get_plugin_factory()
-        .register("cache", |params| Ok(Arc::new(Cache::new(params)?)));
-}
+register_plugin!("cache", Cache);
 
 #[cfg(test)]
 mod tests {
