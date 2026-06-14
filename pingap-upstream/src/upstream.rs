@@ -508,7 +508,7 @@ impl Upstream {
         let Some(states) = &self.circuit_breaker_states else {
             return true;
         };
-        states.is_backend_acceptable(&backend.addr.to_string())
+        states.is_backend_acceptable(&backend.addr)
     }
 
     /// Creates and configures a new HTTP peer for handling requests

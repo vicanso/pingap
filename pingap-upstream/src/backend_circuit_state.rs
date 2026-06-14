@@ -14,6 +14,7 @@
 
 use crate::backend_stats::BackendStats;
 use dashmap::DashMap;
+use std::fmt::Write as _;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -95,6 +96,41 @@ impl BackendCircuitState {
     }
 }
 
+/// A small stack buffer for formatting a socket address into a lookup key
+/// without allocating on the hot path. Socket addresses (`ip:port`, including
+/// IPv6) are far shorter than this capacity; anything longer (e.g. a long unix
+/// socket path) falls back to a heap-allocated key.
+struct AddrKeyBuf {
+    buf: [u8; 64],
+    len: usize,
+}
+
+impl AddrKeyBuf {
+    fn new() -> Self {
+        Self {
+            buf: [0; 64],
+            len: 0,
+        }
+    }
+    fn as_str(&self) -> &str {
+        // Only valid UTF-8 is ever written (via Display in `write_str`).
+        std::str::from_utf8(&self.buf[..self.len]).unwrap_or_default()
+    }
+}
+
+impl std::fmt::Write for AddrKeyBuf {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        let bytes = s.as_bytes();
+        let end = self.len + bytes.len();
+        if end > self.buf.len() {
+            return Err(std::fmt::Error);
+        }
+        self.buf[self.len..end].copy_from_slice(bytes);
+        self.len = end;
+        Ok(())
+    }
+}
+
 pub struct BackendCircuitStates {
     backend_states: DashMap<String, Arc<BackendCircuitState>>,
     config: CircuitBreakerConfig,
@@ -111,6 +147,12 @@ impl BackendCircuitStates {
         &self,
         address: &str,
     ) -> Arc<BackendCircuitState> {
+        // Fast path: the state already exists (true after the first request to
+        // a backend) — look it up by &str with no allocation.
+        if let Some(state) = self.backend_states.get(address) {
+            return state.value().clone();
+        }
+        // Slow path: first time we see this backend — allocate the key once.
         self.backend_states
             .entry(address.to_string())
             .or_insert_with(|| Arc::new(BackendCircuitState::new()))
@@ -155,8 +197,15 @@ impl BackendCircuitStates {
         }
     }
 
-    pub fn is_backend_acceptable(&self, address: &str) -> bool {
-        let state = self.get_or_create_backend_circuit_state(address);
+    pub fn is_backend_acceptable(&self, addr: impl std::fmt::Display) -> bool {
+        // Format the address into a stack buffer so this per-request lookup
+        // avoids a heap allocation; only the rare first-time insert allocates.
+        let mut key = AddrKeyBuf::new();
+        let state = if write!(key, "{addr}").is_ok() {
+            self.get_or_create_backend_circuit_state(key.as_str())
+        } else {
+            self.get_or_create_backend_circuit_state(&addr.to_string())
+        };
 
         // 1. Read the atomic state (no lock, very fast)
         let state_now = state.current_state.load(Ordering::Relaxed);
@@ -252,5 +301,33 @@ impl BackendCircuitStates {
                 _ => {}, // Open state
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_backend_acceptable_stack_key() {
+        let states = BackendCircuitStates::new(CircuitBreakerConfig::default());
+
+        // A fresh backend starts closed → acceptable. The first call takes the
+        // slow path and inserts the state keyed by the formatted address.
+        let v4 = "127.0.0.1:8080";
+        assert!(states.is_backend_acceptable(v4));
+        // The repeat call hits the read-first fast path (no allocation) and
+        // must resolve to the same state, so it stays acceptable.
+        assert!(states.is_backend_acceptable(v4));
+
+        // An IPv6 address exercises a longer Display output in the stack buffer.
+        let v6 = "[2001:db8::1]:443";
+        assert!(states.is_backend_acceptable(v6));
+
+        // Exactly one entry per distinct address, keyed by the formatted string
+        // — proving the stack-buffer key matches the previous to_string key.
+        assert_eq!(states.backend_states.len(), 2);
+        assert!(states.backend_states.contains_key(v4));
+        assert!(states.backend_states.contains_key(v6));
     }
 }
