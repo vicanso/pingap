@@ -38,7 +38,7 @@ use pingap_core::{
     ResponseBodyPluginResult, ResponsePluginResult, get_cache_key,
 };
 use pingap_core::{HTTP_HEADER_NAME_X_REQUEST_ID, get_digest_detail};
-use pingap_core::{Plugin, new_internal_error};
+use pingap_core::{NamedPlugin, new_internal_error};
 use pingap_location::{Location, LocationProvider};
 use pingap_logger::{Parser, parse_access_log_directive};
 #[cfg(feature = "tracing")]
@@ -700,7 +700,7 @@ impl Server {
         &self,
         location: Arc<Location>,
         session: &Session,
-    ) -> Option<Vec<(String, Arc<dyn Plugin>)>> {
+    ) -> Option<Vec<NamedPlugin>> {
         if session.is_upgrade_req() {
             return None;
         }
@@ -747,7 +747,7 @@ impl Server {
                 let mut record_time = |msg: &str| {
                     debug!(
                         target: LOG_TARGET,
-                        name,
+                        name = &**name,
                         elapsed,
                         step = step.to_string(),
                         "{msg}"
@@ -807,7 +807,7 @@ impl Server {
                     let elapsed = now.elapsed().as_millis() as u32;
                     debug!(
                         target: LOG_TARGET,
-                        name, elapsed, "response plugin modify headers"
+                        name = &**name, elapsed, "response plugin modify headers"
                     );
                     ctx.add_plugin_processing_time(name, elapsed);
                 };
@@ -843,7 +843,7 @@ impl Server {
                     let elapsed = now.elapsed().as_millis() as u32;
                     debug!(
                         target: LOG_TARGET,
-                        name,
+                        name = &**name,
                         elapsed,
                         "upstream response plugin modify headers"
                     );
@@ -887,7 +887,7 @@ impl Server {
                         ctx.add_plugin_processing_time(name, elapsed);
                         debug!(
                             target: LOG_TARGET,
-                            name, elapsed, "response body plugin modify body"
+                            name = &**name, elapsed, "response body plugin modify body"
                         );
                     },
                     _ => {},
@@ -929,7 +929,7 @@ impl Server {
                         ctx.add_plugin_processing_time(name, elapsed);
                         debug!(
                             target: LOG_TARGET,
-                            name, elapsed, "response body plugin modify body"
+                            name = &**name, elapsed, "response body plugin modify body"
                         );
                     },
                     _ => {},
@@ -1698,7 +1698,7 @@ mod tests {
     use ahash::AHashMap;
     use pingap_certificate::{DynamicCertificates, TlsCertificate};
     use pingap_config::{PingapConfig, new_file_config_manager};
-    use pingap_core::{CacheInfo, Ctx, UpstreamInfo};
+    use pingap_core::{CacheInfo, Ctx, Plugin, UpstreamInfo};
     use pingap_location::LocationStats;
     use pingora::http::ResponseHeader;
     use pingora::protocols::tls::SslDigest;

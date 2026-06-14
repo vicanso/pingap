@@ -70,9 +70,6 @@ rust-embed = { version = "8.11.0", features = [
 ], default-features = false }
 serde_qs = { workspace = true }
 sysinfo = { workspace = true }
-# TODO remove it after using edition 2024
-include-flate = "0.3.3"
-# #TODO END
 
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -134,7 +131,7 @@ name = "bench"
 harness = false
 
 [package.metadata.cargo-machete]
-ignored = ["humantime-serde", "include-flate", "hcl-rs", "kdl"]
+ignored = ["humantime-serde", "hcl-rs", "kdl"]
 
 [workspace]
 members = [

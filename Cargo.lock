@@ -3011,15 +3011,6 @@ checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
 name = "nanoid"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ffa00dec017b5b1a8b7cf5e2c008bfda1aa7e0697ac1508b491fdf2622fb4d8"
-dependencies = [
- "rand 0.8.6",
-]
-
-[[package]]
-name = "nanoid"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8628de41fe064cc3f0cf07f3d299ee3e73521adaff72278731d5c8cae3797873"
@@ -3813,10 +3804,9 @@ dependencies = [
  "http",
  "humantime",
  "humantime-serde",
- "include-flate",
  "kdl",
  "mimalloc",
- "nanoid 0.5.0",
+ "nanoid",
  "nix 0.31.3",
  "pingap-acme",
  "pingap-cache",
@@ -3868,7 +3858,7 @@ dependencies = [
  "hickory-resolver",
  "hmac",
  "instant-acme",
- "nanoid 0.5.0",
+ "nanoid",
  "pingap-certificate",
  "pingap-config",
  "pingap-core",
@@ -3929,7 +3919,7 @@ dependencies = [
  "ahash",
  "arc-swap",
  "async-trait",
- "nanoid 0.4.0",
+ "nanoid",
  "pingap-config",
  "pingap-core",
  "pingap-util",
@@ -3963,7 +3953,7 @@ dependencies = [
  "http",
  "humantime-serde",
  "kdl",
- "nanoid 0.4.0",
+ "nanoid",
  "pingap-core",
  "pingap-discovery",
  "pingap-util",
@@ -4202,7 +4192,7 @@ dependencies = [
  "http",
  "humantime",
  "mime_guess",
- "nanoid 0.5.0",
+ "nanoid",
  "path-absolutize",
  "pingap-cache",
  "pingap-config",

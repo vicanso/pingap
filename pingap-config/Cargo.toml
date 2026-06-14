@@ -52,7 +52,7 @@ ignored = ["humantime-serde", "hcl-rs", "kdl"]
 [dev-dependencies]
 pretty_assertions = "1.4.1"
 tokio-test = "0.4.4"
-nanoid = "0.4.0"
+nanoid = { workspace = true }
 
 [lints.clippy]
 # Set the unwrap_used lint level to deny

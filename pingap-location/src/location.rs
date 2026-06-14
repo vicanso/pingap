@@ -210,7 +210,7 @@ pub struct Location {
     // pub proxy_set_headers: Option<Vec<HttpHeader>>,
 
     /// Ordered list of plugin names to execute during request/response processing
-    pub plugins: Option<Vec<String>>,
+    pub plugins: Option<Vec<Arc<str>>>,
 
     /// Total number of requests accepted by this location
     /// Used for metrics and monitoring
@@ -342,7 +342,9 @@ impl Location {
             hosts,
             upstream,
             reg_rewrite,
-            plugins: conf.plugins.clone(),
+            plugins: conf.plugins.as_ref().map(|list| {
+                list.iter().map(|name| Arc::from(name.as_str())).collect()
+            }),
             accepted: AtomicU64::new(0),
             processing: AtomicI32::new(0),
             max_processing: conf.max_processing.unwrap_or_default(),

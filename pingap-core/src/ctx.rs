@@ -292,7 +292,7 @@ pub struct Features {
     /// A map of custom variables for request processing.
     pub variables: Option<AHashMap<String, String>>,
     /// A list of plugin names and their processing times in milliseconds.
-    pub plugin_processing_times: Option<Vec<(String, u32)>>,
+    pub plugin_processing_times: Option<Vec<(Arc<str>, u32)>>,
     /// Statistics about response compression.
     pub compression_stat: Option<CompressionStat>,
     /// A map of plugin names and their response body handlers.
@@ -356,6 +356,9 @@ impl OtelTracer {
     }
 }
 
+/// A plugin paired with the name it was registered under in the location config.
+pub type NamedPlugin = (Arc<str>, Arc<dyn Plugin>);
+
 /// Represents the state of a request/response cycle, tracking various metrics and properties
 /// including connection details, caching information, and upstream server interactions.
 #[derive(Default)]
@@ -373,7 +376,7 @@ pub struct Ctx {
     /// Optional features. Wrapped in Option to save memory when not in use.
     pub features: Option<Features>,
     /// Plugins for the current location
-    pub plugins: Option<Vec<(String, Arc<dyn Plugin>)>>,
+    pub plugins: Option<Vec<NamedPlugin>>,
 }
 
 /// Helper struct to store connection timing and TLS details
@@ -565,16 +568,16 @@ impl Ctx {
     /// * `name` - The name of the plugin.
     /// * `time` - The time taken by the plugin in milliseconds.
     #[inline]
-    pub fn add_plugin_processing_time(&mut self, name: &str, time: u32) {
+    pub fn add_plugin_processing_time(&mut self, name: &Arc<str>, time: u32) {
         // Lazily initialize features and the processing times vector.
         let features = self.features.get_or_insert_default();
         let times = features
             .plugin_processing_times
             .get_or_insert_with(|| Vec::with_capacity(5));
-        if let Some(item) = times.iter_mut().find(|item| item.0 == name) {
+        if let Some(item) = times.iter_mut().find(|item| &item.0 == name) {
             item.1 += time;
         } else {
-            times.push((name.to_string(), time));
+            times.push((Arc::clone(name), time));
         }
     }
 
@@ -1068,7 +1071,7 @@ mod tests {
         ctx.timing.upstream_processing = Some(2);
         ctx.timing.cache_lookup = Some(6);
         ctx.timing.cache_lock = Some(7);
-        ctx.add_plugin_processing_time("plugin1", 100);
+        ctx.add_plugin_processing_time(&Arc::from("plugin1"), 100);
 
         let timing_header = ctx.generate_server_timing();
 
@@ -1339,13 +1342,13 @@ mod tests {
     #[test]
     fn test_add_plugin_processing_time() {
         let mut ctx = Ctx::new();
-        ctx.add_plugin_processing_time("plugin1", 100);
-        ctx.add_plugin_processing_time("plugin2", 200);
+        ctx.add_plugin_processing_time(&Arc::from("plugin1"), 100);
+        ctx.add_plugin_processing_time(&Arc::from("plugin2"), 200);
         assert_eq!(
             ctx.features.unwrap().plugin_processing_times,
             Some(vec![
-                ("plugin1".to_string(), 100),
-                ("plugin2".to_string(), 200)
+                (Arc::from("plugin1"), 100),
+                (Arc::from("plugin2"), 200)
             ])
         );
     }

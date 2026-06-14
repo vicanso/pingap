@@ -35,7 +35,7 @@ x509-parser = { workspace = true }
 pretty_assertions = "1.4.1"
 tempfile = "3.21.0"
 tokio-test = "0.4.4"
-nanoid = "0.4.0"
+nanoid = { workspace = true }
 
 [lints.clippy]
 # Set the unwrap_used lint level to deny
