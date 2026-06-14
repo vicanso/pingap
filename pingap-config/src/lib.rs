@@ -23,6 +23,7 @@ use tokio::fs;
 use tracing::debug;
 
 mod common;
+mod config_convert;
 mod etcd_storage;
 mod file_storage;
 pub mod hcl;

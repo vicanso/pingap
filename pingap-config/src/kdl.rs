@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::config_convert::{
+    ConfigBlock, ParsedLocation, ParsedServer, assemble_toml,
+};
 use crate::{Error, Result};
 use kdl::{KdlDocument, KdlNode, KdlValue};
 use toml::Value as TomlValue;
@@ -212,26 +215,6 @@ fn node_to_toml_map(node: &KdlNode) -> Result<TomlMap<String, TomlValue>> {
 }
 
 /// Insert a named entry into a section table in root.
-fn insert_into_section(
-    root: &mut TomlMap<String, TomlValue>,
-    section_key: &str,
-    name: String,
-    value: TomlValue,
-) {
-    let section = root
-        .entry(section_key.to_string())
-        .or_insert_with(|| TomlValue::Table(TomlMap::new()));
-    if let TomlValue::Table(t) = section {
-        t.insert(name, value);
-    }
-}
-
-struct ParsedLocationNode {
-    location: TomlMap<String, TomlValue>,
-    upstreams: TomlMap<String, TomlValue>,
-    plugins: TomlMap<String, TomlValue>,
-}
-
 /// Process a location node, extracting nested upstream/plugin blocks.
 ///
 /// ```kdl
@@ -247,7 +230,7 @@ struct ParsedLocationNode {
 /// Nested upstreams are extracted to top-level upstreams.
 /// If no explicit `upstream "..."` child exists, auto-set from nested block name.
 /// Nested plugin blocks are extracted to top-level plugins.
-fn process_location_node(node: &KdlNode) -> Result<ParsedLocationNode> {
+fn process_location_node(node: &KdlNode) -> Result<ParsedLocation> {
     let mut upstreams = TomlMap::new();
     let mut plugins = TomlMap::new();
     let mut first_upstream_name: Option<String> = None;
@@ -355,19 +338,11 @@ fn process_location_node(node: &KdlNode) -> Result<ParsedLocationNode> {
         );
     }
 
-    Ok(ParsedLocationNode {
+    Ok(ParsedLocation {
         location: loc_map,
         upstreams,
         plugins,
     })
-}
-
-struct ParsedServerNode {
-    server: TomlMap<String, TomlValue>,
-    locations: TomlMap<String, TomlValue>,
-    upstreams: TomlMap<String, TomlValue>,
-    plugins: TomlMap<String, TomlValue>,
-    certificates: TomlMap<String, TomlValue>,
 }
 
 /// Process a server node, extracting nested location/plugin/certificate blocks.
@@ -385,7 +360,7 @@ struct ParsedServerNode {
 /// ```
 ///
 /// Nested locations are extracted to top-level and auto-added to `locations` list.
-fn process_server_node(node: &KdlNode) -> Result<ParsedServerNode> {
+fn process_server_node(node: &KdlNode) -> Result<ParsedServer> {
     let mut locations = TomlMap::new();
     let mut upstreams = TomlMap::new();
     let mut plugins = TomlMap::new();
@@ -496,7 +471,7 @@ fn process_server_node(node: &KdlNode) -> Result<ParsedServerNode> {
         );
     }
 
-    Ok(ParsedServerNode {
+    Ok(ParsedServer {
         server: server_map,
         locations,
         upstreams,
@@ -541,114 +516,46 @@ pub fn convert_kdl_to_toml(input: &str) -> Result<String> {
         message: format!("KDL parse error: {e}"),
     })?;
 
-    let mut root = TomlMap::new();
-    let mut all_locations = TomlMap::new();
-    let mut all_upstreams = TomlMap::new();
-    let mut all_plugins = TomlMap::new();
-    let mut all_certificates = TomlMap::new();
-
+    let mut blocks = Vec::new();
     for node in doc.nodes() {
         let node_type = node.name().value();
 
-        match node_type {
-            "basic" => {
-                let table = node_to_toml_map(node)?;
-                root.insert("basic".to_string(), TomlValue::Table(table));
-            },
-            "server" | "servers" => {
-                let name = get_node_name_arg(node)?;
-                let ParsedServerNode {
-                    server,
-                    locations,
-                    upstreams,
-                    plugins,
-                    certificates,
-                } = process_server_node(node)?;
-                insert_into_section(
-                    &mut root,
-                    "servers",
-                    name,
-                    TomlValue::Table(server),
-                );
-                all_locations.extend(locations);
-                all_upstreams.extend(upstreams);
-                all_plugins.extend(plugins);
-                all_certificates.extend(certificates);
-            },
-            "location" | "locations" => {
-                let name = get_node_name_arg(node)?;
-                let parsed = process_location_node(node)?;
-                all_locations.insert(name, TomlValue::Table(parsed.location));
-                all_upstreams.extend(parsed.upstreams);
-                all_plugins.extend(parsed.plugins);
-            },
-            "upstream" | "upstreams" => {
-                let name = get_node_name_arg(node)?;
-                let table = node_to_toml_map(node)?;
-                all_upstreams.insert(name, TomlValue::Table(table));
-            },
-            "plugin" | "plugins" => {
-                let name = get_node_name_arg(node)?;
-                let table = node_to_toml_map(node)?;
-                insert_into_section(
-                    &mut root,
-                    "plugins",
-                    name,
-                    TomlValue::Table(table),
-                );
-            },
-            "certificate" | "certificates" => {
-                let name = get_node_name_arg(node)?;
-                let table = node_to_toml_map(node)?;
-                insert_into_section(
-                    &mut root,
-                    "certificates",
-                    name,
-                    TomlValue::Table(table),
-                );
-            },
-            "storage" | "storages" => {
-                let name = get_node_name_arg(node)?;
-                let table = node_to_toml_map(node)?;
-                insert_into_section(
-                    &mut root,
-                    "storages",
-                    name,
-                    TomlValue::Table(table),
-                );
-            },
+        let parsed = match node_type {
+            "basic" => ConfigBlock::Basic(node_to_toml_map(node)?),
+            "server" | "servers" => ConfigBlock::Server(
+                get_node_name_arg(node)?,
+                process_server_node(node)?,
+            ),
+            "location" | "locations" => ConfigBlock::Location(
+                get_node_name_arg(node)?,
+                process_location_node(node)?,
+            ),
+            "upstream" | "upstreams" => ConfigBlock::Upstream(
+                get_node_name_arg(node)?,
+                node_to_toml_map(node)?,
+            ),
+            "plugin" | "plugins" => ConfigBlock::Plugin(
+                get_node_name_arg(node)?,
+                node_to_toml_map(node)?,
+            ),
+            "certificate" | "certificates" => ConfigBlock::Certificate(
+                get_node_name_arg(node)?,
+                node_to_toml_map(node)?,
+            ),
+            "storage" | "storages" => ConfigBlock::Storage(
+                get_node_name_arg(node)?,
+                node_to_toml_map(node)?,
+            ),
             _ => {
                 return Err(Error::Invalid {
                     message: format!("unknown KDL node type: {node_type}"),
                 });
             },
-        }
+        };
+        blocks.push(parsed);
     }
 
-    if !all_locations.is_empty() {
-        root.insert("locations".to_string(), TomlValue::Table(all_locations));
-    }
-    if !all_upstreams.is_empty() {
-        root.insert("upstreams".to_string(), TomlValue::Table(all_upstreams));
-    }
-    if !all_plugins.is_empty() {
-        let section = root
-            .entry("plugins".to_string())
-            .or_insert_with(|| TomlValue::Table(TomlMap::new()));
-        if let TomlValue::Table(t) = section {
-            t.extend(all_plugins);
-        }
-    }
-    if !all_certificates.is_empty() {
-        let section = root
-            .entry("certificates".to_string())
-            .or_insert_with(|| TomlValue::Table(TomlMap::new()));
-        if let TomlValue::Table(t) = section {
-            t.extend(all_certificates);
-        }
-    }
-
-    toml::to_string_pretty(&root).map_err(|e| Error::Ser { source: e })
+    assemble_toml(blocks)
 }
 
 // ── TOML → KDL ──────────────────────────────────────────────────────────────

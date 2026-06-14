@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::config_convert::{
+    ConfigBlock, ParsedLocation, ParsedServer, assemble_toml,
+};
 use crate::{Error, Result};
 use serde_json::Value as JsonValue;
 use std::collections::HashSet;
@@ -68,20 +71,6 @@ fn body_attrs_to_toml(body: hcl::Body) -> Result<TomlMap<String, TomlValue>> {
 }
 
 /// Insert a named entry into a section table in root.
-fn insert_into_section(
-    root: &mut TomlMap<String, TomlValue>,
-    section_key: &str,
-    name: String,
-    value: TomlValue,
-) {
-    let section = root
-        .entry(section_key.to_string())
-        .or_insert_with(|| TomlValue::Table(TomlMap::new()));
-    if let TomlValue::Table(t) = section {
-        t.insert(name, value);
-    }
-}
-
 /// Process a location block body, extracting nested upstream blocks.
 ///
 /// ```hcl
@@ -99,12 +88,7 @@ fn insert_into_section(
 /// auto-set to the first nested upstream's name.
 /// Nested plugin blocks are extracted to top-level plugins,
 /// and their names are auto-added to the location's `plugins` list.
-struct ParsedLocationBlock {
-    location: TomlMap<String, TomlValue>,
-    upstreams: TomlMap<String, TomlValue>,
-    plugins: TomlMap<String, TomlValue>,
-}
-fn process_location_block(body: hcl::Body) -> Result<ParsedLocationBlock> {
+fn process_location_block(body: hcl::Body) -> Result<ParsedLocation> {
     let mut upstreams = TomlMap::new();
     let mut plugins = TomlMap::new();
     let mut first_upstream_name: Option<String> = None;
@@ -182,7 +166,7 @@ fn process_location_block(body: hcl::Body) -> Result<ParsedLocationBlock> {
         );
     }
 
-    Ok(ParsedLocationBlock {
+    Ok(ParsedLocation {
         location: loc_table,
         upstreams,
         plugins,
@@ -206,14 +190,7 @@ fn process_location_block(body: hcl::Body) -> Result<ParsedLocationBlock> {
 ///
 /// Nested locations are extracted to top-level locations.
 /// Their names are auto-added to the server's `locations` list.
-struct ParsedServerBlock {
-    server: TomlMap<String, TomlValue>,
-    locations: TomlMap<String, TomlValue>,
-    upstreams: TomlMap<String, TomlValue>,
-    plugins: TomlMap<String, TomlValue>,
-    certificates: TomlMap<String, TomlValue>,
-}
-fn process_server_block(body: hcl::Body) -> Result<ParsedServerBlock> {
+fn process_server_block(body: hcl::Body) -> Result<ParsedServer> {
     let mut locations = TomlMap::new();
     let mut upstreams = TomlMap::new();
     let mut plugins = TomlMap::new();
@@ -294,7 +271,7 @@ fn process_server_block(body: hcl::Body) -> Result<ParsedServerBlock> {
         );
     }
 
-    Ok(ParsedServerBlock {
+    Ok(ParsedServer {
         server,
         locations,
         upstreams,
@@ -334,17 +311,18 @@ fn process_server_block(body: hcl::Body) -> Result<ParsedServerBlock> {
 ///     }
 /// }
 /// ```
+fn require_name(label: Option<String>, kind: &str) -> Result<String> {
+    label.ok_or_else(|| Error::Invalid {
+        message: format!("{kind} block requires a name label"),
+    })
+}
+
 pub fn convert_hcl_to_toml(input: &str) -> Result<String> {
     let body = hcl::parse(input).map_err(|e| Error::Invalid {
         message: format!("HCL parse error: {e}"),
     })?;
 
-    let mut root = TomlMap::new();
-    let mut all_locations = TomlMap::new();
-    let mut all_upstreams = TomlMap::new();
-    let mut all_plugins = TomlMap::new();
-    let mut all_certificates = TomlMap::new();
-
+    let mut blocks = Vec::new();
     for structure in body.into_iter() {
         let hcl::Structure::Block(block) = structure else {
             continue;
@@ -353,118 +331,42 @@ pub fn convert_hcl_to_toml(input: &str) -> Result<String> {
         let ident = block.identifier.as_str();
         let label = block.labels.first().map(|l| l.as_str().to_string());
 
-        match ident {
-            "basic" => {
-                let table = body_attrs_to_toml(block.body)?;
-                root.insert("basic".to_string(), TomlValue::Table(table));
-            },
-            "server" | "servers" => {
-                let name = label.ok_or_else(|| Error::Invalid {
-                    message: "server block requires a name label".to_string(),
-                })?;
-                let ParsedServerBlock {
-                    server,
-                    locations,
-                    upstreams,
-                    plugins,
-                    certificates,
-                } = process_server_block(block.body)?;
-                insert_into_section(
-                    &mut root,
-                    "servers",
-                    name,
-                    TomlValue::Table(server),
-                );
-                all_locations.extend(locations);
-                all_upstreams.extend(upstreams);
-                all_plugins.extend(plugins);
-                all_certificates.extend(certificates);
-            },
-            "location" | "locations" => {
-                let name = label.ok_or_else(|| Error::Invalid {
-                    message: "location block requires a name label".to_string(),
-                })?;
-                let parsed = process_location_block(block.body)?;
-                all_locations.insert(name, TomlValue::Table(parsed.location));
-                all_upstreams.extend(parsed.upstreams);
-                all_plugins.extend(parsed.plugins);
-            },
-            "upstream" | "upstreams" => {
-                let name = label.ok_or_else(|| Error::Invalid {
-                    message: "upstream block requires a name label".to_string(),
-                })?;
-                let table = body_attrs_to_toml(block.body)?;
-                all_upstreams.insert(name, TomlValue::Table(table));
-            },
-            "plugin" | "plugins" => {
-                let name = label.ok_or_else(|| Error::Invalid {
-                    message: "plugin block requires a name label".to_string(),
-                })?;
-                let table = body_attrs_to_toml(block.body)?;
-                insert_into_section(
-                    &mut root,
-                    "plugins",
-                    name,
-                    TomlValue::Table(table),
-                );
-            },
-            "certificate" | "certificates" => {
-                let name = label.ok_or_else(|| Error::Invalid {
-                    message: "certificate block requires a name label"
-                        .to_string(),
-                })?;
-                let table = body_attrs_to_toml(block.body)?;
-                insert_into_section(
-                    &mut root,
-                    "certificates",
-                    name,
-                    TomlValue::Table(table),
-                );
-            },
-            "storage" | "storages" => {
-                let name = label.ok_or_else(|| Error::Invalid {
-                    message: "storage block requires a name label".to_string(),
-                })?;
-                let table = body_attrs_to_toml(block.body)?;
-                insert_into_section(
-                    &mut root,
-                    "storages",
-                    name,
-                    TomlValue::Table(table),
-                );
-            },
+        let parsed = match ident {
+            "basic" => ConfigBlock::Basic(body_attrs_to_toml(block.body)?),
+            "server" | "servers" => ConfigBlock::Server(
+                require_name(label, "server")?,
+                process_server_block(block.body)?,
+            ),
+            "location" | "locations" => ConfigBlock::Location(
+                require_name(label, "location")?,
+                process_location_block(block.body)?,
+            ),
+            "upstream" | "upstreams" => ConfigBlock::Upstream(
+                require_name(label, "upstream")?,
+                body_attrs_to_toml(block.body)?,
+            ),
+            "plugin" | "plugins" => ConfigBlock::Plugin(
+                require_name(label, "plugin")?,
+                body_attrs_to_toml(block.body)?,
+            ),
+            "certificate" | "certificates" => ConfigBlock::Certificate(
+                require_name(label, "certificate")?,
+                body_attrs_to_toml(block.body)?,
+            ),
+            "storage" | "storages" => ConfigBlock::Storage(
+                require_name(label, "storage")?,
+                body_attrs_to_toml(block.body)?,
+            ),
             _ => {
                 return Err(Error::Invalid {
                     message: format!("unknown HCL block type: {ident}"),
                 });
             },
-        }
+        };
+        blocks.push(parsed);
     }
 
-    if !all_locations.is_empty() {
-        root.insert("locations".to_string(), TomlValue::Table(all_locations));
-    }
-    if !all_upstreams.is_empty() {
-        root.insert("upstreams".to_string(), TomlValue::Table(all_upstreams));
-    }
-    if !all_plugins.is_empty() {
-        let section = root
-            .entry("plugins".to_string())
-            .or_insert_with(|| TomlValue::Table(TomlMap::new()));
-        if let TomlValue::Table(t) = section {
-            t.extend(all_plugins);
-        }
-    }
-    if !all_certificates.is_empty() {
-        let section = root
-            .entry("certificates".to_string())
-            .or_insert_with(|| TomlValue::Table(TomlMap::new()));
-        if let TomlValue::Table(t) = section {
-            t.extend(all_certificates);
-        }
-    }
-
-    toml::to_string_pretty(&root).map_err(|e| Error::Ser { source: e })
+    assemble_toml(blocks)
 }
 
 /// Convert a TOML value to its HCL attribute value representation.
