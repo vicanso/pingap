@@ -163,12 +163,9 @@ impl Plugin for GeoRestriction {
             },
         };
 
-        let country_code = self
-            .geo_db
-            .lookup_country_code(ip_addr)
-            .map(|cc| cc.to_string());
-
-        let country_code_str = country_code.as_deref().unwrap_or("??");
+        let country_code = self.geo_db.lookup_country_code(ip_addr);
+        let country_code_str =
+            country_code.as_ref().map(AsRef::as_ref).unwrap_or("??");
 
         if self.restriction_category == RestrictionCategory::Reporting {
             info!(ip = %ip, country = %country_code_str, "geoip lookup");
