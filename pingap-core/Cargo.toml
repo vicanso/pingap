@@ -18,6 +18,7 @@ ctor = { workspace = true }
 futures = { workspace = true }
 hostname = { workspace = true }
 http = { workspace = true }
+ipnet = { workspace = true }
 itoa = { workspace = true }
 opentelemetry = { workspace = true, optional = true }
 pingora = { workspace = true }

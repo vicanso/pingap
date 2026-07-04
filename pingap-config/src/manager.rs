@@ -296,6 +296,10 @@ impl ConfigManager {
         self.current_config.load().clone()
     }
     pub fn set_current_config(&self, config: PingapConfig) {
+        // Keep the global trusted-proxy set in sync with the active config so
+        // client-IP resolution (X-Forwarded-For handling) is applied on both
+        // boot and every reload without a separate wiring point.
+        pingap_core::set_trusted_proxies(&config.basic.trusted_proxies);
         self.current_config.store(Arc::new(config));
     }
 

@@ -875,6 +875,11 @@ pub struct BasicConf {
     pub graceful_shutdown_timeout: Option<Duration>,
     /// Maximum number of idle connections to keep in upstream connection pool
     pub upstream_keepalive_pool_size: Option<usize>,
+    /// Trusted downstream proxy IPs/CIDRs. When set, `X-Forwarded-For` /
+    /// `X-Real-IP` are only honoured for connections coming directly from one
+    /// of these addresses; otherwise the direct peer address is used as the
+    /// client IP. Leave unset to trust forwarded headers unconditionally.
+    pub trusted_proxies: Option<Vec<String>>,
     /// Webhook URL for notifications
     pub webhook: Option<String>,
     /// Type of webhook (e.g. "wecom", "dingtalk")

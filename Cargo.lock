@@ -3988,6 +3988,7 @@ dependencies = [
  "futures",
  "hostname",
  "http",
+ "ipnet",
  "itoa",
  "opentelemetry",
  "pingora",

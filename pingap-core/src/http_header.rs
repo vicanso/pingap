@@ -14,15 +14,20 @@
 
 // Import necessary modules and types from supervisors and external crates.
 use super::{Ctx, get_hostname};
+use ahash::AHashSet;
 use bytes::BytesMut;
 use http::header;
 use http::{HeaderName, HeaderValue};
+use ipnet::IpNet;
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
 use snafu::{ResultExt, Snafu};
 use std::borrow::Cow;
 use std::fmt::Write;
+use std::net::IpAddr;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{LazyLock, RwLock};
 
 // Define string constants for commonly used HTTP header names.
 const HTTP_HEADER_X_FORWARDED_FOR: &str = "x-forwarded-for";
@@ -268,13 +273,93 @@ pub fn get_remote_addr(session: &Session) -> Option<(String, u16)> {
         .map(|addr| (addr.ip().to_string(), addr.port()))
 }
 
-/// Gets the client's IP address by checking proxy headers first, then the direct connection address.
+/// Parsed trusted downstream proxy addresses: individual IPs plus CIDR
+/// networks. Kept small and local since it is only used by `get_client_ip`.
+struct TrustedProxies {
+    nets: Vec<IpNet>,
+    ips: AHashSet<IpAddr>,
+}
+
+impl TrustedProxies {
+    /// Parses a list of IPs / CIDR ranges. Invalid entries are ignored (a
+    /// mistyped proxy simply fails closed: its forwarded headers are dropped).
+    fn parse(values: &[String]) -> Self {
+        let mut nets = Vec::new();
+        let mut ips = AHashSet::new();
+        for item in values {
+            if let Ok(net) = IpNet::from_str(item) {
+                nets.push(net);
+            } else if let Ok(ip) = IpAddr::from_str(item) {
+                ips.insert(ip);
+            }
+        }
+        Self { nets, ips }
+    }
+
+    /// Returns true if `peer` (an IP string) is one of the trusted proxies.
+    fn contains(&self, peer: &str) -> bool {
+        let Ok(addr) = peer.parse::<IpAddr>() else {
+            return false;
+        };
+        self.ips.contains(&addr)
+            || self.nets.iter().any(|net| net.contains(&addr))
+    }
+}
+
+// Trusted downstream proxies. When configured, the forwarded client-IP headers
+// (`X-Forwarded-For` / `X-Real-IP`) are only honoured for connections whose
+// direct TCP peer is one of these addresses; a client connecting directly must
+// not be able to spoof its IP for IP-based access control, rate limiting, etc.
+// A cheap atomic flag keeps the common "not configured" path lock-free.
+static TRUSTED_PROXIES_ENABLED: AtomicBool = AtomicBool::new(false);
+static TRUSTED_PROXIES: LazyLock<RwLock<Option<TrustedProxies>>> =
+    LazyLock::new(|| RwLock::new(None));
+
+/// Sets the trusted downstream proxy addresses (individual IPs or CIDR ranges).
 ///
-/// The lookup order is:
+/// When a non-empty list is configured, forwarded headers are only trusted for
+/// connections coming directly from one of these addresses. Passing `None` or
+/// an empty list restores the default behaviour of trusting forwarded headers
+/// unconditionally (backwards compatible). Safe to call repeatedly on reload.
+pub fn set_trusted_proxies(proxies: &Option<Vec<String>>) {
+    let parsed = match proxies {
+        Some(list) if !list.is_empty() => Some(TrustedProxies::parse(list)),
+        _ => None,
+    };
+    if let Ok(mut guard) = TRUSTED_PROXIES.write() {
+        TRUSTED_PROXIES_ENABLED.store(parsed.is_some(), Ordering::Relaxed);
+        *guard = parsed;
+    }
+}
+
+/// Returns true if the direct peer address is a configured trusted proxy.
+fn is_trusted_proxy(peer: &str) -> bool {
+    TRUSTED_PROXIES
+        .read()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|tp| tp.contains(peer)))
+        .unwrap_or(false)
+}
+
+/// Gets the client's IP address.
+///
+/// When trusted proxies are configured, `X-Forwarded-For` / `X-Real-IP` are
+/// only honoured if the direct TCP peer is a trusted proxy; otherwise the
+/// peer's own address is returned. When no trusted proxies are configured the
+/// lookup order is:
 /// 1. `X-Forwarded-For` (taking the first IP in the list)
 /// 2. `X-Real-IP`
 /// 3. The remote address of the direct TCP connection
 pub fn get_client_ip(session: &Session) -> String {
+    // When trusted proxies are configured, a direct (untrusted) peer's
+    // forwarded headers must be ignored to prevent client-IP spoofing.
+    if TRUSTED_PROXIES_ENABLED.load(Ordering::Relaxed) {
+        let peer = get_remote_addr(session).map(|(addr, _)| addr);
+        let trusted = peer.as_deref().map(is_trusted_proxy).unwrap_or(false);
+        if !trusted {
+            return peer.unwrap_or_default();
+        }
+    }
     // 1. Check `X-Forwarded-For`.
     if let Some(value) = session.get_header(HTTP_HEADER_X_FORWARDED_FOR) {
         // Efficiently take the first IP without creating an intermediate Vec.
@@ -761,6 +846,28 @@ mod tests {
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
         assert_eq!(get_client_ip(&session), "192.168.1.2");
+
+        // With trusted proxies configured, a forwarded header from an untrusted
+        // direct peer (the mock session has no trusted peer address) must be
+        // ignored instead of being taken at face value.
+        set_trusted_proxies(&Some(vec!["10.0.0.0/8".to_string()]));
+        let headers = ["X-Forwarded-For:192.168.1.1"].join("\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        assert_ne!(get_client_ip(&session), "192.168.1.1");
+
+        // Restoring the default trusts forwarded headers again.
+        set_trusted_proxies(&None);
+        let headers = ["X-Forwarded-For:192.168.1.1"].join("\r\n");
+        let input_header =
+            format!("GET /vicanso/pingap?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        assert_eq!(get_client_ip(&session), "192.168.1.1");
     }
 
     #[tokio::test]
