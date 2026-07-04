@@ -1,6 +1,7 @@
 import { LoadingPage } from "@/components/loading";
 import { useI18n } from "@/i18n";
 import useConfigState, { Location } from "@/states/config";
+import useBasicState from "@/states/basic";
 import { ExForm, ExFormItem } from "@/components/ex-form";
 import { z } from "zod";
 import {
@@ -45,13 +46,17 @@ export default function Locations() {
       ]),
     );
 
+  const [basicInfo, basicInitialized] = useBasicState(
+    useShallow((state) => [state.data, state.initialized]),
+  );
+
   const newLocation = "*";
   const locations = Object.keys(config.locations || {});
   locations.sort();
   locations.unshift(newLocation);
   const currentLocation = searchParams.get("name") || newLocation;
 
-  if (!initialized) {
+  if (!initialized || !basicInitialized) {
     return <LoadingPage />;
   }
 
@@ -67,14 +72,7 @@ export default function Locations() {
   };
 
   const plugins = newStringOptions(
-    [
-      "pingap:stats",
-      "pingap:compression",
-      "pingap:compressionUpstream",
-      "pingap:requestId",
-      "pingap:ping",
-      "pingap:acceptEncodingAdjustment",
-    ].sort(),
+    (basicInfo.supported_plugins || []).sort(),
     false,
   );
 

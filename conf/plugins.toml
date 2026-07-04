@@ -503,3 +503,28 @@ add_headers = ["X-Request-Id:123"]
 # Set headers only if they don't already exist in the response
 # Format: ["Header-Name:header-value"]
 # set_headers_not_exists = ["X-Time:10231"]
+
+
+###
+# Plugin GeoRestriction Config
+###
+# GeoRestriction plugin for filtering requests based on country code
+# Requires building with --features geo
+[plugins.geoRestriction]
+# Plugin type
+category = "geo_restriction"
+
+# Access control type:
+# - "allow": Only requests from country_codes can access (whitelist)
+# - "deny": Requests from country_codes cannot access (blacklist)
+# - "reporting": Log IP and country code, never block
+# Default `deny`
+type = "deny"
+
+# List of country codes to match against (ISO 3166-1 alpha-2)
+# Examples: "CN" (China), "RU" (Russia), "US" (United States)
+country_codes = ["CN", "RU"]
+
+# Custom message returned when access is denied
+# Default `Access from your country is not allowed`
+# message = "Access denied from your country"

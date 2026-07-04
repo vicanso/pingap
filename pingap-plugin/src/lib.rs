@@ -158,6 +158,8 @@ mod compression;
 mod cors;
 mod csrf;
 mod directory;
+#[cfg(feature = "geo")]
+mod geo_restriction;
 mod ip_restriction;
 mod jwt;
 mod key_auth;

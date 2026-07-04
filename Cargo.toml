@@ -93,6 +93,7 @@ mimalloc = "0.1.47"
 [features]
 pyro = ["pingap-pyroscope"]
 imageoptim = ["pingap-imageoptim"]
+geo = ["pingap-plugin/geo"]
 tracing = [
     "pingora/sentry",
     "pingap-cache/tracing",
