@@ -407,6 +407,21 @@ pub async fn handle_lets_encrypt(
         // token auth
         let token = path.substring(WELL_KNOWN_PATH_PREFIX.len(), path.len());
 
+        // The token is attacker-controlled and used directly as a storage
+        // lookup key. ACME HTTP-01 tokens are base64url strings, so reject
+        // anything else up front: this blocks path traversal (`../certificate/
+        // foo` and percent-encoded variants) and returns a clean 404 rather
+        // than a storage error.
+        if !is_valid_challenge_token(token) {
+            HttpResponse {
+                status: StatusCode::NOT_FOUND,
+                ..Default::default()
+            }
+            .send(session)
+            .await?;
+            return Ok(true);
+        }
+
         let value: Option<StorageConf> = config_manager
             .get(Category::Storage, token)
             .await
@@ -439,6 +454,15 @@ pub async fn handle_lets_encrypt(
         return Ok(true);
     }
     Ok(false)
+}
+
+/// ACME HTTP-01 tokens are base64url strings; anything else is rejected so the
+/// token cannot be abused as a storage lookup key for path traversal.
+fn is_valid_challenge_token(token: &str) -> bool {
+    !token.is_empty()
+        && token
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// Generates a new certificate from Let's Encrypt for the given domains.
@@ -708,4 +732,22 @@ async fn new_lets_encrypt(
         })?;
 
     Ok((cert_chain_pem, private_key_pem))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_valid_challenge_token;
+
+    #[test]
+    fn test_is_valid_challenge_token() {
+        // Well-formed base64url tokens are accepted.
+        assert!(is_valid_challenge_token("abcXYZ0123_-"));
+
+        // Empty, traversal and percent-encoded tokens are rejected.
+        assert!(!is_valid_challenge_token(""));
+        assert!(!is_valid_challenge_token("../certificate/foo"));
+        assert!(!is_valid_challenge_token("..%2Fcertificate"));
+        assert!(!is_valid_challenge_token("a.b"));
+        assert!(!is_valid_challenge_token("a/b"));
+    }
 }
