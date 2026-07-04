@@ -49,7 +49,6 @@ use pingap_upstream::UpstreamHealthyStatus;
 use pingap_util::base64_decode;
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
-use regex::Regex;
 use rust_embed::EmbeddedFile;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -275,9 +274,19 @@ impl AdminServe {
             return true;
         }
         let path = req_header.uri.path();
-        if path.len() <= 1
-            || Regex::new(r#".(js|css|png)$"#)
-                .map_or(true, |r| r.is_match(path))
+        // The login UI's own static assets (js/css/png) and the index page must
+        // load before the user authenticates. But API routes must ALWAYS require
+        // auth: otherwise auth is bypassed by suffixing an API URL with a
+        // static-looking extension, e.g. `GET /api/configs/x.js`. The auth skip
+        // and the `/api` router use different criteria, so they must be kept
+        // mutually exclusive here.
+        let is_api =
+            path.starts_with("/api") || path.starts_with("api/");
+        if !is_api
+            && (path.len() <= 1
+                || path.ends_with(".js")
+                || path.ends_with(".css")
+                || path.ends_with(".png"))
         {
             return true;
         }
@@ -865,5 +874,48 @@ mod tests {
         let resp: HttpResponse =
             EmbeddedStaticFile(None, Duration::from_secs(60)).into();
         assert_eq!(404, resp.status.as_u16())
+    }
+
+    #[test]
+    fn test_auth_validate_skips_only_static_assets() {
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        try_init_config_manager(&file.path().to_string_lossy()).unwrap();
+        // spellchecker:off
+        let admin = AdminServe::try_from(
+            &toml::from_str::<PluginConf>(
+                r#"
+    category = "admin"
+    path = "/"
+    authorizations = ["YWRtaW46MTIzMTIz"]
+    "#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        // spellchecker:on
+
+        // `auth_validate` runs on the path AFTER the admin prefix is stripped.
+        let auth_skipped = |path: &str| {
+            let req = pingora::http::RequestHeader::build(
+                http::Method::GET,
+                path.as_bytes(),
+                None,
+            )
+            .unwrap();
+            admin.auth_validate(&req)
+        };
+
+        // Genuine static assets of the login UI load without auth.
+        assert_eq!(true, auth_skipped("/"));
+        assert_eq!(true, auth_skipped("/assets/index.js"));
+        assert_eq!(true, auth_skipped("/assets/index.css"));
+        assert_eq!(true, auth_skipped("/pingap.png"));
+
+        // Regression: API routes must never be auth-skipped, even when suffixed
+        // with a static-looking extension.
+        assert_eq!(false, auth_skipped("/api/configs/anything.js"));
+        assert_eq!(false, auth_skipped("/api/configs/upstream/evil.css"));
+        assert_eq!(false, auth_skipped("/api/certificates.png"));
+        assert_eq!(false, auth_skipped("/api/basic"));
     }
 }

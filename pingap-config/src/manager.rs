@@ -300,8 +300,21 @@ impl ConfigManager {
     }
 
     /// get storage key
-    fn get_key(&self, category: &Category, name: &str) -> String {
-        match self.mode {
+    fn get_key(&self, category: &Category, name: &str) -> Result<String> {
+        // Config item names are single path segments, so a path separator (or
+        // NUL) can only come from an attacker crafting a traversal such as
+        // `../../etc/foo`. Reject those before the name is joined onto the
+        // storage directory: without a separator the name stays one path
+        // component and cannot climb out of the category directory.
+        if name.contains('/')
+            || name.contains('\\')
+            || name.contains('\0')
+        {
+            return Err(Error::Invalid {
+                message: format!("invalid config name: {name:?}"),
+            });
+        }
+        let key = match self.mode {
             ConfigMode::Single => SINGLE_KEY.to_string(),
             ConfigMode::MultiByType => {
                 format!("{}.toml", format_category(category))
@@ -313,7 +326,8 @@ impl ConfigManager {
                     format!("{}/{}.toml", format_category(category), name)
                 }
             },
-        }
+        };
+        Ok(key)
     }
 
     pub async fn load_all(&self) -> Result<PingapTomlConfig> {
@@ -325,7 +339,7 @@ impl ConfigManager {
             ConfigMode::Single => {
                 self.storage
                     .save(
-                        &self.get_key(&Category::Basic, ""),
+                        &self.get_key(&Category::Basic, "")?,
                         &to_string_pretty(config)?,
                     )
                     .await?;
@@ -344,14 +358,14 @@ impl ConfigManager {
                 {
                     let value = config.get_category_toml(category)?;
                     self.storage
-                        .save(&self.get_key(category, ""), &value)
+                        .save(&self.get_key(category, "")?, &value)
                         .await?;
                 }
             },
             ConfigMode::MultiByItem => {
                 let basic_config = config.get_toml(&Category::Basic, "")?;
                 self.storage
-                    .save(&self.get_key(&Category::Basic, ""), &basic_config)
+                    .save(&self.get_key(&Category::Basic, "")?, &basic_config)
                     .await?;
 
                 for (category, value) in [
@@ -368,7 +382,7 @@ impl ConfigManager {
                     for name in value.keys() {
                         let value = config.get_toml(&category, name)?;
                         self.storage
-                            .save(&self.get_key(&category, name), &value)
+                            .save(&self.get_key(&category, name)?, &value)
                             .await?;
                     }
                 }
@@ -383,7 +397,7 @@ impl ConfigManager {
         name: &str,
         value: &T,
     ) -> Result<()> {
-        let key = self.get_key(&category, name);
+        let key = self.get_key(&category, name)?;
         let value = toml::to_string_pretty(value)
             .map_err(|e| Error::Ser { source: e })?;
         // update by item
@@ -413,7 +427,7 @@ impl ConfigManager {
         category: Category,
         name: &str,
     ) -> Result<Option<T>> {
-        let key = self.get_key(&category, name);
+        let key = self.get_key(&category, name)?;
         let data = self.storage.fetch(&key).await?;
         let config: PingapTomlConfig =
             toml::from_str(&data).map_err(|e| Error::De { source: e })?;
@@ -428,7 +442,7 @@ impl ConfigManager {
         }
     }
     pub async fn delete(&self, category: Category, name: &str) -> Result<()> {
-        let key = self.get_key(&category, name);
+        let key = self.get_key(&category, name)?;
 
         let mut current_config = (*self.get_current_config()).clone();
         current_config.remove(category.to_string().as_str(), name)?;
@@ -456,7 +470,7 @@ impl ConfigManager {
         if !self.storage.support_history() {
             return Ok(None);
         }
-        let key = self.get_key(&category, name);
+        let key = self.get_key(&category, name)?;
         self.storage.fetch_history(&key).await
     }
 }
@@ -936,5 +950,58 @@ value = "/storage22"
         );
         let manager = new_etcd_config_manager(&url).unwrap();
         test_config_manger(manager, ConfigMode::MultiByItem).await;
+    }
+
+    #[tokio::test]
+    async fn test_config_name_rejects_path_traversal() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let manager = new_file_config_manager(&format!(
+            "{}?separation",
+            dir.path().to_string_lossy()
+        ))
+        .unwrap();
+        let value: toml::Value =
+            toml::from_str(r#"addrs = ["127.0.0.1:7080"]"#).unwrap();
+
+        // A name with a path separator (or NUL) must be rejected so it cannot
+        // escape the storage directory via traversal.
+        for name in ["../../evil", "..\\evil", "a/b", "x\0y"] {
+            assert_eq!(
+                true,
+                manager
+                    .update(Category::Upstream, name, &value)
+                    .await
+                    .is_err(),
+                "update must reject {name:?}"
+            );
+            assert_eq!(
+                true,
+                manager.delete(Category::Upstream, name).await.is_err(),
+                "delete must reject {name:?}"
+            );
+            assert_eq!(
+                true,
+                manager
+                    .get::<toml::Value>(Category::Upstream, name)
+                    .await
+                    .is_err(),
+                "get must reject {name:?}"
+            );
+        }
+
+        // Nothing escaped the storage directory.
+        assert_eq!(
+            false,
+            dir.path().parent().unwrap().join("evil.toml").exists()
+        );
+
+        // A dotted-but-safe name (e.g. a certificate domain) is still accepted.
+        assert_eq!(
+            true,
+            manager
+                .update(Category::Upstream, "example.com", &value)
+                .await
+                .is_ok()
+        );
     }
 }

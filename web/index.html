@@ -5,6 +5,34 @@
         <link rel="icon" type="image/png" href="./pingap.png" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>Pingap: a reverse proxy like nginx</title>
+        <!--
+          Apply the persisted theme before first paint so there is no flash of
+          the default (white) background while React mounts. Keep the storage
+          key and class names in sync with src/components/theme-provider.tsx.
+        -->
+        <style>
+            html.dark {
+                background-color: hsl(240, 10%, 3.9%);
+            }
+            html:not(.dark) {
+                background-color: hsl(0, 0%, 100%);
+            }
+        </style>
+        <script>
+            (function () {
+                try {
+                    var theme =
+                        localStorage.getItem("vite-ui-theme") || "system";
+                    if (theme === "system") {
+                        theme = window.matchMedia("(prefers-color-scheme: dark)")
+                            .matches
+                            ? "dark"
+                            : "light";
+                    }
+                    document.documentElement.classList.add(theme);
+                } catch (e) {}
+            })();
+        </script>
     </head>
     <body>
         <div id="root"></div>
