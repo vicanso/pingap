@@ -275,6 +275,10 @@ pub struct ConfigManager {
     storage: Arc<dyn Storage>,
     mode: ConfigMode,
     current_config: ArcSwap<PingapConfig>,
+    // Serializes read-modify-write config mutations (update/delete/save_all)
+    // so concurrent admin/ACME writes to the same storage file cannot clobber
+    // each other's changes.
+    write_lock: tokio::sync::Mutex<()>,
 }
 
 impl ConfigManager {
@@ -283,6 +287,7 @@ impl ConfigManager {
             storage,
             mode,
             current_config: ArcSwap::from_pointee(PingapConfig::default()),
+            write_lock: tokio::sync::Mutex::new(()),
         }
     }
     pub fn support_observer(&self) -> bool {
@@ -339,6 +344,7 @@ impl ConfigManager {
         toml::from_str(&data).map_err(|e| Error::De { source: e })
     }
     pub async fn save_all(&self, config: &PingapTomlConfig) -> Result<()> {
+        let _guard = self.write_lock.lock().await;
         match self.mode {
             ConfigMode::Single => {
                 self.storage
@@ -401,6 +407,7 @@ impl ConfigManager {
         name: &str,
         value: &T,
     ) -> Result<()> {
+        let _guard = self.write_lock.lock().await;
         let key = self.get_key(&category, name)?;
         let value = toml::to_string_pretty(value)
             .map_err(|e| Error::Ser { source: e })?;
@@ -446,6 +453,7 @@ impl ConfigManager {
         }
     }
     pub async fn delete(&self, category: Category, name: &str) -> Result<()> {
+        let _guard = self.write_lock.lock().await;
         let key = self.get_key(&category, name)?;
 
         let mut current_config = (*self.get_current_config()).clone();
@@ -1007,5 +1015,44 @@ value = "/storage22"
                 .await
                 .is_ok()
         );
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_update_no_lost_write() {
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        // A plain `.toml` file is Single mode: every upstream lives in one
+        // file, so concurrent read-modify-write updates would clobber each
+        // other without the manager's write lock.
+        let manager = Arc::new(
+            new_file_config_manager(&file.path().to_string_lossy()).unwrap(),
+        );
+        let value: toml::Value =
+            toml::from_str(r#"addrs = ["127.0.0.1:7080"]"#).unwrap();
+
+        let mut handles = Vec::new();
+        for i in 0..12 {
+            let manager = manager.clone();
+            let value = value.clone();
+            handles.push(tokio::spawn(async move {
+                manager
+                    .update(Category::Upstream, &format!("up{i}"), &value)
+                    .await
+                    .unwrap();
+            }));
+        }
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        // Every concurrently-written upstream must have survived.
+        let config = manager.load_all().await.unwrap();
+        let upstreams = config.upstreams.unwrap_or_default();
+        for i in 0..12 {
+            assert_eq!(
+                true,
+                upstreams.contains_key(format!("up{i}").as_str()),
+                "upstream up{i} was lost to a concurrent write"
+            );
+        }
     }
 }
