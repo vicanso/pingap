@@ -54,39 +54,71 @@ pub(crate) enum ConfigBlock {
     Storage(String, TomlMap<String, TomlValue>),
 }
 
+/// Insert `name`→`value` into `dst`, erroring if `name` is already present so
+/// that two blocks sharing a name are reported instead of silently
+/// overwriting each other.
+fn insert_unique(
+    dst: &mut TomlMap<String, TomlValue>,
+    name: String,
+    value: TomlValue,
+    section: &str,
+) -> Result<()> {
+    if dst.contains_key(&name) {
+        return Err(Error::Invalid {
+            message: format!("duplicate \"{name}\" in {section}"),
+        });
+    }
+    dst.insert(name, value);
+    Ok(())
+}
+
+/// Merge `src` into `dst`, erroring on the first duplicate name.
+fn merge_unique(
+    dst: &mut TomlMap<String, TomlValue>,
+    src: TomlMap<String, TomlValue>,
+    section: &str,
+) -> Result<()> {
+    for (name, value) in src {
+        insert_unique(dst, name, value, section)?;
+    }
+    Ok(())
+}
+
 /// Insert `value` at `root[section_key][name]`, creating the section table
-/// when it does not yet exist.
+/// when it does not yet exist. Errors on a duplicate name.
 pub(crate) fn insert_into_section(
     root: &mut TomlMap<String, TomlValue>,
     section_key: &str,
     name: String,
     value: TomlValue,
-) {
+) -> Result<()> {
     let section = root
         .entry(section_key.to_string())
         .or_insert_with(|| TomlValue::Table(TomlMap::new()));
     if let TomlValue::Table(t) = section {
-        t.insert(name, value);
+        insert_unique(t, name, value, section_key)?;
     }
+    Ok(())
 }
 
 /// Merge `values` into `root[section_key]`, creating the section table when
 /// needed. Used for sections that may also receive standalone top-level
-/// entries (plugins, certificates).
+/// entries (plugins, certificates). Errors on any name collision.
 fn extend_section(
     root: &mut TomlMap<String, TomlValue>,
     section_key: &str,
     values: TomlMap<String, TomlValue>,
-) {
+) -> Result<()> {
     if values.is_empty() {
-        return;
+        return Ok(());
     }
     let section = root
         .entry(section_key.to_string())
         .or_insert_with(|| TomlValue::Table(TomlMap::new()));
     if let TomlValue::Table(t) = section {
-        t.extend(values);
+        merge_unique(t, values, section_key)?;
     }
+    Ok(())
 }
 
 /// Assemble parsed config blocks into a pretty-printed TOML document,
@@ -103,7 +135,12 @@ pub(crate) fn assemble_toml(blocks: Vec<ConfigBlock>) -> Result<String> {
     for block in blocks {
         match block {
             ConfigBlock::Basic(table) => {
-                root.insert("basic".to_string(), TomlValue::Table(table));
+                insert_unique(
+                    &mut root,
+                    "basic".to_string(),
+                    TomlValue::Table(table),
+                    "basic",
+                )?;
             },
             ConfigBlock::Server(name, parsed) => {
                 let ParsedServer {
@@ -118,19 +155,37 @@ pub(crate) fn assemble_toml(blocks: Vec<ConfigBlock>) -> Result<String> {
                     "servers",
                     name,
                     TomlValue::Table(server),
-                );
-                all_locations.extend(locations);
-                all_upstreams.extend(upstreams);
-                all_plugins.extend(plugins);
-                all_certificates.extend(certificates);
+                )?;
+                merge_unique(&mut all_locations, locations, "locations")?;
+                merge_unique(&mut all_upstreams, upstreams, "upstreams")?;
+                merge_unique(&mut all_plugins, plugins, "plugins")?;
+                merge_unique(
+                    &mut all_certificates,
+                    certificates,
+                    "certificates",
+                )?;
             },
             ConfigBlock::Location(name, parsed) => {
-                all_locations.insert(name, TomlValue::Table(parsed.location));
-                all_upstreams.extend(parsed.upstreams);
-                all_plugins.extend(parsed.plugins);
+                insert_unique(
+                    &mut all_locations,
+                    name,
+                    TomlValue::Table(parsed.location),
+                    "locations",
+                )?;
+                merge_unique(
+                    &mut all_upstreams,
+                    parsed.upstreams,
+                    "upstreams",
+                )?;
+                merge_unique(&mut all_plugins, parsed.plugins, "plugins")?;
             },
             ConfigBlock::Upstream(name, table) => {
-                all_upstreams.insert(name, TomlValue::Table(table));
+                insert_unique(
+                    &mut all_upstreams,
+                    name,
+                    TomlValue::Table(table),
+                    "upstreams",
+                )?;
             },
             ConfigBlock::Plugin(name, table) => {
                 insert_into_section(
@@ -138,7 +193,7 @@ pub(crate) fn assemble_toml(blocks: Vec<ConfigBlock>) -> Result<String> {
                     "plugins",
                     name,
                     TomlValue::Table(table),
-                );
+                )?;
             },
             ConfigBlock::Certificate(name, table) => {
                 insert_into_section(
@@ -146,7 +201,7 @@ pub(crate) fn assemble_toml(blocks: Vec<ConfigBlock>) -> Result<String> {
                     "certificates",
                     name,
                     TomlValue::Table(table),
-                );
+                )?;
             },
             ConfigBlock::Storage(name, table) => {
                 insert_into_section(
@@ -154,7 +209,7 @@ pub(crate) fn assemble_toml(blocks: Vec<ConfigBlock>) -> Result<String> {
                     "storages",
                     name,
                     TomlValue::Table(table),
-                );
+                )?;
             },
         }
     }
@@ -165,8 +220,8 @@ pub(crate) fn assemble_toml(blocks: Vec<ConfigBlock>) -> Result<String> {
     if !all_upstreams.is_empty() {
         root.insert("upstreams".to_string(), TomlValue::Table(all_upstreams));
     }
-    extend_section(&mut root, "plugins", all_plugins);
-    extend_section(&mut root, "certificates", all_certificates);
+    extend_section(&mut root, "plugins", all_plugins)?;
+    extend_section(&mut root, "certificates", all_certificates)?;
 
     toml::to_string_pretty(&root).map_err(|e| Error::Ser { source: e })
 }

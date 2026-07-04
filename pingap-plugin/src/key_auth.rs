@@ -258,7 +258,11 @@ impl Plugin for KeyAuth {
         // 1. Check if provided key exists in the configured valid keys
         // 2. If invalid and delay is configured, wait before responding
         //    This helps prevent timing attacks and brute force attempts
-        if !self.keys.iter().any(|key| key == value) {
+        if !self
+            .keys
+            .iter()
+            .any(|key| pingap_core::constant_time_eq(key, value))
+        {
             if let Some(d) = self.delay {
                 sleep(d).await;
             }

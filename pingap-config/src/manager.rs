@@ -315,10 +315,7 @@ impl ConfigManager {
         // `../../etc/foo`. Reject those before the name is joined onto the
         // storage directory: without a separator the name stays one path
         // component and cannot climb out of the category directory.
-        if name.contains('/')
-            || name.contains('\\')
-            || name.contains('\0')
-        {
+        if name.contains('/') || name.contains('\\') || name.contains('\0') {
             return Err(Error::Invalid {
                 message: format!("invalid config name: {name:?}"),
             });

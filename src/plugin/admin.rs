@@ -280,8 +280,7 @@ impl AdminServe {
         // static-looking extension, e.g. `GET /api/configs/x.js`. The auth skip
         // and the `/api` router use different criteria, so they must be kept
         // mutually exclusive here.
-        let is_api =
-            path.starts_with("/api") || path.starts_with("api/");
+        let is_api = path.starts_with("/api") || path.starts_with("api/");
         if !is_api
             && (path.len() <= 1
                 || path.ends_with(".js")
@@ -323,7 +322,10 @@ impl AdminServe {
             let mut hasher = Sha256::new();
             hasher.update(format!("{user}:{pass}:{ts}").as_bytes());
             let hash256 = hasher.finalize();
-            if hash256.encode_hex::<String>() == token {
+            if pingap_core::constant_time_eq(
+                hash256.encode_hex::<String>().as_bytes(),
+                token.as_bytes(),
+            ) {
                 return true;
             }
         }

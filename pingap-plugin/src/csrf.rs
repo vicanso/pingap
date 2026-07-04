@@ -188,7 +188,10 @@ fn validate_token(key: &str, ttl: u64, value: &str) -> bool {
     if ttl > 0 {
         let now = now_sec();
         // Parse timestamp from hex and compare with current time
-        if now - u64::from_str_radix(arr[1], 16).unwrap_or_default() > ttl {
+        if now
+            .saturating_sub(u64::from_str_radix(arr[1], 16).unwrap_or_default())
+            > ttl
+        {
             return false;
         }
     }
@@ -202,8 +205,11 @@ fn validate_token(key: &str, ttl: u64, value: &str) -> bool {
     hasher.update(key.as_bytes());
     let hash256 = hasher.finalize();
 
-    // Constant-time comparison to prevent timing attacks
-    arr[2] == base64_encode(hash256)
+    // Constant-time comparison to avoid leaking the signature via timing.
+    pingap_core::constant_time_eq(
+        arr[2].as_bytes(),
+        base64_encode(hash256).as_bytes(),
+    )
 }
 
 #[async_trait]

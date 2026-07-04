@@ -273,14 +273,23 @@ impl Plugin for JwtAuth {
         let content = format!("{}.{}", arr[0], arr[1]);
         let secret = self.secret.as_bytes();
         let valid = match jwt_header.alg.as_str() {
+            "HS256" => {
+                let hash = hmac_sha256::HMAC::mac(content.as_bytes(), secret);
+                pingap_core::constant_time_eq(
+                    URL_SAFE_NO_PAD.encode(hash).as_bytes(),
+                    arr[2].as_bytes(),
+                )
+            },
             "HS512" => {
                 let hash = hmac_sha512::HMAC::mac(content.as_bytes(), secret);
-                URL_SAFE_NO_PAD.encode(hash) == arr[2]
+                pingap_core::constant_time_eq(
+                    URL_SAFE_NO_PAD.encode(hash).as_bytes(),
+                    arr[2].as_bytes(),
+                )
             },
-            _ => {
-                let hash = hmac_sha256::HMAC::mac(content.as_bytes(), secret);
-                URL_SAFE_NO_PAD.encode(hash) == arr[2]
-            },
+            // Unknown / unsupported algorithms (including "none") are rejected
+            // rather than silently falling back to HS256.
+            _ => false,
         };
         if !valid {
             if let Some(d) = self.delay {

@@ -128,8 +128,9 @@ impl Plugin for AcceptEncoding {
             if self.only_one_encoding && !new_accept_encodings.is_empty() {
                 break;
             }
-            // Add encoding if it's in the Accept-Encoding header
-            if accept_encoding.contains(encoding) {
+            // Add encoding if the client actually listed it (token match, not
+            // a substring: `x-gzip` must not match `gzip`).
+            if accepts_encoding(accept_encoding, encoding) {
                 new_accept_encodings.push(encoding.to_string());
             }
         }
@@ -146,6 +147,25 @@ impl Plugin for AcceptEncoding {
         }
         Ok(RequestPluginResult::Continue)
     }
+}
+
+/// Returns true if `accept_encoding` lists `coding` as an acceptable encoding.
+/// Matches on comma/`;`-delimited token boundaries (so `x-gzip` does not match
+/// `gzip`) and treats an explicit `q=0` as "not acceptable".
+fn accepts_encoding(accept_encoding: &str, coding: &str) -> bool {
+    accept_encoding.split(',').any(|part| {
+        let mut segments = part.split(';');
+        let name = segments.next().unwrap_or_default().trim();
+        if !name.eq_ignore_ascii_case(coding) {
+            return false;
+        }
+        // Acceptable unless the token is explicitly weighted q=0.
+        !segments.any(|seg| {
+            let seg = seg.trim();
+            seg.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("q="))
+                && seg[2..].trim().parse::<f32>().is_ok_and(|q| q <= 0.0)
+        })
+    })
 }
 
 register_plugin!("accept_encoding", AcceptEncoding);
@@ -174,6 +194,19 @@ only_one_encoding = true
         .unwrap();
         assert_eq!("zstd,br,gzip", params.encodings.join(","));
         assert_eq!(true, params.only_one_encoding);
+    }
+
+    #[test]
+    fn test_accepts_encoding() {
+        use super::accepts_encoding;
+        assert_eq!(true, accepts_encoding("gzip, br", "br"));
+        assert_eq!(true, accepts_encoding("gzip, deflate, br;q=0.9", "br"));
+        assert_eq!(true, accepts_encoding("BR", "br"));
+        // Substring false-matches must be rejected.
+        assert_eq!(false, accepts_encoding("x-gzip", "gzip"));
+        assert_eq!(false, accepts_encoding("gzipx", "gzip"));
+        // Explicit q=0 means "not acceptable".
+        assert_eq!(false, accepts_encoding("br;q=0", "br"));
     }
 
     #[tokio::test]

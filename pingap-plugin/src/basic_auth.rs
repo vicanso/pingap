@@ -201,9 +201,13 @@ impl Plugin for BasicAuth {
             ));
         }
 
-        // Validate credentials against our authorized list
-        // Uses constant-time comparison (through Vec comparison) to prevent timing attacks
-        if !self.authorizations.iter().any(|auth| auth == value) {
+        // Validate credentials against our authorized list, comparing in
+        // constant time so a match position is not leaked via timing.
+        if !self
+            .authorizations
+            .iter()
+            .any(|auth| pingap_core::constant_time_eq(auth, value))
+        {
             // If configured, apply rate limiting delay
             // This helps prevent automated brute force attempts
             if let Some(d) = self.delay {

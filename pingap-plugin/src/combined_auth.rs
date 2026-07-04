@@ -237,8 +237,11 @@ impl CombinedAuth {
         hasher.update(format!("{}:{ts}", auth_param.secret).as_bytes());
         let hash256 = hasher.finalize();
 
-        // Compare digests in constant time to prevent timing attacks
-        if digest.to_lowercase() != hash256.encode_hex::<String>() {
+        // Compare digests in constant time to prevent timing attacks.
+        if !pingap_core::constant_time_eq(
+            digest.to_lowercase().as_bytes(),
+            hash256.encode_hex::<String>().as_bytes(),
+        ) {
             return Err(Error::Invalid {
                 category: category.to_string(),
                 message: "digest is invalid".to_string(),

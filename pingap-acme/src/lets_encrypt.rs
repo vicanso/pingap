@@ -559,7 +559,17 @@ async fn new_lets_encrypt(
             match authz.status {
                 instant_acme::AuthorizationStatus::Pending => {},
                 instant_acme::AuthorizationStatus::Valid => continue,
-                _ => todo!(),
+                // Invalid / Revoked / Deactivated / Expired: surface an error
+                // instead of panicking the renewal background task.
+                _ => {
+                    return Err(Error::Fail {
+                        category: "authorization_status".to_string(),
+                        message: format!(
+                            "unexpected authorization status: {:?}",
+                            authz.status
+                        ),
+                    });
+                },
             }
 
             let mut challenge = if params.dns_challenge {

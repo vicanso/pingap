@@ -98,6 +98,22 @@ pub fn real_now_ms() -> u64 {
     Clock::now_since_epoch().as_millis()
 }
 
+/// Compares two byte slices in constant time relative to their length, avoiding
+/// the early exit of `==` that can leak (via timing) how many leading bytes
+/// matched. Use it for verifying secrets, MACs and signatures. The slice
+/// lengths are not treated as secret and are compared up front.
+#[inline]
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    std::hint::black_box(diff) == 0
+}
+
 #[ctor(unsafe)]
 fn init() {
     ensure_clock_updater();
@@ -106,9 +122,18 @@ fn init() {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_clock_updater, get_hostname, get_super_ts, now_ms, real_now_ms,
+        constant_time_eq, ensure_clock_updater, get_hostname, get_super_ts,
+        now_ms, real_now_ms,
     };
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_constant_time_eq() {
+        assert_eq!(true, constant_time_eq(b"abc123", b"abc123"));
+        assert_eq!(true, constant_time_eq(b"", b""));
+        assert_eq!(false, constant_time_eq(b"abc123", b"abc124"));
+        assert_eq!(false, constant_time_eq(b"abc", b"abcd"));
+    }
 
     #[test]
     fn test_super_ts() {
