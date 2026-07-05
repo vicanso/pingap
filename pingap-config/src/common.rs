@@ -559,6 +559,14 @@ pub struct LocationConf {
     /// Host/domain name to match requests against
     pub host: Option<String>,
 
+    /// Optional request match conditions ("name:value" for an exact value, or
+    /// "name" for presence) on headers / query params / cookies respectively.
+    /// The location matches only when path/host match AND every listed
+    /// condition holds.
+    pub match_headers: Option<Vec<String>>,
+    pub match_query: Option<Vec<String>>,
+    pub match_cookies: Option<Vec<String>>,
+
     /// Headers to set on proxied requests (overwrites existing)
     pub proxy_set_headers: Option<Vec<String>>,
 

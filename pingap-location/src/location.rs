@@ -183,6 +183,43 @@ struct RegexRewrite {
     has_named_captures: bool,
 }
 
+/// Parses `["name:value", "name", ...]` match conditions into `(name, value)`
+/// pairs, where a missing value means a presence-only check.
+fn parse_match_conditions(
+    list: &Option<Vec<String>>,
+) -> Vec<(String, Option<String>)> {
+    list.as_ref()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let item = item.trim();
+                    if item.is_empty() {
+                        return None;
+                    }
+                    let cond = match item.split_once(':') {
+                        Some((n, v)) => {
+                            (n.trim().to_string(), Some(v.trim().to_string()))
+                        },
+                        None => (item.to_string(), None),
+                    };
+                    Some(cond)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Returns true if `actual` satisfies `expected`: present with the exact value,
+/// or merely present when no value is required.
+#[inline]
+fn condition_met(actual: Option<&str>, expected: &Option<String>) -> bool {
+    match actual {
+        Some(a) => expected.as_deref().is_none_or(|v| v == a),
+        None => false,
+    }
+}
+
 /// Location represents a routing configuration for handling HTTP requests.
 /// It defines rules for matching requests based on paths and hosts, and specifies
 /// how these requests should be processed and proxied.
@@ -206,6 +243,15 @@ pub struct Location {
     /// List of host patterns to match against request Host header
     /// Empty list means match all hosts
     hosts: Vec<HostSelector>,
+
+    /// Optional request-header match conditions. A location matches only when
+    /// every condition holds: a `(name, Some(value))` requires that exact
+    /// header value, a `(name, None)` requires the header to be present. Empty
+    /// (the common case) always matches, so non-conditional locations pay
+    /// nothing. Covers headers, query params and cookies.
+    header_conditions: Vec<(String, Option<String>)>,
+    query_conditions: Vec<(String, Option<String>)>,
+    cookie_conditions: Vec<(String, Option<String>)>,
 
     /// Optional URL rewriting rule consisting of:
     /// - regex pattern to match against request path
@@ -335,6 +381,13 @@ impl Location {
             .collect::<Result<Vec<_>>>()?;
 
         let path = conf.path.clone().unwrap_or_default();
+
+        // Parse optional match conditions ("name:value" for an exact value, or
+        // "name" for a presence check) on headers, query params and cookies.
+        let header_conditions = parse_match_conditions(&conf.match_headers);
+        let query_conditions = parse_match_conditions(&conf.match_query);
+        let cookie_conditions = parse_match_conditions(&conf.match_cookies);
+
         let mut headers: Vec<(HeaderName, HeaderValue, bool)> = vec![];
         if conf.enable_reverse_proxy_headers.unwrap_or_default() {
             for (name, value) in DEFAULT_PROXY_SET_HEADERS.iter() {
@@ -362,6 +415,9 @@ impl Location {
             path_selector: PathSelector::new(&path)?,
             path,
             hosts,
+            header_conditions,
+            query_conditions,
+            cookie_conditions,
             upstream,
             reg_rewrite,
             plugins: conf.plugins.as_ref().map(|list| {
@@ -475,6 +531,29 @@ impl Location {
         });
 
         (matched, capture_values)
+    }
+
+    /// Returns true when the request satisfies this location's optional
+    /// header / query / cookie match conditions. With none configured this is a
+    /// cheap `true`, so non-conditional locations pay nothing.
+    #[inline]
+    pub fn match_conditions(&self, req_header: &RequestHeader) -> bool {
+        self.header_conditions.iter().all(|(name, expected)| {
+            condition_met(
+                pingap_core::get_req_header_value(req_header, name),
+                expected,
+            )
+        }) && self.query_conditions.iter().all(|(name, expected)| {
+            condition_met(
+                pingap_core::get_query_value(req_header, name),
+                expected,
+            )
+        }) && self.cookie_conditions.iter().all(|(name, expected)| {
+            condition_met(
+                pingap_core::get_cookie_value(req_header, name),
+                expected,
+            )
+        })
     }
 
     pub fn stats(&self) -> LocationStats {
@@ -803,6 +882,81 @@ mod tests {
         // No named groups -> the second regex pass is skipped, no variables.
         assert_eq!(None, variables);
         assert_eq!("/new/thing?x=1", req_header.uri.to_string());
+    }
+
+    #[test]
+    fn test_match_conditions() {
+        let lo = Location::new(
+            "lo",
+            &LocationConf {
+                upstream: Some("charts".to_string()),
+                path: Some("/".to_string()),
+                match_headers: Some(vec![
+                    "x-version:2".to_string(),
+                    "x-canary".to_string(),
+                ]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        // No matching headers -> no match.
+        let req = RequestHeader::build("GET", b"/", None).unwrap();
+        assert_eq!(false, lo.match_conditions(&req));
+
+        // Only one condition satisfied -> no match.
+        let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+        req.insert_header("x-version", "2").unwrap();
+        assert_eq!(false, lo.match_conditions(&req));
+
+        // Exact value + presence both satisfied -> match.
+        let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+        req.insert_header("x-version", "2").unwrap();
+        req.insert_header("x-canary", "anything").unwrap();
+        assert_eq!(true, lo.match_conditions(&req));
+
+        // Wrong value -> no match.
+        let mut req = RequestHeader::build("GET", b"/", None).unwrap();
+        req.insert_header("x-version", "3").unwrap();
+        req.insert_header("x-canary", "y").unwrap();
+        assert_eq!(false, lo.match_conditions(&req));
+
+        // A location without conditions matches any request (zero overhead).
+        let lo2 = Location::new(
+            "lo2",
+            &LocationConf {
+                upstream: Some("charts".to_string()),
+                path: Some("/".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let req = RequestHeader::build("GET", b"/", None).unwrap();
+        assert_eq!(true, lo2.match_conditions(&req));
+
+        // Query-param (exact) and cookie (presence) conditions.
+        let lo3 = Location::new(
+            "lo3",
+            &LocationConf {
+                upstream: Some("charts".to_string()),
+                path: Some("/".to_string()),
+                match_query: Some(vec!["ver:2".to_string()]),
+                match_cookies: Some(vec!["session".to_string()]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        // Query value matches and the session cookie is present -> match.
+        let mut req = RequestHeader::build("GET", b"/?ver=2", None).unwrap();
+        req.insert_header("Cookie", "session=abc").unwrap();
+        assert_eq!(true, lo3.match_conditions(&req));
+        // Cookie missing -> no match.
+        let req = RequestHeader::build("GET", b"/?ver=2", None).unwrap();
+        assert_eq!(false, lo3.match_conditions(&req));
+        // Wrong query value -> no match.
+        let mut req = RequestHeader::build("GET", b"/?ver=3", None).unwrap();
+        req.insert_header("Cookie", "session=abc").unwrap();
+        assert_eq!(false, lo3.match_conditions(&req));
     }
 
     #[tokio::test]

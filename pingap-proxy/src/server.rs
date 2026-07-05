@@ -519,7 +519,7 @@ impl Server {
         let matched_info = locations.iter().find_map(|name| {
             let location = self.location_provider.get(name)?;
             let (matched, captures) = location.match_host_path(host, path);
-            if matched {
+            if matched && location.match_conditions(header) {
                 Some((location, captures))
             } else {
                 None
