@@ -169,6 +169,20 @@ static DEFAULT_PROXY_SET_HEADERS: LazyLock<Vec<HttpHeader>> =
         .expect("Failed to convert default proxy set headers")
     });
 
+/// A compiled URL rewrite rule with values precomputed at construction so the
+/// per-request path (see [`Location::rewrite`]) avoids re-deriving them.
+#[derive(Debug)]
+struct RegexRewrite {
+    /// Regex matched against the request path.
+    re: Regex,
+    /// Replacement string (may contain `$name` capture references).
+    value: String,
+    /// Pattern is `.*`: the whole path is replaced, no matching needed.
+    match_all: bool,
+    /// Regex declares named capture groups worth extracting into `variables`.
+    has_named_captures: bool,
+}
+
 /// Location represents a routing configuration for handling HTTP requests.
 /// It defines rules for matching requests based on paths and hosts, and specifies
 /// how these requests should be processed and proxied.
@@ -196,7 +210,7 @@ pub struct Location {
     /// Optional URL rewriting rule consisting of:
     /// - regex pattern to match against request path
     /// - replacement string with optional capture group references
-    reg_rewrite: Option<(Regex, String)>,
+    reg_rewrite: Option<RegexRewrite>,
 
     /// Headers to set or append on proxied requests
     pub headers: Option<Vec<(HeaderName, HeaderValue, bool)>>,
@@ -298,7 +312,15 @@ impl Location {
 
             let value = if arr.len() == 2 { arr[1] } else { "" };
             if let Ok(re) = Regex::new(arr[0]) {
-                reg_rewrite = Some((re, value.to_string()));
+                let match_all = re.as_str() == ".*";
+                let has_named_captures =
+                    re.capture_names().flatten().next().is_some();
+                reg_rewrite = Some(RegexRewrite {
+                    re,
+                    value: value.to_string(),
+                    match_all,
+                    has_named_captures,
+                });
             }
         }
 
@@ -535,11 +557,12 @@ impl LocationInstance for Location {
         header: &mut RequestHeader,
         mut variables: Option<AHashMap<String, String>>,
     ) -> (bool, Option<AHashMap<String, String>>) {
-        let Some((re, value)) = &self.reg_rewrite else {
+        let Some(rewrite) = &self.reg_rewrite else {
             return (false, variables);
         };
+        let re = &rewrite.re;
 
-        let mut replace_value = value.to_string();
+        let mut replace_value = rewrite.value.to_string();
 
         if let Some(vars) = &variables {
             for (k, v) in vars.iter() {
@@ -549,7 +572,7 @@ impl LocationInstance for Location {
 
         let path = header.uri.path();
 
-        let mut new_path = if re.to_string() == ".*" {
+        let mut new_path = if rewrite.match_all {
             replace_value
         } else {
             re.replace(path, replace_value).to_string()
@@ -559,7 +582,11 @@ impl LocationInstance for Location {
             return (false, variables);
         }
 
-        if let Some(captures) = re.captures(path) {
+        // Only run the regex a second time to harvest named captures when the
+        // pattern actually declares some.
+        if rewrite.has_named_captures
+            && let Some(captures) = re.captures(path)
+        {
             for name in re.capture_names().flatten() {
                 if let Some(match_value) = captures.name(name) {
                     let values = variables.get_or_insert_with(AHashMap::new);
@@ -756,6 +783,26 @@ mod tests {
         assert_eq!(false, matched);
         assert_eq!(None, variables);
         assert_eq!("/api/me?abc=1", req_header.uri.to_string());
+    }
+
+    #[test]
+    fn test_rewrite_path_without_named_captures() {
+        let lo = Location::new(
+            "lo",
+            &LocationConf {
+                upstream: Some("charts".to_string()),
+                rewrite: Some("^/old/(.*)$ /new/$1".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut req_header =
+            RequestHeader::build("GET", b"/old/thing?x=1", None).unwrap();
+        let (matched, variables) = lo.rewrite(&mut req_header, None);
+        assert_eq!(true, matched);
+        // No named groups -> the second regex pass is skipped, no variables.
+        assert_eq!(None, variables);
+        assert_eq!("/new/thing?x=1", req_header.uri.to_string());
     }
 
     #[tokio::test]

@@ -66,7 +66,7 @@ pub fn get_duration_conf(value: &PluginConf, key: &str) -> Option<Duration> {
         .and_then(|s| parse_duration(s).ok())
 }
 
-pub(crate) fn get_str_slice_conf(value: &PluginConf, key: &str) -> Vec<String> {
+pub fn get_str_slice_conf(value: &PluginConf, key: &str) -> Vec<String> {
     value
         .get(key)
         .and_then(|v| v.as_array())
@@ -98,7 +98,7 @@ pub fn get_int_conf_or_default(
         .unwrap_or(default_value)
 }
 
-pub(crate) fn get_step_conf(
+pub fn get_step_conf(
     value: &PluginConf,
     default_value: PluginStep,
 ) -> PluginStep {

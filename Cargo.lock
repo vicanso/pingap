@@ -3801,7 +3801,6 @@ dependencies = [
  "bytes",
  "cfg-if",
  "clap",
- "crc32fast",
  "criterion",
  "crossbeam-channel",
  "ctor",

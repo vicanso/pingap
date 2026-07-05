@@ -15,6 +15,7 @@
 use ahash::AHashMap;
 use std::sync::Arc;
 
+mod cache;
 mod headers;
 mod server;
 mod server_conf;

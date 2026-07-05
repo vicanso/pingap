@@ -15,7 +15,7 @@ name = "pingap_performance"
 path = "src/lib.rs"
 
 [features]
-tracing = ["prometheus"]
+tracing = ["prometheus", "pingap-cache/tracing"]
 
 [dependencies]
 async-trait = { workspace = true }

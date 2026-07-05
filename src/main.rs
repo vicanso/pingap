@@ -62,7 +62,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use sysinfo::System;
 
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 mod certificates;
 mod config_manager;
@@ -419,6 +419,32 @@ fn parse_arguments() -> Args {
     args
 }
 
+/// Dry-runs each configured plugin through the factory so `--test` reports bad
+/// plugin configs, which `PingapConfig::validate` cannot check (the factory
+/// lives in a higher layer). A category this build does not know — e.g. a
+/// feature-gated plugin that was compiled out — is only warned about, matching
+/// runtime behaviour; any other construction error is treated as fatal.
+fn validate_plugins(config: &PingapConfig) -> Result<(), Box<dyn Error>> {
+    let factory = pingap_plugin::get_plugin_factory();
+    for (name, conf) in config.plugins.iter() {
+        match factory.create(conf) {
+            Ok(_) => {},
+            Err(pingap_plugin::Error::NotFound { category }) => {
+                warn!(
+                    target: LOG_TARGET,
+                    name = %name,
+                    category = %category,
+                    "plugin category is unavailable in this build, skipping validation"
+                );
+            },
+            Err(e) => {
+                return Err(format!("plugin \"{name}\" is invalid: {e}").into());
+            },
+        }
+    }
+    Ok(())
+}
+
 fn run() -> Result<(), Box<dyn Error>> {
     let args = parse_arguments();
 
@@ -525,6 +551,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     // return if test mode
     if args.test {
+        validate_plugins(&config)?;
         info!(target: LOG_TARGET, "Validate config success");
         return Ok(());
     }

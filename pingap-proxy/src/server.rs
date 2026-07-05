@@ -15,7 +15,7 @@
 #[cfg(feature = "tracing")]
 use super::tracing::{
     initialize_telemetry, inject_telemetry_headers, set_otel_request_attrs,
-    set_otel_upstream_attrs, update_otel_cache_attrs,
+    set_otel_upstream_attrs,
 };
 use super::{LOG_TARGET, ServerConf, set_append_proxy_headers};
 use crate::ServerLocationsProvider;
@@ -50,8 +50,7 @@ use pingap_performance::{
 use pingap_performance::{accept_request, end_request};
 use pingap_upstream::{Upstream, UpstreamProvider};
 use pingora::apps::HttpServerOptions;
-use pingora::cache::cache_control::DirectiveValue;
-use pingora::cache::cache_control::{CacheControl, InterpretCacheControl};
+use pingora::cache::cache_control::CacheControl;
 use pingora::cache::filters::resp_cacheable;
 use pingora::cache::key::CacheHashKey;
 use pingora::cache::{
@@ -940,105 +939,6 @@ impl Server {
         ctx.plugins = Some(plugins);
         result
     }
-
-    fn process_cache_control(
-        &self,
-        c: &mut CacheControl,
-        max_ttl: Option<Duration>,
-    ) -> Result<(), NoCacheReason> {
-        // no-cache, no-store, private
-        if c.no_cache() || c.no_store() || c.private() {
-            return Err(NoCacheReason::OriginNotCache);
-        }
-
-        // max-age=0
-        if c.max_age().ok().flatten().unwrap_or_default() == 0 {
-            return Err(NoCacheReason::OriginNotCache);
-        }
-
-        // set cache max ttl
-        if let Some(d) = max_ttl
-            && c.fresh_duration().unwrap_or_default() > d
-        {
-            // 更新 s-maxage 的值
-            let s_maxage_value =
-                itoa::Buffer::new().format(d.as_secs()).as_bytes().to_vec();
-            c.directives.insert(
-                "s-maxage".to_string(),
-                Some(DirectiveValue(s_maxage_value)),
-            );
-        }
-
-        Ok(())
-    }
-
-    #[inline]
-    fn handle_cache_headers(
-        &self,
-        session: &Session,
-        upstream_response: &mut ResponseHeader,
-        ctx: &mut Ctx,
-    ) {
-        let cache_status = session.cache.phase().as_str();
-        let _ = upstream_response.insert_header("x-cache-status", cache_status);
-
-        // process lookup duration
-        let lookup_duration_str = self.process_cache_timing(
-            session.cache.lookup_duration(),
-            "x-cache-lookup",
-            upstream_response,
-            &mut ctx.timing.cache_lookup,
-        );
-
-        // process lock duration
-        let lock_duration_str = self.process_cache_timing(
-            session.cache.lock_duration(),
-            "x-cache-lock",
-            upstream_response,
-            &mut ctx.timing.cache_lock,
-        );
-
-        #[cfg(not(feature = "tracing"))]
-        {
-            let _ = lookup_duration_str;
-            let _ = lock_duration_str;
-        }
-
-        // (optional) process OpenTelemetry
-        #[cfg(feature = "tracing")]
-        update_otel_cache_attrs(
-            ctx,
-            cache_status,
-            lookup_duration_str,
-            lock_duration_str,
-        );
-    }
-
-    #[inline]
-    fn process_cache_timing(
-        &self,
-        duration_opt: Option<Duration>,
-        header_name: &'static str,
-        resp: &mut ResponseHeader,
-        ctx_field: &mut Option<i32>,
-    ) -> String {
-        if let Some(d) = duration_opt {
-            let ms = d.as_millis() as i32;
-
-            // use itoa to avoid format! heap memory allocation
-            let mut buffer = itoa::Buffer::new();
-            let mut value_bytes = Vec::with_capacity(6);
-            value_bytes.extend_from_slice(buffer.format(ms).as_bytes());
-            value_bytes.extend_from_slice(b"ms");
-
-            let _ = resp.insert_header(header_name, value_bytes);
-            *ctx_field = Some(ms);
-
-            #[cfg(feature = "tracing")]
-            return humantime::Duration::from(d).to_string();
-        }
-        String::new()
-    }
 }
 
 #[inline]
@@ -1380,7 +1280,8 @@ impl ProxyHttp for Server {
 
         if let Some(c) = &mut cc {
             // delegate all complex validation and modification logic to the helper function
-            if let Err(reason) = self.process_cache_control(c, max_ttl) {
+            if let Err(reason) = crate::cache::process_cache_control(c, max_ttl)
+            {
                 return Ok(RespCacheable::Uncacheable(reason));
             }
         } else if check_cache_control {
@@ -1410,7 +1311,7 @@ impl ProxyHttp for Server {
         debug!(target: LOG_TARGET, "--> response filter");
         defer!(debug!(target: LOG_TARGET, "<-- response filter"););
         if session.cache.enabled() {
-            self.handle_cache_headers(session, upstream_response, ctx);
+            crate::cache::handle_cache_headers(session, upstream_response, ctx);
         }
 
         // call response plugin

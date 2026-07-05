@@ -1251,14 +1251,9 @@ impl PingapConfig {
             }
             server.validate_with_locations(&location_names)?;
         }
-        // TODO: validate plugins
-        // for (name, plugin) in self.plugins.iter() {
-        //     parse_plugins(vec![(name.to_string(), plugin.clone())]).map_err(
-        //         |e| Error::Invalid {
-        //             message: e.to_string(),
-        //         },
-        //     )?;
-        // }
+        // Plugin configs are validated by the binary (`src/main.rs`) through
+        // the plugin factory: that factory lives in a higher layer than this
+        // crate, so it cannot be reached from here without a dependency cycle.
         for (_, certificate) in self.certificates.iter() {
             certificate.validate()?;
         }
@@ -1503,6 +1498,7 @@ impl PingapConfig {
 
 #[cfg(test)]
 mod tests {
+    use super::{CATEGORY_BASIC, CATEGORY_UPSTREAM, convert_pingap_config};
     use super::{CertificateConf, Hashable, Validate, validate_cert};
     use super::{LocationConf, PluginCategory, ServerConf, UpstreamConf};
     use pingap_core::PluginStep;
@@ -1517,6 +1513,61 @@ mod tests {
         assert_eq!(step, PluginStep::EarlyRequest);
 
         assert_eq!("early_request", step.to_string());
+    }
+
+    #[test]
+    fn test_config_diff() {
+        let base = convert_pingap_config(
+            br#"
+[upstreams.charts]
+addrs = ["127.0.0.1:5000"]
+
+[upstreams.api]
+addrs = ["127.0.0.1:6000"]
+"#,
+            false,
+        )
+        .unwrap();
+
+        // No change: identical config -> nothing affected, empty diff.
+        let (categories, detail) = base.diff(&base.clone());
+        assert_eq!(true, categories.is_empty());
+        assert_eq!(true, detail.is_empty());
+
+        // Modify one upstream -> only the upstream category is affected.
+        let mut modified = base.clone();
+        modified.upstreams.get_mut("charts").unwrap().addrs =
+            vec!["127.0.0.1:5001".to_string()];
+        let (categories, detail) = base.diff(&modified);
+        assert_eq!(vec![CATEGORY_UPSTREAM.to_string()], categories);
+        assert_eq!(
+            true,
+            detail
+                .iter()
+                .any(|l| l.contains("[MODIFIED]") && l.contains("charts"))
+        );
+
+        // Add an upstream -> upstream category affected, ADDED marker.
+        let mut added = base.clone();
+        added
+            .upstreams
+            .insert("new".to_string(), base.upstreams["api"].clone());
+        let (categories, detail) = base.diff(&added);
+        assert_eq!(vec![CATEGORY_UPSTREAM.to_string()], categories);
+        assert_eq!(true, detail.iter().any(|l| l.contains("[ADDED]")));
+
+        // Remove an upstream -> upstream category affected, REMOVED marker.
+        let mut removed = base.clone();
+        removed.upstreams.remove("api");
+        let (categories, detail) = base.diff(&removed);
+        assert_eq!(vec![CATEGORY_UPSTREAM.to_string()], categories);
+        assert_eq!(true, detail.iter().any(|l| l.contains("[REMOVED]")));
+
+        // Change basic -> only the basic category is affected.
+        let mut basic_changed = base.clone();
+        basic_changed.basic.name = Some("renamed".to_string());
+        let (categories, _) = base.diff(&basic_changed);
+        assert_eq!(vec![CATEGORY_BASIC.to_string()], categories);
     }
 
     #[test]

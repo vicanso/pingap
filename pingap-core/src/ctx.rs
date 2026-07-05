@@ -902,12 +902,16 @@ pub fn get_cache_key(ctx: &Ctx, method: &str, uri: &Uri) -> CacheKey {
     };
     let namespace = cache_info.namespace.as_ref().map_or("", |v| v);
     let key = if let Some(keys) = &cache_info.keys {
+        // Materialize the URI once and reuse it for both the capacity estimate
+        // and the value (previously it was formatted twice: once just to
+        // measure its length, once to append it).
+        let uri_str = uri.to_string();
         // Pre-allocate string capacity to avoid reallocations.
         let mut key_buf = String::with_capacity(
             keys.iter().map(|s| s.len() + 1).sum::<usize>()
                 + method.len()
                 + 1
-                + uri.to_string().len(),
+                + uri_str.len(),
         );
 
         // Join custom key components with ':'.
@@ -917,8 +921,8 @@ pub fn get_cache_key(ctx: &Ctx, method: &str, uri: &Uri) -> CacheKey {
             }
             key_buf.push_str(k);
         }
-        // Use write! macro to efficiently concatenate the method and URI.
-        let _ = write!(&mut key_buf, ":{method}:{uri}");
+        // Concatenate the method and URI.
+        let _ = write!(&mut key_buf, ":{method}:{uri_str}");
         key_buf
     } else {
         // If no custom keys, use "METHOD:URI" as the key.

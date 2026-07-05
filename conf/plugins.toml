@@ -197,7 +197,7 @@ category = "cache"
 # RequestId plugin generating unique request identifiers
 [plugins.nanoRequestId]
 # Plugin type
-category = "requestId"
+category = "request_id"
 
 # The algorithm used to generate request IDs:
 # - "nanoid": Uses NanoID algorithm (URL-safe, compact IDs)
@@ -347,7 +347,7 @@ tag = "query"
 # IpRestriction plugin for controlling access based on IP addresses
 [plugins.innerIpRestriction]
 # Plugin type
-category = "IpRestriction"
+category = "ip_restriction"
 
 # List of IP addresses or CIDR ranges to match against
 # Examples:

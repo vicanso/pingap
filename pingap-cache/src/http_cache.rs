@@ -104,7 +104,7 @@ impl From<CacheObject> for Bytes {
         buf.put_u32(meta1_size);
         buf.extend(value.meta.0);
         buf.extend(value.meta.1);
-        buf.extend(value.body.iter());
+        buf.extend_from_slice(&value.body);
 
         buf.into()
     }

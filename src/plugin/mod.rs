@@ -18,6 +18,12 @@ use arc_swap::ArcSwap;
 use pingap_config::PluginConf;
 use pingap_core::{Plugin, PluginProvider, PluginStep, Plugins};
 use pingap_plugin::get_plugin_factory;
+// Reuse the canonical plugin-config helpers instead of keeping a second copy.
+// `get_hash_key` in particular MUST stay byte-identical to the one plugins use
+// to compute their config key, otherwise hot-reload change detection breaks.
+pub(crate) use pingap_plugin::{
+    get_hash_key, get_int_conf, get_step_conf, get_str_conf, get_str_slice_conf,
+};
 use pingap_proxy::ServerConf;
 use pingap_util::base64_encode;
 use serde::{Deserialize, Serialize};
@@ -115,30 +121,6 @@ pub enum Error {
     Invalid { category: String, message: String },
 }
 type Result<T, E = Error> = std::result::Result<T, E>;
-
-/// Generates a unique hash key for a plugin configuration to detect changes.
-///
-/// # Arguments
-/// * `conf` - The plugin configuration to hash
-///
-/// # Returns
-/// A string containing the CRC32 hash of the sorted configuration key-value pairs
-pub(crate) fn get_hash_key(conf: &PluginConf) -> String {
-    let mut keys: Vec<String> =
-        conf.keys().map(|item| item.to_string()).collect();
-    keys.sort();
-    let mut lines = vec![];
-    for key in keys {
-        let value = if let Some(value) = conf.get(&key) {
-            value.to_string()
-        } else {
-            "".to_string()
-        };
-        lines.push(format!("{key}:{value}"));
-    }
-    let hash = crc32fast::hash(lines.join("\n").as_bytes());
-    format!("{hash:X}")
-}
 
 /// Returns a list of built-in plugins with their default configurations.
 ///
@@ -387,47 +369,6 @@ pub fn try_init_plugins(
     };
 
     (updated_plugins, error)
-}
-
-/// Helper functions for accessing plugin configuration values
-pub(crate) fn get_str_conf(value: &PluginConf, key: &str) -> String {
-    if let Some(value) = value.get(key) {
-        value.as_str().unwrap_or_default().to_string()
-    } else {
-        "".to_string()
-    }
-}
-
-pub(crate) fn get_int_conf(value: &PluginConf, key: &str) -> i64 {
-    if let Some(value) = value.get(key) {
-        value.as_integer().unwrap_or_default()
-    } else {
-        0
-    }
-}
-
-pub(crate) fn get_str_slice_conf(value: &PluginConf, key: &str) -> Vec<String> {
-    if let Some(value) = value.get(key)
-        && let Some(values) = value.as_array()
-    {
-        return values
-            .iter()
-            .map(|item| item.as_str().unwrap_or_default().to_string())
-            .collect();
-    }
-    vec![]
-}
-
-pub(crate) fn get_step_conf(
-    value: &PluginConf,
-    default_value: PluginStep,
-) -> PluginStep {
-    let step = get_str_conf(value, "step");
-    if step.is_empty() {
-        return default_value;
-    }
-
-    PluginStep::from_str(step.as_str()).unwrap_or(default_value)
 }
 
 #[test]
