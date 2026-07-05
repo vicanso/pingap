@@ -21,6 +21,7 @@ geo = []
 # Newer versions require 1.89.0
 tor-geoip = { version = "0.39", default-features = false, features = ["embedded-db"] }
 ahash = { workspace = true }
+arc-swap = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
 bstr = { workspace = true }

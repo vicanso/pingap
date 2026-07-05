@@ -12,13 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_str_conf};
+use super::{Error, get_duration_conf, get_hash_key, get_str_conf};
+use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
 use humantime::parse_duration;
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
+use jsonwebtoken::jwk::JwkSet;
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, ModifyResponseBody, Plugin, PluginStep, RequestPluginResult,
@@ -31,11 +33,15 @@ use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 use substring::Substring;
 use tokio::time::sleep;
 use tracing::debug;
+use tracing::error;
 
 const PLUGIN_ID: &str = "_jwt_";
 
@@ -102,6 +108,11 @@ pub struct JwtAuth {
     /// are configured; HMAC algorithms leave this `None` and use `secret`.
     decoding_key: Option<(DecodingKey, Algorithm)>,
 
+    /// Remote JWKS source (`Some` when `jwks_url` is configured). Verifies
+    /// asymmetric tokens against keys fetched from the issuer, selected by
+    /// their `kid`.
+    jwks: Option<Arc<JwksSource>>,
+
     /// Optional delay on authentication failure
     /// Helps prevent timing attacks by making success/failure responses take similar time
     delay: Option<Duration>,
@@ -160,6 +171,163 @@ fn build_asymmetric_key(
     Ok(Some((key, alg)))
 }
 
+/// Cached JWKS decoding keys (`kid` -> key) plus the fetch time.
+struct JwksCache {
+    keys: HashMap<String, DecodingKey>,
+    fetched_at: Instant,
+}
+
+/// A remote JWKS endpoint with a TTL cache, single-flight refresh and key
+/// rotation. Verification serves cached keys lock-free; only a cache miss /
+/// expiry / unknown `kid` triggers a rate-limited refetch.
+struct JwksSource {
+    url: String,
+    ttl: Duration,
+    /// Minimum spacing between refetches, to bound refetching on unknown kids.
+    cooldown: Duration,
+    client: reqwest::Client,
+    cache: ArcSwapOption<JwksCache>,
+    refresh_lock: tokio::sync::Mutex<()>,
+}
+
+impl JwksSource {
+    async fn fetch(&self) -> std::result::Result<JwksCache, String> {
+        let resp = self
+            .client
+            .get(&self.url)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        let set = resp.json::<JwkSet>().await.map_err(|e| e.to_string())?;
+        let mut keys = HashMap::new();
+        for jwk in &set.keys {
+            let Some(kid) = jwk.common.key_id.clone() else {
+                continue;
+            };
+            if let Ok(dk) = DecodingKey::from_jwk(jwk) {
+                keys.insert(kid, dk);
+            }
+        }
+        Ok(JwksCache {
+            keys,
+            fetched_at: Instant::now(),
+        })
+    }
+
+    /// Refreshes the cache with single-flight + rate limiting. On fetch failure
+    /// the previous cache is kept (graceful degradation).
+    async fn refresh(&self) {
+        let _guard = self.refresh_lock.lock().await;
+        // Re-check after acquiring the lock: a peer may have just refreshed, or
+        // we may still be inside the cooldown window (bounds unknown-kid churn).
+        if let Some(cache) = self.cache.load_full()
+            && cache.fetched_at.elapsed() < self.cooldown
+        {
+            return;
+        }
+        match self.fetch().await {
+            Ok(cache) => self.cache.store(Some(Arc::new(cache))),
+            Err(e) => {
+                error!(category = "jwt", error = e, "fetch jwks failed");
+            },
+        }
+    }
+
+    fn key_for(&self, kid: &str, allow_stale: bool) -> Option<DecodingKey> {
+        let cache = self.cache.load_full()?;
+        if !allow_stale && cache.fetched_at.elapsed() > self.ttl {
+            return None;
+        }
+        cache.keys.get(kid).cloned()
+    }
+
+    async fn verify(&self, token: &str) -> bool {
+        let Ok(header) = decode_header(token) else {
+            return false;
+        };
+        let Some(kid) = header.kid else {
+            return false;
+        };
+        // Only asymmetric algorithms are accepted, so a token cannot be signed
+        // with symmetric HMAC using the public key as the secret (algorithm
+        // confusion). `decode` also rejects an alg that mismatches the JWK's
+        // key type.
+        if !is_asymmetric_alg(header.alg) {
+            return false;
+        }
+        let validation = jwks_validation(header.alg);
+        // Fresh cache hit: verify without touching the network.
+        if let Some(key) = self.key_for(&kid, false)
+            && decode::<serde_json::Value>(token, &key, &validation).is_ok()
+        {
+            return true;
+        }
+        // Miss / expired / rotated kid: refresh (rate-limited), then retry with
+        // whatever we have (including a stale cache if the refetch failed).
+        self.refresh().await;
+        if let Some(key) = self.key_for(&kid, true) {
+            return decode::<serde_json::Value>(token, &key, &validation)
+                .is_ok();
+        }
+        false
+    }
+}
+
+/// Validation pinned to the JWK's declared algorithm, enforcing signature and
+/// `exp` while ignoring `aud`.
+fn jwks_validation(alg: Algorithm) -> Validation {
+    let mut validation = Validation::new(alg);
+    validation.validate_aud = false;
+    validation
+}
+
+/// Returns true for signature algorithms usable with a public key.
+fn is_asymmetric_alg(alg: Algorithm) -> bool {
+    matches!(
+        alg,
+        Algorithm::RS256
+            | Algorithm::RS384
+            | Algorithm::RS512
+            | Algorithm::PS256
+            | Algorithm::PS384
+            | Algorithm::PS512
+            | Algorithm::ES256
+            | Algorithm::ES384
+            | Algorithm::EdDSA
+    )
+}
+
+/// Builds a remote JWKS source when `jwks_url` is configured (`Ok(None)`
+/// otherwise). `jwks_ttl` controls the cache lifetime (default 1h).
+fn build_jwks_source(value: &PluginConf) -> Result<Option<Arc<JwksSource>>> {
+    let url = get_str_conf(value, "jwks_url");
+    if url.is_empty() {
+        return Ok(None);
+    }
+    reqwest::Url::parse(&url).map_err(|e| Error::Invalid {
+        category: PluginCategory::Jwt.to_string(),
+        message: format!("invalid jwks_url: {e}"),
+    })?;
+    let ttl = get_duration_conf(value, "jwks_ttl")
+        .unwrap_or(Duration::from_secs(3600));
+    let cooldown = ttl.min(Duration::from_secs(10));
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| Error::Invalid {
+            category: PluginCategory::Jwt.to_string(),
+            message: e.to_string(),
+        })?;
+    Ok(Some(Arc::new(JwksSource {
+        url,
+        ttl,
+        cooldown,
+        client,
+        cache: ArcSwapOption::empty(),
+        refresh_lock: tokio::sync::Mutex::new(()),
+    })))
+}
+
 impl TryFrom<&PluginConf> for JwtAuth {
     type Error = Error;
 
@@ -213,6 +381,7 @@ impl TryFrom<&PluginConf> for JwtAuth {
             &algorithm,
             &get_str_conf(value, "public_key"),
         )?;
+        let jwks = build_jwks_source(value)?;
 
         let params = Self {
             hash_value,
@@ -221,6 +390,7 @@ impl TryFrom<&PluginConf> for JwtAuth {
             auth_path: get_str_conf(value, "auth_path"),
             algorithm,
             decoding_key,
+            jwks,
             delay,
             header,
             query,
@@ -233,8 +403,11 @@ impl TryFrom<&PluginConf> for JwtAuth {
         };
 
         // HMAC algorithms need a shared secret; asymmetric ones use the parsed
-        // public key instead.
-        if params.decoding_key.is_none() && params.secret.is_empty() {
+        // public key or a remote JWKS instead.
+        if params.decoding_key.is_none()
+            && params.jwks.is_none()
+            && params.secret.is_empty()
+        {
             return Err(Error::Invalid {
                 category: PluginCategory::Jwt.to_string(),
                 message: "Jwt secret is not allowed empty".to_string(),
@@ -327,6 +500,19 @@ impl Plugin for JwtAuth {
             let mut validation = Validation::new(*alg);
             validation.validate_aud = false;
             if decode::<serde_json::Value>(value, key, &validation).is_ok() {
+                return Ok(RequestPluginResult::Continue);
+            }
+            if let Some(d) = self.delay {
+                sleep(d).await;
+            }
+            let mut resp = self.unauthorized_resp.clone();
+            resp.body = Bytes::from_static(b"Jwt authorization is invalid");
+            return Ok(RequestPluginResult::Respond(resp));
+        }
+        // Remote JWKS verification: the key is selected by the token's `kid`
+        // and pinned to that JWK's algorithm.
+        if let Some(jwks) = &self.jwks {
+            if jwks.verify(value).await {
                 return Ok(RequestPluginResult::Continue);
             }
             if let Some(d) = self.delay {
@@ -671,6 +857,71 @@ Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
         // An expired token is rejected.
         let expired = run(sign(pingap_core::now_sec() - 3600)).await;
         assert_eq!(true, matches!(expired, RequestPluginResult::Respond(_)));
+    }
+
+    /// Tests remote-JWKS verification with a pre-populated (in-memory) cache,
+    /// exercising kid selection and expiry without any network I/O.
+    #[tokio::test]
+    async fn test_jwt_jwks() {
+        use jsonwebtoken::{EncodingKey, Header, encode};
+
+        let public_key = r#"-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECE/4ox+pGq+yiB3RqIXINmlHJp+l
+6V8vXffF5UzI/h3RPK3l9MphCKS2wg50uVoWlBITXMRhh5LVB/93vQZa0Q==
+-----END PUBLIC KEY-----"#;
+        // spellchecker:off
+        let private_key = r#"-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg6V2VwZk30Az6VKMF
+Bt6nfEa2r4hCQuuMB6azsjMB7xmhRANCAAQIT/ijH6kar7KIHdGohcg2aUcmn6Xp
+Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
+-----END PRIVATE KEY-----"#;
+        // spellchecker:on
+
+        // A JWKS source with a pre-populated cache keyed by kid (no network).
+        let mut keys = HashMap::new();
+        keys.insert(
+            "kid-1".to_string(),
+            DecodingKey::from_ec_pem(public_key.as_bytes()).unwrap(),
+        );
+        let source = JwksSource {
+            url: "http://127.0.0.1:1/jwks".to_string(),
+            ttl: Duration::from_secs(3600),
+            cooldown: Duration::from_secs(10),
+            client: reqwest::Client::new(),
+            cache: ArcSwapOption::new(Some(Arc::new(JwksCache {
+                keys,
+                fetched_at: Instant::now(),
+            }))),
+            refresh_lock: tokio::sync::Mutex::new(()),
+        };
+
+        let sign = |kid: Option<&str>, exp: u64| {
+            let mut header = Header::new(Algorithm::ES256);
+            header.kid = kid.map(|k| k.to_string());
+            let claims = serde_json::json!({ "sub": "u1", "exp": exp });
+            encode(
+                &header,
+                &claims,
+                &EncodingKey::from_ec_pem(private_key.as_bytes()).unwrap(),
+            )
+            .unwrap()
+        };
+
+        // Matching kid + valid signature + not expired -> accepted.
+        let token = sign(Some("kid-1"), pingap_core::now_sec() + 3600);
+        assert_eq!(true, source.verify(&token).await);
+
+        // Expired -> rejected.
+        let token = sign(Some("kid-1"), pingap_core::now_sec() - 3600);
+        assert_eq!(false, source.verify(&token).await);
+
+        // Unknown kid -> rejected (fresh cache has no such key).
+        let token = sign(Some("kid-x"), pingap_core::now_sec() + 3600);
+        assert_eq!(false, source.verify(&token).await);
+
+        // No kid at all -> rejected.
+        let token = sign(None, pingap_core::now_sec() + 3600);
+        assert_eq!(false, source.verify(&token).await);
     }
 
     /// Tests JWT token validation functionality

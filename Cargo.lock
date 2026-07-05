@@ -4196,6 +4196,7 @@ name = "pingap-plugin"
 version = "0.13.1"
 dependencies = [
  "ahash",
+ "arc-swap",
  "async-trait",
  "base64",
  "bstr",
