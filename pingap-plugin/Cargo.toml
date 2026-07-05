@@ -35,6 +35,7 @@ fancy-regex = { workspace = true }
 glob = { workspace = true }
 hex = { workspace = true }
 http = { workspace = true }
+jsonwebtoken = { workspace = true }
 hmac-sha256 = { workspace = true }
 hmac-sha512 = { workspace = true, default-features = false }
 humantime = { workspace = true }

@@ -18,6 +18,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::{Bytes, BytesMut};
 use http::StatusCode;
 use humantime::parse_duration;
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, ModifyResponseBody, Plugin, PluginStep, RequestPluginResult,
@@ -30,6 +31,7 @@ use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::str::FromStr;
 use std::time::Duration;
 use substring::Substring;
 use tokio::time::sleep;
@@ -95,6 +97,11 @@ pub struct JwtAuth {
     /// HS512 provides stronger hashing but may be slower
     algorithm: String,
 
+    /// Pre-parsed decoding key + algorithm for asymmetric verification
+    /// (RS*/ES*/PS*). `Some` when an asymmetric `algorithm` and `public_key`
+    /// are configured; HMAC algorithms leave this `None` and use `secret`.
+    decoding_key: Option<(DecodingKey, Algorithm)>,
+
     /// Optional delay on authentication failure
     /// Helps prevent timing attacks by making success/failure responses take similar time
     delay: Option<Duration>,
@@ -106,6 +113,51 @@ pub struct JwtAuth {
     /// Unique identifier for this plugin instance
     /// Used for internal plugin management
     hash_value: String,
+}
+
+/// Builds a decoding key for an asymmetric `algorithm` from a PEM `public_key`.
+/// Returns `Ok(None)` for HMAC (or unset) algorithms, which use the shared
+/// `secret` path instead.
+fn build_asymmetric_key(
+    algorithm: &str,
+    public_key: &str,
+) -> Result<Option<(DecodingKey, Algorithm)>> {
+    let Ok(alg) = Algorithm::from_str(algorithm) else {
+        // Unknown or empty algorithm -> treated as HMAC (secret) below.
+        return Ok(None);
+    };
+    let is_asymmetric = matches!(
+        alg,
+        Algorithm::RS256
+            | Algorithm::RS384
+            | Algorithm::RS512
+            | Algorithm::PS256
+            | Algorithm::PS384
+            | Algorithm::PS512
+            | Algorithm::ES256
+            | Algorithm::ES384
+    );
+    if !is_asymmetric {
+        return Ok(None);
+    }
+    if public_key.is_empty() {
+        return Err(Error::Invalid {
+            category: PluginCategory::Jwt.to_string(),
+            message: "public_key is required for asymmetric algorithms"
+                .to_string(),
+        });
+    }
+    let key = match alg {
+        Algorithm::ES256 | Algorithm::ES384 => {
+            DecodingKey::from_ec_pem(public_key.as_bytes())
+        },
+        _ => DecodingKey::from_rsa_pem(public_key.as_bytes()),
+    }
+    .map_err(|e| Error::Invalid {
+        category: PluginCategory::Jwt.to_string(),
+        message: format!("invalid public_key: {e}"),
+    })?;
+    Ok(Some((key, alg)))
 }
 
 impl TryFrom<&PluginConf> for JwtAuth {
@@ -156,12 +208,19 @@ impl TryFrom<&PluginConf> for JwtAuth {
         } else {
             None
         };
+        let algorithm = get_str_conf(value, "algorithm");
+        let decoding_key = build_asymmetric_key(
+            &algorithm,
+            &get_str_conf(value, "public_key"),
+        )?;
+
         let params = Self {
             hash_value,
             plugin_step: PluginStep::Request,
             secret: get_str_conf(value, "secret"),
             auth_path: get_str_conf(value, "auth_path"),
-            algorithm: get_str_conf(value, "algorithm"),
+            algorithm,
+            decoding_key,
             delay,
             header,
             query,
@@ -173,7 +232,9 @@ impl TryFrom<&PluginConf> for JwtAuth {
             },
         };
 
-        if params.secret.is_empty() {
+        // HMAC algorithms need a shared secret; asymmetric ones use the parsed
+        // public key instead.
+        if params.decoding_key.is_none() && params.secret.is_empty() {
             return Err(Error::Invalid {
                 category: PluginCategory::Jwt.to_string(),
                 message: "Jwt secret is not allowed empty".to_string(),
@@ -257,6 +318,22 @@ impl Plugin for JwtAuth {
         if value.is_empty() {
             let mut resp = self.unauthorized_resp.clone();
             resp.body = Bytes::from_static(b"Jwt authorization is missing");
+            return Ok(RequestPluginResult::Respond(resp));
+        }
+        // Asymmetric verification: the configured algorithm is pinned (the
+        // token's own `alg` header is not trusted, preventing algorithm
+        // confusion), and jsonwebtoken checks the signature and `exp` together.
+        if let Some((key, alg)) = &self.decoding_key {
+            let mut validation = Validation::new(*alg);
+            validation.validate_aud = false;
+            if decode::<serde_json::Value>(value, key, &validation).is_ok() {
+                return Ok(RequestPluginResult::Continue);
+            }
+            if let Some(d) = self.delay {
+                sleep(d).await;
+            }
+            let mut resp = self.unauthorized_resp.clone();
+            resp.body = Bytes::from_static(b"Jwt authorization is invalid");
             return Ok(RequestPluginResult::Respond(resp));
         }
         let arr: Vec<&str> = value.split('.').collect();
@@ -513,6 +590,87 @@ auth_path = "/login"
         .unwrap();
         assert_eq!("jwt", auth.cookie.unwrap());
         assert_eq!("/login", auth.auth_path);
+    }
+
+    /// Tests asymmetric (ES256) verification with a static public key.
+    #[tokio::test]
+    async fn test_jwt_asymmetric() {
+        use jsonwebtoken::{EncodingKey, Header, encode};
+
+        let public_key = r#"-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECE/4ox+pGq+yiB3RqIXINmlHJp+l
+6V8vXffF5UzI/h3RPK3l9MphCKS2wg50uVoWlBITXMRhh5LVB/93vQZa0Q==
+-----END PUBLIC KEY-----"#;
+        // spellchecker:off
+        let private_key = r#"-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg6V2VwZk30Az6VKMF
+Bt6nfEa2r4hCQuuMB6azsjMB7xmhRANCAAQIT/ijH6kar7KIHdGohcg2aUcmn6Xp
+Xy9d98XlTMj+HdE8reX0ymEIpLbCDnS5WhaUEhNcxGGHktUH/3e9BlrR
+-----END PRIVATE KEY-----"#;
+        // spellchecker:on
+
+        // An asymmetric algorithm requires a public key.
+        let err = JwtAuth::try_from(
+            &toml::from_str::<PluginConf>(
+                "header = \"Authorization\"\nalgorithm = \"ES256\"\n",
+            )
+            .unwrap(),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(true, err.to_string().contains("public_key is required"));
+
+        // A malformed public key is rejected.
+        let err = JwtAuth::try_from(
+            &toml::from_str::<PluginConf>(
+                "header = \"Authorization\"\nalgorithm = \"ES256\"\npublic_key = \"not a pem\"\n",
+            )
+            .unwrap(),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(true, err.to_string().contains("invalid public_key"));
+
+        // Valid asymmetric config (no secret needed).
+        let cfg = format!(
+            "header = \"Authorization\"\nalgorithm = \"ES256\"\npublic_key = \"\"\"\n{public_key}\n\"\"\"\n"
+        );
+        let auth =
+            JwtAuth::new(&toml::from_str::<PluginConf>(&cfg).unwrap()).unwrap();
+        assert_eq!(true, auth.decoding_key.is_some());
+
+        let sign = |exp: u64| {
+            let claims = serde_json::json!({ "sub": "u1", "exp": exp });
+            encode(
+                &Header::new(Algorithm::ES256),
+                &claims,
+                &EncodingKey::from_ec_pem(private_key.as_bytes()).unwrap(),
+            )
+            .unwrap()
+        };
+        let run = async |token: String| {
+            let input = format!(
+                "GET / HTTP/1.1\r\nAuthorization: Bearer {token}\r\n\r\n"
+            );
+            let mock_io = Builder::new().read(input.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            auth.handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut Ctx::default(),
+            )
+            .await
+            .unwrap()
+        };
+
+        // A token signed by the matching private key is accepted.
+        let ok = run(sign(pingap_core::now_sec() + 3600)).await;
+        assert_eq!(true, ok == RequestPluginResult::Continue);
+
+        // An expired token is rejected.
+        let expired = run(sign(pingap_core::now_sec() - 3600)).await;
+        assert_eq!(true, matches!(expired, RequestPluginResult::Respond(_)));
     }
 
     /// Tests JWT token validation functionality
