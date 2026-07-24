@@ -243,6 +243,8 @@ export default {
     idleTimeout: "空闲时长",
     idleTimeoutPlaceholder: "输入连接空闲时长限制(如2m)",
     alpn: "Alpn",
+    maxH2Streams: "H2最大并发流",
+    maxH2StreamsPlaceholder: "每个上游连接的HTTP/2最大并发流数量(如100)，仅H2/H2H1有效",
     sni: "Sni",
     sniPlaceholder: "输入sni的名称",
     verifyCert: "证书校验",

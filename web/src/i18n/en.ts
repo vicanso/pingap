@@ -276,6 +276,9 @@ export default {
     idleTimeoutPlaceholder:
       "Input the idle timeout for upstream connection(e.g. 2m)",
     alpn: "Alpn",
+    maxH2Streams: "Max H2 Streams",
+    maxH2StreamsPlaceholder:
+      "Max concurrent HTTP/2 streams per upstream connection(e.g. 100), only for H2/H2H1",
     sni: "Sni",
     sniPlaceholder: "Input server name indication for tls protocol",
     verifyCert: "Verify Certificate",

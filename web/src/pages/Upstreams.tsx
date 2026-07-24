@@ -221,6 +221,14 @@ export default function Upstreams() {
       ],
     },
     {
+      name: "max_h2_streams",
+      label: upstreamI18n("maxH2Streams"),
+      placeholder: upstreamI18n("maxH2StreamsPlaceholder"),
+      defaultValue: upstreamConfig.max_h2_streams,
+      span: 2,
+      category: ExFormItemCategory.NUMBER,
+    },
+    {
       name: "sni",
       label: upstreamI18n("sni"),
       placeholder: upstreamI18n("sniPlaceholder"),

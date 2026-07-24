@@ -186,6 +186,10 @@ pub struct Upstream {
     /// Application Layer Protocol Negotiation settings (H1, H2, H2H1)
     alpn: ALPN,
 
+    /// Maximum number of concurrent HTTP/2 streams per connection.
+    /// When unset, Pingora's default (1) is used.
+    max_h2_streams: Option<usize>,
+
     /// TCP keepalive configuration for maintaining persistent connections
     tcp_keepalive: Option<TcpKeepalive>,
 
@@ -467,6 +471,7 @@ impl Upstream {
             sni,
             lb,
             alpn,
+            max_h2_streams: conf.max_h2_streams,
             connection_timeout: conf.connection_timeout,
             total_connection_timeout: conf.total_connection_timeout,
             read_timeout: conf.read_timeout,
@@ -586,6 +591,11 @@ impl Upstream {
             }
             // Set protocol negotiation settings
             p.options.alpn = self.alpn.clone();
+            // Override the default number of concurrent h2 streams per
+            // connection to enable practical HTTP/2 multiplexing to the backend
+            if let Some(max_h2_streams) = self.max_h2_streams {
+                p.options.max_h2_streams = max_h2_streams;
+            }
             // Configure TCP-specific options
             p.options.tcp_keepalive.clone_from(&self.tcp_keepalive);
             p.options.tcp_recv_buf = self.tcp_recv_buf;
@@ -940,6 +950,7 @@ mod tests {
                 addrs: vec!["192.168.1.1".to_string()],
                 algo: Some("hash:cookie:user-id".to_string()),
                 alpn: Some("h2".to_string()),
+                max_h2_streams: Some(100),
                 connection_timeout: Some(Duration::from_secs(5)),
                 total_connection_timeout: Some(Duration::from_secs(10)),
                 read_timeout: Some(Duration::from_secs(3)),
@@ -956,6 +967,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(ALPN::H2.to_string(), up.alpn.to_string());
+        assert_eq!(Some(100), up.max_h2_streams);
         assert_eq!("Some(5s)", format!("{:?}", up.connection_timeout));
         assert_eq!("Some(10s)", format!("{:?}", up.total_connection_timeout));
         assert_eq!("Some(3s)", format!("{:?}", up.read_timeout));
@@ -1004,6 +1016,44 @@ mod tests {
         assert_eq!(value, up.completed());
         assert_eq!(value - 1, up.processing.load(Ordering::Relaxed));
         assert_eq!(true, up.new_http_peer(&session, &None,).is_some());
+    }
+
+    #[tokio::test]
+    async fn test_upstream_peer_max_h2_streams() {
+        let input_header =
+            "GET /vicanso/pingap HTTP/1.1\r\nHost: github.com\r\n\r\n";
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        // Configured value reaches the generated peer.
+        let up = Upstream::new(
+            "h2upstream",
+            &UpstreamConf {
+                addrs: vec!["192.168.1.1:8001".to_string()],
+                alpn: Some("H2".to_string()),
+                max_h2_streams: Some(100),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        let peer = up.new_http_peer(&session, &None).unwrap();
+        assert_eq!(100, peer.options.max_h2_streams);
+
+        // Unset falls back to Pingora's default of 1.
+        let up = Upstream::new(
+            "h2default",
+            &UpstreamConf {
+                addrs: vec!["192.168.1.1:8001".to_string()],
+                alpn: Some("H2".to_string()),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+        let peer = up.new_http_peer(&session, &None).unwrap();
+        assert_eq!(1, peer.options.max_h2_streams);
     }
 
     #[test]

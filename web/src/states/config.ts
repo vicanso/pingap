@@ -17,6 +17,7 @@ export interface Upstream {
   algo?: string;
   sni?: string;
   alpn?: string;
+  max_h2_streams?: number;
   health_check?: string;
   ipv4_only?: boolean;
   enable_tracer?: boolean;

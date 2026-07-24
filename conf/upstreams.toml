@@ -71,6 +71,15 @@ addrs = ["127.0.0.1:5000", "127.0.0.1:5001 10"]
 # Default `h1`
 # alpn = "h1"
 
+# Maximum number of concurrent HTTP/2 streams per upstream connection:
+# - Only takes effect when the upstream negotiates HTTP/2 (`alpn = "h2"` or
+#   `"h2h1"`, including cleartext h2c).
+# - Enables practical HTTP/2 multiplexing (gRPC, Connect RPC, h2c backends,
+#   long-lived streaming) instead of one active stream per connection.
+# - Must be greater than 0.
+# - Default: 1 (Pingora default, one stream per connection)
+# max_h2_streams = 100
+
 # How long to wait before giving up establishing a TCP connection
 # Default `none`
 # connection_timeout = "10s"

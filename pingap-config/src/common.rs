@@ -331,6 +331,12 @@ pub struct UpstreamConf {
     /// Application Layer Protocol Negotiation for TLS
     pub alpn: Option<String>,
 
+    /// Maximum number of concurrent HTTP/2 streams per upstream connection.
+    /// Only takes effect when the upstream negotiates HTTP/2 (`alpn = "H2"` or
+    /// `"H2H1"`, including cleartext h2c). Must be greater than zero. When unset,
+    /// Pingora's default of 1 stream per connection is used.
+    pub max_h2_streams: Option<usize>,
+
     /// Timeout for establishing new connections
     #[serde(default)]
     #[serde(with = "humantime_serde")]
@@ -418,6 +424,9 @@ impl Validate for UpstreamConf {
 
         // Validate TCP probe count
         self.validate_tcp_probe_count()?;
+
+        // Validate max h2 streams
+        self.validate_max_h2_streams()?;
 
         Ok(())
     }
@@ -529,6 +538,18 @@ impl UpstreamConf {
                 message: format!(
                     "tcp probe count should be <= {MAX_TCP_PROBE_COUNT}"
                 ),
+            });
+        }
+
+        Ok(())
+    }
+
+    fn validate_max_h2_streams(&self) -> Result<()> {
+        if let Some(max_h2_streams) = self.max_h2_streams
+            && max_h2_streams == 0
+        {
+            return Err(Error::Invalid {
+                message: "max h2 streams should be greater than 0".to_string(),
             });
         }
 
@@ -1668,6 +1689,48 @@ EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
         conf.health_check = Some("http://github.com/".to_string());
         let result = conf.validate();
         assert_eq!(true, result.is_ok());
+    }
+
+    #[test]
+    fn test_upstream_max_h2_streams() {
+        // Parse from TOML
+        let conf: UpstreamConf = toml::from_str(
+            r#"
+addrs = ["127.0.0.1:8080"]
+alpn = "H2"
+max_h2_streams = 100
+"#,
+        )
+        .unwrap();
+        assert_eq!(Some(100), conf.max_h2_streams);
+        assert_eq!(true, conf.validate().is_ok());
+
+        // Round-trip through serialization
+        let toml = toml::to_string(&conf).unwrap();
+        assert_eq!(true, toml.contains("max_h2_streams = 100"));
+        let restored: UpstreamConf = toml::from_str(&toml).unwrap();
+        assert_eq!(Some(100), restored.max_h2_streams);
+
+        // Absent by default
+        let conf = UpstreamConf {
+            addrs: vec!["127.0.0.1:8080".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(None, conf.max_h2_streams);
+        assert_eq!(true, conf.validate().is_ok());
+
+        // Zero is rejected
+        let conf = UpstreamConf {
+            addrs: vec!["127.0.0.1:8080".to_string()],
+            max_h2_streams: Some(0),
+            ..Default::default()
+        };
+        let result = conf.validate();
+        assert_eq!(true, result.is_err());
+        assert_eq!(
+            "Invalid error max h2 streams should be greater than 0",
+            result.expect_err("").to_string()
+        );
     }
 
     #[test]
