@@ -17,7 +17,7 @@ use pingap_core::{NotificationData, NotificationLevel};
 use std::io;
 use std::path::PathBuf;
 use std::process;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::LazyLock;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -64,11 +64,22 @@ pub struct RestartProcessCommand {
 }
 
 impl RestartProcessCommand {
-    fn exec(&self) -> io::Result<process::Output> {
+    /// Spawns the replacement process **without waiting** for it to exit.
+    ///
+    /// The new process is started with `-d` (daemon) and `-u` (upgrade), so it
+    /// daemonizes itself and takes over the listening sockets from the current
+    /// process. We must NOT use `Command::output()` here: it blocks until the
+    /// child exits and reads its stdout/stderr to EOF, which never happens for a
+    /// long-running daemon, and it would keep this task blocked while the old
+    /// process is being torn down. Detach stdio and return the child handle.
+    fn exec(&self) -> io::Result<process::Child> {
         Command::new(&self.exec_path)
             .env("RUST_LOG", &self.log_level)
             .args(&self.args)
-            .output()
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
     }
 }
 
@@ -93,19 +104,30 @@ static PROCESS_RESTARTING: LazyLock<AtomicBool> =
 /// This function will:
 /// 1. Check if a restart is already in progress
 /// 2. Send a notification about the restart
-/// 3. Send a SIGQUIT signal to the current process
-/// 4. Execute the restart command
+/// 3. Spawn the replacement process (with `-u`, so it takes over the listeners)
+/// 4. Send a SIGQUIT signal to the current process so it hands off the listening
+///    sockets and exits gracefully
 ///
-/// # Returns
-/// * `io::Result<process::Output>` - The result of executing the restart command
+/// **Ordering matters.** Pingora's zero-downtime upgrade makes the *new* process
+/// the fd receiver (it binds and listens on the upgrade socket, then `accept`s)
+/// and the *old* process the fd sender (it `connect`s to that socket on SIGQUIT).
+/// Both sides only retry the handshake for ~5s. If we signalled the old process
+/// first and spawned the new one afterwards (the previous behaviour), the old
+/// process could exhaust its retries and shut down before the new one finished
+/// booting and bound the socket — leaving the old process exited and the new one
+/// failing its bootstrap. So we start the new process first, then signal.
+///
+/// Note: pingora's fd transfer is **Linux only**. On other platforms
+/// (e.g. macOS) the new `-u` process cannot acquire the listeners and exits;
+/// use `--autoreload` (hot reload) for local development instead.
 ///
 /// # Errors
 /// Returns an error if:
 /// - A restart is already in progress
 /// - The restart command is not configured
-/// - The restart command fails to execute
+/// - The restart command fails to spawn
 #[cfg(unix)]
-pub async fn restart_now() -> io::Result<process::Output> {
+pub async fn restart_now() -> io::Result<()> {
     let restarting = PROCESS_RESTARTING.swap(true, Ordering::Relaxed);
     if restarting {
         error!(target: LOG_TARGET, "pingap is restarting now");
@@ -114,6 +136,13 @@ pub async fn restart_now() -> io::Result<process::Output> {
             "Pingap is restarting",
         ));
     }
+    let Some(cmd) = CMD.get() else {
+        PROCESS_RESTARTING.store(false, Ordering::Relaxed);
+        return Err(std::io::Error::new(
+            io::ErrorKind::NotFound,
+            "Command not found",
+        ));
+    };
     info!(target: LOG_TARGET, "pingap will restart");
     send_notification(NotificationData {
         category: "restart".to_string(),
@@ -121,23 +150,33 @@ pub async fn restart_now() -> io::Result<process::Output> {
         ..Default::default()
     })
     .await;
-    if let Some(cmd) = CMD.get() {
-        nix::sys::signal::kill(
-            nix::unistd::Pid::from_raw(std::process::id() as i32),
-            nix::sys::signal::SIGQUIT,
-        )?;
-        cmd.exec()
-    } else {
-        Err(std::io::Error::new(
-            io::ErrorKind::NotFound,
-            "Command not found",
-        ))
-    }
+
+    // Start the new process first so it can bind the upgrade socket and wait to
+    // receive the listening fds ...
+    let child = match cmd.exec() {
+        Ok(child) => child,
+        Err(e) => {
+            PROCESS_RESTARTING.store(false, Ordering::Relaxed);
+            return Err(e);
+        },
+    };
+    info!(
+        target: LOG_TARGET,
+        new_pid = child.id(),
+        "new pingap process spawned, sending sockets to it"
+    );
+
+    // ... then signal the current process to transfer its sockets and exit.
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(std::process::id() as i32),
+        nix::sys::signal::SIGQUIT,
+    )?;
+    Ok(())
 }
 
 /// Initiates an immediate process restart (Windows systems - not supported)
 #[cfg(windows)]
-pub async fn restart_now() -> io::Result<process::Output> {
+pub async fn restart_now() -> io::Result<()> {
     return Err(io::Error::new(
         io::ErrorKind::Other,
         "Not support restart".to_string(),
@@ -156,25 +195,20 @@ pub async fn restart_now() -> io::Result<process::Output> {
 pub async fn restart() {
     let count = PROCESS_RESTAR_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     tokio::time::sleep(Duration::from_secs(60)).await;
-    if count == PROCESS_RESTAR_COUNT.load(Ordering::Relaxed) {
-        match restart_now().await {
-            Err(e) => {
-                error!(
-                    target: LOG_TARGET,
-                    error = %e,
-                    "restart fail"
-                );
-                send_notification(NotificationData {
-                    level: NotificationLevel::Error,
-                    category: "restart_fail".to_string(),
-                    message: e.to_string(),
-                    ..Default::default()
-                })
-                .await;
-            },
-            Ok(output) => {
-                info!(target: LOG_TARGET, "{output:?}");
-            },
-        }
+    if count == PROCESS_RESTAR_COUNT.load(Ordering::Relaxed)
+        && let Err(e) = restart_now().await
+    {
+        error!(
+            target: LOG_TARGET,
+            error = %e,
+            "restart fail"
+        );
+        send_notification(NotificationData {
+            level: NotificationLevel::Error,
+            category: "restart_fail".to_string(),
+            message: e.to_string(),
+            ..Default::default()
+        })
+        .await;
     }
 }
