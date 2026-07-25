@@ -29,6 +29,7 @@ mod file_storage;
 pub mod hcl;
 pub mod kdl;
 mod manager;
+mod memory_storage;
 mod storage;
 
 // Error enum for all possible configuration-related errors
@@ -278,4 +279,5 @@ pub async fn sync_to_path(
 pub use common::*;
 pub use etcd_storage::ETCD_PROTOCOL;
 pub use manager::*;
+pub use memory_storage::MemoryStorage;
 pub use storage::*;

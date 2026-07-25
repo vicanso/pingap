@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use pingap_config::ConfigManager;
-use pingap_config::{Error, new_config_manager};
+use pingap_config::{Error, new_config_manager, new_memory_config_manager};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
@@ -21,13 +22,14 @@ type Result<T> = std::result::Result<T, Error>;
 
 static CONFIG_MANAGER: OnceLock<Result<Arc<ConfigManager>>> = OnceLock::new();
 
-pub fn try_init_config_manager(value: &str) -> Result<Arc<ConfigManager>> {
+fn try_init<F>(new_manager: F) -> Result<Arc<ConfigManager>>
+where
+    F: FnOnce() -> Result<ConfigManager>,
+{
     let result_ref = CONFIG_MANAGER.get_or_init(|| {
-        new_config_manager(value)
-            .map(Arc::new)
-            .map_err(|e| Error::Invalid {
-                message: e.to_string(),
-            })
+        new_manager().map(Arc::new).map_err(|e| Error::Invalid {
+            message: e.to_string(),
+        })
     });
     result_ref
         .as_ref()
@@ -35,6 +37,21 @@ pub fn try_init_config_manager(value: &str) -> Result<Arc<ConfigManager>> {
         .map_err(|e| Error::Invalid {
             message: e.to_string(),
         })
+}
+
+pub fn try_init_config_manager(value: &str) -> Result<Arc<ConfigManager>> {
+    try_init(|| new_config_manager(value))
+}
+
+/// Initializes the config manager from a config that is already in memory,
+/// used by the command line proxy (`--upstream`) where there is no file or
+/// etcd backing store to read from. `path` receives the acme state so an issued
+/// certificate is not thrown away on restart.
+pub fn try_init_memory_config_manager(
+    data: &str,
+    path: Option<PathBuf>,
+) -> Result<Arc<ConfigManager>> {
+    try_init(move || Ok(new_memory_config_manager(data, path)))
 }
 
 pub fn get_config_manager() -> Result<Arc<ConfigManager>> {

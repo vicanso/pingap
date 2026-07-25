@@ -13,7 +13,9 @@
 // limitations under the License.
 
 use crate::certificates::{new_certificate_provider, try_update_certificates};
-use crate::config_manager::{get_config_manager, try_init_config_manager};
+use crate::config_manager::{
+    get_config_manager, try_init_config_manager, try_init_memory_config_manager,
+};
 use crate::locations::new_location_provider;
 use crate::locations::try_init_locations;
 use crate::plugin::new_plugin_provider;
@@ -69,6 +71,7 @@ mod config_manager;
 mod locations;
 mod plugin;
 mod process;
+mod quick_start;
 mod server_locations;
 mod upstreams;
 mod webhook;
@@ -109,8 +112,27 @@ const LONG_VERSION: &str =
 #[command(author, version, about, long_version = LONG_VERSION, long_about = None)]
 struct Args {
     /// The config file or directory path
-    #[arg(short, long)]
-    conf: String,
+    #[arg(short, long, required_unless_present = "upstream")]
+    conf: Option<String>,
+    /// Upstream addresses ("host:port", comma separated). Starts a proxy
+    /// straight from the command line, without a config file
+    #[arg(long, conflicts_with = "conf")]
+    upstream: Option<String>,
+    /// Domains served by the command line proxy (comma separated)
+    #[arg(long, requires = "upstream", conflicts_with = "conf")]
+    domain: Option<String>,
+    /// TLS certificate for the command line proxy: a PEM file, or a directory
+    /// containing one (fullchain.pem, cert.pem, tls.crt, ...)
+    #[arg(long, requires = "upstream", conflicts_with = "conf")]
+    cert: Option<String>,
+    /// TLS private key for the command line proxy, defaults to the key found
+    /// next to the certificate
+    #[arg(long, requires = "cert", conflicts_with = "conf")]
+    key: Option<String>,
+    /// Listen address of the command line proxy, defaults to 0.0.0.0:443 with
+    /// a certificate and 0.0.0.0:80 without
+    #[arg(long, requires = "upstream", conflicts_with = "conf")]
+    addr: Option<String>,
     /// Run server in background mode
     #[arg(short, long)]
     daemon: bool,
@@ -127,7 +149,7 @@ struct Args {
     #[arg(long)]
     admin: Option<String>,
     /// Enable control panel mode (admin-only, no service running)
-    #[arg(long)]
+    #[arg(long, conflicts_with = "upstream")]
     cp: bool,
     /// Enable automatic server restart capability
     #[arg(short, long)]
@@ -312,7 +334,8 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     if !error.is_empty() {
         error!(error, "init plugins fail",);
     }
-    let config_manager = try_init_config_manager(&args.conf)?;
+    let config_manager =
+        try_init_config_manager(&args.conf.clone().unwrap_or_default())?;
     let opt = Opt {
         daemon: args.daemon,
         ..Default::default()
@@ -352,7 +375,9 @@ fn parse_arguments() -> Args {
     let mut arr = vec![];
     let mut exist_config_argument = false;
     for arg in std::env::args_os() {
-        for item in ["-c", "--conf"] {
+        // `--upstream` builds the config from the command line, it conflicts
+        // with `-c`, so the PINGAP_CONF fallback must not be applied either.
+        for item in ["-c", "--conf", "--upstream"] {
             if arg == item
                 || arg.to_string_lossy().starts_with(&format!("{item}="))
             {
@@ -466,8 +491,42 @@ fn run() -> Result<(), Box<dyn Error>> {
     sys.refresh_memory();
     pingap_cache::update_available_memory(sys.available_memory());
 
-    // Initialize configuration
-    let config_manager = try_init_config_manager(&args.conf)?;
+    // Initialize configuration. With `--upstream` the whole config is built
+    // from the command line and kept in memory, so no config file is needed.
+    let config_manager = if let Some(upstream) = &args.upstream {
+        let mut config =
+            quick_start::build_config(&quick_start::QuickStartParams {
+                domains: args.domain.clone(),
+                upstreams: upstream.clone(),
+                cert: args.cert.clone(),
+                key: args.key.clone(),
+                addr: args.addr.clone(),
+            })?;
+        // Without a certificate the generated config asks let's encrypt for
+        // one, and that has to survive a restart: issuing is rate limited.
+        let acme_state_path = quick_start::acme_state_path(&config);
+        if let Some(path) = &acme_state_path {
+            let restored =
+                quick_start::restore_acme_certificate(&mut config, path);
+            // The logger is not initialized yet, but the operator needs to know
+            // where the certificate is kept.
+            println!(
+                "acme state: {} ({})",
+                path.to_string_lossy(),
+                if restored {
+                    "certificate restored"
+                } else {
+                    "no certificate yet, one will be requested"
+                }
+            );
+        }
+        try_init_memory_config_manager(
+            &toml::to_string_pretty(&config)?,
+            acme_state_path,
+        )?
+    } else {
+        try_init_config_manager(&args.conf.clone().unwrap_or_default())?
+    };
 
     let r = get_config(get_config_manager()?);
     let config = match r.recv() {
@@ -571,17 +630,28 @@ fn run() -> Result<(), Box<dyn Error>> {
         if let Ok(env) = std::env::var("RUST_LOG") {
             cmd.log_level = env;
         }
-        let conf_path = if args.conf.starts_with(ETCD_PROTOCOL) {
-            args.conf.clone()
-        } else {
-            pingap_util::resolve_path(&args.conf)
-        };
-
-        let mut new_args = vec![
-            format!("-c={conf_path}"),
-            "-d".to_string(),
-            "-u".to_string(),
-        ];
+        let mut new_args = vec!["-d".to_string(), "-u".to_string()];
+        if let Some(conf) = &args.conf {
+            let conf_path = if conf.starts_with(ETCD_PROTOCOL) {
+                conf.clone()
+            } else {
+                pingap_util::resolve_path(conf)
+            };
+            new_args.push(format!("-c={conf_path}"));
+        }
+        // The command line proxy has no config file to point the new process
+        // at, so pass the arguments it was built from instead.
+        for (name, value) in [
+            ("upstream", &args.upstream),
+            ("domain", &args.domain),
+            ("cert", &args.cert),
+            ("key", &args.key),
+            ("addr", &args.addr),
+        ] {
+            if let Some(value) = value {
+                new_args.push(format!("--{name}={value}"));
+            }
+        }
         if let Some(log) = &args.log {
             new_args.push(format!("--log={log}"));
         }

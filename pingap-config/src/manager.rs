@@ -16,12 +16,13 @@ use crate::PingapConfig;
 use crate::convert_pingap_config;
 use crate::etcd_storage::EtcdStorage;
 use crate::file_storage::FileStorage;
+use crate::memory_storage::MemoryStorage;
 use crate::storage::{History, Storage};
 use crate::{Category, Error, Observer};
 use arc_swap::ArcSwap;
 use pingap_util::resolve_path;
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use toml::{Value, map::Map};
 
@@ -261,6 +262,23 @@ pub fn new_file_config_manager(path: &str) -> Result<ConfigManager> {
         storage.with_history_path(&format!("{file}-history"))?;
     }
     Ok(ConfigManager::new(Arc::new(storage), mode))
+}
+
+/// Creates a config manager backed by an in-memory config.
+///
+/// `data` is the whole configuration as toml — the same layout a single config
+/// file would have. Used by the command line quick start, which synthesizes the
+/// config from arguments instead of reading it from disk. `path`, when given,
+/// receives every write so an ACME issued certificate survives a restart.
+pub fn new_memory_config_manager(
+    data: &str,
+    path: Option<PathBuf>,
+) -> ConfigManager {
+    let mut storage = MemoryStorage::new(data);
+    if let Some(path) = path {
+        storage = storage.with_path(path);
+    }
+    ConfigManager::new(Arc::new(storage), ConfigMode::Single)
 }
 
 pub fn new_etcd_config_manager(path: &str) -> Result<ConfigManager> {

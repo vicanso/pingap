@@ -113,6 +113,37 @@ Supported targets: `Linux x86_64/arm64`, `Darwin x86_64/arm64`. See the [release
 
 For more detailed instructions, including running from a binary, check out our [Documentation](https://pingap.io/pingap-en/docs/getting_started).
 
+### Start a proxy without a config file
+
+A single command is enough to serve a domain over https and forward it to a backend:
+
+```bash
+# certificate requested from let's encrypt
+pingap --domain=pingap.io --upstream=192.168.1.1:3000
+
+# or bring your own certificate
+pingap --domain=pingap.io --upstream=192.168.1.1:3000 --cert=/etc/ssl/pingap.io
+```
+
+Without `--cert`, Pingap asks Let's Encrypt for a certificate through the
+HTTP-01 challenge, so `pingap.io` must resolve to this host and port 80 must be
+reachable from the internet. The issued certificate is kept in
+`~/.pingap/acme/<domains>.toml` and reused on restart — issuing is rate limited,
+so do not delete it. Everything else still comes from the command line: changing
+`--upstream` takes effect on the next start without touching the certificate.
+
+`--cert` accepts the certificate itself or the directory holding it — the common
+`fullchain.pem` / `privkey.pem`, `cert.pem` / `key.pem` and `tls.crt` / `tls.key`
+layouts are detected automatically, use `--key` for anything else. The listener
+defaults to `0.0.0.0:443` when there is a certificate and `0.0.0.0:80` when there
+is neither a certificate nor a domain, and `--addr` overrides it. `--upstream`
+takes a comma separated list of backends, `--domain` a comma separated list of
+hosts (omit it to serve every host over plain http).
+
+The configuration is generated on every start, so it cannot be edited through
+the admin UI: for anything beyond a single server use `--conf`, which cannot be
+combined with these flags.
+
 
 ## Dynamic Configuration
 
