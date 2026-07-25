@@ -37,8 +37,18 @@
 
   var isZh = lang === "zh";
 
+  // Logo sits next to the site title in the sidebar
+  var logoSrc = base.replace(/\/?(en|zh)\/?$/, "/") + "assets/logo.png";
+  // When base is /pingap/en/, replace gives /pingap/assets/logo.png
+  if (logoSrc.indexOf("assets/logo.png") === -1) {
+    logoSrc = "../assets/logo.png";
+  }
+
   window.$docsify = {
-    name: "Pingap",
+    name:
+      '<img src="' +
+      logoSrc +
+      '" alt="" class="app-logo" /> Pingap',
     nameLink: base,
     repo: "https://github.com/vicanso/pingap",
     loadSidebar: true,

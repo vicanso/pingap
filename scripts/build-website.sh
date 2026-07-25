@@ -187,24 +187,16 @@ EOF
   cat >"${EN}/README.md" <<'EOF'
 # Pingap
 
-> High-performance reverse proxy powered by [Cloudflare Pingora](https://github.com/cloudflare/pingora).
+<p class="hero-logo"><img src="../assets/logo.png" alt="Pingap" width="96" height="96" /></p>
 
-[中文文档](../zh/) · [GitHub](https://github.com/vicanso/pingap) · [Releases](https://github.com/vicanso/pingap/releases) · [pingap.io](https://pingap.io/pingap-en/)
+High-performance reverse proxy powered by
+[Cloudflare Pingora](https://github.com/cloudflare/pingora) — hot reload, a web
+admin, and 20+ plugins for auth, traffic control, caching and observability.
 
-![Pingap Logo](../assets/logo.png)
-
-## What is this site?
-
-This English tree is **generated from the repository**:
-
-| Section | Source of truth |
+| | |
 | --- | --- |
-| [Plugins](plugins/) | `pingap-plugin/README.md` + `pingap-plugin/docs/*.md` |
-| [Crates](crates/) | each `pingap-*/README.md` |
-| [Architecture](guide/modules.md) | `docs/modules.md` |
-| [Examples](guide/examples.md) | `examples/README.md` |
-
-Chinese translations live under [`docs/zh/`](https://github.com/vicanso/pingap/tree/main/docs/zh) and are published at [../zh/](../zh/).
+| **Start here** | [Quick start](#quick-start-docker) · [Plugins](plugins/) · [Crates](crates/) · [Architecture](guide/modules.md) · [Examples](guide/examples.md) |
+| **Links** | [中文文档](../zh/) · [GitHub](https://github.com/vicanso/pingap) · [Releases](https://github.com/vicanso/pingap/releases) · [pingap.io](https://pingap.io/pingap-en/) |
 
 ## Key features
 
@@ -433,7 +425,6 @@ EOF
 * [中文](../zh/)
 * [GitHub](https://github.com/vicanso/pingap)
 * [Releases](https://github.com/vicanso/pingap/releases)
-* [Languages](../)
 EOF
 }
 
@@ -457,6 +448,7 @@ build_zh() {
   cp "${SRC}/README.md" "${ZH}/README.md"
   # logo path for language root (../assets relative to website/zh/)
   sed -E -i.bak \
+    -e 's|src="\.\./\.\./asset/pingap-logo\.png"|src="../assets/logo.png"|g' \
     -e 's|\(\.\./\.\./asset/pingap-logo\.png\)|(../assets/logo.png)|g' \
     -e 's|\(assets/logo\.png\)|(../assets/logo.png)|g' \
     -e 's|\(\./assets/logo\.png\)|(../assets/logo.png)|g' \
@@ -565,7 +557,6 @@ EOF
 * [English](../en/)
 * [GitHub](https://github.com/vicanso/pingap)
 * [Releases](https://github.com/vicanso/pingap/releases)
-* [语言](../)
 EOF
 }
 
@@ -589,6 +580,7 @@ echo "Website assembled:"
 echo "  EN  crates=$(find "${EN}/crates" -name '*.md' | wc -l | tr -d ' ') plugins=$(find "${EN}/plugins" -name '*.md' | wc -l | tr -d ' ') guide=$(find "${EN}/guide" -name '*.md' | wc -l | tr -d ' ')"
 echo "  ZH  crates=$(find "${ZH}/crates" -name '*.md' | wc -l | tr -d ' ') plugins=$(find "${ZH}/plugins" -name '*.md' | wc -l | tr -d ' ') guide=$(find "${ZH}/guide" -name '*.md' | wc -l | tr -d ' ')"
 echo "Preview: python3 -m http.server -d website 8080"
-echo "  http://127.0.0.1:8080/        language picker"
+echo "  http://127.0.0.1:8080/        → redirects to English"
 echo "  http://127.0.0.1:8080/en/     English"
 echo "  http://127.0.0.1:8080/zh/     中文"
+echo "  http://127.0.0.1:8080/?lang=zh  → Chinese"

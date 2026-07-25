@@ -9,7 +9,7 @@
 
   | URL | Content |
   | --- | --- |
-  | `https://vicanso.github.io/pingap/` | language picker |
+  | `https://vicanso.github.io/pingap/` | redirects to English |
   | `https://vicanso.github.io/pingap/en/` | English (from crate / plugin READMEs) |
   | `https://vicanso.github.io/pingap/zh/` | 中文 (from `docs/zh/`) |
 

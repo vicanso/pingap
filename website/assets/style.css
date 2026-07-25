@@ -4,7 +4,7 @@
 }
 
 body {
-  font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-family: "Inter", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
 }
 
 .sidebar {
@@ -13,14 +13,73 @@ body {
 }
 
 .sidebar > h1 {
-  margin: 0.6rem 0 0.2rem;
-  font-size: 1.35rem;
+  margin: 0.75rem 0 0.35rem;
+  font-size: 1.25rem;
   font-weight: 700;
   letter-spacing: -0.02em;
+  line-height: 1.2;
 }
 
 .sidebar > h1 a {
   color: var(--theme-color);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.app-logo,
+.sidebar .app-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  vertical-align: middle;
+  object-fit: cover;
+}
+
+/* Home hero */
+.markdown-section .hero-logo {
+  margin: 0 0 0.75rem;
+}
+
+.markdown-section .hero-logo img {
+  width: 96px;
+  height: 96px;
+  border-radius: 18px;
+  box-shadow: 0 10px 28px rgba(11, 110, 79, 0.12);
+  border: 1px solid #e2ebe6;
+}
+
+.markdown-section h1 {
+  margin-top: 0.25rem;
+}
+
+/* First table on home as a compact link bar */
+.markdown-section > table:first-of-type {
+  display: table;
+  width: 100%;
+  margin: 1rem 0 1.5rem;
+  border: 1px solid #e2ebe6;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fafcfb;
+}
+
+.markdown-section > table:first-of-type th,
+.markdown-section > table:first-of-type td {
+  border: none;
+  border-bottom: 1px solid #e2ebe6;
+  padding: 0.65rem 0.9rem;
+}
+
+.markdown-section > table:first-of-type tr:last-child td {
+  border-bottom: none;
+}
+
+.markdown-section > table:first-of-type td:first-child {
+  font-weight: 600;
+  color: #5a6b62;
+  white-space: nowrap;
+  width: 7rem;
 }
 
 .sidebar-nav > ul > li > p {

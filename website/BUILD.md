@@ -6,8 +6,8 @@ Bilingual static documentation for Pingap, deployed to GitHub Pages.
 
 | Path | Language | Source of truth |
 | --- | --- | --- |
-| `/` | picker | `website/index.html` |
-| `/en/` | English | `pingap-*/README.md`, `pingap-plugin/docs/*`, `docs/`, `examples/` |
+| `/` | redirect → `/en/` | `website/index.html` (`?lang=zh` → Chinese) |
+| `/en/` | English (default) | `pingap-*/README.md`, `pingap-plugin/docs/*`, `docs/`, `examples/` |
 | `/zh/` | 中文 | `docs/zh/**` (maintained translations) |
 
 ## Build

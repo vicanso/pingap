@@ -1,23 +1,13 @@
 # Pingap
 
-> 基于 [Cloudflare Pingora](https://github.com/cloudflare/pingora) 的高性能反向代理。
+<p class="hero-logo"><img src="../../asset/pingap-logo.png" alt="Pingap" width="96" height="96" /></p>
 
-Pingap 是由 Cloudflare Pingora 驱动的高性能反向代理，支持配置热更新、Web 管理界面与 20+ 开箱即用插件。
+基于 [Cloudflare Pingora](https://github.com/cloudflare/pingora) 的高性能反向代理，支持配置热更新、Web 管理界面与 20+ 插件（认证、限流、缓存、可观测性等）。
 
-[English](../en/) · [GitHub](https://github.com/vicanso/pingap) · [Releases](https://github.com/vicanso/pingap/releases) · [中文 README](https://github.com/vicanso/pingap/blob/main/README_zh.md) · [官方文档 pingap.io](https://pingap.io/pingap-zh/)
-
-![Pingap Logo](../../asset/pingap-logo.png)
-
-## 本站点是什么？
-
-本 GitHub Pages 站点的**中文内容**维护在 `docs/zh/` 下，与仓库内英文源（crate README、`pingap-plugin/docs` 等）对照存在：
-
-| 分区 | 中文路径 | 英文源 |
-| --- | --- | --- |
-| [插件](plugins/) | `docs/zh/plugins/` | `pingap-plugin/README.md` + `pingap-plugin/docs/*.md` |
-| [组件 / 模块](crates/) | `docs/zh/crates/` | 各 `pingap-*/README.md` |
-| [架构](guide/modules.md) | `docs/zh/guide/modules.md` | `docs/modules.md` |
-| [示例](guide/examples.md) | `docs/zh/guide/examples.md` | `examples/README.md` |
+| | |
+| --- | --- |
+| **从这里开始** | [快速开始](#快速开始docker) · [插件](plugins/) · [组件](crates/) · [架构](guide/modules.md) · [示例](guide/examples.md) |
+| **链接** | [English](../en/) · [GitHub](https://github.com/vicanso/pingap) · [Releases](https://github.com/vicanso/pingap/releases) · [pingap.io](https://pingap.io/pingap-zh/) |
 
 ## 核心特性
 
