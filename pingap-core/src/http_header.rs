@@ -489,7 +489,7 @@ pub fn remove_query_from_header(
         // If the new query is not empty, build a new String. Own it.
         let mut s = String::with_capacity(path.len() + 1 + new_query.len());
         // `write!` is an efficient way to format into an existing String buffer.
-        let _ = write!(&mut s, "{}?{}", path, &new_query);
+        let _ = write!(&mut s, "{path}?{new_query}");
         Cow::Owned(s)
     };
 

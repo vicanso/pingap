@@ -109,7 +109,7 @@ async fn diff_and_update_config(
         // acme will create a let's encrypt service
         // so it can't be reloaded.
         let mut exists_acme = false;
-        for (_, cert) in new_config.certificates.iter() {
+        for cert in new_config.certificates.values() {
             if cert.acme.is_some() {
                 exists_acme = true;
             }

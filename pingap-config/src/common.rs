@@ -1283,7 +1283,7 @@ impl PingapConfig {
         // Plugin configs are validated by the binary (`src/main.rs`) through
         // the plugin factory: that factory lives in a higher layer than this
         // crate, so it cannot be reached from here without a dependency cycle.
-        for (_, certificate) in self.certificates.iter() {
+        for certificate in self.certificates.values() {
             certificate.validate()?;
         }
         let ping_conf = toml::to_string_pretty(self)

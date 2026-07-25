@@ -1098,7 +1098,7 @@ impl ProxyHttp for Server {
                 if let Some(features) = &ctx.features
                     && let Some(tracer) = &features.otel_tracer
                 {
-                    let name = format!("upstream.{}", &upstream.name);
+                    let name = format!("upstream.{}", upstream.name);
                     let mut span = tracer.new_upstream_span(&name);
                     span.set_attribute(KeyValue::new(
                         "upstream.connected",
@@ -1116,10 +1116,7 @@ impl ProxyHttp for Server {
             .ok_or_else(|| {
                 new_internal_error(
                     503,
-                    format!(
-                        "No available upstream for {}",
-                        &ctx.upstream.location
-                    ),
+                    format!("No available upstream for {}", ctx.upstream.location),
                 )
             })?;
 
