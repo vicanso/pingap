@@ -596,6 +596,13 @@ impl Plugin for JwtAuth {
         if session.req_header().uri.path() != self.auth_path {
             return Ok(ResponsePluginResult::Unchanged);
         }
+        // The body is signed verbatim, so only a successful response may be
+        // turned into a token. An error body carries no `exp`, and the request
+        // path only checks the signature and `exp`, so signing it would mint a
+        // token that never expires.
+        if !upstream_response.status.is_success() {
+            return Ok(ResponsePluginResult::Unchanged);
+        }
         upstream_response.remove_header(&http::header::CONTENT_LENGTH);
         let json = HTTP_HEADER_CONTENT_JSON.clone();
         let _ = upstream_response.insert_header(json.0, json.1);
@@ -1064,50 +1071,88 @@ header = "Authorization"
         );
     }
 
+    async fn new_auth_path_session() -> Session {
+        let mock_io =
+            Builder::new().read(b"GET /login HTTP/1.1\r\n\r\n").build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        session
+    }
+
     /// Tests JWT token signing functionality
     #[tokio::test]
     async fn test_jwt_sign() {
-        //         let auth = JwtAuth::new(
-        //             &toml::from_str::<PluginConf>(
-        //                 r###"
-        // secret = "123123"
-        // header = "Authorization"
-        // auth_path = "/login"
-        // "###,
-        //             )
-        //             .unwrap(),
-        //         )
-        //         .unwrap();
+        let auth = JwtAuth::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+secret = "123123"
+header = "Authorization"
+auth_path = "/login"
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
 
-        //         let headers = [""].join("\r\n");
-        //         let input_header = format!("GET /login HTTP/1.1\r\n{headers}\r\n\r\n");
-        //         let mock_io = Builder::new().read(input_header.as_bytes()).build();
-        //         let mut session = Session::new_h1(Box::new(mock_io));
-        //         session.read_request().await.unwrap();
+        let mut session = new_auth_path_session().await;
+        let mut ctx = Ctx::default();
+        let mut upstream_response =
+            ResponseHeader::build_no_case(200, None).unwrap();
+        let result = auth
+            .handle_response(&mut session, &mut ctx, &mut upstream_response)
+            .await
+            .unwrap();
+        assert_eq!(ResponsePluginResult::Modified, result);
+        assert_eq!(
+            r#"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"content-type": "application/json; charset=utf-8", "transfer-encoding": "chunked"} }, header_name_map: None, reason_phrase: None }"#,
+            format!("{upstream_response:?}")
+        );
 
-        //         let mut ctx = Ctx::default();
-        //         let mut upstream_response =
-        //             ResponseHeader::build_no_case(200, None).unwrap();
-        //         auth.handle_response(&mut session, &mut ctx, &mut upstream_response)
-        //             .await
-        //             .unwrap();
+        let mut body = Some(Bytes::from_static(b"Pingap"));
+        let result = auth
+            .handle_response_body(&mut session, &mut ctx, &mut body, true)
+            .unwrap();
+        assert_eq!(ResponseBodyPluginResult::FullyReplaced, result);
+        assert_eq!(
+            r#"{"token": "eyJhbGciOiAiSFMyNTYiLCJ0eXAiOiAiSldUIn0.UGluZ2Fw.wRLT2HhM1R-J4rVz3XCWADNIrmeInLtRGQzfJZaz-qI"}"#,
+            std::string::String::from_utf8_lossy(body.unwrap().as_ref())
+        );
+    }
 
-        //         assert_eq!(
-        //             r#"ResponseHeader { base: Parts { status: 200, version: HTTP/1.1, headers: {"content-type": "application/json; charset=utf-8", "transfer-encoding": "chunked"} }, header_name_map: None, reason_phrase: None }"#,
-        //             format!("{upstream_response:?}")
-        //         );
-        //         if let Some(features) = &ctx.features {
-        //             assert_eq!(true, features.modify_response_body.is_some());
-        //             if let Some(modify) = features.modify_response_body.as_ref() {
-        //                 let data =
-        //                     modify.handle(Bytes::from_static(b"Pingap")).unwrap();
-        //                 assert_eq!(
-        //                     r#"{"token": "eyJhbGciOiAiSFMyNTYiLCJ0eXAiOiAiSldUIn0.UGluZ2Fw.wRLT2HhM1R-J4rVz3XCWADNIrmeInLtRGQzfJZaz-qI"}"#,
-        //                     std::string::String::from_utf8_lossy(&data)
-        //                         .to_string()
-        //                         .as_str()
-        //                 );
-        //             }
-        //         }
+    /// An upstream error at `auth_path` must not be signed into a token: the
+    /// error body has no `exp`, so the resulting token would never expire.
+    #[tokio::test]
+    async fn test_jwt_sign_skips_error_response() {
+        let auth = JwtAuth::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+secret = "123123"
+header = "Authorization"
+auth_path = "/login"
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let mut session = new_auth_path_session().await;
+        let mut ctx = Ctx::default();
+        let mut upstream_response =
+            ResponseHeader::build_no_case(401, None).unwrap();
+        let result = auth
+            .handle_response(&mut session, &mut ctx, &mut upstream_response)
+            .await
+            .unwrap();
+        assert_eq!(ResponsePluginResult::Unchanged, result);
+
+        let mut body = Some(Bytes::from_static(b"invalid user or password"));
+        let result = auth
+            .handle_response_body(&mut session, &mut ctx, &mut body, true)
+            .unwrap();
+        assert_eq!(ResponseBodyPluginResult::Unchanged, result);
+        assert_eq!(
+            b"invalid user or password".as_ref(),
+            body.unwrap().as_ref()
+        );
     }
 }

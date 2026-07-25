@@ -629,7 +629,14 @@ async fn handle_request_admin(
             error!(target: LOG_TARGET, error = e.to_string(), "get config category fail");
             pingap_core::new_internal_error(400, e)
         })?;
-        let name = params[3].to_string();
+        // The name segment is optional in the url but not in the code below,
+        // so reject a short url instead of indexing past the end of `params`.
+        let Some(name) = params.get(3).cloned() else {
+            return Err(pingap_core::new_internal_error(
+                400,
+                "Url is invalid(no name)",
+            ));
+        };
         let arr = plugin.manager.history(category.clone(), &name).await.map_err(|e| {
             error!(target: LOG_TARGET, error = e.to_string(), "get config history fail");
             pingap_core::new_internal_error(400, e)
@@ -802,12 +809,16 @@ fn init() {
 
 #[cfg(test)]
 mod tests {
-    use super::{AdminAsset, AdminServe, EmbeddedStaticFile};
+    use super::{
+        AdminAsset, AdminServe, EmbeddedStaticFile, handle_request_admin,
+    };
     use crate::config_manager::try_init_config_manager;
     use pingap_config::PluginConf;
-    use pingap_core::HttpResponse;
+    use pingap_core::{Ctx, HttpResponse};
+    use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use std::time::Duration;
+    use tokio_test::io::Builder;
 
     #[test]
     fn test_admin_params() {
@@ -919,5 +930,34 @@ mod tests {
         assert_eq!(false, auth_skipped("/api/configs/upstream/evil.css"));
         assert_eq!(false, auth_skipped("/api/certificates.png"));
         assert_eq!(false, auth_skipped("/api/basic"));
+    }
+
+    /// Regression: `/config-history/{category}` without the trailing name used
+    /// to index past the end of the split url and panic the request task.
+    #[tokio::test]
+    async fn test_config_history_without_name() {
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        try_init_config_manager(&file.path().to_string_lossy()).unwrap();
+        let admin = AdminServe::try_from(
+            &toml::from_str::<PluginConf>(r#"category = "admin""#).unwrap(),
+        )
+        .unwrap();
+
+        let mock_io = Builder::new()
+            .read(b"GET /api/config-history/upstream HTTP/1.1\r\n\r\n")
+            .build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        let err =
+            handle_request_admin(&admin, &mut session, &mut Ctx::default())
+                .await
+                .err()
+                .unwrap();
+        assert_eq!(
+            true,
+            err.to_string().contains("Url is invalid(no name)"),
+            "unexpected error: {err}"
+        );
     }
 }

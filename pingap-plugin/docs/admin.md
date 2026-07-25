@@ -117,5 +117,5 @@ traffic itself. Data-plane instances watch the same backend and hot reload.
   it.
 - The token embeds a timestamp but not the request; it is a bearer credential.
   Serve the admin UI over TLS.
-- `GET /api/config-history/{category}` without a `{name}` segment is not handled
-  and will abort the request handler — always include the name.
+- `/configs/{category}/{name}` and `/config-history/{category}/{name}` both
+  require the name segment; omitting it returns an error rather than a result.

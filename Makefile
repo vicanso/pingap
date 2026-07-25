@@ -1,6 +1,8 @@
 lint:
 	typos
 	cargo clippy --features=full --all-targets --all -- --deny=warnings
+	# `geo` is not part of `full`, so it needs its own pass or it silently rots.
+	cargo clippy -p pingap-plugin --features=geo --all-targets -- --deny=warnings
 
 fmt:
 	cargo fmt --all

@@ -106,7 +106,9 @@ sets `content-type: application/json` and switches to chunked encoding. The
 upstream therefore returns the *claims* (`{"id":"u-1","exp":…}`), not a token.
 
 Minting only works with HMAC — the signature is always computed from `secret`
-using `HS256` or `HS512`.
+using `HS256` or `HS512`. Only a `2xx` upstream response is signed; an error
+body is passed through untouched, so a failed login cannot be turned into a
+token that never expires.
 
 ## Responses
 

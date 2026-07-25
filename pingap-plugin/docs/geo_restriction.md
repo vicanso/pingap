@@ -12,10 +12,9 @@ can size the impact of a rule before enforcing it.
 cargo build --features=geo
 ```
 
-> **Status:** as of this writing `--features=geo` does not compile — the plugin's
-> constructor uses the old `#[ctor]` form where the current `ctor` crate requires
-> `#[ctor(unsafe)]`. Because `geo` is not part of the `full` feature set, CI never
-> builds it. Treat this plugin as unavailable until that is fixed.
+`geo` is deliberately kept out of `full` because it embeds a GeoIP database in
+the binary. `make lint` runs a separate clippy pass over it so the feature does
+not rot unnoticed.
 
 ## Configuration
 

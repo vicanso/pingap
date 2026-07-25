@@ -12,13 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#[cfg(feature = "geo")]
-use super::{
-    Error, get_hash_key, get_plugin_factory, get_str_conf, get_str_slice_conf,
-};
+use super::{Error, get_hash_key, get_str_conf, get_str_slice_conf};
 use async_trait::async_trait;
 use bytes::Bytes;
-use ctor::ctor;
 use http::StatusCode;
 use pingap_config::PluginConf;
 use pingap_core::{
@@ -34,8 +30,7 @@ use tracing::{debug, info};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-static GEO_DB: LazyLock<Arc<GeoipDb>> =
-    LazyLock::new(|| GeoipDb::new_embedded());
+static GEO_DB: LazyLock<Arc<GeoipDb>> = LazyLock::new(GeoipDb::new_embedded);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RestrictionCategory {
@@ -74,7 +69,7 @@ impl TryFrom<&PluginConf> for GeoRestriction {
         let raw_codes = get_str_slice_conf(value, "country_codes");
         let country_codes: Vec<String> = raw_codes
             .iter()
-            .flat_map(|s| s.split(|c| c == ' ' || c == ','))
+            .flat_map(|s| s.split([' ', ',']))
             .filter(|s| !s.is_empty())
             .map(|s| s.trim().to_uppercase())
             .collect();
@@ -193,12 +188,7 @@ impl Plugin for GeoRestriction {
     }
 }
 
-#[ctor]
-fn init() {
-    get_plugin_factory().register("geo_restriction", |params| {
-        Ok(Arc::new(GeoRestriction::new(params)?))
-    });
-}
+register_plugin!("geo_restriction", GeoRestriction);
 
 #[cfg(test)]
 mod tests {
@@ -254,6 +244,6 @@ message = "Country not allowed"
             )
             .await
             .unwrap();
-        assert_eq!(true, result == RequestPluginResult::Continue);
+        assert!(result == RequestPluginResult::Continue);
     }
 }
