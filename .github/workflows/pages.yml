@@ -1,0 +1,64 @@
+name: Deploy GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - "scripts/build-website.sh"
+      - "pingap-*/README.md"
+      - "pingap-plugin/docs/**"
+      - "docs/**"
+      - "docs/zh/**"
+      - "examples/README.md"
+      - "README.md"
+      - "README_zh.md"
+      - "asset/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Assemble documentation site
+        run: |
+          chmod +x scripts/build-website.sh
+          ./scripts/build-website.sh
+          # Ensure logo is present even if build host layout differs
+          mkdir -p website/assets
+          if [ ! -f website/assets/logo.png ]; then
+            cp asset/pingap-logo.png website/assets/logo.png 2>/dev/null \
+              || cp icons/pingap-256.png website/assets/logo.png
+          fi
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: website
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

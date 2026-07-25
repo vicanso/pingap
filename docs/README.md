@@ -2,6 +2,23 @@
 
 - [acme chart](./acme_chart.md)
 - [modules](./modules.md)
+- **Chinese translations** — [zh/](./zh/) (home, plugins, crates, guide)
+- **GitHub Pages** (bilingual) — built by
+  [`scripts/build-website.sh`](../scripts/build-website.sh), deployed by
+  [`.github/workflows/pages.yml`](../.github/workflows/pages.yml).
+
+  | URL | Content |
+  | --- | --- |
+  | `https://vicanso.github.io/pingap/` | language picker |
+  | `https://vicanso.github.io/pingap/en/` | English (from crate / plugin READMEs) |
+  | `https://vicanso.github.io/pingap/zh/` | 中文 (from `docs/zh/`) |
+
+  Local preview:
+
+  ```bash
+  ./scripts/build-website.sh
+  python3 -m http.server -d website 8080
+  ```
 
 ## Crate documentation
 

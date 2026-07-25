@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Pingap Documentation</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Pingap — high-performance reverse proxy. Bilingual documentation (English / 中文)." />
+    <link rel="icon" href="assets/logo.png" />
+    <link rel="stylesheet" href="assets/style.css" />
+    <style>
+      body.landing {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background:
+          radial-gradient(ellipse at 20% 20%, rgba(11, 110, 79, 0.08), transparent 50%),
+          radial-gradient(ellipse at 80% 80%, rgba(11, 110, 79, 0.06), transparent 45%),
+          #f7faf8;
+        font-family: "Inter", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+        color: #1a2e24;
+      }
+      .card {
+        width: min(520px, 92vw);
+        background: #fff;
+        border: 1px solid #e2ebe6;
+        border-radius: 16px;
+        padding: 2.5rem 2rem;
+        box-shadow: 0 16px 40px rgba(11, 110, 79, 0.08);
+        text-align: center;
+      }
+      .card img {
+        width: 72px;
+        height: 72px;
+        border-radius: 14px;
+        margin-bottom: 1rem;
+      }
+      .card h1 {
+        margin: 0 0 0.4rem;
+        font-size: 1.75rem;
+        letter-spacing: -0.02em;
+        color: #0b6e4f;
+      }
+      .card p {
+        margin: 0 0 1.75rem;
+        color: #5a6b62;
+        line-height: 1.55;
+      }
+      .langs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.75rem;
+      }
+      .langs a {
+        display: block;
+        padding: 0.9rem 1rem;
+        border-radius: 10px;
+        text-decoration: none;
+        font-weight: 600;
+        border: 1px solid #c9d8cf;
+        color: #1a2e24;
+        transition: border-color 0.15s, background 0.15s, color 0.15s;
+      }
+      .langs a:hover {
+        border-color: #0b6e4f;
+        background: #f0f7f3;
+        color: #0b6e4f;
+      }
+      .langs a small {
+        display: block;
+        margin-top: 0.25rem;
+        font-weight: 400;
+        font-size: 0.8rem;
+        color: #5a6b62;
+      }
+      .extra {
+        margin-top: 1.25rem;
+        font-size: 0.85rem;
+      }
+      .extra a {
+        color: #0b6e4f;
+        margin: 0 0.4rem;
+      }
+    </style>
+    <script>
+      // Optional: remember last language
+      (function () {
+        try {
+          var pref = localStorage.getItem("pingap-docs-lang");
+          var params = new URLSearchParams(location.search);
+          if (params.get("stay") === "1") return;
+          if (pref === "en" || pref === "zh") {
+            // only auto-redirect if user previously chose; still show picker on ?stay=1
+          }
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body class="landing">
+    <div class="card">
+      <img src="assets/logo.png" alt="Pingap" />
+      <h1>Pingap</h1>
+      <p>
+        High-performance reverse proxy powered by Cloudflare Pingora.<br />
+        基于 Pingora 的高性能反向代理文档（中英双语）。
+      </p>
+      <div class="langs">
+        <a href="en/" onclick="try{localStorage.setItem('pingap-docs-lang','en')}catch(e){}">
+          English
+          <small>Plugins · Crates · Guide</small>
+        </a>
+        <a href="zh/" onclick="try{localStorage.setItem('pingap-docs-lang','zh')}catch(e){}">
+          中文
+          <small>插件 · 组件 · 指南</small>
+        </a>
+      </div>
+      <div class="extra">
+        <a href="https://github.com/vicanso/pingap">GitHub</a>
+        <a href="https://pingap.io/pingap-zh/">pingap.io</a>
+        <a href="https://github.com/vicanso/pingap/releases">Releases</a>
+      </div>
+    </div>
+  </body>
+</html>
