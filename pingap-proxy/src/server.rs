@@ -1116,7 +1116,10 @@ impl ProxyHttp for Server {
             .ok_or_else(|| {
                 new_internal_error(
                     503,
-                    format!("No available upstream for {}", ctx.upstream.location),
+                    format!(
+                        "No available upstream for {}",
+                        ctx.upstream.location
+                    ),
                 )
             })?;
 
