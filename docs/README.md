@@ -3,15 +3,15 @@
 - [acme chart](./acme_chart.md)
 - [modules](./modules.md)
 - **Chinese translations** — [zh/](./zh/) (home, plugins, crates, guide)
-- **GitHub Pages** (bilingual) — built by
+- **Documentation site** (bilingual) — built by
   [`scripts/build-website.sh`](../scripts/build-website.sh), deployed by
   [`.github/workflows/pages.yml`](../.github/workflows/pages.yml).
 
   | URL | Content |
   | --- | --- |
-  | `https://vicanso.github.io/pingap/` | redirects to English |
-  | `https://vicanso.github.io/pingap/en/` | English (from crate / plugin READMEs) |
-  | `https://vicanso.github.io/pingap/zh/` | 中文 (from `docs/zh/`) |
+  | <https://pingap.io/> | language picker |
+  | <https://pingap.io/en/#/> | English (generated from crate / plugin READMEs) |
+  | <https://pingap.io/zh/#/> | 中文 (generated from `docs/zh/`) |
 
   Local preview:
 

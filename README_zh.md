@@ -9,7 +9,7 @@ Pingap 是一款由 [`Cloudflare Pingora`](https://github.com/cloudflare/pingora
 这使得 Pingap 不仅仅是一个代理，更是一个灵活且可扩展的应用网关，旨在轻松应对从 API 保护到现代化 Web 应用部署的各类复杂场景。
 
 
-[使用示例](./examples/README.md) | [详细文档](http://pingap.io/pingap-zh/) | [GitHub Pages 中文](https://vicanso.github.io/pingap/zh/) · [EN](https://vicanso.github.io/pingap/en/)
+[详细文档](https://pingap.io/zh/#/) · [English](https://pingap.io/en/#/) | [使用示例](./examples/README.md) | [插件](./pingap-plugin/README.md) | [组件](./docs/README.md)
 
 
 ```mermaid
@@ -111,7 +111,7 @@ curl -sSL https://raw.githubusercontent.com/vicanso/pingap/main/install.sh | PIN
 
 支持的平台：`Linux x86_64/arm64`、`Darwin x86_64/arm64`。所有可用的构建产物见 [releases 页面](https://github.com/vicanso/pingap/releases)。
 
-要了解更多详细说明，包括如何通过二进制文件运行，请查阅我们的[文档](https://pingap.io/pingap-zh/docs/getting_started)。
+要了解更多详细说明，包括如何通过二进制文件运行，请查阅我们的[文档](https://pingap.io/zh/#/)。
 
 
 
@@ -156,7 +156,7 @@ addr = "0.0.0.0:6188"
 locations = ["lo"]
 ```
 
-所有的 TOML 配置可以查阅：[https://pingap.io/pingap-zh/docs/config](https://pingap.io/pingap-zh/docs/config)。
+所有的 TOML 配置可以查阅：[https://pingap.io/zh/#/crates/config](https://pingap.io/zh/#/crates/config)。
 
 
 ## 🔄 请求处理流程

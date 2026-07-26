@@ -128,3 +128,38 @@ CLI flags worth knowing: `-c/--conf <url>`, `-d/--daemon`, `-u/--upgrade` (hot u
 ## Web admin
 
 `web/` is a Vite/React app. After editing it, run `make build-web` so the compiled assets in `dist/` get embedded into the binary via `rust-embed` at compile time. `--admin user:pass@host:port[/prefix]` exposes the admin UI; in `make dev` it's on `127.0.0.1:3018`.
+
+## Documentation site (`website/`)
+
+**Any behaviour change must be reflected in the docs the site is built from.** The site is not written separately — it is assembled from files in the repo, so a feature that changes a config key, a default, a CLI flag or a plugin's behaviour is only documented once those source files are updated.
+
+Live at <https://pingap.io/> — English <https://pingap.io/en/#/>, 中文 <https://pingap.io/zh/#/>. It is docsify with hash routing, so deep links always carry `#/` (e.g. `https://pingap.io/en/#/plugins/jwt`). Do not link to `vicanso.github.io/...` or the legacy `pingap.io/pingap-en|zh/...` paths.
+
+Linking rules:
+
+- **Inside site content** (`docs/zh/**`, the home page block in `scripts/build-website.sh`) use root-relative paths with docsify's `':ignore'`, e.g. `[中文文档](/zh/#/ ':ignore')`. They work on the local preview too. Without `':ignore'` docsify compiles `/zh/#/` into an internal route (`#/zh/#/`) and the link breaks.
+- **Between pages of the same language** use plain relative markdown (`plugins/jwt.md`); docsify routes those itself.
+- **In repo files read on GitHub** (`README.md`, `README_zh.md`, `docs/README.md`) use the absolute `https://pingap.io/...` form, since a root-relative path would resolve against github.com.
+
+### What to edit
+
+| Change | Update |
+| --- | --- |
+| Plugin config key / default / behaviour | `pingap-plugin/docs/<plugin>.md` **and** `docs/zh/plugins/<plugin>.md` |
+| New plugin | both of the above, plus the index table in `pingap-plugin/README.md` and `docs/zh/plugins/README.md`, plus the sidebar lists in `scripts/build-website.sh` |
+| Crate-level feature | `pingap-<crate>/README.md` **and** `docs/zh/crates/<crate>.md` |
+| CLI flag / env var / quick start | `README.md`, `README_zh.md`, and the home page block in `scripts/build-website.sh` (English home is generated inline there; the Chinese home is `docs/zh/README.md`) |
+| Architecture / ACME flow / examples | `docs/modules.md`, `docs/acme_chart.md`, `examples/README.md` and their `docs/zh/guide/*` counterparts |
+
+The Chinese tree is a **maintained translation**, not a generated one: adding an English page without its `docs/zh/` counterpart leaves a gap in the Chinese site.
+
+### Build and preview
+
+```bash
+./scripts/build-website.sh
+python3 -m http.server -d website 8080   # /en/ and /zh/
+```
+
+`website/{en,zh}/{README.md,_sidebar.md,_navbar.md,crates/,plugins/,guide/}` are **generated and gitignored** — never edit them directly. Hand-maintained files are `website/index.html` (language picker), `website/{en,zh}/index.html` (docsify shells), `website/assets/`, `website/.nojekyll` and `website/BUILD.md`.
+
+`.github/workflows/pages.yml` reruns the script and deploys on pushes that touch `website/**`, `scripts/build-website.sh`, `pingap-*/README.md`, `pingap-plugin/docs/**`, `docs/**`, `examples/README.md`, `README.md` or `README_zh.md`.

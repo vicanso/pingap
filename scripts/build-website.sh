@@ -196,7 +196,7 @@ admin, and 20+ plugins for auth, traffic control, caching and observability.
 | | |
 | --- | --- |
 | **Start here** | [Quick start](#quick-start-docker) · [Plugins](plugins/) · [Crates](crates/) · [Architecture](guide/modules.md) · [Examples](guide/examples.md) |
-| **Links** | [中文文档](../zh/) · [GitHub](https://github.com/vicanso/pingap) · [Releases](https://github.com/vicanso/pingap/releases) · [pingap.io](https://pingap.io/pingap-en/) |
+| **Links** | [中文文档](/zh/#/ ':ignore') · [GitHub](https://github.com/vicanso/pingap) · [Releases](https://github.com/vicanso/pingap/releases) |
 
 ## Key features
 
@@ -422,7 +422,7 @@ EOF
 EOF
 
   cat >"${EN}/_navbar.md" <<'EOF'
-* [中文](../zh/)
+* [中文](/zh/#/ ':ignore')
 * [GitHub](https://github.com/vicanso/pingap)
 * [Releases](https://github.com/vicanso/pingap/releases)
 EOF
@@ -554,7 +554,7 @@ build_zh() {
 EOF
 
   cat >"${ZH}/_navbar.md" <<'EOF'
-* [English](../en/)
+* [English](/en/#/ ':ignore')
 * [GitHub](https://github.com/vicanso/pingap)
 * [Releases](https://github.com/vicanso/pingap/releases)
 EOF

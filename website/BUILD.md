@@ -1,14 +1,30 @@
 # Building the documentation site
 
-Bilingual static documentation for Pingap, deployed to GitHub Pages.
+Bilingual static documentation for Pingap, deployed to GitHub Pages and served
+from <https://pingap.io/>.
 
 ## Languages
 
-| Path | Language | Source of truth |
+| URL | Language | Source of truth |
 | --- | --- | --- |
-| `/` | redirect → `/en/` | `website/index.html` (`?lang=zh` → Chinese) |
-| `/en/` | English (default) | `pingap-*/README.md`, `pingap-plugin/docs/*`, `docs/`, `examples/` |
-| `/zh/` | 中文 | `docs/zh/**` (maintained translations) |
+| <https://pingap.io/> | redirect → `/en/` | `website/index.html` (`?lang=zh` → Chinese) |
+| <https://pingap.io/en/#/> | English (default) | `pingap-*/README.md`, `pingap-plugin/docs/*`, `docs/`, `examples/` |
+| <https://pingap.io/zh/#/> | 中文 | `docs/zh/**` (maintained translations) |
+
+The site uses docsify hash routing, so a deep link looks like
+`https://pingap.io/en/#/plugins/jwt` — always include the `#/`.
+
+## Linking
+
+| From | Use |
+| --- | --- |
+| Site content (`docs/zh/**`, the home page block in the build script) | root-relative `/zh/#/`, with docsify's `':ignore'` so it is not compiled into a route: `[中文文档](/zh/#/ ':ignore')` |
+| Between pages of the same language | plain relative markdown, e.g. `plugins/jwt.md` — docsify routes it |
+| Repo files read on GitHub (`README.md`, `README_zh.md`, `docs/README.md`) | absolute `https://pingap.io/en/#/` |
+
+Root-relative links keep working on the local preview server, which also serves
+`website/` at the root. Without `':ignore'` docsify treats `/zh/#/` as an
+internal route and turns it into `#/zh/#/`.
 
 ## Build
 

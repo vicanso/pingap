@@ -11,7 +11,7 @@ Pingap is a high-performance reverse proxy powered by the [`Cloudflare Pingora`]
 Its core strength lies in a powerful plugin system, offering over twenty out-of-the-box features for Authentication (JWT, Key Auth), Security (CSRF, IP/Referer/UA Restrictions), Traffic Control (Rate Limiting, Caching), Content Modification (Redirects, Content Substitution), and Observability (Request ID). This makes `Pingap` not just a proxy, but a flexible and extensible application gateway, engineered to effortlessly handle complex scenarios from API protection to modern web application deployments.
 
 
-[中文说明](./README_zh.md) | [Examples](./examples/README.md) | [Documentation](http://pingap.io/pingap-en/) | [GitHub Pages EN](https://vicanso.github.io/pingap/en/) · [中文](https://vicanso.github.io/pingap/zh/) | [Plugins](./pingap-plugin/README.md) | [Crates](./docs/README.md)
+[中文说明](./README_zh.md) | [Documentation](https://pingap.io/en/#/) · [中文文档](https://pingap.io/zh/#/) | [Examples](./examples/README.md) | [Plugins](./pingap-plugin/README.md) | [Crates](./docs/README.md)
 
 ```mermaid
 flowchart LR
@@ -111,7 +111,7 @@ curl -sSL https://raw.githubusercontent.com/vicanso/pingap/main/install.sh | PIN
 
 Supported targets: `Linux x86_64/arm64`, `Darwin x86_64/arm64`. See the [releases page](https://github.com/vicanso/pingap/releases) for all available assets.
 
-For more detailed instructions, including running from a binary, check out our [Documentation](https://pingap.io/pingap-en/docs/getting_started).
+For more detailed instructions, including running from a binary, check out our [Documentation](https://pingap.io/en/#/).
 
 ### Start a proxy without a config file
 
@@ -224,7 +224,7 @@ addr = "127.0.0.1:6118"
 locations = ["github-api", "static"]
 ```
 
-You can find the relevant instructions here: [https://pingap.io/pingap-en/docs/config](https://pingap.io/pingap-en/docs/config).
+You can find the relevant instructions here: [https://pingap.io/en/#/crates/config](https://pingap.io/en/#/crates/config).
 
 ## 🔄 Proxy step
 
