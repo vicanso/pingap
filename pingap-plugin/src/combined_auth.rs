@@ -32,6 +32,12 @@ use std::borrow::Cow;
 use tracing::debug;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
+
+const CATEGORY: &str = "combined_auth";
+
+/// A secret of `*` disables every check for that app, including the ip list.
+const SUPER_USER_SECRET: &str = "*";
+
 // AuthParam defines the authentication configuration for a single application
 struct AuthParam {
     // Optional IP rules for restricting access to specific IP addresses or CIDR ranges
@@ -76,17 +82,15 @@ impl TryFrom<&PluginConf> for CombinedAuth {
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
 
-        let category = "combined_auth".to_string();
-
         let Some(authorizations) = value.get("authorizations") else {
             return Err(Error::Invalid {
-                category,
+                category: CATEGORY.to_string(),
                 message: "authorizations is empty".to_string(),
             });
         };
         let Some(authorizations) = authorizations.as_array() else {
             return Err(Error::Invalid {
-                category,
+                category: CATEGORY.to_string(),
                 message: "authorizations is not array".to_string(),
             });
         };
@@ -104,12 +108,27 @@ impl TryFrom<&PluginConf> for CombinedAuth {
             if !ip_list.is_empty() {
                 ip_rules = Some(pingap_util::IpRules::new(&ip_list));
             }
+            // `deviation` bounds the replay window, so it has to be a
+            // deliberate choice. It used to default to 0, which rejects every
+            // request whose timestamp is not exactly the current second — a
+            // config that appears to work only when the clocks happen to line
+            // up.
+            let deviation = get_int_conf(value, "deviation");
+            let secret = get_str_conf(value, "secret");
+            if deviation <= 0 && secret != SUPER_USER_SECRET {
+                return Err(Error::Invalid {
+                    category: CATEGORY.to_string(),
+                    message: format!(
+                        "deviation of app({app_id}) must be greater than 0 seconds"
+                    ),
+                });
+            }
             auths.insert(
                 app_id,
                 AuthParam {
                     ip_rules,
-                    secret: get_str_conf(value, "secret"),
-                    deviation: get_int_conf(value, "deviation"),
+                    secret,
+                    deviation,
                 },
             );
         }
@@ -155,7 +174,7 @@ impl CombinedAuth {
     /// * `digest` - SHA-256 HMAC of `secret:timestamp`
     #[inline]
     fn validate(&self, session: &Session, ctx: &mut Ctx) -> Result<()> {
-        let category = "combined_auth";
+        let category = CATEGORY;
         let req_header = session.req_header();
 
         // Step 1: Extract and validate app_id
@@ -178,7 +197,7 @@ impl CombinedAuth {
         // Step 3: Super user check
         // If secret is "*", this app has unlimited access
         // USE WITH CAUTION: This bypasses all security checks
-        if auth_param.secret == "*" {
+        if auth_param.secret == SUPER_USER_SECRET {
             return Ok(());
         }
 
@@ -300,11 +319,60 @@ mod tests {
     use super::{AuthParam, CombinedAuth};
     use ahash::AHashMap;
     use hex::ToHex;
+    use pingap_config::PluginConf;
     use pingap_core::{Ctx, PluginStep};
     use pingora::proxy::Session;
     use pretty_assertions::assert_eq;
     use sha2::{Digest, Sha256};
     use tokio_test::io::Builder;
+
+    /// `deviation` bounds the replay window. It used to default to 0, which
+    /// rejects every request whose timestamp is not exactly the current second.
+    #[test]
+    fn test_combined_auth_requires_deviation() {
+        let result = CombinedAuth::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+[[authorizations]]
+app_id = "pingap"
+secret = "123123"
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            "Plugin combined_auth invalid, message: deviation of app(pingap) must be greater than 0 seconds",
+            result.err().unwrap().to_string()
+        );
+
+        let params = CombinedAuth::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+[[authorizations]]
+app_id = "pingap"
+secret = "123123"
+deviation = 60
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(60, params.auths.get("pingap").unwrap().deviation);
+
+        // A super user app has no timestamp check to bound.
+        let params = CombinedAuth::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+[[authorizations]]
+app_id = "internal"
+secret = "*"
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(true, params.auths.contains_key("internal"));
+    }
 
     #[tokio::test]
     async fn test_combined_auth() {

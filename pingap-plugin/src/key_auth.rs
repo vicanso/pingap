@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, get_bool_conf, get_hash_key, get_str_conf, get_str_slice_conf,
+    Error, get_bool_conf, get_hash_key, get_step_conf_in, get_str_conf,
+    get_str_slice_conf,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -44,9 +45,9 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 /// - Distinct error responses for missing vs invalid credentials
 /// - Binary key storage to support various encodings
 pub struct KeyAuth {
-    /// Determines when this plugin runs in the request lifecycle:
-    /// - Request phase: Early authentication before any processing
-    /// - ProxyUpstream phase: Authentication just before forwarding to backend
+    /// Always `Request`. Authenticating at `ProxyUpstream` would run after the
+    /// cache lookup, so cached responses would be served without a key —
+    /// `step` is therefore rejected rather than honoured for anything else.
     plugin_step: PluginStep,
 
     /// Header name to look for the auth key (e.g., "X-API-Key")
@@ -103,7 +104,7 @@ impl TryFrom<&PluginConf> for KeyAuth {
     /// * When neither header nor query parameter is configured
     /// * When no valid keys are provided
     /// * When header name is invalid
-    /// * When plugin step is not request or proxy_upstream
+    /// * When plugin step is not request
     fn try_from(value: &PluginConf) -> Result<Self> {
         let hash_value = get_hash_key(value);
 
@@ -152,7 +153,12 @@ impl TryFrom<&PluginConf> for KeyAuth {
             hash_value,
             keys,
             hide_credentials: get_bool_conf(value, "hide_credentials"),
-            plugin_step: PluginStep::Request,
+            plugin_step: get_step_conf_in(
+                value,
+                &PluginCategory::KeyAuth.to_string(),
+                PluginStep::Request,
+                &[PluginStep::Request],
+            )?,
             query,
             header,
             delay,
@@ -225,8 +231,6 @@ impl Plugin for KeyAuth {
         session: &mut Session,
         _ctx: &mut Ctx,
     ) -> pingora::Result<RequestPluginResult> {
-        // Plugin steps are configurable to support different authentication points
-        // Common steps: request (early auth) or proxy_upstream (pre-forwarding)
         if step != self.plugin_step {
             return Ok(RequestPluginResult::Skipped);
         }
@@ -349,6 +353,24 @@ keys = [
         );
         assert_eq!(
             "Plugin key_auth invalid, message: auth key is not allowed empty",
+            result.err().unwrap().to_string()
+        );
+
+        // `step` used to be accepted and ignored. Authenticating at
+        // `proxy_upstream` would run after the cache lookup, so it is rejected
+        // rather than quietly downgraded to `request`.
+        let result = KeyAuth::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+header = "X-User"
+keys = ["123"]
+step = "proxy_upstream"
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            "Plugin key_auth invalid, message: Invalid step(proxy_upstream), expect one of: request",
             result.err().unwrap().to_string()
         );
     }

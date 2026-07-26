@@ -4,7 +4,7 @@ Returns a canned response instead of proxying, optionally after a delay. Handy
 for stubbing an endpoint that does not exist yet, keeping a maintenance page up,
 serving `/robots.txt` without an upstream, or testing client timeout handling.
 
-- **Step:** `request` (fixed)
+- **Step:** `request` (default) or `proxy_upstream` — configurable
 - **Registered as:** `mock`
 
 ## Configuration
@@ -17,6 +17,7 @@ serving `/robots.txt` without an upstream, or testing client timeout handling.
 | `headers` | string[] | — | Response headers as `Name: value`. |
 | `data` | string | `""` | Response body. |
 | `delay` | duration | none | Sleep before responding. |
+| `step` | string | `request` | `request` or `proxy_upstream`. Any other value is a configuration error. |
 
 ## Examples
 
@@ -83,5 +84,6 @@ does match, the upstream is never contacted.
 - `delay` holds the request task open for its duration. A large delay plus real
   traffic will pile up connections; combine with [`limit`](limit.md) when
   experimenting on a live listener.
-- Because the plugin runs at `request`, it also short-circuits caching and any
-  later plugin in the chain.
+- At `request` the mock also short-circuits caching and any later plugin in the
+  chain. Use `step = "proxy_upstream"` to let cache hits through and mock only
+  the requests that would otherwise reach the origin.

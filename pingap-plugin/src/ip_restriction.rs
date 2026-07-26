@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_str_conf, get_str_slice_conf};
+use super::{
+    Error, RestrictionCategory, get_hash_key, get_restriction_category_conf,
+    get_str_conf, get_str_slice_conf,
+};
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
@@ -32,7 +35,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 pub struct IpRestriction {
     plugin_step: PluginStep, // Defines when plugin runs in request lifecycle (must be Request)
     ip_rules: pingap_util::IpRules, // Contains parsed IP addresses and CIDR ranges for matching
-    restriction_category: String, // "allow": whitelist mode, "deny": blacklist mode
+    restriction_category: RestrictionCategory, // whitelist or blacklist
     forbidden_resp: HttpResponse, // Customizable 403 response returned when access is denied
     hash_value: String, // Unique identifier used for plugin caching/tracking
 }
@@ -72,7 +75,10 @@ impl TryFrom<&PluginConf> for IpRestriction {
             hash_value,
             plugin_step: PluginStep::Request,
             ip_rules,
-            restriction_category: get_str_conf(value, "type"),
+            restriction_category: get_restriction_category_conf(
+                value,
+                "ip_restriction",
+            )?,
             forbidden_resp: HttpResponse {
                 status: StatusCode::FORBIDDEN,
                 body: Bytes::from(message),
@@ -155,15 +161,9 @@ impl Plugin for IpRestriction {
         };
 
         // Determine if request should be allowed based on:
-        // - deny mode: block if IP is found in rules (!found)
-        // - allow mode: block if IP is NOT found in rules (found)
-        let allow = if self.restriction_category == "deny" {
-            !found
-        } else {
-            found
-        };
-
-        if !allow {
+        // - deny mode: block if IP is found in rules
+        // - allow mode: block if IP is NOT found in rules
+        if !self.restriction_category.allows(found) {
             // Return forbidden response with custom message if configured
             return Ok(RequestPluginResult::Respond(
                 self.forbidden_resp.clone(),

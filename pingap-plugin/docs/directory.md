@@ -20,6 +20,7 @@ optional HTML directory index.
 | `private` | bool | `false` | Add `private` to `Cache-Control`. |
 | `charset` | string | — | Appended to `Content-Type` for `text/*`. |
 | `download` | bool | `false` | Add `Content-Disposition: attachment`. |
+| `follow_symlinks` | bool | `true` | When `false`, a file must still be under `path` once symlinks are resolved. |
 | `headers` | string[] | — | Extra response headers as `Name: value`. |
 | `step` | string | `request` | `request` or `proxy_upstream`. |
 
@@ -90,10 +91,14 @@ curl -r 0-1023 -i http://127.0.0.1:6188/big.iso
 - `index` is only substituted for the root path `/`, and only when `autoindex`
   is off. A request for a subdirectory such as `/docs/` returns `404` unless
   `autoindex` is enabled.
-- Traversal protection is lexical: the joined path is normalised and must still
-  start with `path`. A **symlink inside the served directory that points
-  outside** is not caught by that check, so do not serve a tree containing
-  untrusted symlinks.
+- Traversal protection is lexical by default: the joined path is normalised and
+  must still start with `path`, which catches `../` but not a **symlink inside
+  the served directory that points outside it**. Set `follow_symlinks = false`
+  to also compare the resolved real path, at the cost of one extra `realpath`
+  per request. The default stays `true` so that deployments which link content
+  into the tree keep working; turn it off whenever the directory can contain
+  symlinks you did not create. A symlinked *root* works either way, since the
+  root is resolved once at startup.
 - `autoindex` reveals file names, sizes and timestamps. Combine with
   [`basic_auth`](basic_auth.md) or [`ip_restriction`](ip_restriction.md) for
   anything non-public.

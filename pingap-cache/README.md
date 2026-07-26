@@ -88,9 +88,9 @@ them available to access logs as `{:cache_lookup_time}` and `{:cache_lock_time}`
 | Capacity | Bounded by RAM | Bounded by disk |
 | Eviction | LRU, when the `cache` plugin enables it | Inactive-file sweep |
 
-Note that LRU eviction is wired up only when the backend reports a non-zero
-maximum size, which the file backend does not — file cache reclamation is the
-`inactive` sweep.
+LRU eviction needs a backend that reports a maximum size, which the file backend
+does not — file cache reclamation is the `inactive` sweep instead. Setting
+`eviction` on a file cache logs an error rather than pretending to apply.
 
 [TinyUFO]: https://github.com/cloudflare/pingora/tree/main/tinyufo
 

@@ -227,6 +227,11 @@ pub struct Directory {
     // Forces browser to download rather than display inline
     download: bool,
 
+    // When false, a resolved file must still live under `path` after symlinks
+    // are followed. Defaults to true, which is the historical behaviour and
+    // what release-symlink layouts rely on.
+    follow_symlinks: bool,
+
     // Unique identifier for this plugin instance
     hash_value: String,
 }
@@ -384,20 +389,31 @@ impl TryFrom<&PluginConf> for Directory {
         if !index.starts_with("/") {
             index = format!("/{index}");
         }
+        let path =
+            Path::new(&pingap_util::resolve_path(&get_str_conf(value, "path")))
+                .to_path_buf();
+        // Resolve the root once so the per-request check compares two canonical
+        // paths and therefore sees through symlinks. A root that does not exist
+        // yet keeps its literal path; the lexical check still applies.
+        let path = std::fs::canonicalize(&path).unwrap_or(path);
+
+        // `follow_symlinks` defaults to true so an existing deployment that
+        // symlinks content into the served tree keeps working.
+        let follow_symlinks = !value.contains_key("follow_symlinks")
+            || get_bool_conf(value, "follow_symlinks");
+
         let params = Self {
             hash_value,
             autoindex: get_bool_conf(value, "autoindex"),
             index,
-            path: Path::new(&pingap_util::resolve_path(&get_str_conf(
-                value, "path",
-            )))
-            .to_path_buf(),
+            path,
             chunk_size,
             max_age,
             charset,
             cache_private,
             plugin_step: step,
             download: get_bool_conf(value, "download"),
+            follow_symlinks,
             headers: Some(headers),
         };
         if ![PluginStep::Request, PluginStep::ProxyUpstream]
@@ -599,16 +615,28 @@ impl Plugin for Directory {
                 ));
             },
         };
-        if !file.starts_with(&self.path) {
+        let forbidden = || {
             let message = format!(
                 "You do not have permission to access this resource, file: {path_str}"
             );
-            let resp = HttpResponse::builder(StatusCode::FORBIDDEN)
+            HttpResponse::builder(StatusCode::FORBIDDEN)
                 .body(message)
                 .header(HTTP_HEADER_CONTENT_TEXT.clone())
                 .no_store()
-                .finish();
-            return Ok(RequestPluginResult::Respond(resp));
+                .finish()
+        };
+        if !file.starts_with(&self.path) {
+            return Ok(RequestPluginResult::Respond(forbidden()));
+        }
+        // `absolutize` above is lexical, so it cannot see a symlink inside the
+        // root that points outside it. Only enforce when the path resolves; a
+        // path that does not exist cannot escape anywhere and is handled as a
+        // 404 further down.
+        if !self.follow_symlinks
+            && let Ok(resolved) = fs::canonicalize(&file).await
+            && !resolved.starts_with(&self.path)
+        {
+            return Ok(RequestPluginResult::Respond(forbidden()));
         }
 
         debug!(file = format!("{file:?}"), "static file serve");
@@ -901,6 +929,66 @@ download = true
             std::string::String::from_utf8_lossy(resp.body.as_ref())
                 .contains("Cargo.toml")
         );
+    }
+
+    /// A symlink inside the served root that points outside it is not caught by
+    /// the lexical `absolutize` check, so `follow_symlinks = false` has to
+    /// resolve the real path.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_directory_symlink_escape() {
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.txt"), "secret").unwrap();
+
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("public.txt"), "public").unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.txt"),
+            root.path().join("escape.txt"),
+        )
+        .unwrap();
+
+        let request = async |dir: &Directory, path: &str| {
+            let input_header = format!("GET {path} HTTP/1.1\r\n\r\n");
+            let mock_io = Builder::new().read(input_header.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            let result = dir
+                .handle_request(
+                    PluginStep::Request,
+                    &mut session,
+                    &mut Ctx::default(),
+                )
+                .await
+                .unwrap();
+            let RequestPluginResult::Respond(resp) = result else {
+                panic!("result is not Respond");
+            };
+            resp
+        };
+
+        let new_directory = |follow_symlinks: bool| {
+            Directory::new(
+                &toml::from_str::<PluginConf>(&format!(
+                    r###"
+path = "{}"
+follow_symlinks = {follow_symlinks}
+"###,
+                    root.path().to_string_lossy()
+                ))
+                .unwrap(),
+            )
+            .unwrap()
+        };
+
+        // The default keeps following symlinks, so an existing deployment that
+        // links content into the tree is unaffected.
+        let dir = new_directory(true);
+        assert_eq!(200, request(&dir, "/escape.txt").await.status.as_u16());
+
+        let dir = new_directory(false);
+        assert_eq!(200, request(&dir, "/public.txt").await.status.as_u16());
+        assert_eq!(403, request(&dir, "/escape.txt").await.status.as_u16());
     }
 
     #[tokio::test]

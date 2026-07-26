@@ -97,7 +97,7 @@ impl TryFrom<&PluginConf> for BasicAuth {
         let delay = get_str_conf(value, "delay");
         let delay = if !delay.is_empty() {
             let d = parse_duration(&delay).map_err(|e| Error::Invalid {
-                category: PluginCategory::KeyAuth.to_string(),
+                category: PluginCategory::BasicAuth.to_string(),
                 message: e.to_string(),
             })?;
             Some(d)

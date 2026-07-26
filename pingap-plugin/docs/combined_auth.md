@@ -18,7 +18,7 @@ stays replayable. An optional IP allow-list can be attached per application.
 | `authorizations` | table[] | — | **Required.** One entry per application. |
 | `authorizations[].app_id` | string | — | Identifier the caller sends as `?app_id=`. Entries without it are skipped. |
 | `authorizations[].secret` | string | — | Shared secret. The literal `*` disables **all** checks for this app. |
-| `authorizations[].deviation` | int | `0` | Maximum allowed clock skew, in seconds. |
+| `authorizations[].deviation` | int | — | **Required** (unless `secret = "*"`), greater than zero. Maximum allowed clock skew, in seconds. |
 | `authorizations[].ip_list` | string[] | — | IPs / CIDRs allowed to use this app id. |
 
 ## Request format
@@ -76,9 +76,9 @@ invalid`).
 
 ## Usage notes
 
-- `deviation` defaults to `0`, which in practice rejects everything: set it
-  explicitly. 30–120 seconds is a reasonable range — larger values widen the
-  replay window.
+- `deviation` has no default and must be greater than zero, because it is what
+  bounds the replay window. 30–120 seconds is a reasonable range; larger values
+  widen the window.
 - `secret = "*"` bypasses the IP allow-list too. If you want an unauthenticated
   but IP-restricted app, use [`ip_restriction`](ip_restriction.md) instead.
 - Timestamp validation needs the proxy's clock to be in sync with clients; run

@@ -4233,6 +4233,7 @@ dependencies = [
  "smallvec",
  "snafu",
  "substring",
+ "tempfile",
  "tokio",
  "tokio-test",
  "toml",

@@ -13,7 +13,8 @@
 // limitations under the License.
 
 use super::{
-    Error, get_hash_key, get_int_conf, get_str_conf, get_str_slice_conf,
+    Error, get_hash_key, get_int_conf, get_step_conf_in, get_str_conf,
+    get_str_slice_conf,
 };
 use async_trait::async_trait;
 use http::StatusCode;
@@ -42,8 +43,9 @@ pub struct MockResponse {
     /// Determines at which point in the request lifecycle this mock should execute.
     /// Only supports two phases:
     /// - Request: Early in the cycle, before any upstream processing
-    /// - ProxyUpstream: Just before the request would be sent to the upstream server
-    ///   This allows testing different failure scenarios and response behaviors
+    /// - ProxyUpstream: Just before the request would be sent to the upstream
+    ///   server, so a cache hit is served normally and only origin-bound
+    ///   requests get the mock
     pub plugin_step: PluginStep,
 
     /// The pre-configured HTTP response that will be returned when this mock is triggered.
@@ -130,7 +132,12 @@ impl MockResponse {
         Ok(MockResponse {
             hash_value,
             resp,
-            plugin_step: PluginStep::Request,
+            plugin_step: get_step_conf_in(
+                params,
+                &PluginCategory::Mock.to_string(),
+                PluginStep::Request,
+                &[PluginStep::Request, PluginStep::ProxyUpstream],
+            )?,
             path,
             delay,
         })
@@ -214,6 +221,34 @@ data = "{\"message\":\"Mock Service Unavailable\"}"
         .unwrap();
 
         assert_eq!("/", params.path);
+        assert_eq!("request", params.plugin_step.to_string());
+
+        // `step` used to be parsed and then thrown away.
+        let params = MockResponse::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+path = "/"
+step = "proxy_upstream"
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!("proxy_upstream", params.plugin_step.to_string());
+
+        let result = MockResponse::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+path = "/"
+step = "response"
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            "Plugin mock invalid, message: Invalid step(response), expect one of: request, proxy_upstream",
+            result.err().unwrap().to_string()
+        );
     }
 
     #[tokio::test]

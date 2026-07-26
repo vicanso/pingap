@@ -11,7 +11,7 @@ Allow- or deny-list requests by `User-Agent`, matched with regular expressions.
 | --- | --- | --- | --- |
 | `category` | string | — | Must be `ua_restriction`. |
 | `ua_list` | string[] | `[]` | Regex patterns, compiled at startup. |
-| `type` | string | `allow` | `deny` blocks matching agents; anything else allows **only** matching agents. |
+| `type` | string | `allow` | `allow` permits **only** matching agents; `deny` blocks them. Case-insensitive; any other value is a configuration error. |
 | `message` | string | `Request is forbidden` | Body of the 403 response. |
 
 Patterns use the [`regex`] crate's syntax and are **unanchored** — `go-http-client`

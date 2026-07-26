@@ -17,8 +17,8 @@ IP-restricted `PURGE` method.
 | `headers` | string[] | — | Request headers appended to the cache key (variant caching). |
 | `max_ttl` | duration | — | Upper bound on entry lifetime, capping upstream `Cache-Control`. |
 | `max_file_size` | bytesize | `1mb` | Responses larger than this are not cached. |
-| `lock` | duration | `1s` | Cache-lock window against stampedes. **Only `1s`, `2s` and `3s` are supported**; any other value silently disables locking. |
-| `eviction` | bool | absent | Presence of the key enables LRU eviction. |
+| `lock` | duration | `1s` | Cache-lock window against stampedes. Any non-zero duration works; `0s` disables locking. |
+| `eviction` | bool | absent | Presence of the key enables LRU eviction. Memory backend only. |
 | `predictor` | bool | absent | Presence of the key enables the cacheability predictor. |
 | `check_cache_control` | bool | `false` | Require a `Cache-Control` header on the response, otherwise do not store it. |
 | `purge_ip_list` | string[] | `[]` | IPs / CIDRs allowed to issue `PURGE`. |
@@ -83,14 +83,15 @@ curl -X PURGE http://127.0.0.1:6188/assets/app.js
 
 - **`eviction` needs a bounded backend.** It is only wired up when the backend
   reports a non-zero `max_size`, which the file backend does not — so `eviction`
-  is effectively memory-only. File cache entries are reclaimed by the inactive
-  sweep instead (`?inactive=…`).
+  is memory-only, and setting it on a file cache logs an error and is ignored.
+  File cache entries are reclaimed by the inactive sweep instead (`?inactive=…`).
 - **One memory backend per process.** The memory cache is a process-wide
   singleton created by the first `cache` plugin that asks for it; a second
   declaration with a different `max_size` or `mode` silently reuses the first
   one. Use `namespace` to separate content, not a second `directory`.
-- `lock` values other than 1, 2 or 3 seconds disable locking rather than
-  erroring. Prefer `"1s"`, `"2s"` or `"3s"`.
+- Each distinct `lock` duration allocates one shared lock for the lifetime of
+  the process, so the number of distinct values matters, not the number of
+  plugin instances.
 - Pair with [`accept_encoding`](accept_encoding.md) when caching by
   `Accept-Encoding`, otherwise the number of variants explodes.
 

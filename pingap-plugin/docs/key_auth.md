@@ -66,7 +66,9 @@ logs.
 
 - Keys in query strings end up in browser history, `Referer` headers and any
   intermediate proxy log. Prefer `header` when you control the client.
-- `step` is **not** honoured — the plugin always runs at `request`, whatever the
-  configuration says.
+- The plugin only runs at `request`. Setting `step` to anything else is a
+  configuration error rather than a silent downgrade — authenticating at
+  `proxy_upstream` would run after the cache lookup, so cached responses would
+  be served without a key.
 - For per-key quotas, put [`limit`](limit.md) with `tag = "header"` (or
   `"query"`) and the same key name after this plugin.

@@ -36,8 +36,10 @@ use pingora::cache::lock::{CacheKeyLock, CacheLock};
 use pingora::cache::predictor::{CacheablePredictor, Predictor};
 use pingora::proxy::Session;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::LazyLock;
+use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::time::Duration;
 use tracing::{debug, error};
@@ -49,18 +51,14 @@ type Result<T> = std::result::Result<T, Error>;
 static PREDICTOR: OnceLock<Predictor<32>> = OnceLock::new();
 // EvictionManager: Handles removing entries when cache is full using LRU strategy
 static EVICTION_MANAGER: OnceLock<Manager> = OnceLock::new();
-// CacheLock: Prevents multiple requests from generating the same cache entry simultaneously
-static CACHE_LOCK_ONE_SECOND: LazyLock<
-    Box<dyn CacheKeyLock + std::marker::Send + Sync + 'static>,
-> = LazyLock::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(1)));
-
-static CACHE_LOCK_TWO_SECONDS: LazyLock<
-    Box<dyn CacheKeyLock + std::marker::Send + Sync + 'static>,
-> = LazyLock::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(2)));
-
-static CACHE_LOCK_THREE_SECONDS: LazyLock<
-    Box<dyn CacheKeyLock + std::marker::Send + Sync + 'static>,
-> = LazyLock::new(|| CacheLock::new_boxed(std::time::Duration::from_secs(3)));
+// CacheLock: Prevents multiple requests from generating the same cache entry
+// simultaneously. `session.cache.enable` wants a `&'static` lock, so one is
+// leaked per distinct duration and reused from then on — bounded by the number
+// of distinct `lock` values in the configuration, not by the number of plugin
+// instances, so a hot reload does not leak.
+static CACHE_LOCKS: LazyLock<
+    Mutex<HashMap<Duration, &'static (dyn CacheKeyLock + Send + Sync)>>,
+> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub struct Cache {
     // Determines when this plugin runs in the request/response lifecycle
@@ -111,27 +109,30 @@ fn get_eviction_manager(cache_max_size: u64) -> &'static Manager {
     EVICTION_MANAGER.get_or_init(|| Manager::new(cache_max_size as usize))
 }
 
-/// Helper function to get an appropriate cache lock based on the specified duration.
-/// Cache locks prevent cache stampede by ensuring only one request generates a cache entry.
+/// Returns the cache lock for `lock`, creating it on first use.
+/// Cache locks prevent cache stampede by ensuring only one request generates a
+/// cache entry.
 ///
 /// # Arguments
 /// * `lock` - The desired lock duration
 ///
 /// # Returns
-/// * `Some(&CacheLock)` - If duration is 1, 2, or 3 seconds
-/// * `None` - For any other duration
-///
-/// # Limitations
-/// Only supports lock durations of exactly 1, 2, or 3 seconds
+/// * `Some(&CacheLock)` - For any non-zero duration
+/// * `None` - For a zero duration, which disables locking
 fn get_cache_lock(
     lock: Duration,
 ) -> Option<&'static (dyn CacheKeyLock + Send + Sync)> {
-    match lock.as_secs() {
-        1 => Some(CACHE_LOCK_ONE_SECOND.as_ref()),
-        2 => Some(CACHE_LOCK_TWO_SECONDS.as_ref()),
-        3 => Some(CACHE_LOCK_THREE_SECONDS.as_ref()),
-        _ => None,
+    if lock.is_zero() {
+        return None;
     }
+    let mut locks = CACHE_LOCKS.lock().ok()?;
+    if let Some(cache_lock) = locks.get(&lock) {
+        return Some(*cache_lock);
+    }
+    let cache_lock: &'static (dyn CacheKeyLock + Send + Sync) =
+        Box::leak(CacheLock::new_boxed(lock));
+    locks.insert(lock, cache_lock);
+    Some(cache_lock)
 }
 
 /// Helper function to initialize or retrieve the predictor singleton.
@@ -187,9 +188,20 @@ impl TryFrom<&PluginConf> for Cache {
         })?;
         let cache_max_size = cache.max_size;
 
-        let eviction = if value.contains_key("eviction") && cache_max_size > 0 {
-            let eviction = get_eviction_manager(cache_max_size);
-            Some(eviction as &'static (dyn EvictionManager + Sync))
+        let eviction = if value.contains_key("eviction") {
+            if cache_max_size > 0 {
+                let eviction = get_eviction_manager(cache_max_size);
+                Some(eviction as &'static (dyn EvictionManager + Sync))
+            } else {
+                // Eviction needs a bounded backend to evict against. The file
+                // backend does not report a size, so say so instead of leaving
+                // the operator believing the cache is capped.
+                error!(
+                    directory,
+                    "eviction is only supported by the memory cache backend, ignoring it"
+                );
+                None
+            }
         } else {
             None
         };
@@ -488,6 +500,29 @@ max_ttl = "1m"
         assert_eq!(100 * 1000, params.max_file_size);
         assert_eq!(60, params.max_ttl.unwrap().as_secs());
         assert_eq!(true, params.predictor.is_some());
+    }
+
+    /// Regression: only 1, 2 and 3 second locks used to be honoured, every
+    /// other value silently disabled locking altogether.
+    #[test]
+    fn test_cache_lock_any_duration() {
+        let lock_of = |lock: &str| {
+            Cache::try_from(
+                &toml::from_str::<PluginConf>(&format!(
+                    r###"lock = "{lock}""###
+                ))
+                .unwrap(),
+            )
+            .unwrap()
+            .lock
+            .is_some()
+        };
+
+        for lock in ["1s", "2s", "3s", "5s", "30s", "500ms", "1m"] {
+            assert_eq!(true, lock_of(lock), "lock({lock}) was disabled");
+        }
+        // Zero explicitly means "no lock".
+        assert_eq!(false, lock_of("0s"));
     }
     #[tokio::test]
     async fn test_cache() {

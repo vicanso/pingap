@@ -109,6 +109,79 @@ pub fn get_step_conf(
         .unwrap_or(default_value)
 }
 
+/// Resolves `step`, rejecting a value the plugin does not implement.
+///
+/// `get_step_conf` falls back to the default for an unknown or unsupported
+/// value, which turns a misconfigured `step` into a plugin that quietly never
+/// runs. Plugins that implement only some of the steps should use this so the
+/// mistake surfaces at `pingap -t` instead.
+pub fn get_step_conf_in(
+    value: &PluginConf,
+    category: &str,
+    default_value: PluginStep,
+    allowed: &[PluginStep],
+) -> Result<PluginStep, Error> {
+    let Some(step) = value.get("step").and_then(|v| v.as_str()) else {
+        return Ok(default_value);
+    };
+    let invalid = || Error::Invalid {
+        category: category.to_string(),
+        message: format!(
+            "Invalid step({step}), expect one of: {}",
+            allowed
+                .iter()
+                .map(|item| item.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
+    let step = PluginStep::from_str(step).map_err(|_| invalid())?;
+    if !allowed.contains(&step) {
+        return Err(invalid());
+    }
+    Ok(step)
+}
+
+/// Whether a restriction list is a whitelist or a blacklist.
+///
+/// Parsed rather than compared literally: `type` used to be tested against the
+/// string `deny`, so every other spelling — including `Deny` — silently selected
+/// allow mode and inverted the policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum RestrictionCategory {
+    #[default]
+    Allow,
+    Deny,
+}
+
+impl RestrictionCategory {
+    /// Given whether the request matched the configured list, returns whether
+    /// it is allowed through.
+    #[inline]
+    pub(crate) fn allows(&self, found: bool) -> bool {
+        match self {
+            Self::Allow => found,
+            Self::Deny => !found,
+        }
+    }
+}
+
+/// Parses the `type` of a restriction plugin. Absent means `allow`, which is
+/// the documented default; anything that is not `allow` or `deny` is rejected.
+pub(crate) fn get_restriction_category_conf(
+    value: &PluginConf,
+    category: &str,
+) -> Result<RestrictionCategory, Error> {
+    match get_str_conf(value, "type").to_lowercase().as_str() {
+        "" | "allow" => Ok(RestrictionCategory::Allow),
+        "deny" => Ok(RestrictionCategory::Deny),
+        other => Err(Error::Invalid {
+            category: category.to_string(),
+            message: format!("Invalid type({other}), expect allow or deny"),
+        }),
+    }
+}
+
 /// Returns true if `accept_encoding` lists `coding` as an acceptable encoding.
 ///
 /// Matches on comma/`;`-delimited token boundaries (so `x-gzip` does not match

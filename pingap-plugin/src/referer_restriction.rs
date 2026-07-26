@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_str_conf, get_str_slice_conf};
+use super::{
+    Error, RestrictionCategory, get_hash_key, get_restriction_category_conf,
+    get_str_conf, get_str_slice_conf,
+};
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
@@ -53,8 +56,8 @@ pub struct RefererRestriction {
     referer_list: Vec<String>,
     /// List of wildcard domain suffixes (e.g., ".example.com" from "*.example.com")
     prefix_referer_list: Vec<String>,
-    /// The type of restriction: "allow" or "deny"
-    restriction_category: String,
+    /// The type of restriction: whitelist or blacklist
+    restriction_category: RestrictionCategory,
     /// The HTTP response to return when access is forbidden
     forbidden_resp: HttpResponse,
     /// Unique identifier for this plugin instance
@@ -97,7 +100,10 @@ impl TryFrom<&PluginConf> for RefererRestriction {
             plugin_step: PluginStep::Request,
             prefix_referer_list,
             referer_list,
-            restriction_category: get_str_conf(value, "type"),
+            restriction_category: get_restriction_category_conf(
+                value,
+                "referer_restriction",
+            )?,
             forbidden_resp: HttpResponse {
                 status: StatusCode::FORBIDDEN,
                 body: Bytes::from(message),
@@ -191,12 +197,7 @@ impl Plugin for RefererRestriction {
                     .any(|item| host.ends_with(item));
             }
         }
-        let allow = if self.restriction_category == "deny" {
-            !found
-        } else {
-            found
-        };
-        if !allow {
+        if !self.restriction_category.allows(found) {
             return Ok(RequestPluginResult::Respond(
                 self.forbidden_resp.clone(),
             ));

@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_hash_key, get_str_conf, get_str_slice_conf};
+use super::{
+    Error, RestrictionCategory, get_hash_key, get_restriction_category_conf,
+    get_str_conf, get_str_slice_conf,
+};
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::StatusCode;
@@ -62,7 +65,7 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 pub struct UaRestriction {
     plugin_step: PluginStep, // Defines when plugin runs (must be Request phase)
     ua_list: Vec<Regex>, // List of compiled regex patterns to match User-Agents
-    restriction_category: String, // "deny" or "allow" - determines filtering behavior
+    restriction_category: RestrictionCategory, // whitelist or blacklist
     forbidden_resp: HttpResponse, // Custom HTTP response returned when request is blocked
     hash_value: String, // Unique identifier for plugin instance, used for caching/tracking
 }
@@ -109,7 +112,10 @@ impl TryFrom<&PluginConf> for UaRestriction {
             hash_value,
             plugin_step: PluginStep::Request,
             ua_list,
-            restriction_category: get_str_conf(value, "type"),
+            restriction_category: get_restriction_category_conf(
+                value,
+                "ua_restriction",
+            )?,
             forbidden_resp: HttpResponse {
                 status: StatusCode::FORBIDDEN,
                 body: Bytes::from(message),
@@ -189,14 +195,7 @@ impl Plugin for UaRestriction {
         // Determine if request should be allowed based on mode:
         // - deny mode: block if UA matches any pattern
         // - allow mode: block if UA doesn't match any pattern
-        let allow = if self.restriction_category == "deny" {
-            !found // In deny mode, allow = true if no matches found
-        } else {
-            found // In allow mode, allow = true if match found
-        };
-
-        // Return forbidden response if request is not allowed
-        if !allow {
+        if !self.restriction_category.allows(found) {
             return Ok(RequestPluginResult::Respond(
                 self.forbidden_resp.clone(),
             ));
@@ -248,7 +247,36 @@ type = "deny"  # This config will block these user agents
                 .join(",")
         );
 
-        assert_eq!("deny", params.restriction_category);
+        assert_eq!(RestrictionCategory::Deny, params.restriction_category);
+
+        // A `type` that is not exactly allow/deny used to fall through to allow
+        // mode, quietly inverting the policy.
+        let result = UaRestriction::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+ua_list = ["go-http-client/1.1"]
+type = "denied"
+"###,
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            "Plugin ua_restriction invalid, message: Invalid type(denied), expect allow or deny",
+            result.err().unwrap().to_string()
+        );
+
+        // Case differences are tolerated rather than silently inverting.
+        let params = UaRestriction::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+ua_list = ["go-http-client/1.1"]
+type = "Deny"
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(RestrictionCategory::Deny, params.restriction_category);
     }
 
     /// Tests the full request handling flow including:
