@@ -28,7 +28,8 @@ IP-restricted `PURGE` method.
 
 ```toml
 directory = ""                                   # memory, default size
-directory = "memory://pingap?max_size=100mb"     # memory, explicit size
+directory = "memory://pingap?max_size=100mb"     # memory, absolute size
+directory = "memory://pingap?max_size=20"        # memory, 20% of the budget
 directory = "/opt/pingap/cache"                  # file cache
 directory = "/opt/pingap/cache?inactive=1h&reading_max=1000"
 ```

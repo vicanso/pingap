@@ -32,7 +32,8 @@ use pingap_certificate::{
     Certificate, parse_certificates, parse_leaf_chain_certificates,
 };
 use pingap_config::{
-    Category, CertificateConf, ConfigManager, PingapConfig, StorageConf,
+    Category, CertificateConf, ConfigManager, DNS_PROVIDER_MANUAL,
+    PingapConfig, StorageConf, normalize_dns_provider,
 };
 use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
@@ -132,8 +133,7 @@ async fn do_update_certificates(
     for item in params.iter() {
         let name = &item.name;
         let domains = &item.domains;
-        let is_manual =
-            item.dns_provider == "manual" || item.dns_provider.is_empty();
+        let is_manual = item.dns_provider == DNS_PROVIDER_MANUAL;
         // manual dns challenge is only run once
         if item.dns_challenge && is_manual && count > 0 {
             continue;
@@ -328,10 +328,14 @@ impl BackgroundTask for LetsEncryptTask {
                     .filter(|item| !item.is_empty())
                     .collect(),
                 dns_challenge: certificate.dns_challenge.unwrap_or_default(),
-                dns_provider: certificate
-                    .dns_provider
-                    .clone()
-                    .unwrap_or_default(),
+                // Normalized once here so the match below only ever sees a
+                // canonical name. `validate` rejects anything unrecognised, so
+                // the fallback is only reached for `manual` / unset.
+                dns_provider: normalize_dns_provider(
+                    &certificate.dns_provider.clone().unwrap_or_default(),
+                )
+                .unwrap_or(DNS_PROVIDER_MANUAL)
+                .to_string(),
                 dns_service_url,
             });
         }

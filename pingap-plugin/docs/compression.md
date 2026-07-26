@@ -71,10 +71,9 @@ entry is per-encoding.
 
 - Downstream mode does not look at `Content-Type`; pingora's module applies its
   own rules. Upstream mode is the one to use when you need explicit control.
-- The `Accept-Encoding` check in this plugin is a substring test, so an exotic
-  value such as `x-gzip` can enable gzip and a `q=0` weighting is not honoured.
-  Put [`accept_encoding`](accept_encoding.md) in front to normalise the header if
-  that matters for your clients.
+- `Accept-Encoding` is matched on token boundaries and honours `q=0`, using the
+  same helper as [`accept_encoding`](accept_encoding.md), so `x-gzip` does not
+  enable gzip and `gzip;q=0` is treated as "not acceptable".
 - Compressing already-compressed formats (JPEG, PNG, MP4, `.gz`) wastes CPU.
   Upstream mode's content-type list handles this; in downstream mode rely on
   upstream `Content-Type` correctness.

@@ -404,14 +404,25 @@ impl TryFrom<&PluginConf> for JwtAuth {
 
         // HMAC algorithms need a shared secret; asymmetric ones use the parsed
         // public key or a remote JWKS instead.
-        if params.decoding_key.is_none()
-            && params.jwks.is_none()
-            && params.secret.is_empty()
-        {
-            return Err(Error::Invalid {
-                category: PluginCategory::Jwt.to_string(),
-                message: "Jwt secret is not allowed empty".to_string(),
-            });
+        if params.decoding_key.is_none() && params.jwks.is_none() {
+            if params.secret.is_empty() {
+                return Err(Error::Invalid {
+                    category: PluginCategory::Jwt.to_string(),
+                    message: "Jwt secret is not allowed empty".to_string(),
+                });
+            }
+            // Only HS256 and HS512 are implemented on the secret path. Anything
+            // else (HS384, or an asymmetric algorithm without a key) would
+            // otherwise be accepted here and then reject every single token.
+            if !matches!(params.algorithm.as_str(), "" | "HS256" | "HS512") {
+                return Err(Error::Invalid {
+                    category: PluginCategory::Jwt.to_string(),
+                    message: format!(
+                        "Jwt algorithm({}) is not supported, expect HS256 or HS512, or set public_key/jwks_url",
+                        params.algorithm
+                    ),
+                });
+            }
         }
 
         Ok(params)
@@ -536,6 +547,11 @@ impl Plugin for JwtAuth {
         let content = format!("{}.{}", arr[0], arr[1]);
         let secret = self.secret.as_bytes();
         let valid = match jwt_header.alg.as_str() {
+            // An explicitly configured algorithm is pinned: a token must not
+            // downgrade HS512 to HS256 just by saying so in its own header.
+            // An unset `algorithm` keeps accepting either, since that is what
+            // existing configurations rely on.
+            alg if !self.algorithm.is_empty() && alg != self.algorithm => false,
             "HS256" => {
                 let hash = hmac_sha256::HMAC::mac(content.as_bytes(), secret);
                 pingap_core::constant_time_eq(
@@ -1068,6 +1084,102 @@ header = "Authorization"
         assert_eq!(
             "Jwt authorization is expired",
             std::string::String::from_utf8_lossy(resp.body.as_ref())
+        );
+    }
+
+    // Both tokens are signed with the secret `123123` and never expire.
+    const HS256_TOKEN: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoiSm9obiIsImFkbWluIjp0cnVlLCJleHAiOjIzNDgwNTUyNjV9.j6sYJ2dCCSxskwPmvHM7WniGCbkT30z2BrjfsuQLFJc";
+    const HS512_TOKEN: &str = "eyJhbGciOiJIUzUxMiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoiSm9obiIsImFkbWluIjp0cnVlLCJleHAiOjIzNDgwNTUyNjV9.HxFVxDd5ZiLsD1dWW1AywWMERhqk0Ck9IsdBHyD_1zap3w-waVOmFq0Yt1fWaYmh8HDtXLN6vlTd0HHYIYEGUw";
+
+    async fn verify_with_algorithm(
+        algorithm: &str,
+        token: &str,
+    ) -> RequestPluginResult {
+        let auth = JwtAuth::new(
+            &toml::from_str::<PluginConf>(&format!(
+                r###"
+secret = "123123"
+header = "Authorization"
+algorithm = "{algorithm}"
+"###
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let input_header =
+            format!("GET / HTTP/1.1\r\nAuthorization: Bearer {token}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        auth.handle_request(
+            PluginStep::Request,
+            &mut session,
+            &mut Ctx::default(),
+        )
+        .await
+        .unwrap()
+    }
+
+    /// Regression: an explicitly configured algorithm has to be enforced, so a
+    /// token cannot pick a weaker one by saying so in its own header.
+    #[tokio::test]
+    async fn test_jwt_pins_configured_algorithm() {
+        assert_eq!(
+            true,
+            verify_with_algorithm("HS256", HS256_TOKEN).await
+                == RequestPluginResult::Continue
+        );
+        assert_eq!(
+            true,
+            verify_with_algorithm("HS512", HS512_TOKEN).await
+                == RequestPluginResult::Continue
+        );
+
+        for (algorithm, token) in
+            [("HS512", HS256_TOKEN), ("HS256", HS512_TOKEN)]
+        {
+            let result = verify_with_algorithm(algorithm, token).await;
+            let RequestPluginResult::Respond(resp) = result else {
+                panic!(
+                    "{algorithm} accepted a token signed with another algorithm"
+                );
+            };
+            assert_eq!(401, resp.status.as_u16());
+        }
+
+        // An unset algorithm keeps accepting either, as before.
+        assert_eq!(
+            true,
+            verify_with_algorithm("", HS256_TOKEN).await
+                == RequestPluginResult::Continue
+        );
+        assert_eq!(
+            true,
+            verify_with_algorithm("", HS512_TOKEN).await
+                == RequestPluginResult::Continue
+        );
+    }
+
+    /// An hmac algorithm the secret path cannot verify is rejected at startup
+    /// rather than silently rejecting every request.
+    #[test]
+    fn test_jwt_unsupported_hmac_algorithm() {
+        let err = JwtAuth::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+secret = "123123"
+header = "Authorization"
+algorithm = "HS384"
+"###,
+            )
+            .unwrap(),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            "Plugin jwt invalid, message: Jwt algorithm(HS384) is not supported, expect HS256 or HS512, or set public_key/jwks_url",
+            err.to_string()
         );
     }
 

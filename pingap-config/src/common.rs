@@ -120,6 +120,26 @@ impl<'de> Deserialize<'de> for PluginCategory {
     }
 }
 
+/// The dns provider used when no api credentials are configured: the TXT record
+/// is logged and the operator adds it by hand.
+pub const DNS_PROVIDER_MANUAL: &str = "manual";
+
+/// Maps a configured `dns_provider` to the canonical name the acme code matches
+/// on, or `None` when it is not a provider Pingap knows about.
+///
+/// `aliyun` and `cloudflare` are accepted as aliases because earlier
+/// documentation used those spellings.
+pub fn normalize_dns_provider(value: &str) -> Option<&'static str> {
+    match value.trim().to_lowercase().as_str() {
+        "" | "manual" => Some(DNS_PROVIDER_MANUAL),
+        "ali" | "aliyun" => Some("ali"),
+        "cf" | "cloudflare" => Some("cf"),
+        "tencent" => Some("tencent"),
+        "huawei" => Some("huawei"),
+        _ => None,
+    }
+}
+
 /// Configuration struct for TLS/SSL certificates
 #[derive(Debug, Default, Deserialize, Clone, Serialize, Hash)]
 pub struct CertificateConf {
@@ -250,6 +270,19 @@ impl Validate for CertificateConf {
         let tls_cert = self.tls_cert.clone().unwrap_or_default();
         if !tls_cert.is_empty() {
             validate_cert(&tls_cert)?;
+        }
+
+        // An unrecognised dns provider used to fall through to the manual task,
+        // which just waits for a TXT record nobody is going to add. Reject it
+        // here so `pingap -t` reports the typo instead.
+        if let Some(dns_provider) = &self.dns_provider
+            && normalize_dns_provider(dns_provider).is_none()
+        {
+            return Err(Error::Invalid {
+                message: format!(
+                    "Invalid dns_provider({dns_provider}), expect one of: ali, cf, tencent, huawei, manual"
+                ),
+            });
         }
 
         Ok(())

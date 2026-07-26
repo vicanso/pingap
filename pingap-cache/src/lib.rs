@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use bytesize::ByteSize;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use snafu::Snafu;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -97,23 +97,49 @@ pub fn update_available_memory(available_memory: u64) {
     AVAILABLE_MEMORY.store(available_memory, Ordering::Relaxed);
 }
 
-fn parse_byte_size<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
+/// `max_size` accepts either an absolute size with a unit (`100mb`) or a bare
+/// number, which is a percentage of the memory budget (`20` means 20%).
+///
+/// The two have to be told apart while parsing: `ByteSize` turns both into a
+/// byte count, and a magnitude test cannot distinguish `5mb` from "5 percent".
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum MaxSize {
+    Percent(usize),
+    Bytes(usize),
+}
+
+impl MaxSize {
+    fn resolve(&self, budget: usize) -> usize {
+        match self {
+            Self::Percent(percent) => budget * (*percent).min(100) / 100,
+            Self::Bytes(size) => *size,
+        }
+    }
+}
+
+fn parse_max_size<'de, D>(deserializer: D) -> Result<Option<MaxSize>, D::Error>
 where
     D: serde::de::Deserializer<'de>,
 {
     let s: String = String::deserialize(deserializer)?;
+    let s = s.trim();
     if s.is_empty() {
         return Ok(None);
     }
-    let size = ByteSize::from_str(&s)
+    if s.chars().all(|c| c.is_ascii_digit()) {
+        let percent = s.parse::<usize>().map_err(serde::de::Error::custom)?;
+        return Ok(Some(MaxSize::Percent(percent)));
+    }
+    let size = ByteSize::from_str(s)
         .map_err(|e| serde::de::Error::custom(e.to_string()))?;
-    Ok(Some(size.as_u64() as usize))
+    Ok(Some(MaxSize::Bytes(size.as_u64() as usize)))
 }
-#[derive(Debug, PartialEq, Deserialize, Serialize, Default)]
+
+#[derive(Debug, PartialEq, Deserialize, Default)]
 struct MemoryCacheParams {
     #[serde(default)]
-    #[serde(deserialize_with = "parse_byte_size")]
-    max_size: Option<usize>,
+    #[serde(deserialize_with = "parse_max_size")]
+    max_size: Option<MaxSize>,
     mode: Option<String>,
 }
 impl TryFrom<&str> for MemoryCacheParams {
@@ -141,17 +167,11 @@ fn try_init_memory_backend(value: &str) -> &'static HttpCache {
             ByteSize::mb(256).as_u64() as usize
         };
 
-        // Determine cache size from config or use default MAX_MEMORY_SIZE
-        let mut size = if let Some(cache_max_size) = params.max_size {
-            // if memory is less than 10MB, use the percentage of memory
-            if cache_max_size < 10 * 1024 * 1024 {
-                max_memory * cache_max_size.min(100) / 100
-            } else {
-                cache_max_size
-            }
-        } else {
-            max_memory
-        };
+        // Determine cache size from config, or take the whole budget
+        let mut size = params
+            .max_size
+            .map(|max_size| max_size.resolve(max_memory))
+            .unwrap_or(max_memory);
 
         let cache_mode = params.mode.unwrap_or_default();
 
@@ -231,5 +251,33 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let result = new_file_cache(&dir.keep().to_string_lossy());
         assert_eq!(true, result.is_ok());
+    }
+
+    #[test]
+    fn test_memory_cache_max_size() {
+        let parse =
+            |value: &str| MemoryCacheParams::try_from(value).unwrap().max_size;
+
+        assert_eq!(None, parse("memory://pingap"));
+        assert_eq!(None, parse("memory://pingap?max_size="));
+
+        // A bare number is a percentage of the budget.
+        assert_eq!(Some(MaxSize::Percent(20)), parse("memory://?max_size=20"));
+        // A value with a unit is an absolute size, even a small one: `5mb`
+        // used to be read as "5 percent" and clamped up to the whole budget.
+        assert_eq!(
+            Some(MaxSize::Bytes(5_000_000)),
+            parse("memory://?max_size=5mb")
+        );
+        assert_eq!(
+            Some(MaxSize::Bytes(100_000_000)),
+            parse("memory://?max_size=100mb")
+        );
+
+        let budget = 1_000_000_000;
+        assert_eq!(200_000_000, MaxSize::Percent(20).resolve(budget));
+        // Percentages above 100 are clamped rather than overshooting.
+        assert_eq!(budget, MaxSize::Percent(500).resolve(budget));
+        assert_eq!(5_000_000, MaxSize::Bytes(5_000_000).resolve(budget));
     }
 }

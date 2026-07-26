@@ -109,6 +109,28 @@ pub fn get_step_conf(
         .unwrap_or(default_value)
 }
 
+/// Returns true if `accept_encoding` lists `coding` as an acceptable encoding.
+///
+/// Matches on comma/`;`-delimited token boundaries (so `x-gzip` does not match
+/// `gzip`) and treats an explicit `q=0` as "not acceptable". Shared by the
+/// `accept_encoding` and `compression` plugins so the two cannot disagree about
+/// what the client accepts.
+pub(crate) fn accepts_encoding(accept_encoding: &str, coding: &str) -> bool {
+    accept_encoding.split(',').any(|part| {
+        let mut segments = part.split(';');
+        let name = segments.next().unwrap_or_default().trim();
+        if !name.eq_ignore_ascii_case(coding) {
+            return false;
+        }
+        // Acceptable unless the token is explicitly weighted q=0.
+        !segments.any(|seg| {
+            let seg = seg.trim();
+            seg.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("q="))
+                && seg[2..].trim().parse::<f32>().is_ok_and(|q| q <= 0.0)
+        })
+    })
+}
+
 /// Generates a unique hash key for a plugin configuration to detect changes.
 ///
 /// # Arguments
@@ -178,3 +200,21 @@ mod ua_restriction;
 mod plugin;
 
 pub use plugin::get_plugin_factory;
+
+#[cfg(test)]
+mod tests {
+    use super::accepts_encoding;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_accepts_encoding() {
+        assert_eq!(true, accepts_encoding("gzip, br", "br"));
+        assert_eq!(true, accepts_encoding("gzip, deflate, br;q=0.9", "br"));
+        assert_eq!(true, accepts_encoding("BR", "br"));
+        // Substring false-matches must be rejected.
+        assert_eq!(false, accepts_encoding("x-gzip", "gzip"));
+        assert_eq!(false, accepts_encoding("gzipx", "gzip"));
+        // Explicit q=0 means "not acceptable".
+        assert_eq!(false, accepts_encoding("br;q=0", "br"));
+    }
+}

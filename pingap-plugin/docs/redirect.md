@@ -63,11 +63,9 @@ Status choice:
 
 ## Usage notes
 
-- `prefix` is prepended unconditionally whenever a redirect happens. If the
-  scheme does not match but the path *already* carries the prefix, the emitted
-  `Location` contains it twice (`/api/api/users`). Use `prefix` on a location
-  whose paths do not already include it, or leave `prefix` unset on
-  scheme-redirect-only servers.
+- `prefix` is only prepended when the path is missing it, so a scheme redirect
+  on an already prefixed url keeps `/api/users` rather than producing
+  `/api/api/users`.
 - Detection of "already HTTPS" uses the TLS state of the connection Pingap
   terminated. Behind a TLS-terminating load balancer every request looks like
   plain HTTP and this plugin would loop — redirect at the load balancer instead,

@@ -58,10 +58,10 @@ buffer_days = 30
 | `tencent` | DNSPod / Tencent Cloud | `https://dnspod.tencentcloudapi.com?access_key_id=xxx&access_key_secret=xxx` |
 | `manual` or unset | — | No API. The TXT record is logged and you add it yourself. |
 
-The names are exactly `ali` and `cf`, not `aliyun` / `cloudflare`. **Any
-unrecognised value silently falls back to the manual task**, so a typo does not
-fail loudly — it just waits for a TXT record nobody is going to add. Double-check
-the spelling against the table above.
+The canonical names are `ali` and `cf`; `aliyun` and `cloudflare` are accepted
+as aliases because earlier documentation used those spellings. Anything else is
+rejected by `pingap -t` rather than quietly falling back to the manual task and
+waiting for a TXT record nobody is going to add.
 
 Any value in `dns_service_url` may be written as `$ENV:NAME` and is read from the
 environment, so credentials stay out of the configuration file.

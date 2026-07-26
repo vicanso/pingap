@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{Error, get_bool_conf, get_hash_key, get_int_conf, get_str_conf};
+use super::{
+    Error, accepts_encoding, get_bool_conf, get_hash_key, get_int_conf,
+    get_str_conf,
+};
 use async_trait::async_trait;
 use http::HeaderValue;
 use http::header::{
@@ -188,16 +191,19 @@ impl Compression {
 
         // Select compression algorithm based on priority and client support
         // Priority: zstd > br > gzip
+        //
+        // The match is on token boundaries and honours `q=0`, so `x-gzip` does
+        // not enable gzip and `gzip;q=0` is not treated as accepted.
         let mut zstd_level = 0;
         let mut br_level = 0;
         let mut gzip_level = 0;
-        if self.zstd_level > 0 && accept_encoding.contains(ZSTD) {
+        if self.zstd_level > 0 && accepts_encoding(accept_encoding, ZSTD) {
             zstd_level = self.zstd_level;
         }
-        if self.br_level > 0 && accept_encoding.contains(BR) {
+        if self.br_level > 0 && accepts_encoding(accept_encoding, BR) {
             br_level = self.br_level;
         }
-        if self.gzip_level > 0 && accept_encoding.contains(GZIP) {
+        if self.gzip_level > 0 && accepts_encoding(accept_encoding, GZIP) {
             gzip_level = self.gzip_level;
         }
         (zstd_level, br_level, gzip_level)
@@ -569,5 +575,47 @@ zstd_level = 7
                 .unwrap()
                 .is_enabled()
         );
+    }
+
+    /// Regression: the accept-encoding check used to be a substring test, so a
+    /// value that merely contains an algorithm name enabled it.
+    #[tokio::test]
+    async fn test_compression_matches_encoding_tokens() {
+        let compression = Compression::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+gzip_level = 9
+br_level = 8
+zstd_level = 7
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        async fn levels(
+            compression: &Compression,
+            accept_encoding: &str,
+        ) -> (u32, u32, u32) {
+            let input_header = format!(
+                "GET / HTTP/1.1\r\nAccept-Encoding: {accept_encoding}\r\n\r\n"
+            );
+            let mock_io = Builder::new().read(input_header.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+            compression.get_compress_level(&session)
+        }
+
+        let c = &compression;
+        assert_eq!((0, 0, 9), levels(c, "gzip").await);
+        assert_eq!((7, 8, 9), levels(c, "zstd, br, gzip").await);
+        // `x-gzip` is a different token and must not enable gzip.
+        assert_eq!((0, 0, 0), levels(c, "x-gzip").await);
+        assert_eq!((0, 0, 0), levels(c, "gzipx").await);
+        // An explicit q=0 means the client does not accept it.
+        assert_eq!((0, 0, 0), levels(c, "gzip;q=0").await);
+        assert_eq!((0, 8, 0), levels(c, "gzip;q=0, br").await);
+        // A weight other than zero is still acceptable.
+        assert_eq!((0, 0, 9), levels(c, "gzip;q=0.5").await);
     }
 }

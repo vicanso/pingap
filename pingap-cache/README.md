@@ -36,11 +36,12 @@ which makes it a better fit than an LRU for proxy workloads.
 | `max_size` | 1/4 of available memory, else 256 MB, capped at 1 GB | Cache budget |
 | `mode` | `default` | TinyUFO cache mode |
 
-A `max_size` **below 10 MB is interpreted as a percentage** of the memory budget
-rather than an absolute size — `max_size=20` means 20 %. Because the check is on
-the byte value, `max_size=5mb` also lands in the percentage branch and is
-clamped to 100 %, giving the full budget rather than 5 MB. Use values of 10 MB
-or more when you mean an absolute size.
+`max_size` accepts either form:
+
+| Value | Meaning |
+| --- | --- |
+| `max_size=20` | 20 % of the memory budget — a bare number is a percentage, clamped to 100 |
+| `max_size=100mb` | An absolute size — anything with a unit is taken literally, however small |
 
 `update_available_memory()` is called by the process metrics collector so the
 default budget tracks the machine (or the container limit) rather than a

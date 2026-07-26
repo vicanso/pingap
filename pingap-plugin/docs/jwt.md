@@ -123,9 +123,11 @@ token that never expires.
 
 - The asymmetric and JWKS paths verify the signature **and** `exp` together via
   `jsonwebtoken`; `aud` is not validated.
-- In HMAC mode the algorithm is taken from the token header and both `HS256` and
-  `HS512` are accepted, so setting `algorithm = "HS512"` does not by itself
-  reject an `HS256` token. `none` and every other value are rejected.
+- In HMAC mode an explicitly configured `algorithm` is enforced, so an `HS512`
+  configuration rejects an `HS256` token and vice versa. Leaving `algorithm`
+  unset accepts either. `none` and everything else are always rejected, and an
+  `algorithm` the secret path cannot verify (`HS384`, or an asymmetric one with
+  no `public_key` / `jwks_url`) is rejected at startup.
 - `auth_path` is compared for exact equality against the request path.
 - Anything reachable under `auth_path` is unauthenticated by design — keep it on
   its own location if the surrounding location is otherwise protected.

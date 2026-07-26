@@ -160,15 +160,25 @@ impl Plugin for Redirect {
         // Determine target schema based on configuration
         let schema = if self.http_to_https { "https" } else { "http" };
 
+        // Only a url that is missing the prefix gets it prepended. Getting here
+        // with the prefix already in place means the schema is what triggered
+        // the redirect, and prepending unconditionally would produce
+        // `/api/api/...`. The test matches the skip condition above so the two
+        // cannot disagree.
+        let prefix =
+            if session.req_header().uri.path().starts_with(&self.prefix) {
+                ""
+            } else {
+                self.prefix.as_str()
+            };
+
         // Build Location header with:
         // - Desired schema (http/https)
         // - Original host
         // - Configured prefix
         // - Original URI (path + query parameters)
         let location = format!(
-            "Location: {}://{host}{}{}",
-            schema,
-            self.prefix,
+            "Location: {schema}://{host}{prefix}{}",
             session.req_header().uri
         );
 
@@ -277,5 +287,43 @@ status = {status_conf}
             };
             assert_eq!(expected_status, resp.status);
         }
+    }
+
+    /// Regression: a plain-http request whose path already carries the prefix
+    /// used to be redirected to `/api/api/...`.
+    #[tokio::test]
+    async fn test_redirect_keeps_existing_prefix() {
+        let redirect = Redirect::new(
+            &toml::from_str::<PluginConf>(
+                r###"
+http_to_https = true
+prefix = "/api"
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let headers = ["Host: github.com"].join("\r\n");
+        let input_header =
+            format!("GET /api/vicanso?size=1 HTTP/1.1\r\n{headers}\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let result = redirect
+            .handle_request(
+                PluginStep::Request,
+                &mut session,
+                &mut Ctx::default(),
+            )
+            .await
+            .unwrap();
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("result is not Respond");
+        };
+        assert_eq!(
+            r###"Some([("location", "https://github.com/api/vicanso?size=1")])"###,
+            format!("{:?}", resp.headers)
+        );
     }
 }
