@@ -1,6 +1,6 @@
 [package]
 name = "pingap-logger"
-version = "0.13.1"
+version.workspace = true
 edition = "2024"
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 license = "Apache-2.0"
@@ -18,8 +18,8 @@ flate2 = { workspace = true }
 http = { workspace = true }
 humantime-serde = { workspace = true }
 itoa = { workspace = true }
-pingap-core = { version = "0.13.1", path = "../pingap-core" }
-pingap-util = { version = "0.13.1", path = "../pingap-util" }
+pingap-core = { workspace = true }
+pingap-util = { workspace = true }
 pingora = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }

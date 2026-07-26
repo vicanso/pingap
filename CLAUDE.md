@@ -6,6 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Pingap is a Cloudflare-Pingora-based reverse proxy. The binary lives in `src/`; all reusable logic is split across `pingap-*` workspace crates. MSRV is `1.88.0` (Rust edition 2024). Pingora is pinned to `0.8.0` and only the `lb`/`openssl`/`cache` features are enabled.
 
+### Versioning
+
+The binary and every crate share one version, declared once in `[workspace.package]`; members inherit it with `version.workspace = true`. The internal `pingap-*` dependencies live in `[workspace.dependencies]`, so a member depends on a sibling with `{ workspace = true }`.
+
+**Bumping the version means editing two places in the root `Cargo.toml`**: `workspace.package.version`, and the `version = "..."` on each `pingap-*` entry in `[workspace.dependencies]` — cargo has no way to inherit the package version into a dependency requirement. `publish.sh` then publishes all crates at the new version in dependency order.
+
 ## Common commands
 
 ```bash

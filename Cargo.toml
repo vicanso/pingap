@@ -1,6 +1,6 @@
 [package]
 name = "pingap"
-version = "0.13.4"
+version.workspace = true
 authors = ["Tree Xie <tree.xie@outlook.com>"]
 edition = "2024"
 categories = ["network-programming", "web-programming::http-server"]
@@ -44,23 +44,23 @@ humantime = { workspace = true }
 humantime-serde = { workspace = true }
 nanoid = { workspace = true }
 nix = { version = "0.31.3", features = ["signal"] }
-pingap-acme = { version = "0.13.1", path = "pingap-acme" }
-pingap-cache = { version = "0.13.1", path = "pingap-cache" }
-pingap-certificate = { version = "0.13.1", path = "pingap-certificate" }
-pingap-config = { version = "0.13.1", path = "pingap-config" }
-pingap-core = { version = "0.13.1", path = "pingap-core" }
-pingap-imageoptim = { version = "0.13.1", path = "pingap-imageoptim", optional = true }
-pingap-location = { version = "0.13.1", path = "pingap-location" }
-pingap-logger = { version = "0.13.1", path = "pingap-logger" }
-pingap-otel = { version = "0.13.1", path = "pingap-otel", optional = true }
-pingap-performance = { version = "0.13.1", path = "pingap-performance" }
-pingap-plugin = { version = "0.13.1", path = "pingap-plugin" }
-pingap-proxy = { version = "0.13.1", path = "pingap-proxy" }
-pingap-pyroscope = { version = "0.13.1", path = "pingap-pyroscope", optional = true }
-pingap-sentry = { version = "0.13.1", path = "pingap-sentry", optional = true }
-pingap-upstream = { version = "0.13.1", path = "pingap-upstream" }
-pingap-util = { version = "0.13.1", path = "pingap-util" }
-pingap-webhook = { version = "0.13.1", path = "pingap-webhook" }
+pingap-acme = { workspace = true }
+pingap-cache = { workspace = true }
+pingap-certificate = { workspace = true }
+pingap-config = { workspace = true }
+pingap-core = { workspace = true }
+pingap-imageoptim = { workspace = true, optional = true }
+pingap-location = { workspace = true }
+pingap-logger = { workspace = true }
+pingap-otel = { workspace = true, optional = true }
+pingap-performance = { workspace = true }
+pingap-plugin = { workspace = true }
+pingap-proxy = { workspace = true }
+pingap-pyroscope = { workspace = true, optional = true }
+pingap-sentry = { workspace = true, optional = true }
+pingap-upstream = { workspace = true }
+pingap-util = { workspace = true }
+pingap-webhook = { workspace = true }
 pingora = { workspace = true }
 regex = { workspace = true }
 rust-embed = { version = "8.11.0", features = [
@@ -155,6 +155,9 @@ members = [
     "pingap-util",
     "pingap-webhook",
 ]
+[workspace.package]
+version = "0.13.4"
+
 [workspace.dependencies]
 aes-gcm-siv = { version = "0.11.1", default-features = false, features = [
     "aes",
@@ -220,6 +223,25 @@ opentelemetry_sdk = { version = "0.32.1", features = [
     "rt-tokio",
 ], default-features = false }
 path-absolutize = "3.1.1"
+pingap-acme = { version = "0.13.4", path = "pingap-acme" }
+pingap-cache = { version = "0.13.4", path = "pingap-cache" }
+pingap-certificate = { version = "0.13.4", path = "pingap-certificate" }
+pingap-config = { version = "0.13.4", path = "pingap-config" }
+pingap-core = { version = "0.13.4", path = "pingap-core" }
+pingap-discovery = { version = "0.13.4", path = "pingap-discovery" }
+pingap-health = { version = "0.13.4", path = "pingap-health" }
+pingap-imageoptim = { version = "0.13.4", path = "pingap-imageoptim" }
+pingap-location = { version = "0.13.4", path = "pingap-location" }
+pingap-logger = { version = "0.13.4", path = "pingap-logger" }
+pingap-otel = { version = "0.13.4", path = "pingap-otel" }
+pingap-performance = { version = "0.13.4", path = "pingap-performance" }
+pingap-plugin = { version = "0.13.4", path = "pingap-plugin" }
+pingap-proxy = { version = "0.13.4", path = "pingap-proxy" }
+pingap-pyroscope = { version = "0.13.4", path = "pingap-pyroscope" }
+pingap-sentry = { version = "0.13.4", path = "pingap-sentry" }
+pingap-upstream = { version = "0.13.4", path = "pingap-upstream" }
+pingap-util = { version = "0.13.4", path = "pingap-util" }
+pingap-webhook = { version = "0.13.4", path = "pingap-webhook" }
 pingora = { version = "0.8.1", default-features = false, features = [
     "lb",
     "openssl",
