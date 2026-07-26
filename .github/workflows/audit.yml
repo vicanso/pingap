@@ -3,11 +3,13 @@ name: Security Audit
 on:
   push:
     branches:
-      - master
+      - main
     paths:
       - "**/Cargo.toml"
+      - "Cargo.lock"
   schedule:
     - cron: "0 16 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -26,4 +28,6 @@ jobs:
         # https://github.com/rustsec/audit-check/issues/2
         uses: rustsec/audit-check@v2.0.0
         with:
-          token: ${{ secrets.GH_TOKEN }}
+          # The built-in token, which cannot expire. The job permissions above
+          # already grant the checks/issues write access the action needs.
+          token: ${{ secrets.GITHUB_TOKEN }}

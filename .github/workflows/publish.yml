@@ -4,14 +4,24 @@ on:
     tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
     # branches: []
 
+# The built-in token instead of a personal access token: it cannot expire, and
+# an expired PAT is indistinguishable from an empty release list in the upload
+# script. Nothing here triggers on `release`, so the built-in token not raising
+# workflow events costs us nothing.
 env:
-  GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   CARGO_TERM_COLOR: always
   IMAGE_NAME: vicanso/pingap
+
+# Only the jobs that publish release assets get write access.
+permissions:
+  contents: read
 
 jobs:
   macos:
     runs-on: macos-latest
+    permissions:
+      contents: write # create the release and upload assets
     steps:
       - uses: actions/checkout@v4
       - name: setup node
@@ -54,6 +64,8 @@ jobs:
 
   linux-musl-x86:
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write # create the release and upload assets
     steps:
       - uses: actions/checkout@v4
       - name: setup node
@@ -84,6 +96,8 @@ jobs:
 
   linux-musl-aarch64:
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write # create the release and upload assets
     steps:
       - uses: actions/checkout@v4
       - name: setup node
@@ -115,6 +129,8 @@ jobs:
   linux-gnu:
     timeout-minutes: 3600
     runs-on: ${{ matrix.platform.runs-on }}
+    permissions:
+      contents: write # create the release and upload assets
     strategy:
       matrix:
         platform:
@@ -153,6 +169,8 @@ jobs:
   windows:
     # Temporarily disabled
     if: false
+    permissions:
+      contents: write # create the release and upload assets
     runs-on: windows-latest
     name: ${{ matrix.target }}
     env:
