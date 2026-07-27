@@ -9,7 +9,7 @@ Pingap 是一款由 [`Cloudflare Pingora`](https://github.com/cloudflare/pingora
 这使得 Pingap 不仅仅是一个代理，更是一个灵活且可扩展的应用网关，旨在轻松应对从 API 保护到现代化 Web 应用部署的各类复杂场景。
 
 
-[详细文档](https://pingap.io/zh/#/) · [English](https://pingap.io/en/#/) | [使用示例](./examples/README.md) | [插件](./pingap-plugin/README.md) | [组件](./docs/README.md)
+[详细文档](https://pingap.io/zh/) · [English](https://pingap.io/) | [使用示例](./examples/README.md) | [插件](./pingap-plugin/README.md) | [组件](./docs/README.md)
 
 
 ```mermaid

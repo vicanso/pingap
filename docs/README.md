@@ -3,21 +3,21 @@
 - [acme chart](./acme_chart.md)
 - [modules](./modules.md)
 - **Chinese translations** — [zh/](./zh/) (home, plugins, crates, guide)
-- **Documentation site** (bilingual) — built by
-  [`scripts/build-website.sh`](../scripts/build-website.sh), deployed by
+- **Documentation site** (VitePress, bilingual) — assembled by
+  [`scripts/build-website.sh`](../scripts/build-website.sh), built under
+  [`website/`](../website/), deployed by
   [`.github/workflows/pages.yml`](../.github/workflows/pages.yml).
 
   | URL | Content |
   | --- | --- |
-  | <https://pingap.io/> | language picker |
-  | <https://pingap.io/en/#/> | English (generated from crate / plugin READMEs) |
-  | <https://pingap.io/zh/#/> | 中文 (generated from `docs/zh/`) |
+  | <https://pingap.io/> | English (from crate / plugin READMEs) |
+  | <https://pingap.io/zh/> | 中文 (from `docs/zh/`) |
 
   Local preview:
 
   ```bash
   ./scripts/build-website.sh
-  python3 -m http.server -d website 8080
+  cd website && npm install && npm run docs:dev
   ```
 
 ## Crate documentation

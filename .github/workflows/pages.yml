@@ -33,16 +33,31 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Assemble documentation site
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Assemble documentation content
         run: |
           chmod +x scripts/build-website.sh
           ./scripts/build-website.sh
-          # Ensure logo is present even if build host layout differs
-          mkdir -p website/assets
-          if [ ! -f website/assets/logo.png ]; then
-            cp asset/pingap-logo.png website/assets/logo.png 2>/dev/null \
-              || cp icons/pingap-256.png website/assets/logo.png
+          mkdir -p website/public
+          if [ ! -f website/public/logo.png ]; then
+            cp asset/pingap-logo.png website/public/logo.png 2>/dev/null \
+              || cp icons/pingap-256.png website/public/logo.png
           fi
+
+      - name: Install and build VitePress
+        working-directory: website
+        env:
+          # Custom domain (pingap.io) → "/". Project pages → "/pingap/"
+          DOCS_BASE: "/"
+        run: |
+          npm ci
+          npm run docs:build
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -50,7 +65,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: website
+          path: website/.vitepress/dist
 
   deploy:
     needs: build

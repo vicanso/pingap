@@ -1,0 +1,88 @@
+:root {
+  --vp-c-brand-1: #0b6e4f;
+  --vp-c-brand-2: #0d8a63;
+  --vp-c-brand-3: #0a5c42;
+  --vp-c-brand-soft: rgba(11, 110, 79, 0.12);
+
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(
+    120deg,
+    #0b6e4f 25%,
+    #14b8a6 85%
+  );
+  --vp-home-hero-image-background-image: linear-gradient(
+    -45deg,
+    rgba(11, 110, 79, 0.35) 30%,
+    rgba(20, 184, 166, 0.25)
+  );
+  --vp-home-hero-image-filter: blur(44px);
+
+  --vp-font-family-base: "Inter", "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+}
+
+.dark {
+  --vp-c-brand-1: #34d399;
+  --vp-c-brand-2: #6ee7b7;
+  --vp-c-brand-3: #10b981;
+  --vp-c-brand-soft: rgba(52, 211, 153, 0.14);
+}
+
+/* Hero logo */
+.VPHero .image-src {
+  max-width: 220px;
+  border-radius: 28px;
+  box-shadow: 0 18px 50px rgba(11, 110, 79, 0.18);
+}
+
+.dark .VPHero .image-src {
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+}
+
+/* Feature cards */
+.VPFeature {
+  border-radius: 14px !important;
+  transition: border-color 0.2s ease, transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.VPFeature:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 28px rgba(11, 110, 79, 0.08);
+}
+
+.dark .VPFeature:hover {
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.25);
+}
+
+/* Content tables */
+.vp-doc table {
+  display: table;
+  width: 100%;
+  font-size: 0.92em;
+}
+
+.vp-doc th {
+  background: var(--vp-c-bg-soft);
+}
+
+/* Source footer separators */
+.vp-doc hr {
+  margin: 2.5rem 0 1.25rem;
+  border-color: var(--vp-c-divider);
+}
+
+/* Mermaid diagrams */
+.mermaid {
+  margin: 1.25rem 0;
+  padding: 1rem;
+  border-radius: 12px;
+  background: var(--vp-c-bg-soft);
+  overflow-x: auto;
+}
+
+/* Slightly tighter nav brand */
+.VPNavBarTitle .title {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
