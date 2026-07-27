@@ -288,12 +288,17 @@ tonic = "0.14.6"
 tonic-health = "0.14.6"
 tracing = "0.1.44"
 tracing-appender = "0.2.5"
+tracing-log = "0.2.0"
+# `tracing-log` is one of the crate's default features, so it has to be listed
+# back explicitly here. Without it the fmt layers render every record bridged
+# from the `log` crate with the target `log`, hiding which dependency emitted it.
 tracing-subscriber = { version = "0.3.23", features = [
     "local-time",
     "json",
     "fmt",
     "ansi",
     "env-filter",
+    "tracing-log",
 ], default-features = false }
 url = "2.5.8"
 urlencoding = "2.1.3"

@@ -36,7 +36,8 @@ use std::sync::Mutex;
 use std::time::Instant;
 use std::time::{Duration, SystemTime};
 use tracing::Subscriber;
-use tracing::{error, info};
+use tracing::{error, info, warn};
+use tracing_log::LogTracer;
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::reload::Handle;
@@ -401,6 +402,34 @@ pub fn logger_try_init(
                 message: e.to_string(),
             },
         )?
+    }
+
+    // Pingora and a few other dependencies emit through the `log` crate, not
+    // `tracing`. Without this bridge nothing installs a `log::Log`
+    // implementation, so those records - including the bootstrap failure that
+    // explains why a hot upgrade did not take over the listening sockets - are
+    // silently discarded.
+    //
+    // `LogTracer` keeps `log::max_level` at `Trace` (its default), which leaves
+    // `EnvFilter` as the single filtering point. That matters because the level
+    // can be changed at runtime through the reload handle: `Handle::modify`
+    // rebuilds the interest cache, and `LogTracer::enabled` re-reads
+    // `LevelFilter::current()` on every record, so a level change applies to
+    // `log` records immediately. Pinning `log::max_level` to the level observed
+    // here instead would freeze the bridge at whatever the config said on boot.
+    //
+    // Note the target of a bridged record is `log` as far as `EnvFilter`
+    // directives are concerned - only the rendered output carries the original
+    // target, via the `tracing-log` feature of `tracing-subscriber`.
+    if let Err(e) = LogTracer::init() {
+        // Only fails when another logger won the race. The tracing side is
+        // already up by this point, so downgrade it to a warning rather than
+        // failing startup over a diagnostics-only feature.
+        warn!(
+            target: LOG_TARGET,
+            error = %e,
+            "log tracer init fail, logs from the log crate are dropped"
+        );
     }
 
     info!(

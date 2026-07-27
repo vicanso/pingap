@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Pingap is a Cloudflare-Pingora-based reverse proxy. The binary lives in `src/`; all reusable logic is split across `pingap-*` workspace crates. MSRV is `1.88.0` (Rust edition 2024). Pingora is pinned to `0.8.0` and only the `lb`/`openssl`/`cache` features are enabled.
+Pingap is a Cloudflare-Pingora-based reverse proxy. The binary lives in `src/`; all reusable logic is split across `pingap-*` workspace crates. MSRV is `1.88.0` (Rust edition 2024). Pingora is pinned to `0.8.1` and only the `lb`/`openssl`/`cache` features are enabled.
+
+**Build the pingora `Server` with `Server::new_with_opt_and_conf`, never `Server::new` followed by assigning `my_server.configuration`.** Since 0.8.1 the constructor snapshots the configuration into a private `Bootstrap`, and that snapshot — not `Server::configuration` — is what the receiving half of a hot upgrade reads `upgrade_sock` from. A later assignment silently leaves the two halves on different sockets.
 
 ### Versioning
 

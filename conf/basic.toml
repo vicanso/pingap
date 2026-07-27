@@ -15,6 +15,13 @@
 # Process id file. Default `/run/pingap.pid`
 # pid_file = "/run/pingap.pid"
 
+# File the daemon redirects its stderr to, only used together with `--daemon`.
+# Without it the daemonized process keeps the stderr it inherited: the spawning
+# terminal for a manual start, or the parent's stderr for a process spawned by
+# an auto restart. Set this to keep panics and the startup errors that happen
+# before the logger is initialized. Default `none`
+# error_log = "/var/log/pingap_error.log"
+
 # Unix socket path used for application upgrades. Default `/tmp/pingap_upgrade.sock`
 # upgrade_sock = "/tmp/pingap_upgrade.sock"
 

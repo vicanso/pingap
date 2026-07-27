@@ -18,6 +18,7 @@ A flexible and powerful logging library for the Pingap project, built on the `tr
 - **Log Compression:** Compress rotated log files using `gzip` or `zstd` to save disk space.
 - **Structured Logging:** Output logs in JSON format for easy parsing and analysis.
 - **Performance-Oriented:** Designed for high-performance applications, with features like buffered writing.
+- **`log` Crate Bridge:** Records emitted through the `log` crate are captured too, so nothing is silently dropped.
 
 ## Installation
 
@@ -47,6 +48,25 @@ fn main() {
     let _ = logger_try_init(params);
 }
 ```
+
+### Records From the `log` Crate
+
+`logger_try_init` also installs a `tracing-log` bridge, so records emitted
+through the `log` crate reach the same subscriber as `tracing` events. This
+matters because Pingora logs through `log`: without the bridge nothing installs
+a `log::Log` implementation and its diagnostics — including the bootstrap
+failure that explains why a hot upgrade did not take over the listening
+sockets — are discarded.
+
+Two consequences worth knowing:
+
+- `log::max_level` stays at `Trace`, leaving `EnvFilter` as the single
+  filtering point. A level changed at runtime through the reload handle
+  therefore applies to bridged records immediately.
+- As far as `EnvFilter` directives are concerned, the target of a bridged
+  record is `log`, not the emitting module. Use `log=debug` to raise the level
+  for all of them; the rendered output still carries the original target
+  (`pingora_core::server`, ...).
 
 ### Access Logging
 

@@ -915,6 +915,12 @@ pub struct BasicConf {
     pub error_template: Option<String>,
     /// Path to PID file (default: /run/pingap.pid)
     pub pid_file: Option<String>,
+    /// File the daemon redirects its stderr to. Only used with `--daemon`:
+    /// without it the daemonized process keeps whatever stderr it inherited,
+    /// which is the spawning terminal for a manual start and `/dev/null` for a
+    /// process spawned by an auto restart. Set this to keep the panics and the
+    /// early startup errors that happen before the logger is initialized.
+    pub error_log: Option<String>,
     /// Unix domain socket path for graceful upgrades(default: /tmp/pingap_upgrade.sock)
     pub upgrade_sock: Option<String>,
     /// User for daemon

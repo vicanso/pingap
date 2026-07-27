@@ -185,6 +185,10 @@ fn new_server_config(
         user: basic_conf.user.clone(),
         group: basic_conf.group.clone(),
         daemon: args.daemon,
+        // Pingora only redirects the daemon's stderr when this is set;
+        // otherwise it keeps the inherited one, which is `/dev/null` for a
+        // process started by an auto restart.
+        error_log: basic_conf.error_log.clone(),
         ..Default::default()
     };
     if let Some(value) = basic_conf.grace_period {
@@ -677,11 +681,24 @@ fn run() -> Result<(), Box<dyn Error>> {
         test: false,
         conf: None,
     };
-    let mut my_server = server::Server::new(Some(opt))?;
     let server_conf = new_server_config(&args, &config);
+    // The configuration has to be handed to the constructor, not assigned to
+    // `my_server.configuration` afterwards. `Server::new` snapshots the
+    // configuration it builds into a `Bootstrap`, and `Bootstrap` is what the
+    // *receiving* half of a hot upgrade reads `upgrade_sock` from - a later
+    // assignment never reaches it. The *sending* half reads
+    // `Server::configuration` instead, so the two halves ended up looking for
+    // each other on different sockets: the old process sent to our
+    // `/tmp/pingap_upgrade.sock` while the new one listened on pingora's
+    // default `/tmp/pingora_upgrade.sock`. Both then gave up, and the old
+    // process shut down anyway because it had already signalled itself.
+    let mut my_server =
+        server::Server::new_with_opt_and_conf(Some(opt), server_conf);
+    let server_conf = my_server.configuration.as_ref();
     info!(
         target: LOG_TARGET,
         pid_file = server_conf.pid_file,
+        error_log = server_conf.error_log,
         upgrade_sock = server_conf.upgrade_sock,
         user = server_conf.user,
         group = server_conf.group,
@@ -694,7 +711,6 @@ fn run() -> Result<(), Box<dyn Error>> {
         listener_tasks_per_fd = server_conf.listener_tasks_per_fd,
         "server configuration"
     );
-    my_server.configuration = Arc::new(server_conf);
     #[cfg(feature = "full")]
     {
         let sentry_dsn = basic_conf.sentry.clone().unwrap_or_default();

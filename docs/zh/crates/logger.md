@@ -18,6 +18,7 @@
 - **日志压缩：** 用 `gzip` 或 `zstd` 压缩已轮转文件以节省磁盘。
 - **结构化日志：** 以 JSON 输出，便于解析与分析。
 - **面向性能：** 为高性能应用设计，支持缓冲写入等特性。
+- **`log` crate 桥接：** 通过 `log` crate 输出的记录同样会被采集，不会被静默丢弃。
 
 ## 安装
 
@@ -47,6 +48,15 @@ fn main() {
     let _ = logger_try_init(params);
 }
 ```
+
+### 来自 `log` crate 的记录
+
+`logger_try_init` 同时会装上 `tracing-log` 桥接，使通过 `log` crate 输出的记录进入与 `tracing` 事件相同的 subscriber。这一点很关键：Pingora 用的是 `log`，没有桥接就没有任何 `log::Log` 实现被安装，它的诊断信息——包括那条解释热升级为何没能接管监听套接字的 bootstrap 失败——会被直接丢弃。
+
+有两点需要留意：
+
+- `log::max_level` 保持在 `Trace`，`EnvFilter` 是唯一的过滤点。因此通过 reload handle 在运行时修改日志级别，会立即对桥接过来的记录生效。
+- 对 `EnvFilter` 指令而言，桥接记录的 target 是 `log` 而非产生它的模块。要整体提升级别请用 `log=debug`；输出的日志行中仍然带有原始 target（如 `pingora_core::server`）。
 
 ### 访问日志
 

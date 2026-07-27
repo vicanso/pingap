@@ -22,7 +22,7 @@ use std::sync::LazyLock;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 static LOG_TARGET: &str = "main::process";
 
@@ -71,14 +71,21 @@ impl RestartProcessCommand {
     /// process. We must NOT use `Command::output()` here: it blocks until the
     /// child exits and reads its stdout/stderr to EOF, which never happens for a
     /// long-running daemon, and it would keep this task blocked while the old
-    /// process is being torn down. Detach stdio and return the child handle.
+    /// process is being torn down. Return the child handle instead.
+    ///
+    /// stdout/stderr are **inherited**, not discarded. Pingora only redirects a
+    /// daemon's stderr when `basic.error_log` is configured; otherwise it keeps
+    /// whatever it was given (`Stdio::keep()`). Handing the child `/dev/null`
+    /// here therefore threw away every diagnostic the new process produced
+    /// before its own logger was up - which is exactly the window where a
+    /// failed hot upgrade dies.
     fn exec(&self) -> io::Result<process::Child> {
         Command::new(&self.exec_path)
             .env("RUST_LOG", &self.log_level)
             .args(&self.args)
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
             .spawn()
     }
 }
@@ -99,13 +106,28 @@ static PROCESS_RESTAR_COUNT: LazyLock<AtomicU8> =
 static PROCESS_RESTARTING: LazyLock<AtomicBool> =
     LazyLock::new(|| AtomicBool::new(false));
 
+/// How long to give the replacement process a chance to fail before this one
+/// commits to shutting down.
+///
+/// This is a compromise between two hard limits. It has to stay well inside
+/// pingora's fd handshake budget (`MAX_RETRY` * `RETRY_INTERVAL`, 5s in 0.8) or
+/// the sockets never get transferred. And it cannot wait for the new process to
+/// finish booting: the new process blocks inside `bootstrap()` waiting for the
+/// sockets that this process only sends once it gets SIGQUIT, so waiting for a
+/// successful start would deadlock both sides. One second is enough to catch
+/// the failures that happen before pingora is reached at all - an unreadable
+/// config, a rejected argument, a path that no longer resolves.
+const NEW_PROCESS_CHECK_DELAY: Duration = Duration::from_secs(1);
+
 /// Initiates an immediate process restart.
 ///
 /// This function will:
 /// 1. Check if a restart is already in progress
 /// 2. Send a notification about the restart
 /// 3. Spawn the replacement process (with `-u`, so it takes over the listeners)
-/// 4. Send a SIGQUIT signal to the current process so it hands off the listening
+/// 4. Give it [`NEW_PROCESS_CHECK_DELAY`] to fail, and abort the restart if it
+///    already exited with an error
+/// 5. Send a SIGQUIT signal to the current process so it hands off the listening
 ///    sockets and exits gracefully
 ///
 /// **Ordering matters.** Pingora's zero-downtime upgrade makes the *new* process
@@ -153,18 +175,61 @@ pub async fn restart_now() -> io::Result<()> {
 
     // Start the new process first so it can bind the upgrade socket and wait to
     // receive the listening fds ...
-    let child = match cmd.exec() {
+    let mut child = match cmd.exec() {
         Ok(child) => child,
         Err(e) => {
             PROCESS_RESTARTING.store(false, Ordering::Relaxed);
             return Err(e);
         },
     };
+    let new_pid = child.id();
     info!(
         target: LOG_TARGET,
-        new_pid = child.id(),
+        new_pid,
         "new pingap process spawned, sending sockets to it"
     );
+
+    // A successful spawn only means `execve` worked. The signal below is a
+    // point of no return: pingora stops accepting once its close timeout
+    // elapses and exits when the grace period does, so signalling ourselves
+    // next to a replacement that already died takes the whole service down -
+    // several minutes later, which makes it look unrelated to the restart.
+    // Give the new process a moment to fail loudly first.
+    tokio::time::sleep(NEW_PROCESS_CHECK_DELAY).await;
+    match child.try_wait() {
+        Ok(Some(status)) if !status.success() => {
+            PROCESS_RESTARTING.store(false, Ordering::Relaxed);
+            let message =
+                format!("new process({new_pid}) exited with {status}");
+            error!(
+                target: LOG_TARGET,
+                new_pid, %status,
+                "new pingap process exited, keeping the current one"
+            );
+            return Err(std::io::Error::other(message));
+        },
+        Ok(Some(status)) => {
+            // The direct child only exits successfully once it has daemonized,
+            // and daemonizing happens after `bootstrap()` - which is still
+            // blocked waiting for the sockets we have not sent yet. Reaching
+            // here means the new process took a path we did not anticipate, so
+            // say so rather than swallowing it, but let the restart proceed.
+            warn!(
+                target: LOG_TARGET,
+                new_pid, %status,
+                "new pingap process exited before the sockets were sent"
+            );
+        },
+        Ok(None) => {},
+        Err(e) => {
+            // Not knowing is not the same as knowing it failed; carry on.
+            warn!(
+                target: LOG_TARGET,
+                new_pid, error = %e,
+                "unable to check the new pingap process"
+            );
+        },
+    }
 
     // ... then signal the current process to transfer its sockets and exit.
     nix::sys::signal::kill(
