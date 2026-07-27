@@ -1,5 +1,66 @@
 # Changelog
 
+## [0.13.7](https://github.com/vicanso/pingap/compare/v0.13.4..v0.13.7) - 2026-07-27
+
+### ⛰️  Features
+
+- Start a proxy from the command line without a config file - ([800713b](https://github.com/vicanso/pingap/commit/800713b2ffee8ce86003f7a85360d034528c3ba8))
+- Expose max_h2_streams for HTTP/2 upstreams - ([3c2d6a5](https://github.com/vicanso/pingap/commit/3c2d6a5281b13bd67b571cbb0995291bd64ec38c))
+- Remote JWKS verification for the jwt plugin - ([c0554b2](https://github.com/vicanso/pingap/commit/c0554b2c82f5d90502a388b494bdc6d7ede55865))
+- Header/query/cookie-based location routing - ([9c9cefe](https://github.com/vicanso/pingap/commit/9c9cefe6a92c12c7653b04e20318e2d41de34d74))
+- JWT asymmetric verification with static public key - ([00272be](https://github.com/vicanso/pingap/commit/00272be03cfca48002bdcfd362c7d5d9d3dc80bb))
+- Add forward_auth plugin (external/forward authentication) - ([2547af5](https://github.com/vicanso/pingap/commit/2547af58cf729e658299bd02d47b7da864e01083))
+- Gate X-Forwarded-For with trusted_proxies - ([5d7123f](https://github.com/vicanso/pingap/commit/5d7123f2351da493326df49b28e779bc0300d9b7))
+
+### 🐛 Bug Fixes
+
+- Forward --threads to the process an auto restart spawns - ([6966238](https://github.com/vicanso/pingap/commit/6966238861e637b73015fdf9e321800a4597192e))
+- Decide once whether a config path is a file or a directory ([#207](https://github.com/orhun/git-cliff/issues/207)) - ([6c36415](https://github.com/vicanso/pingap/commit/6c3641502a6a9dc19651886952b9a09ea1130267))
+- Make a hot restart actually hand over, and stop hiding why it did not - ([8ea8cbd](https://github.com/vicanso/pingap/commit/8ea8cbd5c1bf8116061b58d35d005f1841727573))
+- Turn six quietly-ignored plugin misconfigurations into errors - ([2f77bc9](https://github.com/vicanso/pingap/commit/2f77bc94537496479b6b86d5908964b986275266))
+- Five smaller defects across redirect, cache, acme, jwt and compression - ([1a3899e](https://github.com/vicanso/pingap/commit/1a3899ed97c47a872f9f78d2e01f65916b4ca8bb))
+- Repair the geo feature, an admin panic and jwt signing of error responses - ([e64ecb7](https://github.com/vicanso/pingap/commit/e64ecb78c82ebac3d47c97efed99a6c1a54ea8f5))
+- Fix clippy - ([ebc4415](https://github.com/vicanso/pingap/commit/ebc4415bbe3d80bd534e7ead0c0d7db7a49ec356))
+- Spawn new process before signaling old on auto restart - ([a5465a4](https://github.com/vicanso/pingap/commit/a5465a48eaae4eb00615f28fc5ae3cec526ad9ed))
+- Make pingap-proxy/performance tracing features self-contained - ([8b193de](https://github.com/vicanso/pingap/commit/8b193deeb0aa4dd9465b5ccb57af6a300be18217))
+- Serialize ConfigManager writes to prevent lost updates - ([6829191](https://github.com/vicanso/pingap/commit/6829191e217031e89ecd752cdc6cbb096646f9b5))
+- Validate ACME http-01 challenge token before storage lookup - ([df397bd](https://github.com/vicanso/pingap/commit/df397bdf2dcc8ce485d4f9f7c2be817223c5799c))
+- Reject path separators in config item names (traversal) - ([fa5f1e4](https://github.com/vicanso/pingap/commit/fa5f1e4e6848326eb0a99c6adda327dd7d3cbed4))
+- Fix pingap core test - ([ebced87](https://github.com/vicanso/pingap/commit/ebced870f7d603ccea29bd9e8ee11545abd25d3a))
+- Fix label of prometheus - ([25f21f4](https://github.com/vicanso/pingap/commit/25f21f42061946e7999fd34f9b903d12741bc4cf))
+
+### 🚜 Refactor
+
+- Constant-time compares, jwt alg allowlist, csrf underflow - ([04a6173](https://github.com/vicanso/pingap/commit/04a6173cda5835bee17f66eb22dad7a602b9a5a4))
+- Share HCL/KDL→TOML assembly via config_convert module - ([45d5961](https://github.com/vicanso/pingap/commit/45d5961077a588399e9975349c7bdbe7bfe570d1))
+- Replace per-plugin ctor boilerplate with register_plugin! macro - ([3d8a416](https://github.com/vicanso/pingap/commit/3d8a4164ce3f4e8860ac4baeccab2883b0e0a701))
+- Clean up deps and remove plugin-path allocations - ([0f0ef2a](https://github.com/vicanso/pingap/commit/0f0ef2ab8d219f14bc8192934463cfd7720dcf74))
+- Fmt code - ([f0a211d](https://github.com/vicanso/pingap/commit/f0a211d6febdd98aba532a97e98a2ca64715a421))
+
+### 📚 Documentation
+
+- Point at the real site url and record how to link to it - ([f8e3d2d](https://github.com/vicanso/pingap/commit/f8e3d2d5f86f39d3ce15671b5a34cc379b9a0753))
+- Default GitHub Pages home to English docs - ([8644ccb](https://github.com/vicanso/pingap/commit/8644ccb029013c16402845e7d9768ad21ab25258))
+- Add bilingual GitHub Pages site (/en, /zh) from repo docs - ([bf58f01](https://github.com/vicanso/pingap/commit/bf58f0123a3b2a9302e159e38d04233e6c94e4d0))
+- Document every crate and plugin - ([af533f6](https://github.com/vicanso/pingap/commit/af533f624b5d21615d93bcd2bc817ca799007429))
+
+### ⚡ Performance
+
+- Avoid per-request alloc in circuit-breaker backend check - ([8513c62](https://github.com/vicanso/pingap/commit/8513c62b48d00378ea351c06c79703605ccaa3bc))
+
+### 🎨 Styling
+
+- Apply cargo fmt - ([888dd8a](https://github.com/vicanso/pingap/commit/888dd8a18102ee8e122367e08e6545f4b73396c0))
+
+### ⚙️ Miscellaneous Tasks
+
+- Version 0.13.7 - ([a380dc5](https://github.com/vicanso/pingap/commit/a380dc53112b0568f10c7a3036b9d5cd14520590))
+- Update github workflow - ([a28d0fc](https://github.com/vicanso/pingap/commit/a28d0fcae02caac09f3f2606768b32aed34448f2))
+- Version 0.13.5 - ([11f95aa](https://github.com/vicanso/pingap/commit/11f95aa9933be3f33cfd3f6253213d7c75ccdfe1))
+- Put every crate on one workspace version - ([b25c9dc](https://github.com/vicanso/pingap/commit/b25c9dc6dbddeee23dc6b6ba75d37e06ed20efda))
+- Downgrade kdl and sysinfo - ([295217d](https://github.com/vicanso/pingap/commit/295217dc637385e7d6826f212c031ccac1e2f7fa))
+- Update dependencies - ([784435c](https://github.com/vicanso/pingap/commit/784435c13ed8c02e29e37d1aa7397b2c47170637))
+
 ## [0.13.5](https://github.com/vicanso/pingap/compare/v0.13.4..v0.13.5) - 2026-07-26
 
 ### ⛰️  Features
