@@ -683,6 +683,14 @@ fn run() -> Result<(), Box<dyn Error>> {
         if let Some(admin) = &args.admin {
             new_args.push(format!("--admin={admin}"));
         }
+        // Only on the command line: it overrides `basic.threads`, so leaving it
+        // out silently drops the replacement process back to the configured
+        // value, or to one thread.
+        if let Some(threads) = args.threads {
+            new_args.push(format!("--threads={threads}"));
+        }
+        // `--autoreload` is deliberately not forwarded: it is implied by
+        // `--autorestart`, which the restarted process gets below.
         if args.autorestart {
             new_args.push("--autorestart".to_string());
         }
