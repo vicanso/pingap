@@ -229,6 +229,22 @@ fn get_config(
         match tokio::runtime::Runtime::new() {
             Ok(rt) => {
                 let send = async move {
+                    // Before the first read, and before anything can write:
+                    // fold any layout left over from a previous `ConfigMode`
+                    // into the current one. Failing here must not be fatal - a
+                    // read only config directory holding a single old layout
+                    // loads perfectly well, and used to.
+                    match config_manager.migrate_layout().await {
+                        Ok(retired) => {
+                            for item in retired {
+                                // use println because log is not init
+                                println!("config layout migrated: {item}");
+                            }
+                        },
+                        Err(e) => {
+                            println!("config layout migration fail, {e}");
+                        },
+                    }
                     match config_manager.load_all().await {
                         Ok(config) => {
                             // TODO 原有的load config有admin模式
@@ -533,20 +549,25 @@ fn run() -> Result<(), Box<dyn Error>> {
     };
 
     let r = get_config(get_config_manager()?);
+    // A broken config is fatal on its own, but not with `--admin`: the admin
+    // server has to come up so the configuration can be repaired through it.
+    // Starting on an empty config is indistinguishable from a healthy server
+    // that simply has nothing configured, though, so the reason has to be
+    // reported. This runs before the logger exists, hence stderr.
+    let empty_config =
+        |e: Box<dyn Error>| -> Result<PingapConfig, Box<dyn Error>> {
+            if args.admin.is_none() {
+                return Err(e);
+            }
+            eprintln!(
+                "load config fail, starting with an empty config so it can be fixed through the admin server: {e}"
+            );
+            Ok(PingapConfig::default())
+        };
     let config = match r.recv() {
         Ok(Ok(conf)) => conf,
-        Ok(Err(e)) => {
-            if args.admin.is_none() {
-                return Err(e.into());
-            }
-            PingapConfig::default()
-        },
-        Err(e) => {
-            if args.admin.is_none() {
-                return Err(e.into());
-            }
-            PingapConfig::default()
-        },
+        Ok(Err(e)) => empty_config(e.into())?,
+        Err(e) => empty_config(e.into())?,
     };
 
     config_manager.set_current_config(config.clone());

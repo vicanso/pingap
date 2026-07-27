@@ -15,7 +15,7 @@
 use crate::PingapConfig;
 use crate::convert_pingap_config;
 use crate::etcd_storage::EtcdStorage;
-use crate::file_storage::FileStorage;
+use crate::file_storage::{FileStorage, is_config_dir};
 use crate::memory_storage::MemoryStorage;
 use crate::storage::{History, Storage};
 use crate::{Category, Error, Observer};
@@ -243,7 +243,7 @@ pub fn new_file_config_manager(path: &str) -> Result<ConfigManager> {
     let (file, query) = path.split_once('?').unwrap_or((path, ""));
     let file = resolve_path(file);
     let filepath = Path::new(&file);
-    let (mode, enable_history) = if filepath.is_dir() {
+    let (mode, enable_history) = if is_config_dir(filepath) {
         let params: ConfigManagerParams =
             serde_qs::from_str(query).map_err(|e| Error::Invalid {
                 message: e.to_string(),
@@ -357,6 +357,97 @@ impl ConfigManager {
     pub async fn load_all(&self) -> Result<PingapTomlConfig> {
         let data = self.storage.fetch("").await?;
         toml::from_str(&data).map_err(|e| Error::De { source: e })
+    }
+
+    /// Config files that a mode other than the current one would have written.
+    ///
+    /// Each mode lays the same configuration out under different file names,
+    /// and a config directory is loaded by concatenating every toml file in
+    /// it. So a directory first written in one mode and later opened in
+    /// another accumulates two copies of the same tables, and the concatenated
+    /// document stops parsing with a `duplicate key` whose line number matches
+    /// no individual file.
+    async fn stale_layout_keys(&self) -> Result<Vec<String>> {
+        let by_item = match self.mode {
+            // Everything lives in the one file the user pointed at, so there
+            // is no directory around it to hold a competing layout.
+            ConfigMode::Single => return Ok(vec![]),
+            ConfigMode::MultiByItem => true,
+            ConfigMode::MultiByType => false,
+        };
+        let mut keys = vec![];
+        // `pingap.toml` is only ever written by `Single`. It ends up inside a
+        // directory when that directory did not exist yet at startup: the mode
+        // detection falls back to `Single` because the path is not a
+        // directory, while the storage still resolves the key underneath it.
+        if !self.storage.fetch(SINGLE_KEY).await?.is_empty() {
+            keys.push(SINGLE_KEY.to_string());
+        }
+        for category in [
+            Category::Server,
+            Category::Location,
+            Category::Upstream,
+            Category::Plugin,
+            Category::Certificate,
+            Category::Storage,
+        ] {
+            let name = format_category(&category);
+            if by_item {
+                // By item keeps each entry in `<category>/<name>.toml`, so a
+                // flat `<category>.toml` was written by the by type mode.
+                let key = format!("{name}.toml");
+                if !self.storage.fetch(&key).await?.is_empty() {
+                    keys.push(key);
+                }
+            } else {
+                // And the other way round.
+                keys.extend(self.storage.list_keys(name).await?);
+            }
+        }
+        Ok(keys)
+    }
+
+    /// Rewrites the configuration in the current mode and retires the files
+    /// left behind by a different one.
+    ///
+    /// Call this once, before the first read, and never after a write. The
+    /// admin panel edits a single entry through [`ConfigManager::update`],
+    /// which only holds that entry and so cannot safely clean up a file
+    /// containing all the others - it is that write which turns a directory
+    /// carrying one old layout into a directory carrying two. Doing the
+    /// migration up front is also the last moment the directory still parses.
+    ///
+    /// Returns a description of every retired file. An empty vec means there
+    /// was nothing to migrate, which is the normal case and costs one `fetch`
+    /// per category.
+    pub async fn migrate_layout(&self) -> Result<Vec<String>> {
+        let stale = self.stale_layout_keys().await?;
+        if stale.is_empty() {
+            return Ok(vec![]);
+        }
+        let config = match self.load_all().await {
+            Ok(config) => config,
+            Err(e) => {
+                // Both layouts are already present, so the concatenated
+                // document no longer parses and there is nothing to migrate
+                // from. Which copy of a table should win is not ours to guess,
+                // so name the files and let the operator merge them.
+                return Err(Error::Invalid {
+                    message: format!(
+                        "config directory holds more than one layout and no longer parses ({e}); files written by the previous layout: {}. Merge what is still needed into the current layout and remove them.",
+                        stale.join(", ")
+                    ),
+                });
+            },
+        };
+        // Write the new layout before retiring the old one: interrupted the
+        // other way round, the configuration would be gone.
+        self.save_all(&config).await?;
+        let mut retired = Vec::with_capacity(stale.len());
+        for key in stale {
+            retired.push(self.storage.retire(&key).await?);
+        }
+        Ok(retired)
     }
     pub async fn save_all(&self, config: &PingapTomlConfig) -> Result<()> {
         let _guard = self.write_lock.lock().await;
@@ -1030,6 +1121,235 @@ value = "/storage22"
                 .await
                 .is_ok()
         );
+    }
+
+    #[tokio::test]
+    async fn test_mode_of_a_path_that_does_not_exist_yet() {
+        let dir = tempfile::TempDir::new().unwrap();
+
+        // A directory pingap is asked to manage before it has been created has
+        // to be treated as a directory, or the very first run writes a layout
+        // no later run would produce.
+        for (path, expected) in [
+            ("conf", ConfigMode::MultiByType),
+            ("nested/conf", ConfigMode::MultiByType),
+            // An extension the loader understands means a single config file.
+            ("pingap.toml", ConfigMode::Single),
+            ("pingap.hcl", ConfigMode::Single),
+            ("pingap.kdl", ConfigMode::Single),
+        ] {
+            let target = dir.path().join(path);
+            assert_eq!(false, target.exists(), "{path} must not exist yet");
+            let manager =
+                new_file_config_manager(&target.to_string_lossy()).unwrap();
+            assert_eq!(expected, manager.mode, "{path}");
+        }
+
+        // And `separation` is honoured rather than silently dropped.
+        let manager = new_file_config_manager(&format!(
+            "{}?separation=true",
+            dir.path().join("fresh").to_string_lossy()
+        ))
+        .unwrap();
+        assert_eq!(ConfigMode::MultiByItem, manager.mode);
+
+        // Writing it produces the separated layout, not a `pingap.toml` that
+        // the next run would then have to migrate away.
+        manager.save_all(&new_pingap_config()).await.unwrap();
+        assert_eq!(true, dir.path().join("fresh/basic.toml").exists());
+        assert_eq!(false, dir.path().join("fresh").join(SINGLE_KEY).exists());
+    }
+
+    #[tokio::test]
+    async fn test_single_config_file_is_not_created_as_a_directory() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let target = dir.path().join("pingap.toml");
+
+        let manager =
+            new_file_config_manager(&target.to_string_lossy()).unwrap();
+        assert_eq!(ConfigMode::Single, manager.mode);
+
+        // Reading a config file that has not been written yet is empty, not an
+        // error.
+        let config = manager.load_all().await.unwrap();
+        assert_eq!(true, config.basic.is_none());
+
+        manager.save_all(&new_pingap_config()).await.unwrap();
+
+        // The whole point: the key resolves to the file itself. Resolving it
+        // underneath the path instead turned `pingap.toml` into a directory
+        // holding a second `pingap.toml`.
+        assert_eq!(true, target.is_file());
+        assert_eq!(false, target.join(SINGLE_KEY).exists());
+
+        let config = manager.load_all().await.unwrap();
+        assert_eq!(true, config.basic.is_some());
+    }
+
+    /// Config written by a `Single` mode run, which is what pingap falls back
+    /// to when the directory it was pointed at did not exist yet.
+    const SINGLE_LAYOUT: &str = r#"
+[basic]
+name = "pingap"
+
+[upstreams.demo]
+addrs = ["127.0.0.1:7080"]
+"#;
+
+    #[tokio::test]
+    async fn test_migrate_single_layout_to_by_item() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join(SINGLE_KEY), SINGLE_LAYOUT).unwrap();
+
+        let manager = new_file_config_manager(&format!(
+            "{}?separation=true",
+            dir.path().to_string_lossy()
+        ))
+        .unwrap();
+
+        let retired = manager.migrate_layout().await.unwrap();
+        assert_eq!(1, retired.len(), "{retired:?}");
+        assert_eq!(true, retired[0].contains(SINGLE_KEY), "{retired:?}");
+
+        // The single file is out of the way and the by item layout replaced it.
+        assert_eq!(false, dir.path().join(SINGLE_KEY).exists());
+        assert_eq!(true, dir.path().join("basic.toml").exists());
+        assert_eq!(true, dir.path().join("upstreams/demo.toml").exists());
+
+        // Without history the bytes stay one rename away.
+        assert_eq!(true, dir.path().join("pingap.toml.bak").exists());
+
+        // And the configuration itself survived the move intact.
+        let config = manager.load_all().await.unwrap();
+        let config = config.to_pingap_config(true).unwrap();
+        assert_eq!(Some("pingap".to_string()), config.basic.name);
+        assert_eq!(1, config.upstreams.len());
+
+        // Re-running is a no-op, so a restart does not keep rewriting.
+        assert_eq!(true, manager.migrate_layout().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_migrate_by_type_layout_to_by_item() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("basic.toml"), "[basic]\n").unwrap();
+        std::fs::write(
+            dir.path().join("upstreams.toml"),
+            "[upstreams.demo]\naddrs = [\"127.0.0.1:7080\"]\n",
+        )
+        .unwrap();
+
+        let manager = new_file_config_manager(&format!(
+            "{}?separation=true",
+            dir.path().to_string_lossy()
+        ))
+        .unwrap();
+
+        let retired = manager.migrate_layout().await.unwrap();
+        assert_eq!(1, retired.len(), "{retired:?}");
+        assert_eq!(true, retired[0].contains("upstreams.toml"), "{retired:?}");
+
+        // `basic.toml` is shared by both multi modes, so it must be left alone.
+        assert_eq!(true, dir.path().join("basic.toml").exists());
+        assert_eq!(false, dir.path().join("upstreams.toml").exists());
+        assert_eq!(true, dir.path().join("upstreams/demo.toml").exists());
+    }
+
+    #[tokio::test]
+    async fn test_migrate_by_item_layout_to_by_type() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("upstreams")).unwrap();
+        std::fs::write(
+            dir.path().join("upstreams/demo.toml"),
+            "[upstreams.demo]\naddrs = [\"127.0.0.1:7080\"]\n",
+        )
+        .unwrap();
+
+        // No `separation`, so this run wants one file per category.
+        let manager =
+            new_file_config_manager(&dir.path().to_string_lossy()).unwrap();
+
+        let retired = manager.migrate_layout().await.unwrap();
+        assert_eq!(1, retired.len(), "{retired:?}");
+        assert_eq!(
+            true,
+            retired[0].contains("upstreams/demo.toml"),
+            "{retired:?}"
+        );
+        assert_eq!(false, dir.path().join("upstreams/demo.toml").exists());
+        assert_eq!(true, dir.path().join("upstreams.toml").exists());
+    }
+
+    #[tokio::test]
+    async fn test_migrate_keeps_retired_config_in_history() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join(SINGLE_KEY), SINGLE_LAYOUT).unwrap();
+
+        let manager = new_file_config_manager(&format!(
+            "{}?separation=true&enable_history=true",
+            dir.path().to_string_lossy()
+        ))
+        .unwrap();
+
+        let retired = manager.migrate_layout().await.unwrap();
+        assert_eq!(1, retired.len(), "{retired:?}");
+        assert_eq!(true, retired[0].contains("history"), "{retired:?}");
+
+        // History holds the bytes, so no `.bak` is needed next to the config.
+        assert_eq!(false, dir.path().join("pingap.toml.bak").exists());
+        let history = std::fs::read_dir(format!(
+            "{}-history",
+            dir.path().to_string_lossy()
+        ))
+        .unwrap()
+        .count();
+        assert_eq!(1, history);
+    }
+
+    #[tokio::test]
+    async fn test_migrate_reports_a_directory_that_already_holds_two_layouts() {
+        let dir = tempfile::TempDir::new().unwrap();
+        // What a directory looks like once an `update` wrote the second layout
+        // next to the first: two `[basic]` tables, so the concatenation of
+        // every toml file no longer parses.
+        std::fs::write(dir.path().join(SINGLE_KEY), SINGLE_LAYOUT).unwrap();
+        std::fs::write(dir.path().join("basic.toml"), "[basic]\n").unwrap();
+
+        let manager = new_file_config_manager(&format!(
+            "{}?separation=true",
+            dir.path().to_string_lossy()
+        ))
+        .unwrap();
+
+        let message = manager.migrate_layout().await.unwrap_err().to_string();
+        // The operator gets the file to look at, not a line number from a
+        // buffer that exists only in memory.
+        assert_eq!(true, message.contains(SINGLE_KEY), "{message}");
+        assert_eq!(true, message.contains("more than one layout"), "{message}");
+
+        // Nothing was touched, so merging by hand is still possible.
+        assert_eq!(true, dir.path().join(SINGLE_KEY).exists());
+        assert_eq!(true, dir.path().join("basic.toml").exists());
+    }
+
+    #[tokio::test]
+    async fn test_migrate_is_noop_for_a_clean_directory() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(dir.path().join("basic.toml"), "[basic]\n").unwrap();
+
+        let manager = new_file_config_manager(&format!(
+            "{}?separation=true",
+            dir.path().to_string_lossy()
+        ))
+        .unwrap();
+        assert_eq!(true, manager.migrate_layout().await.unwrap().is_empty());
+
+        // A single config file has no directory to hold a second layout.
+        let file = tempfile::NamedTempFile::with_suffix(".toml").unwrap();
+        std::fs::write(file.path(), SINGLE_LAYOUT).unwrap();
+        let manager =
+            new_file_config_manager(&file.path().to_string_lossy()).unwrap();
+        assert_eq!(true, manager.migrate_layout().await.unwrap().is_empty());
     }
 
     #[tokio::test]

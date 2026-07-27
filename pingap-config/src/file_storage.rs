@@ -28,8 +28,36 @@ use tracing::debug;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// Whether `path` names a directory of config files rather than a single one.
+///
+/// A path that exists answers for itself. One that does not exist yet has to be
+/// classified by intent, and guessing wrong is not harmless in either
+/// direction: a directory mistaken for a file drops the config manager into
+/// [`crate::ConfigMode::Single`], which silently ignores `separation` and
+/// leaves every later run - which does find a directory by then - reading a
+/// layout it would never have written itself.
+pub(crate) fn is_config_dir(path: &Path) -> bool {
+    if path.exists() {
+        return path.is_dir();
+    }
+    // A config file always carries one of the extensions the loader knows how
+    // to parse. Anything else is a directory that has not been created yet.
+    !matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("toml") | Some("hcl") | Some("kdl")
+    )
+}
+
 pub struct FileStorage {
     path: PathBuf,
+    /// Whether [`Self::path`] is a directory of config files.
+    ///
+    /// Decided once, at construction, rather than probed on every access: a
+    /// path that does not exist yet is neither `is_file` nor `is_dir`, so
+    /// asking the filesystem each time made a single file storage resolve its
+    /// keys *underneath* the file, and the first write then created the file
+    /// as a directory holding `pingap.toml`.
+    is_dir: bool,
     history_path: Option<PathBuf>,
 }
 
@@ -37,12 +65,9 @@ impl FileStorage {
     pub fn new(path: &str) -> Result<Self> {
         let filepath = resolve_path(path);
         let path = Path::new(&filepath);
-        if path.is_dir() {
-            std::fs::create_dir_all(path).map_err(|e| Error::Io {
-                source: e,
-                file: filepath.clone(),
-            })?;
-        } else if let Some(dir) = path.parent() {
+        let is_dir = is_config_dir(path);
+        let created = if is_dir { Some(path) } else { path.parent() };
+        if let Some(dir) = created {
             std::fs::create_dir_all(dir).map_err(|e| Error::Io {
                 source: e,
                 file: filepath.clone(),
@@ -50,6 +75,7 @@ impl FileStorage {
         }
         Ok(Self {
             path: path.to_path_buf(),
+            is_dir,
             history_path: None,
         })
     }
@@ -64,22 +90,28 @@ impl FileStorage {
         Ok(())
     }
     fn get_target_path(&self, key: &str) -> PathBuf {
-        if self.path.is_file() {
-            self.path.clone()
-        } else {
+        if self.is_dir {
             self.path.join(key)
+        } else {
+            self.path.clone()
         }
     }
     fn convert_history_key(&self, key: &str) -> String {
         key.replace("/", "-")
     }
-    async fn save_history(&self, key: &str) -> Result<()> {
+    /// Copies the current value of `key` into the history directory.
+    ///
+    /// Returns whether the value is recoverable afterwards: `false` only when
+    /// history is disabled and there was something to keep. A caller about to
+    /// destroy the value uses this to decide whether it still needs a backup
+    /// of its own.
+    async fn save_history(&self, key: &str) -> Result<bool> {
         let Some(history_path) = &self.history_path else {
-            return Ok(());
+            return Ok(false);
         };
         let value = self.fetch(key).await?;
         if value.is_empty() {
-            return Ok(());
+            return Ok(true);
         }
         let name = format!("{}-{}", self.convert_history_key(key), now_sec());
         let file = history_path.join(name).clone();
@@ -87,7 +119,7 @@ impl FileStorage {
             source: e,
             file: file.to_string_lossy().to_string(),
         })?;
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -200,10 +232,16 @@ impl Storage for FileStorage {
                 )?;
             }
             Ok(content.trim().to_string())
-        } else {
+        } else if self.is_dir {
             let value =
                 read_all_config_files(&target_path.to_string_lossy()).await?;
             Ok(String::from_utf8_lossy(&value).trim().to_string())
+        } else {
+            // A single config file that has not been written yet. Reading it
+            // as a directory would work by accident - the glob matches
+            // nothing - but it would also hide the case from anyone reading
+            // this.
+            Ok(String::new())
         }
     }
 
@@ -233,6 +271,53 @@ impl Storage for FileStorage {
                 file: file.to_string_lossy().to_string(),
             }),
         }
+    }
+
+    async fn list_keys(&self, prefix: &str) -> Result<Vec<String>> {
+        // A single config file holds every category, so it has no keys to
+        // enumerate underneath it.
+        if !self.is_dir {
+            return Ok(vec![]);
+        }
+        let dir = self.path.join(prefix);
+        let pattern = format!("{}/*.toml", dir.to_string_lossy());
+        let entries = glob(&pattern).map_err(|e| Error::Pattern {
+            source: e,
+            path: pattern.clone(),
+        })?;
+        let mut keys = vec![];
+        for entry in entries {
+            let file = entry.map_err(|e| Error::Glob { source: e })?;
+            if let Some(name) = file.file_name().and_then(|name| name.to_str())
+            {
+                keys.push(format!("{prefix}/{name}"));
+            }
+        }
+        Ok(keys)
+    }
+
+    async fn retire(&self, key: &str) -> Result<String> {
+        let file = self.get_target_path(key);
+        // With history enabled the value survives in the history directory, so
+        // the file itself can go.
+        if self.save_history(key).await? {
+            self.delete(key).await?;
+            return Ok(format!("{} (kept in history)", file.display()));
+        }
+        // Otherwise leave the bytes exactly where they are, under a name the
+        // loader ignores: a config directory is read by globbing `*.toml`, so
+        // the extra suffix is enough to take the file out of the picture while
+        // keeping it one rename away from being restored.
+        let backup = file.with_extension("toml.bak");
+        fs::rename(&file, &backup).await.map_err(|e| Error::Io {
+            source: e,
+            file: file.to_string_lossy().to_string(),
+        })?;
+        Ok(format!(
+            "{} (renamed to {})",
+            file.display(),
+            backup.display()
+        ))
     }
     async fn fetch_history(&self, key: &str) -> Result<Option<Vec<History>>> {
         let Some(history_path) = &self.history_path else {

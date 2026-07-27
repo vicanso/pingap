@@ -47,6 +47,13 @@ The backend is chosen from the value of `-c` / `PINGAP_CONF`:
 | `etcd://127.0.0.1:2379/pingap` | etcd | `MultiByItem` | Pushed via a watch stream |
 | *(in-process)* | `MemoryStorage` | `Single` | None |
 
+A path that does not exist yet is classified by its extension: `.toml`, `.hcl`
+and `.kdl` mean a single config file, anything else means a directory to be
+created. Pingap has to commit to one or the other before the path exists — a
+directory it guessed was a file would silently ignore `separation` and write
+`pingap.toml` inside itself, leaving every later run reading a layout it would
+never have written.
+
 ```bash
 pingap -c /opt/pingap/conf --autoreload
 pingap -c "etcd://127.0.0.1:2379/pingap?timeout=10s&connect_timeout=5s" --autoreload
@@ -59,6 +66,33 @@ Query parameters for the file backend (directories only):
 | --- | --- |
 | `separation=true` | Write each item to its own file. Anything other than the literal `false` counts as true. |
 | `enable_history=true` | Keep previous versions next to the config (`<dir>-history`) so the admin UI can restore them. Requires `separation`. |
+
+### Switching layout
+
+Each layout writes different file names, and a config directory is loaded by
+concatenating **every** toml file in it. A directory that was written in one
+layout and later opened in another would therefore end up with two copies of
+the same tables, and stop parsing with a `duplicate key` pointing at a line
+number no individual file has.
+
+`ConfigManager::migrate_layout` handles this. It runs once at startup, before
+the first read, and rewrites the configuration in the current layout, then
+retires the files the previous one left behind:
+
+- with `enable_history=true` the retired file is copied into the history
+  directory and removed;
+- otherwise it is renamed to `<name>.toml.bak`, which the loader ignores since
+  it only globs `*.toml`.
+
+Either way the retired path is printed at startup. A directory that is already
+carrying two layouts cannot be migrated — which table should win is not
+knowable — so startup reports the conflicting file names and leaves everything
+in place for a manual merge.
+
+The migration deliberately happens before anything writes: the admin panel
+edits one entry at a time through `ConfigManager::update`, which holds only
+that entry and so cannot clean up a file containing all the others. That single
+write is what turns a directory carrying one old layout into a broken one.
 
 `MemoryStorage` backs the config-file-less quick start
 (`pingap --domain=… --upstream=…`): the configuration is synthesized from the

@@ -33,6 +33,28 @@ pub trait Storage: Send + Sync {
 
     /// delete from storage
     async fn delete(&self, key: &str) -> Result<()>;
+
+    /// Lists the keys stored directly under `prefix`.
+    ///
+    /// Only the file backend has anything to report: this is how a layout
+    /// migration finds the per item files that a different `ConfigMode` wrote.
+    /// Backends whose layout cannot change return nothing.
+    async fn list_keys(&self, _prefix: &str) -> Result<Vec<String>> {
+        Ok(vec![])
+    }
+
+    /// Removes `key` after preserving its current value.
+    ///
+    /// Returns a human readable description of where the value went, so the
+    /// caller can report it. Unlike [`Storage::delete`] this removes something
+    /// the user never asked to remove, so losing it silently is not
+    /// acceptable; a backend that cannot preserve the value has to say so in
+    /// the description it returns.
+    async fn retire(&self, key: &str) -> Result<String> {
+        self.delete(key).await?;
+        Ok(format!("{key} (removed)"))
+    }
+
     fn support_observer(&self) -> bool {
         false
     }
