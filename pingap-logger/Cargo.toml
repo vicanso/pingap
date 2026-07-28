@@ -44,6 +44,7 @@ ignored = ["humantime-serde"]
 
 [dev-dependencies]
 pretty_assertions = "1.4.1"
+tempfile = { workspace = true }
 tokio-test = "0.4.4"
 criterion = { version = "0.7.0", features = ["html_reports"] }
 

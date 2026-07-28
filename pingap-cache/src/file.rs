@@ -29,11 +29,15 @@ use scopeguard::defer;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 use tokio::fs;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use walkdir::WalkDir;
+
+/// Distinguishes the temporary files of concurrent `put`s within this process;
+/// the pid in the file name distinguishes processes.
+static TMP_FILE_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// A file-based cache implementation that combines disk storage with in-memory caching
 /// using TinyUfo for hot data.
@@ -292,15 +296,28 @@ impl HttpCacheStorage for FileCache {
                 message: "too many reading".to_string(),
             });
         }
-        let result = fs::read(file).await;
+        let result = fs::read(&file).await;
         #[cfg(feature = "tracing")]
         self.read_time.observe(elapsed_second(start));
 
         let obj = match result {
-            Ok(buf) if buf.len() >= 8 => {
-                Ok(Some(CacheObject::from(Bytes::from(buf))))
+            Ok(buf) => match CacheObject::try_from(Bytes::from(buf)) {
+                Ok(obj) => Ok(Some(obj)),
+                // A truncated file (crash or full disk mid write) is a miss,
+                // not an error: an error would surface as a 5xx on every hit of
+                // this key while the file kept lying on disk. Remove it so the
+                // next request re-fetches and rewrites it.
+                Err(e) => {
+                    warn!(
+                        target: LOG_TARGET,
+                        key,
+                        error = %e,
+                        "remove corrupt cache file"
+                    );
+                    let _ = fs::remove_file(&file).await;
+                    Ok(None)
+                },
             },
-            Ok(_) => Ok(None),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(Error::Io { source: e }),
         }?;
@@ -366,7 +383,34 @@ impl HttpCacheStorage for FileCache {
                 .await
                 .map_err(|e| Error::Io { source: e })?;
         }
-        let result = fs::write(file, buf).await;
+        // Write to a temporary file and rename it over the final path. Writing
+        // the final path directly is not atomic: a concurrent `get` could read
+        // a half written file, and a crash or a full disk would leave one
+        // behind permanently. The rename also means a reader only ever sees
+        // either the old complete object or the new complete object.
+        //
+        // The suffix carries the pid because two instances share the cache
+        // directory during a zero-downtime upgrade, and a per-process counter
+        // keeps concurrent writes of the same key inside one process apart.
+        let tmp = file.with_file_name(format!(
+            "{}.{}.{}.tmp",
+            file.file_name()
+                .map(|name| name.to_string_lossy())
+                .unwrap_or_default(),
+            std::process::id(),
+            TMP_FILE_SEQ.fetch_add(1, Ordering::Relaxed),
+        ));
+        let result = async {
+            fs::write(&tmp, buf).await?;
+            if let Err(e) = fs::rename(&tmp, &file).await {
+                // Never leave the temporary file behind: nothing else knows
+                // about it, so nothing else would ever clean it up.
+                let _ = fs::remove_file(&tmp).await;
+                return Err(e);
+            }
+            Ok(())
+        }
+        .await;
         #[cfg(feature = "tracing")]
         self.write_time.observe(elapsed_second(start));
         let _ = result.map_err(|e| Error::Io { source: e })?;
@@ -722,6 +766,45 @@ mod tests {
             )
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_corrupt_cache_file_is_a_miss_and_removed() {
+        let dir = TempDir::new().unwrap();
+        // no tinyufo, so every get goes to the file
+        let cache =
+            FileCache::new(dir.path().to_string_lossy().as_ref()).unwrap();
+
+        let key = "corrupt";
+        let obj = CacheObject {
+            meta: (b"Hello".to_vec(), b"World".to_vec()),
+            body: Bytes::from_static(b"Hello World!"),
+        };
+        cache.put(key, b"", obj.clone()).await.unwrap();
+        let file = cache.get_file_path(key, "");
+
+        // Truncate the file to what a crash mid write leaves behind: an intact
+        // header whose declared meta sizes exceed the bytes present.
+        let full = std::fs::read(&file).unwrap();
+        std::fs::write(&file, &full[0..10]).unwrap();
+
+        // A miss, not an error - and certainly not a panic.
+        let result = cache.get(key, b"").await.unwrap();
+        assert_eq!(true, result.is_none());
+        // The poisoned file is gone, so the next put/get cycle heals it.
+        assert_eq!(false, file.exists());
+
+        cache.put(key, b"", obj.clone()).await.unwrap();
+        assert_eq!(obj, cache.get(key, b"").await.unwrap().unwrap());
+        // The atomic write leaves no temporary files behind.
+        let leftover = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry.file_name().to_string_lossy().ends_with(".tmp")
+            })
+            .count();
+        assert_eq!(0, leftover);
     }
 
     #[test]

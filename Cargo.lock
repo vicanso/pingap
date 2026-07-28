@@ -4083,6 +4083,7 @@ dependencies = [
  "snafu",
  "substring",
  "syslog",
+ "tempfile",
  "time",
  "tokio",
  "tokio-test",

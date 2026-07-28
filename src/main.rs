@@ -1004,7 +1004,14 @@ fn run() -> Result<(), Box<dyn Error>> {
 
 fn main() {
     if let Err(e) = run() {
-        println!("{e}");
+        // stderr, and unbuffered: everything that can fail here can fail before
+        // `logger_try_init`, in which case the `error!` below reaches nobody.
+        eprintln!("{e}");
         error!(error = e.to_string());
+        // Exit non-zero. Without this `pingap -t` reported success on a config
+        // it had just refused to load, so `pingap -t && systemctl reload pingap`
+        // reloaded anyway, and a supervisor could not tell a failed start from
+        // a clean shutdown.
+        std::process::exit(1);
     }
 }

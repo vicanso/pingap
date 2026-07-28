@@ -103,12 +103,36 @@ impl BackgroundService for AsyncLoggerTask {
         const MAX_BATCH_SIZE: usize = 128;
         let mut interval = tokio::time::interval(self.flush_timeout);
 
+        // The shutdown signal must NOT end this task: requests keep completing
+        // (and logging) through the whole grace period, and the senders live
+        // inside the proxy services, which are only dropped when the runtimes
+        // are torn down. Waiting for `recv()` to return `None` after the
+        // signal therefore never ends either - the runtime teardown kills the
+        // task mid-await, and everything still sitting in the `BufWriter`
+        // (up to `flush_timeout` worth of lines) used to die with it. So:
+        // keep running, and once the signal has arrived flush after every
+        // batch, so a kill at any moment loses at most the batch in flight.
+        let mut shutting_down = false;
+        let flush = |writer: &mut BufWriter<RollingFileAppender>| {
+            if let Err(e) = writer.flush() {
+                error!(
+                    target: LOG_TARGET,
+                    error = %e,
+                    "flush fail",
+                );
+            }
+        };
         loop {
             tokio::select! {
-                _ = shutdown.changed() => {
-                    break;
+                _ = shutdown.changed(), if !shutting_down => {
+                    shutting_down = true;
+                    flush(&mut writer);
                 }
-                Some(msg) = receiver.recv() => {
+                msg = receiver.recv() => {
+                    let Some(msg) = msg else {
+                        // all senders are gone
+                        break;
+                    };
                     let mut messages = Vec::with_capacity(MAX_BATCH_SIZE);
                     messages.push(msg);
                     while messages.len() < MAX_BATCH_SIZE {
@@ -121,7 +145,9 @@ impl BackgroundService for AsyncLoggerTask {
                     }
                     for mut msg in messages {
                         msg.extend_from_slice(b"\n");
-                        if let Err(e) = writer.write(&msg) {
+                        // `write_all`, not `write`: a short write would
+                        // silently truncate the line
+                        if let Err(e) = writer.write_all(&msg) {
                             error!(
                                 target: LOG_TARGET,
                                 error = %e,
@@ -129,24 +155,17 @@ impl BackgroundService for AsyncLoggerTask {
                             );
                         }
                     }
-                }
-                _ = interval.tick() => {
-                    if let Err(e) = writer.flush() {
-                        error!(
-                            target: LOG_TARGET,
-                            error = %e,
-                            "flush fail",
-                        );
+                    if shutting_down {
+                        flush(&mut writer);
                     }
                 }
-                else => {
-                    // `recv()` return None, all senders are gone
-                    break;
+                _ = interval.tick() => {
+                    flush(&mut writer);
                 }
             }
         }
-        // clear channel
-        while let Some(mut msg) = receiver.recv().await {
+        // All senders are gone; drain what is left and flush.
+        while let Ok(mut msg) = receiver.try_recv() {
             msg.extend_from_slice(b"\n");
             if let Err(e) = writer.write_all(&msg) {
                 error!(
@@ -156,14 +175,75 @@ impl BackgroundService for AsyncLoggerTask {
                 );
             }
         }
+        flush(&mut writer);
+    }
+}
 
-        // flush writer
-        if let Err(e) = writer.flush() {
-            error!(
-                target: LOG_TARGET,
-                error = %e,
-                "flush fail",
-            );
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use std::time::Duration;
+
+    /// Reads back everything the logger wrote (the rolling appender may add a
+    /// date suffix to the file name, so match by prefix).
+    fn read_logged(dir: &std::path::Path, prefix: &str) -> String {
+        let mut content = String::new();
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_name().to_string_lossy().starts_with(prefix) {
+                content += &std::fs::read_to_string(entry.path()).unwrap();
+            }
         }
+        content
+    }
+
+    #[tokio::test]
+    async fn test_lines_after_shutdown_signal_reach_disk() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("access.log");
+        // A flush interval far beyond the test duration, so anything on disk
+        // got there through the shutdown-triggered flushes - the ones that
+        // used to not exist - and not through the timer.
+        let (sender, task) = new_async_logger(&format!(
+            "{}?flush_timeout=60s",
+            path.to_string_lossy()
+        ))
+        .await
+        .unwrap();
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let handle = tokio::spawn(async move {
+            task.start(shutdown_rx).await;
+        });
+
+        sender
+            .send(BytesMut::from("before shutdown"))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // The grace period begins: the signal fires, but the senders stay
+        // alive and requests keep logging.
+        shutdown_tx.send(true).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        sender
+            .send(BytesMut::from("during grace period"))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Both lines are on disk while the task still runs and the sender is
+        // still alive - a kill at this point loses nothing.
+        let content = read_logged(dir.path(), "access.log");
+        assert_eq!(true, content.contains("before shutdown"), "{content}");
+        assert_eq!(true, content.contains("during grace period"), "{content}");
+
+        // And once the senders drop, the task ends on its own.
+        drop(sender);
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("task must end when all senders are gone")
+            .unwrap();
     }
 }

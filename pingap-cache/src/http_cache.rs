@@ -67,24 +67,46 @@ const META_SIZE_LENGTH: usize = 8;
 /// - Next meta0_size bytes: meta0 data
 /// - Next meta1_size bytes: meta1 data
 /// - Remaining bytes: body data
-impl From<Bytes> for CacheObject {
-    fn from(value: Bytes) -> Self {
+///
+/// Fallible on purpose: the bytes come from a cache file, and a cache file can
+/// be shorter than its header claims (a crash or a full disk mid write). The
+/// declared sizes MUST be checked against what is actually there -
+/// `Bytes::split_to` panics on out of range, and with `panic = "abort"` in the
+/// release profile that panic would take the whole process down on every hit
+/// of the poisoned key, restart after restart, until someone deletes the file.
+impl TryFrom<Bytes> for CacheObject {
+    type Error = Error;
+    fn try_from(value: Bytes) -> Result<Self, Self::Error> {
         // 8 bytes
         if value.len() < META_SIZE_LENGTH {
-            return Self::default();
+            return Err(Error::Invalid {
+                message: format!(
+                    "cache object is truncated, {} bytes is shorter than the header",
+                    value.len()
+                ),
+            });
         }
         let mut data = value;
 
         let meta0_size = data.get_u32() as usize;
         let meta1_size = data.get_u32() as usize;
+        let meta_size = meta0_size.saturating_add(meta1_size);
+        if meta_size > data.len() {
+            return Err(Error::Invalid {
+                message: format!(
+                    "cache object is truncated, meta claims {meta_size} bytes but only {} are present",
+                    data.len()
+                ),
+            });
+        }
 
         let meta0 = data.split_to(meta0_size).to_vec();
         let meta1 = data.split_to(meta1_size).to_vec();
 
-        Self {
+        Ok(Self {
             meta: (meta0, meta1),
             body: data,
-        }
+        })
     }
 }
 /// Converts a CacheObject into bytes with the following format:
@@ -503,6 +525,45 @@ mod tests {
     use pingora::cache::storage::{HitHandler, MissHandler};
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
+
+    #[test]
+    fn test_cache_object_round_trip() {
+        let obj = CacheObject {
+            meta: (b"meta0".to_vec(), b"meta1".to_vec()),
+            body: Bytes::from_static(b"cache body"),
+        };
+        let buf: Bytes = obj.clone().into();
+        assert_eq!(obj, CacheObject::try_from(buf).unwrap());
+    }
+
+    #[test]
+    fn test_cache_object_rejects_truncated_bytes() {
+        // What a crash or a full disk mid write leaves behind: every prefix of
+        // a valid encoding. None of them may panic - with `panic = "abort"`
+        // that would abort the process on every hit of the poisoned key.
+        let full: Bytes = CacheObject {
+            meta: (b"meta0".to_vec(), b"meta1".to_vec()),
+            body: Bytes::from_static(b"cache body"),
+        }
+        .into();
+        for len in 0..full.len() {
+            let truncated = full.slice(0..len);
+            let result = CacheObject::try_from(truncated);
+            // Anything shorter than header + both metas must be rejected;
+            // only the body may legitimately be shorter (its length is not
+            // recorded, so a torn body is indistinguishable from a short one).
+            if len < META_SIZE_LENGTH + b"meta0meta1".len() {
+                assert_eq!(true, result.is_err(), "len {len} must be rejected");
+            }
+        }
+
+        // Sizes that overflow when added must not wrap around the check.
+        let mut evil = BytesMut::new();
+        evil.put_u32(u32::MAX);
+        evil.put_u32(u32::MAX);
+        evil.extend_from_slice(b"tiny");
+        assert_eq!(true, CacheObject::try_from(Bytes::from(evil)).is_err());
+    }
 
     #[tokio::test]
     async fn test_complete_hit() {
