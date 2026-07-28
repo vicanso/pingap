@@ -3,7 +3,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use http::HeaderValue;
 use pingap_core::{Ctx, format_duration};
 use pingap_core::{
-    convert_header, get_host, get_super_ts, now_ms, real_now_ms,
+    convert_header, get_host, get_super_ts, now_ms, now_sec,
     remove_query_from_header,
 };
 use pingora::http::RequestHeader;
@@ -65,10 +65,10 @@ fn bench_now_ms(c: &mut Criterion) {
     });
 }
 
-fn bench_real_now_ms(c: &mut Criterion) {
-    c.bench_function("real now ms", |b| {
+fn bench_now_sec(c: &mut Criterion) {
+    c.bench_function("now sec", |b| {
         b.iter(|| {
-            let _ = real_now_ms();
+            let _ = now_sec();
         });
     });
 }
@@ -122,7 +122,7 @@ criterion_group!(
     bench_convert_header_value,
     bench_get_super_ts,
     bench_now_ms,
-    bench_real_now_ms,
+    bench_now_sec,
     bench_format_duration,
     bench_get_variable,
 );

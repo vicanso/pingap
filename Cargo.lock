@@ -817,17 +817,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
-name = "coarsetime"
-version = "0.1.37"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e58eb270476aa4fc7843849f8a35063e8743b4dbcdf6dd0f8ea0886980c204c2"
-dependencies = [
- "libc",
- "wasix",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "color_quant"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4003,9 +3992,7 @@ dependencies = [
  "ahash",
  "async-trait",
  "bytes",
- "coarsetime",
  "criterion",
- "ctor",
  "futures",
  "hostname",
  "http",
@@ -7079,15 +7066,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5428f8bf88ea5ddc08faddef2ac4a67e390b88186c703ce6dbd955e1c145aca5"
 dependencies = [
  "wit-bindgen 0.51.0",
-]
-
-[[package]]
-name = "wasix"
-version = "0.13.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae86f02046da16a333a9129d31451423e1657737ecdafed4193838a5f54c5cfe"
-dependencies = [
- "wasi",
 ]
 
 [[package]]

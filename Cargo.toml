@@ -177,7 +177,6 @@ chrono = { version = "0.4.45", default-features = false, features = [
     "std",
     "clock",
 ] }
-coarsetime = "0.1.37"
 cookie = "0.18.1"
 crc32fast = "1.5.0"
 ctor = "1.0.7"

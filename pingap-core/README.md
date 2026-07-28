@@ -17,7 +17,7 @@ This library offers a modular toolkit designed to handle the entire lifecycle of
 - **Background Task Service**: A generic service (`BackgroundTaskService`) for running periodic tasks in the background, such as health checks, data synchronization, or cleanup routines.
 - **Rate Limiting**: An efficient, TTL-based LRU cache (`TtlLruLimit`) for implementing rate-limiting logic based on a maximum number of requests within a given time window.
 - **Notification Service**: A simple, extensible trait (`Notification`) for sending alerts and notifications through various channels.
-- **High-Performance Utilities**: Includes utilities like a coarse-grained time cache to reduce system calls and improve performance in hot code paths.
+- **High-Performance Utilities**: Shared helpers for the request path — clock reads, header manipulation, constant-time comparison and duration formatting.
 
 ## Modules
 

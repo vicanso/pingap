@@ -12,52 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use coarsetime::{Clock, Updater};
-use ctor::ctor;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{LazyLock, Mutex};
-
-static CLOCK_UPDATER_PID: AtomicU32 = AtomicU32::new(0);
-static CLOCK_UPDATER: Mutex<Option<Updater>> = Mutex::new(None);
-
-/// Ensures the coarse clock background updater is running for the current
-/// process. Idempotent and fork-safe: if the updater was started in a parent
-/// process and we're now in a child after fork (e.g. pingora's daemonize),
-/// the parent's `Updater` handle is dropped (its thread doesn't exist here)
-/// and a fresh updater thread is spawned for this process.
-pub fn ensure_clock_updater() {
-    let pid = std::process::id();
-    if CLOCK_UPDATER_PID.load(Ordering::Acquire) == pid {
-        return;
-    }
-    let mut guard = CLOCK_UPDATER.lock().expect("clock updater mutex poisoned");
-    if CLOCK_UPDATER_PID.load(Ordering::Acquire) == pid {
-        return;
-    }
-    // Drop the parent's handle without joining — fork only carries the calling
-    // thread, so the parent's updater thread does not exist in this process.
-    // JoinHandle's Drop detaches rather than joining, which is what we want.
-    let _ = guard.take();
-
-    let interval = std::env::var("PINGAP_COARSE_CLOCK_INTERVAL")
-        .unwrap_or_else(|_| "10".to_string())
-        .parse::<u64>()
-        .unwrap_or(10)
-        .clamp(1, 500);
-    let updater = Updater::new(interval)
-        .start()
-        .expect("Failed to start coarse clock updater");
-    *guard = Some(updater);
-    CLOCK_UPDATER_PID.store(pid, Ordering::Release);
-}
+use std::sync::LazyLock;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // 2022-05-07: 1651852800
 const SUPER_TIMESTAMP: u64 = 1651852800;
 
+/// Time since the epoch, or zero if the system clock is set before it.
+#[inline]
+fn since_epoch() -> Duration {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+}
+
 /// Returns the number of seconds since the epoch
 #[inline]
 pub fn now_sec() -> u64 {
-    Clock::recent_since_epoch().as_secs()
+    since_epoch().as_secs()
 }
 
 /// Returns the number of seconds elapsed since SUPER_TIMESTAMP
@@ -88,14 +60,7 @@ pub fn get_hostname() -> &'static str {
 /// Returns the number of milliseconds since the epoch
 #[inline]
 pub fn now_ms() -> u64 {
-    Clock::recent_since_epoch().as_millis()
-}
-
-/// Returns the number of milliseconds since the epoch
-/// This is the real time, not the coarse time
-#[inline]
-pub fn real_now_ms() -> u64 {
-    Clock::now_since_epoch().as_millis()
+    since_epoch().as_millis() as u64
 }
 
 /// Compares two byte slices in constant time relative to their length, avoiding
@@ -114,16 +79,10 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     std::hint::black_box(diff) == 0
 }
 
-#[ctor(unsafe)]
-fn init() {
-    ensure_clock_updater();
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        constant_time_eq, ensure_clock_updater, get_hostname, get_super_ts,
-        now_ms, real_now_ms,
+        constant_time_eq, get_hostname, get_super_ts, now_ms, now_sec,
     };
     use pretty_assertions::assert_eq;
 
@@ -137,20 +96,23 @@ mod tests {
 
     #[test]
     fn test_super_ts() {
-        ensure_clock_updater();
         assert_eq!(true, get_super_ts() > 104017048);
     }
 
     #[test]
     fn test_now_ms() {
-        ensure_clock_updater();
         assert_eq!(true, now_ms() > 1755870295813);
     }
 
+    /// The clock reads straight from the system, so it advances on its own -
+    /// nothing has to tick it, and two reads a moment apart cannot go backwards.
     #[test]
-    fn test_real_now_ms() {
-        ensure_clock_updater();
-        assert_eq!(true, real_now_ms() > 1755870295813);
+    fn test_now_advances_without_an_updater() {
+        let start = now_ms();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let elapsed = now_ms() - start;
+        assert_eq!(true, elapsed >= 20, "only advanced {elapsed}ms");
+        assert_eq!(now_sec(), now_ms() / 1000);
     }
 
     #[test]

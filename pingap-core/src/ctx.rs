@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::{Plugin, real_now_ms};
+use crate::{Plugin, now_ms};
 use ahash::AHashMap;
 use bytes::BytesMut;
 use http::StatusCode;
@@ -414,7 +414,7 @@ pub(crate) fn timing_to_ms(timing: Option<&Option<TimingDigest>>) -> u64 {
 pub fn get_digest_detail(digest: &Digest) -> DigestDetail {
     let tcp_established = timing_to_ms(digest.timing_digest.first());
     let mut connection_time = 0;
-    let now = real_now_ms();
+    let now = now_ms();
     if tcp_established > 0 && tcp_established < now {
         connection_time = now - tcp_established;
     }
@@ -1016,11 +1016,9 @@ mod tests {
         assert_eq!(&buf[..], b"TLSv1.3");
 
         // Test service_time calculation
-        coarsetime::Clock::update();
         std::thread::sleep(Duration::from_millis(11));
         buf = BytesMut::new();
         ctx.append_log_value(&mut buf, "service_time");
-        coarsetime::Clock::update();
         let service_time: u64 =
             std::str::from_utf8(&buf[..]).unwrap().parse().unwrap();
         assert!(service_time >= 10, "Service time should be at least 10ms");

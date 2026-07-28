@@ -205,7 +205,7 @@ at build time.
 | Crate | What it does |
 | --- | --- |
 | [pingap-util](./util) | Crypto, IP rules, PEM/base64, path and formatting helpers |
-| [pingap-core](./core) | `Ctx`, `HttpResponse`, the `Plugin` trait, background services, coarse clock |
+| [pingap-core](./core) | `Ctx`, `HttpResponse`, the `Plugin` trait, background services, clock helpers |
 | [pingap-config](./config) | Configuration model, storage backends, TOML/HCL/KDL |
 | [pingap-discovery](./discovery) | Static / DNS / Docker / transparent backend discovery |
 | [pingap-health](./health) | TCP, HTTP(S) and gRPC health checks |

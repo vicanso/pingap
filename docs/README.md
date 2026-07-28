@@ -28,7 +28,7 @@ configured and where it sits in the dependency graph.
 | Crate | What it does |
 | --- | --- |
 | [pingap-util](../pingap-util/README.md) | Crypto, IP rules, PEM/base64, path and formatting helpers |
-| [pingap-core](../pingap-core/README.md) | `Ctx`, `HttpResponse`, the `Plugin` trait, background services, coarse clock |
+| [pingap-core](../pingap-core/README.md) | `Ctx`, `HttpResponse`, the `Plugin` trait, background services, clock helpers |
 | [pingap-config](../pingap-config/README.md) | Configuration model, storage backends, TOML/HCL/KDL |
 | [pingap-discovery](../pingap-discovery/README.md) | Static / DNS / Docker / transparent backend discovery |
 | [pingap-health](../pingap-health/README.md) | TCP, HTTP(S) and gRPC health checks |

@@ -65,7 +65,7 @@ util -> core -> {discovery, config, logger, location, cache, certificate, upstre
                      proxy <- top binary (`src/main.rs`)
 ```
 
-- `pingap-core` — `HttpResponse`, `Ctx`, plugin traits, coarse clock helpers (`now_sec`/`now_ms`/`real_now_ms`), `BackgroundTaskService`, `ClockUpdaterService`. Every other crate depends on it.
+- `pingap-core` — `HttpResponse`, `Ctx`, plugin traits, clock helpers (`now_sec`/`now_ms`), `BackgroundTaskService`. Every other crate depends on it.
 - `pingap-config` — `PingapConfig` model plus storage backends (`file_storage.rs`, `etcd_storage.rs`) chosen at runtime by URL prefix (`file://`, `etcd://`). Supports TOML, HCL (`hcl.rs`), and KDL (`kdl.rs`) input formats.
 - `pingap-proxy` — implements pingora's `ProxyHttp`. The request lifecycle in `pingap-proxy/src/server.rs` calls (in order) `early_request_filter` -> `request_filter` -> `proxy_upstream_filter` -> `upstream_request_filter` -> `upstream_response_filter` -> `logging`. Each step matches the `PluginStep` enum in `pingap-core/src/plugin.rs` (`EarlyRequest`, `Request`, `ProxyUpstream`, `UpstreamResponse`, `Response`); a plugin runs at most one step per request.
 - `pingap-plugin` — built-in plugins. Add new ones by implementing the `Plugin` trait from `pingap-core` and registering them via the plugin factory.
@@ -78,11 +78,11 @@ util -> core -> {discovery, config, logger, location, cache, certificate, upstre
 
 `src/main.rs` branches on `pingap_config::ConfigManager::support_observer()`. **etcd** returns `true` and pushes changes via a `WatchStream` (`pingap-config/src/etcd_storage.rs`) wired through `new_observer_service`. **File** storage returns `false` and is polled by `new_auto_restart_service` (`src/process/auto_restart.rs`) on a fixed interval. Both feed the same `reload_handle` — the difference is only the delivery mechanism. `--autoreload` keeps the process and swaps config in place; `--autorestart` performs a zero-downtime graceful restart for changes that need a fresh listener.
 
-### Daemonization and the coarse clock
+### Daemonization and background threads
 
-Pingora forks inside `Server::run_forever()` for daemon mode. **`fork()` only carries the calling thread**, so any `std::thread` (including coarsetime's background updater) started before the fork is gone in the child.
+Pingora forks inside `Server::run_forever()` for daemon mode, **after** `bootstrap()` and **before** the service runtimes start. `fork()` only carries the calling thread, so **any `std::thread` started before that point does not exist in the daemon**, and any handle to it is a handle to nothing — joining one gives `EINVAL`. Long-lived threads must be started from a pingora `BackgroundService`, which runs post-fork, not from a `#[ctor]` or from `run()`.
 
-`pingap_core::ensure_clock_updater()` is pid-aware and idempotent — it detects a pid mismatch and re-spawns the coarsetime updater for the current process. `pingap_core::ClockUpdaterService` is a pingora `BackgroundService` that wraps that call so the updater is guaranteed to (re)start *inside* the post-fork process. The service is registered in `src/main.rs` right after `my_server.bootstrap()`; the `#[ctor]` in `pingap-core/src/util.rs` handles the non-daemon path. Anything time-sensitive that runs only on specific paths (e.g. admin auth in `src/plugin/admin.rs`) must not assume `now_sec()` is fresh without this safety net — otherwise it returns the last cached value and skews by hours.
+This is why `now_sec()`/`now_ms()` read the system clock directly (`SystemTime::now()`, ~18ns) instead of caching it in a background-updated global. The coarse clock that used to back them saved ~17ns per call but needed a thread, and the only per-request caller left was `ttl_lru_limit`; the fork-safety machinery it required had already caused one real bug (admin auth reading an hours-stale timestamp in daemon mode).
 
 ### Plugin step contract
 
@@ -107,7 +107,7 @@ When adding a feature-gated module, mirror the wiring in both the workspace `Car
 
 ## Configuration loading and env vars
 
-`src/main.rs::parse_arguments()` overlays CLI args with `PINGAP_*` env vars. Anything not on the CLI falls back to env: `PINGAP_CONF`, `PINGAP_DAEMON`, `PINGAP_UPGRADE`, `PINGAP_LOG`, `PINGAP_ADMIN_ADDR`/`PINGAP_ADMIN_USER`/`PINGAP_ADMIN_PASSWORD` (these three combine into `--admin user:pass@addr` with base64-encoded creds). Other env vars used at runtime: `PINGAP_DISABLE_ACME`, `PINGAP_COARSE_CLOCK_INTERVAL` (in **milliseconds**, clamped 1–500), and `$ENV:...` interpolations inside HCL configs (e.g. `$ENV:PINGAP_DNS_SERVICE_URL`).
+`src/main.rs::parse_arguments()` overlays CLI args with `PINGAP_*` env vars. Anything not on the CLI falls back to env: `PINGAP_CONF`, `PINGAP_DAEMON`, `PINGAP_UPGRADE`, `PINGAP_LOG`, `PINGAP_ADMIN_ADDR`/`PINGAP_ADMIN_USER`/`PINGAP_ADMIN_PASSWORD` (these three combine into `--admin user:pass@addr` with base64-encoded creds). Other env vars used at runtime: `PINGAP_DISABLE_ACME`, and `$ENV:...` interpolations inside HCL configs (e.g. `$ENV:PINGAP_DNS_SERVICE_URL`).
 
 CLI flags worth knowing: `-c/--conf <url>`, `-d/--daemon`, `-u/--upgrade` (hot upgrade from a running instance), `-t/--test` (validate config and exit), `-a/--autorestart` (graceful restart on config change), `--autoreload` (hot reload only — preferred for containers), `--cp` (control-panel mode, admin only).
 
