@@ -272,7 +272,9 @@ sha1 = "0.11.0"
 sha2 = { version = "0.11.0", default-features = false }
 strum = { version = "0.28.0", features = ["derive"] }
 substring = "1.4.5"
-sysinfo = { version = "0.39.6", features = [
+# 0.38.4 is the last version supporting rustc 1.88 (0.39.0 jumped to 1.95);
+# do not bump past it without bumping the workspace MSRV.
+sysinfo = { version = "0.38.4", features = [
     "system",
 ], default-features = false }
 tempfile = "3.27.0"
@@ -282,7 +284,9 @@ tldextract = "0.6.0"
 tokio = { version = "1.53.1", default-features = false, features = ["fs"] }
 toml = "1.1.3"
 hcl-rs = "0.19"
-kdl = "6.7.1"
+# 6.5.0 is the last version supporting rustc 1.88 (6.6.0 jumped to 1.95);
+# do not bump past it without bumping the workspace MSRV.
+kdl = "6.5.0"
 tonic = "0.14.6"
 tonic-health = "0.14.6"
 tracing = "0.1.44"

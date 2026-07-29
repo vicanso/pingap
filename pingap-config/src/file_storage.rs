@@ -279,8 +279,17 @@ impl Storage for FileStorage {
         if !self.is_dir {
             return Ok(vec![]);
         }
-        let dir = self.path.join(prefix);
-        let pattern = format!("{}/*.toml", dir.to_string_lossy());
+        // Recursive on purpose, matching the loader: `fetch("")` globs
+        // `**/*.toml`, so a file in any subdirectory is part of the loaded
+        // configuration and has to show up here too - a layout check that
+        // sees less than the loader would miss exactly the files it exists
+        // to find.
+        let base = if prefix.is_empty() {
+            self.path.clone()
+        } else {
+            self.path.join(prefix)
+        };
+        let pattern = format!("{}/**/*.toml", base.to_string_lossy());
         let entries = glob(&pattern).map_err(|e| Error::Pattern {
             source: e,
             path: pattern.clone(),
@@ -288,9 +297,8 @@ impl Storage for FileStorage {
         let mut keys = vec![];
         for entry in entries {
             let file = entry.map_err(|e| Error::Glob { source: e })?;
-            if let Some(name) = file.file_name().and_then(|name| name.to_str())
-            {
-                keys.push(format!("{prefix}/{name}"));
+            if let Ok(rel) = file.strip_prefix(&self.path) {
+                keys.push(rel.to_string_lossy().replace('\\', "/"));
             }
         }
         Ok(keys)

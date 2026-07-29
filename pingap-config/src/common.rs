@@ -1009,6 +1009,10 @@ pub struct StorageConf {
     pub value: String,
     pub secret: Option<String>,
     pub remark: Option<String>,
+    /// Unix timestamp (seconds) of when the entry was written. Optional so
+    /// entries from before the field existed still deserialize; short-lived
+    /// entries (ACME http-01 tokens) rely on it for age based cleanup.
+    pub created_at: Option<u64>,
 }
 
 impl Validate for StorageConf {

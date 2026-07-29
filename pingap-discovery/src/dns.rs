@@ -175,8 +175,12 @@ impl Dns {
     /// Performs DNS lookups for configured hosts using tokio runtime
     ///
     /// # Returns
-    /// * `Result<(Vec<LookupIp>, Vec<String>)>` - List of DNS lookup results and unhealthy backends
-    async fn tokio_lookup_ip(&self) -> Result<(Vec<LookupIp>, Vec<String>)> {
+    /// * `Result<(Vec<Option<LookupIp>>, Vec<String>)>` - Per-host DNS lookup
+    ///   results, index-aligned with `self.hosts` (`None` marks a failed
+    ///   lookup), plus the failed host names
+    async fn tokio_lookup_ip(
+        &self,
+    ) -> Result<(Vec<Option<LookupIp>>, Vec<String>)> {
         let provider = TokioRuntimeProvider::default();
         let (config, options) = self.read_system_conf()?;
         let mut builder = Resolver::builder_with_config(config, provider);
@@ -184,7 +188,12 @@ impl Dns {
         let resolver =
             builder.build().map_err(|e| Error::Resolve { source: e })?;
 
-        let mut lookup_ips = Vec::new();
+        // One slot per host, in host order. The caller pairs each result with
+        // that host's port and weight by position, so a failed lookup MUST
+        // keep its slot: compacting the list would shift every later result
+        // onto the wrong host, sending one domain's traffic to another
+        // domain's port and weight.
+        let mut lookup_ips = Vec::with_capacity(self.hosts.len());
         let mut failed_hosts = Vec::new();
 
         let lookup_futures = self
@@ -194,10 +203,10 @@ impl Dns {
 
         let results = join_all(lookup_futures).await;
 
-        for (index, result) in results.iter().enumerate() {
+        for (index, result) in results.into_iter().enumerate() {
             match result {
                 Ok(lookup) => {
-                    lookup_ips.push(lookup.clone());
+                    lookup_ips.push(Some(lookup));
                 },
                 Err(e) => {
                     let host = self
@@ -212,10 +221,11 @@ impl Dns {
                         "dns lookup failed"
                     );
                     failed_hosts.push(host);
+                    lookup_ips.push(None);
                 },
             }
         }
-        if lookup_ips.is_empty() {
+        if lookup_ips.iter().all(|lookup| lookup.is_none()) {
             return Err(Error::Invalid {
                 message: "resolve dns failed".to_string(),
             });
@@ -242,6 +252,11 @@ impl Dns {
         for ((_, port, weight), lookup_ip) in
             self.hosts.iter().zip(lookup_ips.iter())
         {
+            // A failed lookup keeps its backends out of this refresh; the
+            // host stays in `failed_hosts` for the notification below.
+            let Some(lookup_ip) = lookup_ip else {
+                continue;
+            };
             for ip in lookup_ip
                 .iter()
                 .filter(|ip| !self.ipv4_only || ip.is_ipv4())
@@ -394,5 +409,44 @@ mod tests {
             sender: None,
         });
         assert_eq!(true, result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_dns_discover_partial_failure_keeps_alignment() {
+        // The first host cannot resolve, the second can, and they declare
+        // different ports. Results are paired with hosts by position, so the
+        // failed lookup must keep its slot: compacting used to shift the
+        // second host's IPs onto the first host's port.
+        let dns = Dns::new(
+            &[
+                "no-such-host-pingap-test:8080".to_string(),
+                "api:443".to_string(),
+            ],
+            true,
+            true,
+        )
+        .unwrap()
+        .with_name_server("8.8.8.8".to_string())
+        .with_domain("github.com".to_string());
+
+        let (ip_list, failed_hosts) = dns.tokio_lookup_ip().await.unwrap();
+        assert_eq!(2, ip_list.len());
+        assert_eq!(true, ip_list[0].is_none());
+        assert_eq!(true, ip_list[1].is_some());
+        assert_eq!(vec!["no-such-host-pingap-test".to_string()], failed_hosts);
+
+        let (backends, _, failed_hosts) = dns.run_discover().await.unwrap();
+        assert_eq!(true, !backends.is_empty());
+        assert_eq!(1, failed_hosts.len());
+        // Every backend belongs to the host that resolved - none may carry
+        // the failed host's port.
+        for backend in backends.iter() {
+            assert_eq!(
+                true,
+                backend.addr.to_string().ends_with(":443"),
+                "{} must not be on the failed host's port",
+                backend.addr
+            );
+        }
     }
 }

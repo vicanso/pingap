@@ -34,11 +34,13 @@ pub trait Storage: Send + Sync {
     /// delete from storage
     async fn delete(&self, key: &str) -> Result<()>;
 
-    /// Lists the keys stored directly under `prefix`.
+    /// Lists every key under `prefix`, recursively, as paths relative to the
+    /// storage root.
     ///
     /// Only the file backend has anything to report: this is how a layout
-    /// migration finds the per item files that a different `ConfigMode` wrote.
-    /// Backends whose layout cannot change return nothing.
+    /// migration finds the files that a different `ConfigMode` (or a hand
+    /// organised layout) wrote. Backends whose layout cannot drift return
+    /// nothing.
     async fn list_keys(&self, _prefix: &str) -> Result<Vec<String>> {
         Ok(vec![])
     }

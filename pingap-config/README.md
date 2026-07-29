@@ -67,17 +67,25 @@ Query parameters for the file backend (directories only):
 | `separation=true` | Write each item to its own file. Anything other than the literal `false` counts as true. |
 | `enable_history=true` | Keep previous versions next to the config (`<dir>-history`) so the admin UI can restore them. Requires `separation`. |
 
-### Switching layout
+### Layout normalization
 
 Each layout writes different file names, and a config directory is loaded by
-concatenating **every** toml file in it. A directory that was written in one
-layout and later opened in another would therefore end up with two copies of
-the same tables, and stop parsing with a `duplicate key` pointing at a line
-number no individual file has.
+concatenating **every** toml file in it. Reads therefore accept any layout —
+including a single hand-written file holding all sections — but every write
+(`get`/`update`/`delete`, the admin panel, the ACME certificate save) only
+addresses the canonical names. A non-canonical file is configuration the write
+path cannot see: a lookup misses it (an ACME-issued certificate would be
+silently lost, re-issued every cycle until the CA's rate limit — issue #213),
+and a category write puts a second copy of its tables next to it, after which
+the directory stops parsing with a `duplicate key` pointing at a line number no
+individual file has.
 
 `ConfigManager::migrate_layout` handles this. It runs once at startup, before
-the first read, and rewrites the configuration in the current layout, then
-retires the files the previous one left behind:
+the first read, and rewrites the configuration in canonical form, then retires
+every file the current layout would not have written itself — another layout's
+leftovers (`pingap.toml` from a run before the directory existed,
+`certificates.toml` in a separated directory) as well as combined or
+arbitrarily named files:
 
 - with `enable_history=true` the retired file is copied into the history
   directory and removed;

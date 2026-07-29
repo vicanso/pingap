@@ -359,67 +359,83 @@ impl ConfigManager {
         toml::from_str(&data).map_err(|e| Error::De { source: e })
     }
 
-    /// Config files that a mode other than the current one would have written.
+    /// Whether `key` is a file this `ConfigMode` itself writes.
     ///
-    /// Each mode lays the same configuration out under different file names,
-    /// and a config directory is loaded by concatenating every toml file in
-    /// it. So a directory first written in one mode and later opened in
-    /// another accumulates two copies of the same tables, and the concatenated
-    /// document stops parsing with a `duplicate key` whose line number matches
-    /// no individual file.
-    async fn stale_layout_keys(&self) -> Result<Vec<String>> {
-        let by_item = match self.mode {
-            // Everything lives in the one file the user pointed at, so there
-            // is no directory around it to hold a competing layout.
-            ConfigMode::Single => return Ok(vec![]),
-            ConfigMode::MultiByItem => true,
-            ConfigMode::MultiByType => false,
-        };
-        let mut keys = vec![];
-        // `pingap.toml` is only ever written by `Single`. It ends up inside a
-        // directory when that directory did not exist yet at startup: the mode
-        // detection falls back to `Single` because the path is not a
-        // directory, while the storage still resolves the key underneath it.
-        if !self.storage.fetch(SINGLE_KEY).await?.is_empty() {
-            keys.push(SINGLE_KEY.to_string());
-        }
-        for category in [
+    /// Reads accept any layout the loader can glob, but every write -
+    /// `get`/`update`/`delete`, the admin panel, the ACME certificate save -
+    /// only ever addresses these canonical names. A file outside this set is
+    /// therefore configuration the write path cannot see or maintain: `get`
+    /// misses it (an ACME certificate defined there was silently never
+    /// saved), and a category write puts a second copy of its tables next to
+    /// it, after which the concatenated document stops parsing with a
+    /// `duplicate key` whose line number matches no individual file.
+    fn is_canonical_key(&self, key: &str) -> bool {
+        const CATEGORIES: [Category; 7] = [
+            Category::Basic,
             Category::Server,
             Category::Location,
             Category::Upstream,
             Category::Plugin,
             Category::Certificate,
             Category::Storage,
-        ] {
-            let name = format_category(&category);
-            if by_item {
-                // By item keeps each entry in `<category>/<name>.toml`, so a
-                // flat `<category>.toml` was written by the by type mode.
-                let key = format!("{name}.toml");
-                if !self.storage.fetch(&key).await?.is_empty() {
-                    keys.push(key);
+        ];
+        match self.mode {
+            ConfigMode::Single => true,
+            // One `<category>.toml` per category, all at the top level.
+            ConfigMode::MultiByType => CATEGORIES.iter().any(|category| {
+                key == format!("{}.toml", format_category(category))
+            }),
+            // `basic.toml` at the top level, everything else as one
+            // `<category>/<name>.toml` per item.
+            ConfigMode::MultiByItem => {
+                if key == "basic.toml" {
+                    return true;
                 }
-            } else {
-                // And the other way round.
-                keys.extend(self.storage.list_keys(name).await?);
-            }
+                let Some((dir, name)) = key.split_once('/') else {
+                    return false;
+                };
+                !name.contains('/')
+                    && CATEGORIES.iter().any(|category| {
+                        *category != Category::Basic
+                            && dir == format_category(category)
+                    })
+            },
         }
-        Ok(keys)
     }
 
-    /// Rewrites the configuration in the current mode and retires the files
-    /// left behind by a different one.
+    /// Config files the current mode would never have written itself: another
+    /// mode's layout (`pingap.toml` from the days the directory did not exist
+    /// yet, `certificates.toml` in a by item directory) or a hand combined
+    /// file holding several categories. The loader reads them all the same,
+    /// which is exactly the trap - everything works until the first write.
+    async fn stale_layout_keys(&self) -> Result<Vec<String>> {
+        // Everything lives in the one file the user pointed at, so there is
+        // no directory around it to hold a competing layout.
+        if self.mode == ConfigMode::Single {
+            return Ok(vec![]);
+        }
+        let keys = self.storage.list_keys("").await?;
+        Ok(keys
+            .into_iter()
+            .filter(|key| !self.is_canonical_key(key))
+            .collect())
+    }
+
+    /// Rewrites the configuration in canonical form and retires the files the
+    /// current mode would never have written itself - another mode's leftovers
+    /// or hand combined files.
     ///
     /// Call this once, before the first read, and never after a write. The
     /// admin panel edits a single entry through [`ConfigManager::update`],
     /// which only holds that entry and so cannot safely clean up a file
     /// containing all the others - it is that write which turns a directory
-    /// carrying one old layout into a directory carrying two. Doing the
-    /// migration up front is also the last moment the directory still parses.
+    /// carrying one non-canonical file into a directory carrying two copies
+    /// of its tables. Doing the migration up front is also the last moment
+    /// the directory still parses.
     ///
     /// Returns a description of every retired file. An empty vec means there
-    /// was nothing to migrate, which is the normal case and costs one `fetch`
-    /// per category.
+    /// was nothing to migrate, which is the normal case and costs one
+    /// directory listing.
     pub async fn migrate_layout(&self) -> Result<Vec<String>> {
         let stale = self.stale_layout_keys().await?;
         if stale.is_empty() {
@@ -1330,6 +1346,115 @@ addrs = ["127.0.0.1:7080"]
         // Nothing was touched, so merging by hand is still possible.
         assert_eq!(true, dir.path().join(SINGLE_KEY).exists());
         assert_eq!(true, dir.path().join("basic.toml").exists());
+    }
+
+    /// The layout behind issue #213: a directory holding one combined file
+    /// with every section in it. The loader globs all toml files so this
+    /// starts up and serves fine - but `get`/`update` address categories by
+    /// their canonical files, so an ACME issued certificate was looked up as
+    /// `certificates.toml`/`certificates/<name>.toml`, found nothing, and was
+    /// silently dropped; every cycle then re-issued from scratch until the
+    /// CA's duplicate-certificate rate limit cut it off.
+    const COMBINED_LAYOUT: &str = r#"
+[basic]
+name = "pingap"
+
+[certificates.panel]
+domains = "example.com"
+acme = "lets_encrypt"
+
+[upstreams.demo]
+addrs = ["127.0.0.1:7080"]
+"#;
+
+    #[tokio::test]
+    async fn test_migrate_normalizes_a_combined_file() {
+        for query in ["", "?separation=true"] {
+            let dir = tempfile::TempDir::new().unwrap();
+            // Any file name that is not a canonical one.
+            std::fs::write(dir.path().join("my-proxy.toml"), COMBINED_LAYOUT)
+                .unwrap();
+            let manager = new_file_config_manager(&format!(
+                "{}{query}",
+                dir.path().to_string_lossy()
+            ))
+            .unwrap();
+
+            // Before the migration the certificate cannot be addressed - this
+            // miss is what used to lose the issued certificate.
+            let cert: Option<toml::Value> =
+                manager.get(Category::Certificate, "panel").await.unwrap();
+            assert_eq!(true, cert.is_none(), "{query}");
+
+            let retired = manager.migrate_layout().await.unwrap();
+            assert_eq!(1, retired.len(), "{query}: {retired:?}");
+            assert_eq!(
+                true,
+                retired[0].contains("my-proxy.toml"),
+                "{query}: {retired:?}"
+            );
+
+            // Now every write path can find it.
+            let cert: Option<toml::Value> =
+                manager.get(Category::Certificate, "panel").await.unwrap();
+            assert_eq!(true, cert.is_some(), "{query}");
+
+            // And the ACME save itself round-trips: update the certificate,
+            // reload, and the stored value is visible to the loader.
+            let mut cert = cert.unwrap();
+            cert.as_table_mut().unwrap().insert(
+                "tls_cert".to_string(),
+                toml::Value::String("PEM".to_string()),
+            );
+            manager
+                .update(Category::Certificate, "panel", &cert)
+                .await
+                .unwrap();
+            let config = manager.load_all().await.unwrap();
+            let value = config.get(&Category::Certificate, "panel").unwrap();
+            assert_eq!(
+                "PEM",
+                value.get("tls_cert").and_then(|v| v.as_str()).unwrap(),
+                "{query}"
+            );
+            // The rest of the combined file survived the normalization.
+            assert_eq!(
+                true,
+                config.get(&Category::Upstream, "demo").is_some(),
+                "{query}"
+            );
+            assert_eq!(true, config.basic.is_some(), "{query}");
+
+            // Re-running is a no-op.
+            assert_eq!(
+                true,
+                manager.migrate_layout().await.unwrap().is_empty(),
+                "{query}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_migrate_normalizes_a_stray_nested_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        // A nested path no mode writes: loaded by the recursive glob, but
+        // unreachable for every write.
+        std::fs::create_dir_all(dir.path().join("sites")).unwrap();
+        std::fs::write(
+            dir.path().join("sites/demo.toml"),
+            "[upstreams.demo]\naddrs = [\"127.0.0.1:7080\"]\n",
+        )
+        .unwrap();
+
+        let manager = new_file_config_manager(&format!(
+            "{}?separation=true",
+            dir.path().to_string_lossy()
+        ))
+        .unwrap();
+        let retired = manager.migrate_layout().await.unwrap();
+        assert_eq!(1, retired.len(), "{retired:?}");
+        assert_eq!(false, dir.path().join("sites/demo.toml").exists());
+        assert_eq!(true, dir.path().join("upstreams/demo.toml").exists());
     }
 
     #[tokio::test]

@@ -98,7 +98,10 @@ means:
   start.
 
 The HTTP-01 challenge token also round-trips through configuration storage, which
-is why ACME needs a writable backend.
+is why ACME needs a writable backend. Tokens are stored with a `created_at`
+timestamp and swept hourly: anything older than a day (far outside the window in
+which any instance sharing the storage could still be serving it to the CA) is
+deleted, so tokens no longer accumulate in the storage category forever.
 
 ## Environment
 

@@ -20,9 +20,10 @@ use crate::dns_manual::ManualDnsTask;
 use crate::dns_tencent::TencentDnsTask;
 use async_trait::async_trait;
 use hickory_resolver::Resolver;
-use hickory_resolver::config::ResolverConfig;
+use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use hickory_resolver::proto::rr::RecordType;
+use hickory_resolver::system_conf::read_system_conf;
 use instant_acme::{
     Account, ChallengeType, Identifier, LetsEncrypt, NewAccount, NewOrder,
     OrderStatus, RetryPolicy,
@@ -50,7 +51,7 @@ use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use substring::Substring;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 static WELL_KNOWN_PATH_PREFIX: &str = "/.well-known/acme-challenge/";
 
@@ -65,17 +66,24 @@ fn ensure_crypto_provider() {
 
 /// Updates the certificate for the given name and domains using Let's Encrypt.
 /// This function will:
-/// 1. Generate a new certificate from Let's Encrypt
-/// 2. Update the configuration with the new certificate
-/// 3. Save the updated configuration
+/// 1. Verify the certificate configuration can be addressed for saving
+/// 2. Generate a new certificate from Let's Encrypt
+/// 3. Update the configuration with the new certificate
 async fn update_certificate_lets_encrypt(
     config_manager: Arc<ConfigManager>,
     params: UpdateCertificateParams,
 ) -> Result<()> {
-    // get new certificate from lets encrypt
-    let (pem, key) =
-        new_lets_encrypt(config_manager.clone(), true, params.clone()).await?;
-
+    // Resolve the certificate conf BEFORE talking to the CA, and treat a miss
+    // as an error. `get` addresses the conf by its canonical file
+    // (`certificates.toml` / `certificates/<name>.toml`), while the loader
+    // accepts any layout it can glob - so a certificate defined in a combined
+    // file starts up fine but cannot be found here. This used to be a silent
+    // `if let Some`, which dropped the freshly issued certificate on the
+    // floor: renewal logged success, no error anywhere, every handshake
+    // failed with "no match certificate", and the next cycle re-issued from
+    // scratch until Let's Encrypt's duplicate-certificate rate limit cut it
+    // off. Checking first also means a config that cannot take the
+    // certificate never burns an issuance against that rate limit.
     let cert: Option<CertificateConf> = config_manager
         .get(Category::Certificate, &params.name)
         .await
@@ -83,17 +91,29 @@ async fn update_certificate_lets_encrypt(
             category: "load_config".to_string(),
             message: e.to_string(),
         })?;
-    if let Some(mut cert) = cert {
-        cert.tls_cert = Some(pem);
-        cert.tls_key = Some(key);
-        config_manager
-            .update(Category::Certificate, &params.name, &cert)
-            .await
-            .map_err(|e| Error::Fail {
-                category: "save_config".to_string(),
-                message: e.to_string(),
-            })?;
-    }
+    let Some(mut cert) = cert else {
+        return Err(Error::Fail {
+            category: "save_config".to_string(),
+            message: format!(
+                "certificate({}) is not stored where this config layout saves it, so the issued certificate could not be persisted. Pingap normalizes the layout at startup; restart to migrate, or move the [certificates.{}] section into its canonical file.",
+                params.name, params.name
+            ),
+        });
+    };
+
+    // get new certificate from lets encrypt
+    let (pem, key) =
+        new_lets_encrypt(config_manager.clone(), true, params.clone()).await?;
+
+    cert.tls_cert = Some(pem);
+    cert.tls_key = Some(key);
+    config_manager
+        .update(Category::Certificate, &params.name, &cert)
+        .await
+        .map_err(|e| Error::Fail {
+            category: "save_config".to_string(),
+            message: e.to_string(),
+        })?;
     Ok(())
 }
 
@@ -347,8 +367,102 @@ impl BackgroundTask for LetsEncryptTask {
             self.sender.clone(),
         )
         .await?;
+
+        // Hourly (the service ticks once a minute), and never on the first
+        // cycle: during a rolling upgrade an old instance may still be mid
+        // order, and its tokens - written by a version without `created_at` -
+        // are exactly the ones the ageless rule below would remove.
+        if count > 0 && count.is_multiple_of(TOKEN_CLEAR_INTERVAL) {
+            match clear_stale_http_tokens(
+                &self.config_manager,
+                pingap_core::now_sec(),
+            )
+            .await
+            {
+                Ok(0) => {},
+                Ok(removed) => {
+                    info!(
+                        target: LOG_TARGET,
+                        removed, "clear stale http-01 challenge tokens"
+                    );
+                },
+                Err(e) => {
+                    error!(
+                        target: LOG_TARGET,
+                        error = %e,
+                        "clear stale http-01 challenge tokens fail"
+                    );
+                },
+            }
+        }
         Ok(true)
     }
+}
+
+/// The remark every http-01 token is stored with; the cleanup below uses it to
+/// tell tokens apart from storage entries a person created.
+static HTTP_01_TOKEN_REMARK: &str = "let's encrypt http-01 token";
+/// How old a token has to be before cleanup may touch it. Validation completes
+/// within minutes of `set_ready`, whichever instance wrote the token, so a day
+/// is far outside any window in which another process could still need it.
+const HTTP_01_TOKEN_MAX_AGE: u64 = 24 * 3600;
+/// Cleanup cadence in service cycles (one cycle per minute).
+const TOKEN_CLEAR_INTERVAL: u32 = 60;
+
+/// Removes http-01 challenge tokens that no validation can still be using.
+///
+/// Tokens used to be stored and never deleted, piling up in the storage
+/// category forever (one file per token in the separated layout). Removal is
+/// by age rather than on order completion so it stays safe across processes:
+/// deleting a day old token cannot sabotage an in-flight validation, no matter
+/// which instance wrote it. A token without `created_at` predates the field
+/// and is removed too - by the time this runs (an hour after start at the
+/// earliest) no older-version instance can still be waiting on it.
+async fn clear_stale_http_tokens(
+    config_manager: &Arc<ConfigManager>,
+    now: u64,
+) -> Result<u32> {
+    let config = config_manager.load_all().await.map_err(|e| Error::Fail {
+        category: "load_config".to_string(),
+        message: e.to_string(),
+    })?;
+    let mut removed = 0;
+    for (name, value) in config.storages.iter().flatten() {
+        let Ok(conf) = value.clone().try_into::<StorageConf>() else {
+            continue;
+        };
+        // The remark decides what is a token; entries people created through
+        // the admin panel carry their own remarks and are never touched.
+        if conf.remark.as_deref() != Some(HTTP_01_TOKEN_REMARK) {
+            continue;
+        }
+        let stale = conf.created_at.is_none_or(|created_at| {
+            now.saturating_sub(created_at) > HTTP_01_TOKEN_MAX_AGE
+        });
+        if !stale {
+            continue;
+        }
+        match config_manager.delete(Category::Storage, name).await {
+            Ok(()) => {
+                info!(
+                    target: LOG_TARGET,
+                    token = name.as_str(),
+                    "remove stale http-01 challenge token"
+                );
+                removed += 1;
+            },
+            Err(e) => {
+                // Keep going: the next hourly run retries whatever failed.
+                error!(
+                    target: LOG_TARGET,
+                    error = %e,
+                    token = name.as_str(),
+                    "remove stale http-01 challenge token fail"
+                );
+            },
+        }
+    }
+    Ok(removed)
 }
 
 /// Create a Let's Encrypt service to generate the certificate,
@@ -442,15 +556,41 @@ pub async fn handle_lets_encrypt(
                     pingora::Error::new(pingora::ErrorType::InternalError),
                 )
             })?;
-        info!(target: LOG_TARGET, token, "let't encrypt http-01 success");
-        let body = if let Some(value) = value {
-            value.value
-        } else {
-            "".to_string()
+        // The validation request normally comes from the CA; the address
+        // tells scanner probes and misrouted requests apart from real ones.
+        let remote_addr = pingap_core::get_remote_addr(session)
+            .map(|(addr, port)| format!("{addr}:{port}"))
+            .unwrap_or_default();
+        let Some(value) = value else {
+            // A token this instance never stored (or stored by a previous
+            // order). Serving an empty 200 here - the old behaviour - could
+            // never pass validation anyway, but it logged "success" and left
+            // the CA reporting a key authorization mismatch that nothing on
+            // this side accounted for. A 404 with a warning names the failure
+            // where it happens.
+            warn!(
+                target: LOG_TARGET,
+                token,
+                remote_addr,
+                "let's encrypt http-01 token not found"
+            );
+            HttpResponse {
+                status: StatusCode::NOT_FOUND,
+                ..Default::default()
+            }
+            .send(session)
+            .await?;
+            return Ok(true);
         };
+        info!(
+            target: LOG_TARGET,
+            token,
+            remote_addr,
+            "let's encrypt http-01 challenge token served"
+        );
         HttpResponse {
             status: StatusCode::OK,
-            body: body.into(),
+            body: value.value.into(),
             ..Default::default()
         }
         .send(session)
@@ -609,53 +749,107 @@ async fn new_lets_encrypt(
                 info!(
                     target: LOG_TARGET,
                     dns_provider = params.dns_provider,
+                    dns_txt_value,
                     "start add dns txt record for {acme_dns_name}"
                 );
                 task.add_txt_record(&acme_dns_name, &dns_txt_value).await?;
                 info!(
                     target: LOG_TARGET,
                     dns_provider = params.dns_provider,
+                    dns_txt_value,
                     "add dns txt record success for {acme_dns_name}"
                 );
-                let resolver = Resolver::builder_with_config(
-                    ResolverConfig::default(),
+                // The system resolver, like everything else on this host uses;
+                // the previous hardcoded default (Google public DNS) is only
+                // the fallback when the system configuration is unreadable.
+                let (resolver_config, mut resolver_options) =
+                    read_system_conf().unwrap_or_else(|e| {
+                        warn!(
+                            target: LOG_TARGET,
+                            error = %e,
+                            "read system dns conf fail, use default resolver"
+                        );
+                        (ResolverConfig::default(), ResolverOpts::default())
+                    });
+                // No caching: the first lookup runs before the record has
+                // propagated, and a cached NXDOMAIN (negative TTL is the SOA
+                // minimum - often 600s, longer than this whole loop) would be
+                // replayed for every remaining attempt, so the check could
+                // never see the record appear.
+                resolver_options.cache_size = 0;
+                let mut resolver_builder = Resolver::builder_with_config(
+                    resolver_config,
                     TokioRuntimeProvider::default(),
-                )
-                .build()
-                .map_err(|e| Error::Fail {
-                    category: "build_resolver".to_string(),
-                    message: e.to_string(),
-                })?;
+                );
+                *resolver_builder.options_mut() = resolver_options;
+                let resolver =
+                    resolver_builder.build().map_err(|e| Error::Fail {
+                        category: "build_resolver".to_string(),
+                        message: e.to_string(),
+                    })?;
                 // dns txt record may take a while to propagate, so we need to retry
+                let mut confirmed = false;
                 for i in 0..10 {
                     tokio::time::sleep(Duration::from_secs(10)).await;
                     info!(
                         target: LOG_TARGET,
                         "lookup dns txt record of {acme_dns_name}, times:{i}"
                     );
-                    if let Ok(response) =
-                        resolver.lookup(&acme_dns_name, RecordType::TXT).await
+                    match resolver.lookup(&acme_dns_name, RecordType::TXT).await
                     {
-                        let txt_records: Vec<String> = response
-                            .answers()
-                            .iter()
-                            .filter_map(|record| match &record.data {
-                                hickory_resolver::proto::rr::RData::TXT(
-                                    txt,
-                                ) => Some(txt.to_string()),
-                                _ => None,
-                            })
-                            .collect();
-                        let matched = txt_records.contains(&dns_txt_value);
-                        info!(
-                            target: LOG_TARGET,
-                            "get dns txt records: {:?}, matched: {matched}",
-                            txt_records
-                        );
-                        if matched {
-                            break;
-                        }
+                        Ok(response) => {
+                            let txt_records: Vec<String> = response
+                                .answers()
+                                .iter()
+                                .filter_map(|record| match &record.data {
+                                    hickory_resolver::proto::rr::RData::TXT(
+                                        txt,
+                                    ) => Some(txt.to_string()),
+                                    _ => None,
+                                })
+                                .collect();
+                            let matched =
+                                txt_records.contains(&dns_txt_value);
+                            // The name accumulates stale values when earlier
+                            // runs were killed before their cleanup, so a
+                            // `matched: false` is only interpretable next to
+                            // the value this run is actually waiting for.
+                            info!(
+                                target: LOG_TARGET,
+                                expected = dns_txt_value,
+                                "get dns txt records: {:?}, matched: {matched}",
+                                txt_records
+                            );
+                            if matched {
+                                confirmed = true;
+                                break;
+                            }
+                        },
+                        // Expected on the early attempts - NXDOMAIN until the
+                        // record propagates - but it has to be visible: these
+                        // errors were silently swallowed before, which made a
+                        // check that never succeeded look like one that never
+                        // ran.
+                        Err(e) => {
+                            warn!(
+                                target: LOG_TARGET,
+                                error = %e,
+                                "lookup dns txt record of {acme_dns_name} fail"
+                            );
+                        },
                     }
+                }
+                if !confirmed {
+                    // Not fatal by design: this check watches propagation from
+                    // this host's viewpoint, while the CA resolves against the
+                    // authoritative servers itself - so proceed and let it
+                    // decide. Say so, though, or a validation failure right
+                    // after looks inexplicable.
+                    warn!(
+                        target: LOG_TARGET,
+                        expected = dns_txt_value,
+                        "dns txt record of {acme_dns_name} was not confirmed, proceeding to let the CA validate"
+                    );
                 }
                 dns_tasks.push(task);
                 challenge
@@ -666,6 +860,7 @@ async fn new_lets_encrypt(
                         message: "Http01 challenge not found".to_string(),
                     })?;
 
+                let identifier = challenge.identifier().to_string();
                 let key_auth = challenge.key_authorization();
                 config_manager
                     .update(
@@ -675,9 +870,11 @@ async fn new_lets_encrypt(
                             value: key_auth.as_str().to_string(),
                             category: "config".to_string(),
                             secret: None,
-                            remark: Some(
-                                "let's encrypt http-01 token".to_string(),
-                            ),
+                            remark: Some(HTTP_01_TOKEN_REMARK.to_string()),
+                            // Tokens are never deleted on completion (another
+                            // process may still be serving them); the age
+                            // based cleanup keys off this instead.
+                            created_at: Some(pingap_core::now_sec()),
                         },
                     )
                     .await
@@ -685,10 +882,14 @@ async fn new_lets_encrypt(
                         category: "save_token".to_string(),
                         message: e.to_string(),
                     })?;
+                // The identifier ties the token to its authorization: an
+                // order for apex + wildcard runs several of these, and a
+                // later validation failure names the domain, not the token.
                 info!(
                     target: LOG_TARGET,
                     token = challenge.token,
-                    "let's encrypt well known path",
+                    identifier,
+                    "save let's encrypt http-01 challenge token",
                 );
                 challenge
             };
@@ -751,6 +952,119 @@ async fn new_lets_encrypt(
 #[cfg(test)]
 mod tests {
     use super::is_valid_challenge_token;
+    use super::{UpdateCertificateParams, update_certificate_lets_encrypt};
+    use pingap_config::new_file_config_manager;
+    use std::sync::Arc;
+
+    /// Issue #213: a certificate defined in a combined file loads and serves,
+    /// but cannot be addressed by the canonical key the save path uses. That
+    /// used to be a silent no-op AFTER issuance - success logged, certificate
+    /// dropped, re-issued every cycle until the CA's rate limit. It must be a
+    /// loud error, and it must fire BEFORE an issuance is burned (which is
+    /// also what makes this testable offline: reaching the CA would be a
+    /// network call).
+    #[tokio::test]
+    async fn test_renewal_fails_loudly_when_conf_is_not_addressable() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            dir.path().join("combined.toml"),
+            "[certificates.panel]\ndomains = \"example.com\"\nacme = \"lets_encrypt\"\n",
+        )
+        .unwrap();
+        let manager = Arc::new(
+            new_file_config_manager(dir.path().to_string_lossy().as_ref())
+                .unwrap(),
+        );
+
+        let err = update_certificate_lets_encrypt(
+            manager,
+            UpdateCertificateParams {
+                name: "panel".to_string(),
+                domains: vec!["example.com".to_string()],
+                buffer_days: 30,
+                dns_challenge: false,
+                dns_provider: "".to_string(),
+                dns_service_url: "".to_string(),
+            },
+        )
+        .await
+        .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("panel"), "{message}");
+        assert!(message.contains("could not be persisted"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn test_clear_stale_http_tokens() {
+        use super::{HTTP_01_TOKEN_REMARK, clear_stale_http_tokens};
+        use pingap_config::{Category, StorageConf};
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let manager = Arc::new(
+            new_file_config_manager(&format!(
+                "{}?separation=true",
+                dir.path().to_string_lossy()
+            ))
+            .unwrap(),
+        );
+        let now = 1_800_000_000_u64;
+        let token = |created_at: Option<u64>, remark: &str| StorageConf {
+            category: "config".to_string(),
+            value: "key-auth".to_string(),
+            secret: None,
+            remark: Some(remark.to_string()),
+            created_at,
+        };
+        // Older than a day: removable.
+        manager
+            .update(
+                Category::Storage,
+                "stale",
+                &token(Some(now - 25 * 3600), HTTP_01_TOKEN_REMARK),
+            )
+            .await
+            .unwrap();
+        // Fresh: an in-flight validation on any instance may still need it.
+        manager
+            .update(
+                Category::Storage,
+                "fresh",
+                &token(Some(now - 60), HTTP_01_TOKEN_REMARK),
+            )
+            .await
+            .unwrap();
+        // No created_at: written before the field existed - removable.
+        manager
+            .update(
+                Category::Storage,
+                "legacy",
+                &token(None, HTTP_01_TOKEN_REMARK),
+            )
+            .await
+            .unwrap();
+        // A person's storage entry: wrong remark, never touched however old.
+        manager
+            .update(
+                Category::Storage,
+                "user-data",
+                &token(Some(now - 999 * 3600), "my secret"),
+            )
+            .await
+            .unwrap();
+
+        let removed = clear_stale_http_tokens(&manager, now).await.unwrap();
+        assert_eq!(2, removed);
+
+        let left = manager.load_all().await.unwrap();
+        let left = left.storages.unwrap();
+        assert!(left.contains_key("fresh"));
+        assert!(left.contains_key("user-data"));
+        assert!(!left.contains_key("stale"));
+        assert!(!left.contains_key("legacy"));
+
+        // Nothing left to do on the next run.
+        assert_eq!(0, clear_stale_http_tokens(&manager, now).await.unwrap());
+    }
 
     #[test]
     fn test_is_valid_challenge_token() {

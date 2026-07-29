@@ -57,11 +57,11 @@ pingap -c "/opt/pingap/conf?separation=true&enable_history=true"
 | `separation=true` | 每项写入独立文件。除字面 `false` 外均视为 true。 |
 | `enable_history=true` | 在配置旁保留历史版本（`<dir>-history`），供管理 UI 恢复。需要 `separation`。 |
 
-### 切换布局
+### 布局归一化
 
-每种布局写出的文件名不同，而配置目录是把其中**所有** toml 文件拼接起来加载的。因此一个目录如果先按某种布局写入、之后又以另一种布局打开，就会出现同名表的两份副本，解析时报 `duplicate key`，而那个行号在任何单个文件里都对不上。
+每种布局写出的文件名不同，而配置目录是把其中**所有** toml 文件拼接起来加载的。因此**读取**接受任何布局——包括手写的、把所有 section 放在一个文件里的合并布局——但所有**写入**（`get`/`update`/`delete`、管理面板、ACME 证书保存）只按规范文件名寻址。非规范文件对写路径不可见：按名查找会落空（ACME 签发的证书会被静默丢失、每个周期重新签发直到撞上 CA 的限流——issue #213），而按类别写入会在它旁边写出同名表的第二份副本，之后整个目录解析报 `duplicate key`，行号在任何单个文件里都对不上。
 
-`ConfigManager::migrate_layout` 负责处理这种情况。它在启动时、首次读取之前运行一次，按当前布局重写配置，然后清理上一种布局遗留的文件：
+`ConfigManager::migrate_layout` 负责处理这种情况。它在启动时、首次读取之前运行一次，把配置重写为规范布局，然后清理当前布局自己绝不会写出的文件——既包括其它布局的遗留（目录尚不存在时那次运行写下的 `pingap.toml`、separation 目录里的 `certificates.toml`），也包括合并的或任意命名的文件：
 
 - 开启 `enable_history=true` 时，被清理的文件先复制进历史目录再删除；
 - 否则重命名为 `<name>.toml.bak` —— 加载时只 glob `*.toml`，所以改名即可让它不再被读取。
