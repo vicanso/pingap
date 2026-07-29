@@ -15,7 +15,6 @@
 use super::{AcmeDnsTask, Error};
 use async_trait::async_trait;
 use serde::Deserialize;
-use tldextract::{TldExtractor, TldOption};
 use tokio::sync::Mutex;
 use url::Url;
 
@@ -50,18 +49,15 @@ async fn get_zone_id(
     api_token: &str,
     domain_name: &str,
 ) -> Result<String> {
-    let tld_result = TldExtractor::new(TldOption::default())
-        .extract_naive(domain_name)
-        .map_err(new_error)?;
+    // The registrable domain ("example.co.uk" for "sub.example.co.uk") names
+    // the Cloudflare zone. `psl` resolves it against the compiled-in public
+    // suffix list; a name with no registrable part falls back to the input
+    // unchanged, matching the previous behaviour.
+    let domain = psl::domain_str(domain_name)
+        .unwrap_or(domain_name)
+        .to_string();
     let client = reqwest::Client::new();
     let url = format!("{endpoint}/client/v4/zones");
-    let domain = tld_result.domain.unwrap_or_default();
-    let suffix = tld_result.suffix.unwrap_or_default();
-    let domain = if domain.is_empty() || suffix.is_empty() {
-        domain_name.to_string()
-    } else {
-        format!("{domain}.{suffix}")
-    };
 
     let response = client
         .get(url)

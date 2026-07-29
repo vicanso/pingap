@@ -1,0 +1,12 @@
+# Configuration for cargo-audit / the security-audit CI job.
+
+[advisories]
+# Every entry here MUST say why it is ignored and what unblocks removing it.
+ignore = [
+    # protobuf 2.28 (uncontrolled recursion on parsing). Pulled in by
+    # prometheus 0.13, which pingora-core 0.8 pins - nothing in this workspace
+    # can upgrade it. Exposure is limited to metrics encoding: neither pingora
+    # nor pingap feeds untrusted protobuf input to it. Remove when pingora
+    # moves to prometheus >= 0.14 (protobuf 3).
+    "RUSTSEC-2024-0437",
+]
