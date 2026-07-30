@@ -58,15 +58,23 @@ plugins = ["httpCache"]
 清理：
 
 ```bash
+# 单个 URL（同时移除 GET 与 HEAD 两个变体）
 curl -X PURGE http://127.0.0.1:6188/assets/app.js
-# 204 No Content       -> removed
-# 403 Forbidden        -> your IP is not in purge_ip_list
+# 204 No Content       -> 已移除（幂等：无缓存时同样返回 204）
+# 403 Forbidden        -> IP 不在 purge_ip_list 中
+
+# 整个 namespace（仅文件后端且配置了 namespace）
+curl -X PURGE http://127.0.0.1:6188/*
+# 200 "purged: 12, fail: 0"
+# 501 Not Implemented  -> 未配置 namespace，或内存缓存后端
 ```
+
+`PURGE /*` 清空该插件缓存的全部内容：namespace 在文件后端以目录形式存在，是精确 URL 之外唯一无需索引即可清除的粒度（存储文件名是完整键的哈希，URL 前缀在磁盘上没有对应结构）。清除会连同内存热层一起处理，且只作用于本机——多实例部署需要对每个节点分别发起。
 
 ## 行为
 
 - 仅处理 `GET`、`HEAD` 与 `PURGE`；其他方法跳过插件。
-- 缓存键由请求 URI、`namespace` 与所列 `headers` 的值推导。`PURGE` 按 `GET` 方式构建键，因此清理 `/x` 会移除 `GET /x` 创建的条目。
+- 缓存键由请求 URI、`namespace` 与所列 `headers` 的值推导。`PURGE` 会同时按 `GET` 与 `HEAD` 构建键，因此清理 `/x` 会移除两种方法创建的条目。若配置了 `headers`，`PURGE` 请求也要带上相同的头——它们是键的一部分。
 - `lock` 使同一键上的并发未命中等待第一个，而不是全部打到源站。
 - 缓存读/写计数写入请求上下文，访问日志中可用 `{:cache_lookup_time}` / `{:cache_lock_time}`。
 

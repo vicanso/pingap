@@ -62,18 +62,33 @@ plugins = ["httpCache"]
 Purging:
 
 ```bash
+# one url (removes both the GET and the HEAD variant)
 curl -X PURGE http://127.0.0.1:6188/assets/app.js
-# 204 No Content       -> removed
+# 204 No Content       -> removed (idempotent: also 204 when nothing was cached)
 # 403 Forbidden        -> your IP is not in purge_ip_list
+
+# the whole namespace (file backend with a configured namespace only)
+curl -X PURGE http://127.0.0.1:6188/*
+# 200 "purged: 12, fail: 0"
+# 501 Not Implemented  -> no namespace configured, or memory cache backend
 ```
+
+`PURGE /*` empties everything this plugin cached: the namespace survives as a
+directory in the file backend, so it is the one granularity beyond an exact url
+that can be purged without an index (storage file names are hashes of the full
+key — a url prefix does not map to anything on disk). The purge clears the
+in-memory hot layer along with the files, and only cleans the local instance:
+in a multi-instance deployment, issue the request on every node.
 
 ## Behaviour
 
 - Only `GET`, `HEAD` and `PURGE` are handled; every other method skips the
   plugin.
 - The cache key is derived from the request URI plus `namespace` plus the values
-  of the `headers` you listed. `PURGE` builds the key as if the request were a
-  `GET`, so purging `/x` removes the entry created by `GET /x`.
+  of the `headers` you listed. `PURGE` builds the key for both `GET` and `HEAD`,
+  so purging `/x` removes the entries created by either method. If `headers`
+  are configured, send them on the `PURGE` request too — they are part of the
+  key.
 - `lock` makes concurrent misses for the same key wait for the first one instead
   of all hitting the origin.
 - Cache read/write counts are recorded into the request context and are available

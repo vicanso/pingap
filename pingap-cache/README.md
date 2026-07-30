@@ -65,8 +65,13 @@ sweeps inactive files.
 ## Namespaces
 
 The `cache` plugin's `namespace` option isolates entries. With the file backend
-it becomes a subdirectory, which also makes it easy to drop a whole class of
-cached content by removing one directory.
+it becomes a subdirectory, which is what makes namespace-level purging possible:
+`HttpCacheStorage::purge_namespace` walks that directory, removes every object
+from disk and from the TinyUFO hot layer (file names are the cache key hashes,
+which are also the memory keys), and drops the emptied directories. The memory
+backend cannot enumerate its entries, so its `purge_namespace` reports
+"unsupported" (`Ok(None)`) rather than silently doing nothing. The `cache`
+plugin exposes this as `PURGE /*`.
 
 ## Metrics
 

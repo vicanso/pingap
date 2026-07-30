@@ -48,7 +48,7 @@ TinyUFO 是 S3-FIFO 风格缓存，扫描抵抗好且无全局锁，比 LRU 更�
 
 ## 命名空间
 
-`cache` 插件的 `namespace` 选项隔离条目。文件后端下成为子目录，也便于删除整类缓存内容。
+`cache` 插件的 `namespace` 选项隔离条目。文件后端下成为子目录——这正是命名空间级清除得以实现的基础：`HttpCacheStorage::purge_namespace` 遍历该目录，把每个对象从磁盘和 TinyUFO 热层一并移除（文件名就是缓存键哈希，同时也是内存层的键），并删掉清空后的目录。内存后端无法枚举条目，其 `purge_namespace` 返回"不支持"（`Ok(None)`）而不是静默什么都不做。`cache` 插件将此能力暴露为 `PURGE /*`。
 
 ## 指标
 

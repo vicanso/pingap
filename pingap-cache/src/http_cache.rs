@@ -202,6 +202,21 @@ pub trait HttpCacheStorage: Sync + Send {
         })
     }
 
+    /// Removes every cached object in `namespace`.
+    ///
+    /// Storage keys are hashes, so this is only possible where the namespace
+    /// survives as structure - the file backend keeps it as a directory. The
+    /// default says "unsupported" (`Ok(None)`) rather than pretending: the
+    /// memory backend has no way to enumerate its entries, and a purge that
+    /// silently does nothing would leave stale content being served with no
+    /// indication why.
+    async fn purge_namespace(
+        &self,
+        _namespace: &str,
+    ) -> Result<Option<HttpCacheClearStats>> {
+        Ok(None)
+    }
+
     /// Returns current storage statistics.
     ///
     /// # Returns

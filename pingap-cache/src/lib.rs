@@ -214,7 +214,7 @@ pub fn new_cache_backend(directory: &str) -> Result<&'static HttpCache> {
     Ok(cache_ref)
 }
 
-pub use http_cache::{HttpCache, new_storage_clear_service};
+pub use http_cache::{CacheObject, HttpCache, new_storage_clear_service};
 
 #[cfg(feature = "tracing")]
 mod prom;

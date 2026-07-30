@@ -417,15 +417,48 @@ impl Plugin for Cache {
                 }));
             }
 
-            let key = get_cache_key(
-                ctx,
-                Method::GET.as_ref(),
-                &session.req_header().uri,
-            );
-            self.http_cache
-                .cache
-                .remove(&key.combined(), key.namespace())
-                .await?;
+            // `PURGE /*` empties the whole namespace. Anything else purges
+            // exactly the requested uri.
+            if session.req_header().uri.path() == "/*" {
+                let Some(namespace) = &self.namespace else {
+                    return Ok(RequestPluginResult::Respond(HttpResponse {
+                        status: StatusCode::NOT_IMPLEMENTED,
+                        body: Bytes::from_static(
+                            b"namespace purge requires the namespace option",
+                        ),
+                        ..Default::default()
+                    }));
+                };
+                let result =
+                    self.http_cache.cache.purge_namespace(namespace).await?;
+                let Some(stats) = result else {
+                    return Ok(RequestPluginResult::Respond(HttpResponse {
+                        status: StatusCode::NOT_IMPLEMENTED,
+                        body: Bytes::from_static(
+                            b"namespace purge is not supported by the memory cache backend",
+                        ),
+                        ..Default::default()
+                    }));
+                };
+                return Ok(RequestPluginResult::Respond(HttpResponse::text(
+                    format!("purged: {}, fail: {}", stats.success, stats.fail),
+                )));
+            }
+
+            // Cached GET and HEAD responses are separate entries (the method
+            // is part of the key); purge both so a HEAD variant cannot keep
+            // answering for a url that was just purged.
+            for method in [Method::GET, Method::HEAD] {
+                let key = get_cache_key(
+                    ctx,
+                    method.as_ref(),
+                    &session.req_header().uri,
+                );
+                self.http_cache
+                    .cache
+                    .remove(&key.combined(), key.namespace())
+                    .await?;
+            }
             return Ok(
                 RequestPluginResult::Respond(HttpResponse::no_content()),
             );
@@ -564,5 +597,119 @@ max_ttl = "1m"
         );
         assert_eq!(true, session.cache.enabled());
         assert_eq!(100 * 1000, cache.max_file_size);
+    }
+
+    async fn purge(cache: &Cache, path: &str) -> HttpResponse {
+        let input_header = format!("PURGE {path} HTTP/1.1\r\n\r\n");
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::default();
+        // The mock io has no peer address, so the ip check is satisfied
+        // explicitly instead of through `get_client_ip`.
+        ctx.conn.client_ip = Some("127.0.0.1".to_string());
+        let result = cache
+            .handle_request(PluginStep::Request, &mut session, &mut ctx)
+            .await
+            .unwrap();
+        let RequestPluginResult::Respond(resp) = result else {
+            panic!("purge must respond, got a pass-through");
+        };
+        resp
+    }
+
+    #[tokio::test]
+    async fn test_purge_namespace_memory_backend_unsupported() {
+        // No directory -> memory backend, which cannot enumerate entries.
+        let cache = Cache::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+namespace = "purge-mem"
+purge_ip_list = ["127.0.0.1"]
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let resp = purge(&cache, "/*").await;
+        assert_eq!(StatusCode::NOT_IMPLEMENTED, resp.status);
+    }
+
+    #[tokio::test]
+    async fn test_purge_namespace_file_backend() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let cache = Cache::try_from(
+            &toml::from_str::<PluginConf>(&format!(
+                r###"
+directory = "{}"
+namespace = "purge-ns"
+purge_ip_list = ["127.0.0.1"]
+"###,
+                dir.path().to_string_lossy()
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+
+        // Seed one object in the plugin's namespace and one outside it.
+        let obj = pingap_cache::CacheObject {
+            meta: (b"meta0".to_vec(), b"meta1".to_vec()),
+            body: Bytes::from_static(b"cached body"),
+        };
+        cache
+            .http_cache
+            .cache
+            .put("purge-key", b"purge-ns", obj.clone())
+            .await
+            .unwrap();
+        cache
+            .http_cache
+            .cache
+            .put("other-key", b"other-ns", obj)
+            .await
+            .unwrap();
+
+        let resp = purge(&cache, "/*").await;
+        assert_eq!(StatusCode::OK, resp.status);
+        assert_eq!(
+            "purged: 1, fail: 0",
+            std::str::from_utf8(&resp.body).unwrap()
+        );
+
+        // The namespace is empty, the other one is untouched.
+        let purged = cache
+            .http_cache
+            .cache
+            .get("purge-key", b"purge-ns")
+            .await
+            .unwrap();
+        assert_eq!(true, purged.is_none());
+        let kept = cache
+            .http_cache
+            .cache
+            .get("other-key", b"other-ns")
+            .await
+            .unwrap();
+        assert_eq!(true, kept.is_some());
+
+        // An exact purge responds 204 whether or not the entry existed.
+        let resp = purge(&cache, "/vicanso/pingap").await;
+        assert_eq!(StatusCode::NO_CONTENT, resp.status);
+    }
+
+    #[tokio::test]
+    async fn test_purge_forbidden_ip() {
+        let cache = Cache::try_from(
+            &toml::from_str::<PluginConf>(
+                r###"
+namespace = "purge-deny"
+purge_ip_list = ["192.168.1.1"]
+"###,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let resp = purge(&cache, "/*").await;
+        assert_eq!(StatusCode::FORBIDDEN, resp.status);
     }
 }

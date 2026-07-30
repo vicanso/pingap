@@ -660,6 +660,98 @@ impl HttpCacheStorage for FileCache {
     fn inactive(&self) -> Option<Duration> {
         Some(self.cache_inactive)
     }
+
+    /// Removes every cached object under `<directory>/<namespace>`.
+    ///
+    /// Only works with a non-empty namespace: it is the one part of the cache
+    /// key that survives hashing (as a directory), so it is the one granularity
+    /// beyond an exact key that can be purged without an index. An empty
+    /// namespace would mean walking the backend root, where other namespaces'
+    /// directories are indistinguishable from level directories.
+    async fn purge_namespace(
+        &self,
+        namespace: &str,
+    ) -> Result<Option<HttpCacheClearStats>> {
+        if namespace.is_empty()
+            || namespace.contains('/')
+            || namespace.contains('\\')
+            || namespace.contains("..")
+        {
+            return Err(Error::Invalid {
+                message: format!(
+                    "purge namespace requires a plain non-empty namespace, got {namespace:?}"
+                ),
+            });
+        }
+        let dir = Path::new(&self.directory).join(namespace);
+        let description = format!(
+            "purge cache namespace, directory: {}",
+            dir.to_string_lossy()
+        );
+        let mut success = 0;
+        let mut fail = 0;
+        for entry in WalkDir::new(&dir)
+            .into_iter()
+            .filter_map(|item| item.ok())
+            .filter(|item| item.path().is_file())
+        {
+            let path = entry.path();
+            // In-flight temporaries still belong to their writer; the rename
+            // that follows will land the object post-purge, which is the same
+            // as a write that started after the purge.
+            if path.extension().is_some_and(|ext| ext == "tmp") {
+                continue;
+            }
+            let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            match fs::remove_file(path).await {
+                Ok(()) => {
+                    self.current_size.fetch_sub(len, Ordering::Relaxed);
+                    // The file name IS the combined cache key hash, which is
+                    // also the hot layer's key - so the memory copy can be
+                    // dropped too and a purged object cannot keep being
+                    // served from tinyufo.
+                    if let Some(cache) = &self.cache
+                        && let Some(name) =
+                            path.file_name().and_then(|name| name.to_str())
+                    {
+                        cache.remove(&name.to_string());
+                    }
+                    success += 1;
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+                Err(e) => {
+                    fail += 1;
+                    error!(
+                        target: LOG_TARGET,
+                        error = %e,
+                        file = %path.display(),
+                        "purge cache file fail"
+                    );
+                },
+            }
+        }
+        // Best effort: drop now-empty level directories and the namespace
+        // directory itself; a concurrent write recreates what it needs.
+        let mut dirs: Vec<PathBuf> = WalkDir::new(&dir)
+            .into_iter()
+            .filter_map(|item| item.ok())
+            .filter(|item| item.path().is_dir())
+            .map(|item| item.path().to_path_buf())
+            .collect();
+        dirs.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+        for dir in dirs {
+            let _ = fs::remove_dir(&dir).await;
+        }
+        info!(
+            target: LOG_TARGET,
+            namespace, success, fail, "purge cache namespace"
+        );
+        Ok(Some(HttpCacheClearStats {
+            success,
+            fail,
+            description,
+        }))
+    }
 }
 
 /// Sum of file sizes under `directory` (skips missing paths). Used once at
@@ -937,6 +1029,50 @@ mod tests {
             )
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_purge_namespace() {
+        let dir = TempDir::new().unwrap();
+        // tinyufo enabled: a purge has to clear the hot layer too, or the
+        // purged object would keep being served from memory.
+        let cache = FileCache::new(&format!(
+            "{}?cache_max=100",
+            dir.path().to_string_lossy()
+        ))
+        .unwrap();
+        let obj = CacheObject {
+            meta: (b"Hello".to_vec(), b"World".to_vec()),
+            body: Bytes::from_static(b"Hello World!"),
+        };
+        cache.put("key-a1", b"ns-a", obj.clone()).await.unwrap();
+        cache.put("key-a2", b"ns-a", obj.clone()).await.unwrap();
+        cache.put("key-b", b"ns-b", obj.clone()).await.unwrap();
+
+        let stats = cache.purge_namespace("ns-a").await.unwrap().unwrap();
+        assert_eq!(2, stats.success);
+        assert_eq!(0, stats.fail);
+
+        // Gone from disk AND memory (a get would prefer tinyufo).
+        assert_eq!(true, cache.get("key-a1", b"ns-a").await.unwrap().is_none());
+        assert_eq!(true, cache.get("key-a2", b"ns-a").await.unwrap().is_none());
+        // The other namespace is untouched.
+        assert_eq!(obj, cache.get("key-b", b"ns-b").await.unwrap().unwrap());
+        // The namespace directory itself is removed.
+        assert_eq!(false, dir.path().join("ns-a").exists());
+
+        // Idempotent.
+        let stats = cache.purge_namespace("ns-a").await.unwrap().unwrap();
+        assert_eq!(0, stats.success);
+
+        // Guard rails: an empty or traversal namespace is rejected.
+        for bad in ["", "../ns-a", "a/b", "a\\b"] {
+            assert_eq!(
+                true,
+                cache.purge_namespace(bad).await.is_err(),
+                "{bad:?} must be rejected"
+            );
+        }
     }
 
     #[tokio::test]
