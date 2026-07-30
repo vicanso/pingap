@@ -221,6 +221,20 @@ fn new_server_config(
     server_conf
 }
 
+async fn migrate_config_layout(config_manager: &ConfigManager) {
+    match config_manager.migrate_layout().await {
+        Ok(retired) => {
+            for item in retired {
+                // use println because log is not init during normal startup
+                println!("config layout migrated: {item}");
+            }
+        },
+        Err(e) => {
+            println!("config layout migration fail, {e}");
+        },
+    }
+}
+
 fn get_config(
     config_manager: Arc<ConfigManager>,
 ) -> Receiver<Result<PingapConfig, pingap_config::Error>> {
@@ -234,17 +248,7 @@ fn get_config(
                     // into the current one. Failing here must not be fatal - a
                     // read only config directory holding a single old layout
                     // loads perfectly well, and used to.
-                    match config_manager.migrate_layout().await {
-                        Ok(retired) => {
-                            for item in retired {
-                                // use println because log is not init
-                                println!("config layout migrated: {item}");
-                            }
-                        },
-                        Err(e) => {
-                            println!("config layout migration fail, {e}");
-                        },
-                    }
+                    migrate_config_layout(&config_manager).await;
                     match config_manager.load_all().await {
                         Ok(config) => {
                             // TODO 原有的load config有admin模式
@@ -356,6 +360,8 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     }
     let config_manager =
         try_init_config_manager(&args.conf.clone().unwrap_or_default())?;
+    tokio::runtime::Runtime::new()?
+        .block_on(migrate_config_layout(&config_manager));
     let opt = Opt {
         daemon: args.daemon,
         ..Default::default()
