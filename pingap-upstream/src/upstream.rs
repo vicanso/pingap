@@ -375,6 +375,8 @@ pub struct UpstreamStats {
     pub processing: i32,
     pub connected: Option<i32>,
     pub backend_stats: HashMap<String, WindowStats>,
+    /// Circuit breaker state per backend address: 0 closed, 1 open, 2 half-open.
+    pub circuit_states: HashMap<String, u8>,
 }
 
 impl Upstream {
@@ -527,13 +529,22 @@ impl Upstream {
     ///
     /// This method:
     /// 1. Selects an appropriate backend using the configured load balancing strategy
-    /// 2. Increments the processing counter
+    /// 2. Optionally increments the processing counter (once per request — see
+    ///    `count_processing`)
     /// 3. Creates and configures an HttpPeer with the connection settings
+    ///
+    /// # Arguments
+    /// * `count_processing` - When `true`, bump the in-flight processing
+    ///   counter. Callers that retry via pingora's `upstream_peer` loop must
+    ///   pass `true` only on the first attempt: each retry re-enters this
+    ///   method, and counting every attempt would permanently inflate the
+    ///   gauge (only one matching `completed()` runs at request end).
     #[inline]
     pub fn new_http_peer(
         &self,
         session: &Session,
         client_ip: &Option<String>,
+        count_processing: bool,
     ) -> Option<HttpPeer> {
         // Select a backend based on the load balancing strategy
         let upstream = match &self.lb {
@@ -553,8 +564,6 @@ impl Upstream {
             // For transparent mode, no backend selection needed
             SelectionLb::Transparent => None,
         };
-        // Increment counter for requests being processed
-        self.processing.fetch_add(1, Ordering::Relaxed);
 
         // Create HTTP peer based on load balancing mode
         let p = if matches!(self.lb, SelectionLb::Transparent) {
@@ -579,6 +588,11 @@ impl Upstream {
 
         // Configure connection options for the peer
         p.map(|mut p| {
+            // Count only after a peer was actually produced, and only when the
+            // caller says this is the request's first attempt.
+            if count_processing {
+                self.processing.fetch_add(1, Ordering::Relaxed);
+            }
             // Set various timeout values
             p.options.connection_timeout = self.connection_timeout;
             p.options.total_connection_timeout = self.total_connection_timeout;
@@ -641,28 +655,48 @@ impl Upstream {
         let Some(backends) = self.get_backends() else {
             return UpstreamStats::default();
         };
+        let backend_stats = self
+            .backend_stats
+            .as_ref()
+            .map(|backend_stats| backend_stats.get_all_stats(backends))
+            .unwrap_or_default();
+        // Prefer states for backends that are currently in the pool; fall
+        // back to the full circuit map so open breakers still show up after
+        // a backend is temporarily removed by health checks.
+        let mut circuit_states = self
+            .circuit_breaker_states
+            .as_ref()
+            .map(|states| states.get_all_state_codes())
+            .unwrap_or_default();
+        if let Some(states) = &self.circuit_breaker_states {
+            for backend in backends.get_backend().iter() {
+                let addr = backend.addr.to_string();
+                circuit_states
+                    .entry(addr.clone())
+                    .or_insert_with(|| states.get_state_code(&addr));
+            }
+        }
         UpstreamStats {
             processing: self.processing.load(Ordering::Relaxed),
             connected: self
                 .peer_tracer
                 .as_ref()
                 .map(|tracer| tracer.connected()),
-            backend_stats: self
-                .backend_stats
-                .as_ref()
-                .map(|backend_stats| backend_stats.get_all_stats(backends))
-                .unwrap_or_default(),
+            backend_stats,
+            circuit_states,
         }
     }
 }
 
 impl UpstreamInstance for Upstream {
-    /// Decrements and returns the number of requests being processed
+    /// Decrements the in-flight processing counter and returns the remaining
+    /// count *after* this request has been released.
     ///
     /// # Returns
-    /// * `i32` - Previous count of requests being processed
+    /// * `i32` - Concurrent requests still processing on this upstream
     fn completed(&self) -> i32 {
-        self.processing.fetch_add(-1, Ordering::Relaxed)
+        // `fetch_sub` returns the previous value; subtract 1 for the new one.
+        self.processing.fetch_sub(1, Ordering::Relaxed) - 1
     }
     fn on_transport_failure(&self, address: &str) {
         let Some(backend_stats) = &self.backend_stats else {
@@ -1013,9 +1047,14 @@ mod tests {
         .unwrap();
         up.processing.fetch_add(10, Ordering::Relaxed);
         let value = up.processing.load(Ordering::Relaxed);
-        assert_eq!(value, up.completed());
+        // completed() returns the remaining count after releasing one slot
+        assert_eq!(value - 1, up.completed());
         assert_eq!(value - 1, up.processing.load(Ordering::Relaxed));
-        assert_eq!(true, up.new_http_peer(&session, &None,).is_some());
+        assert_eq!(true, up.new_http_peer(&session, &None, true).is_some());
+        assert_eq!(value, up.processing.load(Ordering::Relaxed));
+        // A retry must not bump processing again
+        assert_eq!(true, up.new_http_peer(&session, &None, false).is_some());
+        assert_eq!(value, up.processing.load(Ordering::Relaxed));
     }
 
     #[tokio::test]
@@ -1038,7 +1077,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let peer = up.new_http_peer(&session, &None).unwrap();
+        let peer = up.new_http_peer(&session, &None, true).unwrap();
         assert_eq!(100, peer.options.max_h2_streams);
 
         // Unset falls back to Pingora's default of 1.
@@ -1052,7 +1091,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let peer = up.new_http_peer(&session, &None).unwrap();
+        let peer = up.new_http_peer(&session, &None, true).unwrap();
         assert_eq!(1, peer.options.max_h2_streams);
     }
 

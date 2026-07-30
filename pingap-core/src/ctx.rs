@@ -184,6 +184,10 @@ impl Default for Timing {
 pub trait UpstreamInstance: Send + Sync {
     fn on_transport_failure(&self, address: &str);
     fn on_response(&self, address: &str, status: StatusCode);
+    /// Marks the request as finished on this upstream.
+    ///
+    /// Returns the number of in-flight requests still being processed *after*
+    /// releasing this one (so a zero means the upstream is idle).
     fn completed(&self) -> i32;
 }
 

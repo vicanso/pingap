@@ -114,10 +114,15 @@ impl PathSelector {
 // HostSelector enum represents ways to match request hosts:
 // - Regex: Uses regex pattern matching with capture groups
 // - Equal: Matches exact hostname
+// - Suffix: Matches one-or-more subdomains of a domain (`*.example.com`)
 #[derive(Debug)]
 enum HostSelector {
     Regex(RegexCapture),
     Equal(String),
+    /// Domain without the leading `*.` — e.g. `"example.com"` for `*.example.com`.
+    /// Matches `a.example.com` but not the apex `example.com` (same as common
+    /// TLS wildcard rules).
+    Suffix(String),
 }
 impl HostSelector {
     /// Creates a new host selector based on the input host string.
@@ -131,6 +136,7 @@ impl HostSelector {
     /// # Host Format
     /// - Empty string: Matches empty host
     /// - Starting with "~": Regex pattern matching with capture groups
+    /// - Starting with `*.`: Suffix / subdomain wildcard (`*.example.com`)
     /// - Otherwise: Exact hostname matching
     fn new(host: &str) -> Result<Self> {
         let host = host.trim();
@@ -139,17 +145,51 @@ impl HostSelector {
                 value: re_host.trim(),
             })?;
             Ok(HostSelector::Regex(re))
+        } else if let Some(domain) = host.strip_prefix("*.") {
+            let domain = domain.trim();
+            if domain.is_empty() || domain.contains('*') {
+                return Err(Error::Invalid {
+                    message: format!("invalid host wildcard pattern: {host}"),
+                });
+            }
+            Ok(HostSelector::Suffix(domain.to_ascii_lowercase()))
         } else {
-            Ok(HostSelector::Equal(host.to_string()))
+            Ok(HostSelector::Equal(host.to_ascii_lowercase()))
         }
     }
     #[inline]
     fn is_match(&self, host: &str) -> (bool, Option<AHashMap<String, String>>) {
+        // Host matching is case-insensitive (Host header may vary in case).
+        let host_lower = host.to_ascii_lowercase();
         match self {
-            HostSelector::Equal(value) => (value == host, None),
+            HostSelector::Equal(value) => (value == &host_lower, None),
+            HostSelector::Suffix(domain) => {
+                (host_matches_suffix(&host_lower, domain), None)
+            },
             HostSelector::Regex(value) => value.captures(host),
         }
     }
+}
+
+/// `*.example.com` style: host is a subdomain of `domain`, not the apex itself.
+#[inline]
+pub(crate) fn host_matches_suffix(host: &str, domain: &str) -> bool {
+    host.len() > domain.len() + 1
+        && host.ends_with(domain)
+        && host.as_bytes().get(host.len() - domain.len() - 1) == Some(&b'.')
+}
+
+/// Classification of a single host pattern for the routing index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostIndexEntry {
+    /// Exact host string (already lowercased).
+    Exact(String),
+    /// Suffix domain without `*.` (already lowercased).
+    Suffix(String),
+    /// Regex host — cannot be hashed, scanned linearly.
+    Regex,
+    /// No host restriction — matches every request host.
+    Any,
 }
 
 // proxy_set_header X-Real-IP $remote_addr;
@@ -490,6 +530,28 @@ impl Location {
         Ok(())
     }
 
+    /// Host patterns of this location classified for [`crate::LocationHostIndex`].
+    ///
+    /// A multi-host location contributes one entry per pattern so it appears in
+    /// every relevant bucket. Empty host list → a single [`HostIndexEntry::Any`].
+    pub fn host_index_entries(&self) -> Vec<HostIndexEntry> {
+        if self.hosts.is_empty() {
+            return vec![HostIndexEntry::Any];
+        }
+        self.hosts
+            .iter()
+            .map(|selector| match selector {
+                HostSelector::Equal(value) => {
+                    HostIndexEntry::Exact(value.clone())
+                },
+                HostSelector::Suffix(domain) => {
+                    HostIndexEntry::Suffix(domain.clone())
+                },
+                HostSelector::Regex(_) => HostIndexEntry::Regex,
+            })
+            .collect()
+    }
+
     /// Checks if a request matches this location's path and host rules
     /// Returns a tuple containing:
     /// - bool: Whether the request matched both path and host rules
@@ -756,8 +818,24 @@ mod tests {
         )
         .unwrap();
         assert_eq!(true, lo.match_host_path("pingap", "/api").0);
+        assert_eq!(true, lo.match_host_path("Pingap", "/api").0); // case-insensitive
         assert_eq!(true, lo.match_host_path("pingap", "").0);
         assert_eq!(false, lo.match_host_path("", "/api").0);
+
+        // wildcard suffix host
+        let lo = Location::new(
+            "lo",
+            &LocationConf {
+                upstream: Some(upstream_name.to_string()),
+                host: Some("*.example.com".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(true, lo.match_host_path("a.example.com", "/").0);
+        assert_eq!(true, lo.match_host_path("api.example.com", "/").0);
+        assert_eq!(false, lo.match_host_path("example.com", "/").0);
+        assert_eq!(false, lo.match_host_path("evil-example.com", "/").0);
 
         // regex
         let lo = Location::new(

@@ -20,6 +20,7 @@ use super::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use super::{Error, LOG_TARGET, PAGE_SIZE, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
+use bytesize::ByteSize;
 use chrono::{DateTime, Local};
 use path_absolutize::*;
 use pingap_core::TinyUfo;
@@ -67,6 +68,11 @@ pub struct FileCache {
     cache_inactive: Duration,
     /// Cache file path levels
     levels: Vec<u32>,
+    /// Max total size of on-disk cache files in bytes; 0 means unlimited.
+    max_size: u64,
+    /// Approximate current on-disk usage (bytes). Maintained on put/remove/clear
+    /// and initialised by a directory walk at construction time.
+    current_size: AtomicU64,
 }
 
 fn split_levels<'de, D>(deserializer: D) -> Result<Vec<u32>, D::Error>
@@ -120,6 +126,8 @@ struct FileCacheParams {
     #[serde(default)]
     #[serde(deserialize_with = "split_levels")]
     levels: Vec<u32>,
+    /// Max total on-disk cache size (e.g. `max_size=10gb`). 0 / unset = unlimited.
+    max_size: Option<ByteSize>,
 }
 
 impl TryFrom<&str> for FileCacheParams {
@@ -176,6 +184,10 @@ impl FileCache {
             std::fs::create_dir_all(path)
                 .map_err(|e| Error::Io { source: e })?;
         }
+        let max_size = params.max_size.map(|s| s.as_u64()).unwrap_or(0);
+        // One-shot walk so the budget starts from real usage rather than zero
+        // (which would otherwise allow a large overshoot after restart).
+        let current_size = measure_dir_size(&params.directory);
         info!(
             target: LOG_TARGET,
             dir = params.directory,
@@ -189,6 +201,8 @@ impl FileCache {
             writing_max = params.writing_max,
             cache_max = params.cache_max,
             cache_file_max_weight = params.cache_file_max_weight,
+            max_size,
+            current_size,
             "new file cache"
         );
         let mut cache = None;
@@ -218,7 +232,87 @@ impl FileCache {
                 .inactive
                 .unwrap_or(Duration::from_secs(48 * 3600)),
             levels: params.levels,
+            max_size,
+            current_size: AtomicU64::new(current_size),
         })
+    }
+
+    /// Best-effort disk budget: free at least `need` bytes by deleting the
+    /// least-recently-accessed files until `current_size + need <= max_size`.
+    /// Returns early if `max_size` is unlimited or nothing more can be removed.
+    async fn ensure_disk_space(&self, need: u64) {
+        if self.max_size == 0 {
+            return;
+        }
+        // Cap eviction work per put so a pathological directory cannot stall
+        // a single write forever.
+        const MAX_EVICT: usize = 64;
+        for _ in 0..MAX_EVICT {
+            let cur = self.current_size.load(Ordering::Relaxed);
+            if cur.saturating_add(need) <= self.max_size {
+                return;
+            }
+            if !self.evict_oldest_file().await {
+                return;
+            }
+        }
+    }
+
+    /// Removes the least-recently-accessed cache file. Returns `false` when
+    /// the directory is empty or nothing could be deleted.
+    async fn evict_oldest_file(&self) -> bool {
+        let mut oldest: Option<(SystemTime, PathBuf, u64)> = None;
+        for entry in WalkDir::new(&self.directory)
+            .into_iter()
+            .filter_map(|item| item.ok())
+            .filter(|item| item.path().is_file())
+        {
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            // Skip in-progress temps; the writer still owns them.
+            if entry.path().extension().is_some_and(|ext| ext == "tmp") {
+                continue;
+            }
+            let accessed =
+                metadata.accessed().unwrap_or(SystemTime::UNIX_EPOCH);
+            let len = metadata.len();
+            let replace = match &oldest {
+                None => true,
+                Some((t, _, _)) => accessed < *t,
+            };
+            if replace {
+                oldest = Some((accessed, entry.path().to_path_buf(), len));
+            }
+        }
+        let Some((_, path, len)) = oldest else {
+            return false;
+        };
+        match fs::remove_file(&path).await {
+            Ok(()) => {
+                self.current_size.fetch_sub(len, Ordering::Relaxed);
+                debug!(
+                    target: LOG_TARGET,
+                    file = %path.display(),
+                    len,
+                    "evict cache file for max_size budget"
+                );
+                true
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                self.current_size.fetch_sub(len, Ordering::Relaxed);
+                true
+            },
+            Err(e) => {
+                warn!(
+                    target: LOG_TARGET,
+                    error = %e,
+                    file = %path.display(),
+                    "evict cache file fail"
+                );
+                false
+            },
+        }
     }
     #[inline]
     fn get_file_path(&self, key: &str, namespace: &str) -> std::path::PathBuf {
@@ -263,8 +357,9 @@ impl HttpCacheStorage for FileCache {
     ///
     /// # Returns
     /// * `Ok(Some(CacheObject))` - If cache entry is found and valid
-    /// * `Ok(None)` - If entry doesn't exist or is invalid
-    /// * `Err(Error::OverQuota)` - If max concurrent reads exceeded
+    /// * `Ok(None)` - If entry doesn't exist, is invalid, or concurrent
+    ///   reads are over quota (treated as a miss so the request falls back
+    ///   to origin instead of 5xx)
     /// * `Err(Error::Io)` - On file system errors
     async fn get(
         &self,
@@ -290,11 +385,15 @@ impl HttpCacheStorage for FileCache {
         // add reading count
         let count = self.reading.fetch_add(1, Ordering::Relaxed);
         defer!(self.reading.fetch_sub(1, Ordering::Relaxed););
+        // Over quota: degrade to a miss (origin fetch) rather than 5xx.
         if self.reading_max > 0 && count >= self.reading_max {
-            return Err(Error::OverQuota {
-                max: self.reading_max,
-                message: "too many reading".to_string(),
-            });
+            debug!(
+                target: LOG_TARGET,
+                key,
+                max = self.reading_max,
+                "file cache read over quota, treat as miss"
+            );
+            return Ok(None);
         }
         let result = fs::read(&file).await;
         #[cfg(feature = "tracing")]
@@ -314,7 +413,11 @@ impl HttpCacheStorage for FileCache {
                         error = %e,
                         "remove corrupt cache file"
                     );
-                    let _ = fs::remove_file(&file).await;
+                    let len =
+                        fs::metadata(&file).await.map(|m| m.len()).unwrap_or(0);
+                    if fs::remove_file(&file).await.is_ok() {
+                        self.current_size.fetch_sub(len, Ordering::Relaxed);
+                    }
                     Ok(None)
                 },
             },
@@ -345,8 +448,8 @@ impl HttpCacheStorage for FileCache {
     /// * `data` - The cache object to store
     ///
     /// # Returns
-    /// * `Ok(())` - On successful storage
-    /// * `Err(Error::OverQuota)` - If max concurrent writes exceeded
+    /// * `Ok(())` - On successful storage, or when concurrent writes are
+    ///   over quota (disk write is skipped; memory layer may still hold it)
     /// * `Err(Error::Io)` - On file system errors
     async fn put(
         &self,
@@ -372,11 +475,16 @@ impl HttpCacheStorage for FileCache {
         // add writing count
         let count = self.writing.fetch_add(1, Ordering::Relaxed);
         defer!(self.writing.fetch_sub(1, Ordering::Relaxed););
+        // Over quota: skip the disk write instead of failing the response.
+        // Hot data may already be in TinyUfo above.
         if self.writing_max > 0 && count >= self.writing_max {
-            return Err(Error::OverQuota {
-                max: self.writing_max,
-                message: "too many writing".to_string(),
-            });
+            debug!(
+                target: LOG_TARGET,
+                key,
+                max = self.writing_max,
+                "file cache write over quota, skip disk put"
+            );
+            return Ok(());
         }
         if let Some(parent) = file.parent() {
             fs::create_dir_all(parent)
@@ -392,6 +500,12 @@ impl HttpCacheStorage for FileCache {
         // The suffix carries the pid because two instances share the cache
         // directory during a zero-downtime upgrade, and a per-process counter
         // keeps concurrent writes of the same key inside one process apart.
+        let new_len = buf.len() as u64;
+        // Account for overwriting an existing object so the budget stays honest.
+        let old_len = fs::metadata(&file).await.map(|m| m.len()).unwrap_or(0);
+        let net_add = new_len.saturating_sub(old_len);
+        self.ensure_disk_space(net_add).await;
+
         let tmp = file.with_file_name(format!(
             "{}.{}.{}.tmp",
             file.file_name()
@@ -401,7 +515,7 @@ impl HttpCacheStorage for FileCache {
             TMP_FILE_SEQ.fetch_add(1, Ordering::Relaxed),
         ));
         let result = async {
-            fs::write(&tmp, buf).await?;
+            fs::write(&tmp, &buf).await?;
             if let Err(e) = fs::rename(&tmp, &file).await {
                 // Never leave the temporary file behind: nothing else knows
                 // about it, so nothing else would ever clean it up.
@@ -414,6 +528,12 @@ impl HttpCacheStorage for FileCache {
         #[cfg(feature = "tracing")]
         self.write_time.observe(elapsed_second(start));
         let _ = result.map_err(|e| Error::Io { source: e })?;
+        // current = current - old + new
+        let _ = self.current_size.fetch_update(
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+            |cur| Some(cur.saturating_sub(old_len).saturating_add(new_len)),
+        );
         debug!(
             target: LOG_TARGET,
             key,
@@ -448,13 +568,20 @@ impl HttpCacheStorage for FileCache {
             key,
             std::string::String::from_utf8_lossy(namespace).as_ref(),
         );
-        fs::remove_file(file)
-            .await
-            .map_err(|e| Error::Io { source: e })?;
-        debug!(
-            target: LOG_TARGET,
-            key, namespace, "remove cache from file"
-        );
+        let old_len = fs::metadata(&file).await.map(|m| m.len()).unwrap_or(0);
+        match fs::remove_file(&file).await {
+            Ok(()) => {
+                self.current_size.fetch_sub(old_len, Ordering::Relaxed);
+                debug!(
+                    target: LOG_TARGET,
+                    key, namespace, "remove cache from file"
+                );
+            },
+            // Already gone (e.g. external cleanup) — same as a cache miss on
+            // get, not an operational error.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+            Err(e) => return Err(Error::Io { source: e }),
+        }
         Ok(None)
     }
     /// Returns current cache statistics.
@@ -503,8 +630,10 @@ impl HttpCacheStorage for FileCache {
             }
             let path = entry.path();
             let file = path.to_string_lossy().to_string();
+            let len = metadata.len();
             match fs::remove_file(path).await {
                 Ok(()) => {
+                    self.current_size.fetch_sub(len, Ordering::Relaxed);
                     info!(
                         target: LOG_TARGET,
                         file, "remove cache file success"
@@ -533,6 +662,18 @@ impl HttpCacheStorage for FileCache {
     }
 }
 
+/// Sum of file sizes under `directory` (skips missing paths). Used once at
+/// construction so the `max_size` budget starts from real disk usage.
+fn measure_dir_size(directory: &str) -> u64 {
+    WalkDir::new(directory)
+        .into_iter()
+        .filter_map(|item| item.ok())
+        .filter(|item| item.path().is_file())
+        .filter_map(|item| item.metadata().ok())
+        .map(|m| m.len())
+        .sum()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -546,18 +687,48 @@ mod tests {
     #[test]
     fn test_parse_params() {
         let params = FileCacheParams::try_from(
-              "~/pingap?reading_max=1000&writing_max=500&cache_max=100&inactive=10m&levels=1:2",
+              "~/pingap?reading_max=1000&writing_max=500&cache_max=100&inactive=10m&levels=1:2&max_size=10mb",
           ).unwrap();
         assert_eq!(params.reading_max, Some(1000));
         assert_eq!(params.writing_max, Some(500));
         assert_eq!(params.cache_max, 100);
         assert_eq!(params.inactive, Some(Duration::from_secs(600)));
         assert_eq!(params.levels, vec![1, 2]);
+        assert_eq!(params.max_size, Some(ByteSize::mb(10)));
         assert!(
             params
                 .directory
                 .starts_with(dirs::home_dir().unwrap().to_str().unwrap())
         );
+    }
+
+    #[tokio::test]
+    async fn test_read_write_over_quota_degrades() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        // Only one concurrent read/write allowed.
+        let cache =
+            FileCache::new(&format!("{path}?reading_max=1&writing_max=1"))
+                .unwrap();
+        // Force the counters into the over-quota region without a real concurrent peer.
+        cache.reading.store(1, Ordering::Relaxed);
+        cache.writing.store(1, Ordering::Relaxed);
+
+        let obj = CacheObject {
+            meta: (b"k".to_vec(), b"v".to_vec()),
+            body: Bytes::from_static(b"body"),
+        };
+        // Write over quota: Ok, no error, no 5xx path.
+        cache.put("k", b"", obj.clone()).await.unwrap();
+        // File should not have been written.
+        assert_eq!(true, cache.get("k", b"").await.unwrap().is_none());
+
+        // Seed a file under the limit for the read path.
+        cache.writing.store(0, Ordering::Relaxed);
+        cache.put("k", b"", obj).await.unwrap();
+        cache.reading.store(1, Ordering::Relaxed);
+        // Read over quota: miss, not error.
+        assert_eq!(true, cache.get("k", b"").await.unwrap().is_none());
     }
 
     /// A comprehensive test for the FileCache functionality.

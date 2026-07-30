@@ -19,19 +19,31 @@ use pingap_cache::{CACHE_READING_TIME, CACHE_WRITING_TIME};
 use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
 use pingap_core::{Ctx, get_hostname};
+use pingap_upstream::UpstreamProvider;
 use pingora::proxy::Session;
 use prometheus::core::Collector;
 use prometheus::{
-    Encoder, HistogramVec, Opts, ProtobufEncoder, Registry, TextEncoder,
+    Encoder, GaugeVec, HistogramVec, Opts, ProtobufEncoder, Registry,
+    TextEncoder,
 };
 use prometheus::{
     Histogram, HistogramOpts, IntCounter, IntCounterVec, IntGauge, IntGaugeVec,
 };
 use smallvec::SmallVec;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tracing::error;
 use url::Url;
+
+/// Optional upstream provider used to refresh per-backend gauges on scrape.
+static METRICS_UPSTREAM_PROVIDER: OnceLock<Arc<dyn UpstreamProvider>> =
+    OnceLock::new();
+
+/// Registers the process-wide upstream provider so Prometheus scrapes can
+/// export per-backend failure rate and circuit-breaker state.
+pub fn set_metrics_upstream_provider(provider: Arc<dyn UpstreamProvider>) {
+    let _ = METRICS_UPSTREAM_PROVIDER.set(provider);
+}
 
 /// Tag used to dynamically replace with actual hostname in prometheus push URLs.
 /// This allows for dynamic host identification in distributed deployments.
@@ -132,6 +144,15 @@ pub struct Prometheus {
 
     /// Current number of IPv6 TCP connections
     tcp6_count: Box<IntGauge>,
+
+    /// Sliding-window failure rate percent per upstream backend (0–100)
+    upstream_backend_failure_rate: Box<GaugeVec>,
+
+    /// Sliding-window request count per upstream backend
+    upstream_backend_requests: Box<IntGaugeVec>,
+
+    /// Circuit breaker state per upstream backend: 0 closed, 1 open, 2 half-open
+    upstream_backend_circuit_state: Box<IntGaugeVec>,
 }
 
 /// Milliseconds to seconds conversion factor
@@ -338,7 +359,37 @@ impl Prometheus {
         self.fd_count.set(info.fd_count as i64);
         self.tcp_count.set(info.tcp_count as i64);
         self.tcp6_count.set(info.tcp6_count as i64);
+        self.refresh_upstream_backend_metrics();
         self.r.gather()
+    }
+
+    /// Push current per-backend stats/circuit state into the gauge vectors.
+    fn refresh_upstream_backend_metrics(&self) {
+        let Some(provider) = METRICS_UPSTREAM_PROVIDER.get() else {
+            return;
+        };
+        for (upstream_name, stats) in provider.get_all_stats() {
+            // Union of backends that have window stats and/or a circuit state.
+            let mut backends: std::collections::HashSet<&str> =
+                stats.backend_stats.keys().map(|s| s.as_str()).collect();
+            backends.extend(stats.circuit_states.keys().map(|s| s.as_str()));
+            for backend in backends {
+                let labels = [upstream_name.as_str(), backend];
+                if let Some(window) = stats.backend_stats.get(backend) {
+                    self.upstream_backend_failure_rate
+                        .with_label_values(&labels)
+                        .set(window.failure_rate_percent);
+                    self.upstream_backend_requests
+                        .with_label_values(&labels)
+                        .set(window.total_requests as i64);
+                }
+                let state =
+                    stats.circuit_states.get(backend).copied().unwrap_or(0);
+                self.upstream_backend_circuit_state
+                    .with_label_values(&labels)
+                    .set(state as i64);
+            }
+        }
     }
 
     /// Formats all metrics in Prometheus text format for scraping.
@@ -805,6 +856,40 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         "pingap_tcp6_count",
         "pingap tcp6 connections"
     )?;
+    let upstream_backend_failure_rate =
+        {
+            let opts = Opts::new(
+                "pingap_upstream_backend_failure_rate",
+                "pingap sliding-window backend failure rate percent (0-100)",
+            )
+            .const_label("server", server);
+            let metric = GaugeVec::new(opts, &["upstream", "backend"])
+                .map_err(|e| Error::Prometheus {
+                    message: e.to_string(),
+                })?;
+            r.register(Box::new(metric.clone())).map_err(|e| {
+                Error::Prometheus {
+                    message: e.to_string(),
+                }
+            })?;
+            Box::new(metric)
+        };
+    let upstream_backend_requests = register_metric!(
+        r,
+        new_int_gauge_vec,
+        server,
+        "pingap_upstream_backend_requests",
+        "pingap sliding-window backend request count",
+        &["upstream", "backend"]
+    )?;
+    let upstream_backend_circuit_state = register_metric!(
+        r,
+        new_int_gauge_vec,
+        server,
+        "pingap_upstream_backend_circuit_state",
+        "pingap backend circuit state (0=closed,1=open,2=half-open)",
+        &["upstream", "backend"]
+    )?;
 
     let collectors: Vec<Box<dyn Collector>> =
         vec![CACHE_READING_TIME.clone(), CACHE_WRITING_TIME.clone()];
@@ -842,6 +927,9 @@ pub fn new_prometheus(server: &str) -> Result<Prometheus> {
         fd_count,
         tcp_count,
         tcp6_count,
+        upstream_backend_failure_rate,
+        upstream_backend_requests,
+        upstream_backend_circuit_state,
     })
 }
 

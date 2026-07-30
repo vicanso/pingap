@@ -57,6 +57,9 @@ prometheus_metrics = "http://user:pass@pushgateway:9091/job/pingap?interval=15s"
 | `pingap_upstream_tls_handshake_time` | histogram | upstream | Upstream TLS handshake (s) |
 | `pingap_upstream_processing_time` | histogram | upstream | Upstream processing (s) |
 | `pingap_upstream_response_time` | histogram | upstream | Upstream response (s) |
+| `pingap_upstream_backend_failure_rate` | gauge | upstream, backend | Sliding-window failure rate percent (0–100) |
+| `pingap_upstream_backend_requests` | gauge | upstream, backend | Sliding-window request count |
+| `pingap_upstream_backend_circuit_state` | gauge | upstream, backend | Circuit state: 0 closed, 1 open, 2 half-open |
 | `pingap_cache_lookup_time` | histogram | — | Cache lookup (s) |
 | `pingap_cache_lock_time` | histogram | — | Time waiting on a cache lock (s) |
 | `pingap_cache_reading` / `pingap_cache_writing` | gauge | — | Concurrent cache reads / writes |

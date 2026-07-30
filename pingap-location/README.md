@@ -5,8 +5,10 @@ This module provides an intelligent and flexible request routing system for reve
 ## Features
 
 - **Dynamic Host Matching**: Match requests based on the `Host` header using:
-  - **Exact Match**: e.g., `example.com`
+  - **Exact Match**: e.g., `example.com` (case-insensitive)
+  - **Wildcard / suffix**: e.g., `*.example.com` (subdomains only, not the apex)
   - **Regex Match**: e.g., `~(?<subdomain>.+)\.example\.com`, with support for named captures.
+- **Host-bucket routing index**: per-server weight-ordered locations are indexed by exact host, suffix, regex, and “any host” so matching skips unrelated hosts when hostnames are diverse (see `LocationHostIndex`).
 - **Flexible Path Matching**: Match requests based on the URL path with different strategies:
   - **Exact Match**: e.g., `=/api/login`
   - **Prefix Match**: e.g., `/static`
@@ -26,9 +28,19 @@ The `Location` is the central struct that encapsulates a complete set of routing
 
 ### `HostSelector`
 
-This enum determines how to match the request's `Host` header. It can be an exact string match or a regular expression. When using a regex, named capture groups (e.g., `(?<name>...)`) can be used to extract variables from the hostname for use in rewriting or other logic.
+How the request `Host` header is matched:
 
-For example, a `HostSelector` with the pattern `~(?<name>.+).npmtrend.com` will match `charts.npmtrend.com` and capture `charts` into the `name` variable.
+| Pattern | Meaning |
+| --- | --- |
+| `example.com` | Exact match (case-insensitive) |
+| `*.example.com` | Any subdomain of `example.com` (not the apex itself) |
+| `~regex` | Regex with optional named captures |
+
+Example: `~(?<name>.+)\.npmtrend\.com` matches `charts.npmtrend.com` and captures `charts` as `name`.
+
+### `LocationHostIndex` / `ServerLocationRoute`
+
+Built when server locations are (re)loaded. For each request host the index returns a **weight-ordered** candidate list (exact + matching suffixes + all regex-host locations + any-host locations). Full path/condition matching still runs only on those candidates, so the first hit is the same as a linear scan of the full weight-sorted list.
 
 ### `PathSelector`
 

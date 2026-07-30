@@ -16,7 +16,7 @@ use super::{Addr, Error, Result, format_addrs};
 use super::{DNS_DISCOVERY, Discovery, LOG_TARGET};
 use async_trait::async_trait;
 use futures::future::join_all;
-use hickory_resolver::Resolver;
+use hickory_resolver::TokioResolver;
 use hickory_resolver::config::{
     LookupIpStrategy, NameServerConfig, ResolverConfig, ResolverOpts,
 };
@@ -31,14 +31,31 @@ use pingora::lb::discovery::ServiceDiscovery;
 use pingora::lb::{Backend, Backends};
 use pingora::protocols::l4::socket::SocketAddr;
 use std::collections::{BTreeSet, HashMap};
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr as StdSocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
 use tracing::{debug, error, info};
 
+/// How long a built `Resolver` may be reused before re-reading system conf.
+const RESOLVER_REFRESH: Duration = Duration::from_secs(60);
+/// Floor / ceiling for DNS-TTL-based result caching.
+const DISCOVERY_CACHE_MIN: Duration = Duration::from_secs(5);
+const DISCOVERY_CACHE_MAX: Duration = Duration::from_secs(300);
+
+struct CachedResolver {
+    resolver: Arc<TokioResolver>,
+    built_at: Instant,
+}
+
+struct DiscoveryCache {
+    backends: BTreeSet<Backend>,
+    failed_hosts: Vec<String>,
+    valid_until: Instant,
+}
+
 /// DNS service discovery implementation
-#[derive(Default)]
 struct Dns {
     ipv4_only: bool,
     hosts: Vec<Addr>,
@@ -46,6 +63,10 @@ struct Dns {
     name_server: Option<String>,
     domain: Option<String>,
     search: Option<String>,
+    /// Reused across discovery ticks; rebuilt when system DNS conf may have changed.
+    resolver: Mutex<Option<CachedResolver>>,
+    /// Successful (or partial) discovery result held until the shortest DNS TTL.
+    discovery_cache: Mutex<Option<DiscoveryCache>>,
 }
 
 /// Checks if the discovery type is DNS
@@ -69,8 +90,36 @@ impl Dns {
             hosts,
             ipv4_only,
             sender: None,
-            ..Default::default()
+            name_server: None,
+            domain: None,
+            search: None,
+            resolver: Mutex::new(None),
+            discovery_cache: Mutex::new(None),
         })
+    }
+
+    /// Returns a shared resolver, rebuilding at most every `RESOLVER_REFRESH`
+    /// so `/etc/resolv.conf` changes are still picked up without paying the
+    /// rebuild cost on every discovery tick.
+    async fn get_resolver(&self) -> Result<Arc<TokioResolver>> {
+        let mut slot = self.resolver.lock().await;
+        if let Some(cached) = slot.as_ref()
+            && cached.built_at.elapsed() < RESOLVER_REFRESH
+        {
+            return Ok(cached.resolver.clone());
+        }
+        let provider = TokioRuntimeProvider::default();
+        let (config, options) = self.read_system_conf()?;
+        let mut builder = TokioResolver::builder_with_config(config, provider);
+        *builder.options_mut() = options;
+        let resolver =
+            builder.build().map_err(|e| Error::Resolve { source: e })?;
+        let resolver = Arc::new(resolver);
+        *slot = Some(CachedResolver {
+            resolver: resolver.clone(),
+            built_at: Instant::now(),
+        });
+        Ok(resolver)
     }
     /// Sets the name server
     ///
@@ -181,12 +230,7 @@ impl Dns {
     async fn tokio_lookup_ip(
         &self,
     ) -> Result<(Vec<Option<LookupIp>>, Vec<String>)> {
-        let provider = TokioRuntimeProvider::default();
-        let (config, options) = self.read_system_conf()?;
-        let mut builder = Resolver::builder_with_config(config, provider);
-        *builder.options_mut() = options;
-        let resolver =
-            builder.build().map_err(|e| Error::Resolve { source: e })?;
+        let resolver = self.get_resolver().await?;
 
         // One slot per host, in host order. The caller pairs each result with
         // that host's port and weight by position, so a failed lookup MUST
@@ -236,10 +280,35 @@ impl Dns {
     /// Discovers backend services by resolving DNS
     ///
     /// # Returns
-    /// * `Result<(BTreeSet<Backend>, HashMap<u64, bool>)>` - Set of discovered backends and their states
+    /// * `Result<(BTreeSet<Backend>, HashMap<u64, bool>, Vec<String>)>` -
+    ///   backends, enablement map, and hosts that failed to resolve
     async fn run_discover(
         &self,
     ) -> Result<(BTreeSet<Backend>, HashMap<u64, bool>, Vec<String>)> {
+        // Honour DNS TTLs: health-check / update loops may call us more often
+        // than records change; reuse the last set until the shortest TTL
+        // expires (clamped to [MIN, MAX]).
+        {
+            let cache = self.discovery_cache.lock().await;
+            if let Some(cached) = cache.as_ref()
+                && Instant::now() < cached.valid_until
+            {
+                debug!(
+                    hosts = ?self.hosts,
+                    remaining_ms = cached
+                        .valid_until
+                        .saturating_duration_since(Instant::now())
+                        .as_millis(),
+                    "dns discover cache hit"
+                );
+                return Ok((
+                    cached.backends.clone(),
+                    HashMap::new(),
+                    cached.failed_hosts.clone(),
+                ));
+            }
+        }
+
         let mut upstreams = BTreeSet::new();
 
         debug!(
@@ -248,6 +317,21 @@ impl Dns {
         );
 
         let (lookup_ips, failed_hosts) = self.tokio_lookup_ip().await?;
+
+        let now = Instant::now();
+        let mut valid_until = now + DISCOVERY_CACHE_MAX;
+        for lookup in lookup_ips.iter().flatten() {
+            let until = lookup.valid_until();
+            if until < valid_until {
+                valid_until = until;
+            }
+        }
+        if valid_until < now + DISCOVERY_CACHE_MIN {
+            valid_until = now + DISCOVERY_CACHE_MIN;
+        }
+        if valid_until > now + DISCOVERY_CACHE_MAX {
+            valid_until = now + DISCOVERY_CACHE_MAX;
+        }
 
         for ((_, port, weight), lookup_ip) in
             self.hosts.iter().zip(lookup_ips.iter())
@@ -261,26 +345,34 @@ impl Dns {
                 .iter()
                 .filter(|ip| !self.ipv4_only || ip.is_ipv4())
             {
-                let addr = if port.is_empty() {
-                    ip.to_string()
+                // Build SocketAddr directly — avoid format! + to_socket_addrs.
+                let socket_addr = if port.is_empty() {
+                    StdSocketAddr::new(ip, 0)
                 } else {
-                    format!("{ip}:{port}")
+                    let port_num: u16 =
+                        port.parse().map_err(|e| Error::Invalid {
+                            message: format!(
+                                "invalid port {port} for host: {e}"
+                            ),
+                        })?;
+                    StdSocketAddr::new(ip, port_num)
                 };
 
-                let socket_addrs =
-                    addr.to_socket_addrs().map_err(|e| Error::Io {
-                        source: e,
-                        content: format!(
-                            "Failed to convert {addr} to socket address"
-                        ),
-                    })?;
-
-                upstreams.extend(socket_addrs.map(|socket_addr| Backend {
+                upstreams.insert(Backend {
                     addr: SocketAddr::Inet(socket_addr),
                     weight: *weight,
                     ext: Extensions::new(),
-                }));
+                });
             }
+        }
+
+        {
+            let mut cache = self.discovery_cache.lock().await;
+            *cache = Some(DiscoveryCache {
+                backends: upstreams.clone(),
+                failed_hosts: failed_hosts.clone(),
+                valid_until,
+            });
         }
 
         Ok((upstreams, HashMap::new(), failed_hosts))

@@ -46,6 +46,8 @@ use pingap_logger::{
 #[cfg(feature = "full")]
 use pingap_otel::TracerService;
 use pingap_performance::new_performance_metrics_log_service;
+#[cfg(feature = "tracing")]
+use pingap_performance::set_metrics_upstream_provider;
 use pingap_plugin::get_plugin_factory;
 use pingap_proxy::{AppContext, Server, ServerConf, parse_from_conf};
 use pingap_upstream::new_upstream_health_check_task;
@@ -699,6 +701,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     try_init_upstreams(&config.upstreams, webhook::get_webhook_sender())?;
+    // Wire upstreams into Prometheus scrapes for per-backend gauges.
+    #[cfg(feature = "tracing")]
+    set_metrics_upstream_provider(new_upstream_provider());
     try_init_locations(&config.locations)?;
     try_init_server_locations(&config.servers, &config.locations)?;
     let certificates = config.certificates.clone();

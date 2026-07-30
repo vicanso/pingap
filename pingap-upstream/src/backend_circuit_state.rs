@@ -197,6 +197,29 @@ impl BackendCircuitStates {
         }
     }
 
+    /// Returns the circuit state code for a backend address:
+    /// `0` = closed, `1` = open, `2` = half-open.
+    /// Unknown backends are reported as closed (0).
+    pub fn get_state_code(&self, address: &str) -> u8 {
+        self.backend_states
+            .get(address)
+            .map(|state| state.current_state.load(Ordering::Relaxed))
+            .unwrap_or(STATE_CLOSED)
+    }
+
+    /// Snapshot of circuit state codes for every backend we have tracked.
+    pub fn get_all_state_codes(&self) -> std::collections::HashMap<String, u8> {
+        self.backend_states
+            .iter()
+            .map(|entry| {
+                (
+                    entry.key().clone(),
+                    entry.current_state.load(Ordering::Relaxed),
+                )
+            })
+            .collect()
+    }
+
     pub fn is_backend_acceptable(&self, addr: impl std::fmt::Display) -> bool {
         // Format the address into a stack buffer so this per-request lookup
         // avoids a heap allocation; only the rare first-time insert allocates.

@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::locations::new_location_provider;
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use pingap_core::Error;
+use pingap_location::ServerLocationRoute;
 use pingap_proxy::{ServerLocations, ServerLocationsProvider};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -33,7 +35,7 @@ impl Provider {
 }
 
 impl ServerLocationsProvider for Provider {
-    fn get(&self, name: &str) -> Option<Arc<Vec<String>>> {
+    fn get(&self, name: &str) -> Option<Arc<ServerLocationRoute>> {
         self.server_locations.load().get(name).cloned()
     }
 }
@@ -62,6 +64,7 @@ pub fn try_init_server_locations(
     for (name, item) in locations.iter() {
         location_weights.insert(name.to_string(), item.get_weight());
     }
+    let location_provider = new_location_provider();
     let mut server_locations = AHashMap::new();
     let mut updated_servers = vec![];
     for (name, server) in servers.iter() {
@@ -76,8 +79,8 @@ pub fn try_init_server_locations(
                 std::cmp::Reverse(weight)
             });
             let mut not_modified = false;
-            if let Some(current_locations) = SERVER_LOCATIONS_PROVIDER.get(name)
-                && current_locations.join(",") == items.join(",")
+            if let Some(current) = SERVER_LOCATIONS_PROVIDER.get(name)
+                && current.ordered.as_slice() == items.as_slice()
             {
                 not_modified = true;
             }
@@ -85,7 +88,10 @@ pub fn try_init_server_locations(
                 updated_servers.push(name.to_string());
             }
 
-            server_locations.insert(name.to_string(), Arc::new(items));
+            let route = ServerLocationRoute::build(items, |loc_name| {
+                location_provider.get(loc_name)
+            });
+            server_locations.insert(name.to_string(), Arc::new(route));
         }
     }
     SERVER_LOCATIONS_PROVIDER.store(server_locations);

@@ -30,14 +30,16 @@ pub use server_conf::*;
 #[cfg(feature = "tracing")]
 pub(crate) use tracing::*;
 
+pub use pingap_location::ServerLocationRoute;
+
 pub trait ServerLocationsProvider: Send + Sync {
-    /// Get the locations of the server
+    /// Get the weight-ordered locations and host index for a server.
     ///
     /// # Arguments
     /// * `name` - The name of the server to get
     ///
     /// # Returns
-    /// * `Option<Arc<Vec<String>>>` - The locations of the server if found, None otherwise
-    fn get(&self, name: &str) -> Option<Arc<Vec<String>>>;
+    /// * `Option<Arc<ServerLocationRoute>>` - Route table if the server exists
+    fn get(&self, name: &str) -> Option<Arc<ServerLocationRoute>>;
 }
-pub type ServerLocations = AHashMap<String, Arc<Vec<String>>>;
+pub type ServerLocations = AHashMap<String, Arc<ServerLocationRoute>>;

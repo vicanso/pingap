@@ -79,6 +79,9 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::Sender;
 use tracing::{debug, error, info};
 
+/// Access-log lines dropped because the async logger channel was full.
+static ACCESS_LOG_DROPPED: AtomicU64 = AtomicU64::new(0);
+
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("Common error, category: {category}, {message}"))]
@@ -510,21 +513,26 @@ impl Server {
         let path = header.uri.path();
 
         // locations not found
-        let Some(locations) = self.server_locations_provider.get(&self.name)
-        else {
+        let Some(route) = self.server_locations_provider.get(&self.name) else {
             return Ok(());
         };
 
-        // use find_map to optimize logic, performance and readability
-        let matched_info = locations.iter().find_map(|name| {
-            let location = self.location_provider.get(name)?;
-            let (matched, captures) = location.match_host_path(host, path);
-            if matched && location.match_conditions(header) {
-                Some((location, captures))
-            } else {
-                None
-            }
-        });
+        // Host-bucket index shrinks candidates; weight order is preserved so
+        // the first full match equals a linear scan of `route.ordered`.
+        let matched_info = route
+            .host_index
+            .candidate_indices(host)
+            .into_iter()
+            .find_map(|idx| {
+                let name = route.ordered.get(idx)?;
+                let location = self.location_provider.get(name)?;
+                let (matched, captures) = location.match_host_path(host, path);
+                if matched && location.match_conditions(header) {
+                    Some((location, captures))
+                } else {
+                    None
+                }
+            });
 
         let Some((location, captures)) = matched_info else {
             return Ok(());
@@ -1107,8 +1115,11 @@ impl ProxyHttp for Server {
                     let features = ctx.features.get_or_insert_default();
                     features.upstream_span = Some(span);
                 }
+                // Count processing only on the first attempt: pingora re-calls
+                // upstream_peer on every retry, and completed() runs once.
+                let first_attempt = ctx.upstream.retries == 0;
                 upstream
-                    .new_http_peer(session, &ctx.conn.client_ip)
+                    .new_http_peer(session, &ctx.conn.client_ip, first_attempt)
                     .inspect(|peer| {
                         ctx.upstream.address = peer.address().to_string();
                     })
@@ -1479,7 +1490,8 @@ impl ProxyHttp for Server {
 
         let user_agent = server_session
             .get_header(http::header::USER_AGENT)
-            .map(|v| v.clone().to_str().unwrap_or_default().to_string());
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
 
         error!(
             target: LOG_TARGET,
@@ -1583,7 +1595,21 @@ impl ProxyHttp for Server {
         if let Some(p) = &self.log_parser {
             let buf = p.format(session, ctx);
             if let Some(logger) = &self.access_logger {
-                let _ = logger.try_send(buf);
+                if logger.try_send(buf).is_err() {
+                    // Channel full: drop the line rather than block the request
+                    // path, but surface the loss so operators can size the buffer.
+                    let dropped =
+                        ACCESS_LOG_DROPPED.fetch_add(1, Ordering::Relaxed) + 1;
+                    // Rate-limit the warning: log every power-of-two drop so a
+                    // saturated channel does not flood the error log.
+                    if dropped.is_power_of_two() {
+                        error!(
+                            target: LOG_TARGET,
+                            dropped,
+                            "access log channel full, dropping lines"
+                        );
+                    }
+                }
             } else {
                 let msg = buf.as_bstr();
                 info!(target: LOG_TARGET, "{msg}");
@@ -1743,11 +1769,14 @@ value = 'proxy_set_headers = ["name:value"]'
             }
         }
         struct TmpServerLocationsLoader {
-            server_locations: Arc<Vec<String>>,
+            route: Arc<crate::ServerLocationRoute>,
         }
         impl ServerLocationsProvider for TmpServerLocationsLoader {
-            fn get(&self, _name: &str) -> Option<Arc<Vec<String>>> {
-                Some(self.server_locations.clone())
+            fn get(
+                &self,
+                _name: &str,
+            ) -> Option<Arc<crate::ServerLocationRoute>> {
+                Some(self.route.clone())
             }
         }
 
@@ -1773,8 +1802,15 @@ value = 'proxy_set_headers = ["name:value"]'
                     new_file_config_manager(&file.path().to_string_lossy())
                         .unwrap(),
                 ),
-                server_locations_provider: Arc::new(TmpServerLocationsLoader {
-                    server_locations: Arc::new(vec!["lo".to_string()]),
+                server_locations_provider: Arc::new({
+                    let location_for_index = location.clone();
+                    let route = crate::ServerLocationRoute::build(
+                        vec!["lo".to_string()],
+                        move |_| Some(location_for_index.clone()),
+                    );
+                    TmpServerLocationsLoader {
+                        route: Arc::new(route),
+                    }
                 }),
                 location_provider: Arc::new(TmpLocationLoader { location }),
                 upstream_provider: Arc::new(TmpUpstreamLoader { upstream }),

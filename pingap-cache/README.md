@@ -52,11 +52,12 @@ hard-coded number.
 | Parameter | Default | Description |
 | --- | --- | --- |
 | `inactive` | none | Remove files untouched for this long, regardless of freshness |
-| `reading_max` | `10000` | Maximum concurrent reads |
-| `writing_max` | — | Maximum concurrent writes |
+| `reading_max` | `10000` | Maximum concurrent reads; over quota is a **miss** (origin fetch), not 5xx |
+| `writing_max` | — | Maximum concurrent writes; over quota **skips** the disk write |
 | `cache_max` | `0` | Size of an in-front TinyUFO layer for hot entries |
 | `cache_file_max_weight` | 256 pages (1 MB) | Largest entry admitted to that layer |
 | `levels` | — | Directory nesting levels, e.g. `levels=1:2`, to avoid huge flat directories |
+| `max_size` | unlimited | Total on-disk budget (e.g. `max_size=10gb`); least-recently-accessed files are evicted to stay under it |
 
 `new_storage_clear_service()` returns a background service that periodically
 sweeps inactive files.

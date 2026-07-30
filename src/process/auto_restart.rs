@@ -568,17 +568,20 @@ async fn run_diff_and_update_config(
 #[async_trait]
 impl BackgroundTask for AutoRestart {
     async fn execute(&self, count: u32) -> Result<bool, ServiceError> {
-        // Calculate if this iteration should be hot reload only
-        // Uses modulo arithmetic with restart_unit to create a pattern like:
-        // [hot reload, hot reload, full restart, hot reload, hot reload, full restart]
-        // This helps spread out potentially disruptive full restarts
-        let hot_reload_only = if self.only_hot_reload {
-            true
-        } else if count > 0 && self.restart_unit > 1 {
-            !count.is_multiple_of(self.restart_unit) // Only do full restart when count divides evenly
-        } else {
-            true
-        };
+        // Calculate if this iteration should be hot reload only.
+        //
+        // `restart_unit` is how many check ticks make one full config interval
+        // (the service itself runs every min(interval, 10s)). Full restart is
+        // offered when `count` is a multiple of `restart_unit`.
+        //
+        // When interval ≤ 10s, `restart_unit == 1`, so every tick after the
+        // first is a full-restart opportunity — otherwise non-hot-reloadable
+        // changes (server addr, threads, …) would never take effect.
+        //
+        // count=0 is always hot-reload-only so the first pass is gentle.
+        let hot_reload_only = self.only_hot_reload
+            || count == 0
+            || !count.is_multiple_of(self.restart_unit);
         self.running_hot_reload
             .store(hot_reload_only, Ordering::Relaxed);
         if let Some(new_config) = run_diff_and_update_config(

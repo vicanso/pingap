@@ -32,8 +32,10 @@ pub trait LocationProvider: Send + Sync {
     fn stats(&self) -> HashMap<String, LocationStats>;
 }
 
+mod host_index;
 mod location;
 
 mod regex;
 
+pub use host_index::*;
 pub use location::*;
