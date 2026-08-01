@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.13.8](https://github.com/vicanso/pingap/compare/v0.13.7..v0.13.8) - 2026-08-01
+
+### ⛰️  Features
+
+- Purge a whole cache namespace with `PURGE /*` - ([e9f574f](https://github.com/vicanso/pingap/commit/e9f574f8531406372466c37f5dc089946d7fb691))
+- Host-indexed routing, disk-budgeted cache, and honest upstream metrics - ([b4c8d88](https://github.com/vicanso/pingap/commit/b4c8d88fb5ffb680541f1f95aea560fe4ec55cc5))
+
+### 🐛 Bug Fixes
+
+- Clear the security audit, removing tldextract for psl - ([7480575](https://github.com/vicanso/pingap/commit/74805756a71eda64252568a9d66cd1157259fea3))
+- Stop losing issued ACME certificates, and make every failure say why ([#213](https://github.com/orhun/git-cliff/issues/213)) - ([79a7bda](https://github.com/vicanso/pingap/commit/79a7bdab65ae29260b2d20b2704f7c1ded4fce64))
+- Three defects found auditing the request path - ([0561611](https://github.com/vicanso/pingap/commit/056161144ef0fcceb034ca0e5a1973abd48d2d10))
+
+### 🚜 Refactor
+
+- Drop coarsetime, read the clock directly - ([099c0ce](https://github.com/vicanso/pingap/commit/099c0ce0339f04f5f9b1c6fa7dee1670a083ca92))
+
+### 📚 Documentation
+
+- Migrate GitHub Pages site from docsify to VitePress - ([80a13e4](https://github.com/vicanso/pingap/commit/80a13e4f766510e8ed4877197553dc3bc811b1af))
+
+### ⚙️ Miscellaneous Tasks
+
+- Update dependencies - ([9ad29ed](https://github.com/vicanso/pingap/commit/9ad29ed4cdb6302481a6266f00e6a2e731f3b6a2))
+
 ## [0.13.7](https://github.com/vicanso/pingap/compare/v0.13.4..v0.13.7) - 2026-07-27
 
 ### ⛰️  Features
