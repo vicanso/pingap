@@ -12,15 +12,8 @@ import {
 import { newZodBytes, omitEmptyArrayString } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
 import History from "@/pages/History";
+import { ConfigEntityHeader } from "@/components/config-entity-header";
 
 function getLocationConfig(name: string, locations?: Record<string, Location>) {
   if (!locations) {
@@ -247,48 +240,39 @@ export default function Locations() {
     });
   };
 
-  const selectItems = locations.map((location) => {
-    let name = location;
-    if (name === newLocation) {
-      name = "new";
-    }
-    return (
-      <SelectItem key={location} value={location}>
-        {name}
-      </SelectItem>
-    );
-  });
-
   return (
-    <div className="grow overflow-auto p-4">
-      <div className="flex flex-row items-center gap-2 mb-2">
-        <Label>{locationI18n("location")}:</Label>
-        <Select
-          value={currentLocation}
-          onValueChange={(value) => {
-            if (value === newLocation) {
-              searchParams.delete("name");
-            } else {
-              searchParams.set("name", value);
-            }
-            setSearchParams(searchParams);
-          }}
-        >
-          <SelectTrigger className="w-[180px] cursor-pointer">
-            <SelectValue placeholder={locationI18n("locationPlaceholder")} />
-          </SelectTrigger>
-          <SelectContent>{selectItems}</SelectContent>
-        </Select>
-        {currentLocation !== newLocation && (
-          <History
-            category="location"
-            name={currentLocation}
-            onRestore={async (data) => {
-              await update("location", currentLocation, data);
-            }}
-          />
-        )}
-      </div>
+    <div className="grow overflow-auto p-4 md:p-6">
+      <ConfigEntityHeader
+        title={locationI18n("title") || locationI18n("location")}
+        description={locationI18n("description")}
+        label={locationI18n("location")}
+        value={currentLocation}
+        placeholder={locationI18n("locationPlaceholder")}
+        isNew={currentLocation === newLocation}
+        options={locations.map((location) => ({
+          value: location,
+          label: location === newLocation ? "new" : location,
+        }))}
+        onChange={(value) => {
+          if (value === newLocation) {
+            searchParams.delete("name");
+          } else {
+            searchParams.set("name", value);
+          }
+          setSearchParams(searchParams);
+        }}
+        actions={
+          currentLocation !== newLocation ? (
+            <History
+              category="location"
+              name={currentLocation}
+              onRestore={async (data) => {
+                await update("location", currentLocation, data);
+              }}
+            />
+          ) : undefined
+        }
+      />
       <ExForm
         category="location"
         key={`${currentLocation}-${version}`}

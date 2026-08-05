@@ -3,10 +3,10 @@ import { formatError } from "@/helpers/util";
 import { useAsync } from "react-async-hook";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useShallow } from "zustand/react/shallow";
-import { ClipboardCopy } from "lucide-react";
+import { ClipboardCopy, LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Textarea } from "@/components/ui/textarea";
@@ -16,15 +16,16 @@ export default function Config() {
   const { t } = useTranslation();
   const [importing, setImporting] = React.useState(false);
   const [newToml, setNewToml] = React.useState("");
-  const [fetchFullConfig, importToml, fullToml, originalToml, hcl] = useConfigState(
-    useShallow((state) => [
-      state.fetchFullConfig,
-      state.importToml,
-      state.fullToml,
-      state.originalToml,
-      state.hcl,
-    ]),
-  );
+  const [fetchFullConfig, importToml, fullToml, originalToml, hcl] =
+    useConfigState(
+      useShallow((state) => [
+        state.fetchFullConfig,
+        state.importToml,
+        state.fullToml,
+        state.originalToml,
+        state.hcl,
+      ]),
+    );
   useAsync(async () => {
     try {
       await fetchFullConfig();
@@ -48,13 +49,13 @@ export default function Config() {
   const copyHcl = async () => {
     try {
       await navigator.clipboard.writeText(hcl);
-      toast(t("copyConfigFail"));
+      toast(t("copyConfigSuccess"));
     } catch (err) {
       toast(t("copyConfigFail"), {
         description: formatError(err),
       });
     }
-  }
+  };
   const handleImportToml = async (value: string) => {
     if (importing) {
       return;
@@ -81,75 +82,117 @@ export default function Config() {
   if (importing) {
     importText += "...";
   }
+
+  // Absolute fill: keeps TabsList out of the scroll region so it never scrolls away.
+  const panelClass =
+    "mt-0 absolute inset-0 flex flex-col data-[state=inactive]:hidden";
+
+  const CodePanel = ({
+    content,
+    onCopy,
+  }: {
+    content: string;
+    onCopy?: () => void;
+  }) => (
+    <Card className="relative flex h-full min-h-0 flex-col overflow-hidden border-border/80 shadow-none">
+      {onCopy && content && (
+        <Button
+          className="absolute top-3 right-3 z-10 cursor-pointer"
+          variant="secondary"
+          size="icon"
+          onClick={async (e) => {
+            e.preventDefault();
+            onCopy();
+          }}
+        >
+          <ClipboardCopy className="h-4 w-4" />
+        </Button>
+      )}
+      <CardContent className="min-h-0 flex-1 overflow-hidden p-0">
+        <pre className="h-full overflow-auto p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap sm:text-sm">
+          {content || <span className="text-muted-foreground">—</span>}
+        </pre>
+      </CardContent>
+    </Card>
+  );
+
   return (
-    <div className="grow overflow-auto p-4">
-      <Tabs defaultValue="original">
-        <TabsList className={cn("grid w-full", tabClass)}>
-          <TabsTrigger value="original">{t("original")}</TabsTrigger>
-          {different && <TabsTrigger value="full">{t("full")}</TabsTrigger>}
-          <TabsTrigger value="hcl">HCL</TabsTrigger>
-          <TabsTrigger value="import">{t("import")}</TabsTrigger>
-        </TabsList>
-        <TabsContent value="full">
-          <Card className="p-4">
-            <pre className="whitespace-pre-wrap">{fullToml}</pre>
-          </Card>
-        </TabsContent>
-        <TabsContent value="original">
-          {originalToml && (
-            <Card className="p-4">
-              <Button
-                className="absolute right-10"
-                variant="ghost"
-                size="icon"
-                onClick={async (e) => {
-                  e.preventDefault();
-                  copyToml();
-                }}
-              >
-                <ClipboardCopy />
-              </Button>
-              <pre className="whitespace-pre-wrap">{originalToml}</pre>
-            </Card>
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden p-4 md:p-6">
+      <div className="mb-4 shrink-0">
+        <h2 className="text-lg font-semibold tracking-tight">
+          {t("tomlTitle")}
+        </h2>
+        <p className="text-sm text-muted-foreground">{t("tomlDescription")}</p>
+      </div>
+
+      <Tabs
+        defaultValue="original"
+        className="flex min-h-0 flex-1 flex-col overflow-hidden"
+      >
+        <TabsList
+          className={cn(
+            "mb-3 grid h-10 w-full shrink-0",
+            tabClass,
           )}
-        </TabsContent>
-        <TabsContent value="hcl">
-          <Card className="p-4">
-            <Button
-              className="absolute right-10"
-              variant="ghost"
-              size="icon"
-              onClick={async (e) => {
-                e.preventDefault();
-                copyHcl();
-              }}
-            >
-              <ClipboardCopy />
-            </Button>
-            <pre className="whitespace-pre-wrap">{hcl}</pre>
-          </Card>
-        </TabsContent>
-        <TabsContent value="import">
-          <Card className="p-4">
-            <Textarea
-              autoFocus
-              rows={25}
-              onChange={(e) => {
-                const value = e.target.value.trim();
-                setNewToml(value);
-              }}
-            />
-            <Button
-              className="w-full mt-5"
-              disabled={importing}
-              onClick={() => {
-                handleImportToml(newToml);
-              }}
-            >
-              {importText}
-            </Button>
-          </Card>
-        </TabsContent>
+        >
+          <TabsTrigger value="original" className="cursor-pointer">
+            {t("original")}
+          </TabsTrigger>
+          {different && (
+            <TabsTrigger value="full" className="cursor-pointer">
+              {t("full")}
+            </TabsTrigger>
+          )}
+          <TabsTrigger value="hcl" className="cursor-pointer">
+            HCL
+          </TabsTrigger>
+          <TabsTrigger value="import" className="cursor-pointer">
+            {t("import")}
+          </TabsTrigger>
+        </TabsList>
+
+        {/* Fill remaining height under tabs; only the panel body scrolls */}
+        <div className="relative min-h-0 flex-1">
+          <TabsContent value="full" className={panelClass}>
+            <CodePanel content={fullToml} />
+          </TabsContent>
+          <TabsContent value="original" className={panelClass}>
+            <CodePanel content={originalToml} onCopy={copyToml} />
+          </TabsContent>
+          <TabsContent value="hcl" className={panelClass}>
+            <CodePanel content={hcl} onCopy={copyHcl} />
+          </TabsContent>
+          <TabsContent value="import" className={panelClass}>
+            <Card className="flex h-full min-h-0 flex-col overflow-hidden border-border/80 shadow-none">
+              <CardHeader className="shrink-0 pb-3">
+                <CardTitle className="text-base">{t("import")}</CardTitle>
+              </CardHeader>
+              <CardContent className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+                <Textarea
+                  autoFocus
+                  className="min-h-0 flex-1 resize-none font-mono text-sm"
+                  placeholder="paste TOML config…"
+                  onChange={(e) => {
+                    const value = e.target.value.trim();
+                    setNewToml(value);
+                  }}
+                />
+                <Button
+                  className="w-full shrink-0 cursor-pointer sm:w-auto"
+                  disabled={importing || !newToml}
+                  onClick={() => {
+                    handleImportToml(newToml);
+                  }}
+                >
+                  {importing && (
+                    <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+                  )}
+                  {importText}
+                </Button>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </div>
       </Tabs>
     </div>
   );

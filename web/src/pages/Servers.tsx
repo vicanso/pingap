@@ -12,15 +12,8 @@ import {
 import { newZodDuration, omitEmptyArrayString } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
 import History from "@/pages/History";
+import { ConfigEntityHeader } from "@/components/config-entity-header";
 
 function getServerConfig(name: string, servers?: Record<string, Server>) {
   if (!servers) {
@@ -311,48 +304,39 @@ export default function Servers() {
     });
   };
 
-  const selectItems = servers.map((server) => {
-    let name = server;
-    if (name === newServer) {
-      name = "new";
-    }
-    return (
-      <SelectItem key={server} value={server}>
-        {name}
-      </SelectItem>
-    );
-  });
-
   return (
-    <div className="grow overflow-auto p-4">
-      <div className="flex flex-row items-center gap-2 mb-2">
-        <Label>{serverI18n("server")}:</Label>
-        <Select
-          value={currentServer}
-          onValueChange={(value) => {
-            if (value === newServer) {
-              searchParams.delete("name");
-            } else {
-              searchParams.set("name", value);
-            }
-            setSearchParams(searchParams);
-          }}
-        >
-          <SelectTrigger className="w-[180px] cursor-pointer">
-            <SelectValue placeholder={serverI18n("serverPlaceholder")} />
-          </SelectTrigger>
-          <SelectContent>{selectItems}</SelectContent>
-        </Select>
-        {currentServer !== newServer && (
-          <History
-            category="server"
-            name={currentServer}
-            onRestore={async (data) => {
-              await update("server", currentServer, data);
-            }}
-          />
-        )}
-      </div>
+    <div className="grow overflow-auto p-4 md:p-6">
+      <ConfigEntityHeader
+        title={serverI18n("title") || serverI18n("server")}
+        description={serverI18n("description")}
+        label={serverI18n("server")}
+        value={currentServer}
+        placeholder={serverI18n("serverPlaceholder")}
+        isNew={currentServer === newServer}
+        options={servers.map((server) => ({
+          value: server,
+          label: server === newServer ? "new" : server,
+        }))}
+        onChange={(value) => {
+          if (value === newServer) {
+            searchParams.delete("name");
+          } else {
+            searchParams.set("name", value);
+          }
+          setSearchParams(searchParams);
+        }}
+        actions={
+          currentServer !== newServer ? (
+            <History
+              category="server"
+              name={currentServer}
+              onRestore={async (data) => {
+                await update("server", currentServer, data);
+              }}
+            />
+          ) : undefined
+        }
+      />
       <ExForm
         category="server"
         key={`${currentServer}-${version}`}

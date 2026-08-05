@@ -7,7 +7,6 @@ import {
   SunMoon,
   LoaderCircle,
   Cog,
-  Languages,
   FileCode2,
   AudioWaveform,
   ClipboardCopy,
@@ -113,14 +112,64 @@ export function MainHeader({
   const zhLang = "zh";
   const enLang = "en";
 
-  const tips = (
+  const isZh = lang === zhLang || lang.startsWith("zh");
+
+  // Design mock: segmented 中文 / EN control in a padded pill.
+  const languageSwitch = (
+    <div
+      className="flex gap-0.5 rounded-lg border border-border bg-muted/60 p-[3px]"
+      role="group"
+      aria-label="Language"
+    >
+      <button
+        type="button"
+        className={cn(
+          "cursor-pointer rounded-md px-3 py-1 text-[12.5px] font-medium transition-colors",
+          isZh
+            ? "bg-background text-foreground shadow-sm"
+            : "text-muted-foreground hover:text-foreground",
+        )}
+        aria-pressed={isZh}
+        onClick={() => {
+          i18n.changeLanguage(zhLang);
+        }}
+      >
+        中文
+      </button>
+      <button
+        type="button"
+        className={cn(
+          "cursor-pointer rounded-md px-3 py-1 text-[12.5px] font-medium transition-colors",
+          !isZh
+            ? "bg-background text-foreground shadow-sm"
+            : "text-muted-foreground hover:text-foreground",
+        )}
+        aria-pressed={!isZh}
+        onClick={() => {
+          i18n.changeLanguage(enLang);
+        }}
+      >
+        EN
+      </button>
+    </div>
+  );
+
+  const iconBtnClass =
+    "size-8 shrink-0 cursor-pointer text-muted-foreground hover:text-foreground";
+
+  const settingsMenu = (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="cursor-pointer">
-          <Cog />
+        <Button
+          variant="ghost"
+          size="icon"
+          className={iconBtnClass}
+          aria-label="Settings"
+        >
+          <Cog className="size-4" strokeWidth={1.8} />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent>
+      <DropdownMenuContent align="end">
         <DropdownMenuGroup>
           <DropdownMenuItem
             className="cursor-pointer"
@@ -152,36 +201,18 @@ export function MainHeader({
             {theme != "light" && <Sun className={iconClassName} />}
             <span>{t("themeLight")}</span>
           </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            className="cursor-pointer"
-            onClick={() => {
-              i18n.changeLanguage(zhLang);
-            }}
-          >
-            {lang == zhLang && <Check className={iconClassName} />}
-            {lang != zhLang && <Languages className={iconClassName} />}
-            中文
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            className="cursor-pointe"
-            onClick={() => {
-              i18n.changeLanguage(enLang);
-            }}
-          >
-            {lang == enLang && <Check className={iconClassName} />}
-            {lang != enLang && <Languages className={iconClassName} />}
-            English
-          </DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
           <AlertDialog>
             <AlertDialogTrigger asChild>
-              <Button variant="ghost" className="cursor-pointer">
+              <button
+                type="button"
+                className="flex w-full cursor-pointer items-center text-sm"
+              >
                 <PowerOff className={iconClassName} />
                 <span>{t("restart")}</span>
-              </Button>
+              </button>
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
@@ -355,43 +386,49 @@ export function MainHeader({
   return (
     <header
       className={cn(
-        "flex h-16 shrink-0 items-center gap-2 border-b bg-background/95 backdrop-blur-sm supports-backdrop-filter:bg-background/60 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12",
+        "flex h-12 shrink-0 items-center gap-2 border-b px-5 transition-[width,height] ease-linear",
         className,
       )}
     >
-      <div className="flex items-center gap-2 px-4 flex-1">
-        <SidebarTrigger className="cursor-pointer -ml-1" />
-        <div className="flex flex-1 items-center space-x-2 justify-end">
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="ghost" size="icon" className="cursor-pointer">
-                <AudioWaveform />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-[400px]" align="end">
-              <Tabs defaultValue="base64" className="w-full">
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="base64">Base64</TabsTrigger>
-                  <TabsTrigger value="aes">AES</TabsTrigger>
-                </TabsList>
-                {base64Tab}
-                {aesTab}
-              </Tabs>
-            </PopoverContent>
-          </Popover>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="cursor-pointer"
-            onClick={(e) => {
-              e.preventDefault();
-              goToConfig();
-            }}
-          >
-            <FileCode2 />
-          </Button>
-          {tips}
-        </div>
+      <SidebarTrigger className={cn(iconBtnClass, "-ml-1")} />
+      <div className="flex-1" />
+      <div className="flex items-center gap-2">
+        {languageSwitch}
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={iconBtnClass}
+              aria-label="Tools"
+            >
+              <AudioWaveform className="size-4" strokeWidth={1.8} />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-[400px]" align="end">
+            <Tabs defaultValue="base64" className="w-full">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="base64">Base64</TabsTrigger>
+                <TabsTrigger value="aes">AES</TabsTrigger>
+              </TabsList>
+              {base64Tab}
+              {aesTab}
+            </Tabs>
+          </PopoverContent>
+        </Popover>
+        <Button
+          variant="ghost"
+          size="icon"
+          className={iconBtnClass}
+          aria-label="Config"
+          onClick={(e) => {
+            e.preventDefault();
+            goToConfig();
+          }}
+        >
+          <FileCode2 className="size-4" strokeWidth={1.8} />
+        </Button>
+        {settingsMenu}
       </div>
     </header>
   );

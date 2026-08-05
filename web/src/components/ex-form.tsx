@@ -82,6 +82,8 @@ export interface ExFormItem {
   separator?: string;
   notTrim?: boolean;
   nullAsEmpty?: boolean;
+  /** Optional group title; rendered as a full-width section header when it changes. */
+  section?: string;
   defaultValue: string[] | string | number | boolean | null | undefined;
 }
 
@@ -218,12 +220,30 @@ export function ExForm({
   }
 
   const fields: React.JSX.Element[] = [];
+  let lastSection: string | undefined;
 
   items.map((item, index) => {
     if (defaultShow > 0) {
       if (index > showCount - 1) {
         return;
       }
+    }
+
+    if (item.section && item.section !== lastSection) {
+      lastSection = item.section;
+      fields.push(
+        <div
+          key={`section-${item.section}`}
+          className={cn(
+            "col-span-full",
+            fields.length > 0 && "mt-2 border-t border-border/60 pt-5",
+          )}
+        >
+          <h3 className="text-sm font-semibold tracking-tight text-foreground">
+            {item.section}
+          </h3>
+        </div>,
+      );
     }
 
     let fieldClass = "";
@@ -533,32 +553,19 @@ export function ExForm({
     fields.push(field);
   });
 
-  let showButton: React.JSX.Element = <> </>;
+  let showButton: React.JSX.Element | null = null;
   if (defaultShow > 0 && defaultShow < maxCount) {
-    let tips = t("moreSettings");
-    let icon = (
-      <>
-        <UnfoldVertical />
-        <span className="ml-2">{tips}</span>
-      </>
-    );
-    if (showCount > defaultShow) {
-      tips = t("lessSettings");
-      icon = (
-        <>
-          <FoldVertical />
-          <span className="ml-2">{tips}</span>
-        </>
-      );
-    }
-
+    const expanded = showCount > defaultShow;
+    const tips = expanded ? t("lessSettings") : t("moreSettings");
     showButton = (
       <Button
+        type="button"
         variant="ghost"
-        className="absolute right-0 top-[-20px] cursor-pointer"
+        size="sm"
+        className="cursor-pointer text-muted-foreground hover:text-foreground"
         title={tips}
         onClick={(e) => {
-          if (showCount > defaultShow) {
+          if (expanded) {
             localStorage.removeItem(showAllKey);
             setShowCount(defaultShow);
           } else {
@@ -568,32 +575,45 @@ export function ExForm({
           e.preventDefault();
         }}
       >
-        {icon}
+        {expanded ? (
+          <FoldVertical className="h-4 w-4" />
+        ) : (
+          <UnfoldVertical className="h-4 w-4" />
+        )}
+        <span className="ml-1.5">{tips}</span>
       </Button>
     );
-  }
-  let columns = 0;
-  if (onSave) {
-    columns++;
-  }
-  if (onRemove) {
-    columns++;
   }
 
   return (
     <Form {...form}>
       {/* 因为col-span是动态生成，因此先引入，否则tailwind并未编译该类 */}
-      <span className="col-span-1 col-span-2 col-span-3 col-span-4 col-span-5 col-span-6" />
+      <span className="col-span-1 col-span-2 col-span-3 col-span-4 col-span-5 col-span-6 col-span-full" />
       <form
         onSubmit={form.handleSubmit(onSubmit)}
-        className="space-y-8 relative"
+        className="relative space-y-0"
       >
-        <div className={cn("grid gap-4", `grid-cols-${cols}`)}>{fields}</div>
-        <div className={`grid gap-4 grid-cols-${columns}`}>
-          {onSave && (
-            <div className="grid-cols-1">
+        <div className="rounded-xl border border-border/80 bg-card p-5 shadow-none sm:p-6">
+          {updatedCount > 0 && (
+            <div className="mb-4 text-xs font-medium text-primary">
+              {updatedCount} {t("modified") || "modified"}
+            </div>
+          )}
+          <div className={cn("grid gap-x-8 gap-y-5", `grid-cols-${cols}`)}>
+            {fields}
+          </div>
+        </div>
+
+        {(onSave || onRemove || showButton) && (
+          <div
+            className={cn(
+              "sticky bottom-0 z-10 mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-border/80 bg-card/95 p-3 shadow-none backdrop-blur supports-backdrop-filter:bg-card/80",
+              updatedCount > 0 && "border-primary/30 ring-1 ring-primary/15",
+            )}
+          >
+            {onSave && (
               <Button
-                className="w-full cursor-pointer"
+                className="min-w-[120px] cursor-pointer"
                 type="submit"
                 disabled={updatedCount === 0}
               >
@@ -601,32 +621,41 @@ export function ExForm({
                   <LoaderCircle className="mr-2 h-4 w-4 inline animate-spin" />
                 )}
                 {t("save")}
+                {updatedCount > 0 && (
+                  <span className="ml-1.5 rounded bg-primary-foreground/20 px-1.5 text-xs">
+                    {updatedCount}
+                  </span>
+                )}
               </Button>
-            </div>
-          )}
-          {onRemove && (
-            <div className="grid-cols-1">
+            )}
+            {onRemove && (
               <Popover>
                 <PopoverTrigger asChild>
-                  <Button variant="secondary" type="reset" className="w-full cursor-pointer">
+                  <Button
+                    variant="outline"
+                    type="button"
+                    className="min-w-[100px] cursor-pointer text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  >
                     {processing && (
                       <LoaderCircle className="mr-2 h-4 w-4 inline animate-spin" />
                     )}
                     {t("remove")}
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-60">
-                  <div className="grid gap-4">
-                    <div className="space-y-2">
+                <PopoverContent className="w-64" align="start">
+                  <div className="grid gap-3">
+                    <div className="space-y-1">
                       <h4 className="font-medium leading-none">
                         {t("removeConfirm")}
                       </h4>
-                      <p className="text-sm text-muted-foreground mb-2">
+                      <p className="text-sm text-muted-foreground">
                         {t("removeTips")}
                       </p>
                     </div>
                     <Button
-                      size={"sm"}
+                      size="sm"
+                      variant="destructive"
+                      className="cursor-pointer"
                       onClick={async () => {
                         await handleRemove();
                       }}
@@ -636,10 +665,10 @@ export function ExForm({
                   </div>
                 </PopoverContent>
               </Popover>
-            </div>
-          )}
-        </div>
-        {showButton}
+            )}
+            {showButton && <div className="ml-auto">{showButton}</div>}
+          </div>
+        )}
       </form>
     </Form>
   );

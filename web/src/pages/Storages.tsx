@@ -6,15 +6,8 @@ import { useI18n } from "@/i18n";
 import { ExFormItemCategory, newStringOptions } from "@/constants";
 import { useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
 import History from "@/pages/History";
+import { ConfigEntityHeader } from "@/components/config-entity-header";
 
 function getStorageConfig(name: string, storages?: Record<string, Storage>) {
   if (!storages) {
@@ -116,48 +109,39 @@ export default function Storages() {
     });
   };
 
-  const selectItems = storages.map((storage) => {
-    let name = storage;
-    if (name === newStorage) {
-      name = "new";
-    }
-    return (
-      <SelectItem key={storage} value={storage}>
-        {name}
-      </SelectItem>
-    );
-  });
-
   return (
-    <div className="grow overflow-auto p-4">
-      <div className="flex flex-row items-center gap-2 mb-2">
-        <Label>{storageI18n("storage")}:</Label>
-        <Select
-          value={currentStorage}
-          onValueChange={(value) => {
-            if (value === newStorage) {
-              searchParams.delete("name");
-            } else {
-              searchParams.set("name", value);
-            }
-            setSearchParams(searchParams);
-          }}
-        >
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder={storageI18n("storagePlaceholder")} />
-          </SelectTrigger>
-          <SelectContent>{selectItems}</SelectContent>
-        </Select>
-        {currentStorage !== newStorage && (
-          <History
-            category="storage"
-            name={currentStorage}
-            onRestore={async (data) => {
-              await update("storage", currentStorage, data);
-            }}
-          />
-        )}
-      </div>
+    <div className="grow overflow-auto p-4 md:p-6">
+      <ConfigEntityHeader
+        title={storageI18n("title") || storageI18n("storage")}
+        description={storageI18n("description")}
+        label={storageI18n("storage")}
+        value={currentStorage}
+        placeholder={storageI18n("storagePlaceholder")}
+        isNew={currentStorage === newStorage}
+        options={storages.map((storage) => ({
+          value: storage,
+          label: storage === newStorage ? "new" : storage,
+        }))}
+        onChange={(value) => {
+          if (value === newStorage) {
+            searchParams.delete("name");
+          } else {
+            searchParams.set("name", value);
+          }
+          setSearchParams(searchParams);
+        }}
+        actions={
+          currentStorage !== newStorage ? (
+            <History
+              category="storage"
+              name={currentStorage}
+              onRestore={async (data) => {
+                await update("storage", currentStorage, data);
+              }}
+            />
+          ) : undefined
+        }
+      />
       <ExForm
         category="storage"
         key={`${currentStorage}-${version}`}
