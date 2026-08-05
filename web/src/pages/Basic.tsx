@@ -12,7 +12,6 @@ import { newZodBytes, newZodDuration, newZodNumber } from "@/helpers/util";
 import useBasicState from "@/states/basic";
 import { useShallow } from "zustand/react/shallow";
 import History from "@/pages/History";
-import { Label } from "@/components/ui/label";
 
 export default function Basic() {
   const basicI18n = useI18n("basic");
@@ -30,13 +29,24 @@ export default function Basic() {
   }
   const basic = config.basic;
 
+  const sec = {
+    core: basicI18n("sectionCore"),
+    logging: basicI18n("sectionLogging"),
+    process: basicI18n("sectionProcess"),
+    notify: basicI18n("sectionNotify"),
+    advanced: basicI18n("sectionAdvanced"),
+  };
+
+  // Core + Logging shown by default; Process / Notify / Advanced behind "More Settings".
   const items: ExFormItem[] = [
+    // ── Core ──────────────────────────────────────────────
     {
       name: "name",
       label: basicI18n("name"),
       placeholder: basicI18n("namePlaceholder"),
       defaultValue: basic.name,
       span: 6,
+      section: sec.core,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -45,6 +55,7 @@ export default function Basic() {
       placeholder: basicI18n("threadsPlaceholder"),
       defaultValue: basic.threads,
       span: 3,
+      section: sec.core,
       category: ExFormItemCategory.NUMBER,
     },
     {
@@ -53,6 +64,7 @@ export default function Basic() {
       placeholder: "",
       defaultValue: basic.work_stealing || null,
       span: 3,
+      section: sec.core,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
@@ -62,6 +74,7 @@ export default function Basic() {
       placeholder: basicI18n("listenerTasksPerFdPlaceholder"),
       defaultValue: basic.listener_tasks_per_fd,
       span: 3,
+      section: sec.core,
       category: ExFormItemCategory.NUMBER,
     },
     {
@@ -70,15 +83,19 @@ export default function Basic() {
       placeholder: basicI18n("upstreamKeepalivePoolSizePlaceholder"),
       defaultValue: basic.upstream_keepalive_pool_size,
       span: 3,
+      section: sec.core,
       category: ExFormItemCategory.NUMBER,
     },
+    // ── Logging ───────────────────────────────────────────
     {
       name: "log_level",
       label: basicI18n("logLevel"),
       placeholder: basicI18n("logLevelPlaceholder"),
       defaultValue: basic.log_level,
       span: 3,
-      category: ExFormItemCategory.INPUT_SELECT,
+      section: sec.logging,
+      // SELECT only — avoid INPUT_SELECT's free-text switch clutter.
+      category: ExFormItemCategory.SELECT,
       options: newStringOptions(
         ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"],
         false,
@@ -91,6 +108,7 @@ export default function Basic() {
       placeholder: "",
       defaultValue: basic.log_format_json,
       span: 3,
+      section: sec.logging,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
     },
@@ -100,6 +118,7 @@ export default function Basic() {
       placeholder: basicI18n("logBufferedSizePlaceholder"),
       defaultValue: basic.log_buffered_size,
       span: 3,
+      section: sec.logging,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -108,6 +127,7 @@ export default function Basic() {
       placeholder: basicI18n("logCompressAlgorithmPlaceholder"),
       defaultValue: basic.log_compress_algorithm,
       span: 3,
+      section: sec.logging,
       category: ExFormItemCategory.SELECT,
       options: newStringOptions(["gzip", "zstd"], false, true),
     },
@@ -117,6 +137,7 @@ export default function Basic() {
       placeholder: basicI18n("logCompressLevelPlaceholder"),
       defaultValue: basic.log_compress_level,
       span: 3,
+      section: sec.logging,
       category: ExFormItemCategory.NUMBER,
     },
     {
@@ -125,6 +146,7 @@ export default function Basic() {
       placeholder: basicI18n("logCompressDaysAgoPlaceholder"),
       defaultValue: basic.log_compress_days_ago,
       span: 3,
+      section: sec.logging,
       category: ExFormItemCategory.NUMBER,
     },
     {
@@ -133,15 +155,17 @@ export default function Basic() {
       placeholder: basicI18n("logCompressTimePointHourPlaceholder"),
       defaultValue: basic.log_compress_time_point_hour,
       span: 3,
+      section: sec.logging,
       category: ExFormItemCategory.NUMBER,
     },
-
+    // ── Process (more settings) ───────────────────────────
     {
       name: "grace_period",
       label: basicI18n("gracePeriod"),
       placeholder: basicI18n("gracePeriodPlaceholder"),
       defaultValue: basic.grace_period,
       span: 3,
+      section: sec.process,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -150,6 +174,7 @@ export default function Basic() {
       placeholder: basicI18n("gracefulShutdownTimeoutPlaceholder"),
       defaultValue: basic.graceful_shutdown_timeout,
       span: 3,
+      section: sec.process,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -158,6 +183,7 @@ export default function Basic() {
       placeholder: basicI18n("autoRestartCheckIntervalPlaceholder"),
       defaultValue: basic.auto_restart_check_interval,
       span: 3,
+      section: sec.process,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -166,6 +192,7 @@ export default function Basic() {
       placeholder: basicI18n("pidFilePlaceholder"),
       defaultValue: basic.pid_file,
       span: 3,
+      section: sec.process,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -174,6 +201,7 @@ export default function Basic() {
       placeholder: basicI18n("upgradeSockPlaceholder"),
       defaultValue: basic.upgrade_sock,
       span: 3,
+      section: sec.process,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -182,6 +210,7 @@ export default function Basic() {
       placeholder: basicI18n("userPlaceholder"),
       defaultValue: basic.user,
       span: 3,
+      section: sec.process,
       category: ExFormItemCategory.TEXT,
     },
     {
@@ -190,14 +219,17 @@ export default function Basic() {
       placeholder: basicI18n("groupPlaceholder"),
       defaultValue: basic.group,
       span: 3,
+      section: sec.process,
       category: ExFormItemCategory.TEXT,
     },
+    // ── Notify ────────────────────────────────────────────
     {
       name: "webhook_type",
       label: basicI18n("webhookType"),
       placeholder: basicI18n("webhookTypePlaceholder"),
       defaultValue: basic.webhook_type,
       span: 3,
+      section: sec.notify,
       category: ExFormItemCategory.SELECT,
       options: newStringOptions(["normal", "wecom", "dingtalk"], true),
     },
@@ -207,6 +239,7 @@ export default function Basic() {
       placeholder: basicI18n("webhookNotificationsPlaceholder"),
       defaultValue: basic.webhook_notifications,
       span: 3,
+      section: sec.notify,
       category: ExFormItemCategory.MULTI_SELECT,
       options: newStringOptions(
         [
@@ -231,9 +264,11 @@ export default function Basic() {
       placeholder: basicI18n("webhookPlaceholder"),
       defaultValue: basic.webhook,
       span: 6,
+      section: sec.notify,
       category: ExFormItemCategory.TEXT,
     },
   ];
+
   if (basicInfo.features.includes("tracing")) {
     items.push({
       name: "sentry",
@@ -241,6 +276,7 @@ export default function Basic() {
       placeholder: basicI18n("sentryPlaceholder"),
       defaultValue: basic.sentry,
       span: 6,
+      section: sec.notify,
       category: ExFormItemCategory.TEXT,
     });
   }
@@ -251,6 +287,7 @@ export default function Basic() {
       placeholder: basicI18n("pyroscopePlaceholder"),
       defaultValue: basic.pyroscope,
       span: 6,
+      section: sec.notify,
       category: ExFormItemCategory.TEXT,
     });
   }
@@ -262,8 +299,12 @@ export default function Basic() {
     defaultValue: basic.error_template,
     span: 6,
     rows: 8,
+    section: sec.advanced,
     category: ExFormItemCategory.TEXTAREA,
   });
+
+  // Core (5) + Logging (7) = 12 default fields.
+  const defaultShow = 12;
 
   const schema = z.object({
     name: z.string().optional(),
@@ -275,24 +316,34 @@ export default function Basic() {
     auto_restart_check_interval: newZodDuration().optional(),
     cache_max_size: newZodBytes().optional(),
   });
+
   return (
-    <div className="grow overflow-auto p-4">
-      <div className="flex flex-row items-center gap-2 mb-2">
-        <Label>{basicI18n("title")}</Label>
-        <History
+    <div className="grow overflow-auto">
+      <div className="mx-auto w-full max-w-[1100px] px-6 py-6 pb-10">
+        <div className="mb-6 flex flex-wrap items-start gap-3">
+          <div className="mr-auto min-w-0">
+            <h1 className="text-[28px] font-bold tracking-tight leading-none">
+              {basicI18n("title")}
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {basicI18n("description")}
+            </p>
+          </div>
+          <History
+            category="basic"
+            name=""
+            onRestore={async (data) => update("pingap", "basic", data)}
+          />
+        </div>
+        <ExForm
+          key={version}
           category="basic"
-          name=""
-          onRestore={async (data) => update("pingap", "basic", data)}
+          items={items}
+          schema={schema}
+          defaultShow={defaultShow}
+          onSave={async (value) => update("pingap", "basic", value)}
         />
       </div>
-      <ExForm
-        key={version}
-        category="basic"
-        items={items}
-        schema={schema}
-        defaultShow={13}
-        onSave={async (value) => update("pingap", "basic", value)}
-      />
-    </div >
+    </div>
   );
 }

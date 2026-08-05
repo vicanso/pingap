@@ -11,15 +11,8 @@ import {
 import { omitEmptyArrayString } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
 import History from "@/pages/History";
+import { ConfigEntityHeader } from "@/components/config-entity-header";
 
 function getCertificateConfig(
   name: string,
@@ -187,50 +180,39 @@ export default function Certificates() {
     });
   };
 
-  const selectItems = certificates.map((certificate) => {
-    let name = certificate;
-    if (name === newCertificate) {
-      name = "new";
-    }
-    return (
-      <SelectItem key={certificate} value={certificate}>
-        {name}
-      </SelectItem>
-    );
-  });
-
   return (
-    <div className="grow overflow-auto p-4">
-      <div className="flex flex-row items-center gap-2 mb-2">
-        <Label>{certificateI18n("certificate")}:</Label>
-        <Select
-          value={currentCertificate}
-          onValueChange={(value) => {
-            if (value === newCertificate) {
-              searchParams.delete("name");
-            } else {
-              searchParams.set("name", value);
-            }
-            setSearchParams(searchParams);
-          }}
-        >
-          <SelectTrigger className="w-[180px]">
-            <SelectValue
-              placeholder={certificateI18n("certificatePlaceholder")}
+    <div className="grow overflow-auto p-4 md:p-6">
+      <ConfigEntityHeader
+        title={certificateI18n("title") || certificateI18n("certificate")}
+        description={certificateI18n("description")}
+        label={certificateI18n("certificate")}
+        value={currentCertificate}
+        placeholder={certificateI18n("certificatePlaceholder")}
+        isNew={currentCertificate === newCertificate}
+        options={certificates.map((certificate) => ({
+          value: certificate,
+          label: certificate === newCertificate ? "new" : certificate,
+        }))}
+        onChange={(value) => {
+          if (value === newCertificate) {
+            searchParams.delete("name");
+          } else {
+            searchParams.set("name", value);
+          }
+          setSearchParams(searchParams);
+        }}
+        actions={
+          currentCertificate !== newCertificate ? (
+            <History
+              category="certificate"
+              name={currentCertificate}
+              onRestore={async (data) => {
+                await update("certificate", currentCertificate, data);
+              }}
             />
-          </SelectTrigger>
-          <SelectContent>{selectItems}</SelectContent>
-        </Select>
-        {currentCertificate !== newCertificate && (
-          <History
-            category="certificate"
-            name={currentCertificate}
-            onRestore={async (data) => {
-              await update("certificate", currentCertificate, data);
-            }}
-          />
-        )}
-      </div>
+          ) : undefined
+        }
+      />
       <ExForm
         category="certificate"
         key={`${currentCertificate}-${version}`}

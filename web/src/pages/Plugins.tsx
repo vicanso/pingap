@@ -15,15 +15,8 @@ import { useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import useBasicState from "@/states/basic";
 import { omitEmptyArrayString } from "@/helpers/util";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
 import History from "@/pages/History";
+import { ConfigEntityHeader } from "@/components/config-entity-header";
 
 function getPluginConfig(
   name: string,
@@ -1177,48 +1170,39 @@ export default function Plugins() {
     });
   };
 
-  const selectItems = plugins.map((plugin) => {
-    let name = plugin;
-    if (name === newPlugin) {
-      name = "new";
-    }
-    return (
-      <SelectItem key={plugin} value={plugin}>
-        {name}
-      </SelectItem>
-    );
-  });
-
   return (
-    <div className="grow overflow-auto p-4">
-      <div className="flex flex-row items-center gap-2 mb-2">
-        <Label>{pluginI18n("plugin")}:</Label>
-        <Select
-          value={currentPlugin}
-          onValueChange={(value) => {
-            if (value === newPlugin) {
-              searchParams.delete("name");
-            } else {
-              searchParams.set("name", value);
-            }
-            setSearchParams(searchParams);
-          }}
-        >
-          <SelectTrigger className="w-[180px] cursor-pointer">
-            <SelectValue placeholder={pluginI18n("pluginPlaceholder")} />
-          </SelectTrigger>
-          <SelectContent>{selectItems}</SelectContent>
-        </Select>
-        {currentPlugin !== newPlugin && (
-          <History
-            category="plugin"
-            name={currentPlugin}
-            onRestore={async (data) => {
-              await update("plugin", currentPlugin, data);
-            }}
-          />
-        )}
-      </div>
+    <div className="grow overflow-auto p-4 md:p-6">
+      <ConfigEntityHeader
+        title={pluginI18n("title") || pluginI18n("plugin")}
+        description={pluginI18n("description")}
+        label={pluginI18n("plugin")}
+        value={currentPlugin}
+        placeholder={pluginI18n("pluginPlaceholder")}
+        isNew={currentPlugin === newPlugin}
+        options={plugins.map((plugin) => ({
+          value: plugin,
+          label: plugin === newPlugin ? "new" : plugin,
+        }))}
+        onChange={(value) => {
+          if (value === newPlugin) {
+            searchParams.delete("name");
+          } else {
+            searchParams.set("name", value);
+          }
+          setSearchParams(searchParams);
+        }}
+        actions={
+          currentPlugin !== newPlugin ? (
+            <History
+              category="plugin"
+              name={currentPlugin}
+              onRestore={async (data) => {
+                await update("plugin", currentPlugin, data);
+              }}
+            />
+          ) : undefined
+        }
+      />
       <ExForm
         category="plugin"
         key={key}

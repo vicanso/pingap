@@ -20,11 +20,15 @@ import HTTPError from "@/helpers/http-error";
 import { formatError } from "@/helpers/util";
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 export default function Root() {
   const key = "sidebarOpen";
   const sidebarOpen = window.localStorage.getItem(key);
   const [open, setOpen] = useState(sidebarOpen == "true" || !sidebarOpen);
+  // The mobile sheet is always full width; ignore the desktop collapse state there.
+  const isMobile = useIsMobile();
+  const showBrand = open || isMobile;
   const { t } = useTranslation();
   const [fetchBasicInfo, basicInfo] = useBasicState(
     useShallow((state) => [state.fetch, state.data]),
@@ -58,46 +62,56 @@ export default function Root() {
         setOpen(open);
       }}
     >
-      {/* Sidebar Component */}
-      <Sidebar collapsible="icon">
-        <SidebarHeader>
-          {/* Logo or app name can go here */}
-          <div className="text-lg font-bold border-b flex items-center">
+      <Sidebar collapsible="icon" className="border-r border-sidebar-border">
+        {/* h-12 matches MainHeader so brand row and top bar share one baseline */}
+        <SidebarHeader className="h-12 shrink-0 justify-center border-b border-sidebar-border p-0">
+          <div
+            className={
+              showBrand
+                ? "flex h-full items-center gap-1.5 px-3"
+                : "flex h-full w-full items-center justify-center"
+            }
+          >
             <Button
               size="icon"
               variant="ghost"
-              className="cursor-pointer"
+              className="size-8 shrink-0 cursor-pointer rounded-lg"
               onClick={() => {
                 goToHome();
               }}
             >
-              <img width={24} src={Logo} />
+              <img width={20} height={20} src={Logo} alt="Pingap" className="rounded-md" />
             </Button>
-            {open && (
-              <Button
-                variant="link"
-                className="px-0 cursor-pointer"
+            {showBrand && (
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-1.5 text-left cursor-pointer"
                 onClick={(e) => {
                   e.preventDefault();
                   goToHome();
                 }}
               >
-                Pingap
+                <span className="truncate text-base font-semibold tracking-tight text-sidebar-foreground">
+                  Pingap
+                </span>
                 {!initialized && (
-                  <LoaderCircle className="ml-2 h-4 w-4 inline animate-spin" />
+                  <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
                 )}
-                <span>{basicInfo.version}</span>
-              </Button>
+                {basicInfo.version && (
+                  <span className="truncate rounded-full bg-sidebar-accent px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    {basicInfo.version}
+                  </span>
+                )}
+              </button>
             )}
           </div>
         </SidebarHeader>
         <MainSidebar sidebarOpen={open} />
       </Sidebar>
 
-      {/* Main Content - Using SidebarInset for proper spacing */}
-      <SidebarInset>
+      <SidebarInset className="min-h-0 overflow-hidden bg-background">
         <MainHeader />
-        <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <Outlet />
         </div>
       </SidebarInset>
