@@ -43,3 +43,6 @@ website/README.md
 website/_sidebar.md
 website/_navbar.md
 .gstack/
+
+# tsc -b incremental caches, rewritten by every web build
+web/*.tsbuildinfo

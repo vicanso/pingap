@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Textarea } from "@/components/ui/textarea";
 import { PageShell } from "@/components/page-shell";
+import { goToHome } from "@/routers";
 import React from "react";
 
 /**
@@ -53,16 +54,23 @@ export default function Config() {
   const { t } = useTranslation();
   const [importing, setImporting] = React.useState(false);
   const [newToml, setNewToml] = React.useState("");
-  const [fetchFullConfig, importToml, fullToml, originalToml, hcl] =
-    useConfigState(
-      useShallow((state) => [
-        state.fetchFullConfig,
-        state.importToml,
-        state.fullToml,
-        state.originalToml,
-        state.hcl,
-      ]),
-    );
+  const [
+    fetchFullConfig,
+    fetchConfig,
+    importToml,
+    fullToml,
+    originalToml,
+    hcl,
+  ] = useConfigState(
+    useShallow((state) => [
+      state.fetchFullConfig,
+      state.fetch,
+      state.importToml,
+      state.fullToml,
+      state.originalToml,
+      state.hcl,
+    ]),
+  );
   useAsync(async () => {
     try {
       await fetchFullConfig();
@@ -101,6 +109,10 @@ export default function Config() {
     try {
       await importToml(value);
       toast(t("importSuccess"));
+      // An import replaces the whole config, so nothing on this page still
+      // describes what is running. Reload it and show the dashboard.
+      await fetchConfig();
+      goToHome();
     } catch (err) {
       toast(t("importFail"), {
         description: formatError(err),

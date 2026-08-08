@@ -29,6 +29,9 @@ export default {
   removeFailTitle: "删除配置失败",
   removeSuccessTitle: "删除配置成功",
   removeSuccessDescription: "配置已成功删除",
+  unsavedTitle: "确定离开吗？",
+  unsavedDescription: "此表单有未保存的修改，离开后将会丢失",
+  leave: "离开",
   backToList: "返回列表",
   includes: "引入配置",
   includesPlaceholder: "选择要引入的配置",
@@ -48,6 +51,12 @@ export default {
   decode: "解码",
   value: "数据",
   result: "结果",
+  error: {
+    title: "页面出错了",
+    description: "这个页面渲染失败，控制台的其余部分仍可使用",
+    reload: "重新加载",
+    backHome: "回到概览",
+  },
   nav: {
     home: "概览",
     basic: "基础配置",
@@ -57,6 +66,7 @@ export default {
     plugin: "插件配置",
     certificate: "证书配置",
     storage: "存储配置",
+    searchEmpty: "无匹配项",
     searchPlaceholder: "输入关键字",
   },
   login: {

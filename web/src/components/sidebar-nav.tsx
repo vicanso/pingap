@@ -70,9 +70,19 @@ const CollapsedIconLink = React.forwardRef<
     className?: string;
     onMouseEnter?: React.MouseEventHandler;
     onMouseLeave?: React.MouseEventHandler;
+    onKeyDown?: React.KeyboardEventHandler;
   }
 >(function CollapsedIconLink(
-  { to, title, isActive, children, className, onMouseEnter, onMouseLeave },
+  {
+    to,
+    title,
+    isActive,
+    children,
+    className,
+    onMouseEnter,
+    onMouseLeave,
+    onKeyDown,
+  },
   ref,
 ) {
   return (
@@ -83,6 +93,7 @@ const CollapsedIconLink = React.forwardRef<
       aria-label={title}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
+      onKeyDown={onKeyDown}
       className={cn(
         // Fixed square only — no w-full. Parent ul uses items-center when collapsed.
         "flex size-8 shrink-0 items-center justify-center rounded-md outline-none",
@@ -99,7 +110,7 @@ const CollapsedIconLink = React.forwardRef<
   );
 });
 
-/** Hover flyout for a nav category when the sidebar is icon-collapsed. */
+/** Flyout for a nav category when the sidebar is icon-collapsed. */
 function CollapsedNavFlyout({
   item,
   isActive,
@@ -111,6 +122,9 @@ function CollapsedNavFlyout({
 }) {
   const [open, setOpen] = React.useState(false);
   const closeTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const contentRef = React.useRef<HTMLDivElement>(null);
+  const anchorRef = React.useRef<HTMLAnchorElement>(null);
+  const openedByKey = React.useRef(false);
   const Icon = item.icon;
 
   const clearClose = () => {
@@ -133,6 +147,25 @@ function CollapsedNavFlyout({
   React.useEffect(() => {
     return () => clearClose();
   }, []);
+
+  // Submenu keys, the same shape as a menubar: the rail icon is reachable by
+  // Tab and Enter still follows it to the category list, ArrowRight/ArrowDown
+  // opens the flyout and moves focus into it, Escape closes and comes back.
+  //
+  // Opening on plain focus was tried and dropped: two adjacent flyouts are two
+  // Radix layers, and tabbing between them left both dismissed.
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowDown") {
+      return;
+    }
+    e.preventDefault();
+    openedByKey.current = true;
+    openNow();
+    // The content mounts on open, so focus it on the next frame.
+    requestAnimationFrame(() => {
+      contentRef.current?.querySelector<HTMLElement>("a")?.focus();
+    });
+  };
 
   const hasChildren = (item.children?.length ?? 0) > 0;
 
@@ -161,23 +194,38 @@ function CollapsedNavFlyout({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverAnchor asChild>
         <CollapsedIconLink
+          ref={anchorRef}
           to={item.path}
           title={item.title}
           isActive={isActive}
           onMouseEnter={openNow}
           onMouseLeave={closeLater}
+          onKeyDown={handleKeyDown}
         >
           {Icon && <Icon className="size-4 shrink-0" />}
         </CollapsedIconLink>
       </PopoverAnchor>
       <PopoverContent
+        ref={contentRef}
         side="right"
         align="start"
         sideOffset={10}
         className="w-52 p-1.5"
         onOpenAutoFocus={(e) => e.preventDefault()}
+        onCloseAutoFocus={(e) => {
+          // Radix returns focus to its trigger, and this popover has only an
+          // anchor. Put it back on the rail icon, but only when a key opened
+          // the flyout — hovering away must not steal focus.
+          e.preventDefault();
+          if (openedByKey.current) {
+            openedByKey.current = false;
+            anchorRef.current?.focus();
+          }
+        }}
         onMouseEnter={openNow}
         onMouseLeave={closeLater}
+        onFocusCapture={clearClose}
+        onBlurCapture={closeLater}
       >
         <Link
           to={item.path}
@@ -232,6 +280,13 @@ export function MainSidebar({
   const { isMobile } = useSidebar();
   const expanded = sidebarOpen || isMobile;
   const [keyword, setKeyword] = React.useState("");
+  // The search box only renders while expanded. Applying a leftover keyword on
+  // the collapsed rail silently empties every flyout with no visible box to
+  // clear it, so ignore it there — the input is controlled, so collapsing and
+  // expanding again brings both the text and the filter back together.
+  // Normalise where it is used, not on the way in, so the box shows exactly
+  // what was typed instead of eating case and trailing spaces mid-word.
+  const activeKeyword = expanded ? keyword.trim().toLowerCase() : "";
   const [config, initialized] = useConfigState(
     useShallow((state) => [state.data, state.initialized]),
   );
@@ -286,12 +341,12 @@ export function MainSidebar({
   // Expanded: only expand children for the active route (or when searching).
   // Collapsed: always build full lists so hover flyouts have content.
   const generateChildren = (baseUrl: string, items: string[]) => {
-    if (expanded && !keyword && !pathname.startsWith(baseUrl)) {
+    if (expanded && !activeKeyword && !pathname.startsWith(baseUrl)) {
       return [] as NavLink[];
     }
     const arr: NavLink[] = [];
     items.forEach((item) => {
-      if (keyword && !item.toLowerCase().includes(keyword)) {
+      if (activeKeyword && !item.toLowerCase().includes(activeKeyword)) {
         return;
       }
       const path = `${baseUrl}?name=${item}`;
@@ -365,6 +420,10 @@ export function MainSidebar({
 
   const urlParams = new URLSearchParams(location.search);
   const currentName = urlParams.get("name");
+  const matchCount = items.reduce(
+    (total, item) => total + (item.children?.length ?? 0),
+    0,
+  );
 
   const renderMenuSub = (subItems: NavLink[] | undefined) => {
     if (!subItems || subItems.length == 0) {
@@ -398,12 +457,18 @@ export function MainSidebar({
               type="search"
               placeholder={navI18n("searchPlaceholder")}
               className="pl-8"
+              value={keyword}
               onChange={(e) => {
-                setKeyword(e.target.value.trim().toLowerCase());
+                setKeyword(e.target.value);
               }}
             />
             <Search className="pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 select-none opacity-50" />
           </div>
+        )}
+        {expanded && activeKeyword && matchCount === 0 && (
+          <p className="mx-2 mb-2 text-xs text-muted-foreground">
+            {navI18n("searchEmpty")}
+          </p>
         )}
         <SidebarGroupContent>
           <SidebarMenu>
