@@ -352,8 +352,9 @@ export function MainHeader({
                   } else {
                     setBase64Data(window.atob(value));
                   }
-                } catch (err) {
-                  console.error(err);
+                } catch {
+                  // Half-typed or non-base64 input is the normal case here,
+                  // not a fault: just show nothing until it decodes.
                   setBase64Data("");
                 }
               }}

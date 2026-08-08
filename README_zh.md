@@ -234,9 +234,6 @@ Transfer/sec:     19.24MB
 ```
 
 
-<div align="center">
-  <img width="200" src="./asset/qrcode.jpg" alt="Pingap qrcode" />
-</div>
 
 
 ## 📦 最低支持rust版本

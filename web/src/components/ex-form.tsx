@@ -39,6 +39,17 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { InputSelect } from "./input_select";
+import { useBlocker } from "react-router-dom";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 function getOption(
   value: string | number | boolean | null | undefined,
@@ -175,6 +186,32 @@ export function ExForm({
     resolver: zodResolver(schema as z.ZodSchema<Record<string, unknown>>),
     defaultValues,
   });
+  const dirty = updatedCount > 0;
+  // Saving and removing navigate on their way out (to the saved entity, or back
+  // to the list). Those redirects run before the dirty count is cleared, so the
+  // guard has to know to stand down for them. A ref, because useBlocker reads it
+  // at navigation time rather than at render time.
+  const leavingOnPurpose = React.useRef(false);
+
+  // Closing the tab or reloading: the browser shows its own confirmation.
+  React.useEffect(() => {
+    if (!dirty) {
+      return;
+    }
+    const confirmClose = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", confirmClose);
+    return () => window.removeEventListener("beforeunload", confirmClose);
+  }, [dirty]);
+
+  // Navigating inside the app: react-router hands us the decision.
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      dirty &&
+      !leavingOnPurpose.current &&
+      currentLocation.pathname + currentLocation.search !==
+        nextLocation.pathname + nextLocation.search,
+  );
+
   // 2. Define a submit handler.
   async function onSubmit() {
     if (!onSave || processing) {
@@ -185,6 +222,7 @@ export function ExForm({
       data = Object.assign({}, originalValues, updatedValues);
     }
     setProcessing(true);
+    leavingOnPurpose.current = true;
     try {
       await onSave(data);
       setUpdatedCount(0);
@@ -196,6 +234,7 @@ export function ExForm({
         description: formatError(err),
       });
     } finally {
+      leavingOnPurpose.current = false;
       setProcessing(false);
     }
   }
@@ -205,6 +244,7 @@ export function ExForm({
       return;
     }
     setProcessing(true);
+    leavingOnPurpose.current = true;
     try {
       await onRemove();
       toast(t("removeSuccessTitle"), {
@@ -215,6 +255,7 @@ export function ExForm({
         description: formatError(err),
       });
     } finally {
+      leavingOnPurpose.current = false;
       setProcessing(false);
     }
   }
@@ -590,7 +631,9 @@ export function ExForm({
       {/* 因为col-span是动态生成，因此先引入，否则tailwind并未编译该类 */}
       <span className="col-span-1 col-span-2 col-span-3 col-span-4 col-span-5 col-span-6 col-span-full" />
       <form
-        onSubmit={form.handleSubmit(onSubmit)}
+        // Built inside the handler, not during render: onSubmit now touches a
+        // ref, and calling handleSubmit() while rendering would read it there.
+        onSubmit={(e) => form.handleSubmit(onSubmit)(e)}
         className="relative space-y-0"
       >
         <div className="rounded-xl border border-border/80 bg-card p-5 shadow-none sm:p-6">
@@ -683,6 +726,38 @@ export function ExForm({
           </div>
         )}
       </form>
+
+      <AlertDialog
+        open={blocker.state === "blocked"}
+        onOpenChange={(open) => {
+          if (!open) {
+            blocker.reset?.();
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("unsavedTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("unsavedDescription")}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              className="cursor-pointer"
+              onClick={() => blocker.reset?.()}
+            >
+              {t("cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="cursor-pointer"
+              onClick={() => blocker.proceed?.()}
+            >
+              {t("leave")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Form>
   );
 }

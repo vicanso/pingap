@@ -45,8 +45,31 @@ export default function Home() {
       state.getCertificateInfos,
     ]),
   );
-  const [basicInfo] = useBasicState(useShallow((state) => [state.data]));
+  const [basicInfo, fetchBasicInfo] = useBasicState(
+    useShallow((state) => [state.data, state.fetch]),
+  );
   const [validity, setValidity] = React.useState({} as Record<string, string>);
+
+  // /basic was only fetched once when the app mounted, so every counter on this
+  // page froze the moment it opened. Refresh while the dashboard is on screen —
+  // scoped to this component, so no other page pays for it — and skip ticks for
+  // a hidden tab, where nobody is reading the numbers.
+  React.useEffect(() => {
+    const refresh = () => {
+      if (document.hidden) {
+        return;
+      }
+      // A dropped poll is not worth a toast; the next tick retries.
+      fetchBasicInfo().catch(() => {});
+    };
+    const timer = setInterval(refresh, 5000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [fetchBasicInfo]);
+
   useAsync(async () => {
     try {
       const infos = await getCertificateInfos();
@@ -73,8 +96,9 @@ export default function Home() {
         }
       });
       setValidity(results);
-    } catch (err) {
-      console.error(err);
+    } catch {
+      // Validity dates are decorative: the certificate card simply omits the
+      // range. Not worth a toast on every visit to the dashboard.
     }
   }, []);
   if (!initialized) {

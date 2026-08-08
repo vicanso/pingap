@@ -30,6 +30,10 @@ export default {
   removeFailTitle: "Remove Config Fail",
   removeSuccessTitle: "Remove Config Success",
   removeSuccessDescription: "Config is removed from storage",
+  unsavedTitle: "Leave without saving?",
+  unsavedDescription:
+    "The changes on this form have not been saved and will be lost.",
+  leave: "Leave",
   backToList: "Back to list",
   includes: "Includes",
   includesPlaceholder: "Select the include config",
@@ -49,6 +53,13 @@ export default {
   decode: "Decode",
   value: "Value",
   result: "Result",
+  error: {
+    title: "Something went wrong",
+    description:
+      "This page failed to render. The rest of the console still works.",
+    reload: "Reload",
+    backHome: "Back to dashboard",
+  },
   nav: {
     home: "Dashboard",
     basic: "Basic",
@@ -58,6 +69,7 @@ export default {
     plugin: "Plugin",
     certificate: "Certificate",
     storage: "Storage",
+    searchEmpty: "No matches",
     searchPlaceholder: "Input the keyword",
   },
   login: {
