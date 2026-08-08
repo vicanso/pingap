@@ -206,7 +206,7 @@ members = [
     "pingap-webhook",
 ]
 [workspace.package]
-version = "0.13.8"
+version = "0.13.9"
 
 [workspace.dependencies]
 aes-gcm-siv = { version = "0.11.1", default-features = false, features = [
@@ -272,25 +272,25 @@ opentelemetry_sdk = { version = "0.32.1", features = [
     "rt-tokio",
 ], default-features = false }
 path-absolutize = "4.0.1"
-pingap-acme = { version = "0.13.4", path = "pingap-acme" }
-pingap-cache = { version = "0.13.4", path = "pingap-cache" }
-pingap-certificate = { version = "0.13.4", path = "pingap-certificate" }
-pingap-config = { version = "0.13.4", path = "pingap-config" }
-pingap-core = { version = "0.13.4", path = "pingap-core" }
-pingap-discovery = { version = "0.13.4", path = "pingap-discovery" }
-pingap-health = { version = "0.13.4", path = "pingap-health" }
-pingap-imageoptim = { version = "0.13.4", path = "pingap-imageoptim" }
-pingap-location = { version = "0.13.4", path = "pingap-location" }
-pingap-logger = { version = "0.13.4", path = "pingap-logger" }
-pingap-otel = { version = "0.13.4", path = "pingap-otel" }
-pingap-performance = { version = "0.13.4", path = "pingap-performance" }
-pingap-plugin = { version = "0.13.4", path = "pingap-plugin" }
-pingap-proxy = { version = "0.13.4", path = "pingap-proxy" }
-pingap-pyroscope = { version = "0.13.4", path = "pingap-pyroscope" }
-pingap-sentry = { version = "0.13.4", path = "pingap-sentry" }
-pingap-upstream = { version = "0.13.4", path = "pingap-upstream" }
-pingap-util = { version = "0.13.4", path = "pingap-util" }
-pingap-webhook = { version = "0.13.4", path = "pingap-webhook" }
+pingap-acme = { version = "0.13.9", path = "pingap-acme" }
+pingap-cache = { version = "0.13.9", path = "pingap-cache" }
+pingap-certificate = { version = "0.13.9", path = "pingap-certificate" }
+pingap-config = { version = "0.13.9", path = "pingap-config" }
+pingap-core = { version = "0.13.9", path = "pingap-core" }
+pingap-discovery = { version = "0.13.9", path = "pingap-discovery" }
+pingap-health = { version = "0.13.9", path = "pingap-health" }
+pingap-imageoptim = { version = "0.13.9", path = "pingap-imageoptim" }
+pingap-location = { version = "0.13.9", path = "pingap-location" }
+pingap-logger = { version = "0.13.9", path = "pingap-logger" }
+pingap-otel = { version = "0.13.9", path = "pingap-otel" }
+pingap-performance = { version = "0.13.9", path = "pingap-performance" }
+pingap-plugin = { version = "0.13.9", path = "pingap-plugin" }
+pingap-proxy = { version = "0.13.9", path = "pingap-proxy" }
+pingap-pyroscope = { version = "0.13.9", path = "pingap-pyroscope" }
+pingap-sentry = { version = "0.13.9", path = "pingap-sentry" }
+pingap-upstream = { version = "0.13.9", path = "pingap-upstream" }
+pingap-util = { version = "0.13.9", path = "pingap-util" }
+pingap-webhook = { version = "0.13.9", path = "pingap-webhook" }
 pingora = { version = "0.8.1", default-features = false, features = [
     "lb",
     "openssl",

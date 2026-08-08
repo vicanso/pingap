@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.13.9](https://github.com/vicanso/pingap/compare/v0.13.8..v0.13.9) - 2026-08-08
+
+### ⛰️  Features
+
+- Publish deb packages for linux releases ([#12](https://github.com/orhun/git-cliff/issues/12)) - ([ab4c377](https://github.com/vicanso/pingap/commit/ab4c3775e40429af08432ad36fe4d3c6a327ab57))
+- Live dashboard, unsaved-changes guard and a route error boundary - ([0cc7bc7](https://github.com/vicanso/pingap/commit/0cc7bc74afddd9816d318bb661f98880ce8a22c4))
+- Browse config entities as a list, then edit one - ([a030730](https://github.com/vicanso/pingap/commit/a030730673c589b3c60361eb782e99a46199fd08))
+- Redesign the web admin UI - ([db1ab2e](https://github.com/vicanso/pingap/commit/db1ab2ead3e81a3b72ac121b973c983c2bd7651d))
+
+### 🐛 Bug Fixes
+
+- Run location plugins on upgrade requests ([#215](https://github.com/orhun/git-cliff/issues/215)) - ([29373ca](https://github.com/vicanso/pingap/commit/29373caaed1252e0162af8ed41b5dae58bc1c1ba))
+
+### ⚙️ Miscellaneous Tasks
+
+- Clear the security audit - ([12812d4](https://github.com/vicanso/pingap/commit/12812d4308f02ecf30510957c0b040d5d015f134))
+
 ## [0.13.8](https://github.com/vicanso/pingap/compare/v0.13.7..v0.13.8) - 2026-08-01
 
 ### ⛰️  Features
