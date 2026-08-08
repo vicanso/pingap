@@ -584,7 +584,7 @@ impl Server {
         }
 
         // initialize plugins and execute
-        ctx.plugins = self.get_context_plugins(location.clone(), session);
+        ctx.plugins = self.get_context_plugins(location.clone());
         let _ = self
             .handle_request_plugin(PluginStep::EarlyRequest, session, ctx)
             .await?;
@@ -706,11 +706,7 @@ impl Server {
     fn get_context_plugins(
         &self,
         location: Arc<Location>,
-        session: &Session,
     ) -> Option<Vec<NamedPlugin>> {
-        if session.is_upgrade_req() {
-            return None;
-        }
         let plugins = location.plugins.as_ref()?;
 
         let location_plugins: Vec<_> = plugins
@@ -871,6 +867,11 @@ impl Server {
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
     ) -> pingora::Result<()> {
+        // Same reasoning as handle_response_body_plugin: after the 101 these
+        // bytes are the upgraded protocol, not a body to rewrite.
+        if session.was_upgraded() {
+            return Ok(());
+        }
         let plugins = match ctx.plugins.take() {
             Some(p) => p,
             None => return Ok(()), // No plugins, exit early.
@@ -914,6 +915,18 @@ impl Server {
         body: &mut Option<bytes::Bytes>,
         end_of_stream: bool,
     ) -> pingora::Result<()> {
+        // Once the upstream answered 101 the connection carries the upgraded
+        // protocol, not an HTTP body, so a body-rewriting plugin would corrupt
+        // it (#114, sub_filter breaking websockets).
+        //
+        // The test is `was_upgraded`, which is only true after the backend's
+        // 101, never `is_upgrade_req`: pingora treats any HTTP/1.1 request
+        // carrying an `Upgrade` header as an upgrade request without checking
+        // its value, so keying off the request would let a client turn plugins
+        // off with one header.
+        if session.was_upgraded() {
+            return Ok(());
+        }
         let plugins = match ctx.plugins.take() {
             Some(p) => p,
             None => return Ok(()), // No plugins, exit early.
@@ -1637,6 +1650,7 @@ mod tests {
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, SystemTime};
     use tokio_test::io::Builder;
 
@@ -1663,8 +1677,12 @@ mod tests {
         assert_eq!("1.3", result.tls_version.unwrap_or_default());
     }
 
-    /// Creates a new test server instance with default configuration
-    fn new_server() -> Server {
+    /// Creates a new test server instance with default configuration.
+    /// Pass a plugin provider to exercise the plugin chain; the default one
+    /// resolves nothing, which is enough for tests that ignore plugins.
+    fn new_server_with(
+        plugin_provider: Option<Arc<dyn PluginProvider>>,
+    ) -> Server {
         let toml_data = r###"
 [upstreams.charts]
 # upstream address list
@@ -1746,6 +1764,8 @@ value = 'proxy_set_headers = ["name:value"]'
                 None
             }
         }
+        let plugin_provider =
+            plugin_provider.unwrap_or_else(|| Arc::new(TmpPluginLoader {}));
         struct TmpLocationLoader {
             location: Arc<Location>,
         }
@@ -1814,11 +1834,15 @@ value = 'proxy_set_headers = ["name:value"]'
                 }),
                 location_provider: Arc::new(TmpLocationLoader { location }),
                 upstream_provider: Arc::new(TmpUpstreamLoader { upstream }),
-                plugin_provider: Arc::new(TmpPluginLoader {}),
+                plugin_provider,
                 certificate_provider: Arc::new(TmpCertificateLoader {}),
             },
         )
         .unwrap()
+    }
+
+    fn new_server() -> Server {
+        new_server_with(None)
     }
 
     #[test]
@@ -1848,6 +1872,169 @@ value = 'proxy_set_headers = ["name:value"]'
             .await
             .unwrap();
         assert_eq!("lo", ctx.upstream.location.as_ref());
+    }
+
+    /// Stands in for a plugin that gates a request, e.g. `basic_auth`. It only
+    /// counts, so a test can tell "the chain ran" from "the chain was skipped"
+    /// without the session having to write a response.
+    #[derive(Default)]
+    struct CountingPlugin {
+        request_calls: Arc<AtomicUsize>,
+        body_calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Plugin for CountingPlugin {
+        async fn handle_request(
+            &self,
+            _step: PluginStep,
+            _session: &mut Session,
+            _ctx: &mut Ctx,
+        ) -> pingora::Result<RequestPluginResult> {
+            self.request_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(RequestPluginResult::Continue)
+        }
+
+        fn handle_response_body(
+            &self,
+            _session: &mut Session,
+            _ctx: &mut Ctx,
+            _body: &mut Option<bytes::Bytes>,
+            _end_of_stream: bool,
+        ) -> pingora::Result<ResponseBodyPluginResult> {
+            self.body_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(ResponseBodyPluginResult::Unchanged)
+        }
+    }
+
+    struct CountingPluginProvider {
+        plugin: Arc<dyn Plugin>,
+    }
+    impl PluginProvider for CountingPluginProvider {
+        fn get(&self, _name: &str) -> Option<Arc<dyn Plugin>> {
+            Some(self.plugin.clone())
+        }
+    }
+
+    /// Server plus the counters of the single plugin every location resolves to.
+    fn new_server_counting() -> (Server, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+        let plugin = CountingPlugin::default();
+        let request_calls = plugin.request_calls.clone();
+        let body_calls = plugin.body_calls.clone();
+        let server = new_server_with(Some(Arc::new(CountingPluginProvider {
+            plugin: Arc::new(plugin),
+        })));
+        (server, request_calls, body_calls)
+    }
+
+    /// Regression for the pre-auth bypass reported in #215.
+    ///
+    /// `get_context_plugins` used to return `None` when `session.is_upgrade_req()`,
+    /// leaving `ctx.plugins` empty for the whole request and turning every plugin
+    /// step into a no-op — authentication included. pingora treats any HTTP/1.1
+    /// request carrying an `Upgrade` header as an upgrade request without looking
+    /// at the value, so `Upgrade: x` on any path was enough to walk past
+    /// `basic_auth`, `key_auth`, `jwt`, `ip_restriction` and the rest and still be
+    /// proxied upstream.
+    #[tokio::test]
+    async fn test_upgrade_request_cannot_skip_plugins() {
+        for headers in [
+            // No upgrade at all, as the control.
+            "",
+            // What pingora accepts as an upgrade: an `Upgrade` header whose
+            // value it never inspects.
+            "Upgrade: x\r\n",
+            // A well-formed websocket handshake.
+            "Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n",
+        ] {
+            let (server, request_calls, _) = new_server_counting();
+
+            let input_header =
+                format!("GET /vicanso/pingap HTTP/1.1\r\n{headers}\r\n");
+            let mock_io = Builder::new().read(input_header.as_bytes()).build();
+            let mut session = Session::new_h1(Box::new(mock_io));
+            session.read_request().await.unwrap();
+
+            let mut ctx = Ctx::default();
+            server
+                .early_request_filter(&mut session, &mut ctx)
+                .await
+                .unwrap();
+
+            assert!(
+                ctx.plugins.is_some(),
+                "plugin chain was dropped for headers {headers:?}"
+            );
+            assert!(
+                request_calls.load(Ordering::SeqCst) > 0,
+                "request plugins never ran for headers {headers:?}"
+            );
+
+            // And they keep running at the Request step, not just EarlyRequest.
+            let before = request_calls.load(Ordering::SeqCst);
+            server
+                .handle_request_plugin(
+                    PluginStep::Request,
+                    &mut session,
+                    &mut ctx,
+                )
+                .await
+                .unwrap();
+            assert!(
+                request_calls.load(Ordering::SeqCst) > before,
+                "Request step was skipped for headers {headers:?}"
+            );
+        }
+    }
+
+    /// The websocket breakage that motivated the original skip (#114) is a
+    /// response-body concern, so the guard belongs on the body hooks — and it
+    /// has to key off the completed handshake, not the request header, or a
+    /// client could switch the hooks off on demand.
+    #[tokio::test]
+    async fn test_response_body_plugins_wait_for_the_handshake() {
+        let (server, _, body_calls) = new_server_counting();
+
+        let input_header =
+            "GET /vicanso/pingap HTTP/1.1\r\nUpgrade: websocket\r\n\r\n";
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+
+        // The client asked to upgrade, but no 101 came back, so this is still a
+        // plain HTTP response and the body hooks must stay live. Only pingora
+        // flips `was_upgraded`, and only on the 101, which is exactly why the
+        // guard reads it instead of the request header.
+        assert!(session.is_upgrade_req());
+        assert!(!session.was_upgraded());
+
+        let location = server.location_provider.get("lo").unwrap();
+        let mut ctx = Ctx {
+            plugins: server.get_context_plugins(location),
+            ..Default::default()
+        };
+        let mut body = Some(bytes::Bytes::from_static(b"hello"));
+        server
+            .handle_response_body_plugin(
+                &mut session,
+                &mut ctx,
+                &mut body,
+                true,
+            )
+            .unwrap();
+        server
+            .handle_upstream_response_body_plugin(
+                &mut session,
+                &mut ctx,
+                &mut body,
+                true,
+            )
+            .unwrap();
+        assert_eq!(
+            2,
+            body_calls.load(Ordering::SeqCst),
+            "body hooks must not bail out before the handshake completes"
+        );
     }
 
     #[tokio::test]
