@@ -83,16 +83,27 @@ jobs:
             make release-full
             mv target/x86_64-unknown-linux-musl/release/pingap ./pingap-linux-musl-x86-full
             make release
-            mv target/x86_64-unknown-linux-musl/release/pingap ./pingap-linux-musl-x86
+            # Copied, not moved: cargo-deb picks the binary up from the target
+            # directory in the next step.
+            cp target/x86_64-unknown-linux-musl/release/pingap ./pingap-linux-musl-x86
+      - name: Build deb
+        run: |
+          cargo install cargo-deb --locked
+          # --no-build because the musl binary already exists from the container
+          # step above, and --no-strip because the release profile strips it and
+          # the host toolchain cannot strip a foreign binary anyway.
+          cargo deb --target x86_64-unknown-linux-musl --no-build --no-strip \
+            --output ./pingap-linux-x86.deb
       - name: Upload Assets
         run: |
           tar -czvf pingap-linux-musl-x86.tar.gz pingap-linux-musl-x86
           tar -czvf pingap-linux-musl-x86-full.tar.gz pingap-linux-musl-x86-full
 
-          ls -lh pingap*.gz
+          ls -lh pingap*.gz pingap*.deb
 
           ./.github/workflows/upload_asset.sh ./pingap-linux-musl-x86.tar.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./pingap-linux-musl-x86-full.tar.gz $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./pingap-linux-x86.deb $GITHUB_TOKEN
 
   linux-musl-aarch64:
     runs-on: ubuntu-22.04
@@ -115,16 +126,27 @@ jobs:
             make release-all
             mv target/aarch64-unknown-linux-musl/release/pingap ./pingap-linux-musl-aarch64-full
             make release
-            mv target/aarch64-unknown-linux-musl/release/pingap ./pingap-linux-musl-aarch64
+            # Copied, not moved: cargo-deb picks the binary up from the target
+            # directory in the next step.
+            cp target/aarch64-unknown-linux-musl/release/pingap ./pingap-linux-musl-aarch64
+      - name: Build deb
+        run: |
+          cargo install cargo-deb --locked
+          # --no-build because the musl binary already exists from the container
+          # step above, and --no-strip because the release profile strips it and
+          # the host toolchain cannot strip a foreign binary anyway.
+          cargo deb --target aarch64-unknown-linux-musl --no-build --no-strip \
+            --output ./pingap-linux-aarch64.deb
       - name: Upload Assets
         run: |
           tar -czvf pingap-linux-musl-aarch64.tar.gz pingap-linux-musl-aarch64
           tar -czvf pingap-linux-musl-aarch64-full.tar.gz pingap-linux-musl-aarch64-full
 
-          ls -lh pingap*.gz
+          ls -lh pingap*.gz pingap*.deb
 
           ./.github/workflows/upload_asset.sh ./pingap-linux-musl-aarch64.tar.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./pingap-linux-musl-aarch64-full.tar.gz $GITHUB_TOKEN
+          ./.github/workflows/upload_asset.sh ./pingap-linux-aarch64.deb $GITHUB_TOKEN
 
   linux-gnu:
     timeout-minutes: 3600

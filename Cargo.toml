@@ -133,6 +133,56 @@ harness = false
 [package.metadata.cargo-machete]
 ignored = ["humantime-serde", "hcl-rs", "kdl"]
 
+# Debian packaging (cargo-deb). The paths below are not a fresh choice: they are
+# the ones pingap.service has always used, so the unit works as installed.
+#
+# Built from the musl targets in publish.yml, which link statically - hence
+# `depends` is empty rather than `$auto`. `$auto` would run dpkg-shlibdeps and
+# tie the package to the glibc of whichever runner built it.
+[package.metadata.deb]
+maintainer = "Tree Xie <tree.xie@outlook.com>"
+copyright = "2024-2026, Tree Xie <tree.xie@outlook.com>"
+license-file = ["LICENSE", "0"]
+extended-description = """\
+Pingap is a reverse proxy built on Cloudflare Pingora, configured through TOML, \
+HCL or KDL and manageable from a built-in web admin panel. It supports dynamic \
+upstreams, health checks, ACME certificates and a plugin chain for auth, \
+caching, rate limiting and traffic splitting."""
+section = "net"
+priority = "optional"
+# Statically linked, so nothing to resolve at install time.
+depends = ""
+assets = [
+    ["target/release/pingap", "usr/sbin/pingap", "755"],
+    # The one config file that is canonical in every layout pingap supports, so
+    # dropping it here cannot trigger the startup layout migration. Everything
+    # in /etc is registered as a conffile, so an edited copy survives upgrades.
+    ["conf/basic.toml", "etc/pingap/conf/basic.toml", "644"],
+    ["README.md", "usr/share/doc/pingap/README.md", "644"],
+    # Reference material, deliberately outside /etc: these use the one file per
+    # category layout, which would collide with the `?separation` layout the
+    # unit asks for if they were loaded as live config.
+    ["conf/servers.toml", "usr/share/doc/pingap/examples/servers.toml", "644"],
+    ["conf/locations.toml", "usr/share/doc/pingap/examples/locations.toml", "644"],
+    ["conf/upstreams.toml", "usr/share/doc/pingap/examples/upstreams.toml", "644"],
+    ["conf/plugins.toml", "usr/share/doc/pingap/examples/plugins.toml", "644"],
+    ["conf/certificates.toml", "usr/share/doc/pingap/examples/certificates.toml", "644"],
+]
+# cargo-deb writes the generated systemd maintainer scripts here. Without this
+# key it installs the unit but emits no postinst/postrm at all, so nothing runs
+# `systemctl daemon-reload` and `purge` leaves the unit registered.
+maintainer-scripts = "packaging/debian"
+
+# `unit-scripts = "."` because pingap.service lives at the repo root and is the
+# file the docs point at. Installed but neither enabled nor started: the shipped
+# config defines no server, so doing either here would only produce a failed
+# unit. `systemctl enable --now pingap` once there is something to serve.
+[package.metadata.deb.systemd-units]
+unit-name = "pingap"
+unit-scripts = "."
+enable = false
+start = false
+
 [workspace]
 members = [
     "pingap-acme",
