@@ -2,6 +2,7 @@ import { LoadingPage } from "@/components/loading";
 import useBasicState from "@/states/basic";
 import useConfigState, { getLocationWeight, Server } from "@/states/config";
 import { ExForm, ExFormItem } from "@/components/ex-form";
+import { sortIntoSections } from "@/components/ex-form-sections";
 import { z } from "zod";
 import { useI18n } from "@/i18n";
 import {
@@ -13,7 +14,10 @@ import { newZodDuration, omitEmptyArrayString } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import History from "@/pages/History";
-import { ConfigEntityHeader } from "@/components/config-entity-header";
+import { EntityBadge } from "@/components/config-entity-badge";
+import { PageShell } from "@/components/page-shell";
+import { ConfigEntityList, EntityText } from "@/components/config-entity-list";
+import { SERVERS } from "@/routers";
 
 function getServerConfig(name: string, servers?: Record<string, Server>) {
   if (!servers) {
@@ -39,16 +43,60 @@ export default function Servers() {
     );
   const [basicInfo] = useBasicState(useShallow((state) => [state.data]));
 
+  const sec = {
+    basic: serverI18n("sectionBasic"),
+    logging: serverI18n("sectionLogging"),
+    tls: serverI18n("sectionTls"),
+    connection: serverI18n("sectionConnection"),
+    tcp: serverI18n("sectionTcp"),
+  };
+
   const newServer = "*";
   const servers = Object.keys(config.servers || {});
   servers.sort();
-  servers.unshift(newServer);
 
-  const currentServer = searchParams.get("name") || newServer;
+  // No `name` in the url means the category overview, `*` means the create form.
+  const currentServer = searchParams.get("name") || "";
 
   if (!initialized) {
     return <LoadingPage />;
   }
+
+  if (!currentServer) {
+    return (
+      <ConfigEntityList<Server>
+        title={serverI18n("title")}
+        summary={serverI18n("summary", { count: servers.length })}
+        nameLabel={serverI18n("name")}
+        addLabel={serverI18n("add")}
+        emptyText={serverI18n("empty")}
+        basePath={SERVERS}
+        newValue={newServer}
+        names={servers}
+        values={config.servers || {}}
+        columns={[
+          {
+            key: "addr",
+            label: serverI18n("addr"),
+            render: (value) => <EntityText value={value?.addr} />,
+          },
+          {
+            key: "locations",
+            label: serverI18n("locations"),
+            render: (value) => (
+              <EntityText value={(value?.locations || []).join(", ")} />
+            ),
+          },
+          {
+            key: "threads",
+            label: serverI18n("threads"),
+            render: (value) => <EntityText value={value?.threads} />,
+          },
+        ]}
+      />
+    );
+  }
+
   const locations = Object.keys(config.locations || {});
   const getWeight = (name: string) => {
     const lo = (config.locations || {})[name];
@@ -62,11 +110,12 @@ export default function Servers() {
   });
 
   const handleSelectServer = (name: string) => {
-    if (name === newServer) {
-      searchParams.delete("name");
-    } else {
-      searchParams.set("name", name);
-    }
+    searchParams.set("name", name);
+    setSearchParams(searchParams);
+  };
+
+  const backToList = () => {
+    searchParams.delete("name");
     setSearchParams(searchParams);
   };
 
@@ -74,6 +123,7 @@ export default function Servers() {
   const items: ExFormItem[] = [
     {
       name: "addr",
+      section: sec.basic,
       label: serverI18n("addr"),
       placeholder: serverI18n("addrPlaceholder"),
       defaultValue: serverConfig.addr,
@@ -82,6 +132,7 @@ export default function Servers() {
     },
     {
       name: "locations",
+      section: sec.basic,
       label: serverI18n("locations"),
       placeholder: serverI18n("locationsPlaceholder"),
       span: 3,
@@ -91,6 +142,7 @@ export default function Servers() {
     },
     {
       name: "threads",
+      section: sec.basic,
       label: serverI18n("threads"),
       placeholder: serverI18n("threadsPlaceholder"),
       defaultValue: serverConfig.threads,
@@ -99,6 +151,7 @@ export default function Servers() {
     },
     {
       name: "global_certificates",
+      section: sec.tls,
       label: serverI18n("globalCertificates"),
       placeholder: "",
       defaultValue: serverConfig.global_certificates,
@@ -108,6 +161,7 @@ export default function Servers() {
     },
     {
       name: "access_log",
+      section: sec.logging,
       label: serverI18n("accessLog"),
       placeholder: serverI18n("accessLogPlaceholder"),
       defaultValue: serverConfig.access_log,
@@ -116,6 +170,7 @@ export default function Servers() {
     },
     {
       name: "enabled_h2",
+      section: sec.connection,
       label: serverI18n("enabledH2"),
       placeholder: "",
       defaultValue: serverConfig.enabled_h2,
@@ -125,6 +180,7 @@ export default function Servers() {
     },
     {
       name: "enable_server_timing",
+      section: sec.logging,
       label: serverI18n("enabledServerTiming"),
       placeholder: "",
       defaultValue: serverConfig.enable_server_timing,
@@ -134,6 +190,7 @@ export default function Servers() {
     },
     {
       name: "downstream_read_timeout",
+      section: sec.connection,
       label: serverI18n("downstreamReadTimeout"),
       placeholder: serverI18n("downstreamReadTimeoutPlaceholder"),
       defaultValue: serverConfig.downstream_read_timeout,
@@ -142,6 +199,7 @@ export default function Servers() {
     },
     {
       name: "downstream_write_timeout",
+      section: sec.connection,
       label: serverI18n("downstreamWriteTimeout"),
       placeholder: serverI18n("downstreamWriteTimeoutPlaceholder"),
       defaultValue: serverConfig.downstream_write_timeout,
@@ -150,6 +208,7 @@ export default function Servers() {
     },
     {
       name: "reuse_port",
+      section: sec.connection,
       label: serverI18n("reusePort"),
       placeholder: "",
       defaultValue: serverConfig.reuse_port,
@@ -159,6 +218,7 @@ export default function Servers() {
     },
     {
       name: "modules",
+      section: sec.basic,
       label: serverI18n("modules"),
       placeholder: serverI18n("modulesPlaceholder"),
       defaultValue: serverConfig.modules,
@@ -168,6 +228,7 @@ export default function Servers() {
     },
     {
       name: "includes",
+      section: sec.basic,
       label: i18n("includes"),
       placeholder: i18n("includesPlaceholder"),
       defaultValue: serverConfig.includes,
@@ -177,6 +238,7 @@ export default function Servers() {
     },
     {
       name: "tls_cipher_list",
+      section: sec.tls,
       label: serverI18n("tlsCipherList"),
       placeholder: serverI18n("tlsCipherListPlaceholder"),
       defaultValue: serverConfig.tls_cipher_list,
@@ -185,6 +247,7 @@ export default function Servers() {
     },
     {
       name: "tls_ciphersuites",
+      section: sec.tls,
       label: serverI18n("tlsCiphersuites"),
       placeholder: serverI18n("tlsCiphersuitesPlaceholder"),
       defaultValue: serverConfig.tls_ciphersuites,
@@ -193,6 +256,7 @@ export default function Servers() {
     },
     {
       name: "tls_min_version",
+      section: sec.tls,
       label: serverI18n("tlsMinVersion"),
       placeholder: "",
       defaultValue: serverConfig.tls_min_version,
@@ -202,6 +266,7 @@ export default function Servers() {
     },
     {
       name: "tls_max_version",
+      section: sec.tls,
       label: serverI18n("tlsMaxVersion"),
       placeholder: "",
       defaultValue: serverConfig.tls_max_version,
@@ -211,6 +276,7 @@ export default function Servers() {
     },
     {
       name: "tcp_fastopen",
+      section: sec.tcp,
       label: serverI18n("tcpFastOpen"),
       placeholder: serverI18n("tcpFastOpenPlaceholder"),
       defaultValue: serverConfig.tcp_fastopen,
@@ -219,6 +285,7 @@ export default function Servers() {
     },
     {
       name: "tcp_user_timeout",
+      section: sec.tcp,
       label: serverI18n("tcpUserTimeout"),
       placeholder: serverI18n("tcpUserTimeoutPlaceholder"),
       defaultValue: serverConfig.tcp_user_timeout,
@@ -227,6 +294,7 @@ export default function Servers() {
     },
     {
       name: "tcp_idle",
+      section: sec.tcp,
       label: serverI18n("tcpIdle"),
       placeholder: serverI18n("tcpIdlePlaceholder"),
       defaultValue: serverConfig.tcp_idle,
@@ -235,6 +303,7 @@ export default function Servers() {
     },
     {
       name: "tcp_interval",
+      section: sec.tcp,
       label: serverI18n("tcpInterval"),
       placeholder: serverI18n("tcpIntervalPlaceholder"),
       defaultValue: serverConfig.tcp_interval,
@@ -243,6 +312,7 @@ export default function Servers() {
     },
     {
       name: "tcp_probe_count",
+      section: sec.tcp,
       label: serverI18n("tcpProbeCount"),
       placeholder: serverI18n("tcpProbeCountPlaceholder"),
       defaultValue: serverConfig.tcp_probe_count,
@@ -255,6 +325,7 @@ export default function Servers() {
     items.push(
       {
         name: "prometheus_metrics",
+        section: sec.logging,
         label: serverI18n("prometheusMetrics"),
         placeholder: serverI18n("prometheusMetricsPlaceholder"),
         defaultValue: serverConfig.prometheus_metrics,
@@ -263,6 +334,7 @@ export default function Servers() {
       },
       {
         name: "otlp_exporter",
+        section: sec.logging,
         label: serverI18n("otlpExporter"),
         placeholder: serverI18n("otlpExporterPlaceholder"),
         defaultValue: serverConfig.otlp_exporter,
@@ -273,17 +345,17 @@ export default function Servers() {
   }
   items.push({
     name: "remark",
+    section: sec.basic,
     label: serverI18n("remark"),
     placeholder: "",
     defaultValue: serverConfig.remark,
     span: 6,
     category: ExFormItemCategory.TEXTAREA,
   });
-  let defaultShow = 7;
   if (currentServer === newServer) {
-    defaultShow++;
     items.unshift({
       name: "name",
+      section: sec.basic,
       label: serverI18n("name"),
       placeholder: serverI18n("namePlaceholder"),
       defaultValue: "",
@@ -291,6 +363,12 @@ export default function Servers() {
       category: ExFormItemCategory.TEXT,
     });
   }
+
+  const defaultShow = sortIntoSections(
+    items,
+    [sec.basic, sec.logging, sec.tls, sec.connection, sec.tcp],
+    [sec.basic, sec.logging],
+  );
 
   const schema = z.object({
     addr: z.string().min(1),
@@ -300,43 +378,32 @@ export default function Servers() {
 
   const onRemove = async () => {
     return remove("server", currentServer).then(() => {
-      handleSelectServer(newServer);
+      backToList();
     });
   };
 
   return (
-    <div className="grow overflow-auto p-4 md:p-6">
-      <ConfigEntityHeader
-        title={serverI18n("title") || serverI18n("server")}
-        description={serverI18n("description")}
-        label={serverI18n("server")}
-        value={currentServer}
-        placeholder={serverI18n("serverPlaceholder")}
-        isNew={currentServer === newServer}
-        options={servers.map((server) => ({
-          value: server,
-          label: server === newServer ? "new" : server,
-        }))}
-        onChange={(value) => {
-          if (value === newServer) {
-            searchParams.delete("name");
-          } else {
-            searchParams.set("name", value);
-          }
-          setSearchParams(searchParams);
-        }}
-        actions={
-          currentServer !== newServer ? (
-            <History
-              category="server"
-              name={currentServer}
-              onRestore={async (data) => {
-                await update("server", currentServer, data);
-              }}
-            />
-          ) : undefined
-        }
-      />
+    <PageShell
+      title={serverI18n("title")}
+      description={serverI18n("description")}
+      width="narrow"
+      backTo={SERVERS}
+      backLabel={i18n("backToList")}
+      badge={
+        <EntityBadge name={currentServer} isNew={currentServer === newServer} />
+      }
+      actions={
+        currentServer !== newServer ? (
+          <History
+            category="server"
+            name={currentServer}
+            onRestore={async (data) => {
+              await update("server", currentServer, data);
+            }}
+          />
+        ) : undefined
+      }
+    >
       <ExForm
         category="server"
         key={`${currentServer}-${version}`}
@@ -354,6 +421,6 @@ export default function Servers() {
           handleSelectServer(name);
         }}
       />
-    </div>
+    </PageShell>
   );
 }

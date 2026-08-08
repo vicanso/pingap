@@ -266,8 +266,8 @@ export function MainHeader({
               id="secret"
               className="grow"
               onChange={(e) => {
-                aesData.key = e.target.value.trim();
-                setAesData(aesData);
+                const key = e.target.value.trim();
+                setAesData((prev) => ({ ...prev, key }));
               }}
             />
           </div>
@@ -279,8 +279,8 @@ export function MainHeader({
               id="value"
               className="grow"
               onChange={(e) => {
-                aesData.data = e.target.value.trim();
-                setAesData(aesData);
+                const data = e.target.value.trim();
+                setAesData((prev) => ({ ...prev, data }));
               }}
             />
           </div>

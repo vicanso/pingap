@@ -30,6 +30,7 @@ export default {
   removeFailTitle: "Remove Config Fail",
   removeSuccessTitle: "Remove Config Success",
   removeSuccessDescription: "Config is removed from storage",
+  backToList: "Back to list",
   includes: "Includes",
   includesPlaceholder: "Select the include config",
   full: "Full",
@@ -125,7 +126,8 @@ export default {
     upstreamKeepalivePoolSizePlaceholder:
       "Input the pool size of upstream keepavlie(default: 128)",
     logLevel: "Log Level",
-    logLevelPlaceholder: "Select the log level of pingap : Input custom log filter(e.g. global_level,target_a=level_a,target_b=level_b)",
+    logLevelPlaceholder:
+      "Select the log level of pingap : Input custom log filter(e.g. global_level,target_a=level_a,target_b=level_b)",
     logBufferedSize: "Log Buffered Size",
     logBufferedSizePlaceholder: "Input the buffer size for log(e.g. 64kb, 1mb)",
     logFormatJson: "Json Log Format",
@@ -170,7 +172,17 @@ export default {
   },
   server: {
     title: "Server",
-    description: "Configure the listen address, tls and locations of the server",
+    description:
+      "Configure the listen address, tls and locations of the server",
+    add: "New Server",
+    summary_one: "{{count}} server configured",
+    summary_other: "{{count}} servers configured",
+    empty: "No server configured yet",
+    sectionBasic: "Basic",
+    sectionLogging: "Logging & Observability",
+    sectionTls: "TLS",
+    sectionConnection: "Connection",
+    sectionTcp: "TCP",
     name: "Name",
     namePlaceholder: "Input the name of server",
     server: "Server",
@@ -222,7 +234,17 @@ export default {
   },
   location: {
     title: "Location",
-    description: "Configure the routing rules, upstream and plugins of the location",
+    description:
+      "Configure the routing rules, upstream and plugins of the location",
+    add: "New Location",
+    summary_one: "{{count}} location configured",
+    summary_other: "{{count}} locations configured",
+    empty: "No location configured yet",
+    sectionMatch: "Matching",
+    sectionUpstream: "Upstream & Retry",
+    sectionHeaders: "Proxy Headers",
+    sectionLimit: "Limits",
+    sectionPlugins: "Plugins & Extensions",
     name: "Name",
     namePlaceholder: "Input the name of location",
     location: "Location",
@@ -264,6 +286,17 @@ export default {
     title: "Upstream",
     description:
       "Configure the address list, health check and connection options of the upstream",
+    add: "New Upstream",
+    summary_one: "{{count}} upstream configured",
+    summary_other: "{{count}} upstreams configured",
+    empty: "No upstream configured yet",
+    healthyStatus: "Healthy",
+    sectionBackends: "Backends & Discovery",
+    sectionBalancing: "Load Balancing & Health",
+    sectionTimeout: "Timeouts",
+    sectionTls: "Protocol & TLS",
+    sectionResilience: "Stats & Circuit Breaking",
+    sectionTcp: "TCP",
     name: "Name",
     namePlaceholder: "Input the name of upstream",
     upstream: "Upstream",
@@ -313,19 +346,29 @@ export default {
     enableTracer: "Enable Tracer",
     enableBackendStats: "Enable Backend Stats",
     backendFailureStatusCode: "Backend Failure Status Code",
-    backendFailureStatusCodePlaceholder: "Input the backend failure status code(e.g. 400,500,502,503,504)",
+    backendFailureStatusCodePlaceholder:
+      "Input the backend failure status code(e.g. 400,500,502,503,504)",
     backendStatsInterval: "Backend Stats Interval",
-    backendStatsIntervalPlaceholder: "Input the backend stats interval(e.g. 60s)",
-    circuitBreakMaxConsecutiveFailures: "Circuit Break Max Consecutive Failures",
-    circuitBreakMaxConsecutiveFailuresPlaceholder: "Input the max consecutive failures for circuit break",
-    circuitBreakMaxFailurePercent: "Circuit Break Max Failure Percent(Only input integer)",
-    circuitBreakMaxFailurePercentPlaceholder: "Input the max failure percent for circuit break",
+    backendStatsIntervalPlaceholder:
+      "Input the backend stats interval(e.g. 60s)",
+    circuitBreakMaxConsecutiveFailures:
+      "Circuit Break Max Consecutive Failures",
+    circuitBreakMaxConsecutiveFailuresPlaceholder:
+      "Input the max consecutive failures for circuit break",
+    circuitBreakMaxFailurePercent:
+      "Circuit Break Max Failure Percent(Only input integer)",
+    circuitBreakMaxFailurePercentPlaceholder:
+      "Input the max failure percent for circuit break",
     circuitBreakMinRequestsThreshold: "Circuit Break Min Requests Threshold",
-    circuitBreakMinRequestsThresholdPlaceholder: "Input the min requests threshold for circuit break",
-    circuitBreakHalfOpenConsecutiveSuccessThreshold: "Circuit Break Half Open Consecutive Success Threshold",
-    circuitBreakHalfOpenConsecutiveSuccessThresholdPlaceholder: "Input the half open consecutive success threshold for circuit break",
+    circuitBreakMinRequestsThresholdPlaceholder:
+      "Input the min requests threshold for circuit break",
+    circuitBreakHalfOpenConsecutiveSuccessThreshold:
+      "Circuit Break Half Open Consecutive Success Threshold",
+    circuitBreakHalfOpenConsecutiveSuccessThresholdPlaceholder:
+      "Input the half open consecutive success threshold for circuit break",
     circuitBreakOpenDuration: "Circuit Break Open Duration",
-    circuitBreakOpenDurationPlaceholder: "Input the open duration for circuit break",
+    circuitBreakOpenDurationPlaceholder:
+      "Input the open duration for circuit break",
     tcpFastOpen: "Tcp Fast Open",
     tcpRecvBuf: "Tcp Recv Buf",
     tcpRecvBufPlaceholder: "Input the tcp receive buffer limit size",
@@ -343,6 +386,10 @@ export default {
   certificate: {
     title: "Certificate",
     description: "Configure tls certificates, issued manually or via acme",
+    add: "New Certificate",
+    summary_one: "{{count}} certificate configured",
+    summary_other: "{{count}} certificates configured",
+    empty: "No certificate configured yet",
     name: "Name",
     namePlaceholder: "Input the name of certificate",
     certificate: "Certificate",
@@ -370,6 +417,10 @@ export default {
   plugin: {
     title: "Plugin",
     description: "Configure plugins to extend request and response handling",
+    add: "New Plugin",
+    summary_one: "{{count}} plugin configured",
+    summary_other: "{{count}} plugins configured",
+    empty: "No plugin configured yet",
     name: "Name",
     namePlaceholder: "Input the name of plugin",
     plugin: "Plugin",
@@ -419,7 +470,8 @@ export default {
     redirectPrefix: "Prefix",
     redirectPrefixPlaceholder: "Input prefix url append to redirect url",
     redirectStatus: "Status",
-    redirectStatusPlaceholder: "Input the status for redirect(e.g. 301, 302, 307, 308)",
+    redirectStatusPlaceholder:
+      "Input the status for redirect(e.g. 301, 302, 307, 308)",
     redirectHttps: "Https",
     cacheDirectory: "Directory",
     cacheDirectoryPlaceholder: "Input the directory of cache",
@@ -455,7 +507,8 @@ export default {
     compressionZstdLevel: "Zstd Level",
     compressionZstdLevelPlaceholder: "Input the zstd level(1-22)",
     compressionMinLength: "Min Length",
-    compressionMinLengthPlaceholder: "Input the min length of response body to be compressed",
+    compressionMinLengthPlaceholder:
+      "Input the min length of response body to be compressed",
     compressionDecompression: "Support Decompression",
     compressionMode: "Mode",
     acceptEncodingList: "Accept Encoding",
@@ -573,7 +626,8 @@ export default {
     subFilterPath: "Path",
     subFilterPathPlaceholder: "Input the path for sub filter(e.g. ^/api/)",
     subFilterStatusCodes: "Status Codes",
-    subFilterStatusCodesPlaceholder: "Input the status codes for sub filter(e.g. 200,201,202)",
+    subFilterStatusCodesPlaceholder:
+      "Input the status codes for sub filter(e.g. 200,201,202)",
     subFilterFilters: "Filters",
     subFilterFiltersPlaceholder:
       "Input the filters for sub filter(e.g. subs_filter 'http://pingap.io' 'https://pingap.io/api' ig)",
@@ -610,6 +664,10 @@ export default {
   storage: {
     title: "Storage",
     description: "Configure key-value storage for tokens and shared data",
+    add: "New Storage",
+    summary_one: "{{count}} storage configured",
+    summary_other: "{{count}} storages configured",
+    empty: "No storage configured yet",
     name: "Name",
     namePlaceholder: "Input the name of storage",
     storage: "Storage",

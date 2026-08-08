@@ -599,7 +599,20 @@ export function ExForm({
               {updatedCount} {t("modified") || "modified"}
             </div>
           )}
-          <div className={cn("grid gap-x-8 gap-y-5", `grid-cols-${cols}`)}>
+          {/*
+            The template is inline, not `grid-cols-${cols}`: that class is built
+            at runtime so tailwind never emits a rule for it, leaving the grid
+            with no explicit columns. Spans then created implicit columns of
+            uneven width, and `col-span-full` (grid-column: 1/-1) resolved
+            against the empty explicit grid, so section headers spanned one
+            column instead of the row.
+          */}
+          <div
+            className="grid gap-x-8 gap-y-5"
+            style={{
+              gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+            }}
+          >
             {fields}
           </div>
         </div>

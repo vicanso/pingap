@@ -7,7 +7,10 @@ import { ExFormItemCategory, newStringOptions } from "@/constants";
 import { useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import History from "@/pages/History";
-import { ConfigEntityHeader } from "@/components/config-entity-header";
+import { EntityBadge } from "@/components/config-entity-badge";
+import { PageShell } from "@/components/page-shell";
+import { ConfigEntityList, EntityText } from "@/components/config-entity-list";
+import { STORAGES } from "@/routers";
 
 function getStorageConfig(name: string, storages?: Record<string, Storage>) {
   if (!storages) {
@@ -18,6 +21,7 @@ function getStorageConfig(name: string, storages?: Record<string, Storage>) {
 
 export default function Storages() {
   const storageI18n = useI18n("storage");
+  const i18n = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
   const [config, initialized, update, remove, version] = useConfigState(
     useShallow((state) => [
@@ -32,20 +36,49 @@ export default function Storages() {
   const newStorage = "*";
   const storages = Object.keys(config.storages || {});
   storages.sort();
-  storages.unshift(newStorage);
 
-  const currentStorage = searchParams.get("name") || newStorage;
+  // No `name` in the url means the category overview, `*` means the create form.
+  const currentStorage = searchParams.get("name") || "";
 
   if (!initialized) {
     return <LoadingPage />;
   }
 
+  if (!currentStorage) {
+    return (
+      <ConfigEntityList<Storage>
+        title={storageI18n("title")}
+        summary={storageI18n("summary", { count: storages.length })}
+        nameLabel={storageI18n("name")}
+        addLabel={storageI18n("add")}
+        emptyText={storageI18n("empty")}
+        basePath={STORAGES}
+        newValue={newStorage}
+        names={storages}
+        values={config.storages || {}}
+        columns={[
+          {
+            key: "category",
+            label: storageI18n("category"),
+            render: (value) => <EntityText value={value?.category} />,
+          },
+          {
+            key: "remark",
+            label: storageI18n("remark"),
+            render: (value) => <EntityText value={value?.remark} />,
+          },
+        ]}
+      />
+    );
+  }
+
   const handleSelectStorage = (name: string) => {
-    if (name === newStorage) {
-      searchParams.delete("name");
-    } else {
-      searchParams.set("name", name);
-    }
+    searchParams.set("name", name);
+    setSearchParams(searchParams);
+  };
+
+  const backToList = () => {
+    searchParams.delete("name");
     setSearchParams(searchParams);
   };
 
@@ -105,43 +138,35 @@ export default function Storages() {
 
   const onRemove = async () => {
     return remove("storage", currentStorage).then(() => {
-      handleSelectStorage(newStorage);
+      backToList();
     });
   };
 
   return (
-    <div className="grow overflow-auto p-4 md:p-6">
-      <ConfigEntityHeader
-        title={storageI18n("title") || storageI18n("storage")}
-        description={storageI18n("description")}
-        label={storageI18n("storage")}
-        value={currentStorage}
-        placeholder={storageI18n("storagePlaceholder")}
-        isNew={currentStorage === newStorage}
-        options={storages.map((storage) => ({
-          value: storage,
-          label: storage === newStorage ? "new" : storage,
-        }))}
-        onChange={(value) => {
-          if (value === newStorage) {
-            searchParams.delete("name");
-          } else {
-            searchParams.set("name", value);
-          }
-          setSearchParams(searchParams);
-        }}
-        actions={
-          currentStorage !== newStorage ? (
-            <History
-              category="storage"
-              name={currentStorage}
-              onRestore={async (data) => {
-                await update("storage", currentStorage, data);
-              }}
-            />
-          ) : undefined
-        }
-      />
+    <PageShell
+      title={storageI18n("title")}
+      description={storageI18n("description")}
+      width="narrow"
+      backTo={STORAGES}
+      backLabel={i18n("backToList")}
+      badge={
+        <EntityBadge
+          name={currentStorage}
+          isNew={currentStorage === newStorage}
+        />
+      }
+      actions={
+        currentStorage !== newStorage ? (
+          <History
+            category="storage"
+            name={currentStorage}
+            onRestore={async (data) => {
+              await update("storage", currentStorage, data);
+            }}
+          />
+        ) : undefined
+      }
+    >
       <ExForm
         category="storage"
         key={`${currentStorage}-${version}`}
@@ -157,6 +182,6 @@ export default function Storages() {
           handleSelectStorage(name);
         }}
       />
-    </div>
+    </PageShell>
   );
 }

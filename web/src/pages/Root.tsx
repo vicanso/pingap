@@ -53,7 +53,6 @@ export default function Root() {
     }
   }, []);
 
-
   return (
     <SidebarProvider
       open={open}
@@ -80,7 +79,13 @@ export default function Root() {
                 goToHome();
               }}
             >
-              <img width={20} height={20} src={Logo} alt="Pingap" className="rounded-md" />
+              <img
+                width={20}
+                height={20}
+                src={Logo}
+                alt="Pingap"
+                className="rounded-md"
+              />
             </Button>
             {showBrand && (
               <button
