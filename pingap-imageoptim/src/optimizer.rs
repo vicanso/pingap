@@ -197,3 +197,67 @@ pub(crate) fn optimize_webp(info: &ImageInfo, _quality: u8) -> Result<Vec<u8>> {
 
     Ok(w)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{ImageEncoder, RgbaImage};
+    use pretty_assertions::assert_eq;
+
+    fn sample() -> RgbaImage {
+        RgbaImage::from_fn(4, 3, |x, y| {
+            image::Rgba([(x * 60) as u8, (y * 80) as u8, 0, 255])
+        })
+    }
+
+    /// `image` is pulled with `default-features = false`, so every decoder this
+    /// crate needs has to be listed explicitly. Decoding is what breaks if one
+    /// is missing, and it breaks at runtime rather than at compile time, so
+    /// pin the four formats the plugin accepts.
+    #[test]
+    fn test_every_supported_format_decodes() {
+        let img = sample();
+
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(img.as_raw(), 4, 3, image::ExtendedColorType::Rgba8)
+            .unwrap();
+
+        let mut jpeg = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new(&mut jpeg)
+            .write_image(
+                image::DynamicImage::ImageRgba8(img.clone())
+                    .to_rgb8()
+                    .as_raw(),
+                4,
+                3,
+                image::ExtendedColorType::Rgb8,
+            )
+            .unwrap();
+
+        let mut webp = Vec::new();
+        image::codecs::webp::WebPEncoder::new_lossless(&mut webp)
+            .encode(img.as_raw(), 4, 3, image::ExtendedColorType::Rgba8)
+            .unwrap();
+
+        for (ext, data) in [("png", &png), ("jpeg", &jpeg), ("webp", &webp)] {
+            let info = load_image(data, ext)
+                .unwrap_or_else(|e| panic!("{ext} failed to decode: {e}"));
+            assert_eq!(4, info.width, "{ext}");
+            assert_eq!(3, info.height, "{ext}");
+        }
+    }
+
+    /// avif is the encoder that keeps rav1e - and therefore paste
+    /// (RUSTSEC-2024-0436) - in the tree, so make sure it is actually used.
+    #[test]
+    fn test_avif_encodes() {
+        let info: ImageInfo = sample().into();
+        let out = optimize_avif(&info, 60, 10).unwrap();
+        assert!(!out.is_empty());
+        assert_eq!(
+            Some(image::ImageFormat::Avif),
+            image::guess_format(&out).ok()
+        );
+    }
+}

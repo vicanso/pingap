@@ -5,8 +5,37 @@
 ignore = [
     # protobuf 2.28 (uncontrolled recursion on parsing). Pulled in by
     # prometheus 0.13, which pingora-core 0.8 pins - nothing in this workspace
-    # can upgrade it. Exposure is limited to metrics encoding: neither pingora
-    # nor pingap feeds untrusted protobuf input to it. Remove when pingora
-    # moves to prometheus >= 0.14 (protobuf 3).
+    # can upgrade it. pingap's own crates are already on prometheus 0.14
+    # (protobuf 3.7), so this is pingora's copy alone. Exposure is limited to
+    # metrics encoding: neither pingora nor pingap parses untrusted protobuf.
+    # Remove when pingora moves to prometheus >= 0.14.
     "RUSTSEC-2024-0437",
+
+    # daemonize 0.5 (unmaintained, not a vulnerability). A non-optional unix
+    # dependency of pingora-core 0.8, backing the daemon mode that `-d/--daemon`
+    # ends up in. No crate here references it and no pingora feature drops it.
+    # Remove when pingora replaces or vendors it.
+    "RUSTSEC-2025-0069",
+
+    # derivative 2.2 (unmaintained, not a vulnerability). A proc-macro, so it
+    # emits no runtime code and is absent from the shipped binary. Another
+    # non-optional dependency of pingora-core 0.8. Remove when pingora drops it.
+    "RUSTSEC-2024-0388",
+
+    # paste 1.0 (unmaintained, not a vulnerability). Also a proc-macro, also
+    # absent from the binary. Reaches this tree only under the `imageoptim`
+    # feature, through rav1e (ravif -> image), which still requires paste ^1.0
+    # as of its latest release 0.8.1; dropping it would mean dropping avif
+    # output. The `exr` path was removed by trimming image's default features.
+    # Remove when rav1e moves to pastey or drops the dependency.
+    "RUSTSEC-2024-0436",
+
+    # git2 0.20 (unsound: Remote::list() and Signature-from-BlameHunk). A build
+    # dependency only, via vergen-git2, which reads the commit hash at compile
+    # time - git2 is not in the shipped binary, and vergen-git2 references
+    # neither Remote nor Blame, so both unsound paths are unreachable. The fix
+    # is git2 0.21, which needs vergen-git2 10, whose rust-version is 1.95 -
+    # this workspace's MSRV is 1.88. Remove when the MSRV moves to 1.95+.
+    "RUSTSEC-2026-0183",
+    "RUSTSEC-2026-0184",
 ]
