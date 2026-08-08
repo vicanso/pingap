@@ -10,7 +10,44 @@ import { ClipboardCopy, LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Textarea } from "@/components/ui/textarea";
+import { PageShell } from "@/components/page-shell";
 import React from "react";
+
+/**
+ * Module scope, not inside Config: a component created during render is a new
+ * type on every render, so React would unmount and remount the whole panel —
+ * losing the <pre> scroll position on each keystroke in the import tab.
+ */
+function CodePanel({
+  content,
+  onCopy,
+}: {
+  content: string;
+  onCopy?: () => void;
+}) {
+  return (
+    <Card className="relative flex h-full min-h-0 flex-col overflow-hidden border-border/80 shadow-none">
+      {onCopy && content && (
+        <Button
+          className="absolute top-3 right-3 z-10 cursor-pointer"
+          variant="secondary"
+          size="icon"
+          onClick={async (e) => {
+            e.preventDefault();
+            onCopy();
+          }}
+        >
+          <ClipboardCopy className="h-4 w-4" />
+        </Button>
+      )}
+      <CardContent className="min-h-0 flex-1 overflow-hidden p-0">
+        <pre className="h-full overflow-auto p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap sm:text-sm">
+          {content || <span className="text-muted-foreground">—</span>}
+        </pre>
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function Config() {
   const { t } = useTranslation();
@@ -87,54 +124,13 @@ export default function Config() {
   const panelClass =
     "mt-0 absolute inset-0 flex flex-col data-[state=inactive]:hidden";
 
-  const CodePanel = ({
-    content,
-    onCopy,
-  }: {
-    content: string;
-    onCopy?: () => void;
-  }) => (
-    <Card className="relative flex h-full min-h-0 flex-col overflow-hidden border-border/80 shadow-none">
-      {onCopy && content && (
-        <Button
-          className="absolute top-3 right-3 z-10 cursor-pointer"
-          variant="secondary"
-          size="icon"
-          onClick={async (e) => {
-            e.preventDefault();
-            onCopy();
-          }}
-        >
-          <ClipboardCopy className="h-4 w-4" />
-        </Button>
-      )}
-      <CardContent className="min-h-0 flex-1 overflow-hidden p-0">
-        <pre className="h-full overflow-auto p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap sm:text-sm">
-          {content || <span className="text-muted-foreground">—</span>}
-        </pre>
-      </CardContent>
-    </Card>
-  );
-
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden p-4 md:p-6">
-      <div className="mb-4 shrink-0">
-        <h2 className="text-lg font-semibold tracking-tight">
-          {t("tomlTitle")}
-        </h2>
-        <p className="text-sm text-muted-foreground">{t("tomlDescription")}</p>
-      </div>
-
+    <PageShell title={t("tomlTitle")} description={t("tomlDescription")} fill>
       <Tabs
         defaultValue="original"
         className="flex min-h-0 flex-1 flex-col overflow-hidden"
       >
-        <TabsList
-          className={cn(
-            "mb-3 grid h-10 w-full shrink-0",
-            tabClass,
-          )}
-        >
+        <TabsList className={cn("mb-3 grid h-10 w-full shrink-0", tabClass)}>
           <TabsTrigger value="original" className="cursor-pointer">
             {t("original")}
           </TabsTrigger>
@@ -194,6 +190,6 @@ export default function Config() {
           </TabsContent>
         </div>
       </Tabs>
-    </div>
+    </PageShell>
   );
 }

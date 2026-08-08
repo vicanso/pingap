@@ -12,7 +12,11 @@ import { omitEmptyArrayString } from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import History from "@/pages/History";
-import { ConfigEntityHeader } from "@/components/config-entity-header";
+import { EntityBadge } from "@/components/config-entity-badge";
+import { PageShell } from "@/components/page-shell";
+import { ConfigEntityList, EntityText } from "@/components/config-entity-list";
+import { CERTIFICATES } from "@/routers";
+import { Check } from "lucide-react";
 
 function getCertificateConfig(
   name: string,
@@ -26,6 +30,7 @@ function getCertificateConfig(
 
 export default function Certificates() {
   const certificateI18n = useI18n("certificate");
+  const i18n = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [config, initialized, update, remove, version] = useConfigState(
@@ -40,19 +45,58 @@ export default function Certificates() {
   const newCertificate = "*";
   const certificates = Object.keys(config.certificates || {});
   certificates.sort();
-  certificates.unshift(newCertificate);
-  const currentCertificate = searchParams.get("name") || newCertificate;
+  // No `name` in the url means the category overview, `*` means the create form.
+  const currentCertificate = searchParams.get("name") || "";
 
   if (!initialized) {
     return <LoadingPage />;
   }
 
+  if (!currentCertificate) {
+    return (
+      <ConfigEntityList<Certificate>
+        title={certificateI18n("title")}
+        summary={certificateI18n("summary", { count: certificates.length })}
+        nameLabel={certificateI18n("name")}
+        addLabel={certificateI18n("add")}
+        emptyText={certificateI18n("empty")}
+        basePath={CERTIFICATES}
+        newValue={newCertificate}
+        names={certificates}
+        values={config.certificates || {}}
+        columns={[
+          {
+            key: "domains",
+            label: certificateI18n("domains"),
+            render: (value) => <EntityText value={value?.domains} />,
+          },
+          {
+            key: "acme",
+            label: certificateI18n("acme"),
+            render: (value) => <EntityText value={value?.acme} />,
+          },
+          {
+            key: "isDefault",
+            label: certificateI18n("isDefault"),
+            render: (value) =>
+              value?.is_default ? (
+                <Check className="size-4 text-primary" />
+              ) : (
+                <EntityText />
+              ),
+          },
+        ]}
+      />
+    );
+  }
+
   const handleSelectCertificate = (name: string) => {
-    if (name === newCertificate) {
-      searchParams.delete("name");
-    } else {
-      searchParams.set("name", name);
-    }
+    searchParams.set("name", name);
+    setSearchParams(searchParams);
+  };
+
+  const backToList = () => {
+    searchParams.delete("name");
     setSearchParams(searchParams);
   };
 
@@ -176,43 +220,35 @@ export default function Certificates() {
   const schema = z.object({});
   const onRemove = async () => {
     return remove("certificate", currentCertificate).then(() => {
-      handleSelectCertificate(newCertificate);
+      backToList();
     });
   };
 
   return (
-    <div className="grow overflow-auto p-4 md:p-6">
-      <ConfigEntityHeader
-        title={certificateI18n("title") || certificateI18n("certificate")}
-        description={certificateI18n("description")}
-        label={certificateI18n("certificate")}
-        value={currentCertificate}
-        placeholder={certificateI18n("certificatePlaceholder")}
-        isNew={currentCertificate === newCertificate}
-        options={certificates.map((certificate) => ({
-          value: certificate,
-          label: certificate === newCertificate ? "new" : certificate,
-        }))}
-        onChange={(value) => {
-          if (value === newCertificate) {
-            searchParams.delete("name");
-          } else {
-            searchParams.set("name", value);
-          }
-          setSearchParams(searchParams);
-        }}
-        actions={
-          currentCertificate !== newCertificate ? (
-            <History
-              category="certificate"
-              name={currentCertificate}
-              onRestore={async (data) => {
-                await update("certificate", currentCertificate, data);
-              }}
-            />
-          ) : undefined
-        }
-      />
+    <PageShell
+      title={certificateI18n("title")}
+      description={certificateI18n("description")}
+      width="narrow"
+      backTo={CERTIFICATES}
+      backLabel={i18n("backToList")}
+      badge={
+        <EntityBadge
+          name={currentCertificate}
+          isNew={currentCertificate === newCertificate}
+        />
+      }
+      actions={
+        currentCertificate !== newCertificate ? (
+          <History
+            category="certificate"
+            name={currentCertificate}
+            onRestore={async (data) => {
+              await update("certificate", currentCertificate, data);
+            }}
+          />
+        ) : undefined
+      }
+    >
       <ExForm
         category="certificate"
         key={`${currentCertificate}-${version}`}
@@ -230,6 +266,6 @@ export default function Certificates() {
           handleSelectCertificate(name);
         }}
       />
-    </div>
+    </PageShell>
   );
 }

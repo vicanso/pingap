@@ -12,6 +12,7 @@ import { newZodBytes, newZodDuration, newZodNumber } from "@/helpers/util";
 import useBasicState from "@/states/basic";
 import { useShallow } from "zustand/react/shallow";
 import History from "@/pages/History";
+import { PageShell } from "@/components/page-shell";
 
 export default function Basic() {
   const basicI18n = useI18n("basic");
@@ -94,8 +95,11 @@ export default function Basic() {
       defaultValue: basic.log_level,
       span: 3,
       section: sec.logging,
-      // SELECT only — avoid INPUT_SELECT's free-text switch clutter.
-      category: ExFormItemCategory.SELECT,
+      // INPUT_SELECT, not SELECT: log_level also accepts a tracing filter
+      // string (e.g. `info,pingap_proxy=debug`), which the fixed list can't
+      // express. The switch toggles to free text; the placeholder's two halves
+      // (split on " : ") describe each mode.
+      category: ExFormItemCategory.INPUT_SELECT,
       options: newStringOptions(
         ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"],
         false,
@@ -318,32 +322,26 @@ export default function Basic() {
   });
 
   return (
-    <div className="grow overflow-auto">
-      <div className="mx-auto w-full max-w-[1100px] px-6 py-6 pb-10">
-        <div className="mb-6 flex flex-wrap items-start gap-3">
-          <div className="mr-auto min-w-0">
-            <h1 className="text-[28px] font-bold tracking-tight leading-none">
-              {basicI18n("title")}
-            </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {basicI18n("description")}
-            </p>
-          </div>
-          <History
-            category="basic"
-            name=""
-            onRestore={async (data) => update("pingap", "basic", data)}
-          />
-        </div>
-        <ExForm
-          key={version}
+    <PageShell
+      title={basicI18n("title")}
+      description={basicI18n("description")}
+      width="narrow"
+      actions={
+        <History
           category="basic"
-          items={items}
-          schema={schema}
-          defaultShow={defaultShow}
-          onSave={async (value) => update("pingap", "basic", value)}
+          name=""
+          onRestore={async (data) => update("pingap", "basic", data)}
         />
-      </div>
-    </div>
+      }
+    >
+      <ExForm
+        key={version}
+        category="basic"
+        items={items}
+        schema={schema}
+        defaultShow={defaultShow}
+        onSave={async (value) => update("pingap", "basic", value)}
+      />
+    </PageShell>
   );
 }

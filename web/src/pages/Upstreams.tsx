@@ -2,6 +2,7 @@ import { LoadingPage } from "@/components/loading";
 import { useI18n } from "@/i18n";
 import useConfigState, { Upstream } from "@/states/config";
 import { ExForm, ExFormItem } from "@/components/ex-form";
+import { sortIntoSections } from "@/components/ex-form-sections";
 import { z } from "zod";
 import {
   ExFormItemCategory,
@@ -16,7 +17,12 @@ import {
 import { useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import History from "@/pages/History";
-import { ConfigEntityHeader } from "@/components/config-entity-header";
+import { EntityBadge } from "@/components/config-entity-badge";
+import { PageShell } from "@/components/page-shell";
+import { ConfigEntityList, EntityText } from "@/components/config-entity-list";
+import { UPSTREAMS } from "@/routers";
+import useBasicState from "@/states/basic";
+import { cn } from "@/lib/utils";
 
 function getUpstreamConfig(name: string, upstreams?: Record<string, Upstream>) {
   if (!upstreams) {
@@ -41,22 +47,97 @@ export default function Upstreams() {
         state.version,
       ]),
     );
+  const [basicInfo] = useBasicState(useShallow((state) => [state.data]));
+  const sec = {
+    backends: upstreamI18n("sectionBackends"),
+    balancing: upstreamI18n("sectionBalancing"),
+    timeout: upstreamI18n("sectionTimeout"),
+    tls: upstreamI18n("sectionTls"),
+    resilience: upstreamI18n("sectionResilience"),
+    tcp: upstreamI18n("sectionTcp"),
+  };
+
   const newUpstream = "*";
   const upstreams = Object.keys(config.upstreams || {});
   upstreams.sort();
-  upstreams.unshift(newUpstream);
-  const currentUpstream = searchParams.get("name") || newUpstream;
+  // No `name` in the url means the category overview, `*` means the create form.
+  const currentUpstream = searchParams.get("name") || "";
 
   if (!initialized) {
     return <LoadingPage />;
   }
 
+  if (!currentUpstream) {
+    return (
+      <ConfigEntityList<Upstream>
+        title={upstreamI18n("title")}
+        summary={upstreamI18n("summary", { count: upstreams.length })}
+        nameLabel={upstreamI18n("name")}
+        addLabel={upstreamI18n("add")}
+        emptyText={upstreamI18n("empty")}
+        basePath={UPSTREAMS}
+        newValue={newUpstream}
+        names={upstreams}
+        values={config.upstreams || {}}
+        columns={[
+          {
+            key: "addrs",
+            label: upstreamI18n("addrs"),
+            render: (value) => (
+              <EntityText
+                value={(value?.addrs || [])
+                  .map((addr) => addr.split(" ")[0])
+                  .join(", ")}
+              />
+            ),
+          },
+          {
+            key: "discovery",
+            label: upstreamI18n("discovery"),
+            render: (value) => <EntityText value={value?.discovery} />,
+          },
+          {
+            key: "algo",
+            label: upstreamI18n("algo"),
+            render: (value) => <EntityText value={value?.algo} />,
+          },
+          {
+            key: "healthyStatus",
+            label: upstreamI18n("healthyStatus"),
+            render: (_value, name) => {
+              // Only upstreams have a real runtime status; it comes from the
+              // health checker via /basic, not from the config.
+              const status = basicInfo.upstream_healthy_status[name];
+              if (!status) {
+                return <EntityText />;
+              }
+              return (
+                <span
+                  className={cn(
+                    "tabular-nums",
+                    status.healthy === 0 && "text-rose-600 dark:text-rose-400",
+                    status.healthy > 0 &&
+                      status.healthy < status.total &&
+                      "text-amber-600 dark:text-amber-400",
+                  )}
+                >
+                  {status.healthy}/{status.total}
+                </span>
+              );
+            },
+          },
+        ]}
+      />
+    );
+  }
+
   const handleSelectUpstream = (name: string) => {
-    if (name === newUpstream) {
-      searchParams.delete("name");
-    } else {
-      searchParams.set("name", name);
-    }
+    searchParams.set("name", name);
+    setSearchParams(searchParams);
+  };
+
+  const backToList = () => {
+    searchParams.delete("name");
     setSearchParams(searchParams);
   };
 
@@ -65,6 +146,7 @@ export default function Upstreams() {
   const items: ExFormItem[] = [
     {
       name: "addrs",
+      section: sec.backends,
       label: upstreamI18n("addrs"),
       placeholder: upstreamI18n("addrsPlaceholder"),
       defaultValue: upstreamConfig.addrs,
@@ -75,6 +157,7 @@ export default function Upstreams() {
     },
     {
       name: "discovery",
+      section: sec.backends,
       label: upstreamI18n("discovery"),
       placeholder: upstreamI18n("discoveryPlaceholder"),
       defaultValue: upstreamConfig.discovery,
@@ -88,6 +171,7 @@ export default function Upstreams() {
     },
     {
       name: "update_frequency",
+      section: sec.backends,
       label: upstreamI18n("updateFrequency"),
       placeholder: upstreamI18n("updateFrequencyPlaceholder"),
       defaultValue: upstreamConfig.update_frequency,
@@ -96,6 +180,7 @@ export default function Upstreams() {
     },
     {
       name: "dns_server",
+      section: sec.backends,
       label: upstreamI18n("dnsServer"),
       placeholder: upstreamI18n("dnsServerPlaceholder"),
       defaultValue: upstreamConfig.dns_server,
@@ -104,6 +189,7 @@ export default function Upstreams() {
     },
     {
       name: "dns_domain",
+      section: sec.backends,
       label: upstreamI18n("dnsDomain"),
       placeholder: upstreamI18n("dnsDomainPlaceholder"),
       defaultValue: upstreamConfig.dns_domain,
@@ -112,6 +198,7 @@ export default function Upstreams() {
     },
     {
       name: "dns_search",
+      section: sec.backends,
       label: upstreamI18n("dnsSearch"),
       placeholder: upstreamI18n("dnsSearchPlaceholder"),
       defaultValue: upstreamConfig.dns_search,
@@ -120,6 +207,7 @@ export default function Upstreams() {
     },
     {
       name: "includes",
+      section: sec.backends,
       label: i18n("includes"),
       placeholder: i18n("includesPlaceholder"),
       defaultValue: upstreamConfig.includes,
@@ -129,6 +217,7 @@ export default function Upstreams() {
     },
     {
       name: "algo",
+      section: sec.balancing,
       label: upstreamI18n("algo"),
       placeholder: upstreamI18n("algoPlaceholder"),
       defaultValue: upstreamConfig.algo,
@@ -137,6 +226,7 @@ export default function Upstreams() {
     },
     {
       name: "health_check",
+      section: sec.balancing,
       label: upstreamI18n("healthCheck"),
       placeholder: upstreamI18n("healthCheckPlaceholder"),
       defaultValue: upstreamConfig.health_check,
@@ -145,6 +235,7 @@ export default function Upstreams() {
     },
     {
       name: "connection_timeout",
+      section: sec.timeout,
       label: upstreamI18n("connectionTimeout"),
       placeholder: upstreamI18n("connectionTimeoutPlaceholder"),
       defaultValue: upstreamConfig.connection_timeout,
@@ -153,6 +244,7 @@ export default function Upstreams() {
     },
     {
       name: "total_connection_timeout",
+      section: sec.timeout,
       label: upstreamI18n("totalConnectionTimeout"),
       placeholder: upstreamI18n("totalConnectionTimeoutPlaceholder"),
       defaultValue: upstreamConfig.total_connection_timeout,
@@ -161,6 +253,7 @@ export default function Upstreams() {
     },
     {
       name: "read_timeout",
+      section: sec.timeout,
       label: upstreamI18n("readTimeout"),
       placeholder: upstreamI18n("readTimeoutPlaceholder"),
       defaultValue: upstreamConfig.read_timeout,
@@ -169,6 +262,7 @@ export default function Upstreams() {
     },
     {
       name: "write_timeout",
+      section: sec.timeout,
       label: upstreamI18n("writeTimeout"),
       placeholder: upstreamI18n("writeTimeoutPlaceholder"),
       defaultValue: upstreamConfig.write_timeout,
@@ -177,6 +271,7 @@ export default function Upstreams() {
     },
     {
       name: "idle_timeout",
+      section: sec.timeout,
       label: upstreamI18n("idleTimeout"),
       placeholder: upstreamI18n("idleTimeoutPlaceholder"),
       defaultValue: upstreamConfig.idle_timeout,
@@ -185,6 +280,7 @@ export default function Upstreams() {
     },
     {
       name: "alpn",
+      section: sec.tls,
       label: upstreamI18n("alpn"),
       placeholder: "",
       defaultValue: upstreamConfig.alpn,
@@ -215,6 +311,7 @@ export default function Upstreams() {
     },
     {
       name: "max_h2_streams",
+      section: sec.tls,
       label: upstreamI18n("maxH2Streams"),
       placeholder: upstreamI18n("maxH2StreamsPlaceholder"),
       defaultValue: upstreamConfig.max_h2_streams,
@@ -223,6 +320,7 @@ export default function Upstreams() {
     },
     {
       name: "sni",
+      section: sec.tls,
       label: upstreamI18n("sni"),
       placeholder: upstreamI18n("sniPlaceholder"),
       defaultValue: upstreamConfig.sni,
@@ -231,6 +329,7 @@ export default function Upstreams() {
     },
     {
       name: "verify_cert",
+      section: sec.tls,
       label: upstreamI18n("verifyCert"),
       placeholder: "",
       defaultValue: upstreamConfig.verify_cert,
@@ -240,6 +339,7 @@ export default function Upstreams() {
     },
     {
       name: "ipv4_only",
+      section: sec.tls,
       label: upstreamI18n("ipv4Only"),
       placeholder: "",
       defaultValue: upstreamConfig.ipv4_only,
@@ -249,6 +349,7 @@ export default function Upstreams() {
     },
     {
       name: "enable_tracer",
+      section: sec.resilience,
       label: upstreamI18n("enableTracer"),
       placeholder: "",
       defaultValue: upstreamConfig.enable_tracer,
@@ -258,6 +359,7 @@ export default function Upstreams() {
     },
     {
       name: "enable_backend_stats",
+      section: sec.resilience,
       label: upstreamI18n("enableBackendStats"),
       placeholder: "",
       defaultValue: upstreamConfig.enable_backend_stats,
@@ -267,6 +369,7 @@ export default function Upstreams() {
     },
     {
       name: "backend_failure_status_code",
+      section: sec.resilience,
       label: upstreamI18n("backendFailureStatusCode"),
       placeholder: upstreamI18n("backendFailureStatusCodePlaceholder"),
       defaultValue: upstreamConfig.backend_failure_status_code,
@@ -275,6 +378,7 @@ export default function Upstreams() {
     },
     {
       name: "backend_stats_interval",
+      section: sec.resilience,
       label: upstreamI18n("backendStatsInterval"),
       placeholder: upstreamI18n("backendStatsIntervalPlaceholder"),
       defaultValue: upstreamConfig.backend_stats_interval,
@@ -283,14 +387,18 @@ export default function Upstreams() {
     },
     {
       name: "circuit_break_max_consecutive_failures",
+      section: sec.resilience,
       label: upstreamI18n("circuitBreakMaxConsecutiveFailures"),
-      placeholder: upstreamI18n("circuitBreakMaxConsecutiveFailuresPlaceholder"),
+      placeholder: upstreamI18n(
+        "circuitBreakMaxConsecutiveFailuresPlaceholder",
+      ),
       defaultValue: upstreamConfig.circuit_break_max_consecutive_failures,
       span: 2,
       category: ExFormItemCategory.NUMBER,
     },
     {
       name: "circuit_break_max_failure_percent",
+      section: sec.resilience,
       label: upstreamI18n("circuitBreakMaxFailurePercent"),
       placeholder: upstreamI18n("circuitBreakMaxFailurePercentPlaceholder"),
       defaultValue: upstreamConfig.circuit_break_max_failure_percent,
@@ -299,6 +407,7 @@ export default function Upstreams() {
     },
     {
       name: "circuit_break_min_requests_threshold",
+      section: sec.resilience,
       label: upstreamI18n("circuitBreakMinRequestsThreshold"),
       placeholder: upstreamI18n("circuitBreakMinRequestsThresholdPlaceholder"),
       defaultValue: upstreamConfig.circuit_break_min_requests_threshold,
@@ -307,14 +416,19 @@ export default function Upstreams() {
     },
     {
       name: "circuit_break_half_open_consecutive_success_threshold",
+      section: sec.resilience,
       label: upstreamI18n("circuitBreakHalfOpenConsecutiveSuccessThreshold"),
-      placeholder: upstreamI18n("circuitBreakHalfOpenConsecutiveSuccessThresholdPlaceholder"),
-      defaultValue: upstreamConfig.circuit_break_half_open_consecutive_success_threshold,
+      placeholder: upstreamI18n(
+        "circuitBreakHalfOpenConsecutiveSuccessThresholdPlaceholder",
+      ),
+      defaultValue:
+        upstreamConfig.circuit_break_half_open_consecutive_success_threshold,
       span: 2,
       category: ExFormItemCategory.NUMBER,
     },
     {
       name: "circuit_break_open_duration",
+      section: sec.resilience,
       label: upstreamI18n("circuitBreakOpenDuration"),
       placeholder: upstreamI18n("circuitBreakOpenDurationPlaceholder"),
       defaultValue: upstreamConfig.circuit_break_open_duration,
@@ -323,6 +437,7 @@ export default function Upstreams() {
     },
     {
       name: "tcp_fast_open",
+      section: sec.tcp,
       label: upstreamI18n("tcpFastOpen"),
       placeholder: "",
       defaultValue: upstreamConfig.tcp_fast_open,
@@ -332,6 +447,7 @@ export default function Upstreams() {
     },
     {
       name: "tcp_user_timeout",
+      section: sec.tcp,
       label: upstreamI18n("tcpUserTimeout"),
       placeholder: upstreamI18n("tcpUserTimeoutPlaceholder"),
       defaultValue: upstreamConfig.tcp_user_timeout,
@@ -340,6 +456,7 @@ export default function Upstreams() {
     },
     {
       name: "tcp_recv_buf",
+      section: sec.tcp,
       label: upstreamI18n("tcpRecvBuf"),
       placeholder: upstreamI18n("tcpRecvBufPlaceholder"),
       defaultValue: upstreamConfig.tcp_recv_buf,
@@ -348,6 +465,7 @@ export default function Upstreams() {
     },
     {
       name: "tcp_idle",
+      section: sec.tcp,
       label: upstreamI18n("tcpIdle"),
       placeholder: upstreamI18n("tcpIdlePlaceholder"),
       defaultValue: upstreamConfig.tcp_idle,
@@ -356,6 +474,7 @@ export default function Upstreams() {
     },
     {
       name: "tcp_interval",
+      section: sec.tcp,
       label: upstreamI18n("tcpInterval"),
       placeholder: upstreamI18n("tcpIntervalPlaceholder"),
       defaultValue: upstreamConfig.tcp_interval,
@@ -364,6 +483,7 @@ export default function Upstreams() {
     },
     {
       name: "tcp_probe_count",
+      section: sec.tcp,
       label: upstreamI18n("tcpProbeCount"),
       placeholder: upstreamI18n("tcpProbeCountPlaceholder"),
       defaultValue: upstreamConfig.tcp_probe_count,
@@ -372,6 +492,7 @@ export default function Upstreams() {
     },
     {
       name: "remark",
+      section: sec.backends,
       label: upstreamI18n("remark"),
       placeholder: "",
       defaultValue: upstreamConfig.remark,
@@ -379,11 +500,10 @@ export default function Upstreams() {
       category: ExFormItemCategory.TEXTAREA,
     },
   ];
-  let defaultShow = 4;
   if (currentUpstream === newUpstream) {
-    defaultShow++;
     items.unshift({
       name: "name",
+      section: sec.backends,
       label: upstreamI18n("name"),
       placeholder: upstreamI18n("namePlaceholder"),
       defaultValue: "",
@@ -391,6 +511,19 @@ export default function Upstreams() {
       category: ExFormItemCategory.TEXT,
     });
   }
+
+  const defaultShow = sortIntoSections(
+    items,
+    [
+      sec.backends,
+      sec.balancing,
+      sec.timeout,
+      sec.tls,
+      sec.resilience,
+      sec.tcp,
+    ],
+    [sec.backends, sec.balancing],
+  );
 
   const schema = z.object({
     addrs: z.array(z.string()),
@@ -407,43 +540,35 @@ export default function Upstreams() {
 
   const onRemove = async () => {
     return remove("upstream", currentUpstream).then(() => {
-      handleSelectUpstream(newUpstream);
+      backToList();
     });
   };
 
   return (
-    <div className="grow overflow-auto p-4 md:p-6">
-      <ConfigEntityHeader
-        title={upstreamI18n("title") || upstreamI18n("upstream")}
-        description={upstreamI18n("description")}
-        label={upstreamI18n("upstream")}
-        value={currentUpstream}
-        placeholder={upstreamI18n("upstreamPlaceholder")}
-        isNew={currentUpstream === newUpstream}
-        options={upstreams.map((upstream) => ({
-          value: upstream,
-          label: upstream === newUpstream ? "new" : upstream,
-        }))}
-        onChange={(value) => {
-          if (value === newUpstream) {
-            searchParams.delete("name");
-          } else {
-            searchParams.set("name", value);
-          }
-          setSearchParams(searchParams);
-        }}
-        actions={
-          currentUpstream !== newUpstream ? (
-            <History
-              category="upstream"
-              name={currentUpstream}
-              onRestore={async (data) => {
-                await update("upstream", currentUpstream, data);
-              }}
-            />
-          ) : undefined
-        }
-      />
+    <PageShell
+      title={upstreamI18n("title")}
+      description={upstreamI18n("description")}
+      width="narrow"
+      backTo={UPSTREAMS}
+      backLabel={i18n("backToList")}
+      badge={
+        <EntityBadge
+          name={currentUpstream}
+          isNew={currentUpstream === newUpstream}
+        />
+      }
+      actions={
+        currentUpstream !== newUpstream ? (
+          <History
+            category="upstream"
+            name={currentUpstream}
+            onRestore={async (data) => {
+              await update("upstream", currentUpstream, data);
+            }}
+          />
+        ) : undefined
+      }
+    >
       <ExForm
         category="upstream"
         key={`${currentUpstream}-${version}`}
@@ -461,6 +586,6 @@ export default function Upstreams() {
           handleSelectUpstream(name);
         }}
       />
-    </div>
+    </PageShell>
   );
 }

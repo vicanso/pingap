@@ -39,7 +39,7 @@ export function omitEmptyArrayString(data: Record<string, unknown>) {
 }
 
 export function formatError(err: Error | HTTPError | unknown): string {
-  let message = "";
+  let message: string;
   if (err instanceof HTTPError) {
     message = err.message;
     if (err.category) {

@@ -198,7 +198,7 @@ interface ConfigState {
   data: Config;
   originalToml: string;
   fullToml: string;
-  hcl: string,
+  hcl: string;
   initialized: boolean;
   version: string;
   fetch: () => Promise<Config>;

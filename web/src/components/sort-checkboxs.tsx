@@ -3,8 +3,7 @@ import { cn } from "@/lib/utils";
 import { ChevronUp } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 
-interface SortCheckboxsProps
-  extends React.InputHTMLAttributes<HTMLInputElement> {
+interface SortCheckboxsProps extends React.InputHTMLAttributes<HTMLInputElement> {
   defaultValue?: string[];
   onValueChange: (values: string[]) => void;
   className?: string;

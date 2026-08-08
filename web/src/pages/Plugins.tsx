@@ -7,16 +7,19 @@ import React from "react";
 import {
   ExFormItemCategory,
   newStringOptions,
-  newBooleanOptions,
   PluginCategory,
   getPluginSteps,
 } from "@/constants";
+import { PLUGIN_FIELDS } from "@/plugin-fields";
 import { useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import useBasicState from "@/states/basic";
 import { omitEmptyArrayString } from "@/helpers/util";
 import History from "@/pages/History";
-import { ConfigEntityHeader } from "@/components/config-entity-header";
+import { EntityBadge } from "@/components/config-entity-badge";
+import { PageShell } from "@/components/page-shell";
+import { ConfigEntityList, EntityText } from "@/components/config-entity-list";
+import { PLUGINS } from "@/routers";
 
 function getPluginConfig(
   name: string,
@@ -30,6 +33,7 @@ function getPluginConfig(
 
 export default function Plugins() {
   const pluginI18n = useI18n("plugin");
+  const i18n = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [config, initialized, update, remove, version] = useConfigState(
@@ -47,9 +51,9 @@ export default function Plugins() {
   const newPlugin = "*";
   const plugins = Object.keys(config.plugins || {});
   plugins.sort();
-  plugins.unshift(newPlugin);
 
-  const currentPlugin = searchParams.get("name") || newPlugin;
+  // No `name` in the url means the category overview, `*` means the create form.
+  const currentPlugin = searchParams.get("name") || "";
   const pluginConfig = getPluginConfig(currentPlugin, config.plugins);
   const [currentCategory, setCurrentCategory] = React.useState(
     (pluginConfig.category as string) || "",
@@ -59,14 +63,48 @@ export default function Plugins() {
     return <LoadingPage />;
   }
 
+  if (!currentPlugin) {
+    return (
+      <ConfigEntityList<Record<string, unknown>>
+        title={pluginI18n("title")}
+        summary={pluginI18n("summary", { count: plugins.length })}
+        nameLabel={pluginI18n("name")}
+        addLabel={pluginI18n("add")}
+        emptyText={pluginI18n("empty")}
+        basePath={PLUGINS}
+        newValue={newPlugin}
+        names={plugins}
+        values={config.plugins || {}}
+        columns={[
+          {
+            key: "category",
+            label: pluginI18n("category"),
+            render: (value) => <EntityText value={value?.category as string} />,
+          },
+          {
+            key: "step",
+            label: pluginI18n("step"),
+            render: (value) => <EntityText value={value?.step as string} />,
+          },
+          {
+            key: "remark",
+            label: pluginI18n("remark"),
+            render: (value) => <EntityText value={value?.remark as string} />,
+          },
+        ]}
+      />
+    );
+  }
+
   const handleSelectPlugin = (name: string) => {
     const conf = getPluginConfig(name, config.plugins);
     setCurrentCategory(conf.category as string);
-    if (name === newPlugin) {
-      searchParams.delete("name");
-    } else {
-      searchParams.set("name", name);
-    }
+    searchParams.set("name", name);
+    setSearchParams(searchParams);
+  };
+
+  const backToList = () => {
+    searchParams.delete("name");
     setSearchParams(searchParams);
   };
 
@@ -101,7 +139,14 @@ export default function Plugins() {
       span: 6,
     });
   }
-  const category = currentCategory || (pluginConfig.category as string);
+  // `currentCategory` exists only so the create form can react to the category
+  // radio. For a saved plugin the category is whatever its config says — letting
+  // the state win here made a plugin reached by url or by a list row render the
+  // fields of whichever category was picked last.
+  const category =
+    currentPlugin === newPlugin
+      ? currentCategory
+      : (pluginConfig.category as string);
   if (category) {
     const options = getPluginSteps(category);
     if (options.length > 1) {
@@ -116,1035 +161,11 @@ export default function Plugins() {
       });
     }
   }
-  switch (category) {
-    case PluginCategory.STATS: {
-      items.push({
-        name: "path",
-        label: pluginI18n("statsPath"),
-        placeholder: pluginI18n("statsPathPlaceholder"),
-        defaultValue: pluginConfig.path as string,
-        span: 6,
-        category: ExFormItemCategory.TEXT,
-      });
-      break;
-    }
-    case PluginCategory.PING: {
-      items.push({
-        name: "path",
-        label: pluginI18n("pingPath"),
-        placeholder: pluginI18n("pingPathPlaceholder"),
-        defaultValue: pluginConfig.path as string,
-        span: 6,
-        category: ExFormItemCategory.TEXT,
-      });
-      break;
-    }
-    case PluginCategory.ADMIN: {
-      items.push(
-        {
-          name: "path",
-          label: pluginI18n("adminPath"),
-          placeholder: pluginI18n("adminPathPlaceholder"),
-          defaultValue: (pluginConfig.path || "") as string,
-          span: 2,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "max_age",
-          label: pluginI18n("adminMaxAge"),
-          placeholder: pluginI18n("adminMaxAgePlaceholder"),
-          defaultValue: (pluginConfig.max_age || "") as string,
-          span: 2,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "ip_fail_limit",
-          label: pluginI18n("adminIpFailLimit"),
-          placeholder: pluginI18n("adminIpFailLimitPlaceholder"),
-          defaultValue: Number(pluginConfig.ip_fail_limit || 0),
-          span: 2,
-          category: ExFormItemCategory.NUMBER,
-        },
-        {
-          name: "authorizations",
-          label: pluginI18n("adminAuthorization"),
-          placeholder: pluginI18n("adminAuthorizationPlaceholder"),
-          defaultValue: (pluginConfig.authorizations || []) as string[],
-          span: 6,
-          category: ExFormItemCategory.TEXTS,
-        },
-      );
-      break;
-    }
-    case PluginCategory.DIRECTORY: {
-      items.push(
-        {
-          name: "path",
-          label: pluginI18n("dirPath"),
-          placeholder: pluginI18n("dirPathPlaceholder"),
-          defaultValue: pluginConfig.path as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "index",
-          label: pluginI18n("dirIndex"),
-          placeholder: pluginI18n("dirIndexPlaceholder"),
-          defaultValue: pluginConfig.index as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "chunk_size",
-          label: pluginI18n("dirChunkSize"),
-          placeholder: pluginI18n("dirChunkSizePlaceholder"),
-          defaultValue: pluginConfig.chunk_size as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "autoindex",
-          label: pluginI18n("dirAutoIndex"),
-          placeholder: "",
-          defaultValue: pluginConfig.autoindex as boolean,
-          span: 3,
-          category: ExFormItemCategory.RADIOS,
-          options: newBooleanOptions(),
-        },
-        {
-          name: "max_age",
-          label: pluginI18n("dirMaxAge"),
-          placeholder: pluginI18n("dirMaxAgePlaceholder"),
-          defaultValue: pluginConfig.max_age as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "private",
-          label: pluginI18n("dirCachePrivate"),
-          placeholder: "",
-          defaultValue: pluginConfig.private as boolean,
-          span: 3,
-          category: ExFormItemCategory.RADIOS,
-          options: newBooleanOptions(),
-        },
-        {
-          name: "charset",
-          label: pluginI18n("dirCharset"),
-          placeholder: pluginI18n("dirCharsetPlaceholder"),
-          defaultValue: pluginConfig.charset as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "download",
-          label: pluginI18n("dirDownload"),
-          placeholder: "",
-          defaultValue: pluginConfig.download as boolean,
-          span: 3,
-          category: ExFormItemCategory.RADIOS,
-          options: newBooleanOptions(),
-        },
-        {
-          name: "headers",
-          label: pluginI18n("dirHeaderName"),
-          placeholder: pluginI18n("dirHeaderNamePlaceholder"),
-          defaultValue: pluginConfig.headers as string[],
-          span: 6,
-          category: ExFormItemCategory.KV_LIST,
-        },
-      );
-      break;
-    }
-    case PluginCategory.MOCK: {
-      items.push(
-        {
-          name: "path",
-          label: pluginI18n("mockPath"),
-          placeholder: pluginI18n("mockPathPlaceholder"),
-          defaultValue: pluginConfig.path as string,
-          span: 2,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "status",
-          label: pluginI18n("mockStatus"),
-          placeholder: pluginI18n("mockStatusPlaceholder"),
-          defaultValue: pluginConfig.status as number,
-          span: 2,
-          category: ExFormItemCategory.NUMBER,
-        },
-        {
-          name: "delay",
-          label: pluginI18n("mockResponseDelay"),
-          placeholder: pluginI18n("mockResponseDelayPlaceholder"),
-          defaultValue: pluginConfig.delay as string,
-          span: 2,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "headers",
-          label: pluginI18n("mockHeaderName"),
-          placeholder: pluginI18n("mockHeaderNamePlaceholder"),
-          defaultValue: pluginConfig.headers as string[],
-          span: 6,
-          category: ExFormItemCategory.KV_LIST,
-        },
-        {
-          name: "data",
-          label: pluginI18n("mockData"),
-          placeholder: pluginI18n("mockDataPlaceholder"),
-          defaultValue: pluginConfig.data as string,
-          span: 6,
-          category: ExFormItemCategory.TEXTAREA,
-          rows: 5,
-        },
-      );
-      break;
-    }
-    case PluginCategory.REDIRECT: {
-      items.push(
-        {
-          name: "prefix",
-          label: pluginI18n("redirectPrefix"),
-          placeholder: pluginI18n("redirectPrefixPlaceholder"),
-          defaultValue: pluginConfig.prefix as string,
-          span: 2,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "status",
-          label: pluginI18n("redirectStatus"),
-          placeholder: pluginI18n("redirectStatusPlaceholder"),
-          defaultValue: pluginConfig.status as number,
-          span: 2,
-          category: ExFormItemCategory.NUMBER,
-        },
-        {
-          name: "http_to_https",
-          label: pluginI18n("redirectHttps"),
-          placeholder: "",
-          defaultValue: pluginConfig.http_to_https as boolean,
-          span: 2,
-          category: ExFormItemCategory.RADIOS,
-          options: newBooleanOptions(),
-        },
-      );
-      break;
-    }
-    case PluginCategory.CACHE: {
-      items.push(
-        {
-          name: "directory",
-          label: pluginI18n("cacheDirectory"),
-          placeholder: pluginI18n("cacheDirectoryPlaceholder"),
-          defaultValue: pluginConfig.directory as string,
-          span: 6,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "lock",
-          label: pluginI18n("cacheLock"),
-          placeholder: pluginI18n("cacheLockPlaceholder"),
-          defaultValue: pluginConfig.lock as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "max_file_size",
-          label: pluginI18n("cacheMaxFileSize"),
-          placeholder: pluginI18n("cacheMaxFileSizePlaceholder"),
-          defaultValue: pluginConfig.max_file_size as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "namespace",
-          label: pluginI18n("cacheNamespace"),
-          placeholder: pluginI18n("cacheNamespacePlaceholder"),
-          defaultValue: pluginConfig.namespace as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "max_ttl",
-          label: pluginI18n("cacheMaxTtl"),
-          placeholder: pluginI18n("cacheMaxTtlPlaceholder"),
-          defaultValue: pluginConfig.max_ttl as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "eviction",
-          label: pluginI18n("cacheEviction"),
-          placeholder: "",
-          defaultValue: pluginConfig.eviction as boolean,
-          span: 3,
-          category: ExFormItemCategory.RADIOS,
-          options: newBooleanOptions(),
-        },
-        {
-          name: "predictor",
-          label: pluginI18n("cachePredictor"),
-          placeholder: "",
-          defaultValue: pluginConfig.predictor as boolean,
-          span: 3,
-          category: ExFormItemCategory.RADIOS,
-          options: newBooleanOptions(),
-        },
-        {
-          name: "skip",
-          label: pluginI18n("cacheSkip"),
-          placeholder: pluginI18n("cacheSkipPlaceholder"),
-          defaultValue: pluginConfig.skip as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "check_cache_control",
-          label: pluginI18n("checkCacheControl"),
-          placeholder: "",
-          defaultValue: pluginConfig.check_cache_control as boolean,
-          span: 3,
-          category: ExFormItemCategory.RADIOS,
-          options: newBooleanOptions(),
-        },
-        {
-          name: "headers",
-          label: pluginI18n("cacheHeaders"),
-          placeholder: pluginI18n("cacheHeadersPlaceholder"),
-          defaultValue: pluginConfig.headers as string[],
-          span: 6,
-          category: ExFormItemCategory.TEXTS,
-        },
-        {
-          name: "purge_ip_list",
-          label: pluginI18n("cachePurgeIpList"),
-          placeholder: pluginI18n("cachePurgeIpListPlaceholder"),
-          defaultValue: pluginConfig.purge_ip_list as string[],
-          span: 6,
-          category: ExFormItemCategory.TEXTS,
-        },
-      );
-      break;
-    }
-    case PluginCategory.REQUEST_ID: {
-      items.push(
-        {
-          name: "algorithm",
-          label: pluginI18n("requestIdAlgo"),
-          placeholder: pluginI18n("requestIdAlgoPlaceholder"),
-          defaultValue: pluginConfig.algorithm as string,
-          span: 2,
-          category: ExFormItemCategory.RADIOS,
-          options: newStringOptions(["uuid", "nanoid"], false),
-        },
-        {
-          name: "size",
-          label: pluginI18n("requestIdLength"),
-          placeholder: pluginI18n("requestIdLengthPlaceholder"),
-          defaultValue: pluginConfig.size as number,
-          span: 2,
-          category: ExFormItemCategory.NUMBER,
-        },
-        {
-          name: "header_name",
-          label: pluginI18n("requestIdHeaderName"),
-          placeholder: pluginI18n("requestIdHeaderNamePlaceholder"),
-          defaultValue: pluginConfig.header_name as string,
-          span: 2,
-          category: ExFormItemCategory.TEXT,
-        },
-      );
-      break;
-    }
-    case PluginCategory.COMPRESSION: {
-      items.push(
-        {
-          name: "gzip_level",
-          label: pluginI18n("compressionGzipLevel"),
-          placeholder: pluginI18n("compressionGzipLevelPlaceholder"),
-          defaultValue: pluginConfig.gzip_level as number,
-          span: 2,
-          category: ExFormItemCategory.NUMBER,
-        },
-        {
-          name: "br_level",
-          label: pluginI18n("compressionBrLevel"),
-          placeholder: pluginI18n("compressionBrLevelPlaceholder"),
-          defaultValue: pluginConfig.br_level as number,
-          span: 2,
-          category: ExFormItemCategory.NUMBER,
-        },
-        {
-          name: "zstd_level",
-          label: pluginI18n("compressionZstdLevel"),
-          placeholder: pluginI18n("compressionZstdLevelPlaceholder"),
-          defaultValue: pluginConfig.zstd_level as number,
-          span: 2,
-          category: ExFormItemCategory.NUMBER,
-        },
-        {
-          name: "min_length",
-          label: pluginI18n("compressionMinLength"),
-          placeholder: pluginI18n("compressionMinLengthPlaceholder"),
-          defaultValue: pluginConfig.min_length as number,
-          span: 2,
-          category: ExFormItemCategory.NUMBER,
-        },
-        {
-          name: "decompression",
-          label: pluginI18n("compressionDecompression"),
-          placeholder: "",
-          defaultValue: pluginConfig.decompression as boolean,
-          span: 2,
-          category: ExFormItemCategory.RADIOS,
-          options: newBooleanOptions(),
-        },
-        {
-          name: "mode",
-          label: pluginI18n("compressionMode"),
-          placeholder: "",
-          defaultValue: pluginConfig.mode as string,
-          span: 2,
-          category: ExFormItemCategory.RADIOS,
-          options: newStringOptions(["response", "upstream"], false),
-        },
-      );
-      break;
-    }
-    case PluginCategory.ACCEPT_ENCODING: {
-      items.push(
-        {
-          name: "encodings",
-          label: pluginI18n("acceptEncodingList"),
-          placeholder: pluginI18n("acceptEncodingListPlaceholder"),
-          defaultValue: pluginConfig.encodings as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "only_one_encoding",
-          label: pluginI18n("acceptEncodingOnlyOne"),
-          placeholder: "",
-          defaultValue: pluginConfig.only_one_encoding as boolean,
-          span: 3,
-          category: ExFormItemCategory.RADIOS,
-          options: newBooleanOptions(),
-        },
-      );
-      break;
-    }
-    case PluginCategory.KEY_AUTH: {
-      items.push(
-        {
-          name: "query",
-          label: pluginI18n("keyAuthQuery"),
-          placeholder: pluginI18n("keyAuthQueryPlaceholder"),
-          defaultValue: pluginConfig.query as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "header",
-          label: pluginI18n("keyAuthHeader"),
-          placeholder: pluginI18n("keyAuthHeaderPlaceholder"),
-          defaultValue: pluginConfig.header as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "delay",
-          label: pluginI18n("keyAuthFailDelay"),
-          placeholder: pluginI18n("keyAuthFailDelayPlaceholder"),
-          defaultValue: pluginConfig.delay as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "hide_credentials",
-          label: pluginI18n("keyAuthHideCredentials"),
-          placeholder: pluginI18n("keyAuthHideCredentialsPlaceholder"),
-          defaultValue: pluginConfig.hide_credentials as boolean,
-          span: 3,
-          category: ExFormItemCategory.RADIOS,
-          options: newBooleanOptions(),
-        },
-        {
-          name: "keys",
-          label: pluginI18n("keyAuthValues"),
-          placeholder: pluginI18n("keyAuthValuesPlaceholder"),
-          defaultValue: pluginConfig.keys as string[],
-          span: 6,
-          category: ExFormItemCategory.TEXTS,
-        },
-      );
-      break;
-    }
-    case PluginCategory.BASIC_AUTH: {
-      items.push(
-        {
-          name: "authorizations",
-          label: pluginI18n("basicAuthList"),
-          placeholder: pluginI18n("basicAuthListPlaceholder"),
-          defaultValue: pluginConfig.authorizations as string[],
-          span: 6,
-          category: ExFormItemCategory.TEXTS,
-        },
-        {
-          name: "delay",
-          label: pluginI18n("basicAuthFailDelay"),
-          placeholder: pluginI18n("basicAuthFailDelayPlaceholder"),
-          defaultValue: pluginConfig.delay as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "hide_credentials",
-          label: pluginI18n("basicAuthHideCredentials"),
-          placeholder: pluginI18n("basicAuthHideCredentialsPlaceholder"),
-          defaultValue: pluginConfig.hide_credentials as boolean,
-          span: 3,
-          category: ExFormItemCategory.RADIOS,
-          options: newBooleanOptions(),
-        },
-      );
-      break;
-    }
-    case PluginCategory.JWT: {
-      items.push(
-        {
-          name: "header",
-          label: pluginI18n("jwtAuthHeader"),
-          placeholder: pluginI18n("jwtAuthHeaderPlaceholder"),
-          defaultValue: pluginConfig.header as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "query",
-          label: pluginI18n("jwtAuthQuery"),
-          placeholder: pluginI18n("jwtAuthQueryPlaceholder"),
-          defaultValue: pluginConfig.query as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "cookie",
-          label: pluginI18n("jwtAuthCookie"),
-          placeholder: pluginI18n("jwtAuthCookiePlaceholder"),
-          defaultValue: pluginConfig.cookie as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "auth_path",
-          label: pluginI18n("jwtSignPath"),
-          placeholder: pluginI18n("jwtSignPathPlaceholder"),
-          defaultValue: pluginConfig.auth_path as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "delay",
-          label: pluginI18n("jwtAuthFailDelay"),
-          placeholder: pluginI18n("jwtAuthFailDelayPlaceholder"),
-          defaultValue: pluginConfig.delay as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "algorithm",
-          label: pluginI18n("jwtSignAlgorithm"),
-          placeholder: "",
-          defaultValue: pluginConfig.algorithm as string,
-          span: 3,
-          category: ExFormItemCategory.RADIOS,
-          options: newStringOptions(["HS256", "HS512"], false),
-        },
-        {
-          name: "secret",
-          label: pluginI18n("jwtAuthSecret"),
-          placeholder: pluginI18n("jwtAuthSecretPlaceholder"),
-          defaultValue: pluginConfig.secret as string,
-          span: 6,
-          category: ExFormItemCategory.TEXT,
-        },
-      );
-      break;
-    }
-    case PluginCategory.COMBINED_AUTH: {
-      items.push({
-        name: "authorizations",
-        label: pluginI18n("combinedAuthAuthorizations"),
-        placeholder: "",
-        defaultValue: pluginConfig.authorizations as [],
-        span: 6,
-        category: ExFormItemCategory.COMBINED_AUTHS,
-      });
-      break;
-    }
-    case PluginCategory.LIMIT: {
-      items.push(
-        {
-          name: "type",
-          label: pluginI18n("limitCategory"),
-          placeholder: "",
-          defaultValue: pluginConfig.type as string,
-          span: 3,
-          category: ExFormItemCategory.RADIOS,
-          options: newStringOptions(["rate", "inflight"], true),
-        },
-        {
-          name: "tag",
-          label: pluginI18n("limitTag"),
-          placeholder: "",
-          defaultValue: pluginConfig.tag as string,
-          span: 3,
-          category: ExFormItemCategory.RADIOS,
-          options: newStringOptions(["cookie", "header", "query", "ip"], true),
-        },
-        {
-          name: "key",
-          label: pluginI18n("limitKey"),
-          placeholder: pluginI18n("limitKeyPlaceholder"),
-          defaultValue: pluginConfig.key as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "max",
-          label: pluginI18n("limitMax"),
-          placeholder: pluginI18n("limitMaxPlaceholder"),
-          defaultValue: pluginConfig.max as number,
-          span: 3,
-          category: ExFormItemCategory.NUMBER,
-        },
-        {
-          name: "interval",
-          label: pluginI18n("limitInterval"),
-          placeholder: pluginI18n("limitIntervalPlaceholder"),
-          defaultValue: pluginConfig.interval as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "weight",
-          label: pluginI18n("limitWeight"),
-          placeholder: pluginI18n("limitWeightPlaceholder"),
-          defaultValue: pluginConfig.weight as number,
-          span: 3,
-          category: ExFormItemCategory.NUMBER,
-        },
-      );
-      break;
-    }
-    case PluginCategory.IP_RESTRICTION: {
-      items.push(
-        {
-          name: "type",
-          label: pluginI18n("ipRestrictionMode"),
-          placeholder: "",
-          defaultValue: pluginConfig.type as string,
-          span: 6,
-          category: ExFormItemCategory.RADIOS,
-          options: newStringOptions(["allow", "deny"], true),
-        },
-        {
-          name: "ip_list",
-          label: pluginI18n("ipList"),
-          placeholder: pluginI18n("ipListPlaceholder"),
-          defaultValue: pluginConfig.ip_list as string[],
-          span: 6,
-          category: ExFormItemCategory.TEXTS,
-        },
-        {
-          name: "message",
-          label: pluginI18n("ipRestrictionMessage"),
-          placeholder: pluginI18n("ipRestrictionMessagePlaceholder"),
-          defaultValue: pluginConfig.message as string,
-          span: 6,
-          category: ExFormItemCategory.TEXT,
-        },
-      );
-      break;
-    }
-    case PluginCategory.GEO_RESTRICTION: {
-      items.push(
-        {
-          name: "type",
-          label: pluginI18n("geoRestrictionMode"),
-          placeholder: "",
-          defaultValue: pluginConfig.type as string,
-          span: 6,
-          category: ExFormItemCategory.RADIOS,
-          options: newStringOptions(["allow", "deny", "reporting"], true),
-        },
-        {
-          name: "country_codes",
-          label: pluginI18n("geoRestrictionCountryCodes"),
-          placeholder: pluginI18n("geoRestrictionCountryCodesPlaceholder"),
-          defaultValue: pluginConfig.country_codes as string[],
-          span: 6,
-          category: ExFormItemCategory.TEXTS,
-        },
-        {
-          name: "message",
-          label: pluginI18n("geoRestrictionMessage"),
-          placeholder: pluginI18n("geoRestrictionMessagePlaceholder"),
-          defaultValue: pluginConfig.message as string,
-          span: 6,
-          category: ExFormItemCategory.TEXT,
-        },
-      );
-      break;
-    }
-    case PluginCategory.REFERER_RESTRICTION: {
-      items.push(
-        {
-          name: "type",
-          label: pluginI18n("refererRestrictionMode"),
-          placeholder: "",
-          defaultValue: pluginConfig.type as string,
-          span: 6,
-          category: ExFormItemCategory.RADIOS,
-          options: newStringOptions(["allow", "deny"], true),
-        },
-        {
-          name: "referer_list",
-          label: pluginI18n("refererList"),
-          placeholder: pluginI18n("refererListPlaceholder"),
-          defaultValue: pluginConfig.referer_list as string[],
-          span: 6,
-          category: ExFormItemCategory.TEXTS,
-        },
-        {
-          name: "message",
-          label: pluginI18n("refererRestrictionMessage"),
-          placeholder: pluginI18n("refererRestrictionMessagePlaceholder"),
-          defaultValue: pluginConfig.message as string,
-          span: 6,
-          category: ExFormItemCategory.TEXT,
-        },
-      );
-      break;
-    }
-    case PluginCategory.UA_RESTRICTION: {
-      items.push(
-        {
-          name: "type",
-          label: pluginI18n("uaRestrictionMode"),
-          placeholder: "",
-          defaultValue: pluginConfig.type as string,
-          span: 6,
-          category: ExFormItemCategory.RADIOS,
-          options: newStringOptions(["allow", "deny"], true),
-        },
-        {
-          name: "ua_list",
-          label: pluginI18n("uaList"),
-          placeholder: pluginI18n("uaListPlaceholder"),
-          defaultValue: pluginConfig.ua_list as string[],
-          span: 6,
-          category: ExFormItemCategory.TEXTS,
-        },
-        {
-          name: "message",
-          label: pluginI18n("uaRestrictionMessage"),
-          placeholder: pluginI18n("uaRestrictionMessagePlaceholder"),
-          defaultValue: pluginConfig.message as string,
-          span: 6,
-          category: ExFormItemCategory.TEXT,
-        },
-      );
-      break;
-    }
-    case PluginCategory.CSRF: {
-      items.push(
-        {
-          name: "token_path",
-          label: pluginI18n("csrfTokenPath"),
-          placeholder: pluginI18n("csrfTokenPathPlaceholder"),
-          defaultValue: pluginConfig.token_path as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "name",
-          label: pluginI18n("csrfName"),
-          placeholder: pluginI18n("csrfNamePlaceholder"),
-          defaultValue: pluginConfig.name as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "key",
-          label: pluginI18n("csrfKey"),
-          placeholder: pluginI18n("csrfKeyPlaceholder"),
-          defaultValue: pluginConfig.key as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "ttl",
-          label: pluginI18n("csrfTtl"),
-          placeholder: pluginI18n("csrfTtlPlaceholder"),
-          defaultValue: pluginConfig.ttl as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-      );
-      break;
-    }
-    case PluginCategory.CORS: {
-      items.push(
-        {
-          name: "path",
-          label: pluginI18n("corsPath"),
-          placeholder: pluginI18n("corsPathPlaceholder"),
-          defaultValue: pluginConfig.path as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "allow_origin",
-          label: pluginI18n("corsAllowOrigin"),
-          placeholder: pluginI18n("corsAllowOriginPlaceholder"),
-          defaultValue: pluginConfig.allow_origin as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "allow_methods",
-          label: pluginI18n("corsAllowMethods"),
-          placeholder: pluginI18n("corsAllowMethodsPlaceholder"),
-          defaultValue: pluginConfig.allow_methods as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "allow_headers",
-          label: pluginI18n("corsAllowHeaders"),
-          placeholder: pluginI18n("corsAllowHeadersPlaceholder"),
-          defaultValue: pluginConfig.allow_headers as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "allow_credentials",
-          label: pluginI18n("corsAllowCredentials"),
-          placeholder: "",
-          defaultValue: pluginConfig.allow_credentials as boolean,
-          span: 3,
-          category: ExFormItemCategory.RADIOS,
-          options: newBooleanOptions(),
-        },
-        {
-          name: "max_age",
-          label: pluginI18n("corsMaxAge"),
-          placeholder: pluginI18n("corsMaxAgePlaceholder"),
-          defaultValue: pluginConfig.max_age as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "expose_headers",
-          label: pluginI18n("corsExposeHeaders"),
-          placeholder: pluginI18n("corsExposeHeadersPlaceholder"),
-          defaultValue: pluginConfig.expose_headers as string,
-          span: 6,
-          category: ExFormItemCategory.TEXT,
-        },
-      );
-      break;
-    }
-    case PluginCategory.RESPONSE_HEADERS: {
-      items.push(
-        {
-          name: "add_headers",
-          label: pluginI18n("responseHeadersAddHeader"),
-          placeholder: pluginI18n("responseHeadersAddHeaderPlaceholder"),
-          defaultValue: pluginConfig.add_headers as string[],
-          span: 6,
-          category: ExFormItemCategory.KV_LIST,
-        },
-        {
-          name: "set_headers",
-          label: pluginI18n("responseHeadersSetHeader"),
-          placeholder: pluginI18n("responseHeadersSetHeaderPlaceholder"),
-          defaultValue: pluginConfig.set_headers as string[],
-          span: 6,
-          category: ExFormItemCategory.KV_LIST,
-        },
-        {
-          name: "remove_headers",
-          label: pluginI18n("responseHeadersRemoveHeader"),
-          placeholder: pluginI18n("responseHeadersRemoveHeaderPlaceholder"),
-          defaultValue: pluginConfig.remove_headers as string[],
-          span: 6,
-          category: ExFormItemCategory.TEXTS,
-        },
-        {
-          name: "rename_headers",
-          label: pluginI18n("responseHeadersRenameHeader"),
-          placeholder: pluginI18n("responseHeadersRenamePlaceholder"),
-          defaultValue: pluginConfig.rename_headers as string[],
-          span: 6,
-          category: ExFormItemCategory.KV_LIST,
-        },
-        {
-          name: "set_headers_not_exists",
-          label: pluginI18n("responseHeadersSetHeaderNotExists"),
-          placeholder: pluginI18n(
-            "responseHeadersSetHeaderNotExistsPlaceholder",
-          ),
-          defaultValue: pluginConfig.set_headers_not_exists as string[],
-          span: 6,
-          category: ExFormItemCategory.KV_LIST,
-        },
-        {
-          name: "mode",
-          label: pluginI18n("responseHeadersMode"),
-          placeholder: pluginI18n("responseHeadersModePlaceholder"),
-          defaultValue: pluginConfig.mode as string,
-          span: 6,
-          category: ExFormItemCategory.RADIOS,
-          options: newStringOptions(["upstream", "response"], true),
-        },
-      );
-      break;
-    }
-    case PluginCategory.SUB_FILTER: {
-      items.push(
-        {
-          name: "path",
-          label: pluginI18n("subFilterPath"),
-          placeholder: pluginI18n("subFilterPathPlaceholder"),
-          defaultValue: pluginConfig.path as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "status_codes",
-          label: pluginI18n("subFilterStatusCodes"),
-          placeholder: pluginI18n("subFilterStatusCodesPlaceholder"),
-          defaultValue: pluginConfig.status_codes as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "filters",
-          label: pluginI18n("subFilterFilters"),
-          placeholder: pluginI18n("subFilterFiltersPlaceholder"),
-          defaultValue: pluginConfig.filters as string[],
-          span: 6,
-          category: ExFormItemCategory.TEXTS,
-        },
-      );
-      break;
-    }
-    case PluginCategory.IMAGE_OPTIM: {
-      items.push(
-        {
-          name: "output_types",
-          label: pluginI18n("imageOptimOutputTypes"),
-          placeholder: pluginI18n("imageOptimOutputTypesPlaceholder"),
-          defaultValue: pluginConfig.output_types as string,
-          span: 6,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "png_quality",
-          label: pluginI18n("imageOptimPngQuality"),
-          placeholder: pluginI18n("imageOptimPngQualityPlaceholder"),
-          defaultValue: pluginConfig.png_quality as number,
-          span: 3,
-          category: ExFormItemCategory.NUMBER,
-        },
-        {
-          name: "jpeg_quality",
-          label: pluginI18n("imageOptimJpegQuality"),
-          placeholder: pluginI18n("imageOptimJpegQualityPlaceholder"),
-          defaultValue: pluginConfig.jpeg_quality as number,
-          span: 3,
-          category: ExFormItemCategory.NUMBER,
-        },
-        {
-          name: "avif_quality",
-          label: pluginI18n("imageOptimAvifQuality"),
-          placeholder: pluginI18n("imageOptimAvifQualityPlaceholder"),
-          defaultValue: pluginConfig.avif_quality as number,
-          span: 3,
-          category: ExFormItemCategory.NUMBER,
-        },
-        {
-          name: "avif_speed",
-          label: pluginI18n("imageOptimAvifSpeed"),
-          placeholder: pluginI18n("imageOptimAvifSpeedPlaceholder"),
-          defaultValue: pluginConfig.avif_speed as number,
-          span: 3,
-          category: ExFormItemCategory.NUMBER,
-        },
-      );
-      break;
-    }
-    case PluginCategory.TRAFFIC_SPLITTING: {
-      items.push(
-        {
-          name: "upstream",
-          label: pluginI18n("trafficSplittingUpstream"),
-          placeholder: pluginI18n("trafficSplittingUpstreamPlaceholder"),
-          defaultValue: pluginConfig.upstream as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "weight",
-          label: pluginI18n("trafficSplittingWeight"),
-          placeholder: pluginI18n("trafficSplittingWeightPlaceholder"),
-          defaultValue: pluginConfig.weight as number,
-          span: 3,
-          category: ExFormItemCategory.NUMBER,
-        },
-        {
-          name: "stickiness",
-          label: pluginI18n("trafficSplittingStickiness"),
-          placeholder: pluginI18n("trafficSplittingStickinessPlaceholder"),
-          defaultValue: pluginConfig.stickiness as boolean,
-          span: 3,
-          category: ExFormItemCategory.RADIOS,
-          options: newBooleanOptions(),
-        },
-        {
-          name: "sticky_cookie",
-          label: pluginI18n("trafficSplittingStickyCookie"),
-          placeholder: pluginI18n("trafficSplittingStickyCookiePlaceholder"),
-          defaultValue: pluginConfig.sticky_cookie as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "sticky_header",
-          label: pluginI18n("trafficSplittingStickyHeader"),
-          placeholder: pluginI18n("trafficSplittingStickyHeaderPlaceholder"),
-          defaultValue: pluginConfig.sticky_header as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-        {
-          name: "matcher",
-          label: pluginI18n("trafficSplittingMatcher"),
-          placeholder: pluginI18n("trafficSplittingMatcherPlaceholder"),
-          defaultValue: pluginConfig.matcher as string,
-          span: 3,
-          category: ExFormItemCategory.TEXT,
-        },
-      );
-      break;
-    }
-    default: {
-      break;
-    }
+  // Per-category fields live in plugin-fields.ts; every builder is pure, so
+  // the page only needs to look one up and append what it returns.
+  const buildFields = PLUGIN_FIELDS[category as PluginCategory];
+  if (buildFields) {
+    items.push(...buildFields(pluginConfig, pluginI18n));
   }
   if (category) {
     items.push({
@@ -1166,43 +187,32 @@ export default function Plugins() {
   }
   const onRemove = async () => {
     return remove("plugin", currentPlugin).then(() => {
-      handleSelectPlugin(newPlugin);
+      backToList();
     });
   };
 
   return (
-    <div className="grow overflow-auto p-4 md:p-6">
-      <ConfigEntityHeader
-        title={pluginI18n("title") || pluginI18n("plugin")}
-        description={pluginI18n("description")}
-        label={pluginI18n("plugin")}
-        value={currentPlugin}
-        placeholder={pluginI18n("pluginPlaceholder")}
-        isNew={currentPlugin === newPlugin}
-        options={plugins.map((plugin) => ({
-          value: plugin,
-          label: plugin === newPlugin ? "new" : plugin,
-        }))}
-        onChange={(value) => {
-          if (value === newPlugin) {
-            searchParams.delete("name");
-          } else {
-            searchParams.set("name", value);
-          }
-          setSearchParams(searchParams);
-        }}
-        actions={
-          currentPlugin !== newPlugin ? (
-            <History
-              category="plugin"
-              name={currentPlugin}
-              onRestore={async (data) => {
-                await update("plugin", currentPlugin, data);
-              }}
-            />
-          ) : undefined
-        }
-      />
+    <PageShell
+      title={pluginI18n("title")}
+      description={pluginI18n("description")}
+      width="narrow"
+      backTo={PLUGINS}
+      backLabel={i18n("backToList")}
+      badge={
+        <EntityBadge name={currentPlugin} isNew={currentPlugin === newPlugin} />
+      }
+      actions={
+        currentPlugin !== newPlugin ? (
+          <History
+            category="plugin"
+            name={currentPlugin}
+            onRestore={async (data) => {
+              await update("plugin", currentPlugin, data);
+            }}
+          />
+        ) : undefined
+      }
+    >
       <ExForm
         category="plugin"
         key={key}
@@ -1226,6 +236,6 @@ export default function Plugins() {
           handleSelectPlugin(name);
         }}
       />
-    </div>
+    </PageShell>
   );
 }

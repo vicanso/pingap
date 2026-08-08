@@ -11,7 +11,7 @@ import {
   Container,
   Search,
 } from "lucide-react";
-import router, {
+import {
   HOME,
   BASIC,
   SERVERS,
@@ -24,7 +24,7 @@ import router, {
 import useConfigState from "@/states/config";
 import { useI18n } from "@/i18n";
 import { Input } from "@/components/ui/input";
-import React, { useEffect } from "react";
+import React from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useLocation } from "react-router-dom";
 import {
@@ -232,18 +232,14 @@ export function MainSidebar({
   const { isMobile } = useSidebar();
   const expanded = sidebarOpen || isMobile;
   const [keyword, setKeyword] = React.useState("");
-  const [pathname, setPathname] = React.useState(
-    router.state.location.pathname,
-  );
   const [config, initialized] = useConfigState(
     useShallow((state) => [state.data, state.initialized]),
   );
 
+  // Read straight from the router instead of mirroring it into state via an
+  // effect: it is derived, so the copy only added a render behind the URL.
   const location = useLocation();
-
-  useEffect(() => {
-    setPathname(location.pathname);
-  }, [location]);
+  const pathname = location.pathname;
 
   const getVariant = (path: string) => {
     if (path === `${pathname}${location.search}`) {
