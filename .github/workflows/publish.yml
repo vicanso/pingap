@@ -86,8 +86,16 @@ jobs:
             # Copied, not moved: cargo-deb picks the binary up from the target
             # directory in the next step.
             cp target/x86_64-unknown-linux-musl/release/pingap ./pingap-linux-musl-x86
+      # Best effort: a broken deb must not cost the release its tarballs, which
+      # are what the install instructions actually point at. The upload step
+      # skips the file when this did not produce one.
       - name: Build deb
+        continue-on-error: true
         run: |
+          # The build above ran as root inside the container, so everything it
+          # wrote to target/ is root owned and cargo-deb cannot create or clear
+          # its staging directory underneath.
+          sudo chown -R "$(id -u):$(id -g)" target
           cargo install cargo-deb --locked
           # --no-build because the musl binary already exists from the container
           # step above, and --no-strip because the release profile strips it and
@@ -99,11 +107,18 @@ jobs:
           tar -czvf pingap-linux-musl-x86.tar.gz pingap-linux-musl-x86
           tar -czvf pingap-linux-musl-x86-full.tar.gz pingap-linux-musl-x86-full
 
-          ls -lh pingap*.gz pingap*.deb
+          ls -lh pingap*.gz
 
           ./.github/workflows/upload_asset.sh ./pingap-linux-musl-x86.tar.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./pingap-linux-musl-x86-full.tar.gz $GITHUB_TOKEN
-          ./.github/workflows/upload_asset.sh ./pingap-linux-x86.deb $GITHUB_TOKEN
+
+          # Absent when the deb step failed, which is allowed to happen.
+          if [ -f ./pingap-linux-x86.deb ]; then
+            ls -lh ./pingap-linux-x86.deb
+            ./.github/workflows/upload_asset.sh ./pingap-linux-x86.deb $GITHUB_TOKEN
+          else
+            echo "no deb produced, skipping"
+          fi
 
   linux-musl-aarch64:
     runs-on: ubuntu-22.04
@@ -129,8 +144,16 @@ jobs:
             # Copied, not moved: cargo-deb picks the binary up from the target
             # directory in the next step.
             cp target/aarch64-unknown-linux-musl/release/pingap ./pingap-linux-musl-aarch64
+      # Best effort: a broken deb must not cost the release its tarballs, which
+      # are what the install instructions actually point at. The upload step
+      # skips the file when this did not produce one.
       - name: Build deb
+        continue-on-error: true
         run: |
+          # The build above ran as root inside the container, so everything it
+          # wrote to target/ is root owned and cargo-deb cannot create or clear
+          # its staging directory underneath.
+          sudo chown -R "$(id -u):$(id -g)" target
           cargo install cargo-deb --locked
           # --no-build because the musl binary already exists from the container
           # step above, and --no-strip because the release profile strips it and
@@ -142,11 +165,18 @@ jobs:
           tar -czvf pingap-linux-musl-aarch64.tar.gz pingap-linux-musl-aarch64
           tar -czvf pingap-linux-musl-aarch64-full.tar.gz pingap-linux-musl-aarch64-full
 
-          ls -lh pingap*.gz pingap*.deb
+          ls -lh pingap*.gz
 
           ./.github/workflows/upload_asset.sh ./pingap-linux-musl-aarch64.tar.gz $GITHUB_TOKEN
           ./.github/workflows/upload_asset.sh ./pingap-linux-musl-aarch64-full.tar.gz $GITHUB_TOKEN
-          ./.github/workflows/upload_asset.sh ./pingap-linux-aarch64.deb $GITHUB_TOKEN
+
+          # Absent when the deb step failed, which is allowed to happen.
+          if [ -f ./pingap-linux-aarch64.deb ]; then
+            ls -lh ./pingap-linux-aarch64.deb
+            ./.github/workflows/upload_asset.sh ./pingap-linux-aarch64.deb $GITHUB_TOKEN
+          else
+            echo "no deb produced, skipping"
+          fi
 
   linux-gnu:
     timeout-minutes: 3600
