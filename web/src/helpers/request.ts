@@ -82,9 +82,15 @@ request.interceptors.response.use(
     const { response } = err;
 
     const he = new HTTPError("Unknown error");
-    he.status = response.status;
+    // Axios network failures have no response — guard before reading status.
+    he.status = response?.status ?? 0;
     if (he.status == 401) {
       removeLoginToken();
+      // Hash router: avoid a hard reload, and don't bounce if already on login.
+      const hash = window.location.hash || "";
+      if (!hash.includes("/login")) {
+        window.location.hash = "#/login";
+      }
     }
     if (timeoutErrorCodes.includes(err.code)) {
       he.category = "timeout";

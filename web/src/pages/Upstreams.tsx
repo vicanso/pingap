@@ -20,6 +20,7 @@ import History from "@/pages/History";
 import { EntityBadge } from "@/components/config-entity-badge";
 import { PageShell } from "@/components/page-shell";
 import { ConfigEntityList, EntityText } from "@/components/config-entity-list";
+import { ConfigEntitySummary } from "@/components/config-entity-summary";
 import { UPSTREAMS } from "@/routers";
 import useBasicState from "@/states/basic";
 import { cn } from "@/lib/utils";
@@ -569,6 +570,42 @@ export default function Upstreams() {
         ) : undefined
       }
     >
+      {currentUpstream !== newUpstream && (
+        <ConfigEntitySummary
+          fields={[
+            {
+              label: upstreamI18n("addrs"),
+              value: (upstreamConfig.addrs || [])
+                .map((a) => a.split(" ")[0])
+                .join(", "),
+              mono: true,
+            },
+            {
+              label: upstreamI18n("discovery"),
+              value: upstreamConfig.discovery || "static",
+            },
+            {
+              label: upstreamI18n("algo"),
+              value: upstreamConfig.algo || "—",
+            },
+            {
+              label: upstreamI18n("sni"),
+              value: upstreamConfig.sni || "—",
+              mono: true,
+            },
+            {
+              label: upstreamI18n("healthyStatus"),
+              value: (() => {
+                const status =
+                  basicInfo.upstream_healthy_status[currentUpstream];
+                return status
+                  ? `${status.healthy} / ${status.total}`
+                  : "—";
+              })(),
+            },
+          ]}
+        />
+      )}
       <ExForm
         category="upstream"
         key={`${currentUpstream}-${version}`}

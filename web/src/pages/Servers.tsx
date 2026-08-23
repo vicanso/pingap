@@ -17,6 +17,7 @@ import History from "@/pages/History";
 import { EntityBadge } from "@/components/config-entity-badge";
 import { PageShell } from "@/components/page-shell";
 import { ConfigEntityList, EntityText } from "@/components/config-entity-list";
+import { ConfigEntitySummary } from "@/components/config-entity-summary";
 import { SERVERS } from "@/routers";
 
 function getServerConfig(name: string, servers?: Record<string, Server>) {
@@ -126,6 +127,7 @@ export default function Servers() {
       section: sec.basic,
       label: serverI18n("addr"),
       placeholder: serverI18n("addrPlaceholder"),
+      tips: serverI18n("addrTips"),
       defaultValue: serverConfig.addr,
       span: 3,
       category: ExFormItemCategory.TEXT,
@@ -135,6 +137,7 @@ export default function Servers() {
       section: sec.basic,
       label: serverI18n("locations"),
       placeholder: serverI18n("locationsPlaceholder"),
+      tips: serverI18n("locationsTips"),
       span: 3,
       defaultValue: serverConfig.locations,
       category: ExFormItemCategory.MULTI_SELECT,
@@ -145,6 +148,7 @@ export default function Servers() {
       section: sec.basic,
       label: serverI18n("threads"),
       placeholder: serverI18n("threadsPlaceholder"),
+      tips: serverI18n("threadsTips"),
       defaultValue: serverConfig.threads,
       span: 3,
       category: ExFormItemCategory.NUMBER,
@@ -404,6 +408,29 @@ export default function Servers() {
         ) : undefined
       }
     >
+      {currentServer !== newServer && (
+        <ConfigEntitySummary
+          fields={[
+            { label: serverI18n("addr"), value: serverConfig.addr, mono: true },
+            {
+              label: serverI18n("locations"),
+              value: (serverConfig.locations || []).join(", ") || "—",
+            },
+            {
+              label: serverI18n("threads"),
+              value:
+                serverConfig.threads === 0
+                  ? "auto"
+                  : serverConfig.threads ?? "—",
+            },
+            {
+              label: serverI18n("tlsCert"),
+              value: serverConfig.tls_cert || "—",
+              mono: true,
+            },
+          ]}
+        />
+      )}
       <ExForm
         category="server"
         key={`${currentServer}-${version}`}

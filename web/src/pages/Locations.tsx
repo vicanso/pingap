@@ -17,6 +17,7 @@ import History from "@/pages/History";
 import { EntityBadge } from "@/components/config-entity-badge";
 import { PageShell } from "@/components/page-shell";
 import { ConfigEntityList, EntityText } from "@/components/config-entity-list";
+import { ConfigEntitySummary } from "@/components/config-entity-summary";
 import { LOCATIONS } from "@/routers";
 
 function getLocationConfig(name: string, locations?: Record<string, Location>) {
@@ -348,6 +349,31 @@ export default function Locations() {
         ) : undefined
       }
     >
+      {currentLocation !== newLocation && (
+        <ConfigEntitySummary
+          fields={[
+            {
+              label: locationI18n("host"),
+              value: locationConfig.host || "—",
+              mono: true,
+            },
+            {
+              label: locationI18n("path"),
+              value: locationConfig.path || "/",
+              mono: true,
+            },
+            {
+              label: locationI18n("upstream"),
+              value: locationConfig.upstream || "—",
+            },
+            {
+              label: locationI18n("rewrite"),
+              value: locationConfig.rewrite || "—",
+              mono: true,
+            },
+          ]}
+        />
+      )}
       <ExForm
         category="location"
         key={`${currentLocation}-${version}`}

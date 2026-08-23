@@ -23,21 +23,23 @@ export default function RouteError() {
   const i18n = useI18n("error");
 
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-6">
-      <div className="w-full max-w-md space-y-4 rounded-xl border bg-card p-6 text-center">
-        <div className="mx-auto flex size-10 items-center justify-center rounded-xl bg-destructive/10 text-destructive">
-          <TriangleAlert className="size-5" />
+    <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4 md:p-6">
+      <div className="w-full max-w-md space-y-5 rounded-xl border border-border/80 bg-card p-6 text-center shadow-none">
+        <div className="mx-auto flex size-11 items-center justify-center rounded-xl bg-destructive/10 text-destructive">
+          <TriangleAlert className="size-5" strokeWidth={1.8} />
         </div>
-        <div className="space-y-1">
+        <div className="space-y-1.5">
           <h1 className="text-lg font-semibold tracking-tight">
             {i18n("title")}
           </h1>
-          <p className="text-sm text-muted-foreground">{i18n("description")}</p>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            {i18n("description")}
+          </p>
         </div>
-        <pre className="max-h-40 overflow-auto rounded-md bg-muted p-3 text-left font-mono text-xs break-all whitespace-pre-wrap">
+        <pre className="max-h-40 overflow-auto rounded-lg bg-muted/60 p-3 text-left font-mono text-xs break-all whitespace-pre-wrap text-muted-foreground">
           {describe(error)}
         </pre>
-        <div className="flex justify-center gap-2">
+        <div className="flex flex-col-reverse justify-center gap-2 sm:flex-row">
           <Button
             variant="outline"
             className="cursor-pointer"

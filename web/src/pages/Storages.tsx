@@ -10,6 +10,7 @@ import History from "@/pages/History";
 import { EntityBadge } from "@/components/config-entity-badge";
 import { PageShell } from "@/components/page-shell";
 import { ConfigEntityList, EntityText } from "@/components/config-entity-list";
+import { ConfigEntitySummary } from "@/components/config-entity-summary";
 import { STORAGES } from "@/routers";
 
 function getStorageConfig(name: string, storages?: Record<string, Storage>) {
@@ -167,6 +168,20 @@ export default function Storages() {
         ) : undefined
       }
     >
+      {currentStorage !== newStorage && (
+        <ConfigEntitySummary
+          fields={[
+            {
+              label: storageI18n("category"),
+              value: storageConfig.category || "—",
+            },
+            {
+              label: storageI18n("secret"),
+              value: storageConfig.secret ? "••••••" : "—",
+            },
+          ]}
+        />
+      )}
       <ExForm
         category="storage"
         key={`${currentStorage}-${version}`}

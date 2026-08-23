@@ -14,14 +14,14 @@ import { Button } from "@/components/ui/button";
 import React from "react";
 import { toast } from "sonner";
 import { formatError } from "@/helpers/util";
-import { LoadingPage } from "@/components/loading";
+import { Loading } from "@/components/loading";
 import {
   Item,
   ItemContent,
   ItemHeader,
   ItemFooter,
 } from "@/components/ui/item";
-import { History as HistoryIcon } from "lucide-react";
+import { History as HistoryIcon, Inbox } from "lucide-react";
 
 export default function HistoryPage(props: {
   category: string;
@@ -66,10 +66,10 @@ export default function HistoryPage(props: {
   const items = history.map((item) => {
     const date = new Date(item.created_at * 1000).toLocaleString();
     return (
-      <Item key={item.created_at} variant="outline">
-        <ItemHeader>{date}</ItemHeader>
+      <Item key={item.created_at} variant="outline" className="bg-card">
+        <ItemHeader className="text-[13px] font-medium">{date}</ItemHeader>
         <ItemContent>
-          <pre className="overflow-x-auto max-w-full text-xs text-muted-foreground whitespace-pre-wrap break-words">
+          <pre className="max-h-48 max-w-full overflow-auto break-words whitespace-pre-wrap rounded-md bg-muted/40 p-2.5 font-mono text-[11px] leading-relaxed text-muted-foreground">
             {JSON.stringify(item.data, null, 2)}
           </pre>
         </ItemContent>
@@ -104,19 +104,24 @@ export default function HistoryPage(props: {
           <HistoryIcon className="size-4" />
         </Button>
       </SheetTrigger>
-      <SheetContent className="!p-0 flex flex-col">
-        <div className="p-6 pb-4 flex-shrink-0">
+      <SheetContent className="flex flex-col !p-0">
+        <div className="shrink-0 border-b border-border/80 px-6 py-5">
           <SheetHeader>
             <SheetTitle>{historyI18n("title")}</SheetTitle>
             <SheetDescription>{historyI18n("description")}</SheetDescription>
           </SheetHeader>
         </div>
-        <div className="flex-1 overflow-y-auto px-6">
-          <div className="grid auto-rows-min gap-6 pb-6">
-            {fetching && <LoadingPage />}
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+          <div className="grid auto-rows-min gap-4 pb-4">
+            {fetching && <Loading className="mt-2" />}
             {!fetching && items.length === 0 && (
-              <div className="text-muted-foreground">
-                {historyI18n("noHistory")}
+              <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/80 bg-muted/20 px-4 py-12 text-center">
+                <div className="mb-3 flex size-10 items-center justify-center rounded-xl bg-muted text-muted-foreground">
+                  <Inbox className="size-5" strokeWidth={1.8} />
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {historyI18n("noHistory")}
+                </p>
               </div>
             )}
             {!fetching && items}

@@ -59,6 +59,33 @@ interface NavLink {
   children?: NavLink[];
 }
 
+/** Highlight the first case-insensitive match of `keyword` inside `text`. */
+function HighlightMatch({
+  text,
+  keyword,
+}: {
+  text: string;
+  keyword: string;
+}) {
+  if (!keyword) {
+    return <>{text}</>;
+  }
+  const lower = text.toLowerCase();
+  const idx = lower.indexOf(keyword);
+  if (idx < 0) {
+    return <>{text}</>;
+  }
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark className="rounded-sm bg-primary/20 px-0.5 text-inherit">
+        {text.slice(idx, idx + keyword.length)}
+      </mark>
+      {text.slice(idx + keyword.length)}
+    </>
+  );
+}
+
 /** Square icon control for the collapsed rail (centered by SidebarMenu items-center). */
 const CollapsedIconLink = React.forwardRef<
   HTMLAnchorElement,
@@ -277,8 +304,13 @@ export function MainSidebar({
   const navI18n = useI18n("nav");
   // The mobile sheet is always full width, so the icon-rail rendering driven by
   // the desktop collapse toggle would strand tiny icon squares at its left edge.
-  const { isMobile } = useSidebar();
+  const { isMobile, setOpenMobile } = useSidebar();
   const expanded = sidebarOpen || isMobile;
+  const closeMobileNav = () => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+  };
   const [keyword, setKeyword] = React.useState("");
   // The search box only renders while expanded. Applying a leftover keyword on
   // the collapsed rail silently empties every flyout with no visible box to
@@ -437,8 +469,18 @@ export function MainSidebar({
           return (
             <SidebarMenuSubItem key={item.title}>
               <SidebarMenuSubButton isActive={isSelected} asChild>
-                <Link to={item.path} className="w-full">
-                  <span className="truncate">{item.title}</span>
+                <Link
+                  to={item.path}
+                  className="w-full"
+                  onClick={closeMobileNav}
+                  aria-current={isSelected ? "page" : undefined}
+                >
+                  <span className="truncate">
+                    <HighlightMatch
+                      text={item.title}
+                      keyword={activeKeyword}
+                    />
+                  </span>
                 </Link>
               </SidebarMenuSubButton>
             </SidebarMenuSubItem>
@@ -485,7 +527,11 @@ export function MainSidebar({
                         isActive={isActive}
                         asChild
                       >
-                        <Link to={item.path}>
+                        <Link
+                          to={item.path}
+                          onClick={closeMobileNav}
+                          aria-current={isActive ? "page" : undefined}
+                        >
                           {item.icon && <item.icon />}
                           <span>{item.title}</span>
                           {item.label && (

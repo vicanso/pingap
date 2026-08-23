@@ -15,6 +15,7 @@ import History from "@/pages/History";
 import { EntityBadge } from "@/components/config-entity-badge";
 import { PageShell } from "@/components/page-shell";
 import { ConfigEntityList, EntityText } from "@/components/config-entity-list";
+import { ConfigEntitySummary } from "@/components/config-entity-summary";
 import { CERTIFICATES } from "@/routers";
 import { Check } from "lucide-react";
 
@@ -249,6 +250,27 @@ export default function Certificates() {
         ) : undefined
       }
     >
+      {currentCertificate !== newCertificate && (
+        <ConfigEntitySummary
+          fields={[
+            {
+              label: certificateI18n("domains"),
+              value: certificateConfig.domains || "—",
+              mono: true,
+            },
+            {
+              label: certificateI18n("acme"),
+              value: certificateConfig.acme || "—",
+            },
+            {
+              label: certificateI18n("tlsCert"),
+              value: certificateConfig.tls_cert
+                ? `${certificateConfig.tls_cert.split("\n").length} lines`
+                : "—",
+            },
+          ]}
+        />
+      )}
       <ExForm
         category="certificate"
         key={`${currentCertificate}-${version}`}

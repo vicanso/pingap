@@ -53,13 +53,13 @@ export function PageShell({
     >
       <div
         className={cn(
-          "mx-auto flex w-full flex-col px-4 py-5 md:px-6 md:py-6",
+          "mx-auto flex w-full flex-col px-3 py-4 sm:px-4 sm:py-5 md:px-6 md:py-6",
           width === "narrow" ? "max-w-[1100px]" : "max-w-[1400px]",
           fill ? "min-h-0 flex-1 overflow-hidden" : "pb-10",
           className,
         )}
       >
-        <div className="mb-6 flex shrink-0 flex-wrap items-start gap-3 md:gap-4">
+        <div className="mb-5 flex shrink-0 flex-wrap items-start gap-3 sm:mb-6 md:gap-4">
           {backTo && (
             <Button
               asChild
@@ -74,7 +74,7 @@ export function PageShell({
           )}
           <div className="mr-auto min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-[28px] leading-none font-bold tracking-tight">
+              <h1 className="text-2xl leading-none font-bold tracking-tight sm:text-[28px]">
                 {title}
               </h1>
               {badge}

@@ -15,6 +15,7 @@ import {
 import {
   Form,
   FormControl,
+  FormDescription,
   FormItem,
   FormLabel,
   FormMessage,
@@ -39,6 +40,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { InputSelect } from "./input_select";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useBlocker } from "react-router-dom";
 import {
   AlertDialog,
@@ -95,6 +97,8 @@ export interface ExFormItem {
   nullAsEmpty?: boolean;
   /** Optional group title; rendered as a full-width section header when it changes. */
   section?: string;
+  /** Short help under the control — use for non-obvious defaults and units. */
+  tips?: string;
   defaultValue: string[] | string | number | boolean | null | undefined;
 }
 
@@ -128,6 +132,10 @@ export function ExForm({
   cols = 6,
 }: ExFormProps) {
   const { t } = useTranslation();
+  const isMobile = useIsMobile();
+  // One column on phones so span-3/6 fields don't squeeze into unreadably
+  // narrow halves of a still-six-column grid.
+  const effectiveCols = isMobile ? 1 : cols;
   const maxCount = items.length;
   let showCountDefaultValue = defaultShow;
   let showAllKey = "";
@@ -289,7 +297,7 @@ export function ExForm({
 
     let fieldClass = "";
     if (item.span) {
-      fieldClass = `col-span-${item.span}`;
+      fieldClass = `col-span-${isMobile ? 1 : item.span}`;
     }
     const field = (
       <div key={item.name} className={fieldClass}>
@@ -359,6 +367,9 @@ export function ExForm({
                         placeholder={item.placeholder}
                       />
                     </FormControl>
+                    {item.tips ? (
+                      <FormDescription>{item.tips}</FormDescription>
+                    ) : null}
                     <FormMessage />
                   </FormItem>
                 );
@@ -392,6 +403,9 @@ export function ExForm({
                         <SelectContent>{options}</SelectContent>
                       </Select>
                     </FormControl>
+                    {item.tips ? (
+                      <FormDescription>{item.tips}</FormDescription>
+                    ) : null}
                     <FormMessage />
                   </FormItem>
                 );
@@ -414,6 +428,9 @@ export function ExForm({
                         options={item.options}
                       />
                     </FormControl>
+                    {item.tips ? (
+                      <FormDescription>{item.tips}</FormDescription>
+                    ) : null}
                     <FormMessage />
                   </FormItem>
                 );
@@ -440,6 +457,9 @@ export function ExForm({
                         }}
                       />
                     </FormControl>
+                    {item.tips ? (
+                      <FormDescription>{item.tips}</FormDescription>
+                    ) : null}
                     <FormMessage />
                   </FormItem>
                 );
@@ -469,6 +489,9 @@ export function ExForm({
                         ref={field.ref}
                       />
                     </FormControl>
+                    {item.tips ? (
+                      <FormDescription>{item.tips}</FormDescription>
+                    ) : null}
                     <FormMessage />
                   </FormItem>
                 );
@@ -491,6 +514,9 @@ export function ExForm({
                         }}
                       />
                     </FormControl>
+                    {item.tips ? (
+                      <FormDescription>{item.tips}</FormDescription>
+                    ) : null}
                     <FormMessage />
                   </FormItem>
                 );
@@ -508,6 +534,9 @@ export function ExForm({
                         }}
                       />
                     </FormControl>
+                    {item.tips ? (
+                      <FormDescription>{item.tips}</FormDescription>
+                    ) : null}
                     <FormMessage />
                   </FormItem>
                 );
@@ -531,6 +560,9 @@ export function ExForm({
                         }}
                       />
                     </FormControl>
+                    {item.tips ? (
+                      <FormDescription>{item.tips}</FormDescription>
+                    ) : null}
                     <FormMessage />
                   </FormItem>
                 );
@@ -556,6 +588,9 @@ export function ExForm({
                         }}
                       />
                     </FormControl>
+                    {item.tips ? (
+                      <FormDescription>{item.tips}</FormDescription>
+                    ) : null}
                     <FormMessage />
                   </FormItem>
                 );
@@ -584,6 +619,9 @@ export function ExForm({
                         ref={field.ref}
                       />
                     </FormControl>
+                    {item.tips ? (
+                      <FormDescription>{item.tips}</FormDescription>
+                    ) : null}
                     <FormMessage />
                   </FormItem>
                 );
@@ -656,7 +694,7 @@ export function ExForm({
           <div
             className="grid gap-x-8 gap-y-5"
             style={{
-              gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+              gridTemplateColumns: `repeat(${effectiveCols}, minmax(0, 1fr))`,
             }}
           >
             {fields}
@@ -666,7 +704,9 @@ export function ExForm({
         {(onSave || onRemove || showButton) && (
           <div
             className={cn(
-              "sticky bottom-0 z-10 mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-border/80 bg-card/95 p-3 shadow-none backdrop-blur supports-backdrop-filter:bg-card/80",
+              "sticky bottom-0 z-10 mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-border/80 bg-card/95 p-3 shadow-none backdrop-blur supports-backdrop-filter:bg-card/80 sm:gap-3",
+              // Keep the bar clear of the home indicator on notched phones.
+              "pb-[max(0.75rem,env(safe-area-inset-bottom))]",
               updatedCount > 0 && "border-primary/30 ring-1 ring-primary/15",
             )}
           >

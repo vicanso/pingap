@@ -4,6 +4,7 @@ import {
   SidebarHeader,
   SidebarProvider,
   SidebarInset,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { MainSidebar } from "@/components/sidebar-nav";
 import { MainHeader } from "@/components/header";
@@ -21,6 +22,74 @@ import { formatError } from "@/helpers/util";
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { useIsMobile } from "@/hooks/use-mobile";
+
+/** Brand row lives under SidebarProvider so it can close the mobile sheet. */
+function BrandHeader({
+  showBrand,
+  initialized,
+  version,
+}: {
+  showBrand: boolean;
+  initialized: boolean;
+  version?: string;
+}) {
+  const { isMobile, setOpenMobile } = useSidebar();
+  const goHome = () => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+    goToHome();
+  };
+
+  return (
+    <SidebarHeader className="h-12 shrink-0 justify-center border-b border-sidebar-border p-0">
+      <div
+        className={
+          showBrand
+            ? "flex h-full items-center gap-1.5 px-3"
+            : "flex h-full w-full items-center justify-center"
+        }
+      >
+        <Button
+          size="icon"
+          variant="ghost"
+          className="size-8 shrink-0 cursor-pointer rounded-lg"
+          onClick={goHome}
+        >
+          <img
+            width={20}
+            height={20}
+            src={Logo}
+            alt="Pingap"
+            className="rounded-md"
+          />
+        </Button>
+        {showBrand && (
+          <button
+            type="button"
+            className="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
+            onClick={(e) => {
+              e.preventDefault();
+              goHome();
+            }}
+          >
+            <span className="truncate text-base font-semibold tracking-tight text-sidebar-foreground">
+              Pingap
+            </span>
+            {!initialized && (
+              <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
+            )}
+            {version && (
+              <span className="truncate rounded-full bg-sidebar-accent px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                {version}
+              </span>
+            )}
+          </button>
+        )}
+      </div>
+    </SidebarHeader>
+  );
+}
 
 export default function Root() {
   const key = "sidebarOpen";
@@ -63,54 +132,11 @@ export default function Root() {
     >
       <Sidebar collapsible="icon" className="border-r border-sidebar-border">
         {/* h-12 matches MainHeader so brand row and top bar share one baseline */}
-        <SidebarHeader className="h-12 shrink-0 justify-center border-b border-sidebar-border p-0">
-          <div
-            className={
-              showBrand
-                ? "flex h-full items-center gap-1.5 px-3"
-                : "flex h-full w-full items-center justify-center"
-            }
-          >
-            <Button
-              size="icon"
-              variant="ghost"
-              className="size-8 shrink-0 cursor-pointer rounded-lg"
-              onClick={() => {
-                goToHome();
-              }}
-            >
-              <img
-                width={20}
-                height={20}
-                src={Logo}
-                alt="Pingap"
-                className="rounded-md"
-              />
-            </Button>
-            {showBrand && (
-              <button
-                type="button"
-                className="flex min-w-0 flex-1 items-center gap-1.5 text-left cursor-pointer"
-                onClick={(e) => {
-                  e.preventDefault();
-                  goToHome();
-                }}
-              >
-                <span className="truncate text-base font-semibold tracking-tight text-sidebar-foreground">
-                  Pingap
-                </span>
-                {!initialized && (
-                  <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
-                )}
-                {basicInfo.version && (
-                  <span className="truncate rounded-full bg-sidebar-accent px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                    {basicInfo.version}
-                  </span>
-                )}
-              </button>
-            )}
-          </div>
-        </SidebarHeader>
+        <BrandHeader
+          showBrand={showBrand}
+          initialized={initialized}
+          version={basicInfo.version}
+        />
         <MainSidebar sidebarOpen={open} />
       </Sidebar>
 

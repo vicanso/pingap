@@ -115,6 +115,7 @@ export function MainHeader({
   const isZh = lang === zhLang || lang.startsWith("zh");
 
   // Design mock: segmented 中文 / EN control in a padded pill.
+  // Compact padding on small screens so the bar stays one row.
   const languageSwitch = (
     <div
       className="flex gap-0.5 rounded-lg border border-border bg-muted/60 p-[3px]"
@@ -124,7 +125,7 @@ export function MainHeader({
       <button
         type="button"
         className={cn(
-          "cursor-pointer rounded-md px-3 py-1 text-[12.5px] font-medium transition-colors",
+          "cursor-pointer rounded-md px-2 py-1 text-[12.5px] font-medium transition-colors sm:px-3",
           isZh
             ? "bg-background text-foreground shadow-sm"
             : "text-muted-foreground hover:text-foreground",
@@ -139,7 +140,7 @@ export function MainHeader({
       <button
         type="button"
         className={cn(
-          "cursor-pointer rounded-md px-3 py-1 text-[12.5px] font-medium transition-colors",
+          "cursor-pointer rounded-md px-2 py-1 text-[12.5px] font-medium transition-colors sm:px-3",
           !isZh
             ? "bg-background text-foreground shadow-sm"
             : "text-muted-foreground hover:text-foreground",
@@ -387,13 +388,13 @@ export function MainHeader({
   return (
     <header
       className={cn(
-        "flex h-12 shrink-0 items-center gap-2 border-b px-5 transition-[width,height] ease-linear",
+        "flex h-12 shrink-0 items-center gap-1.5 border-b border-border/80 bg-background/80 px-3 backdrop-blur-md transition-[width,height] ease-linear supports-backdrop-filter:bg-background/70 sm:gap-2 sm:px-5",
         className,
       )}
     >
-      <SidebarTrigger className={cn(iconBtnClass, "-ml-1")} />
+      <SidebarTrigger className={cn(iconBtnClass, "-ml-0.5")} />
       <div className="flex-1" />
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1 sm:gap-2">
         {languageSwitch}
         <Popover>
           <PopoverTrigger asChild>

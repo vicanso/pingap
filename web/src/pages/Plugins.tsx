@@ -19,6 +19,7 @@ import History from "@/pages/History";
 import { EntityBadge } from "@/components/config-entity-badge";
 import { PageShell } from "@/components/page-shell";
 import { ConfigEntityList, EntityText } from "@/components/config-entity-list";
+import { ConfigEntitySummary } from "@/components/config-entity-summary";
 import { PLUGINS } from "@/routers";
 
 function getPluginConfig(
@@ -213,6 +214,21 @@ export default function Plugins() {
         ) : undefined
       }
     >
+      {currentPlugin !== newPlugin && (
+        <ConfigEntitySummary
+          fields={[
+            {
+              label: pluginI18n("category"),
+              value: (pluginConfig.category as string) || "—",
+            },
+            {
+              label: pluginI18n("name"),
+              value: currentPlugin,
+              mono: true,
+            },
+          ]}
+        />
+      )}
       <ExForm
         category="plugin"
         key={key}

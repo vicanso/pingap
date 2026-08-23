@@ -35,11 +35,14 @@ export default {
     "The changes on this form have not been saved and will be lost.",
   leave: "Leave",
   backToList: "Back to list",
+  listFilterPlaceholder: "Filter by name…",
+  listFilterEmpty: "No names match this filter",
   includes: "Includes",
   includesPlaceholder: "Select the include config",
   full: "Full",
   original: "Original",
   import: "Import",
+  configDiffHint: "Runtime config differs from the stored original",
   importFail: "Import Toml Fail",
   importSuccess: "Import Toml Success",
   aesGcm: "AES-GCM",
@@ -117,6 +120,7 @@ export default {
     upstreamUnit: "Upstream",
     pluginUnit: "Plugin",
     certificateUnit: "Certificate",
+    configureHint: "Click to configure →",
   },
   basic: {
     title: "Basic",
@@ -130,18 +134,27 @@ export default {
     namePlaceholder: "Input the name of pingap process",
     threads: "Threads",
     threadsPlaceholder: "Input the default thread count",
+    threadsTips: "0 uses the CPU count. Leave empty to keep the built-in default.",
     workStealing: "Work Stealing",
+    workStealingTips:
+      "Allow idle workers to steal tasks from busy ones for better multi-core use.",
     listenerTasksPerFd: "Listener Tasks Per Fd",
     listenerTasksPerFdPlaceholder:
       "Input the listener tasks per fd(default: 1)",
+    listenerTasksPerFdTips: "Usually leave at 1 unless you have a specific need.",
     upstreamKeepalivePoolSize: "Upstream Keepalive Pool",
     upstreamKeepalivePoolSizePlaceholder:
       "Input the pool size of upstream keepavlie(default: 128)",
+    upstreamKeepalivePoolSizeTips:
+      "Reusable connections to upstreams. Larger pools use more memory.",
     logLevel: "Log Level",
     logLevelPlaceholder:
       "Select the log level of pingap : Input custom log filter(e.g. global_level,target_a=level_a,target_b=level_b)",
+    logLevelTips:
+      "Use the switch for a custom tracing filter string (e.g. info,pingap_proxy=debug).",
     logBufferedSize: "Log Buffered Size",
     logBufferedSizePlaceholder: "Input the buffer size for log(e.g. 64kb, 1mb)",
+    logBufferedSizeTips: "Async write buffer size. Empty disables buffering.",
     logFormatJson: "Json Log Format",
     logCompressAlgorithm: "Log Compress Algorithm",
     logCompressAlgorithmPlaceholder: "Select the log compress algorithm",
@@ -154,16 +167,23 @@ export default {
       "Input the time point hour for log compress(e.g. 0)",
     gracePeriod: "Grace Period",
     gracePeriodPlaceholder: "Input grace period for exit(e.g. 30s, 1m)",
+    gracePeriodTips:
+      "How long to wait after a shutdown signal before forcing exit.",
     gracefulShutdownTimeout: "Graceful Shutdown Timeout",
     gracefulShutdownTimeoutPlaceholder:
       "Input graceful shutdown timeout(e.g. 10s)",
+    gracefulShutdownTimeoutTips:
+      "Max time to drain in-flight requests during graceful shutdown.",
     autoRestartCheckInterval: "Auto Restart Check Interval",
     autoRestartCheckIntervalPlaceholder:
       "Input auto restart check interval(e.g. 30s)",
+    autoRestartCheckIntervalTips:
+      "How often file-backed config is polled for changes that need a restart.",
     pidFile: "Pid File",
     pidFilePlaceholder: "Input pid file path(e.g. /opt/pingap/pingap.pid)",
     upgradeSock: "Upgrade Sock For Daemon",
     upgradeSockPlaceholder: "Input upgrade unix sock for daemon",
+    upgradeSockTips: "Unix socket used for zero-downtime hot upgrade.",
     user: "User For Daemon",
     userPlaceholder: "Input user for daemon",
     group: "Group For Daemon",
@@ -181,6 +201,8 @@ export default {
     errorTemplate: "Error Template",
     errorTemplatePlaceholder:
       "Input the error template, it should be html or json",
+    errorTemplateTips:
+      "HTML or JSON body returned for proxied errors. Supports simple placeholders.",
   },
   server: {
     title: "Server",
@@ -201,10 +223,13 @@ export default {
     serverPlaceholder: "Select the server",
     addr: "Listen Addresses",
     addrPlaceholder: "Input listen addresses, separated by comma",
+    addrTips: "e.g. 0.0.0.0:80, [::]:443 — multiple addresses separated by commas.",
     locations: "Locations",
     locationsPlaceholder: "Select the locations for server",
+    locationsTips: "Request routes handled by this listener, matched by weight.",
     threads: "Threads",
     threadsPlaceholder: "Input the thread count of server",
+    threadsTips: "0 follows CPU count. Empty inherits basic.threads.",
     globalCertificates: "Using Global Certificates",
     accessLog: "Access Log Format",
     accessLogPlaceholder: "Input the format layout for access",

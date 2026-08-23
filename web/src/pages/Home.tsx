@@ -19,6 +19,8 @@ import { useAsync } from "react-async-hook";
 import React from "react";
 import { useShallow } from "zustand/react/shallow";
 import { PageShell } from "@/components/page-shell";
+import { getLoginToken } from "@/states/token";
+import { goToLogin } from "@/routers";
 
 interface Summary {
   name: string;
@@ -54,17 +56,25 @@ export default function Home() {
   // page froze the moment it opened. Refresh while the dashboard is on screen —
   // scoped to this component, so no other page pays for it — and skip ticks for
   // a hidden tab, where nobody is reading the numbers.
+  // Also skip when there is no login token: unauthenticated polls only spam
+  // the admin log with "missing authorization header".
   React.useEffect(() => {
+    let stopped = false;
     const refresh = () => {
-      if (document.hidden) {
+      if (stopped || document.hidden || !getLoginToken()) {
         return;
       }
-      // A dropped poll is not worth a toast; the next tick retries.
-      fetchBasicInfo().catch(() => {});
+      fetchBasicInfo().catch((err: { status?: number }) => {
+        if (err?.status === 401) {
+          stopped = true;
+          goToLogin();
+        }
+      });
     };
     const timer = setInterval(refresh, 5000);
     document.addEventListener("visibilitychange", refresh);
     return () => {
+      stopped = true;
       clearInterval(timer);
       document.removeEventListener("visibilitychange", refresh);
     };
@@ -527,7 +537,12 @@ export default function Home() {
                   )}
                 </ul>
               ) : (
-                <p className="text-[13px] text-muted-foreground">—</p>
+                <Link
+                  to={item.path}
+                  className="mt-1 text-[13px] text-muted-foreground underline-offset-2 hover:text-primary hover:underline"
+                >
+                  {homeI18n("configureHint")}
+                </Link>
               )}
             </CardContent>
           </Card>

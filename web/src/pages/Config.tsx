@@ -147,8 +147,13 @@ export default function Config() {
             {t("original")}
           </TabsTrigger>
           {different && (
-            <TabsTrigger value="full" className="cursor-pointer">
+            <TabsTrigger value="full" className="cursor-pointer gap-1.5">
               {t("full")}
+              <span
+                className="size-1.5 shrink-0 rounded-full bg-amber-500"
+                title={t("configDiffHint")}
+                aria-label={t("configDiffHint")}
+              />
             </TabsTrigger>
           )}
           <TabsTrigger value="hcl" className="cursor-pointer">
