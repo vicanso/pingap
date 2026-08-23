@@ -543,7 +543,7 @@ impl Upstream {
     pub fn new_http_peer(
         &self,
         session: &Session,
-        client_ip: &Option<String>,
+        client_ip: &mut Option<String>,
         count_processing: bool,
     ) -> Option<HttpPeer> {
         // Select a backend based on the load balancing strategy
@@ -1050,10 +1050,17 @@ mod tests {
         // completed() returns the remaining count after releasing one slot
         assert_eq!(value - 1, up.completed());
         assert_eq!(value - 1, up.processing.load(Ordering::Relaxed));
-        assert_eq!(true, up.new_http_peer(&session, &None, true).is_some());
+        let mut client_ip = None;
+        assert_eq!(
+            true,
+            up.new_http_peer(&session, &mut client_ip, true).is_some()
+        );
         assert_eq!(value, up.processing.load(Ordering::Relaxed));
         // A retry must not bump processing again
-        assert_eq!(true, up.new_http_peer(&session, &None, false).is_some());
+        assert_eq!(
+            true,
+            up.new_http_peer(&session, &mut client_ip, false).is_some()
+        );
         assert_eq!(value, up.processing.load(Ordering::Relaxed));
     }
 
@@ -1077,7 +1084,8 @@ mod tests {
             None,
         )
         .unwrap();
-        let peer = up.new_http_peer(&session, &None, true).unwrap();
+        let mut client_ip = None;
+        let peer = up.new_http_peer(&session, &mut client_ip, true).unwrap();
         assert_eq!(100, peer.options.max_h2_streams);
 
         // Unset falls back to Pingora's default of 1.
@@ -1091,7 +1099,8 @@ mod tests {
             None,
         )
         .unwrap();
-        let peer = up.new_http_peer(&session, &None, true).unwrap();
+        let mut client_ip = None;
+        let peer = up.new_http_peer(&session, &mut client_ip, true).unwrap();
         assert_eq!(1, peer.options.max_h2_streams);
     }
 

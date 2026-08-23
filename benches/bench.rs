@@ -321,7 +321,7 @@ fn bench_logger_format(c: &mut Criterion) {
                 ..Default::default()
             },
             conn: ConnectionInfo {
-                tls_version: Some("tls1.2".to_string()),
+                tls_version: Some("tls1.2".into()),
                 ..Default::default()
             },
             features: Some(Features{

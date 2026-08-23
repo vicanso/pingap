@@ -20,7 +20,7 @@ use bytes::Bytes;
 use http::{HeaderName, HeaderValue, StatusCode};
 use pingap_config::PluginConf;
 use pingap_core::{
-    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult, get_client_ip,
+    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult, ensure_client_ip,
     get_host,
 };
 use pingora::proxy::Session;
@@ -114,7 +114,7 @@ impl Plugin for ForwardAuth {
         &self,
         step: PluginStep,
         session: &mut Session,
-        _ctx: &mut Ctx,
+        ctx: &mut Ctx,
     ) -> pingora::Result<RequestPluginResult> {
         if step != self.plugin_step {
             return Ok(RequestPluginResult::Skipped);
@@ -149,7 +149,8 @@ impl Plugin for ForwardAuth {
                     get_host(req_header).unwrap_or_default(),
                 );
         }
-        builder = builder.header("x-forwarded-for", get_client_ip(session));
+        let client_ip = ensure_client_ip(session, ctx);
+        builder = builder.header("x-forwarded-for", client_ip);
 
         // Phase 2: call the auth service.
         let resp = match builder.send().await {

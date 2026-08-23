@@ -650,7 +650,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 
     let auto_restart_check_interval = basic_conf
         .auto_restart_check_interval
-        .map_or(Duration::from_secs(90), |item| item);
+        .unwrap_or(Duration::from_secs(90));
 
     #[cfg(feature = "perf")]
     info!(target: LOG_TARGET, "Enable feature perf");

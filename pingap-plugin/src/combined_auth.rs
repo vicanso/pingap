@@ -25,7 +25,7 @@ use pingap_core::{
     Ctx, HTTP_HEADER_NO_STORE, HttpResponse, Plugin, PluginStep,
     RequestPluginResult,
 };
-use pingap_core::{get_client_ip, get_query_value, now_sec};
+use pingap_core::{ensure_client_ip, get_query_value, now_sec};
 use pingora::proxy::Session;
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
@@ -205,10 +205,7 @@ impl CombinedAuth {
         // Checks if the client IP is in the allowed list
         // Uses X-Forwarded-For header for IP detection behind proxies
         if let Some(ip_rules) = &auth_param.ip_rules {
-            let ip = ctx
-                .conn
-                .client_ip
-                .get_or_insert_with(|| get_client_ip(session));
+            let ip = ensure_client_ip(session, ctx);
             if !ip_rules.is_match(ip).unwrap_or_default() {
                 return Err(Error::Invalid {
                     category: category.to_string(),

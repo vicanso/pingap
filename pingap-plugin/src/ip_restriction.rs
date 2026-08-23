@@ -21,7 +21,7 @@ use bytes::Bytes;
 use http::StatusCode;
 use pingap_config::PluginConf;
 use pingap_core::{
-    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult, get_client_ip,
+    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult, ensure_client_ip,
 };
 use pingap_util::IpRules;
 use pingora::proxy::Session;
@@ -144,10 +144,7 @@ impl Plugin for IpRestriction {
 
         // Get client IP address, using cached value if available
         // Otherwise extract from X-Forwarded-For or remote address
-        let ip = ctx
-            .conn
-            .client_ip
-            .get_or_insert_with(|| get_client_ip(session));
+        let ip = ensure_client_ip(session, ctx);
 
         // Check if IP matches any configured rules
         // Returns error if IP is malformed

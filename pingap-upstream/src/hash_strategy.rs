@@ -32,21 +32,23 @@ pub enum HashStrategy {
 impl HashStrategy {
     /// Gets the value to use for consistent hashing.
     /// This is optimized to avoid allocations where possible.
+    ///
+    /// When the strategy is [`HashStrategy::Ip`] and `client_ip` is empty, the
+    /// resolved IP is written back so later callers can reuse it.
     pub fn get_value<'a>(
         &self,
         session: &'a Session,
-        client_ip: &'a Option<String>,
+        client_ip: &'a mut Option<String>,
     ) -> Cow<'a, str> {
         match self {
             HashStrategy::Url => {
                 Cow::Owned(session.req_header().uri.to_string())
             },
             HashStrategy::Ip => {
-                if let Some(ip) = client_ip {
-                    Cow::Borrowed(ip)
-                } else {
-                    Cow::Owned(get_client_ip(session))
+                if client_ip.is_none() {
+                    *client_ip = Some(get_client_ip(session));
                 }
+                Cow::Borrowed(client_ip.as_deref().unwrap_or_default())
             },
             HashStrategy::Header(key) => {
                 get_req_header_value(session.req_header(), key)
@@ -128,35 +130,48 @@ mod tests {
         let mut session = Session::new_h1(Box::new(mock_io));
         session.read_request().await.unwrap();
 
+        let mut none = None;
         assert_eq!(
             "/vicanso/pingap?id=1234",
-            HashStrategy::Url.get_value(&session, &None)
+            HashStrategy::Url.get_value(&session, &mut none)
         );
 
-        assert_eq!("1.1.1.1", HashStrategy::Ip.get_value(&session, &None));
+        let mut none = None;
+        assert_eq!(
+            "1.1.1.1",
+            HashStrategy::Ip.get_value(&session, &mut none)
+        );
+        // Ip strategy writes the resolved address back for reuse.
+        assert_eq!(none.as_deref(), Some("1.1.1.1"));
+        let mut cached = Some("2.2.2.2".to_string());
         assert_eq!(
             "2.2.2.2",
-            HashStrategy::Ip.get_value(&session, &Some("2.2.2.2".to_string()))
+            HashStrategy::Ip.get_value(&session, &mut cached)
         );
 
+        let mut none = None;
         assert_eq!(
             "pingap/0.1.1",
             HashStrategy::Header("User-Agent".to_string())
-                .get_value(&session, &None)
+                .get_value(&session, &mut none)
         );
 
+        let mut none = None;
         assert_eq!(
             "abc",
             HashStrategy::Cookie("deviceId".to_string())
-                .get_value(&session, &None)
+                .get_value(&session, &mut none)
         );
+        let mut none = None;
         assert_eq!(
             "1234",
-            HashStrategy::Query("id".to_string()).get_value(&session, &None)
+            HashStrategy::Query("id".to_string())
+                .get_value(&session, &mut none)
         );
+        let mut none = None;
         assert_eq!(
             "/vicanso/pingap",
-            HashStrategy::Path.get_value(&session, &None)
+            HashStrategy::Path.get_value(&session, &mut none)
         );
     }
 }

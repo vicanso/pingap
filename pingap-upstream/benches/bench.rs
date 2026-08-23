@@ -56,7 +56,8 @@ fn bench_hash_strategy(c: &mut Criterion) {
 
     g.bench_function("ip", |b| {
         b.iter(|| {
-            let value = HashStrategy::Ip.get_value(&session, &None);
+            let mut client_ip = None;
+            let value = HashStrategy::Ip.get_value(&session, &mut client_ip);
             if value != "1.1.1.1" {
                 panic!("value is invalid");
             }
@@ -65,8 +66,9 @@ fn bench_hash_strategy(c: &mut Criterion) {
 
     g.bench_function("header", |b| {
         b.iter(|| {
+            let mut none = None;
             let value = HashStrategy::Header("User-Agent".to_string())
-                .get_value(&session, &None);
+                .get_value(&session, &mut none);
             if value != "pingap/0.1.1" {
                 panic!("value is invalid");
             }
@@ -75,8 +77,9 @@ fn bench_hash_strategy(c: &mut Criterion) {
 
     g.bench_function("cookie", |b| {
         b.iter(|| {
+            let mut none = None;
             let value = HashStrategy::Cookie("deviceId".to_string())
-                .get_value(&session, &None);
+                .get_value(&session, &mut none);
             if value != "abc" {
                 panic!("value is invalid");
             }
@@ -85,8 +88,9 @@ fn bench_hash_strategy(c: &mut Criterion) {
 
     g.bench_function("query", |b| {
         b.iter(|| {
+            let mut none = None;
             let value = HashStrategy::Query("id".to_string())
-                .get_value(&session, &None);
+                .get_value(&session, &mut none);
             if value != "1234" {
                 panic!("value is invalid");
             }
@@ -95,7 +99,8 @@ fn bench_hash_strategy(c: &mut Criterion) {
 
     g.bench_function("path", |b| {
         b.iter(|| {
-            let value = HashStrategy::Path.get_value(&session, &None);
+            let mut none = None;
+            let value = HashStrategy::Path.get_value(&session, &mut none);
             if value != "/vicanso/pingap" {
                 panic!("value is invalid");
             }
@@ -104,7 +109,8 @@ fn bench_hash_strategy(c: &mut Criterion) {
 
     g.bench_function("url", |b| {
         b.iter(|| {
-            let value = HashStrategy::Url.get_value(&session, &None);
+            let mut none = None;
+            let value = HashStrategy::Url.get_value(&session, &mut none);
             if value != "/vicanso/pingap?id=1234" {
                 panic!("value is invalid");
             }

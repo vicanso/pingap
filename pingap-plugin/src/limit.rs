@@ -24,7 +24,7 @@ use pingap_core::{
     Ctx, HttpResponse, Inflight, Plugin, PluginStep, Rate, RequestPluginResult,
 };
 use pingap_core::{
-    get_client_ip, get_cookie_value, get_query_value, get_req_header_value,
+    ensure_client_ip, get_cookie_value, get_query_value, get_req_header_value,
 };
 use pingora::proxy::Session;
 use std::borrow::Cow;
@@ -206,34 +206,22 @@ impl Limiter {
     /// * For inflight limiting: Increments counter and stores RAII guard in context
     /// * For IP-based limiting: Stores client IP in context
     pub fn incr(&self, session: &Session, ctx: &mut Ctx) -> Result<()> {
-        // Extract the key value based on configured tag type
-        let key = match self.tag {
-            LimitTag::Query => {
-                // Get value from URL query parameter
+        // Extract the key value based on configured tag type.
+        // Borrow where possible — Rate/Inflight only need `Hash`, not an owned String.
+        let key: Cow<'_, str> = match self.tag {
+            LimitTag::Query => Cow::Borrowed(
                 get_query_value(session.req_header(), &self.key)
-                    .unwrap_or_default()
-                    .to_string()
-            },
-            LimitTag::RequestHeader => {
-                // Get value from HTTP request header
+                    .unwrap_or_default(),
+            ),
+            LimitTag::RequestHeader => Cow::Borrowed(
                 get_req_header_value(session.req_header(), &self.key)
-                    .unwrap_or_default()
-                    .to_string()
-            },
-            LimitTag::Cookie => {
-                // Get value from cookie
+                    .unwrap_or_default(),
+            ),
+            LimitTag::Cookie => Cow::Borrowed(
                 get_cookie_value(session.req_header(), &self.key)
-                    .unwrap_or_default()
-                    .to_string()
-            },
-            _ => {
-                let ip = ctx
-                    .conn
-                    .client_ip
-                    .get_or_insert_with(|| get_client_ip(session));
-
-                ip.to_string()
-            },
+                    .unwrap_or_default(),
+            ),
+            _ => Cow::Borrowed(ensure_client_ip(session, ctx)),
         };
 
         // Skip limiting if no key found (e.g., missing header/cookie)
@@ -241,7 +229,8 @@ impl Limiter {
             return Ok(());
         }
 
-        // Track request based on limiter type
+        // Track request based on limiter type.
+        // Pass `&Cow` (Sized) rather than `&str` — pingora-limits requires `T: Hash + Sized`.
         let value = if let Some(rate) = &self.rate {
             // For rate limiting:
             rate.observe(&key, 1); // Record this request

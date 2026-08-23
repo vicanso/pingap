@@ -209,10 +209,14 @@ pub fn convert_header_value(
         PROXY_ADD_FORWARDED_TAG => {
             ctx.conn.remote_addr.as_deref().and_then(|remote_addr| {
                 // Build the new `x-forwarded-for` value efficiently using `BytesMut` to avoid `format!`.
-                let mut value_buf = BytesMut::new();
-                if let Some(existing) =
-                    session.get_header(HTTP_HEADER_X_FORWARDED_FOR)
-                {
+                let existing =
+                    session.get_header(HTTP_HEADER_X_FORWARDED_FOR);
+                let capacity = existing
+                    .map(|v| v.as_bytes().len() + 2)
+                    .unwrap_or(0)
+                    + remote_addr.len();
+                let mut value_buf = BytesMut::with_capacity(capacity);
+                if let Some(existing) = existing {
                     value_buf.extend_from_slice(existing.as_bytes());
                     value_buf.extend_from_slice(b", ");
                 }
@@ -339,6 +343,19 @@ fn is_trusted_proxy(peer: &str) -> bool {
         .ok()
         .and_then(|guard| guard.as_ref().map(|tp| tp.contains(peer)))
         .unwrap_or(false)
+}
+
+/// Ensures `ctx.conn.client_ip` is populated and returns a borrowed reference.
+///
+/// Prefer this on the request path over calling [`get_client_ip`] repeatedly —
+/// the first call allocates once and subsequent callers reuse the cached value.
+#[inline]
+pub fn ensure_client_ip<'a>(session: &Session, ctx: &'a mut Ctx) -> &'a str {
+    if ctx.conn.client_ip.is_none() {
+        ctx.conn.client_ip = Some(get_client_ip(session));
+    }
+    // Just inserted or already present — never None after the block above.
+    ctx.conn.client_ip.as_deref().unwrap_or_default()
 }
 
 /// Gets the client's IP address.
@@ -574,7 +591,7 @@ mod tests {
 
         assert_eq!(
             "x-request-id",
-            format!("{}", HTTP_HEADER_NAME_X_REQUEST_ID.to_string(),)
+            HTTP_HEADER_NAME_X_REQUEST_ID.to_string()
         );
 
         assert_eq!(
@@ -606,7 +623,7 @@ mod tests {
                 remote_port: Some(6000),
                 server_addr: Some("10.1.1.2".to_string()),
                 server_port: Some(6001),
-                tls_version: Some("tls1.3".to_string()),
+                tls_version: Some("tls1.3".into()),
                 ..Default::default()
             },
             ..Default::default()

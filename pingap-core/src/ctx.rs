@@ -30,6 +30,7 @@ use pingora::protocols::Digest;
 use pingora::protocols::TimingDigest;
 use pingora::proxy::Session;
 use pingora_limits::inflight::Guard;
+use std::borrow::Cow;
 use std::fmt::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -127,9 +128,12 @@ pub struct ConnectionInfo {
     /// The server port the client connected to.
     pub server_port: Option<u16>,
     /// The TLS version used for the connection, if any.
-    pub tls_version: Option<String>,
+    ///
+    /// Stored as `Cow<'static, str>` so values borrowed from pingora's
+    /// `SslDigest` (usually `&'static str`) do not allocate per request.
+    pub tls_version: Option<Cow<'static, str>>,
     /// The TLS cipher used for the connection, if any.
-    pub tls_cipher: Option<String>,
+    pub tls_cipher: Option<Cow<'static, str>>,
     /// Indicates whether the connection was reused (e.g., HTTP keep-alive).
     pub reused: bool,
 }
@@ -395,9 +399,9 @@ pub struct DigestDetail {
     /// Timestamp when TLS handshake completed
     pub tls_established: u64,
     /// TLS protocol version if using HTTPS
-    pub tls_version: Option<String>,
+    pub tls_version: Option<Cow<'static, str>>,
     /// TLS cipher suite in use if using HTTPS
-    pub tls_cipher: Option<String>,
+    pub tls_cipher: Option<Cow<'static, str>>,
 }
 
 #[inline]
@@ -438,8 +442,9 @@ pub fn get_digest_detail(digest: &Digest) -> DigestDetail {
         tcp_established,
         connection_time,
         tls_established: timing_to_ms(digest.timing_digest.last()),
-        tls_version: Some(ssl_digest.version.to_string()),
-        tls_cipher: Some(ssl_digest.cipher.to_string()),
+        // Clone the Cow: Borrowed(&'static str) is allocation-free.
+        tls_version: Some(ssl_digest.version.clone()),
+        tls_cipher: Some(ssl_digest.cipher.clone()),
     }
 }
 
@@ -729,7 +734,15 @@ impl Ctx {
                 if let Some(feature) = &self.features
                     && let Some(value) = &feature.compression_stat
                 {
-                    buf.extend(format!("{:.1}", value.ratio()).as_bytes());
+                    // One decimal place without allocating via `format!`.
+                    let tenths = (value.ratio() * 10.0).round() as u64;
+                    buf.extend(
+                        itoa::Buffer::new().format(tenths / 10).as_bytes(),
+                    );
+                    buf.extend_from_slice(b".");
+                    buf.extend(
+                        itoa::Buffer::new().format(tenths % 10).as_bytes(),
+                    );
                 }
             },
             "cache_lookup_time" => {
@@ -820,10 +833,13 @@ impl Ctx {
                     continue;
                 }
                 plugin_time += time;
-                let mut plugin_name = String::with_capacity(7 + name.len());
-                plugin_name.push_str("plugin.");
-                plugin_name.push_str(name);
-                add_timing!(&plugin_name, time);
+                // Write directly into the shared buffer — avoid a per-plugin
+                // temporary `"plugin." + name` String.
+                if !first {
+                    timing_str.push_str(", ");
+                }
+                let _ = write!(&mut timing_str, "plugin.{name};dur={time}");
+                first = false;
             }
             if plugin_time > 0 {
                 add_timing!("plugin", plugin_time);
@@ -905,11 +921,10 @@ pub fn get_cache_key(ctx: &Ctx, method: &str, uri: &Uri) -> CacheKey {
         return CacheKey::new("", "", "");
     };
     let namespace = cache_info.namespace.as_ref().map_or("", |v| v);
+    // Materialize the URI once (Display) and reuse for capacity + write.
+    // Keep full-URI semantics so existing cache keys stay stable across upgrades.
+    let uri_str = uri.to_string();
     let key = if let Some(keys) = &cache_info.keys {
-        // Materialize the URI once and reuse it for both the capacity estimate
-        // and the value (previously it was formatted twice: once just to
-        // measure its length, once to append it).
-        let uri_str = uri.to_string();
         // Pre-allocate string capacity to avoid reallocations.
         let mut key_buf = String::with_capacity(
             keys.iter().map(|s| s.len() + 1).sum::<usize>()
@@ -930,7 +945,12 @@ pub fn get_cache_key(ctx: &Ctx, method: &str, uri: &Uri) -> CacheKey {
         key_buf
     } else {
         // If no custom keys, use "METHOD:URI" as the key.
-        format!("{method}:{uri}")
+        let mut key_buf =
+            String::with_capacity(method.len() + 1 + uri_str.len());
+        key_buf.push_str(method);
+        key_buf.push(':');
+        key_buf.push_str(&uri_str);
+        key_buf
     };
 
     CacheKey::new(namespace, key, "")
@@ -1014,7 +1034,7 @@ mod tests {
         assert_eq!(&buf[..], b"true");
 
         // Test optional string values
-        ctx.conn.tls_version = Some("TLSv1.3".to_string());
+        ctx.conn.tls_version = Some("TLSv1.3".into());
         buf = BytesMut::new();
         ctx.append_log_value(&mut buf, "tls_version");
         assert_eq!(&buf[..], b"TLSv1.3");
@@ -1285,13 +1305,13 @@ mod tests {
         assert_eq!(b"true", buf.as_ref());
 
         buf = BytesMut::new();
-        ctx.conn.tls_version = Some("TLSv1.3".to_string());
+        ctx.conn.tls_version = Some("TLSv1.3".into());
         ctx.append_log_value(&mut buf, "tls_version");
         assert_eq!(b"TLSv1.3", buf.as_ref());
 
         buf = BytesMut::new();
         ctx.conn.tls_cipher =
-            Some("ECDHE_ECDSA_WITH_AES_128_GCM_SHA256".to_string());
+            Some("ECDHE_ECDSA_WITH_AES_128_GCM_SHA256".into());
         ctx.append_log_value(&mut buf, "tls_cipher");
         assert_eq!(b"ECDHE_ECDSA_WITH_AES_128_GCM_SHA256", buf.as_ref());
 
@@ -1394,8 +1414,8 @@ mod tests {
         assert_eq!(detail.connection_reused, true);
         assert_eq!(detail.tcp_established, 5000);
         assert_eq!(detail.tls_established, 3000);
-        assert_eq!(detail.tls_version, Some("1.3".to_string()));
-        assert_eq!(detail.tls_cipher, Some("123".to_string()));
+        assert_eq!(detail.tls_version.as_deref(), Some("1.3"));
+        assert_eq!(detail.tls_cipher.as_deref(), Some("123"));
     }
 
     #[test]

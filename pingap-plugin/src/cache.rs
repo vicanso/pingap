@@ -26,7 +26,7 @@ use pingap_cache::{HttpCache, new_cache_backend};
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
     Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult, get_cache_key,
-    get_client_ip,
+    ensure_client_ip,
 };
 use pingap_util::IpRules;
 use pingora::cache::eviction::EvictionManager;
@@ -397,10 +397,7 @@ impl Plugin for Cache {
 
         // Handle PURGE requests with IP-based access control
         if method == *METHOD_PURGE {
-            let ip = ctx
-                .conn
-                .client_ip
-                .get_or_insert_with(|| get_client_ip(session));
+            let ip = ensure_client_ip(session, ctx);
             let found = match self.purge_ip_rules.is_match(ip) {
                 Ok(matched) => matched,
                 Err(e) => {

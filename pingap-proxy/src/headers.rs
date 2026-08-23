@@ -16,6 +16,13 @@ use pingap_core::{Ctx, convert_header_value};
 use pingora::http::RequestHeader;
 use pingora::proxy::Session;
 
+/// Returns true when the header value may contain a `$…` / `:…` substitution.
+#[inline]
+fn is_dynamic_header_value(value: &http::HeaderValue) -> bool {
+    let buf = value.as_bytes();
+    !buf.is_empty() && (buf[0] == b'$' || buf[0] == b':')
+}
+
 /// Sets or appends proxy-related headers before forwarding request
 /// Handles both default reverse proxy headers and custom configured headers
 #[inline]
@@ -28,8 +35,14 @@ pub fn set_append_proxy_headers(
         && let Some(headers) = location.headers()
     {
         for (k, v, append) in headers {
-            let value = convert_header_value(v, session, ctx)
-                .unwrap_or_else(|| v.clone());
+            // Static values skip convert_header_value entirely (common for
+            // proxy_set_headers / proxy_add_headers without `$` substitutions).
+            let value = if is_dynamic_header_value(v) {
+                convert_header_value(v, session, ctx)
+                    .unwrap_or_else(|| v.clone())
+            } else {
+                v.clone()
+            };
             if *append {
                 let _ = header.append_header(k, value);
             } else {

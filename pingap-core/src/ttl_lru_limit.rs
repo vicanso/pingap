@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::{LOG_TARGET, now_ms};
+use ahash::RandomState;
 use std::time::Duration;
 use tinyufo::TinyUfo;
 use tracing::debug;
@@ -25,8 +26,12 @@ struct TtlLimit {
 
 pub struct TtlLruLimit {
     ttl: u64,
-    ufo: TinyUfo<String, TtlLimit>,
+    /// Keys are stored as stable hashes so `validate`/`inc` can look up with
+    /// `&str` without allocating a `String` on every call. TinyUFO itself only
+    /// indexes by `hash_one(key)`, so a `u64` key is equivalent for lookup.
+    ufo: TinyUfo<u64, TtlLimit>,
     max: usize,
+    hasher: RandomState,
 }
 
 impl TtlLruLimit {
@@ -42,6 +47,7 @@ impl TtlLruLimit {
             ttl: ttl.as_millis() as u64,
             max,
             ufo: TinyUfo::new(size, size),
+            hasher: RandomState::new(),
         }
     }
     /// Creates a new compact TTL-based LRU limit with the specified parameters.
@@ -55,8 +61,15 @@ impl TtlLruLimit {
             ttl: ttl.as_millis() as u64,
             max,
             ufo: TinyUfo::new_compact(size, size),
+            hasher: RandomState::new(),
         }
     }
+
+    #[inline]
+    fn hash_key(&self, key: &str) -> u64 {
+        self.hasher.hash_one(key)
+    }
+
     /// Validates whether a key has not exceeded its rate limit.
     ///
     /// # Arguments
@@ -69,13 +82,13 @@ impl TtlLruLimit {
     pub fn validate(&self, key: &str) -> bool {
         let mut should_reset = false;
         let mut valid = false;
-        let key = key.to_string();
+        let key = self.hash_key(key);
 
         if let Some(value) = self.ufo.get(&key) {
             debug!(
                 target: LOG_TARGET,
                 key,
-                value = format!("{value:?}"),
+                ?value,
                 "ttl lru limit"
             );
             // validate expired first
@@ -110,7 +123,7 @@ impl TtlLruLimit {
     ///
     /// * `key` - The key to increment
     pub fn inc(&self, key: &str) {
-        let key = key.to_string();
+        let key = self.hash_key(key);
         let data = if let Some(mut value) = self.ufo.get(&key) {
             // the reset value
             if value.created_at == 0 {

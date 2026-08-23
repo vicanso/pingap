@@ -1132,7 +1132,11 @@ impl ProxyHttp for Server {
                 // upstream_peer on every retry, and completed() runs once.
                 let first_attempt = ctx.upstream.retries == 0;
                 upstream
-                    .new_http_peer(session, &ctx.conn.client_ip, first_attempt)
+                    .new_http_peer(
+                        session,
+                        &mut ctx.conn.client_ip,
+                        first_attempt,
+                    )
                     .inspect(|peer| {
                         ctx.upstream.address = peer.address().to_string();
                     })

@@ -18,7 +18,7 @@ use bytes::Bytes;
 use http::StatusCode;
 use pingap_config::PluginConf;
 use pingap_core::{
-    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult, get_client_ip,
+    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult, ensure_client_ip,
 };
 use pingora::proxy::Session;
 use std::borrow::Cow;
@@ -149,10 +149,7 @@ impl Plugin for GeoRestriction {
             return Ok(RequestPluginResult::Skipped);
         }
 
-        let ip = ctx
-            .conn
-            .client_ip
-            .get_or_insert_with(|| get_client_ip(session));
+        let ip = ensure_client_ip(session, ctx);
 
         let ip_addr: IpAddr = match ip.parse() {
             Ok(addr) => addr,

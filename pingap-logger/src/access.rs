@@ -865,7 +865,7 @@ mod tests {
             conn: ConnectionInfo {
                 remote_addr: Some("10.1.1.1".to_string()),
                 client_ip: Some("1.1.1.1".to_string()),
-                tls_version: Some("1.2".to_string()),
+                tls_version: Some("1.2".into()),
                 ..Default::default()
             },
             upstream: UpstreamInfo {

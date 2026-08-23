@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use pingap_core::OtelTracer;
-use pingap_core::{Ctx, get_client_ip};
+use pingap_core::{Ctx, ensure_client_ip};
 use pingap_otel::HeaderExtractor;
 use pingap_otel::{
     KeyValue, global,
@@ -123,29 +123,37 @@ pub(crate) fn set_otel_upstream_attrs(ctx: &mut Ctx) {
 
 #[inline]
 pub(crate) fn set_otel_request_attrs(session: &Session, ctx: &mut Ctx) {
+    // Bail out before touching client_ip when there is no tracer to annotate.
+    if ctx
+        .features
+        .as_ref()
+        .and_then(|f| f.otel_tracer.as_ref())
+        .is_none()
+    {
+        return;
+    }
+
+    // Resolve IP (and any other ctx fields we need) before taking a mutable
+    // borrow of `features` / the tracer — otherwise `ensure_client_ip` conflicts.
+    let ip = ensure_client_ip(session, ctx).to_string();
+    let status = ctx.state.status.unwrap_or_default().as_u16() as i64;
+    let location = if ctx.upstream.location.is_empty() {
+        None
+    } else {
+        Some(ctx.upstream.location.clone())
+    };
+    let body_size = session.body_bytes_sent() as i64;
+
     if let Some(features) = ctx.features.as_mut()
         && let Some(ref mut tracer) = features.otel_tracer.as_mut()
     {
-        let ip = ctx
-            .conn
-            .client_ip
-            .get_or_insert_with(|| get_client_ip(session));
         let mut attrs = vec![
-            KeyValue::new("http.client_ip", ip.to_string()),
-            KeyValue::new(
-                "http.status_code",
-                ctx.state.status.unwrap_or_default().as_u16() as i64,
-            ),
-            KeyValue::new(
-                "http.response.body.size",
-                session.body_bytes_sent() as i64,
-            ),
+            KeyValue::new("http.client_ip", ip),
+            KeyValue::new("http.status_code", status),
+            KeyValue::new("http.response.body.size", body_size),
         ];
-        if !ctx.upstream.location.is_empty() {
-            attrs.push(KeyValue::new(
-                "http.location",
-                ctx.upstream.location.clone(),
-            ));
+        if let Some(location) = location {
+            attrs.push(KeyValue::new("http.location", location));
         }
 
         tracer.http_request_span.set_attributes(attrs);
