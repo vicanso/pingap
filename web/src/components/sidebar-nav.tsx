@@ -452,17 +452,17 @@ export function MainSidebar({
     <SidebarContent className={className}>
       <SidebarGroup>
         {expanded && (
-          <div className="m-2 mt-0 relative">
+          <div className="relative m-2 mt-0">
             <Input
               type="search"
               placeholder={navI18n("searchPlaceholder")}
-              className="pl-8"
+              className="h-9 border-border/80 bg-muted/40 pl-8 shadow-none focus-visible:bg-background"
               value={keyword}
               onChange={(e) => {
                 setKeyword(e.target.value);
               }}
             />
-            <Search className="pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 select-none opacity-50" />
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 select-none text-muted-foreground opacity-70" />
           </div>
         )}
         {expanded && activeKeyword && matchCount === 0 && (

@@ -94,12 +94,14 @@ export default function HistoryPage(props: {
         <Button
           variant="outline"
           size="icon"
-          className="cursor-pointer ml-2"
+          className="size-8 cursor-pointer text-muted-foreground hover:text-foreground"
+          title={historyI18n("title")}
+          aria-label={historyI18n("title")}
           onClick={() => {
             fetchHistory();
           }}
         >
-          <HistoryIcon />
+          <HistoryIcon className="size-4" />
         </Button>
       </SheetTrigger>
       <SheetContent className="!p-0 flex flex-col">

@@ -79,11 +79,17 @@ export function ConfigEntityList<T>({
       }
     >
       {names.length === 0 ? (
-        <div className="rounded-xl border border-dashed p-10 text-center text-sm text-muted-foreground">
-          {emptyText}
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/80 bg-muted/20 px-6 py-14 text-center">
+          <p className="text-sm text-muted-foreground">{emptyText}</p>
+          <Button asChild variant="outline" size="sm" className="mt-4 cursor-pointer">
+            <Link to={entityUrl(newValue)}>
+              <Plus className="size-4" />
+              {addLabel}
+            </Link>
+          </Button>
         </div>
       ) : (
-        <div className="rounded-xl border bg-card">
+        <div className="overflow-hidden rounded-xl border border-border/80 bg-card shadow-none">
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
@@ -99,14 +105,14 @@ export function ConfigEntityList<T>({
               {names.map((name) => (
                 <TableRow
                   key={name}
-                  className="cursor-pointer hover:bg-muted/50"
+                  className="cursor-pointer transition-colors hover:bg-muted/40"
                   onClick={() => navigate(entityUrl(name))}
                 >
                   <TableCell className="font-medium">
                     {/* Link (not just the row handler) so the row is keyboard reachable. */}
                     <Link
                       to={entityUrl(name)}
-                      className="outline-none hover:underline focus-visible:underline"
+                      className="outline-none hover:text-primary hover:underline focus-visible:underline"
                       onClick={(e) => e.stopPropagation()}
                     >
                       {name}
@@ -116,7 +122,7 @@ export function ConfigEntityList<T>({
                     <TableCell
                       key={column.key}
                       className={cn(
-                        "max-w-[320px] truncate text-muted-foreground",
+                        "max-w-[320px] truncate text-[13px] text-muted-foreground",
                         column.className,
                       )}
                     >

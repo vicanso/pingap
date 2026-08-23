@@ -59,13 +59,13 @@ export function PageShell({
           className,
         )}
       >
-        <div className="mb-6 flex shrink-0 flex-wrap items-start gap-4">
+        <div className="mb-6 flex shrink-0 flex-wrap items-start gap-3 md:gap-4">
           {backTo && (
             <Button
               asChild
               size="icon"
               variant="ghost"
-              className="mt-0.5 size-8 shrink-0 cursor-pointer"
+              className="mt-0.5 size-8 shrink-0 cursor-pointer text-muted-foreground hover:text-foreground"
             >
               <Link to={backTo} title={backLabel} aria-label={backLabel}>
                 <ArrowLeft className="size-4" />
@@ -80,13 +80,13 @@ export function PageShell({
               {badge}
             </div>
             {description && (
-              <p className="mt-1.5 text-sm text-muted-foreground">
+              <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-muted-foreground">
                 {description}
               </p>
             )}
           </div>
           {actions && (
-            <div className="flex flex-wrap items-center gap-2 pt-1">
+            <div className="flex flex-wrap items-center gap-2 pt-0.5">
               {actions}
             </div>
           )}

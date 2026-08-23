@@ -403,7 +403,7 @@ export default function Home() {
       }
     >
       {/* Stat tiles — 4-up with icon chip */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
         {statTiles.map((tile) => (
           <Card
             key={tile.label}
@@ -434,7 +434,7 @@ export default function Home() {
       {/* Basic information — 3-column label/value rows */}
       <Card className="mt-4 border-border/80 shadow-none">
         <CardHeader className="px-6 pb-3 pt-5">
-          <CardTitle className="text-[15px] font-semibold">
+          <CardTitle className="text-[13px] font-semibold uppercase tracking-wide text-muted-foreground">
             {homeI18n("basic")}
           </CardTitle>
         </CardHeader>

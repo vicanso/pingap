@@ -12,7 +12,7 @@ export function EntityBadge({ name, isNew }: EntityBadgeProps) {
     return (
       <Badge
         variant="outline"
-        className="border-primary/30 bg-primary/10 text-primary"
+        className="rounded-full border-primary/30 bg-primary/10 px-2 py-0 text-[11px] font-medium text-primary"
       >
         new
       </Badge>
@@ -22,7 +22,10 @@ export function EntityBadge({ name, isNew }: EntityBadgeProps) {
     return null;
   }
   return (
-    <Badge variant="secondary" className="font-mono text-xs">
+    <Badge
+      variant="secondary"
+      className="rounded-full px-2 py-0 font-mono text-[11px] font-normal"
+    >
       {name}
     </Badge>
   );

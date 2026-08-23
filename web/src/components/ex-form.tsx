@@ -277,10 +277,10 @@ export function ExForm({
           key={`section-${item.section}`}
           className={cn(
             "col-span-full",
-            fields.length > 0 && "mt-2 border-t border-border/60 pt-5",
+            fields.length > 0 && "mt-3 border-t border-border/50 pt-5",
           )}
         >
-          <h3 className="text-sm font-semibold tracking-tight text-foreground">
+          <h3 className="text-[13px] font-semibold tracking-wide text-muted-foreground uppercase">
             {item.section}
           </h3>
         </div>,
@@ -303,9 +303,12 @@ export function ExForm({
                   (opt: ExFormOption, index: number) => {
                     const id = `${item.name}-${index}`;
                     return (
-                      <div className="flex items-center mr-4" key={id}>
+                      <div className="mr-4 flex items-center" key={id}>
                         <RadioGroupItem value={opt.option} id={id} />
-                        <Label className="pl-2 cursor-pointer" htmlFor={id}>
+                        <Label
+                          className="cursor-pointer pl-2 text-[13px] font-normal text-foreground"
+                          htmlFor={id}
+                        >
                           {opt.label}
                         </Label>
                       </div>
@@ -638,7 +641,7 @@ export function ExForm({
       >
         <div className="rounded-xl border border-border/80 bg-card p-5 shadow-none sm:p-6">
           {updatedCount > 0 && (
-            <div className="mb-4 text-xs font-medium text-primary">
+            <div className="mb-4 inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
               {updatedCount} {t("modified") || "modified"}
             </div>
           )}
