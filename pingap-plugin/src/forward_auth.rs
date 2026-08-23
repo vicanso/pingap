@@ -20,8 +20,8 @@ use bytes::Bytes;
 use http::{HeaderName, HeaderValue, StatusCode};
 use pingap_config::PluginConf;
 use pingap_core::{
-    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult, ensure_client_ip,
-    get_host,
+    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
+    ensure_client_ip, get_host,
 };
 use pingora::proxy::Session;
 use std::borrow::Cow;

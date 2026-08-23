@@ -209,12 +209,10 @@ pub fn convert_header_value(
         PROXY_ADD_FORWARDED_TAG => {
             ctx.conn.remote_addr.as_deref().and_then(|remote_addr| {
                 // Build the new `x-forwarded-for` value efficiently using `BytesMut` to avoid `format!`.
-                let existing =
-                    session.get_header(HTTP_HEADER_X_FORWARDED_FOR);
-                let capacity = existing
-                    .map(|v| v.as_bytes().len() + 2)
-                    .unwrap_or(0)
-                    + remote_addr.len();
+                let existing = session.get_header(HTTP_HEADER_X_FORWARDED_FOR);
+                let capacity =
+                    existing.map(|v| v.as_bytes().len() + 2).unwrap_or(0)
+                        + remote_addr.len();
                 let mut value_buf = BytesMut::with_capacity(capacity);
                 if let Some(existing) = existing {
                     value_buf.extend_from_slice(existing.as_bytes());
@@ -589,10 +587,7 @@ mod tests {
             )
         );
 
-        assert_eq!(
-            "x-request-id",
-            HTTP_HEADER_NAME_X_REQUEST_ID.to_string()
-        );
+        assert_eq!("x-request-id", HTTP_HEADER_NAME_X_REQUEST_ID.to_string());
 
         assert_eq!(
             "content-type: text/plain; charset=utf-8",

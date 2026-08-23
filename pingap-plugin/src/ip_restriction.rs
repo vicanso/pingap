@@ -21,7 +21,8 @@ use bytes::Bytes;
 use http::StatusCode;
 use pingap_config::PluginConf;
 use pingap_core::{
-    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult, ensure_client_ip,
+    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
+    ensure_client_ip,
 };
 use pingap_util::IpRules;
 use pingora::proxy::Session;

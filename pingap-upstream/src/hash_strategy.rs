@@ -137,10 +137,7 @@ mod tests {
         );
 
         let mut none = None;
-        assert_eq!(
-            "1.1.1.1",
-            HashStrategy::Ip.get_value(&session, &mut none)
-        );
+        assert_eq!("1.1.1.1", HashStrategy::Ip.get_value(&session, &mut none));
         // Ip strategy writes the resolved address back for reuse.
         assert_eq!(none.as_deref(), Some("1.1.1.1"));
         let mut cached = Some("2.2.2.2".to_string());

@@ -18,7 +18,8 @@ use bytes::Bytes;
 use http::StatusCode;
 use pingap_config::PluginConf;
 use pingap_core::{
-    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult, ensure_client_ip,
+    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
+    ensure_client_ip,
 };
 use pingora::proxy::Session;
 use std::borrow::Cow;

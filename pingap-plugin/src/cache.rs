@@ -25,8 +25,8 @@ use humantime::parse_duration;
 use pingap_cache::{HttpCache, new_cache_backend};
 use pingap_config::{PluginCategory, PluginConf};
 use pingap_core::{
-    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult, get_cache_key,
-    ensure_client_ip,
+    Ctx, HttpResponse, Plugin, PluginStep, RequestPluginResult,
+    ensure_client_ip, get_cache_key,
 };
 use pingap_util::IpRules;
 use pingora::cache::eviction::EvictionManager;
