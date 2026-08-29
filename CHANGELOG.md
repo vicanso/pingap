@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.13.10](https://github.com/vicanso/pingap/compare/v0.13.9..v0.13.10) - 2026-08-29
+
+### 🐛 Bug Fixes
+
+- Fix cargo fmt - ([b322296](https://github.com/vicanso/pingap/commit/b32229657f7a331443a215f3869109649e6ff8f2))
+- Unbreak the deb build and let it fail without sinking the release - ([f1d48c1](https://github.com/vicanso/pingap/commit/f1d48c125b502235bd9375b1445f51b19072726f))
+
+### 🚜 Refactor
+
+- *(web)* Rebuild the admin console around the request path - ([3f24018](https://github.com/vicanso/pingap/commit/3f24018c1e362ff905c9997f65aa6462bc07feb5))
+- *(web)* Modernize admin console UX and fix basic auth polling - ([a112a8a](https://github.com/vicanso/pingap/commit/a112a8afa9c60309f39bc6517c6262fd5b89ae19))
+- Enhance admin web - ([510c132](https://github.com/vicanso/pingap/commit/510c132466d0030cb4777794fbafbb69d7f9f70b))
+
+### ⚡ Performance
+
+- *(core)* Cut request-path allocations in headers, TLS digest, and limits - ([51a6afc](https://github.com/vicanso/pingap/commit/51a6afca28a3395ab5f85645cd3da2037988efe8))
+
 ## [0.13.9](https://github.com/vicanso/pingap/compare/v0.13.8..v0.13.9) - 2026-08-08
 
 ### ⛰️  Features
