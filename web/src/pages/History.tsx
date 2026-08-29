@@ -105,7 +105,7 @@ export default function HistoryPage(props: {
         </Button>
       </SheetTrigger>
       <SheetContent className="flex flex-col !p-0">
-        <div className="shrink-0 border-b border-border/80 px-6 py-5">
+        <div className="shrink-0 border-b border-border px-6 py-5">
           <SheetHeader>
             <SheetTitle>{historyI18n("title")}</SheetTitle>
             <SheetDescription>{historyI18n("description")}</SheetDescription>
@@ -115,8 +115,8 @@ export default function HistoryPage(props: {
           <div className="grid auto-rows-min gap-4 pb-4">
             {fetching && <Loading className="mt-2" />}
             {!fetching && items.length === 0 && (
-              <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/80 bg-muted/20 px-4 py-12 text-center">
-                <div className="mb-3 flex size-10 items-center justify-center rounded-xl bg-muted text-muted-foreground">
+              <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/50 px-4 py-12 text-center">
+                <div className="mb-3 flex size-10 items-center justify-center rounded-md bg-muted text-muted-foreground">
                   <Inbox className="size-5" strokeWidth={1.8} />
                 </div>
                 <p className="text-sm text-muted-foreground">

@@ -81,6 +81,9 @@ export function ConfigEntityList<T>({
     <PageShell
       title={title}
       description={summary}
+      // The route is also the config section this page edits — `/servers` is
+      // `[servers.*]` in the TOML — so the eyebrow needs no separate label.
+      eyebrow={basePath.replace(/^\//, "")}
       actions={
         <Button asChild className="cursor-pointer">
           <Link to={entityUrl(newValue)}>
@@ -91,8 +94,8 @@ export function ConfigEntityList<T>({
       }
     >
       {names.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/80 bg-muted/20 px-6 py-14 text-center">
-          <div className="mb-3 flex size-10 items-center justify-center rounded-xl bg-muted text-muted-foreground">
+        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/50 px-6 py-14 text-center">
+          <div className="mb-3 flex size-10 items-center justify-center rounded-md bg-muted text-muted-foreground">
             <Inbox className="size-5" strokeWidth={1.8} />
           </div>
           <p className="max-w-xs text-sm text-muted-foreground">{emptyText}</p>
@@ -123,11 +126,11 @@ export function ConfigEntityList<T>({
             </div>
           )}
           {filteredNames.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-border/80 bg-muted/10 px-6 py-10 text-center text-sm text-muted-foreground">
+            <div className="rounded-lg border border-dashed border-border bg-card/50 px-6 py-10 text-center text-sm text-muted-foreground">
               {i18n("listFilterEmpty")}
             </div>
           ) : (
-            <div className="overflow-hidden rounded-xl border border-border/80 bg-card shadow-none">
+            <div className="overflow-hidden rounded-lg border border-border bg-card">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
@@ -143,10 +146,10 @@ export function ConfigEntityList<T>({
                   {filteredNames.map((name) => (
                     <TableRow
                       key={name}
-                      className="cursor-pointer transition-colors hover:bg-muted/40"
+                      className="cursor-pointer transition-colors hover:bg-accent/50"
                       onClick={() => navigate(entityUrl(name))}
                     >
-                      <TableCell className="font-medium">
+                      <TableCell className="py-2.5 font-medium">
                         {/* Link (not just the row handler) so the row is keyboard reachable. */}
                         <Link
                           to={entityUrl(name)}
@@ -160,7 +163,9 @@ export function ConfigEntityList<T>({
                         <TableCell
                           key={column.key}
                           className={cn(
-                            "max-w-[320px] truncate text-[13px] text-muted-foreground",
+                            // Machine track: every cell but the name holds a
+                            // value pingap reported or a value from the config.
+                            "machine max-w-[320px] truncate py-2.5 text-[12.5px] text-muted-foreground",
                             column.className,
                           )}
                         >

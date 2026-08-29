@@ -1,20 +1,34 @@
 import * as React from "react";
 
 const MOBILE_BREAKPOINT = 768;
+const MOBILE_QUERY = `(max-width: ${MOBILE_BREAKPOINT - 1}px)`;
+
+let mediaQuery: MediaQueryList | null = null;
+
+function getMediaQuery() {
+  if (!mediaQuery) {
+    mediaQuery = window.matchMedia(MOBILE_QUERY);
+  }
+  return mediaQuery;
+}
 
 function subscribe(onStoreChange: () => void) {
-  const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
+  const mql = getMediaQuery();
   mql.addEventListener("change", onStoreChange);
   return () => mql.removeEventListener("change", onStoreChange);
 }
 
-const getSnapshot = () => window.innerWidth < MOBILE_BREAKPOINT;
-
 /**
- * Read the viewport as an external store rather than mirroring it into state
- * from an effect: the width is known during the first render, so there is no
- * desktop-then-mobile flash and no setState-in-effect cascade.
+ * A media query is an external store, so read it as one. The upstream shadcn
+ * version seeds `undefined` and assigns inside an effect, which renders the
+ * desktop layout for one frame on a phone — visible as the sidebar rail
+ * flashing before the sheet takes over — and now also trips the react-hooks
+ * `set-state-in-effect` rule.
  */
 export function useIsMobile() {
-  return React.useSyncExternalStore(subscribe, getSnapshot);
+  return React.useSyncExternalStore(
+    subscribe,
+    () => getMediaQuery().matches,
+    () => false,
+  );
 }

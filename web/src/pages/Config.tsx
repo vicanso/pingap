@@ -27,7 +27,7 @@ function CodePanel({
   onCopy?: () => void;
 }) {
   return (
-    <Card className="relative flex h-full min-h-0 flex-col overflow-hidden border-border/80 shadow-none">
+    <Card className="relative flex h-full min-h-0 flex-col overflow-hidden border-border">
       {onCopy && content && (
         <Button
           className="absolute top-3 right-3 z-10 cursor-pointer"
@@ -137,7 +137,12 @@ export default function Config() {
     "mt-0 absolute inset-0 flex flex-col data-[state=inactive]:hidden";
 
   return (
-    <PageShell title={t("tomlTitle")} description={t("tomlDescription")} fill>
+    <PageShell
+      eyebrow="config"
+      title={t("tomlTitle")}
+      description={t("tomlDescription")}
+      fill
+    >
       <Tabs
         defaultValue="original"
         className="flex min-h-0 flex-1 flex-col overflow-hidden"
@@ -176,11 +181,11 @@ export default function Config() {
             <CodePanel content={hcl} onCopy={copyHcl} />
           </TabsContent>
           <TabsContent value="import" className={panelClass}>
-            <Card className="flex h-full min-h-0 flex-col overflow-hidden border-border/80 shadow-none">
-              <CardHeader className="shrink-0 pb-3">
+            <Card className="flex h-full min-h-0 flex-col overflow-hidden border-border">
+              <CardHeader className="shrink-0 px-5 pt-5 pb-3">
                 <CardTitle className="text-base">{t("import")}</CardTitle>
               </CardHeader>
-              <CardContent className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+              <CardContent className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden px-5 pb-5">
                 <Textarea
                   autoFocus
                   className="min-h-0 flex-1 resize-none font-mono text-sm"

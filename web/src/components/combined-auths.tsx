@@ -74,12 +74,12 @@ export const CombinedAuths = React.forwardRef<
     const mb = last ? "" : "mb-4";
     return (
       <Card key={item.id} className={cn(mb)}>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 px-5 pt-4 pb-2">
           <CardTitle className="text-sm font-medium ">
             {pluginI18n("combinedAuthAuthParameters")}
           </CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="px-5 pb-4">
           <Input
             className="mb-4"
             defaultValue={item.app_id || ""}

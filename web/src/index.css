@@ -5,6 +5,22 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme {
+  /*
+   * Two type tracks, and the split is the rule the whole console is built on:
+   * `font-sans` for what a person wrote (names, labels, prose) and `font-mono`
+   * for what the machine reports (addresses, ports, counts, durations, hashes).
+   * The sans stack names CJK faces explicitly — the UI ships in English and
+   * Chinese, and leaving 中文 to the browser default was the one place the
+   * type fell apart.
+   */
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI Variable Text",
+    "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", "Cascadia Mono",
+    Menlo, Consolas, "Liberation Mono", monospace;
+
   /* Whole radius scale derives from --radius so one value tunes the app. */
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -40,6 +56,14 @@
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
 
+  /*
+   * Health semantics, kept apart from the brand accent on purpose: the accent
+   * is azure so it can never be mistaken for up/degraded/down at a glance.
+   */
+  --color-ok: hsl(var(--ok));
+  --color-warn: hsl(var(--warn));
+  --color-down: hsl(var(--down));
+
   --color-chart-1: hsl(var(--chart-1));
   --color-chart-2: hsl(var(--chart-2));
   --color-chart-3: hsl(var(--chart-3));
@@ -57,6 +81,28 @@
 
   --animate-accordion-down: accordion-down 0.2s ease-out;
   --animate-accordion-up: accordion-up 0.2s ease-out;
+  /* Slower and fainter than Tailwind's `ping` — a heartbeat, not an alarm. */
+  --animate-live-ping: live-ping 2.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+  --animate-rise: rise 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+
+  @keyframes live-ping {
+    70%,
+    100% {
+      transform: scale(2.4);
+      opacity: 0;
+    }
+  }
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
 
   @keyframes accordion-down {
     from {
@@ -100,78 +146,166 @@
   }
 
   /*
-   * Brand primary: rgb(22, 104, 220) → hsl(215 82% 47%)
-   * Surfaces follow the design mock zinc palette (dark-first, light counterpart).
+   * Palette: a cool, slightly blue-grey neutral rather than zinc, so the whole
+   * console reads as network equipment rather than as paper. Three planes are
+   * kept distinct at all times — sidebar (deepest) < ground < card (lightest) —
+   * which is what carries structure now that shadows are gone.
+   *
+   * Accent is a deep azure (#1171B0), not the royal blue every admin console
+   * defaults to: it stays 5.2:1 on white for link text, and sits far enough
+   * from green/amber/red that it can never read as a health state.
    */
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 4%;
+    --background: 202 20% 95%;
+    --foreground: 210 30% 8%;
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 4%;
+    --card-foreground: 210 30% 8%;
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 4%;
-    --primary: 215 82% 47%;
+    --popover-foreground: 210 30% 8%;
+    --primary: 204 82% 38%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 240 5% 96%;
-    --secondary-foreground: 240 6% 10%;
-    --muted: 240 5% 96%;
-    --muted-foreground: 240 4% 46%;
-    --accent: 240 5% 96%;
-    --accent-foreground: 240 6% 10%;
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 6% 90%;
-    --input: 240 6% 90%;
-    --ring: 215 82% 47%;
-    --chart-1: 215 82% 47%;
-    --chart-2: 200 70% 42%;
-    --chart-3: 230 55% 40%;
-    --chart-4: 43 74% 66%;
-    --chart-5: 27 87% 67%;
-    --radius: 0.625rem;
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 240 5% 26%;
-    --sidebar-primary: 215 82% 47%;
+    --secondary: 204 20% 93%;
+    --secondary-foreground: 210 25% 14%;
+    --muted: 204 22% 91%;
+    --muted-foreground: 206 14% 41%;
+    --accent: 204 24% 92%;
+    --accent-foreground: 210 25% 14%;
+    --destructive: 358 58% 45%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 205 21% 88%;
+    --input: 205 21% 86%;
+    --ring: 204 82% 38%;
+    --ok: 161 68% 28%;
+    --warn: 26 90% 37%;
+    --down: 358 58% 45%;
+    --chart-1: 204 82% 38%;
+    --chart-2: 185 70% 32%;
+    --chart-3: 161 68% 28%;
+    --chart-4: 26 90% 37%;
+    --chart-5: 358 58% 45%;
+    /* 6px: crisp enough to read as an instrument, not so square it reads brutalist. */
+    --radius: 0.375rem;
+    --sidebar-background: 203 22% 92%;
+    --sidebar-foreground: 206 16% 32%;
+    --sidebar-primary: 204 82% 38%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 5% 96%;
-    --sidebar-accent-foreground: 240 6% 10%;
-    --sidebar-border: 240 6% 90%;
-    --sidebar-ring: 215 82% 47%;
+    --sidebar-accent: 204 26% 89%;
+    --sidebar-accent-foreground: 210 25% 14%;
+    --sidebar-border: 205 21% 86%;
+    --sidebar-ring: 204 82% 38%;
   }
 
   .dark {
-    /* Design mock: bg #09090b, card #0e0e11, border #27272a, muted #a1a1aa */
-    --background: 240 6% 4%;
-    --foreground: 0 0% 98%;
-    --card: 240 6% 6%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 6% 6%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 215 82% 55%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 240 4% 16%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 4% 16%;
-    --muted-foreground: 240 5% 65%;
-    --accent: 240 4% 16%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 55% 42%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 4% 16%;
-    --input: 240 4% 16%;
-    --ring: 215 82% 55%;
-    --chart-1: 215 82% 55%;
-    --chart-2: 200 70% 50%;
-    --chart-3: 30 80% 55%;
-    --chart-4: 280 65% 60%;
-    --chart-5: 340 75% 55%;
-    --sidebar-background: 240 6% 4%;
-    --sidebar-foreground: 240 5% 65%;
-    --sidebar-primary: 215 82% 55%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 4% 16%;
-    --sidebar-accent-foreground: 0 0% 98%;
-    --sidebar-border: 240 4% 16%;
-    --sidebar-ring: 215 82% 55%;
+    /* Deep blue-black rather than neutral: the same equipment, powered down. */
+    --background: 204 33% 6%;
+    --foreground: 204 37% 92%;
+    --card: 206 32% 9%;
+    --card-foreground: 204 37% 92%;
+    --popover: 206 32% 10%;
+    --popover-foreground: 204 37% 92%;
+    --primary: 204 72% 56%;
+    --primary-foreground: 204 60% 8%;
+    --secondary: 206 25% 16%;
+    --secondary-foreground: 204 37% 92%;
+    --muted: 206 25% 15%;
+    --muted-foreground: 206 19% 63%;
+    --accent: 206 27% 18%;
+    --accent-foreground: 204 37% 92%;
+    --destructive: 358 62% 52%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 206 27% 16%;
+    --input: 206 27% 20%;
+    --ring: 204 72% 56%;
+    --ok: 160 55% 45%;
+    --warn: 36 85% 55%;
+    --down: 358 70% 65%;
+    --chart-1: 204 72% 56%;
+    --chart-2: 185 65% 48%;
+    --chart-3: 160 55% 45%;
+    --chart-4: 36 85% 55%;
+    --chart-5: 358 70% 65%;
+    --sidebar-background: 205 34% 5%;
+    --sidebar-foreground: 206 19% 63%;
+    --sidebar-primary: 204 72% 56%;
+    --sidebar-primary-foreground: 204 60% 8%;
+    --sidebar-accent: 206 27% 15%;
+    --sidebar-accent-foreground: 204 37% 92%;
+    --sidebar-border: 206 27% 14%;
+    --sidebar-ring: 204 72% 56%;
+  }
+}
+
+@layer base {
+  body {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background-color: hsl(var(--primary) / 0.18);
+  }
+
+  /*
+   * Thin, self-coloured scrollbars: this console is mostly dense scroll regions,
+   * and the default chrome bars punched a light grey slab through the dark theme.
+   */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.35) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.3);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.5);
+  }
+}
+
+@layer components {
+  /*
+   * The console's one repeated typographic device: a small uppercase mono
+   * label that names a region. Used for section eyebrows and for the stage
+   * names on the traffic path, so both read as machine nomenclature.
+   */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
+  }
+
+  /* Machine-reported values: mono, tabular, tightened so columns line up. */
+  .machine {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

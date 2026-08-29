@@ -78,6 +78,38 @@ export function random(length = 8) {
   return str;
 }
 
+/**
+ * Seconds since `startTime` as a two-unit duration: `3d 07h`, `7h 12m`, `48s`.
+ * Two units is the readable limit at a glance, and the console shows uptime in
+ * places where it is a status, not a measurement.
+ */
+export function formatUptime(startTime?: number | null) {
+  if (!startTime) {
+    return "";
+  }
+  const total = Math.max(0, Math.floor(Date.now() / 1000) - startTime);
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  if (days > 0) {
+    return `${days}d ${pad(hours)}h`;
+  }
+  if (hours > 0) {
+    return `${hours}h ${pad(minutes)}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${pad(seconds)}s`;
+  }
+  return `${seconds}s`;
+}
+
+/** Whole days from now until `at` (unix seconds); negative once it has passed. */
+export function daysUntil(at: number) {
+  return Math.floor((at - Date.now() / 1000) / 86400);
+}
+
 export async function sha256(message: string) {
   const hashDigest = sha256hash(message);
   return hex.stringify(hashDigest);

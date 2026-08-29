@@ -145,6 +145,7 @@ export default function Storages() {
 
   return (
     <PageShell
+      eyebrow="storages"
       title={storageI18n("title")}
       description={storageI18n("description")}
       width="narrow"

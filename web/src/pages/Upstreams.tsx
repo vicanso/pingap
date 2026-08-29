@@ -547,6 +547,7 @@ export default function Upstreams() {
 
   return (
     <PageShell
+      eyebrow="upstreams"
       title={upstreamI18n("title")}
       description={upstreamI18n("description")}
       width="narrow"
@@ -598,9 +599,7 @@ export default function Upstreams() {
               value: (() => {
                 const status =
                   basicInfo.upstream_healthy_status[currentUpstream];
-                return status
-                  ? `${status.healthy} / ${status.total}`
-                  : "—";
+                return status ? `${status.healthy} / ${status.total}` : "—";
               })(),
             },
           ]}

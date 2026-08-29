@@ -24,8 +24,8 @@ export default function RouteError() {
 
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-4 md:p-6">
-      <div className="w-full max-w-md space-y-5 rounded-xl border border-border/80 bg-card p-6 text-center shadow-none">
-        <div className="mx-auto flex size-11 items-center justify-center rounded-xl bg-destructive/10 text-destructive">
+      <div className="w-full max-w-md space-y-5 rounded-lg border border-border bg-card p-6 text-center">
+        <div className="mx-auto flex size-11 items-center justify-center rounded-md bg-destructive/10 text-destructive">
           <TriangleAlert className="size-5" strokeWidth={1.8} />
         </div>
         <div className="space-y-1.5">
@@ -36,7 +36,7 @@ export default function RouteError() {
             {i18n("description")}
           </p>
         </div>
-        <pre className="max-h-40 overflow-auto rounded-lg bg-muted/60 p-3 text-left font-mono text-xs break-all whitespace-pre-wrap text-muted-foreground">
+        <pre className="max-h-40 overflow-auto rounded-md bg-muted/60 p-3 text-left font-mono text-xs break-all whitespace-pre-wrap text-muted-foreground">
           {describe(error)}
         </pre>
         <div className="flex flex-col-reverse justify-center gap-2 sm:flex-row">

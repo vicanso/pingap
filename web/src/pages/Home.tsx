@@ -1,6 +1,5 @@
 import useConfigState, { getLocationWeight } from "@/states/config";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { FilePlus2, Activity, Cpu, MemoryStick, Network } from "lucide-react";
+import { CheckCircle2, ChevronRight } from "lucide-react";
 import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import {
@@ -8,6 +7,7 @@ import {
   LOCATIONS,
   PLUGINS,
   SERVERS,
+  STORAGES,
   UPSTREAMS,
 } from "@/routers";
 import { LoadingPage } from "@/components/loading";
@@ -21,13 +21,18 @@ import { useShallow } from "zustand/react/shallow";
 import { PageShell } from "@/components/page-shell";
 import { getLoginToken } from "@/states/token";
 import { goToLogin } from "@/routers";
+import { daysUntil, formatUptime } from "@/helpers/util";
+import {
+  TrafficPath,
+  type PathHealth,
+  type PathStage,
+} from "@/components/traffic-path";
 
 interface Summary {
   name: string;
   value: string;
   link: string;
   nameClass?: string;
-  extra?: React.ReactNode;
 }
 
 interface EntityCard {
@@ -36,6 +41,14 @@ interface EntityCard {
   count: number;
   unit: string;
   summary: Summary[];
+}
+
+interface Alert {
+  key: string;
+  tone: "warn" | "down";
+  name: string;
+  message: string;
+  to: string;
 }
 
 export default function Home() {
@@ -50,7 +63,9 @@ export default function Home() {
   const [basicInfo, fetchBasicInfo] = useBasicState(
     useShallow((state) => [state.data, state.fetch]),
   );
-  const [validity, setValidity] = React.useState({} as Record<string, string>);
+  const [certificateInfos, setCertificateInfos] = React.useState(
+    {} as Record<string, { not_before: number; not_after: number }>,
+  );
 
   // /basic was only fetched once when the app mounted, so every counter on this
   // page froze the moment it opened. Refresh while the dashboard is on screen —
@@ -82,38 +97,22 @@ export default function Home() {
 
   useAsync(async () => {
     try {
-      const infos = await getCertificateInfos();
-      const formatDate = (value: number) => {
-        const date = new Date(value * 1000);
-        let month = `${date.getMonth() + 1}`;
-        if (month.length === 1) {
-          month = `0${month}`;
-        }
-        let day = `${date.getDate()}`;
-        if (day.length === 1) {
-          day = `0${day}`;
-        }
-        return `${date.getFullYear()}-${month}-${day}`;
-      };
-      const results = {} as Record<string, string>;
-      Object.keys(infos).forEach((name) => {
-        const data = infos[name];
-        if (data) {
-          results[name] =
-            formatDate(data.not_before) +
-            ` ${homeI18n("to")} ` +
-            formatDate(data.not_after);
-        }
-      });
-      setValidity(results);
+      setCertificateInfos(await getCertificateInfos());
     } catch {
-      // Validity dates are decorative: the certificate card simply omits the
-      // range. Not worth a toast on every visit to the dashboard.
+      // Validity dates are supporting detail: without them the certificate
+      // card simply omits the range and no expiry warning is raised. Not worth
+      // a toast on every visit to the dashboard.
     }
   }, []);
   if (!initialized) {
     return <LoadingPage />;
   }
+
+  const formatDate = (value: number) => {
+    const date = new Date(value * 1000);
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  };
 
   const serverSummary: Summary[] = [];
   if (config.servers) {
@@ -131,62 +130,38 @@ export default function Home() {
   const locationSummaryWeight: Record<string, number> = {};
   if (config.locations) {
     listify(config.locations, (name, value) => {
-      const weight = getLocationWeight(value);
-      locationSummaryWeight[name] = weight;
-      const tmpArr: string[] = [];
-      if (value.host) {
-        tmpArr.push(`host: ${value.host}`);
-      }
-      tmpArr.push(`path: ${value.path || "/"}`);
+      locationSummaryWeight[name] = getLocationWeight(value);
+      const match = [value.host, value.path || "/"].filter(Boolean).join(" ");
       locationSummary.push({
         name,
         link: `${LOCATIONS}?name=${name}`,
-        value: tmpArr.join(" "),
+        value: match,
       });
     });
-    locationSummary.sort((a, b) => {
-      return (
+    locationSummary.sort(
+      (a, b) =>
         (locationSummaryWeight[b.name] || 0) -
-        (locationSummaryWeight[a.name] || 0)
-      );
-    });
+        (locationSummaryWeight[a.name] || 0),
+    );
   }
 
   const upstreamSummary: Summary[] = [];
   if (config.upstreams) {
     listify(config.upstreams, (name, value) => {
-      let desc = value.addrs.map((addr) => addr.split(" ")[0]).join(",");
       const status = basicInfo.upstream_healthy_status[name];
       let nameClass = "";
-      let extra = <></>;
       if (status) {
-        desc += ` (${status.healthy}/${status.total})`;
         if (status.healthy === 0) {
-          nameClass = "text-rose-600 dark:text-rose-400";
+          nameClass = "text-down";
         } else if (status.healthy < status.total) {
-          nameClass = "text-amber-600 dark:text-amber-400";
-        }
-        if (status.unhealthy_backends.length > 0) {
-          extra = (
-            <ul className="mt-1 space-y-0.5 text-xs">
-              {status.unhealthy_backends.map((backend) => (
-                <li
-                  key={backend}
-                  className="relative pl-3 text-muted-foreground before:absolute before:left-0 before:top-1.5 before:h-1.5 before:w-1.5 before:rounded-full before:bg-rose-500 before:content-['']"
-                >
-                  {backend}
-                </li>
-              ))}
-            </ul>
-          );
+          nameClass = "text-warn";
         }
       }
       upstreamSummary.push({
         name,
         nameClass,
         link: `${UPSTREAMS}?name=${name}`,
-        value: desc,
-        extra,
+        value: value.addrs.map((addr) => addr.split(" ")[0]).join(" "),
       });
     });
   }
@@ -207,18 +182,204 @@ export default function Home() {
   const certificateSummary: Summary[] = [];
   if (config.certificates) {
     listify(config.certificates, (name, value) => {
-      let date = validity[name] || "";
-      if (date) {
-        date = ` (${date})`;
-      }
+      const info = certificateInfos[name];
       certificateSummary.push({
         name,
         link: `${CERTIFICATES}?name=${name}`,
-        value: (value.domains || "") + date,
+        value: info ? formatDate(info.not_after) : value.domains || "",
       });
     });
   }
   certificateSummary.sort((a, b) => a.name.localeCompare(b.name));
+
+  const storageSummary: Summary[] = [];
+  if (config.storages) {
+    listify(config.storages, (name, value) => {
+      storageSummary.push({
+        name,
+        link: `${STORAGES}?name=${name}`,
+        value: value.category,
+      });
+    });
+  }
+  storageSummary.sort((a, b) => a.name.localeCompare(b.name));
+
+  // Health is reported per upstream, and only for upstreams that actually run a
+  // check. Anything not reported stays out of the ratio rather than being
+  // counted as up — a green bar that means "nobody asked" is worse than none.
+  const statuses = Object.entries(basicInfo.upstream_healthy_status || {}).sort(
+    ([a], [b]) => a.localeCompare(b),
+  );
+  const health: PathHealth = { up: 0, total: 0, ticks: [] };
+  let degradedPools = 0;
+  statuses.forEach(([, status]) => {
+    health.up += status.healthy;
+    health.total += status.total;
+    for (let i = 0; i < status.total; i++) {
+      health.ticks.push(i < status.healthy);
+    }
+    if (status.healthy < status.total) {
+      degradedPools += 1;
+    }
+  });
+  const hasHealthChecks = statuses.length > 0;
+  const backendsDown = health.total - health.up;
+  const configuredBackends = upstreamSummary.length
+    ? Object.values(config.upstreams || {}).reduce(
+        (total, upstream) => total + upstream.addrs.length,
+        0,
+      )
+    : 0;
+
+  // Every port the process is bound to, in listen order — the first concrete
+  // fact anyone checks when a request is not arriving.
+  const ports = Array.from(
+    new Set(
+      serverSummary.flatMap((server) =>
+        server.value
+          .split(",")
+          .map((addr) => addr.trim())
+          .filter(Boolean)
+          .map((addr) => `:${addr.slice(addr.lastIndexOf(":") + 1)}`),
+      ),
+    ),
+  );
+
+  // Every distinct host the routes answer for. Falls back to the
+  // highest-weight matcher when no location pins a host, since that is then
+  // the first rule an incoming request is tested against.
+  const hosts = Array.from(
+    new Set(
+      Object.values(config.locations || {}).flatMap((location) =>
+        (location.host || "")
+          .split(",")
+          .map((host) => host.trim())
+          .filter(Boolean),
+      ),
+    ),
+  );
+  const routeDetail = hosts.length
+    ? hosts.slice(0, 2).join("  ") +
+      (hosts.length > 2 ? `  +${hosts.length - 2}` : "")
+    : locationSummary[0]?.value || homeI18n("stageEmpty");
+
+  const stages: PathStage[] = [
+    {
+      key: "listen",
+      label: homeI18n("stageListen"),
+      value: serverSummary.length.toString(),
+      unit: homeI18n("stageListenUnit"),
+      detail: ports.length ? ports.join(" ") : homeI18n("stageEmpty"),
+      to: SERVERS,
+    },
+    {
+      key: "route",
+      label: homeI18n("stageRoute"),
+      value: locationSummary.length.toString(),
+      unit: homeI18n("stageRouteUnit"),
+      detail: routeDetail,
+      to: LOCATIONS,
+    },
+    {
+      key: "pool",
+      label: homeI18n("stagePool"),
+      value: upstreamSummary.length.toString(),
+      unit: homeI18n("stagePoolUnit"),
+      detail: !upstreamSummary.length
+        ? homeI18n("stageEmpty")
+        : degradedPools > 0
+          ? homeI18n("poolsDegraded", { count: degradedPools })
+          : hasHealthChecks
+            ? homeI18n("poolsHealthy")
+            : homeI18n("noHealthChecks"),
+      detailTone: degradedPools > 0 ? "warn" : "muted",
+      to: UPSTREAMS,
+    },
+    {
+      key: "origin",
+      label: homeI18n("stageOrigin"),
+      value: hasHealthChecks
+        ? `${health.up}/${health.total}`
+        : configuredBackends.toString(),
+      unit: hasHealthChecks
+        ? homeI18n("stageOriginUnit")
+        : homeI18n("stageOriginUnitPlain"),
+      detail: !hasHealthChecks
+        ? homeI18n("noHealthChecks")
+        : backendsDown > 0
+          ? homeI18n("backendsDown", { count: backendsDown })
+          : homeI18n("stageOriginAllUp"),
+      detailTone: backendsDown > 0 ? "down" : "muted",
+      to: UPSTREAMS,
+    },
+  ];
+
+  const meters = [
+    {
+      label: homeI18n("processing"),
+      value: basicInfo.processing.toLocaleString(),
+    },
+    {
+      label: homeI18n("accepted"),
+      value: basicInfo.accepted.toLocaleString(),
+    },
+    {
+      label: homeI18n("memory"),
+      value: basicInfo.memory || "—",
+      muted: !basicInfo.memory,
+    },
+    {
+      label: homeI18n("threads"),
+      // Thread count comes from the OS; -1 means unavailable (e.g. non-Linux).
+      value:
+        basicInfo.threads == null || basicInfo.threads < 0
+          ? "—"
+          : basicInfo.threads.toLocaleString(),
+      muted: basicInfo.threads == null || basicInfo.threads < 0,
+    },
+  ];
+
+  // Anything an operator would want to act on today, in one list, ordered by
+  // how bad it is. Both of these were previously only visible as small print
+  // inside a card that is mostly about counting things.
+  const alerts: Alert[] = [];
+  statuses.forEach(([name, status]) => {
+    if (status.healthy >= status.total) {
+      return;
+    }
+    alerts.push({
+      key: `upstream-${name}`,
+      tone: status.healthy === 0 ? "down" : "warn",
+      name,
+      message:
+        status.healthy === 0
+          ? homeI18n("upstreamAllDown", { total: status.total })
+          : homeI18n("upstreamDegraded", {
+              healthy: status.healthy,
+              total: status.total,
+            }),
+      to: `${UPSTREAMS}?name=${name}`,
+    });
+  });
+  Object.keys(certificateInfos).forEach((name) => {
+    const days = daysUntil(certificateInfos[name].not_after);
+    if (days > 30) {
+      return;
+    }
+    alerts.push({
+      key: `certificate-${name}`,
+      tone: days <= 7 ? "down" : "warn",
+      name,
+      message:
+        days < 0
+          ? homeI18n("certExpired", { days: Math.abs(days) })
+          : days === 0
+            ? homeI18n("certExpiresToday")
+            : homeI18n("certExpiring", { days }),
+      to: `${CERTIFICATES}?name=${name}`,
+    });
+  });
+  alerts.sort((a, b) => (a.tone === b.tone ? 0 : a.tone === "down" ? -1 : 1));
 
   const entityCards: EntityCard[] = [
     {
@@ -256,6 +417,13 @@ export default function Home() {
       unit: homeI18n("certificateUnit"),
       summary: certificateSummary,
     },
+    {
+      title: homeI18n("storage"),
+      path: STORAGES,
+      count: storageSummary.length,
+      unit: homeI18n("storageUnit"),
+      summary: storageSummary,
+    },
   ];
 
   let git_hash = basicInfo.git_hash;
@@ -263,132 +431,78 @@ export default function Home() {
     git_hash = git_hash.slice(0, 7);
   }
 
-  // Runtime process thread count from OS; -1 means unavailable (e.g. non-Linux).
-  const formatThreads = (n: number | undefined | null) =>
-    n == null || n < 0 ? "—" : n.toLocaleString();
+  const dash = (v: string | number | undefined | null) =>
+    v === undefined || v === null || v === "" ? "—" : String(v);
 
-  const dash = (v: string | number | undefined | null) => {
-    if (v === undefined || v === null || v === "") return "—";
-    return String(v);
-  };
-
-  const statTiles = [
-    {
-      icon: Activity,
-      label: homeI18n("processing"),
-      value: basicInfo.processing.toLocaleString(),
-      muted: false,
-    },
-    {
-      icon: Network,
-      label: homeI18n("accepted"),
-      value: basicInfo.accepted.toLocaleString(),
-      muted: false,
-    },
-    {
-      icon: MemoryStick,
-      label: homeI18n("memory"),
-      value: basicInfo.memory || "—",
-      muted: !basicInfo.memory,
-    },
-    {
-      icon: Cpu,
-      label: homeI18n("threads"),
-      value: formatThreads(basicInfo.threads),
-      muted: formatThreads(basicInfo.threads) === "—",
-    },
-  ];
-
-  // Three columns like the design mock (interleaved for balanced reading).
-  const basicInfos = [
-    { name: "pid", value: dash(basicInfo.pid), mono: false },
+  const runtime = [
+    { name: "uptime", value: formatUptime(basicInfo.start_time) || "—" },
     {
       name: "startTime",
       value: basicInfo.start_time
         ? new Date(basicInfo.start_time * 1000).toLocaleString()
         : "—",
-      mono: false,
     },
-    { name: "threads", value: formatThreads(basicInfo.threads), mono: false },
+    { name: "pid", value: dash(basicInfo.pid) },
+    { name: "user", value: dash(basicInfo.user) },
+    { name: "group", value: dash(basicInfo.group) },
+    { name: "arch", value: dash(basicInfo.arch) },
+    { name: "kernel", value: dash(basicInfo.kernel) },
+    { name: "rustc", value: dash(basicInfo.rustc_version) },
     {
       name: "machineCpu",
       value: `${basicInfo.cpus} / ${basicInfo.physical_cpus}`,
-      mono: false,
     },
-    { name: "memory", value: dash(basicInfo.memory), mono: false },
     {
       name: "machineMemory",
       value: `${basicInfo.used_memory} / ${basicInfo.total_memory}`,
-      mono: false,
     },
-    {
-      name: "processing",
-      value: basicInfo.processing.toLocaleString(),
-      mono: false,
-    },
-    {
-      name: "accepted",
-      value: basicInfo.accepted.toLocaleString(),
-      mono: false,
-    },
-    {
-      name: "tcpCount",
-      value: basicInfo.tcp_count.toLocaleString(),
-      mono: false,
-    },
-    {
-      name: "tcp6Count",
-      value: basicInfo.tcp6_count.toLocaleString(),
-      mono: false,
-    },
-    {
-      name: "fdCount",
-      value: basicInfo.fd_count.toLocaleString(),
-      mono: false,
-    },
-    { name: "arch", value: dash(basicInfo.arch), mono: false },
-    { name: "kernel", value: dash(basicInfo.kernel), mono: false },
-    { name: "user", value: dash(basicInfo.user), mono: false },
-    { name: "group", value: dash(basicInfo.group), mono: false },
+    { name: "tcpCount", value: basicInfo.tcp_count.toLocaleString() },
+    { name: "tcp6Count", value: basicInfo.tcp6_count.toLocaleString() },
+    { name: "fdCount", value: basicInfo.fd_count.toLocaleString() },
     {
       name: "enabledTracing",
       value: basicInfo.features.includes("tracing")
         ? homeI18n("yes")
         : homeI18n("no"),
-      mono: false,
     },
     {
       name: "enabledFull",
       value: basicInfo.features.includes("full")
         ? homeI18n("yes")
         : homeI18n("no"),
-      mono: false,
     },
-    { name: "rustc", value: dash(basicInfo.rustc_version), mono: false },
-    { name: "git", value: dash(git_hash), mono: true },
-    { name: "configHash", value: dash(basicInfo.config_hash), mono: true },
+    { name: "configHash", value: dash(basicInfo.config_hash) },
   ];
 
-  // Split into 3 columns for the design grid.
-  const colSize = Math.ceil(basicInfos.length / 3);
-  const basicColumns = [
-    basicInfos.slice(0, colSize),
-    basicInfos.slice(colSize, colSize * 2),
-    basicInfos.slice(colSize * 2),
+  const colSize = Math.ceil(runtime.length / 3);
+  const runtimeColumns = [
+    runtime.slice(0, colSize),
+    runtime.slice(colSize, colSize * 2),
+    runtime.slice(colSize * 2),
   ];
+
+  // Uptime is already in the top bar on every page, so this line carries the
+  // two facts that are not shown anywhere else at a glance: which build is
+  // running and which process it is.
+  const pathMeta = [
+    basicInfo.version && `v${basicInfo.version}`,
+    basicInfo.pid && `pid ${basicInfo.pid}`,
+  ]
+    .filter(Boolean)
+    .join("  ·  ");
 
   return (
     <PageShell
+      // No eyebrow here on purpose: every other page names the config section
+      // it edits, and the dashboard is the one page that edits nothing.
       title={homeI18n("dashboard")}
-      description={
-        basicInfo.version ? `Pingap ${basicInfo.version}` : "Pingap admin"
-      }
+      description={config.basic?.name || undefined}
       actions={
         <>
           {basicInfo.features?.includes("tracing") && (
             <Badge
               variant="secondary"
-              className="rounded-full px-2.5 py-0.5 text-xs font-normal"
+              className="machine rounded-full px-2.5 py-0.5 text-[11px] font-medium"
             >
               tracing
             </Badge>
@@ -396,7 +510,7 @@ export default function Home() {
           {basicInfo.features?.includes("full") && (
             <Badge
               variant="secondary"
-              className="rounded-full px-2.5 py-0.5 text-xs font-normal"
+              className="machine rounded-full px-2.5 py-0.5 text-[11px] font-medium"
             >
               full
             </Badge>
@@ -404,7 +518,7 @@ export default function Home() {
           {git_hash && (
             <Badge
               variant="outline"
-              className="rounded-full px-2.5 py-0.5 font-mono text-xs font-normal"
+              className="machine rounded-full px-2.5 py-0.5 text-[11px] font-medium"
             >
               {git_hash}
             </Badge>
@@ -412,142 +526,153 @@ export default function Home() {
         </>
       }
     >
-      {/* Stat tiles — 4-up with icon chip */}
-      <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
-        {statTiles.map((tile) => (
-          <Card
-            key={tile.label}
-            className="border-border/80 shadow-none transition-colors hover:border-border"
-          >
-            <CardContent className="flex items-center gap-3.5 p-5">
-              <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/12 text-primary">
-                <tile.icon className="size-[18px]" strokeWidth={1.8} />
-              </div>
-              <div className="min-w-0">
-                <p className="text-[13px] text-muted-foreground">
-                  {tile.label}
-                </p>
-                <p
+      <TrafficPath
+        title={homeI18n("pathTitle")}
+        meta={pathMeta}
+        stages={stages}
+        health={health}
+        meters={meters}
+      />
+
+      <section className="mt-4 overflow-hidden rounded-lg border border-border bg-card">
+        <div className="border-b border-border px-4 py-2.5 sm:px-5">
+          <h2 className="eyebrow">{homeI18n("attention")}</h2>
+        </div>
+        {alerts.length === 0 ? (
+          <p className="flex items-center gap-2.5 px-4 py-3.5 text-[13px] text-muted-foreground sm:px-5">
+            <CheckCircle2 className="size-4 shrink-0 text-ok" strokeWidth={2} />
+            {homeI18n("allClear")}
+          </p>
+        ) : (
+          <ul className="divide-y divide-border">
+            {alerts.map((alert) => (
+              <li key={alert.key}>
+                <Link
+                  to={alert.to}
                   className={cn(
-                    "truncate text-[22px] font-bold tabular-nums leading-tight",
-                    tile.muted && "text-muted-foreground",
+                    "flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-accent/50 sm:px-5",
+                    alert.tone === "down" && "bg-down/[0.045]",
                   )}
                 >
-                  {tile.value}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+                  <span
+                    className={cn(
+                      "size-1.5 shrink-0 rounded-full",
+                      alert.tone === "down" ? "bg-down" : "bg-warn",
+                    )}
+                  />
+                  <span className="machine shrink-0 text-[13px] font-semibold">
+                    {alert.name}
+                  </span>
+                  <span className="truncate text-[13px] text-muted-foreground">
+                    {alert.message}
+                  </span>
+                  <ChevronRight className="ml-auto size-3.5 shrink-0 text-muted-foreground/50" />
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
-      {/* Basic information — 3-column label/value rows */}
-      <Card className="mt-4 border-border/80 shadow-none">
-        <CardHeader className="px-6 pb-3 pt-5">
-          <CardTitle className="text-[13px] font-semibold uppercase tracking-wide text-muted-foreground">
-            {homeI18n("basic")}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="px-6 pb-5">
-          <div className="grid gap-x-10 text-[13.5px] sm:grid-cols-2 lg:grid-cols-3">
-            {basicColumns.map((col, colIdx) => (
-              <div key={colIdx}>
-                {col.map((item, rowIdx) => {
-                  const isLast = rowIdx === col.length - 1;
-                  const empty = !item.value || item.value === "—";
-                  return (
-                    <div
-                      key={item.name}
+      <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {entityCards.map((item) => (
+          <div
+            key={item.title}
+            className="flex h-full flex-col overflow-hidden rounded-lg border border-border bg-card transition-colors hover:border-primary/35"
+          >
+            <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2.5">
+              <Link
+                to={item.path}
+                className="eyebrow transition-colors hover:text-foreground"
+              >
+                {item.title}
+              </Link>
+              <span className="machine text-[12.5px] text-muted-foreground">
+                <span className="font-semibold text-foreground">
+                  {item.count}
+                </span>{" "}
+                {item.unit}
+              </span>
+            </div>
+            {item.summary.length > 0 ? (
+              <ul className="flex-1 divide-y divide-border/60 px-4">
+                {item.summary.slice(0, 4).map((entry) => (
+                  <li
+                    key={entry.name}
+                    className="flex items-baseline gap-2 py-2 text-[12.5px]"
+                  >
+                    <Link
+                      to={entry.link}
                       className={cn(
-                        "flex items-center justify-between gap-3 py-[7px]",
-                        !isLast && "border-b border-border/60",
+                        "shrink-0 font-medium hover:text-primary hover:underline",
+                        entry.nameClass,
                       )}
                     >
-                      <span className="shrink-0 text-muted-foreground">
-                        {homeI18n(item.name)}
-                      </span>
-                      <span
-                        className={cn(
-                          "min-w-0 truncate text-right tabular-nums",
-                          empty && "text-muted-foreground",
-                          item.mono && "font-mono text-[12.5px]",
-                        )}
-                      >
-                        {item.value}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Entity summary cards */}
-      <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
-        {entityCards.map((item) => (
-          <Card
-            key={item.title}
-            className="group h-full border-border/80 shadow-none transition-colors hover:border-border"
-          >
-            <CardContent className="flex h-full flex-col gap-1.5 p-[18px]">
-              <div className="flex items-center justify-between text-[13.5px]">
-                <Link
-                  to={item.path}
-                  className="font-medium text-foreground hover:text-primary"
-                >
-                  {item.title}
-                </Link>
-                <Link
-                  to={item.path}
-                  className="text-muted-foreground opacity-70 transition-opacity hover:text-foreground group-hover:opacity-100"
-                  aria-label={item.title}
-                >
-                  <FilePlus2 className="size-3.5" />
-                </Link>
-              </div>
-              <div className="text-2xl font-bold tabular-nums">
-                {item.count}{" "}
-                <span className="text-[15px] font-medium text-muted-foreground">
-                  {item.unit}
-                </span>
-              </div>
-              {item.summary.length > 0 ? (
-                <ul className="mt-1 max-h-28 space-y-1 overflow-auto text-[13px] text-muted-foreground">
-                  {item.summary.slice(0, 4).map((entry) => (
-                    <li key={entry.name} className="truncate">
-                      <Link
-                        to={entry.link}
-                        className={cn(
-                          "font-medium text-primary hover:underline",
-                          entry.nameClass,
-                        )}
-                      >
-                        {entry.name}
-                      </Link>{" "}
-                      <span>{entry.value}</span>
-                      {entry.extra}
-                    </li>
-                  ))}
-                  {item.summary.length > 4 && (
-                    <li className="text-xs text-muted-foreground/80">
+                      {entry.name}
+                    </Link>
+                    <span className="machine truncate text-muted-foreground">
+                      {entry.value}
+                    </span>
+                  </li>
+                ))}
+                {item.summary.length > 4 && (
+                  <li className="py-2">
+                    <Link
+                      to={item.path}
+                      className="machine text-[12px] text-muted-foreground hover:text-primary"
+                    >
                       +{item.summary.length - 4}
-                    </li>
-                  )}
-                </ul>
-              ) : (
+                    </Link>
+                  </li>
+                )}
+              </ul>
+            ) : (
+              <div className="flex flex-1 items-center px-4 py-4">
                 <Link
                   to={item.path}
-                  className="mt-1 text-[13px] text-muted-foreground underline-offset-2 hover:text-primary hover:underline"
+                  className="text-[12.5px] text-muted-foreground underline-offset-2 hover:text-primary hover:underline"
                 >
                   {homeI18n("configureHint")}
                 </Link>
-              )}
-            </CardContent>
-          </Card>
+              </div>
+            )}
+          </div>
         ))}
       </div>
+
+      <section className="mt-4 overflow-hidden rounded-lg border border-border bg-card">
+        <div className="border-b border-border px-4 py-2.5 sm:px-5">
+          <h2 className="eyebrow">{homeI18n("runtime")}</h2>
+        </div>
+        <div className="grid gap-x-10 px-4 py-1 text-[12.5px] sm:grid-cols-2 sm:px-5 lg:grid-cols-3">
+          {runtimeColumns.map((column, columnIndex) => (
+            <div key={columnIndex}>
+              {column.map((item, rowIndex) => (
+                <div
+                  key={item.name}
+                  className={cn(
+                    "flex items-center justify-between gap-3 py-[7px]",
+                    rowIndex !== column.length - 1 &&
+                      "border-b border-border/50",
+                  )}
+                >
+                  <span className="shrink-0 text-muted-foreground">
+                    {homeI18n(item.name)}
+                  </span>
+                  <span
+                    className={cn(
+                      "machine min-w-0 truncate text-right",
+                      item.value === "—" && "text-muted-foreground",
+                    )}
+                  >
+                    {item.value}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </section>
     </PageShell>
   );
 }

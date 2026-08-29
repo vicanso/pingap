@@ -33,13 +33,8 @@ export function ConfigEntitySummary({
   }
 
   return (
-    <Card
-      className={cn(
-        "mb-4 overflow-hidden border-border/80 bg-muted/20 shadow-none",
-        className,
-      )}
-    >
-      <CardContent className="grid gap-x-8 px-5 py-4 text-[13.5px] sm:grid-cols-2 lg:grid-cols-3">
+    <Card className={cn("mb-4 overflow-hidden border-border", className)}>
+      <CardContent className="grid gap-x-9 px-4 py-1 text-[12.5px] sm:grid-cols-2 sm:px-5 lg:grid-cols-3">
         {visible.map((field, idx) => {
           const empty =
             field.value === undefined ||
@@ -49,7 +44,7 @@ export function ConfigEntitySummary({
           return (
             <div
               key={`${field.label}-${idx}`}
-              className="flex items-baseline justify-between gap-3 border-b border-border/50 py-2 last:border-b-0 sm:border-b-0 sm:py-1.5"
+              className="flex items-baseline justify-between gap-3 border-b border-border/50 py-[7px] last:border-b-0"
             >
               <span className="shrink-0 text-muted-foreground">
                 {field.label}
@@ -58,7 +53,7 @@ export function ConfigEntitySummary({
                 className={cn(
                   "min-w-0 truncate text-right font-medium",
                   empty && "font-normal text-muted-foreground",
-                  field.mono && "font-mono text-[12.5px] font-normal",
+                  field.mono && "machine font-normal",
                 )}
               >
                 {empty ? "—" : field.value}

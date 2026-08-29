@@ -45,36 +45,38 @@ export default function Login() {
       setLoading(false);
     }
   };
-  // Top aligned rather than centred, and sized to the region the app shell
-  // gives this page rather than to the viewport: the 48px header means a
-  // viewport-tall box (min-h-svh) overflows by exactly that much. The gap above
-  // the card matches the header height so the two line up as one rhythm, and
-  // the wrapper scrolls on its own once the card outgrows a short window.
+  // Top aligned rather than centred, and high on the page: this route renders
+  // without the app shell, so the 96px gap that used to line the card up under
+  // the header is now the padding itself and the card lands in the same place.
   return (
-    <div className="min-h-0 flex-1 overflow-auto bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-primary/10 via-background to-background">
-      <div className="mx-auto w-full max-w-md px-4 pt-12 pb-10">
-        <Card className="w-full border-border/80 shadow-lg">
-          <CardHeader className="space-y-3 text-center">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border bg-card shadow-sm">
-              <img src={Logo} alt="Pingap" className="h-8 w-8 rounded-md" />
-            </div>
-            <div>
-              <CardTitle className="text-xl tracking-tight">
-                {loginI18n("title")}
-              </CardTitle>
-              <CardDescription className="mt-1">
-                {loginI18n("description")}
-              </CardDescription>
-            </div>
+    <div className="min-h-svh overflow-auto bg-background">
+      <div className="mx-auto w-full max-w-[400px] px-4 pt-24 pb-10">
+        <div className="mb-5 flex items-center gap-2.5">
+          <span className="flex size-8 items-center justify-center rounded-md border border-border bg-card">
+            <img src={Logo} alt="" className="size-5 rounded-sm" />
+          </span>
+          <span className="text-[15px] font-semibold tracking-tight">
+            Pingap
+          </span>
+          <span className="eyebrow ml-0.5">admin</span>
+        </div>
+        <Card className="w-full border-border">
+          <CardHeader className="space-y-0 px-5 pt-5 pb-4">
+            <CardTitle className="text-xl tracking-tight">
+              {loginI18n("title")}
+            </CardTitle>
+            <CardDescription className="mt-1.5 text-[13px]">
+              {loginI18n("description")}
+            </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-4 px-5">
             <div className="space-y-2">
               <Label htmlFor="account">{loginI18n("account")}</Label>
               <Input
                 id="account"
                 autoFocus
                 autoComplete="username"
-                className="h-10"
+                className="machine h-10"
                 onChange={(e) => {
                   setAccount(e.target.value.trim());
                 }}
@@ -86,7 +88,7 @@ export default function Login() {
                 id="password"
                 type="password"
                 autoComplete="current-password"
-                className="h-10"
+                className="machine h-10"
                 onChange={(e) => {
                   setPassword(e.target.value.trim());
                 }}
@@ -98,7 +100,7 @@ export default function Login() {
               />
             </div>
           </CardContent>
-          <CardFooter>
+          <CardFooter className="px-5 pt-5 pb-5">
             <Button
               className="h-10 w-full cursor-pointer"
               disabled={loading || !account || !password}
@@ -107,9 +109,7 @@ export default function Login() {
                 handleLogin();
               }}
             >
-              {loading && (
-                <LoaderCircle className="mr-2 size-4 animate-spin" />
-              )}
+              {loading && <LoaderCircle className="mr-2 size-4 animate-spin" />}
               {loginI18n("submit")}
             </Button>
           </CardFooter>

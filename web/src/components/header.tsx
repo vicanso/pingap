@@ -37,6 +37,7 @@ import {
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import request from "@/helpers/request";
+import { formatUptime } from "@/helpers/util";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -70,7 +71,18 @@ export function MainHeader({
   const [base64Type, setBase64Type] = React.useState("encode");
   const [base64Data, setBase64Data] = React.useState("");
 
-  const [restart] = useBasicState(useShallow((state) => [state.restart]));
+  const [restart, basicInfo, initialized] = useBasicState(
+    useShallow((state) => [state.restart, state.data, state.initialized]),
+  );
+
+  // Uptime is derived from a fixed start_time, so it only advances if something
+  // re-renders. The dashboard polls /basic every 5s; every other page would
+  // otherwise freeze this readout, which is worse than not showing it.
+  const [, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const timer = setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => clearInterval(timer);
+  }, []);
 
   const handleAes = async () => {
     const secret = aesData.key;
@@ -157,6 +169,28 @@ export function MainHeader({
 
   const iconBtnClass =
     "size-8 shrink-0 cursor-pointer text-muted-foreground hover:text-foreground";
+
+  // Proof of life, on every page. While you are half-way through editing an
+  // upstream the one thing worth keeping on screen is that the process is
+  // still up and still taking traffic.
+  const uptime = formatUptime(basicInfo.start_time);
+  const liveReadout = initialized && basicInfo.start_time > 0 && (
+    <div className="machine flex min-w-0 items-center gap-2 text-[11.5px] text-muted-foreground">
+      <span className="relative flex size-1.5 shrink-0">
+        <span className="absolute inline-flex size-full animate-live-ping rounded-full bg-ok opacity-60" />
+        <span className="relative inline-flex size-1.5 rounded-full bg-ok" />
+      </span>
+      <span className="font-semibold tracking-wider text-foreground">
+        {t("header.live")}
+      </span>
+      <span className="hidden text-border sm:inline">/</span>
+      <span className="hidden sm:inline">{uptime}</span>
+      <span className="hidden text-border md:inline">/</span>
+      <span className="hidden truncate md:inline">
+        {basicInfo.processing.toLocaleString()} {t("header.active")}
+      </span>
+    </div>
+  );
 
   const settingsMenu = (
     <DropdownMenu>
@@ -388,11 +422,13 @@ export function MainHeader({
   return (
     <header
       className={cn(
-        "flex h-12 shrink-0 items-center gap-1.5 border-b border-border/80 bg-background/80 px-3 backdrop-blur-md transition-[width,height] ease-linear supports-backdrop-filter:bg-background/70 sm:gap-2 sm:px-5",
+        "flex h-12 shrink-0 items-center gap-1.5 border-b border-border bg-background/85 px-3 backdrop-blur-md transition-[width,height] ease-linear supports-backdrop-filter:bg-background/70 sm:gap-2 sm:px-5",
         className,
       )}
     >
       <SidebarTrigger className={cn(iconBtnClass, "-ml-0.5")} />
+      <div className="mx-1 h-4 w-px shrink-0 bg-border" />
+      {liveReadout}
       <div className="flex-1" />
       <div className="flex items-center gap-1 sm:gap-2">
         {languageSwitch}

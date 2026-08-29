@@ -1,4 +1,4 @@
-import { Outlet } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
 import {
   Sidebar,
   SidebarHeader,
@@ -15,7 +15,8 @@ import useConfigState from "@/states/config";
 import { Button } from "@/components/ui/button";
 import { LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
-import { goToHome, goToLogin } from "@/routers";
+import { goToHome, goToLogin, HOME } from "@/routers";
+import { cn } from "@/lib/utils";
 import { useAsync } from "react-async-hook";
 import HTTPError from "@/helpers/http-error";
 import { formatError } from "@/helpers/util";
@@ -40,6 +41,10 @@ function BrandHeader({
     }
     goToHome();
   };
+  // The dashboard has no nav entry — it is reached through this row — so
+  // without this the console showed no "you are here" at all on its own
+  // landing page.
+  const onDashboard = useLocation().pathname === HOME;
 
   return (
     <SidebarHeader className="h-12 shrink-0 justify-center border-b border-sidebar-border p-0">
@@ -53,7 +58,11 @@ function BrandHeader({
         <Button
           size="icon"
           variant="ghost"
-          className="size-8 shrink-0 cursor-pointer rounded-lg"
+          aria-current={onDashboard ? "page" : undefined}
+          className={cn(
+            "size-8 shrink-0 cursor-pointer rounded-md",
+            onDashboard && "bg-sidebar-primary/12 hover:bg-sidebar-primary/18",
+          )}
           onClick={goHome}
         >
           <img
@@ -73,14 +82,19 @@ function BrandHeader({
               goHome();
             }}
           >
-            <span className="truncate text-base font-semibold tracking-tight text-sidebar-foreground">
+            <span
+              className={cn(
+                "truncate text-base font-semibold tracking-tight",
+                onDashboard ? "text-sidebar-primary" : "text-foreground",
+              )}
+            >
               Pingap
             </span>
             {!initialized && (
               <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
             )}
             {version && (
-              <span className="truncate rounded-full bg-sidebar-accent px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+              <span className="machine truncate rounded-full bg-sidebar-accent px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
                 {version}
               </span>
             )}

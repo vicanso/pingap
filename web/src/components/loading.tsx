@@ -15,7 +15,7 @@ export function Loading({ className, tips }: LoadingProps) {
         </div>
         <Skeleton className="h-9 w-28 rounded-md" />
       </div>
-      <div className="rounded-xl border border-border/80 p-4 space-y-3">
+      <div className="rounded-lg border border-border p-4 space-y-3">
         <Skeleton className="h-10 w-full" />
         <Skeleton className="h-10 w-full" />
         <Skeleton className="h-10 w-3/4" />

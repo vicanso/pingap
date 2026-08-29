@@ -3,7 +3,6 @@ import path from "path";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-
 function getModuleName(id: string) {
   const arr = id.split(path.sep);
   const index = arr.indexOf("node_modules");
@@ -16,15 +15,7 @@ function getModuleName(id: string) {
 function manualChunks(id: string) {
   const module = getModuleName(id);
   if (
-    [
-      "axios",
-      "crypto-js",
-      "date-fns",
-      "radash",
-      "react",
-      "zod",
-      "zustand",
-    ].includes(module)
+    ["axios", "crypto-js", "radash", "react", "zod", "zustand"].includes(module)
   ) {
     return "common";
   }
@@ -35,8 +26,6 @@ function manualChunks(id: string) {
     return "ui";
   }
 }
-
-
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -58,7 +47,9 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:3018",
+        // Defaults to the admin address `make dev` starts. Override to point the
+        // dev server at another instance: PINGAP_ADMIN_PROXY=http://host:port
+        target: process.env.PINGAP_ADMIN_PROXY || "http://127.0.0.1:3018",
       },
     },
   },

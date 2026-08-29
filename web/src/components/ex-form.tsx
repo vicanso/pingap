@@ -288,9 +288,7 @@ export function ExForm({
             fields.length > 0 && "mt-3 border-t border-border/50 pt-5",
           )}
         >
-          <h3 className="text-[13px] font-semibold tracking-wide text-muted-foreground uppercase">
-            {item.section}
-          </h3>
+          <h3 className="eyebrow">{item.section}</h3>
         </div>,
       );
     }
@@ -677,9 +675,9 @@ export function ExForm({
         onSubmit={(e) => form.handleSubmit(onSubmit)(e)}
         className="relative space-y-0"
       >
-        <div className="rounded-xl border border-border/80 bg-card p-5 shadow-none sm:p-6">
+        <div className="rounded-lg border border-border bg-card p-5 sm:p-6">
           {updatedCount > 0 && (
-            <div className="mb-4 inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
+            <div className="machine mb-4 inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-medium text-primary">
               {updatedCount} {t("modified") || "modified"}
             </div>
           )}
@@ -704,7 +702,7 @@ export function ExForm({
         {(onSave || onRemove || showButton) && (
           <div
             className={cn(
-              "sticky bottom-0 z-10 mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-border/80 bg-card/95 p-3 shadow-none backdrop-blur supports-backdrop-filter:bg-card/80 sm:gap-3",
+              "sticky bottom-0 z-10 mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card/95 p-3 backdrop-blur supports-backdrop-filter:bg-card/85 sm:gap-3",
               // Keep the bar clear of the home indicator on notched phones.
               "pb-[max(0.75rem,env(safe-area-inset-bottom))]",
               updatedCount > 0 && "border-primary/30 ring-1 ring-primary/15",

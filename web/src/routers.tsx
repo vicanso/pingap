@@ -32,6 +32,7 @@ function suspense(element: ReactNode) {
   return <Suspense fallback={<LoadingPage />}>{element}</Suspense>;
 }
 
+// Everything inside the app shell. Login is deliberately not here.
 const pages = [
   { path: HOME, element: suspense(<Home />) },
   { path: BASIC, element: suspense(<Basic />) },
@@ -42,7 +43,6 @@ const pages = [
   { path: CERTIFICATES, element: suspense(<Certificates />) },
   { path: CONFIG, element: suspense(<Config />) },
   { path: STORAGES, element: suspense(<Storages />) },
-  { path: LOGIN, element: suspense(<Login />) },
 ];
 
 const router = createHashRouter([
@@ -53,6 +53,15 @@ const router = createHashRouter([
     // Per page as well, so a crash in one route renders inside the layout and
     // leaves the sidebar and header usable instead of blanking the app.
     children: pages.map((page) => ({ ...page, errorElement: <RouteError /> })),
+  },
+  {
+    // Outside the shell on purpose: the sidebar lists every config section and
+    // the top bar polls the process, neither of which a visitor who has not
+    // signed in should see or trigger. The layout route above is pathless, so
+    // it only matches when one of its children does — /login falls through here.
+    path: LOGIN,
+    element: suspense(<Login />),
+    errorElement: <RouteError />,
   },
 ]);
 

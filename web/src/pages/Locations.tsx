@@ -326,6 +326,7 @@ export default function Locations() {
 
   return (
     <PageShell
+      eyebrow="locations"
       title={locationI18n("title")}
       description={locationI18n("description")}
       width="narrow"

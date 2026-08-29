@@ -7,6 +7,12 @@ import type { ReactNode } from "react";
 interface PageShellProps {
   title: string;
   description?: string;
+  /**
+   * Small mono label above the title naming the config section this page
+   * edits — `servers`, `upstreams` — in the vocabulary of the config file
+   * rather than the vocabulary of the UI.
+   */
+  eyebrow?: string;
   /** Rendered at the top right, e.g. a create button or the history control. */
   actions?: ReactNode;
   /** Shown next to the title — the entity name, a `new` marker, feature pills. */
@@ -35,6 +41,7 @@ interface PageShellProps {
 export function PageShell({
   title,
   description,
+  eyebrow,
   actions,
   badge,
   backTo,
@@ -73,14 +80,15 @@ export function PageShell({
             </Button>
           )}
           <div className="mr-auto min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-2xl leading-none font-bold tracking-tight sm:text-[28px]">
+            {eyebrow && <p className="eyebrow mb-1.5">{eyebrow}</p>}
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h1 className="text-[26px] leading-none font-semibold tracking-[-0.02em]">
                 {title}
               </h1>
               {badge}
             </div>
             {description && (
-              <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+              <p className="mt-2 max-w-2xl text-[13.5px] leading-relaxed text-muted-foreground">
                 {description}
               </p>
             )}

@@ -50,23 +50,20 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
+type NavGroup = "path" | "policy" | "system";
+
 interface NavLink {
   title: string;
   label?: string;
   icon?: LucideIcon;
   path: string;
   variant: "default" | "ghost";
+  group: NavGroup;
   children?: NavLink[];
 }
 
 /** Highlight the first case-insensitive match of `keyword` inside `text`. */
-function HighlightMatch({
-  text,
-  keyword,
-}: {
-  text: string;
-  keyword: string;
-}) {
+function HighlightMatch({ text, keyword }: { text: string; keyword: string }) {
   if (!keyword) {
     return <>{text}</>;
   }
@@ -393,19 +390,18 @@ export function MainSidebar({
   };
 
   // Dashboard is reached via the Pingap brand in the sidebar header, not a nav item.
+  //
+  // Order is the request's own order — a request meets a server, then a
+  // location, then an upstream — so the nav teaches the pipeline instead of
+  // listing seven unrelated config sections alphabetically.
   const items: NavLink[] = [
-    {
-      title: navI18n("basic"),
-      icon: AppWindow,
-      variant: getVariant(BASIC),
-      path: BASIC,
-    },
     {
       title: navI18n("server"),
       icon: Server,
       variant: getVariant(SERVERS),
       label: getLabel("server"),
       path: SERVERS,
+      group: "path",
       children: generateChildren(SERVERS, servers),
     },
     {
@@ -414,6 +410,7 @@ export function MainSidebar({
       variant: getVariant(LOCATIONS),
       label: getLabel("location"),
       path: LOCATIONS,
+      group: "path",
       children: generateChildren(LOCATIONS, locations),
     },
     {
@@ -422,6 +419,7 @@ export function MainSidebar({
       variant: getVariant(UPSTREAMS),
       label: getLabel("upstream"),
       path: UPSTREAMS,
+      group: "path",
       children: generateChildren(UPSTREAMS, upstreams),
     },
     {
@@ -430,6 +428,7 @@ export function MainSidebar({
       variant: getVariant(PLUGINS),
       label: getLabel("plugin"),
       path: PLUGINS,
+      group: "policy",
       children: generateChildren(PLUGINS, plugins),
     },
     {
@@ -438,7 +437,15 @@ export function MainSidebar({
       variant: getVariant(CERTIFICATES),
       label: getLabel("certificate"),
       path: CERTIFICATES,
+      group: "policy",
       children: generateChildren(CERTIFICATES, certificates),
+    },
+    {
+      title: navI18n("basic"),
+      icon: AppWindow,
+      variant: getVariant(BASIC),
+      path: BASIC,
+      group: "system",
     },
     {
       title: navI18n("storage"),
@@ -446,8 +453,15 @@ export function MainSidebar({
       variant: getVariant(STORAGES),
       label: getLabel("storage"),
       path: STORAGES,
+      group: "system",
       children: generateChildren(STORAGES, storages),
     },
+  ];
+
+  const groups: { key: NavGroup; label: string }[] = [
+    { key: "path", label: navI18n("groupPath") },
+    { key: "policy", label: navI18n("groupPolicy") },
+    { key: "system", label: navI18n("groupSystem") },
   ];
 
   const urlParams = new URLSearchParams(location.search);
@@ -476,10 +490,7 @@ export function MainSidebar({
                   aria-current={isSelected ? "page" : undefined}
                 >
                   <span className="truncate">
-                    <HighlightMatch
-                      text={item.title}
-                      keyword={activeKeyword}
-                    />
+                    <HighlightMatch text={item.title} keyword={activeKeyword} />
                   </span>
                 </Link>
               </SidebarMenuSubButton>
@@ -498,7 +509,7 @@ export function MainSidebar({
             <Input
               type="search"
               placeholder={navI18n("searchPlaceholder")}
-              className="h-9 border-border/80 bg-muted/40 pl-8 shadow-none focus-visible:bg-background"
+              className="h-9 border-border bg-card/60 pl-8 focus-visible:bg-card"
               value={keyword}
               onChange={(e) => {
                 setKeyword(e.target.value);
@@ -512,56 +523,75 @@ export function MainSidebar({
             {navI18n("searchEmpty")}
           </p>
         )}
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {items.map((item) => {
-              const isActive =
-                item.variant === "default" ||
-                (item.path !== HOME && pathname.startsWith(item.path));
-              return (
-                <SidebarMenuItem key={item.title}>
-                  {expanded ? (
-                    <>
-                      <SidebarMenuButton
-                        className="h-9 gap-2.5 px-3"
-                        isActive={isActive}
-                        asChild
-                      >
-                        <Link
-                          to={item.path}
-                          onClick={closeMobileNav}
-                          aria-current={isActive ? "page" : undefined}
-                        >
-                          {item.icon && <item.icon />}
-                          <span>{item.title}</span>
-                          {item.label && (
-                            <span
-                              className={cn(
-                                // Fixed min width so badges line up even when counts differ (0 vs 10).
-                                "ml-auto inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-sidebar-accent px-1.5 text-[11px] tabular-nums text-muted-foreground",
-                                isActive &&
-                                  "bg-sidebar-primary/15 text-sidebar-primary",
-                              )}
+        {groups.map((group, groupIdx) => {
+          const groupItems = items.filter((item) => item.group === group.key);
+          if (groupItems.length === 0) {
+            return null;
+          }
+          return (
+            <SidebarGroupContent key={group.key}>
+              {expanded ? (
+                <p
+                  className={cn("eyebrow px-3 pb-1.5", groupIdx > 0 && "pt-4")}
+                >
+                  {group.label}
+                </p>
+              ) : (
+                groupIdx > 0 && (
+                  <div className="mx-auto my-2 h-px w-5 bg-sidebar-border" />
+                )
+              )}
+              <SidebarMenu>
+                {groupItems.map((item) => {
+                  const isActive =
+                    item.variant === "default" ||
+                    (item.path !== HOME && pathname.startsWith(item.path));
+                  return (
+                    <SidebarMenuItem key={item.title}>
+                      {expanded ? (
+                        <>
+                          <SidebarMenuButton
+                            className="h-9 gap-2.5 px-3"
+                            isActive={isActive}
+                            asChild
+                          >
+                            <Link
+                              to={item.path}
+                              onClick={closeMobileNav}
+                              aria-current={isActive ? "page" : undefined}
                             >
-                              {item.label}
-                            </span>
-                          )}
-                        </Link>
-                      </SidebarMenuButton>
-                      {renderMenuSub(item.children)}
-                    </>
-                  ) : (
-                    <CollapsedNavFlyout
-                      item={item}
-                      isActive={isActive}
-                      currentName={currentName}
-                    />
-                  )}
-                </SidebarMenuItem>
-              );
-            })}
-          </SidebarMenu>
-        </SidebarGroupContent>
+                              {item.icon && <item.icon />}
+                              <span>{item.title}</span>
+                              {item.label && (
+                                <span
+                                  className={cn(
+                                    // Fixed min width so badges line up even when counts differ (0 vs 10).
+                                    "machine ml-auto inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-sidebar-accent px-1.5 text-[11px] text-muted-foreground",
+                                    isActive &&
+                                      "bg-sidebar-primary/15 text-sidebar-primary",
+                                  )}
+                                >
+                                  {item.label}
+                                </span>
+                              )}
+                            </Link>
+                          </SidebarMenuButton>
+                          {renderMenuSub(item.children)}
+                        </>
+                      ) : (
+                        <CollapsedNavFlyout
+                          item={item}
+                          isActive={isActive}
+                          currentName={currentName}
+                        />
+                      )}
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          );
+        })}
       </SidebarGroup>
     </SidebarContent>
   );
