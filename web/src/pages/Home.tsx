@@ -33,6 +33,14 @@ interface Summary {
   value: string;
   link: string;
   nameClass?: string;
+  /**
+   * Marks the value itself as a health state. A certificate row shows an
+   * expiry date, and a bare date says nothing about whether it has passed —
+   * reading it correctly means knowing today's date. The tone says it.
+   */
+  valueTone?: "warn" | "down";
+  /** Spelled out, because a colour on its own is not a message. */
+  valueTitle?: string;
 }
 
 interface EntityCard {
@@ -179,14 +187,35 @@ export default function Home() {
   }
   pluginSummary.sort((a, b) => a.name.localeCompare(b.name));
 
+  // Single source of truth for what a certificate's remaining validity means,
+  // so the alert list and the entity card can never disagree about it.
+  const certificateState = (notAfter: number) => {
+    const days = daysUntil(notAfter);
+    if (days > 30) {
+      return undefined;
+    }
+    return {
+      tone: (days <= 7 ? "down" : "warn") as "down" | "warn",
+      message:
+        days < 0
+          ? homeI18n("certExpired", { days: Math.abs(days) })
+          : days === 0
+            ? homeI18n("certExpiresToday")
+            : homeI18n("certExpiring", { days }),
+    };
+  };
+
   const certificateSummary: Summary[] = [];
   if (config.certificates) {
     listify(config.certificates, (name, value) => {
       const info = certificateInfos[name];
+      const state = info ? certificateState(info.not_after) : undefined;
       certificateSummary.push({
         name,
         link: `${CERTIFICATES}?name=${name}`,
         value: info ? formatDate(info.not_after) : value.domains || "",
+        valueTone: state?.tone,
+        valueTitle: state?.message,
       });
     });
   }
@@ -362,20 +391,15 @@ export default function Home() {
     });
   });
   Object.keys(certificateInfos).forEach((name) => {
-    const days = daysUntil(certificateInfos[name].not_after);
-    if (days > 30) {
+    const state = certificateState(certificateInfos[name].not_after);
+    if (!state) {
       return;
     }
     alerts.push({
       key: `certificate-${name}`,
-      tone: days <= 7 ? "down" : "warn",
+      tone: state.tone,
       name,
-      message:
-        days < 0
-          ? homeI18n("certExpired", { days: Math.abs(days) })
-          : days === 0
-            ? homeI18n("certExpiresToday")
-            : homeI18n("certExpiring", { days }),
+      message: state.message,
       to: `${CERTIFICATES}?name=${name}`,
     });
   });
@@ -610,8 +634,26 @@ export default function Home() {
                     >
                       {entry.name}
                     </Link>
-                    <span className="machine truncate text-muted-foreground">
-                      {entry.value}
+                    <span
+                      className={cn(
+                        "machine flex min-w-0 items-center gap-1.5 self-center",
+                        entry.valueTone === "down"
+                          ? "font-medium text-down"
+                          : entry.valueTone === "warn"
+                            ? "font-medium text-warn"
+                            : "text-muted-foreground",
+                      )}
+                      title={entry.valueTitle}
+                    >
+                      {entry.valueTone && (
+                        <span
+                          className={cn(
+                            "size-1.5 shrink-0 rounded-full",
+                            entry.valueTone === "down" ? "bg-down" : "bg-warn",
+                          )}
+                        />
+                      )}
+                      <span className="truncate">{entry.value}</span>
                     </span>
                   </li>
                 ))}

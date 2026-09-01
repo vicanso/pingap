@@ -2,15 +2,10 @@
 
 import * as React from "react";
 import { cva, type VariantProps } from "class-variance-authority";
-import {
-  CheckIcon,
-  XCircle,
-  ChevronDown,
-  XIcon,
-  WandSparkles,
-} from "lucide-react";
+import { XCircle, ChevronDown, XIcon, WandSparkles } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -299,16 +294,25 @@ export const MultiSelect = React.forwardRef<
                   onSelect={toggleAll}
                   className="cursor-pointer"
                 >
-                  <div
-                    className={cn(
-                      "mr-2 flex h-4 w-4 items-center justify-center rounded-sm border border-primary",
+                  {/*
+                    The real Checkbox, not a look-alike: this row and the
+                    checkbox lists elsewhere in the console are the same
+                    control and must not drift apart again. It is decorative
+                    here — CommandItem owns the click and the aria-selected
+                    state — hence inert and hidden from the a11y tree.
+                  */}
+                  <Checkbox
+                    className="pointer-events-none"
+                    tabIndex={-1}
+                    aria-hidden
+                    checked={
                       selectedValues.length === options.length
-                        ? "bg-primary text-primary-foreground"
-                        : "opacity-50 [&_svg]:invisible",
-                    )}
-                  >
-                    <CheckIcon className="h-4 w-4" />
-                  </div>
+                        ? true
+                        : selectedValues.length > 0
+                          ? "indeterminate"
+                          : false
+                    }
+                  />
                   <span>(Select All)</span>
                 </CommandItem>
                 {options.map((option) => {
@@ -319,18 +323,14 @@ export const MultiSelect = React.forwardRef<
                       onSelect={() => toggleOption(option.value)}
                       className="cursor-pointer"
                     >
-                      <div
-                        className={cn(
-                          "mr-2 flex h-4 w-4 items-center justify-center rounded-sm border border-primary",
-                          isSelected
-                            ? "bg-primary text-primary-foreground"
-                            : "opacity-50 [&_svg]:invisible",
-                        )}
-                      >
-                        <CheckIcon className="h-4 w-4" />
-                      </div>
+                      <Checkbox
+                        className="pointer-events-none"
+                        tabIndex={-1}
+                        aria-hidden
+                        checked={isSelected}
+                      />
                       {option.icon && (
-                        <option.icon className="mr-2 h-4 w-4 text-muted-foreground" />
+                        <option.icon className="h-4 w-4 text-muted-foreground" />
                       )}
                       <span>{option.label}</span>
                     </CommandItem>
