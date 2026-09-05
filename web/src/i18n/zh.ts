@@ -169,6 +169,26 @@ export default {
     workStealing: "线程工作抢占模式",
     workStealingTips: "允许空闲线程从繁忙线程抢任务，提升多核利用率。",
     listenerTasksPerFd: "每个fd的监听任务数",
+    downstreamTlsOffloadThreadpools: "TLS 握手 offload 线程池数",
+    downstreamTlsOffloadThreadpoolsPlaceholder:
+      "输入 TLS 握手 offload 线程池数量(如2)",
+    downstreamTlsOffloadThreadpoolsTips:
+      "把客户端 TLS 握手放到专用线程池而不是 worker 线程上执行，按连接分片。需与每池线程数同时设置；两者都留空则握手仍在 worker 上进行。",
+    upstreamConnectOffloadThreadpools: "上游建连 offload 线程池数",
+    upstreamConnectOffloadThreadpoolsPlaceholder:
+      "输入上游建连 offload 线程池数量(如2)",
+    upstreamConnectOffloadThreadpoolsTips:
+      "把上游建连（TCP 连接、TLS 握手）放到专用线程池而不是 worker 线程上执行。需与每池线程数同时设置；两者都留空则仍在 worker 上建连。",
+    upstreamConnectOffloadThreadPerPool: "每个上游 offload 池的线程数",
+    upstreamConnectOffloadThreadPerPoolPlaceholder:
+      "输入每个上游 offload 线程池的线程数(如4)",
+    upstreamConnectOffloadThreadPerPoolTips:
+      "每个上游建连 offload 线程池内的线程数，仅与线程池数一起设置时生效。",
+    downstreamTlsOffloadThreadPerPool: "每个 offload 池的线程数",
+    downstreamTlsOffloadThreadPerPoolPlaceholder:
+      "输入每个 offload 线程池的线程数(如4)",
+    downstreamTlsOffloadThreadPerPoolTips:
+      "每个 TLS 握手 offload 线程池内的线程数，仅与线程池数一起设置时生效。",
     listenerTasksPerFdPlaceholder: "输入每个fd的监听任务数(默认值: 1)",
     listenerTasksPerFdTips: "一般保持 1 即可，除非有特殊场景。",
     upstreamKeepalivePoolSize: "上游保持连接池大小",

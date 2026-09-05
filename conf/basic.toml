@@ -46,6 +46,23 @@
 
 # Allow work stealing between threads of the same service. Default `true`.
 # work_stealing = true
+# Downstream TLS handshake offload. Set both to run TLS handshakes on dedicated
+# thread pools instead of the worker threads, sharded by connection: the number
+# of pools, and the threads in each. A handshake-heavy TLS endpoint - many
+# short connections, little session resumption - stops stalling request
+# processing this way. Both are required together and must be greater than 0;
+# leave both unset to keep handshaking on the workers (pingora's default).
+# Default `none`
+# downstream_tls_offload_threadpools = 2
+# downstream_tls_offload_thread_per_pool = 4
+# Upstream connect offload: the same idea for establishing upstream connections
+# (TCP connect and TLS handshake), which otherwise run on the worker threads.
+# Set both to move them onto dedicated pools; the wait for a pool thread shows
+# up in the access log as {:upstream_connect_offload_wait_time}. Both are
+# required together and must be greater than 0.
+# Default `none`
+# upstream_connect_offload_threadpools = 2
+# upstream_connect_offload_thread_per_pool = 4
 
 # Grace period before starting the final step of the graceful shutdown after signaling shutdown. Default `5m`
 # grace_period = "5m"

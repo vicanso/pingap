@@ -227,6 +227,21 @@ fn new_server_config(
     if let Some(listener_tasks_per_fd) = basic_conf.listener_tasks_per_fd {
         server_conf.listener_tasks_per_fd = listener_tasks_per_fd;
     }
+    // Downstream TLS handshake offload. pingora reads the pair back from this
+    // conf when each TLS listener calls
+    // `TlsSettings::set_offload_threadpool_from_server_conf`, so copying the
+    // values is all that is needed here.
+    server_conf.downstream_tls_offload_threadpools =
+        basic_conf.downstream_tls_offload_threadpools;
+    server_conf.downstream_tls_offload_thread_per_pool =
+        basic_conf.downstream_tls_offload_thread_per_pool;
+    // Upstream connect offload needs nothing on pingap's side beyond this:
+    // pingora-proxy builds its connector with
+    // `ConnectorOptions::from_server_conf`, which reads the pair back.
+    server_conf.upstream_connect_offload_threadpools =
+        basic_conf.upstream_connect_offload_threadpools;
+    server_conf.upstream_connect_offload_thread_per_pool =
+        basic_conf.upstream_connect_offload_thread_per_pool;
     if let Some(dir) = &basic_conf.working_directory {
         server_conf.working_directory = Some(std::path::PathBuf::from(dir));
     }

@@ -154,6 +154,11 @@ pub struct Timing {
     pub upstream_tcp_connect: Option<i32>,
     /// The duration of the TLS handshake with the upstream server in milliseconds.
     pub upstream_tls_handshake: Option<i32>,
+    /// How long the upstream connect waited for an offload thread before it
+    /// began, in milliseconds. Only present when
+    /// `basic.upstream_connect_offload_*` is on; it separates scheduling
+    /// delay in the offload pool from network latency.
+    pub upstream_connect_offload_wait: Option<i32>,
     /// The duration the upstream server took to process the request in milliseconds.
     pub upstream_processing: Option<i32>,
     /// The duration from sending the request to receiving the upstream response in milliseconds.
@@ -175,6 +180,7 @@ impl Default for Timing {
             upstream_connect: None,
             upstream_tcp_connect: None,
             upstream_tls_handshake: None,
+            upstream_connect_offload_wait: None,
             upstream_processing: None,
             upstream_response: None,
             upstream_connection_duration: None,
@@ -410,6 +416,9 @@ pub struct DigestDetail {
     /// clock around the handshake itself; `None` without TLS or when it was
     /// not measured.
     pub tls_handshake: Option<u64>,
+    /// Time the connect spent queued for an offload thread, in milliseconds.
+    /// `None` unless the connect was offloaded.
+    pub connect_offload_wait: Option<u64>,
     /// TLS protocol version if using HTTPS
     pub tls_version: Option<Cow<'static, str>>,
     /// TLS cipher suite in use if using HTTPS
@@ -443,6 +452,7 @@ pub fn get_digest_detail(digest: &Digest) -> DigestDetail {
     // layer - the TLS session when there is one, otherwise the transport
     // layer again, which is why the handshake is only read under TLS.
     let tcp_connect = establishment_ms(digest.timing_digest.first());
+    let connect_offload_wait = offload_wait_ms(digest.timing_digest.first());
 
     let Some(ssl_digest) = &digest.ssl_digest else {
         return DigestDetail {
@@ -450,6 +460,7 @@ pub fn get_digest_detail(digest: &Digest) -> DigestDetail {
             tcp_established,
             connection_time,
             tcp_connect,
+            connect_offload_wait,
             ..Default::default()
         };
     };
@@ -459,6 +470,7 @@ pub fn get_digest_detail(digest: &Digest) -> DigestDetail {
         tcp_established,
         connection_time,
         tcp_connect,
+        connect_offload_wait,
         tls_established: timing_to_ms(digest.timing_digest.last()),
         tls_handshake: establishment_ms(digest.timing_digest.last()),
         // Clone the Cow: Borrowed(&'static str) is allocation-free.
@@ -472,6 +484,15 @@ fn establishment_ms(timing: Option<&Option<TimingDigest>>) -> Option<u64> {
     timing
         .and_then(|item| item.as_ref())
         .and_then(|item| item.establishment_duration)
+        .map(|duration| duration.as_millis() as u64)
+}
+
+/// How long the transport connect waited for an offload thread, when it was
+/// offloaded at all.
+fn offload_wait_ms(timing: Option<&Option<TimingDigest>>) -> Option<u64> {
+    timing
+        .and_then(|item| item.as_ref())
+        .and_then(|item| item.offload_wait_duration)
         .map(|duration| duration.as_millis() as u64)
 }
 
@@ -705,6 +726,12 @@ impl Ctx {
             "upstream_tls_handshake_time_human" => {
                 append_time!(self.timing.upstream_tls_handshake, human)
             },
+            "upstream_connect_offload_wait_time" => {
+                append_time!(self.timing.upstream_connect_offload_wait)
+            },
+            "upstream_connect_offload_wait_time_human" => {
+                append_time!(self.timing.upstream_connect_offload_wait, human)
+            },
             "upstream_connection_time" => {
                 append_time!(self.timing.upstream_connection_duration)
             },
@@ -923,6 +950,8 @@ impl Ctx {
             self.timing.upstream_tcp_connect = Some(tcp_connect as i32);
             self.timing.upstream_tls_handshake =
                 detail.tls_handshake.map(|value| value as i32);
+            self.timing.upstream_connect_offload_wait =
+                detail.connect_offload_wait.map(|value| value as i32);
             return;
         }
 
@@ -1311,6 +1340,17 @@ mod tests {
         assert_eq!(b"110", buf.as_ref());
 
         buf = BytesMut::new();
+        ctx.timing.upstream_connect_offload_wait = Some(3);
+        ctx.append_log_value(&mut buf, "upstream_connect_offload_wait_time");
+        assert_eq!(b"3", buf.as_ref());
+        buf = BytesMut::new();
+        ctx.append_log_value(
+            &mut buf,
+            "upstream_connect_offload_wait_time_human",
+        );
+        assert_eq!(b"3ms", buf.as_ref());
+
+        buf = BytesMut::new();
         ctx.append_log_value(&mut buf, "upstream_tls_handshake_time_human");
         assert_eq!(b"110ms", buf.as_ref());
 
@@ -1479,6 +1519,17 @@ mod tests {
         let detail = get_digest_detail(&digest);
         assert_eq!(detail.tcp_connect, Some(12));
         assert_eq!(detail.tls_handshake, Some(34));
+        // Not offloaded: no queueing time to report.
+        assert_eq!(detail.connect_offload_wait, None);
+
+        // An offloaded connect also carries the time it waited for a thread.
+        digest.timing_digest[0] = Some(TimingDigest {
+            establishment_duration: Some(Duration::from_millis(12)),
+            offload_wait_duration: Some(Duration::from_millis(2)),
+            ..Default::default()
+        });
+        let detail = get_digest_detail(&digest);
+        assert_eq!(detail.connect_offload_wait, Some(2));
 
         // Without TLS the last entry is the transport again: no handshake.
         digest.ssl_digest = None;
@@ -1519,6 +1570,19 @@ mod tests {
         ctx.update_upstream_timing_from_digest(&measured(12, 34), false);
         assert_eq!(Some(12), ctx.timing.upstream_tcp_connect);
         assert_eq!(Some(34), ctx.timing.upstream_tls_handshake);
+        assert_eq!(None, ctx.timing.upstream_connect_offload_wait);
+
+        // The offload queueing time rides along when the connect was
+        // offloaded.
+        let mut ctx = Ctx::new();
+        let mut offloaded = measured(12, 34);
+        offloaded.timing_digest[0] = Some(TimingDigest {
+            establishment_duration: Some(Duration::from_millis(12)),
+            offload_wait_duration: Some(Duration::from_millis(2)),
+            ..Default::default()
+        });
+        ctx.update_upstream_timing_from_digest(&offloaded, false);
+        assert_eq!(Some(2), ctx.timing.upstream_connect_offload_wait);
 
         // A reused connection carries no connect cost for this request.
         let mut ctx = Ctx::new();

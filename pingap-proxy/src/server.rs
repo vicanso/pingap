@@ -462,7 +462,7 @@ impl Server {
         for addr in addr.split(',') {
             // tls
             if let Some(dynamic_cert) = &dynamic_cert {
-                let tls_settings = dynamic_cert
+                let mut tls_settings = dynamic_cert
                     .new_tls_settings(&TlsSettingParams {
                         server_name: name.clone(),
                         enabled_h2,
@@ -475,6 +475,11 @@ impl Server {
                         category: "tls".to_string(),
                         message: e.to_string(),
                     })?;
+                // Handshakes move to the dedicated pools when
+                // `basic.downstream_tls_offload_*` asks for them. pingora
+                // applies this per listener because every listener owns its
+                // TlsSettings, and leaves it off while the pair is unset.
+                tls_settings.set_offload_threadpool_from_server_conf(&conf);
                 lb.add_tls_with_settings(
                     addr,
                     tcp_socket_options.clone(),

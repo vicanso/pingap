@@ -1060,6 +1060,22 @@ pub struct BasicConf {
     pub work_stealing: Option<bool>,
     /// Number of listener tasks to use per fd. This allows for parallel accepts.
     pub listener_tasks_per_fd: Option<usize>,
+    /// Number of dedicated thread pools that run downstream TLS handshakes
+    /// off the worker threads, sharded by connection. Only takes effect
+    /// together with `downstream_tls_offload_thread_per_pool`; both unset
+    /// keeps handshakes on the workers, which is pingora's default.
+    pub downstream_tls_offload_threadpools: Option<usize>,
+    /// Threads in each of those pools. Only takes effect together with
+    /// `downstream_tls_offload_threadpools`.
+    pub downstream_tls_offload_thread_per_pool: Option<usize>,
+    /// Number of dedicated thread pools that establish upstream connections
+    /// (TCP connect and TLS handshake) off the worker threads. Only takes
+    /// effect together with `upstream_connect_offload_thread_per_pool`; both
+    /// unset keeps connecting on the workers, which is pingora's default.
+    pub upstream_connect_offload_threadpools: Option<usize>,
+    /// Threads in each of those pools. Only takes effect together with
+    /// `upstream_connect_offload_threadpools`.
+    pub upstream_connect_offload_thread_per_pool: Option<usize>,
     /// Grace period before forcefully terminating during shutdown(default: 5m)
     #[serde(default)]
     #[serde(with = "humantime_serde")]
@@ -1118,7 +1134,43 @@ impl Validate for BasicConf {
                     .to_string(),
             });
         }
+        // pingora only offloads when both values of a pair are set and
+        // non-zero, and says nothing otherwise; refuse the half-configured
+        // states instead.
+        validate_offload_pair(
+            "downstream tls offload",
+            self.downstream_tls_offload_threadpools,
+            self.downstream_tls_offload_thread_per_pool,
+        )?;
+        validate_offload_pair(
+            "upstream connect offload",
+            self.upstream_connect_offload_threadpools,
+            self.upstream_connect_offload_thread_per_pool,
+        )?;
         Ok(())
+    }
+}
+
+/// An offload pool is described by two numbers that only mean something
+/// together: how many pools, and how many threads in each.
+fn validate_offload_pair(
+    name: &str,
+    pools: Option<usize>,
+    threads: Option<usize>,
+) -> Result<()> {
+    match (pools, threads) {
+        (None, None) => Ok(()),
+        (Some(pools), Some(threads)) if pools > 0 && threads > 0 => Ok(()),
+        (Some(_), Some(_)) => Err(Error::Invalid {
+            message: format!(
+                "{name} threadpools and thread per pool should be greater than 0"
+            ),
+        }),
+        _ => Err(Error::Invalid {
+            message: format!(
+                "{name} threadpools and thread per pool should be set together"
+            ),
+        }),
     }
 }
 
@@ -2217,6 +2269,60 @@ restart_ready_timeout = "2m"
         assert_eq!(
             "Invalid error restart ready timeout should be at least 1s",
             result.expect_err("").to_string()
+        );
+    }
+
+    #[test]
+    fn test_basic_tls_offload_conf() {
+        let conf: BasicConf = toml::from_str(
+            r#"
+downstream_tls_offload_threadpools = 2
+downstream_tls_offload_thread_per_pool = 4
+"#,
+        )
+        .unwrap();
+        assert_eq!(Some(2), conf.downstream_tls_offload_threadpools);
+        assert_eq!(Some(4), conf.downstream_tls_offload_thread_per_pool);
+        assert_eq!(true, conf.validate().is_ok());
+
+        // Half a configuration would be a silent no-op in pingora.
+        let conf = BasicConf {
+            downstream_tls_offload_threadpools: Some(2),
+            ..Default::default()
+        };
+        assert_eq!(
+            "Invalid error downstream tls offload threadpools and thread per pool should be set together",
+            conf.validate().expect_err("").to_string()
+        );
+        // So would a zero.
+        let conf = BasicConf {
+            downstream_tls_offload_threadpools: Some(2),
+            downstream_tls_offload_thread_per_pool: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(
+            "Invalid error downstream tls offload threadpools and thread per pool should be greater than 0",
+            conf.validate().expect_err("").to_string()
+        );
+
+        // The upstream pair follows the same rule.
+        let conf: BasicConf = toml::from_str(
+            r#"
+upstream_connect_offload_threadpools = 1
+upstream_connect_offload_thread_per_pool = 8
+"#,
+        )
+        .unwrap();
+        assert_eq!(Some(1), conf.upstream_connect_offload_threadpools);
+        assert_eq!(Some(8), conf.upstream_connect_offload_thread_per_pool);
+        assert_eq!(true, conf.validate().is_ok());
+        let conf = BasicConf {
+            upstream_connect_offload_thread_per_pool: Some(8),
+            ..Default::default()
+        };
+        assert_eq!(
+            "Invalid error upstream connect offload threadpools and thread per pool should be set together",
+            conf.validate().expect_err("").to_string()
         );
     }
 

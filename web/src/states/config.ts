@@ -170,6 +170,10 @@ interface Basic {
   threads?: number;
   work_stealing?: boolean;
   listener_tasks_per_fd?: number;
+  downstream_tls_offload_threadpools?: number;
+  downstream_tls_offload_thread_per_pool?: number;
+  upstream_connect_offload_threadpools?: number;
+  upstream_connect_offload_thread_per_pool?: number;
   grace_period?: string;
   graceful_shutdown_timeout?: string;
   upstream_keepalive_pool_size?: number;

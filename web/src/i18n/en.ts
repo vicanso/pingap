@@ -174,6 +174,27 @@ export default {
     workStealingTips:
       "Allow idle workers to steal tasks from busy ones for better multi-core use.",
     listenerTasksPerFd: "Listener Tasks Per Fd",
+    downstreamTlsOffloadThreadpools: "TLS Offload Thread Pools",
+    downstreamTlsOffloadThreadpoolsPlaceholder:
+      "Input the number of TLS handshake offload pools(e.g. 2)",
+    downstreamTlsOffloadThreadpoolsTips:
+      "Run client TLS handshakes on dedicated thread pools instead of the workers, sharded by connection. Set together with the threads per pool; leave both empty to keep handshakes on the workers.",
+    upstreamConnectOffloadThreadpools: "Upstream Connect Offload Pools",
+    upstreamConnectOffloadThreadpoolsPlaceholder:
+      "Input the number of upstream connect offload pools(e.g. 2)",
+    upstreamConnectOffloadThreadpoolsTips:
+      "Establish upstream connections (TCP connect, TLS handshake) on dedicated thread pools instead of the workers. Set together with the threads per pool; leave both empty to keep connecting on the workers.",
+    upstreamConnectOffloadThreadPerPool:
+      "Upstream Connect Offload Threads Per Pool",
+    upstreamConnectOffloadThreadPerPoolPlaceholder:
+      "Input the threads in each offload pool(e.g. 4)",
+    upstreamConnectOffloadThreadPerPoolTips:
+      "Threads in each upstream connect offload pool. Only takes effect together with the pool count.",
+    downstreamTlsOffloadThreadPerPool: "TLS Offload Threads Per Pool",
+    downstreamTlsOffloadThreadPerPoolPlaceholder:
+      "Input the threads in each offload pool(e.g. 4)",
+    downstreamTlsOffloadThreadPerPoolTips:
+      "Threads in each TLS handshake offload pool. Only takes effect together with the pool count.",
     listenerTasksPerFdPlaceholder:
       "Input the listener tasks per fd(default: 1)",
     listenerTasksPerFdTips:
