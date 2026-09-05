@@ -31,6 +31,7 @@
     -   **HTTP/2 & ALPN**: Supports ALPN for negotiating HTTP/1.1 or HTTP/2 with backends.
     -   **Connection Timeouts**: Fine-grained control over connection, read, write, and idle timeouts.
     -   **TCP Control**: Advanced options for TCP keepalives, buffer sizes, and TCP Fast Open.
+    -   **Request Header Policy**: By default hop-by-hop and `Connection`-nominated request headers are stripped before a request reaches the backend and only WebSocket upgrades are forwarded, as RFC 9110 asks. Each rule can be relaxed per upstream (`strip_hop_by_hop`, `strip_connection_nominated`, `reject_malformed_connection_nominations`, `h1_upgrade`) for a backend that still depends on the old passthrough behaviour, such as Docker `attach`/`exec` or h2c upgrades.
 
 -   **Runtime Management**:
     -   Upstreams can be dynamically added, updated, or removed at runtime without service interruption.

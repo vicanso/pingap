@@ -319,6 +319,70 @@ export default function Upstreams() {
       span: 2,
       category: ExFormItemCategory.NUMBER,
     },
+    // Request-header policy towards the upstream. Unset means pingora's
+    // standards-oriented default; each switch is an escape hatch for a
+    // backend that still depends on the old passthrough behaviour.
+    {
+      name: "h1_upgrade",
+      section: sec.tls,
+      label: upstreamI18n("h1Upgrade"),
+      placeholder: "",
+      defaultValue: upstreamConfig.h1_upgrade,
+      span: 2,
+      category: ExFormItemCategory.RADIOS,
+      options: [
+        {
+          label: upstreamI18n("h1UpgradeWebSocketOnly"),
+          option: "websocket_only",
+          value: "websocket_only",
+        },
+        {
+          label: upstreamI18n("h1UpgradePreserve"),
+          option: "preserve",
+          value: "preserve",
+        },
+        {
+          label: upstreamI18n("h1UpgradeDeny"),
+          option: "deny",
+          value: "deny",
+        },
+        {
+          label: "None",
+          option: "",
+          value: null,
+        },
+      ],
+    },
+    {
+      name: "strip_hop_by_hop",
+      section: sec.tls,
+      label: upstreamI18n("stripHopByHop"),
+      placeholder: "",
+      defaultValue: upstreamConfig.strip_hop_by_hop,
+      span: 2,
+      category: ExFormItemCategory.RADIOS,
+      options: newBooleanOptions(),
+    },
+    {
+      name: "strip_connection_nominated",
+      section: sec.tls,
+      label: upstreamI18n("stripConnectionNominated"),
+      placeholder: "",
+      defaultValue: upstreamConfig.strip_connection_nominated,
+      span: 2,
+      category: ExFormItemCategory.RADIOS,
+      options: newBooleanOptions(),
+    },
+    {
+      name: "reject_malformed_connection_nominations",
+      section: sec.tls,
+      label: upstreamI18n("rejectMalformedConnectionNominations"),
+      placeholder: "",
+      defaultValue: upstreamConfig.reject_malformed_connection_nominations,
+      span: 2,
+      category: ExFormItemCategory.RADIOS,
+      options: newBooleanOptions(),
+    },
     {
       name: "sni",
       section: sec.tls,

@@ -80,6 +80,37 @@ addrs = ["127.0.0.1:5000", "127.0.0.1:5001 10"]
 # - Default: 1 (Pingora default, one stream per connection)
 # max_h2_streams = 100
 
+# Request header policy towards this upstream. The defaults are what RFC 9110
+# asks of a proxy and are right for almost every backend; each key exists as
+# an escape hatch for an upstream that depends on the old passthrough
+# behaviour. Setting all four as shown restores it completely.
+#
+# Strip the standard hop-by-hop request headers (Connection, Keep-Alive,
+# Proxy-Connection, Proxy-Authenticate, Proxy-Authorization, TE, Trailer,
+# Transfer-Encoding, Upgrade, HTTP2-Settings).
+# Default `true`
+# strip_hop_by_hop = false
+#
+# Strip the extension headers named in the downstream `Connection` header.
+# While on, a request whose Connection nominates Host, an X-Forwarded-*
+# header or a pseudo-header is rejected rather than forwarded.
+# Default `true`
+# strip_connection_nominated = false
+#
+# Reject Connection nominations that are not a valid HTTP token (e.g. a
+# quoted name). Only has an effect while strip_connection_nominated is on.
+# Default `true`
+# reject_malformed_connection_nominations = false
+#
+# HTTP/1 Upgrade handshakes:
+# - "websocket_only": forward a valid WebSocket upgrade in normalized form,
+#   drop every other Upgrade
+# - "preserve": forward any Upgrade request with its headers untouched -
+#   needed for Docker attach/exec, h2c and other non-WebSocket protocols
+# - "deny": forward none
+# Default `websocket_only`
+# h1_upgrade = "preserve"
+
 # How long to wait before giving up establishing a TCP connection
 # Default `none`
 # connection_timeout = "10s"

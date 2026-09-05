@@ -48,7 +48,9 @@ use pingora::lb::{Backends, LoadBalancer};
 use pingora::protocols::ALPN;
 use pingora::protocols::l4::ext::TcpKeepalive;
 use pingora::proxy::Session;
-use pingora::upstreams::peer::{HttpPeer, Tracer};
+use pingora::upstreams::peer::{
+    H1UpgradePolicy, HttpPeer, HttpUpstreamRequestPolicy, Tracer,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -185,6 +187,10 @@ pub struct Upstream {
 
     /// Application Layer Protocol Negotiation settings (H1, H2, H2H1)
     alpn: ALPN,
+
+    /// How request headers are sanitized on the way to this upstream:
+    /// pingora's standards-oriented default unless the config opts out.
+    request_policy: HttpUpstreamRequestPolicy,
 
     /// Maximum number of concurrent HTTP/2 streams per connection.
     /// When unset, Pingora's default (1) is used.
@@ -379,6 +385,33 @@ pub struct UpstreamStats {
     pub circuit_states: HashMap<String, u8>,
 }
 
+/// Builds the request-header policy pingora applies to every request sent
+/// to this upstream. It starts from pingora's default - strip hop-by-hop
+/// headers, strip and police `Connection` nominations, forward WebSocket
+/// upgrades only - and flips exactly the fields the upstream config sets.
+/// `h1_upgrade` names were validated by `UpstreamConf::validate`, so the
+/// fallback arm is never reached with a real config.
+fn new_request_policy(conf: &UpstreamConf) -> HttpUpstreamRequestPolicy {
+    let mut policy = HttpUpstreamRequestPolicy::default();
+    if let Some(value) = conf.strip_hop_by_hop {
+        policy.strip_hop_by_hop = value;
+    }
+    if let Some(value) = conf.strip_connection_nominated {
+        policy.strip_connection_nominated = value;
+    }
+    if let Some(value) = conf.reject_malformed_connection_nominations {
+        policy.reject_malformed_connection_nominations = value;
+    }
+    if let Some(value) = &conf.h1_upgrade {
+        policy.h1_upgrade = match value.to_lowercase().as_str() {
+            "preserve" => H1UpgradePolicy::Preserve,
+            "deny" => H1UpgradePolicy::Deny,
+            _ => H1UpgradePolicy::WebSocketOnly,
+        };
+    }
+    policy
+}
+
 impl Upstream {
     /// Creates a new Upstream instance from the provided configuration
     ///
@@ -473,6 +506,7 @@ impl Upstream {
             sni,
             lb,
             alpn,
+            request_policy: new_request_policy(conf),
             max_h2_streams: conf.max_h2_streams,
             connection_timeout: conf.connection_timeout,
             total_connection_timeout: conf.total_connection_timeout,
@@ -605,6 +639,8 @@ impl Upstream {
             }
             // Set protocol negotiation settings
             p.options.alpn = self.alpn.clone();
+            // Hop-by-hop / Connection / Upgrade handling for this upstream
+            p.options.http_upstream_request_policy = self.request_policy;
             // Override the default number of concurrent h2 streams per
             // connection to enable practical HTTP/2 multiplexing to the backend
             if let Some(max_h2_streams) = self.max_h2_streams {
@@ -912,6 +948,9 @@ mod tests {
     use pingap_discovery::Discovery;
     use pingora::protocols::ALPN;
     use pingora::proxy::Session;
+    use pingora::upstreams::peer::{
+        H1UpgradePolicy, HttpUpstreamRequestPolicy,
+    };
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -1102,6 +1141,64 @@ mod tests {
         let mut client_ip = None;
         let peer = up.new_http_peer(&session, &mut client_ip, true).unwrap();
         assert_eq!(1, peer.options.max_h2_streams);
+    }
+
+    #[tokio::test]
+    async fn test_upstream_peer_request_header_policy() {
+        let input_header =
+            "GET /vicanso/pingap HTTP/1.1\r\nHost: github.com\r\n\r\n";
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let new_peer = |conf: UpstreamConf| {
+            let up = Upstream::new("policy", &conf, None).unwrap();
+            let mut client_ip = None;
+            up.new_http_peer(&session, &mut client_ip, true).unwrap()
+        };
+
+        // Nothing set: pingora's standards-oriented default, untouched.
+        let peer = new_peer(UpstreamConf {
+            addrs: vec!["192.168.1.1:8001".to_string()],
+            ..Default::default()
+        });
+        assert_eq!(
+            HttpUpstreamRequestPolicy::default(),
+            peer.options.http_upstream_request_policy
+        );
+
+        // The full legacy recipe is pingora's `preserve()` preset.
+        let peer = new_peer(UpstreamConf {
+            addrs: vec!["192.168.1.1:8001".to_string()],
+            strip_hop_by_hop: Some(false),
+            strip_connection_nominated: Some(false),
+            reject_malformed_connection_nominations: Some(false),
+            h1_upgrade: Some("preserve".to_string()),
+            ..Default::default()
+        });
+        assert_eq!(
+            HttpUpstreamRequestPolicy::preserve(),
+            peer.options.http_upstream_request_policy
+        );
+
+        // One field at a time: only the named field moves, case ignored.
+        let peer = new_peer(UpstreamConf {
+            addrs: vec!["192.168.1.1:8001".to_string()],
+            h1_upgrade: Some("Deny".to_string()),
+            ..Default::default()
+        });
+        assert_eq!(
+            HttpUpstreamRequestPolicy::deny_upgrades(),
+            peer.options.http_upstream_request_policy
+        );
+        let peer = new_peer(UpstreamConf {
+            addrs: vec!["192.168.1.1:8001".to_string()],
+            strip_connection_nominated: Some(false),
+            ..Default::default()
+        });
+        let policy = peer.options.http_upstream_request_policy;
+        assert_eq!(false, policy.strip_connection_nominated);
+        assert_eq!(true, policy.strip_hop_by_hop);
+        assert_eq!(H1UpgradePolicy::WebSocketOnly, policy.h1_upgrade);
     }
 
     #[test]

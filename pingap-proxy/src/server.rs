@@ -1447,6 +1447,7 @@ impl ProxyHttp for Server {
     /// Error handling for:
     /// - Upstream connection failures (502, 504)
     /// - Client timeouts (408)
+    /// - Malformed request headers (400)
     /// - Client disconnections (499)
     /// Generates error pages using configured template
     async fn fail_to_proxy(
@@ -1471,6 +1472,11 @@ impl ProxyHttp for Server {
                     pingora::ErrorType::ConnectTimedout => 408,
                     // client close the connection
                     pingora::ErrorType::ConnectionClosed => 499,
+                    // The request itself is malformed - e.g. `Connection`
+                    // nominating Host, which the upstream request policy
+                    // rejects. pingora's own default answers 400 here; 500
+                    // would file a client mistake under server errors.
+                    pingora::ErrorType::InvalidHTTPHeader => 400,
                     _ => 500,
                 },
                 pingora::ErrorSource::Internal

@@ -18,6 +18,10 @@ export interface Upstream {
   sni?: string;
   alpn?: string;
   max_h2_streams?: number;
+  strip_hop_by_hop?: boolean;
+  strip_connection_nominated?: boolean;
+  reject_malformed_connection_nominations?: boolean;
+  h1_upgrade?: string;
   health_check?: string;
   ipv4_only?: boolean;
   enable_tracer?: boolean;

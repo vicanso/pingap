@@ -289,6 +289,12 @@ impl Validate for CertificateConf {
     }
 }
 
+/// Accepted values of `UpstreamConf::h1_upgrade`, matched case-insensitively.
+/// They mirror pingora's `H1UpgradePolicy` variants; the upstream crate maps
+/// them, this crate only validates them.
+pub const H1_UPGRADE_POLICIES: [&str; 3] =
+    ["websocket_only", "preserve", "deny"];
+
 /// Configuration for an upstream service that handles proxied requests
 #[derive(Debug, Default, Deserialize, Clone, Serialize, Hash)]
 pub struct UpstreamConf {
@@ -370,6 +376,31 @@ pub struct UpstreamConf {
     /// Pingora's default of 1 stream per connection is used.
     pub max_h2_streams: Option<usize>,
 
+    /// Strip the standard hop-by-hop request headers (`Connection`,
+    /// `Keep-Alive`, `Proxy-Connection`, `Proxy-Authenticate`,
+    /// `Proxy-Authorization`, `TE`, `Trailer`, `Transfer-Encoding`, `Upgrade`,
+    /// `HTTP2-Settings`) before the request reaches the upstream. Default
+    /// `true`, which is what RFC 9110 asks of a proxy.
+    pub strip_hop_by_hop: Option<bool>,
+
+    /// Strip the extension headers named in the downstream `Connection`
+    /// header. While on, a request whose `Connection` nominates `Host`, an
+    /// `X-Forwarded-*` header or a pseudo-header is rejected rather than
+    /// forwarded with that metadata removed. Default `true`.
+    pub strip_connection_nominated: Option<bool>,
+
+    /// Reject `Connection` nominations that are not a valid HTTP token, such
+    /// as a quoted name. Only has an effect while `strip_connection_nominated`
+    /// is on. Default `true`.
+    pub reject_malformed_connection_nominations: Option<bool>,
+
+    /// What to do with an HTTP/1 `Upgrade` handshake: `websocket_only`
+    /// (default) forwards a valid WebSocket upgrade in normalized form and
+    /// drops every other one, `preserve` forwards any upgrade request with
+    /// its headers untouched (Docker attach/exec, h2c and other non-WebSocket
+    /// protocols need this), `deny` forwards none.
+    pub h1_upgrade: Option<String>,
+
     /// Timeout for establishing new connections
     #[serde(default)]
     #[serde(with = "humantime_serde")]
@@ -448,6 +479,7 @@ impl Validate for UpstreamConf {
     /// 2. For static discovery, addresses must be valid socket addresses
     /// 3. Health check URL must be valid if specified
     /// 4. TCP probe count must not exceed maximum (16)
+    /// 5. `h1_upgrade` must be one of the known policies
     fn validate(&self) -> Result<()> {
         // Validate address list
         self.validate_addresses()?;
@@ -460,6 +492,9 @@ impl Validate for UpstreamConf {
 
         // Validate max h2 streams
         self.validate_max_h2_streams()?;
+
+        // Validate the HTTP/1 upgrade policy name
+        self.validate_h1_upgrade()?;
 
         Ok(())
     }
@@ -583,6 +618,21 @@ impl UpstreamConf {
         {
             return Err(Error::Invalid {
                 message: "max h2 streams should be greater than 0".to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    fn validate_h1_upgrade(&self) -> Result<()> {
+        if let Some(policy) = &self.h1_upgrade
+            && !H1_UPGRADE_POLICIES.contains(&policy.to_lowercase().as_str())
+        {
+            return Err(Error::Invalid {
+                message: format!(
+                    "h1 upgrade should be one of {}, got {policy:?}",
+                    H1_UPGRADE_POLICIES.join(", ")
+                ),
             });
         }
 
@@ -1772,6 +1822,60 @@ max_h2_streams = 100
         assert_eq!(true, result.is_err());
         assert_eq!(
             "Invalid error max h2 streams should be greater than 0",
+            result.expect_err("").to_string()
+        );
+    }
+
+    #[test]
+    fn test_upstream_request_header_policy() {
+        // The legacy passthrough recipe parses, validates and round-trips.
+        let conf: UpstreamConf = toml::from_str(
+            r#"
+addrs = ["127.0.0.1:8080"]
+strip_hop_by_hop = false
+strip_connection_nominated = false
+reject_malformed_connection_nominations = false
+h1_upgrade = "preserve"
+"#,
+        )
+        .unwrap();
+        assert_eq!(Some(false), conf.strip_hop_by_hop);
+        assert_eq!(Some(false), conf.strip_connection_nominated);
+        assert_eq!(Some(false), conf.reject_malformed_connection_nominations);
+        assert_eq!(Some("preserve".to_string()), conf.h1_upgrade);
+        assert_eq!(true, conf.validate().is_ok());
+        let toml = toml::to_string(&conf).unwrap();
+        assert_eq!(true, toml.contains("h1_upgrade = \"preserve\""));
+        let restored: UpstreamConf = toml::from_str(&toml).unwrap();
+        assert_eq!(Some(false), restored.strip_hop_by_hop);
+
+        // Absent by default, so pingora's standards-oriented policy applies.
+        let conf = UpstreamConf {
+            addrs: vec!["127.0.0.1:8080".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(None, conf.strip_hop_by_hop);
+        assert_eq!(None, conf.h1_upgrade);
+        assert_eq!(true, conf.validate().is_ok());
+
+        // Case does not matter for the policy name.
+        let conf = UpstreamConf {
+            addrs: vec!["127.0.0.1:8080".to_string()],
+            h1_upgrade: Some("WebSocket_Only".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(true, conf.validate().is_ok());
+
+        // An unknown policy is refused with the accepted names spelled out.
+        let conf = UpstreamConf {
+            addrs: vec!["127.0.0.1:8080".to_string()],
+            h1_upgrade: Some("tcp".to_string()),
+            ..Default::default()
+        };
+        let result = conf.validate();
+        assert_eq!(true, result.is_err());
+        assert_eq!(
+            "Invalid error h1 upgrade should be one of websocket_only, preserve, deny, got \"tcp\"",
             result.expect_err("").to_string()
         );
     }

@@ -414,6 +414,14 @@ export default {
     maxH2Streams: "Max H2 Streams",
     maxH2StreamsPlaceholder:
       "Max concurrent HTTP/2 streams per upstream connection(e.g. 100), only for H2/H2H1",
+    h1Upgrade: "HTTP/1 Upgrade",
+    h1UpgradeWebSocketOnly: "WebSocket only",
+    h1UpgradePreserve: "Preserve",
+    h1UpgradeDeny: "Deny",
+    stripHopByHop: "Strip Hop-by-hop Headers",
+    stripConnectionNominated: "Strip Connection-nominated Headers",
+    rejectMalformedConnectionNominations:
+      "Reject Malformed Connection Nominations",
     sni: "Sni",
     sniPlaceholder: "Input server name indication for tls protocol",
     verifyCert: "Verify Certificate",

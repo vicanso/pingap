@@ -376,6 +376,13 @@ export default {
     maxH2Streams: "H2最大并发流",
     maxH2StreamsPlaceholder:
       "每个上游连接的HTTP/2最大并发流数量(如100)，仅H2/H2H1有效",
+    h1Upgrade: "HTTP/1 Upgrade 转发",
+    h1UpgradeWebSocketOnly: "仅 WebSocket",
+    h1UpgradePreserve: "全部透传",
+    h1UpgradeDeny: "不转发",
+    stripHopByHop: "剥离 hop-by-hop 头",
+    stripConnectionNominated: "剥离 Connection 提名的头",
+    rejectMalformedConnectionNominations: "拒绝畸形的 Connection 提名",
     sni: "Sni",
     sniPlaceholder: "输入sni的名称",
     verifyCert: "证书校验",
