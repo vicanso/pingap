@@ -24,6 +24,16 @@
 
 # Unix socket path used for application upgrades. Default `/tmp/pingap_upgrade.sock`
 # upgrade_sock = "/tmp/pingap_upgrade.sock"
+# Working directory the daemon switches to after forking, only with `--daemon`.
+# Default `none` (pingora's default)
+# working_directory = "/var/lib/pingap"
+# How long `--autorestart` waits for the replacement process to report that it
+# is ready to take over the listening sockets. The report arrives over
+# `<upgrade_sock>.ready` right before the new process asks for the sockets; only
+# then does the current process send itself SIGQUIT. If the replacement exits,
+# its daemon dies, or this much time passes first, the restart is abandoned and
+# the current process keeps serving. Default `1m`
+# restart_ready_timeout = "1m"
 
 # After daemonization, this process will switch to the given user before starting to serve traffic. Default `none`
 # user = ""

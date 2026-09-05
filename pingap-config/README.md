@@ -196,7 +196,12 @@ pingap -c /opt/pingap/conf -t                         # validate and exit
 Both feed the same reload handle; the difference is only the delivery mechanism.
 `--autoreload` swaps the configuration in place, which is what you want in
 containers. `--autorestart` performs a zero-downtime graceful restart, which is
-what listener-level changes need.
+what listener-level changes need. That restart hands over on readiness: the
+replacement reports over `<upgrade_sock>.ready` the moment it is ready to take
+the listening sockets, and only then does the old process signal itself to
+quit; `basic.restart_ready_timeout` (default 1m) bounds the wait, after which
+the restart is abandoned. `basic.working_directory` sets where the daemon
+`chdir`s.
 
 ## Includes
 

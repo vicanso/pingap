@@ -218,6 +218,28 @@ export default function Basic() {
       section: sec.process,
       category: ExFormItemCategory.TEXT,
     },
+    // Restart hand-over: how long --autorestart waits for the replacement to
+    // report readiness before abandoning the restart.
+    {
+      name: "restart_ready_timeout",
+      label: basicI18n("restartReadyTimeout"),
+      placeholder: basicI18n("restartReadyTimeoutPlaceholder"),
+      tips: basicI18n("restartReadyTimeoutTips"),
+      defaultValue: basic.restart_ready_timeout,
+      span: 3,
+      section: sec.process,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
+      name: "working_directory",
+      label: basicI18n("workingDirectory"),
+      placeholder: basicI18n("workingDirectoryPlaceholder"),
+      tips: basicI18n("workingDirectoryTips"),
+      defaultValue: basic.working_directory,
+      span: 3,
+      section: sec.process,
+      category: ExFormItemCategory.TEXT,
+    },
     {
       name: "user",
       label: basicI18n("user"),
@@ -329,6 +351,7 @@ export default function Basic() {
     grace_period: newZodDuration().optional(),
     graceful_shutdown_timeout: newZodDuration().optional(),
     auto_restart_check_interval: newZodDuration().optional(),
+    restart_ready_timeout: newZodDuration().optional(),
     cache_max_size: newZodBytes().optional(),
   });
 

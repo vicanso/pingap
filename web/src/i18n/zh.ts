@@ -206,6 +206,14 @@ export default {
     upgradeSock: "更新配置使用的sock",
     upgradeSockPlaceholder: "输入后台服务更新配置使用的sock",
     upgradeSockTips: "用于零停机热升级的 Unix socket。",
+    restartReadyTimeout: "重启就绪超时",
+    restartReadyTimeoutPlaceholder: "输入平滑重启等待新进程就绪的时长(如1m)",
+    restartReadyTimeoutTips:
+      "--autorestart 等待新进程回报“已准备好接管监听”的时长上限，超时则放弃本次重启。默认 1m。",
+    workingDirectory: "工作目录",
+    workingDirectoryPlaceholder: "输入守护进程切换到的目录(如 /var/lib/pingap)",
+    workingDirectoryTips:
+      "守护进程 fork 后 chdir 到的目录，仅 --daemon 时生效。",
     user: "启用后台服务的用户",
     userPlaceholder: "输入后台服务的用户",
     group: "启用后台服务的用户组",

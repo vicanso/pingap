@@ -1041,6 +1041,15 @@ pub struct BasicConf {
     pub error_log: Option<String>,
     /// Unix domain socket path for graceful upgrades(default: /tmp/pingap_upgrade.sock)
     pub upgrade_sock: Option<String>,
+    /// Working directory the daemon switches to right after forking, only
+    /// used together with `--daemon`. Unset keeps pingora's default.
+    pub working_directory: Option<String>,
+    /// How long `--autorestart` waits for the replacement process to report
+    /// that it is ready for the listening sockets before abandoning the
+    /// restart and keeping the current process(default: 1m)
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub restart_ready_timeout: Option<Duration>,
     /// User for daemon
     pub user: Option<String>,
     /// Group for daemon
@@ -1099,6 +1108,16 @@ pub struct BasicConf {
 
 impl Validate for BasicConf {
     fn validate(&self) -> Result<()> {
+        // Anything shorter than the restart's own polling would abandon
+        // every restart before the replacement can even fork.
+        if let Some(value) = self.restart_ready_timeout
+            && value < Duration::from_secs(1)
+        {
+            return Err(Error::Invalid {
+                message: "restart ready timeout should be at least 1s"
+                    .to_string(),
+            });
+        }
         Ok(())
     }
 }
@@ -1419,6 +1438,9 @@ impl PingapConfig {
     }
     /// Validate the options of pinggap config.
     pub fn validate(&self) -> Result<()> {
+        // `basic` carries the restart hand-over timeout; a bad one used to
+        // slip through because nothing ever called this.
+        self.basic.validate()?;
         let mut upstream_names = vec![];
         for (name, upstream) in self.upstreams.iter() {
             upstream.validate()?;
@@ -1688,9 +1710,11 @@ impl PingapConfig {
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        BasicConf, LocationConf, PluginCategory, ServerConf, UpstreamConf,
+    };
     use super::{CATEGORY_BASIC, CATEGORY_UPSTREAM, convert_pingap_config};
     use super::{CertificateConf, Hashable, Validate, validate_cert};
-    use super::{LocationConf, PluginCategory, ServerConf, UpstreamConf};
     use bytesize::ByteSize;
     use pingap_core::PluginStep;
     use pingap_util::base64_encode;
@@ -2165,6 +2189,35 @@ h2_idle_timeout = "2m"
             assert_eq!(true, result.is_err());
             assert_eq!(message, result.expect_err("").to_string());
         }
+    }
+
+    #[test]
+    fn test_basic_daemon_conf() {
+        let conf: BasicConf = toml::from_str(
+            r#"
+working_directory = "/var/lib/pingap"
+restart_ready_timeout = "2m"
+"#,
+        )
+        .unwrap();
+        assert_eq!(Some("/var/lib/pingap".to_string()), conf.working_directory);
+        assert_eq!(Some(Duration::from_secs(120)), conf.restart_ready_timeout);
+        assert_eq!(true, conf.validate().is_ok());
+
+        // Unset everywhere is the default and validates.
+        assert_eq!(true, BasicConf::default().validate().is_ok());
+
+        // A sub-second wait is refused up front.
+        let conf = BasicConf {
+            restart_ready_timeout: Some(Duration::from_millis(500)),
+            ..Default::default()
+        };
+        let result = conf.validate();
+        assert_eq!(true, result.is_err());
+        assert_eq!(
+            "Invalid error restart ready timeout should be at least 1s",
+            result.expect_err("").to_string()
+        );
     }
 
     #[test]

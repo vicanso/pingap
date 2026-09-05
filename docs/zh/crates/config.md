@@ -151,7 +151,7 @@ pingap -c /opt/pingap/conf -t                         # validate and exit
 - **etcd** 返回 `true`，经 `etcd_client::WatchStream` 推送。
 - **文件** 返回 `false`，按 `basic.auto_restart_check_interval` 轮询。
 
-两者接入同一重载句柄；区别仅在投递机制。`--autoreload` 就地交换配置，适合容器。`--autorestart` 做零停机优雅重启，监听级变更需要它。
+两者接入同一重载句柄；区别仅在投递机制。`--autoreload` 就地交换配置，适合容器。`--autorestart` 做零停机优雅重启，监听级变更需要它。这次重启以“就绪”为交接依据：新进程一旦准备好接管监听 socket，就通过 `<upgrade_sock>.ready` 回报，旧进程此时才向自己发退出信号；`basic.restart_ready_timeout`（默认 1m）限定等待时长，超时则放弃本次重启。`basic.working_directory` 指定守护进程 `chdir` 的目录。
 
 ## Includes
 

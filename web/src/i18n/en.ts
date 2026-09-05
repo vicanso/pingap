@@ -220,6 +220,16 @@ export default {
     upgradeSock: "Upgrade Sock For Daemon",
     upgradeSockPlaceholder: "Input upgrade unix sock for daemon",
     upgradeSockTips: "Unix socket used for zero-downtime hot upgrade.",
+    restartReadyTimeout: "Restart Ready Timeout",
+    restartReadyTimeoutPlaceholder:
+      "Input how long an auto restart waits for the new process(e.g. 1m)",
+    restartReadyTimeoutTips:
+      "How long --autorestart waits for the replacement to report that it is ready to take over the listeners before abandoning the restart. Default 1m.",
+    workingDirectory: "Working Directory",
+    workingDirectoryPlaceholder:
+      "Input the directory the daemon switches to(e.g. /var/lib/pingap)",
+    workingDirectoryTips:
+      "Directory the daemon chdirs to after forking, only with --daemon.",
     user: "User For Daemon",
     userPlaceholder: "Input user for daemon",
     group: "Group For Daemon",

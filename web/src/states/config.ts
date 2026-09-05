@@ -163,6 +163,8 @@ interface Basic {
   name?: string;
   pid_file?: string;
   upgrade_sock?: string;
+  working_directory?: string;
+  restart_ready_timeout?: string;
   user?: string;
   group?: string;
   threads?: number;

@@ -176,6 +176,17 @@ struct Args {
     threads: Option<usize>,
 }
 
+const DEFAULT_UPGRADE_SOCK: &str = "/tmp/pingap_upgrade.sock";
+
+/// pingora's upgrade socket for this deployment: `basic.upgrade_sock`, or the
+/// path pingap has always defaulted to.
+fn upgrade_sock_path(basic_conf: &pingap_config::BasicConf) -> String {
+    basic_conf
+        .upgrade_sock
+        .clone()
+        .unwrap_or_else(|| DEFAULT_UPGRADE_SOCK.to_string())
+}
+
 fn new_server_config(
     args: &Args,
     conf: &PingapConfig,
@@ -183,7 +194,7 @@ fn new_server_config(
     let basic_conf = &conf.basic;
     let mut server_conf = server::configuration::ServerConf {
         pid_file: basic_conf.get_pid_file(),
-        upgrade_sock: "/tmp/pingap_upgrade.sock".to_string(),
+        upgrade_sock: upgrade_sock_path(basic_conf),
         user: basic_conf.user.clone(),
         group: basic_conf.group.clone(),
         daemon: args.daemon,
@@ -204,9 +215,6 @@ fn new_server_config(
     {
         server_conf.upstream_keepalive_pool_size = upstream_keepalive_pool_size;
     }
-    if let Some(upgrade_sock) = &basic_conf.upgrade_sock {
-        server_conf.upgrade_sock = upgrade_sock.to_string();
-    }
     if let Some(threads) = basic_conf.threads {
         server_conf.threads = threads.max(1);
     }
@@ -219,6 +227,17 @@ fn new_server_config(
     if let Some(listener_tasks_per_fd) = basic_conf.listener_tasks_per_fd {
         server_conf.listener_tasks_per_fd = listener_tasks_per_fd;
     }
+    if let Some(dir) = &basic_conf.working_directory {
+        server_conf.working_directory = Some(std::path::PathBuf::from(dir));
+    }
+    // pingora's own `daemon_wait_for_ready` stays off on purpose. Its parent
+    // side waits on a tokio SIGUSR1 listener, and tokio's signal wake-up pipe
+    // is process-global: pingap has already created it before the fork (the
+    // config is loaded on a tokio runtime), so the daemon inherits the same
+    // pipe, its runtimes drain the wake-up, and the parent never sees the
+    // signal - it waits the full timeout and exits 1 while the daemon runs
+    // fine. The readiness hand-over pingap needs lives in
+    // `process::restart_now` instead, over a unix socket of its own.
 
     server_conf
 }
@@ -381,9 +400,12 @@ fn run_admin_node(args: Args) -> Result<(), Box<dyn Error>> {
     };
     let ps = Server::new(&server_conf, ctx)?;
     let services = ps.run(my_server.configuration.clone())?;
-    my_server.add_service(services.lb);
-
-    my_server.bootstrap();
+    // See run(): bootstrap as a service, with the listener depending on it so
+    // it waits for the inherited sockets instead of binding fresh ones.
+    let bootstrap_handle = my_server.bootstrap_as_a_service();
+    my_server
+        .add_service(services.lb)
+        .add_dependency(&bootstrap_handle);
     info!(target: LOG_TARGET, "Admin node server is running");
     let _ = get_start_time();
 
@@ -702,6 +724,18 @@ fn run() -> Result<(), Box<dyn Error>> {
         if args.autorestart {
             new_args.push("--autorestart".to_string());
         }
+        // The readiness channel for the hand-over: a unix socket next to the
+        // upgrade socket, plus the pid file both generations share so that a
+        // daemon dying before it reports is noticed.
+        cmd.ready_sock = std::path::PathBuf::from(format!(
+            "{}.ready",
+            upgrade_sock_path(&config.basic)
+        ));
+        cmd.ready_timeout = config
+            .basic
+            .restart_ready_timeout
+            .unwrap_or(process::DEFAULT_RESTART_READY_TIMEOUT);
+        cmd.pid_file = config.basic.get_pid_file();
         cmd.args = new_args;
         process::set_restart_process_command(cmd);
     }
@@ -765,7 +799,22 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
         }
     }
-    my_server.bootstrap();
+    // Bootstrap runs as a service rather than up front so that a restart's
+    // readiness report (next) can be ordered *before* it: bootstrap is where
+    // the new process asks the old one for the listening sockets, and the
+    // old one only hands them over after that report. Every listener below
+    // declares a dependency on this handle: a listening service builds its
+    // sockets from the inherited fds when it starts, and would bind fresh
+    // ones if it ran first.
+    let bootstrap_handle = my_server.bootstrap_as_a_service();
+    // Started by `--autorestart`? Report readiness to the process that
+    // spawned us right before bootstrap asks it for the listening sockets;
+    // that report is what lets it send itself SIGQUIT.
+    if let Some(service) = process::new_ready_notify_service() {
+        let notify_handle =
+            my_server.add_service(background_service("ready_notify", service));
+        bootstrap_handle.add_dependency(&notify_handle);
+    }
 
     #[cfg(feature = "pyro")]
     if let Some(url) = &config.basic.pyroscope {
@@ -929,7 +978,9 @@ fn run() -> Result<(), Box<dyn Error>> {
             simple_background_service.add_task("prometheus_push", service);
         }
         let services = ps.run(my_server.configuration.clone())?;
-        my_server.add_service(services.lb);
+        my_server
+            .add_service(services.lb)
+            .add_dependency(&bootstrap_handle);
     }
 
     let basic_config = &config.basic;
