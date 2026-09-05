@@ -27,6 +27,7 @@ pingap-config = { workspace = true }
 pingap-core = { workspace = true }
 pingap-discovery = { workspace = true }
 pingap-health = { workspace = true }
+pingap-util = { workspace = true }
 pingora = { workspace = true }
 pingora-runtime = { workspace = true }
 serde = { workspace = true }
@@ -36,6 +37,7 @@ tracing = { workspace = true }
 
 
 [dev-dependencies]
+rcgen = { workspace = true }
 pretty_assertions = "1.4.1"
 tokio-test = "0.4.4"
 criterion = { version = "0.7.0", features = ["html_reports"] }

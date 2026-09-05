@@ -401,6 +401,22 @@ pub struct UpstreamConf {
     /// protocols need this), `deny` forwards none.
     pub h1_upgrade: Option<String>,
 
+    /// CA certificate(s) used to verify this upstream's server certificate
+    /// instead of the system trust store: a PEM file path, base64-encoded
+    /// PEM, or raw PEM, holding one or more certificates. Lets a private
+    /// or self-signed backend keep `verify_cert` enabled.
+    pub ca: Option<String>,
+
+    /// HTTP/2 flow-control window advertised per stream to this upstream
+    /// (RFC 9113 §6.9.2), between 1 and 2 GiB - 1; pingora defaults to
+    /// 8 MiB. Larger windows help big responses on high-latency links.
+    pub h2_stream_window_size: Option<ByteSize>,
+
+    /// HTTP/2 connection-level flow-control window advertised to this
+    /// upstream, shared by every stream on the connection, between 1 and
+    /// 2 GiB - 1; pingora defaults to 8 MiB.
+    pub h2_connection_window_size: Option<ByteSize>,
+
     /// Timeout for establishing new connections
     #[serde(default)]
     #[serde(with = "humantime_serde")]
@@ -495,6 +511,10 @@ impl Validate for UpstreamConf {
 
         // Validate the HTTP/1 upgrade policy name
         self.validate_h1_upgrade()?;
+
+        // Validate the custom CA bundle and the HTTP/2 flow-control windows
+        self.validate_ca()?;
+        self.validate_h2_window()?;
 
         Ok(())
     }
@@ -636,6 +656,32 @@ impl UpstreamConf {
             });
         }
 
+        Ok(())
+    }
+
+    fn validate_ca(&self) -> Result<()> {
+        if let Some(ca) = &self.ca {
+            validate_cert(ca).map_err(|e| Error::Invalid {
+                message: format!("upstream ca is invalid: {e}"),
+            })?;
+        }
+        Ok(())
+    }
+
+    fn validate_h2_window(&self) -> Result<()> {
+        // RFC 9113 §6.9.2: a flow-control window cannot exceed 2^31 - 1.
+        for (name, value) in [
+            ("h2 stream window size", self.h2_stream_window_size),
+            ("h2 connection window size", self.h2_connection_window_size),
+        ] {
+            if let Some(size) = value
+                && !(1..=H2_MAX_WINDOW_SIZE).contains(&size.as_u64())
+            {
+                return Err(Error::Invalid {
+                    message: format!("{name} should be between 1 and 2GiB - 1"),
+                });
+            }
+        }
         Ok(())
     }
 }
@@ -1969,6 +2015,107 @@ max_h2_streams = 100
         assert_eq!(
             "Invalid error max h2 streams should be greater than 0",
             result.expect_err("").to_string()
+        );
+    }
+
+    #[test]
+    fn test_upstream_ca_and_h2_window() {
+        // spellchecker:off
+        let pem = r#"-----BEGIN CERTIFICATE-----
+MIIEljCCAv6gAwIBAgIQeYUdeFj3gpzhQes3aGaMZTANBgkqhkiG9w0BAQsFADCB
+pTEeMBwGA1UEChMVbWtjZXJ0IGRldmVsb3BtZW50IENBMT0wOwYDVQQLDDR4aWVz
+aHV6aG91QHhpZXNodXpob3VzLU1hY0Jvb2stQWlyLmxvY2FsICjosKLmoJHmtLIp
+MUQwQgYDVQQDDDtta2NlcnQgeGllc2h1emhvdUB4aWVzaHV6aG91cy1NYWNCb29r
+LUFpci5sb2NhbCAo6LCi5qCR5rSyKTAeFw0yMzA5MjQxMzA1MjdaFw0yNTEyMjQx
+MzA1MjdaMGgxJzAlBgNVBAoTHm1rY2VydCBkZXZlbG9wbWVudCBjZXJ0aWZpY2F0
+ZTE9MDsGA1UECww0eGllc2h1emhvdUB4aWVzaHV6aG91cy1NYWNCb29rLUFpci5s
+b2NhbCAo6LCi5qCR5rSyKTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEB
+ALuJ8lYEj9uf4iE9hguASq7re87Np+zJc2x/eqr1cR/SgXRStBsjxqI7i3xwMRqX
+AuhAnM6ktlGuqidl7D9y6AN/UchqgX8AetslRJTpCcEDfL/q24zy0MqOS0FlYEgh
+s4PIjWsSNoglBDeaIdUpN9cM/64IkAAtHndNt2p2vPfjrPeixLjese096SKEnZM/
+xBdWF491hx06IyzjtWKqLm9OUmYZB9d/gDGnDsKpqClw8m95opKD4TBHAoE//WvI
+m1mZnjNTNR27vVbmnc57d2Lx2Ib2eqJG5zMsP2hPBoqS8CKEwMRFLHAcclNkI67U
+kcSEGaWgr15QGHJPN/FtjDsCAwEAAaN+MHwwDgYDVR0PAQH/BAQDAgWgMBMGA1Ud
+JQQMMAoGCCsGAQUFBwMBMB8GA1UdIwQYMBaAFJo0y9bYUM/OuenDjsJ1RyHJfL3n
+MDQGA1UdEQQtMCuCBm1lLmRldoIJbG9jYWxob3N0hwR/AAABhxAAAAAAAAAAAAAA
+AAAAAAABMA0GCSqGSIb3DQEBCwUAA4IBgQAlQbow3+4UyQx+E+J0RwmHBltU6i+K
+soFfza6FWRfAbTyv+4KEWl2mx51IfHhJHYZvsZqPqGWxm5UvBecskegDExFMNFVm
+O5QixydQzHHY2krmBwmDZ6Ao88oW/qw4xmMUhzKAZbsqeQyE/uiUdyI4pfDcduLB
+rol31g9OFsgwZrZr0d1ZiezeYEhemnSlh9xRZW3veKx9axgFttzCMmWdpGTCvnav
+ZVc3rB+KBMjdCwsS37zmrNm9syCjW1O5a1qphwuMpqSnDHBgKWNpbsgqyZM0oyOc
+9Bkja+BV5wFO+4zH5WtestcrNMeoQ83a5lI0m42u/bUEJ/T/5BQBSFidNuvS7Ylw
+IZpXa00xvlnm1BOHOfRI4Ehlfa5jmfcdnrGkQLGjiyygQtKcc7rOXGK+mSeyxwhs
+sIARwslSQd4q0dbYTPKvvUHxTYiCv78vQBAsE15T2GGS80pAFDBW9vOf3upANvOf
+EHjKf0Dweb4ppL4ddgeAKU5V0qn76K2fFaE=
+-----END CERTIFICATE-----"#;
+        // spellchecker:on
+
+        // A PEM bundle (raw or base64) and the two windows parse, validate
+        // and round-trip through TOML.
+        let conf: UpstreamConf = toml::from_str(&format!(
+            r#"
+addrs = ["127.0.0.1:8080"]
+ca = "{}"
+h2_stream_window_size = "1mib"
+h2_connection_window_size = "16mib"
+"#,
+            base64_encode(pem)
+        ))
+        .unwrap();
+        assert_eq!(true, conf.ca.is_some());
+        assert_eq!(Some(ByteSize::mib(1)), conf.h2_stream_window_size);
+        assert_eq!(Some(ByteSize::mib(16)), conf.h2_connection_window_size);
+        assert_eq!(true, conf.validate().is_ok());
+        let toml = toml::to_string(&conf).unwrap();
+        assert_eq!(true, toml.contains("h2_stream_window_size = \"1.0 MiB\""));
+        let restored: UpstreamConf = toml::from_str(&toml).unwrap();
+        assert_eq!(conf.ca, restored.ca);
+        assert_eq!(
+            conf.h2_connection_window_size,
+            restored.h2_connection_window_size
+        );
+
+        // Absent by default: system trust store and pingora's window sizes.
+        let conf = UpstreamConf {
+            addrs: vec!["127.0.0.1:8080".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(None, conf.ca);
+        assert_eq!(None, conf.h2_stream_window_size);
+        assert_eq!(None, conf.h2_connection_window_size);
+        assert_eq!(true, conf.validate().is_ok());
+
+        // Something that is not a certificate is rejected up front.
+        let conf = UpstreamConf {
+            addrs: vec!["127.0.0.1:8080".to_string()],
+            ca: Some("not a certificate".to_string()),
+            ..Default::default()
+        };
+        let err = conf.validate().unwrap_err().to_string();
+        assert_eq!(true, err.contains("upstream ca is invalid"), "{err}");
+
+        // Windows must stay within RFC 9113's 2^31 - 1 limit and be non-zero.
+        let conf = UpstreamConf {
+            addrs: vec!["127.0.0.1:8080".to_string()],
+            h2_stream_window_size: Some(ByteSize::b(0)),
+            ..Default::default()
+        };
+        let err = conf.validate().unwrap_err().to_string();
+        assert_eq!(
+            true,
+            err.contains("h2 stream window size should be between"),
+            "{err}"
+        );
+        let conf = UpstreamConf {
+            addrs: vec!["127.0.0.1:8080".to_string()],
+            h2_connection_window_size: Some(ByteSize::gib(2)),
+            ..Default::default()
+        };
+        let err = conf.validate().unwrap_err().to_string();
+        assert_eq!(
+            true,
+            err.contains("h2 connection window size should be between"),
+            "{err}"
         );
     }
 

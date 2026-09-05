@@ -468,6 +468,15 @@ export default {
     stripConnectionNominated: "Strip Connection-nominated Headers",
     rejectMalformedConnectionNominations:
       "Reject Malformed Connection Nominations",
+    ca: "Upstream CA",
+    caPlaceholder:
+      "Input the CA bundle (PEM, base64 or a PEM file path) that verifies the upstream certificate instead of the system trust store",
+    h2StreamWindowSize: "H2 Stream Window Size",
+    h2StreamWindowSizePlaceholder:
+      "Input the HTTP/2 per-stream flow-control window, e.g. 8mib (1 to 2GiB - 1)",
+    h2ConnectionWindowSize: "H2 Connection Window Size",
+    h2ConnectionWindowSizePlaceholder:
+      "Input the HTTP/2 connection-level flow-control window, e.g. 8mib",
     sni: "Sni",
     sniPlaceholder: "Input server name indication for tls protocol",
     verifyCert: "Verify Certificate",

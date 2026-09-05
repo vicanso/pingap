@@ -110,6 +110,24 @@ addrs = ["127.0.0.1:5000", "127.0.0.1:5001 10"]
 # - "deny": forward none
 # Default `websocket_only`
 # h1_upgrade = "preserve"
+#
+# CA certificate(s) used to verify this upstream's certificate instead of
+# the system trust store: a PEM file path, base64-encoded PEM or raw PEM,
+# holding one or more certificates. Lets a private or self-signed backend
+# keep verify_cert enabled. Only matters when the upstream uses TLS.
+# Default `none` (system trust store)
+# ca = "/opt/pingap/conf/upstream-ca.pem"
+#
+# HTTP/2 flow-control window advertised per stream to this upstream, between
+# 1 and 2GiB - 1 (RFC 9113). Larger windows help big responses on
+# high-latency links.
+# Default `8mib` (pingora default)
+# h2_stream_window_size = "8mib"
+#
+# HTTP/2 connection-level flow-control window advertised to this upstream,
+# shared by every stream on the connection, between 1 and 2GiB - 1.
+# Default `8mib` (pingora default)
+# h2_connection_window_size = "8mib"
 
 # How long to wait before giving up establishing a TCP connection
 # Default `none`

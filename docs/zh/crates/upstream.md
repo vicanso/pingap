@@ -27,8 +27,8 @@
 - **主动健康检查**：周期性探测后端；不健康后端会自动、临时地从负载均衡池移除。
 
 - **高级配置**：
-  - **TLS & SNI**：可配置 TLS 与 SNI 的安全后端连接。
-  - **HTTP/2 & ALPN**：支持 ALPN 协商 HTTP/1.1 或 HTTP/2。
+  - **TLS & SNI**：可配置 TLS 与 SNI 的安全后端连接。可为单个上游指定私有 CA（`ca`，支持 PEM 文件路径、base64 或原始 PEM）替代系统信任库，使自签名或内部 PKI 的后端也能保持 `verify_cert` 开启；连接池同时按该 CA 分组，不同 CA 的上游不会复用同一条连接。
+  - **HTTP/2 & ALPN**：支持 ALPN 协商 HTTP/1.1 或 HTTP/2，并可按上游设置流控窗口（`h2_stream_window_size`、`h2_connection_window_size`），适合高延迟链路上的大响应。
   - **连接超时**：连接、读、写与空闲超时的细粒度控制。
   - **TCP 控制**：TCP keepalive、缓冲区大小与 TCP Fast Open 等高级选项。
   - **请求头策略**：默认按 RFC 9110 的要求，在请求到达后端前剥离 hop-by-hop 头与 `Connection` 提名的头，且只转发 WebSocket 升级。每条规则都可按上游单独放宽（`strip_hop_by_hop`、`strip_connection_nominated`、`reject_malformed_connection_nominations`、`h1_upgrade`），供仍依赖旧透传行为的后端使用，例如 Docker `attach`/`exec` 或 h2c 升级。

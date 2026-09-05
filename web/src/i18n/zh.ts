@@ -425,6 +425,14 @@ export default {
     stripHopByHop: "剥离 hop-by-hop 头",
     stripConnectionNominated: "剥离 Connection 提名的头",
     rejectMalformedConnectionNominations: "拒绝畸形的 Connection 提名",
+    ca: "上游 CA",
+    caPlaceholder:
+      "输入校验上游证书所用的 CA（PEM、base64 或 PEM 文件路径），替代系统信任库",
+    h2StreamWindowSize: "H2 流窗口大小",
+    h2StreamWindowSizePlaceholder:
+      "输入 HTTP/2 每个流的流控窗口，如 8mib（1 至 2GiB - 1）",
+    h2ConnectionWindowSize: "H2 连接窗口大小",
+    h2ConnectionWindowSizePlaceholder: "输入 HTTP/2 连接级流控窗口，如 8mib",
     sni: "Sni",
     sniPlaceholder: "输入sni的名称",
     verifyCert: "证书校验",

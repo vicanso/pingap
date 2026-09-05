@@ -319,6 +319,24 @@ export default function Upstreams() {
       span: 2,
       category: ExFormItemCategory.NUMBER,
     },
+    {
+      name: "h2_stream_window_size",
+      section: sec.tls,
+      label: upstreamI18n("h2StreamWindowSize"),
+      placeholder: upstreamI18n("h2StreamWindowSizePlaceholder"),
+      defaultValue: upstreamConfig.h2_stream_window_size,
+      span: 2,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
+      name: "h2_connection_window_size",
+      section: sec.tls,
+      label: upstreamI18n("h2ConnectionWindowSize"),
+      placeholder: upstreamI18n("h2ConnectionWindowSizePlaceholder"),
+      defaultValue: upstreamConfig.h2_connection_window_size,
+      span: 2,
+      category: ExFormItemCategory.TEXT,
+    },
     // Request-header policy towards the upstream. Unset means pingora's
     // standards-oriented default; each switch is an escape hatch for a
     // backend that still depends on the old passthrough behaviour.
@@ -401,6 +419,20 @@ export default function Upstreams() {
       span: 2,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
+    },
+    {
+      name: "ca",
+      section: sec.tls,
+      label: upstreamI18n("ca"),
+      placeholder: upstreamI18n("caPlaceholder"),
+      defaultValue: upstreamConfig.ca,
+      span: 6,
+      category: ExFormItemCategory.TEXTAREA,
+      rows: Math.min(
+        20,
+        Math.max(3, (upstreamConfig.ca || "").split("\n").length),
+      ),
+      nullAsEmpty: true,
     },
     {
       name: "ipv4_only",
@@ -601,6 +633,8 @@ export default function Upstreams() {
     tcp_idle: newZodDuration().optional(),
     tcp_interval: newZodDuration().optional(),
     tcp_recv_buf: newZodBytes().optional(),
+    h2_stream_window_size: newZodBytes().optional(),
+    h2_connection_window_size: newZodBytes().optional(),
   });
 
   const onRemove = async () => {

@@ -22,6 +22,9 @@ export interface Upstream {
   strip_connection_nominated?: boolean;
   reject_malformed_connection_nominations?: boolean;
   h1_upgrade?: string;
+  ca?: string;
+  h2_stream_window_size?: string;
+  h2_connection_window_size?: string;
   health_check?: string;
   ipv4_only?: boolean;
   enable_tracer?: boolean;

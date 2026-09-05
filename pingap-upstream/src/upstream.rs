@@ -23,6 +23,7 @@ use crate::{LOG_TARGET, UpstreamProvider, Upstreams};
 use ahash::AHashMap;
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
+use bytesize::ByteSize;
 use derive_more::Debug;
 use futures_util::FutureExt;
 use http::StatusCode;
@@ -48,11 +49,13 @@ use pingora::lb::{Backends, LoadBalancer};
 use pingora::protocols::ALPN;
 use pingora::protocols::l4::ext::TcpKeepalive;
 use pingora::proxy::Session;
+use pingora::tls::x509::X509;
 use pingora::upstreams::peer::{
     H1UpgradePolicy, HttpPeer, HttpUpstreamRequestPolicy, Tracer,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
@@ -191,6 +194,21 @@ pub struct Upstream {
     /// How request headers are sanitized on the way to this upstream:
     /// pingora's standards-oriented default unless the config opts out.
     request_policy: HttpUpstreamRequestPolicy,
+
+    /// CA bundle that replaces the system trust store when this upstream's
+    /// certificate is verified; `None` keeps the system store.
+    ca: Option<Arc<Box<[X509]>>>,
+
+    /// Connection-pool isolation key derived from `ca`; `0` when no CA is set.
+    ca_key: u64,
+
+    /// HTTP/2 per-stream flow-control window advertised to this upstream;
+    /// `None` keeps pingora's default.
+    h2_stream_window_size: Option<u32>,
+
+    /// HTTP/2 connection-level flow-control window advertised to this
+    /// upstream; `None` keeps pingora's default.
+    h2_connection_window_size: Option<u32>,
 
     /// Maximum number of concurrent HTTP/2 streams per connection.
     /// When unset, Pingora's default (1) is used.
@@ -412,6 +430,50 @@ fn new_request_policy(conf: &UpstreamConf) -> HttpUpstreamRequestPolicy {
     policy
 }
 
+/// Parses the configured CA bundle (a PEM file path, base64-encoded PEM or
+/// raw PEM holding one or more certificates) into the certificate list that
+/// pingora installs as the peer's verify store.
+fn new_ca(conf: &UpstreamConf) -> Result<Option<Arc<Box<[X509]>>>> {
+    let Some(value) = &conf.ca else {
+        return Ok(None);
+    };
+    let ca_error = |message: String| Error::Common {
+        category: "ca".to_string(),
+        message,
+    };
+    let mut certs = vec![];
+    for pem in
+        pingap_util::convert_pem(value).map_err(|e| ca_error(e.to_string()))?
+    {
+        let mut parsed =
+            X509::stack_from_pem(&pem).map_err(|e| ca_error(e.to_string()))?;
+        certs.append(&mut parsed);
+    }
+    if certs.is_empty() {
+        return Err(ca_error("no certificate found in ca".to_string()));
+    }
+    Ok(Some(Arc::new(certs.into_boxed_slice())))
+}
+
+/// Derives the pool-isolation key for a CA bundle. pingora's connection reuse
+/// key covers the address, SNI and verify flags but not `ca`, so without this
+/// an upstream could ride on a connection that another upstream at the same
+/// address verified against a different CA (or that this upstream itself
+/// could never have verified).
+fn ca_group_key(conf: &UpstreamConf) -> u64 {
+    conf.ca.as_ref().map_or(0, |ca| {
+        let mut hasher = DefaultHasher::new();
+        ca.hash(&mut hasher);
+        hasher.finish()
+    })
+}
+
+/// Narrows a configured HTTP/2 window to the `u32` pingora takes; the config
+/// layer already rejects anything above RFC 9113's 2^31 - 1.
+fn h2_window_size(size: Option<ByteSize>) -> Option<u32> {
+    size.map(|v| u32::try_from(v.as_u64()).unwrap_or(u32::MAX))
+}
+
 impl Upstream {
     /// Creates a new Upstream instance from the provided configuration
     ///
@@ -507,6 +569,12 @@ impl Upstream {
             lb,
             alpn,
             request_policy: new_request_policy(conf),
+            ca: new_ca(conf)?,
+            ca_key: ca_group_key(conf),
+            h2_stream_window_size: h2_window_size(conf.h2_stream_window_size),
+            h2_connection_window_size: h2_window_size(
+                conf.h2_connection_window_size,
+            ),
             max_h2_streams: conf.max_h2_streams,
             connection_timeout: conf.connection_timeout,
             total_connection_timeout: conf.total_connection_timeout,
@@ -641,6 +709,13 @@ impl Upstream {
             p.options.alpn = self.alpn.clone();
             // Hop-by-hop / Connection / Upgrade handling for this upstream
             p.options.http_upstream_request_policy = self.request_policy;
+            // Private CA bundle for verifying this upstream's certificate
+            p.options.ca = self.ca.clone();
+            p.group_key = self.ca_key;
+            // HTTP/2 flow-control windows advertised to this upstream
+            p.options.h2_stream_window_size = self.h2_stream_window_size;
+            p.options.h2_connection_window_size =
+                self.h2_connection_window_size;
             // Override the default number of concurrent h2 streams per
             // connection to enable practical HTTP/2 multiplexing to the backend
             if let Some(max_h2_streams) = self.max_h2_streams {
@@ -944,6 +1019,7 @@ mod tests {
         new_load_balancer,
     };
     use crate::new_ahash_upstreams;
+    use bytesize::ByteSize;
     use pingap_core::UpstreamInstance;
     use pingap_discovery::Discovery;
     use pingora::protocols::ALPN;
@@ -1199,6 +1275,70 @@ mod tests {
         assert_eq!(false, policy.strip_connection_nominated);
         assert_eq!(true, policy.strip_hop_by_hop);
         assert_eq!(H1UpgradePolicy::WebSocketOnly, policy.h1_upgrade);
+    }
+
+    #[tokio::test]
+    async fn test_upstream_peer_ca_and_h2_window() {
+        let input_header =
+            "GET /vicanso/pingap HTTP/1.1\r\nHost: github.com\r\n\r\n";
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let new_peer = |conf: UpstreamConf| {
+            let up = Upstream::new("ca", &conf, None).unwrap();
+            let mut client_ip = None;
+            up.new_http_peer(&session, &mut client_ip, true).unwrap()
+        };
+
+        // Nothing set: system trust store and pingora's window defaults.
+        let peer = new_peer(UpstreamConf {
+            addrs: vec!["192.168.1.1:8001".to_string()],
+            ..Default::default()
+        });
+        assert_eq!(true, peer.options.ca.is_none());
+        assert_eq!(0, peer.group_key);
+        assert_eq!(None, peer.options.h2_stream_window_size);
+        assert_eq!(None, peer.options.h2_connection_window_size);
+
+        // A self-signed bundle with two certificates and explicit windows.
+        let cert =
+            rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+                .unwrap();
+        let pem = cert.cert.pem();
+        let bundle = format!("{pem}{pem}");
+        let peer = new_peer(UpstreamConf {
+            addrs: vec!["192.168.1.1:8001".to_string()],
+            sni: Some("localhost".to_string()),
+            ca: Some(bundle),
+            h2_stream_window_size: Some(ByteSize::mib(1)),
+            h2_connection_window_size: Some(ByteSize::mib(16)),
+            ..Default::default()
+        });
+        assert_eq!(2, peer.options.ca.as_ref().unwrap().len());
+        // Pooled connections are keyed by the CA bundle as well.
+        assert_ne!(0, peer.group_key);
+        assert_eq!(Some(1024 * 1024), peer.options.h2_stream_window_size);
+        assert_eq!(
+            Some(16 * 1024 * 1024),
+            peer.options.h2_connection_window_size
+        );
+
+        // Garbage is rejected when the upstream is built, not per request.
+        let err = Upstream::new(
+            "ca",
+            &UpstreamConf {
+                addrs: vec!["192.168.1.1:8001".to_string()],
+                ca: Some(
+                    "-----BEGIN CERTIFICATE-----\nnope\n-----END CERTIFICATE-----"
+                        .to_string(),
+                ),
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!(true, err.contains("category: ca"), "{err}");
     }
 
     #[test]

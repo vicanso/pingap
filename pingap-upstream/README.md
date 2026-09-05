@@ -27,8 +27,8 @@
 -   **Active Health Checking**: Periodically probes backend servers to ensure they are healthy. Unhealthy backends are automatically and temporarily removed from the load balancing pool.
 
 -   **Advanced Configuration**:
-    -   **TLS & SNI**: Secure connections to backends with configurable TLS and Server Name Indication.
-    -   **HTTP/2 & ALPN**: Supports ALPN for negotiating HTTP/1.1 or HTTP/2 with backends.
+    -   **TLS & SNI**: Secure connections to backends with configurable TLS and Server Name Indication. A private CA bundle (`ca`, as a PEM file path, base64 or raw PEM) can replace the system trust store for one upstream, so self-signed or internal-PKI backends keep `verify_cert` on; pooled connections are keyed by that bundle, so upstreams with different CAs never share one.
+    -   **HTTP/2 & ALPN**: Supports ALPN for negotiating HTTP/1.1 or HTTP/2 with backends, with per-upstream flow-control windows (`h2_stream_window_size`, `h2_connection_window_size`) for large responses over high-latency links.
     -   **Connection Timeouts**: Fine-grained control over connection, read, write, and idle timeouts.
     -   **TCP Control**: Advanced options for TCP keepalives, buffer sizes, and TCP Fast Open.
     -   **Request Header Policy**: By default hop-by-hop and `Connection`-nominated request headers are stripped before a request reaches the backend and only WebSocket upgrades are forwarded, as RFC 9110 asks. Each rule can be relaxed per upstream (`strip_hop_by_hop`, `strip_connection_nominated`, `reject_malformed_connection_nominations`, `h1_upgrade`) for a backend that still depends on the old passthrough behaviour, such as Docker `attach`/`exec` or h2c upgrades.
