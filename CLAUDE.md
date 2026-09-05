@@ -120,7 +120,7 @@ CLI flags worth knowing: `-c/--conf <url>`, `-d/--daemon`, `-u/--upgrade` (hot u
 
 ## CI gates
 
-`.github/workflows/test.yml` runs every gate listed below; any one of them failing breaks the build. Reproduce locally with the corresponding command:
+`.github/workflows/test.yml` runs every gate listed below on pushes to `main`, on pull requests against `main`, and on manual dispatch (`gh workflow run test.yml --ref <branch>`); any one of them failing breaks the build. The same file also publishes the `vicanso/pingap:latest`/`:full` Docker images from its `build`/`merge` jobs, which are guarded to pushes on `main` - a PR or dispatch run must never reach them. Reproduce locally with the corresponding command:
 
 | CI step | Local equivalent |
 |---|---|

@@ -3,6 +3,18 @@ on:
   push:
     # tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
     branches: [main]
+  # Both run only the `linux` gate. The Docker jobs below publish the
+  # `:latest`/`:full` images and are guarded to pushes on main, otherwise
+  # a branch run would ship that branch as `latest`.
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# One run per ref. Superseded branch/PR runs are cancelled; main is not,
+# so a half-pushed image set cannot be left behind.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -143,6 +155,9 @@ jobs:
           cargo build --release --features=full
           ls -lh target/release
   build:
+    # Publishes vicanso/pingap:{amd64,arm64}-{latest,full}. Main only: a
+    # pull_request or workflow_dispatch run must never push images.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     timeout-minutes: 3600
     runs-on: ${{ matrix.platform.runs-on }}
     strategy:
@@ -219,6 +234,9 @@ jobs:
         run: |
           echo ${{ steps.docker_build.outputs.digest }}
   merge:
+    # Same guard as `build`, spelled out rather than relying on `needs`
+    # to skip this job whenever `build` was skipped.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-22.04
     strategy:
       matrix:
