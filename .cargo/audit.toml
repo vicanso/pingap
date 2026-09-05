@@ -29,13 +29,4 @@ ignore = [
     # output. The `exr` path was removed by trimming image's default features.
     # Remove when rav1e moves to pastey or drops the dependency.
     "RUSTSEC-2024-0436",
-
-    # git2 0.20 (unsound: Remote::list() and Signature-from-BlameHunk). A build
-    # dependency only, via vergen-git2, which reads the commit hash at compile
-    # time - git2 is not in the shipped binary, and vergen-git2 references
-    # neither Remote nor Blame, so both unsound paths are unreachable. The fix
-    # is git2 0.21, which needs vergen-git2 10, whose rust-version is 1.95 -
-    # this workspace's MSRV is 1.88. Remove when the MSRV moves to 1.95+.
-    "RUSTSEC-2026-0183",
-    "RUSTSEC-2026-0184",
 ]

@@ -914,46 +914,45 @@ impl Ctx {
 /// * `method` - The HTTP method as a string.
 /// * `uri` - The request URI.
 ///
-/// Returns: A CacheKey combining the namespace, custom keys (if any), method and URI.
+/// Returns: A CacheKey whose primary is the namespace, custom keys (if any),
+/// method and URI concatenated, and whose `user_tag` is the namespace.
 pub fn get_cache_key(ctx: &Ctx, method: &str, uri: &Uri) -> CacheKey {
     let Some(cache_info) = &ctx.cache else {
         // Return an empty key if cache is not configured for this context.
-        return CacheKey::new("", "", "");
+        return CacheKey::new("", "");
     };
     let namespace = cache_info.namespace.as_ref().map_or("", |v| v);
     // Materialize the URI once (Display) and reuse for capacity + write.
     // Keep full-URI semantics so existing cache keys stay stable across upgrades.
     let uri_str = uri.to_string();
-    let key = if let Some(keys) = &cache_info.keys {
-        // Pre-allocate string capacity to avoid reallocations.
-        let mut key_buf = String::with_capacity(
-            keys.iter().map(|s| s.len() + 1).sum::<usize>()
-                + method.len()
-                + 1
-                + uri_str.len(),
-        );
-
-        // Join custom key components with ':'.
-        for (i, k) in keys.iter().enumerate() {
-            if i > 0 {
-                key_buf.push(':');
-            }
+    // pingora's CacheKey used to take the namespace as its own argument and
+    // hashed `namespace ++ primary` as one unframed byte string. That argument
+    // is gone, so the namespace is written straight in front of the primary
+    // here: the hash comes out byte-identical and an on-disk cache filled by
+    // an older pingap stays warm across the upgrade. The storage layer still
+    // partitions by namespace, so it also travels in `user_tag`, which is
+    // carried alongside the key but never hashed.
+    let keys_len = cache_info
+        .keys
+        .as_ref()
+        .map_or(0, |keys| keys.iter().map(|s| s.len() + 1).sum::<usize>());
+    let mut key_buf = String::with_capacity(
+        namespace.len() + keys_len + method.len() + 1 + uri_str.len(),
+    );
+    key_buf.push_str(namespace);
+    // Custom key components first, each followed by ':'.
+    if let Some(keys) = &cache_info.keys {
+        for k in keys {
             key_buf.push_str(k);
+            key_buf.push(':');
         }
-        // Concatenate the method and URI.
-        let _ = write!(&mut key_buf, ":{method}:{uri_str}");
-        key_buf
-    } else {
-        // If no custom keys, use "METHOD:URI" as the key.
-        let mut key_buf =
-            String::with_capacity(method.len() + 1 + uri_str.len());
-        key_buf.push_str(method);
-        key_buf.push(':');
-        key_buf.push_str(&uri_str);
-        key_buf
-    };
+    }
+    // Then "METHOD:URI".
+    key_buf.push_str(method);
+    key_buf.push(':');
+    key_buf.push_str(&uri_str);
 
-    CacheKey::new(namespace, key, "")
+    CacheKey::new(key_buf, namespace)
 }
 
 #[cfg(test)]
@@ -961,6 +960,7 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use bytes::BytesMut;
+    use pingora::cache::key::CacheHashKey;
     use pingora::protocols::tls::SslDigest;
     use pingora::protocols::tls::SslDigestExtension;
     use pretty_assertions::assert_eq;
@@ -1057,7 +1057,7 @@ mod tests {
         // Case 1: No cache info in context.
         let ctx_no_cache = Ctx::new();
         let key1 = get_cache_key(&ctx_no_cache, method, &uri);
-        assert_eq!(key1.namespace_str(), Some(""));
+        assert_eq!(key1.user_tag, "");
         assert_eq!(key1.primary_key_str(), Some(""));
 
         // Case 2: Cache info with namespace but no keys.
@@ -1067,11 +1067,15 @@ mod tests {
             ..Default::default()
         });
         let key2 = get_cache_key(&ctx_with_ns, method, &uri);
-        assert_eq!(key2.namespace_str(), Some("my-ns"));
+        assert_eq!(key2.user_tag, "my-ns");
         assert_eq!(
             key2.primary_key_str(),
-            Some("GET:https://example.com/path")
+            Some("my-nsGET:https://example.com/path")
         );
+        // The hex pingora 0.8.1 produced for namespace "my-ns" and primary
+        // "GET:https://example.com/path". If this changes, every entry an
+        // older pingap wrote to disk becomes unreachable after an upgrade.
+        assert_eq!(key2.primary(), "3f45c68799da5997559d474ba4b5775c");
 
         // Case 3: Cache info with namespace and multiple keys.
         let mut ctx_with_keys = Ctx::new();
@@ -1081,10 +1085,10 @@ mod tests {
             ..Default::default()
         });
         let key3 = get_cache_key(&ctx_with_keys, method, &uri);
-        assert_eq!(key3.namespace_str(), Some("my-ns"));
+        assert_eq!(key3.user_tag, "my-ns");
         assert_eq!(
             key3.primary_key_str(),
-            Some("user-123:desktop:GET:https://example.com/path")
+            Some("my-nsuser-123:desktop:GET:https://example.com/path")
         );
     }
 
@@ -1184,7 +1188,7 @@ mod tests {
             "GET",
             &Uri::from_static("https://example.com/path"),
         );
-        assert_eq!(key.namespace_str(), Some(""));
+        assert_eq!(key.user_tag, "");
         assert_eq!(key.primary_key_str(), Some("GET:https://example.com/path"));
     }
 
@@ -1394,11 +1398,13 @@ mod tests {
             established_ts: SystemTime::UNIX_EPOCH
                 .checked_add(Duration::from_secs(5))
                 .unwrap(),
+            ..Default::default()
         }));
         digest.timing_digest.push(Some(TimingDigest {
             established_ts: SystemTime::UNIX_EPOCH
                 .checked_add(Duration::from_secs(3))
                 .unwrap(),
+            ..Default::default()
         }));
         digest.ssl_digest = Some(Arc::new(SslDigest {
             version: "1.3".into(),

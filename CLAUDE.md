@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Pingap is a Cloudflare-Pingora-based reverse proxy. The binary lives in `src/`; all reusable logic is split across `pingap-*` workspace crates. MSRV is `1.88.0` (Rust edition 2024). Pingora is pinned to `0.8.1` and only the `lb`/`openssl`/`cache` features are enabled.
+Pingap is a Cloudflare-Pingora-based reverse proxy. The binary lives in `src/`; all reusable logic is split across `pingap-*` workspace crates. MSRV is `1.96.0` (Rust edition 2024). Pingora is pulled from git (`rev = 09696b51bc59315353d96686355861604d0bb48c`, pingora main as of 2026-08-24, crate version still reads `0.8.0`), not from crates.io; only the `lb`/`openssl`/`cache` features are enabled. The three `pingora*` entries in `[workspace.dependencies]` must always name the same `rev`. Because these are git dependencies the `pingap-*` crates cannot be published to crates.io until pingora cuts a release containing that commit.
 
 **Build the pingora `Server` with `Server::new_with_opt_and_conf`, never `Server::new` followed by assigning `my_server.configuration`.** Since 0.8.1 the constructor snapshots the configuration into a private `Bootstrap`, and that snapshot — not `Server::configuration` — is what the receiving half of a hot upgrade reads `upgrade_sock` from. A later assignment silently leaves the two halves on different sockets.
 
@@ -71,7 +71,7 @@ util -> core -> {discovery, config, logger, location, cache, certificate, upstre
 - `pingap-plugin` — built-in plugins. Add new ones by implementing the `Plugin` trait from `pingap-core` and registering them via the plugin factory.
 - `pingap-upstream` — pingora `Backends` + load-balancing wiring; gets its backend set from `pingap-discovery` (static / DNS / Docker labels / transparent) and `pingap-health` for active checks.
 - `src/main.rs` — argument parsing, config bootstrap, daemonization, server assembly. The `src/process/` and `src/plugin/` modules handle hot reload + the admin plugin.
-- `build.rs` — uses `vergen = "9.1.0"` + `vergen-git2 = "9.1.0"` to embed `VERGEN_GIT_SHA` into the binary's `--version`. **Both crates must stay on matching majors**; if you see `Add` trait-bound errors from `vergen_lib`, the lockfile has pulled mismatched versions — refresh it.
+- `build.rs` — uses `vergen = "10.0.3"` + `vergen-git2 = "10.0.3"` to embed `VERGEN_GIT_SHA` into the binary's `--version`. **Both crates must stay on matching majors**; if you see `Add` trait-bound errors from `vergen_lib`, the lockfile has pulled mismatched versions — refresh it.
 - `examples/` — working configs to copy from: `api-gateway`, `grpc-web`, `static-serve`, `transparent-proxy`, `web-socket`.
 
 ### Hot reload vs auto-restart
@@ -113,7 +113,7 @@ CLI flags worth knowing: `-c/--conf <url>`, `-d/--daemon`, `-u/--upgrade` (hot u
 
 ## Lint and code style notes
 
-- `clippy.toml` denies unwrap outside tests, sets `cognitive-complexity-threshold = 10`, and pins `msrv = "1.88.0"`. The root `Cargo.toml` adds `unwrap_used = "deny"`.
+- `clippy.toml` denies unwrap outside tests, sets `cognitive-complexity-threshold = 10`, and pins `msrv = "1.96.0"`. The root `Cargo.toml` adds `unwrap_used = "deny"`.
 - CI runs `cargo clippy --features=full --all-targets --all -- --deny=warnings` plus `typos`. Run `make lint` before pushing.
 - The git pre-commit hook (installed via `make hooks`) just runs `make lint`.
 - `typos.toml` excludes `*.md` and `*.toml` from the spell check — typos in those file types will not be caught by `make lint`.
@@ -132,6 +132,10 @@ CLI flags worth knowing: `-c/--conf <url>`, `-d/--daemon`, `-u/--upgrade` (hot u
 | `cargo llvm-cov` | `make cov` |
 | `make release-all` (builds both `pingap` and `pingap-full`) | `make release-all` |
 | `make build-web` (web assets) | `make build-web` |
+
+### Release toolchain vs MSRV
+
+The MSRV (`rust-version` in `Cargo.toml`, `msrv` in `clippy.toml`, first entry of the `test.yml` matrix) is a floor that `test.yml` proves. Release binaries are built with a **pinned recent stable**, deliberately newer: the two `toolchain:` pins in `.github/workflows/publish.yml` (macOS, linux-gnu) and `FROM rust:…` in the `Dockerfile` are one setting and move together. The musl jobs build inside the `messense/rust-musl-cross` image and use whatever toolchain it ships. Both toolchain jobs use `dtolnay/rust-toolchain`, which runs `rustup default`; the archived `actions-rs/toolchain` only installed the toolchain, so its pin never took effect on macOS. `.github/dependabot.yml` watches the workflow actions weekly; Cargo is intentionally not covered there (Dependabot ignores `rust-version` and cannot follow the pingora git pin).
 
 ## Web admin
 

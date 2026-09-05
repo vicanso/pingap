@@ -6,7 +6,10 @@ RUN apk update \
   && cd /pingap \
   && make build-web
 
-FROM rust:1.92.0 AS builder
+# Release toolchain - keep in step with the `toolchain:` pins in
+# .github/workflows/publish.yml. (1.98.1 had no Docker Hub image yet when
+# this moved; 1.98.0 is the same release series.)
+FROM rust:1.98.0 AS builder
 
 ARG BUILD_ARGS=""
 

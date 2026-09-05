@@ -19,7 +19,7 @@
 use pingap_core::Ctx;
 use pingora::cache::NoCacheReason;
 use pingora::cache::cache_control::{
-    CacheControl, DirectiveValue, InterpretCacheControl,
+    CacheControl, DirectiveKey, DirectiveValue, InterpretCacheControl,
 };
 use pingora::http::ResponseHeader;
 use pingora::proxy::Session;
@@ -52,7 +52,7 @@ pub(crate) fn process_cache_control(
         let s_maxage_value =
             itoa::Buffer::new().format(d.as_secs()).as_bytes().to_vec();
         c.directives.insert(
-            "s-maxage".to_string(),
+            DirectiveKey::SMaxAge,
             Some(DirectiveValue(s_maxage_value)),
         );
     }

@@ -19,12 +19,13 @@ use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use pingap_core::BackgroundTask;
 use pingap_core::Error as ServiceError;
-use pingora::cache::key::{CacheHashKey, CompactCacheKey};
+use pingora::cache::key::CacheHashKey;
 use pingora::cache::storage::MissFinishType;
 use pingora::cache::storage::{HandleHit, HandleMiss};
 use pingora::cache::trace::SpanHandle;
 use pingora::cache::{
-    CacheKey, CacheMeta, HitHandler, MissHandler, PurgeType, Storage,
+    CacheKey, CacheMeta, HitHandler, MissHandler, PurgeOutcome, PurgeTarget,
+    PurgeType, Storage,
 };
 use std::any::Any;
 use std::sync::Arc;
@@ -435,7 +436,7 @@ impl Storage for HttpCache {
         key: &CacheKey,
         _trace: &SpanHandle,
     ) -> pingora::Result<Option<(CacheMeta, HitHandler)>> {
-        let namespace = key.namespace();
+        let namespace = key.user_tag().as_bytes();
         let hash = key.combined();
         if let Some(obj) = self.cache.get(&hash, namespace).await? {
             let meta = CacheMeta::deserialize(&obj.meta.0, &obj.meta.1)?;
@@ -477,7 +478,7 @@ impl Storage for HttpCache {
             meta,
             key: hash,
             primary_key: key.primary_key_str().unwrap_or_default().to_string(),
-            namespace: key.namespace().to_vec(),
+            namespace: key.user_tag().as_bytes().to_vec(),
             cache: self.cache.clone(),
             body: BytesMut::with_capacity(size),
         };
@@ -486,21 +487,28 @@ impl Storage for HttpCache {
 
     async fn purge(
         &'static self,
-        key: &CompactCacheKey,
+        target: PurgeTarget<'_>,
         _type: PurgeType,
         _trace: &SpanHandle,
-    ) -> pingora::Result<bool> {
+    ) -> pingora::Result<PurgeOutcome> {
         // This usually purges the primary key because, without a lookup,
-        // the variance key is usually empty
+        // the variance key is usually empty.
+        let key = target.key();
         let hash = key.combined();
-        // TODO get namespace of cache key
+        // The namespace rides in user_tag, which a CompactCacheKey keeps, so
+        // the purge reaches the same partition the entry was written to.
         let cache_removed =
-            if let Ok(result) = self.cache.remove(&hash, b"").await {
-                result.is_some()
-            } else {
-                false
+            match self.cache.remove(&hash, key.user_tag().as_bytes()).await {
+                Ok(result) => result.is_some(),
+                Err(_) => false,
             };
-        Ok(cache_removed)
+        // These storages have no per-entry identity beyond the key itself,
+        // so an active purge has no CacheEntryId to report.
+        Ok(if cache_removed {
+            PurgeOutcome::Purged(None)
+        } else {
+            PurgeOutcome::NotFound
+        })
     }
 
     async fn update_meta(
@@ -509,7 +517,7 @@ impl Storage for HttpCache {
         meta: &CacheMeta,
         _trace: &SpanHandle,
     ) -> pingora::Result<bool> {
-        let namespace = key.namespace();
+        let namespace = key.user_tag().as_bytes();
         let hash = key.combined();
         if let Some(mut obj) = self.cache.get(&hash, namespace).await? {
             obj.meta = meta.serialize()?;

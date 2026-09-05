@@ -4,6 +4,11 @@ on:
     tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
     # branches: []
 
+# Release toolchain: a pinned recent stable, deliberately newer than the
+# workspace MSRV. test.yml proves the MSRV; this file only has to produce
+# good binaries. The two `toolchain:` pins below and the builder image in
+# the Dockerfile are one setting - move them together.
+#
 # The built-in token instead of a personal access token: it cannot expire, and
 # an expired PAT is indistinguishable from an empty release list in the upload
 # script. Nothing here triggers on `release`, so the built-in token not raising
@@ -26,19 +31,24 @@ jobs:
       - uses: actions/checkout@v4
       - name: setup node
         uses: actions/setup-node@v4
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: 1.88.0
       - name: build-web
         run: make build-web
-      - name: Install target
-        run: |
-          brew install protobuf
-          rustup update
-          rustup target add aarch64-apple-darwin
-          rustup target add x86_64-apple-darwin
+      # dtolnay's action makes the pinned toolchain the rustup default. The
+      # archived actions-rs/toolchain it replaces only installed it: the
+      # runner's preinstalled stable stayed active, and the `rustup update`
+      # that used to follow moved that to whatever was newest on release
+      # day - v0.13.10's macOS binaries were built with 1.98.0 while the pin
+      # said 1.88.0.
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - name: Install protobuf
+        run: brew install protobuf
       - name: release
         run: |
+          rustc --version
           cargo build --release --target=aarch64-apple-darwin
           mv target/aarch64-apple-darwin/release/pingap ./pingap-darwin-aarch64
           tar -czvf pingap-darwin-aarch64.tar.gz pingap-darwin-aarch64
@@ -199,11 +209,12 @@ jobs:
           sudo apt update
           sudo apt install -y cmake libclang-dev wget gnupg ca-certificates lsb-release --no-install-recommends protobuf-compiler
       - name: Install toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.88.0
+          toolchain: 1.98.1
       - name: Run cargo release
         run: |
+          rustc --version
           make release-all
           ldd target/release/pingap
           mv target/release/pingap ./pingap-linux-gnu-${{ matrix.platform.tag }}
