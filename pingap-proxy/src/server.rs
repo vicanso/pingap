@@ -73,6 +73,7 @@ use pingora::services::listening::Service;
 use pingora::upstreams::peer::{HttpPeer, Peer};
 use scopeguard::defer;
 use snafu::Snafu;
+use std::any::Any;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
@@ -115,6 +116,10 @@ pub fn get_latency(started_at: &Instant, value: &Option<i32>) -> Option<i32> {
 
 /// Core HTTP proxy server implementation that handles request processing, caching, and monitoring.
 /// Manages server configuration, connection lifecycle, and integration with various modules.
+/// Carried from one HTTP/1 request to the next on the same downstream
+/// connection; its presence is the whole message.
+struct KeepaliveReuse;
+
 pub struct Server {
     /// Server name identifier used for logging and metrics
     name: String,
@@ -514,15 +519,30 @@ impl Server {
         if let Some(digest) = session.digest() {
             let digest_detail = get_digest_detail(digest);
             ctx.timing.connection_duration = digest_detail.connection_time;
-            ctx.conn.reused = digest_detail.connection_reused;
+            // HTTP/1: pingora already told us about keepalive reuse through
+            // on_connection_reuse(), which runs before this. HTTP/2 streams
+            // share one connection with no such signal, so only there is the
+            // "older than 100 ms" guess still applied.
+            if session.is_http2() {
+                ctx.conn.reused = digest_detail.connection_reused;
+            }
 
+            // The handshake only costs the first request on a connection.
+            // Prefer the TLS layer's own measurement; the wall-clock gap
+            // between the layers' timestamps is the fallback.
             if !ctx.conn.reused
-                && digest_detail.tls_established
-                    >= digest_detail.tcp_established
+                && let Some(handshake) =
+                    digest_detail.tls_handshake.or_else(|| {
+                        (digest_detail.tls_established
+                            >= digest_detail.tcp_established
+                            && digest_detail.tls_established > 0)
+                            .then(|| {
+                                digest_detail.tls_established
+                                    - digest_detail.tcp_established
+                            })
+                    })
             {
-                let latency = digest_detail.tls_established
-                    - digest_detail.tcp_established;
-                ctx.timing.tls_handshake = Some(latency as i32);
+                ctx.timing.tls_handshake = Some(handshake as i32);
             }
             ctx.conn.tls_cipher = digest_detail.tls_cipher;
             ctx.conn.tls_version = digest_detail.tls_version;
@@ -1202,6 +1222,32 @@ impl ProxyHttp for Server {
 
         Ok(Box::new(peer))
     }
+    /// Runs after `logging` when the downstream HTTP/1 connection stays open
+    /// for another request. Whatever this returns reaches that request's
+    /// `on_connection_reuse`, and returning `None` skips the hook entirely,
+    /// so a marker goes back even though nothing needs carrying over: the
+    /// next request has to learn that its connection is a reused one.
+    fn persist_connection_context(
+        &self,
+        _session: &Session,
+        _ctx: &Self::CTX,
+    ) -> Option<Box<dyn Any + Send + Sync>> {
+        Some(Box::new(KeepaliveReuse))
+    }
+
+    /// The exact HTTP/1 keepalive signal. It replaces the "connection older
+    /// than 100 ms" guess for this protocol, which flagged the first request
+    /// on a fresh connection whenever the handshake or the client took longer
+    /// than that; `initialize_context` leaves the flag alone for HTTP/1.
+    fn on_connection_reuse(
+        &self,
+        _session: &mut Session,
+        ctx: &mut Self::CTX,
+        _prev_ctx: Box<dyn Any + Send + Sync>,
+    ) {
+        ctx.conn.reused = true;
+    }
+
     /// Called when connection is established to upstream.
     /// Records timing metrics and TLS details.
     async fn connected_to_upstream(
@@ -1900,6 +1946,26 @@ value = 'proxy_set_headers = ["name:value"]'
 
     fn new_server() -> Server {
         new_server_with(None)
+    }
+
+    #[tokio::test]
+    async fn test_keepalive_reuse_signal() {
+        let server = new_server();
+        let input_header =
+            "GET /vicanso/pingap HTTP/1.1\r\nHost: github.com\r\n\r\n";
+        let mock_io = Builder::new().read(input_header.as_bytes()).build();
+        let mut session = Session::new_h1(Box::new(mock_io));
+        session.read_request().await.unwrap();
+        let mut ctx = Ctx::new();
+
+        // A fresh request knows nothing about reuse until pingora says so.
+        assert_eq!(false, ctx.conn.reused);
+        // Always hand a marker back, or the next request's hook never runs.
+        let carried = server
+            .persist_connection_context(&session, &ctx)
+            .expect("a marker must be carried to the next request");
+        server.on_connection_reuse(&mut session, &mut ctx, carried);
+        assert_eq!(true, ctx.conn.reused);
     }
 
     #[test]

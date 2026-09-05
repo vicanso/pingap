@@ -390,14 +390,26 @@ pub struct Ctx {
 /// Helper struct to store connection timing and TLS details
 #[derive(Debug, Default)]
 pub struct DigestDetail {
-    /// Whether the connection was reused from pool
+    /// A guess at reuse: the connection was established more than 100 ms
+    /// before this request. It is only a guess - a slow client or a long TLS
+    /// handshake trips it on a brand-new connection - so the proxy takes the
+    /// exact keepalive signal pingora gives it for HTTP/1 and applies this
+    /// only to HTTP/2, where streams share one connection with no signal.
     pub connection_reused: bool,
-    /// Total connection time in milliseconds
+    /// Age of the connection in milliseconds, wall clock.
     pub connection_time: u64,
     /// Timestamp when TCP connection was established
     pub tcp_established: u64,
     /// Timestamp when TLS handshake completed
     pub tls_established: u64,
+    /// TCP connect time in milliseconds, measured by pingora on a monotonic
+    /// clock. Only a connection this side opened has one; an accepted
+    /// connection reports `None`.
+    pub tcp_connect: Option<u64>,
+    /// TLS handshake time in milliseconds, measured by pingora on a monotonic
+    /// clock around the handshake itself; `None` without TLS or when it was
+    /// not measured.
+    pub tls_handshake: Option<u64>,
     /// TLS protocol version if using HTTPS
     pub tls_version: Option<Cow<'static, str>>,
     /// TLS cipher suite in use if using HTTPS
@@ -427,12 +439,17 @@ pub fn get_digest_detail(digest: &Digest) -> DigestDetail {
         connection_time = now - tcp_established;
     }
     let connection_reused = connection_time > 100;
+    // The first entry is the transport layer, the last one the outermost
+    // layer - the TLS session when there is one, otherwise the transport
+    // layer again, which is why the handshake is only read under TLS.
+    let tcp_connect = establishment_ms(digest.timing_digest.first());
 
     let Some(ssl_digest) = &digest.ssl_digest else {
         return DigestDetail {
             connection_reused,
             tcp_established,
             connection_time,
+            tcp_connect,
             ..Default::default()
         };
     };
@@ -441,11 +458,21 @@ pub fn get_digest_detail(digest: &Digest) -> DigestDetail {
         connection_reused,
         tcp_established,
         connection_time,
+        tcp_connect,
         tls_established: timing_to_ms(digest.timing_digest.last()),
+        tls_handshake: establishment_ms(digest.timing_digest.last()),
         // Clone the Cow: Borrowed(&'static str) is allocation-free.
         tls_version: Some(ssl_digest.version.clone()),
         tls_cipher: Some(ssl_digest.cipher.clone()),
     }
+}
+
+/// The layer's own establishment time, when pingora measured it.
+fn establishment_ms(timing: Option<&Option<TimingDigest>>) -> Option<u64> {
+    timing
+        .and_then(|item| item.as_ref())
+        .and_then(|item| item.establishment_duration)
+        .map(|duration| duration.as_millis() as u64)
 }
 
 impl Ctx {
@@ -890,9 +917,21 @@ impl Ctx {
             return;
         }
 
+        // pingora times each layer on a monotonic clock: the TCP connect on
+        // the transport entry, the handshake on the TLS entry. Prefer those.
+        if let Some(tcp_connect) = detail.tcp_connect {
+            self.timing.upstream_tcp_connect = Some(tcp_connect as i32);
+            self.timing.upstream_tls_handshake =
+                detail.tls_handshake.map(|value| value as i32);
+            return;
+        }
+
+        // Fallback for a stream that carries no measurement: split pingap's
+        // own end-to-end connect timer by the wall-clock gap between the
+        // layers' timestamps. Coarser, and the TCP share also absorbs
+        // whatever the connector did around the connect.
         let upstream_connect_time =
             self.timing.upstream_connect.unwrap_or_default();
-        // upstream tcp, tls(if https) connect time
         let mut upstream_tcp_connect = upstream_connect_time;
         if detail.tls_established > detail.tcp_established {
             let latency =
@@ -1422,6 +1461,94 @@ mod tests {
         assert_eq!(detail.tls_established, 3000);
         assert_eq!(detail.tls_version.as_deref(), Some("1.3"));
         assert_eq!(detail.tls_cipher.as_deref(), Some("123"));
+        // Nothing measured on these entries.
+        assert_eq!(detail.tcp_connect, None);
+        assert_eq!(detail.tls_handshake, None);
+
+        // pingora's per-layer measurements come through as such.
+        digest.timing_digest = vec![
+            Some(TimingDigest {
+                establishment_duration: Some(Duration::from_millis(12)),
+                ..Default::default()
+            }),
+            Some(TimingDigest {
+                establishment_duration: Some(Duration::from_millis(34)),
+                ..Default::default()
+            }),
+        ];
+        let detail = get_digest_detail(&digest);
+        assert_eq!(detail.tcp_connect, Some(12));
+        assert_eq!(detail.tls_handshake, Some(34));
+
+        // Without TLS the last entry is the transport again: no handshake.
+        digest.ssl_digest = None;
+        digest.timing_digest.truncate(1);
+        let detail = get_digest_detail(&digest);
+        assert_eq!(detail.tcp_connect, Some(12));
+        assert_eq!(detail.tls_handshake, None);
+    }
+
+    #[test]
+    fn test_update_upstream_timing_from_digest() {
+        let measured = |tcp: u64, tls: u64| Digest {
+            timing_digest: vec![
+                Some(TimingDigest {
+                    establishment_duration: Some(Duration::from_millis(tcp)),
+                    ..Default::default()
+                }),
+                Some(TimingDigest {
+                    establishment_duration: Some(Duration::from_millis(tls)),
+                    ..Default::default()
+                }),
+            ],
+            ssl_digest: Some(Arc::new(SslDigest {
+                version: "1.3".into(),
+                cipher: "123".into(),
+                organization: None,
+                serial_number: None,
+                cert_digest: vec![],
+                extension: SslDigestExtension::default(),
+            })),
+            ..Default::default()
+        };
+
+        // Measured layers are taken as they are, independent of pingap's
+        // own end-to-end timer.
+        let mut ctx = Ctx::new();
+        ctx.timing.upstream_connect = Some(100);
+        ctx.update_upstream_timing_from_digest(&measured(12, 34), false);
+        assert_eq!(Some(12), ctx.timing.upstream_tcp_connect);
+        assert_eq!(Some(34), ctx.timing.upstream_tls_handshake);
+
+        // A reused connection carries no connect cost for this request.
+        let mut ctx = Ctx::new();
+        ctx.timing.upstream_connect = Some(100);
+        ctx.update_upstream_timing_from_digest(&measured(12, 34), true);
+        assert_eq!(None, ctx.timing.upstream_tcp_connect);
+        assert_eq!(None, ctx.timing.upstream_tls_handshake);
+
+        // No measurement: fall back to splitting the end-to-end timer by
+        // the layers' wall-clock timestamps.
+        let mut ctx = Ctx::new();
+        ctx.timing.upstream_connect = Some(100);
+        let mut unmeasured = measured(0, 0);
+        unmeasured.timing_digest = vec![
+            Some(TimingDigest {
+                established_ts: SystemTime::UNIX_EPOCH
+                    .checked_add(Duration::from_millis(1_000))
+                    .unwrap(),
+                ..Default::default()
+            }),
+            Some(TimingDigest {
+                established_ts: SystemTime::UNIX_EPOCH
+                    .checked_add(Duration::from_millis(1_030))
+                    .unwrap(),
+                ..Default::default()
+            }),
+        ];
+        ctx.update_upstream_timing_from_digest(&unmeasured, false);
+        assert_eq!(Some(70), ctx.timing.upstream_tcp_connect);
+        assert_eq!(Some(30), ctx.timing.upstream_tls_handshake);
     }
 
     #[test]
