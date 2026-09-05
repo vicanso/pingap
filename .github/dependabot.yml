@@ -1,0 +1,17 @@
+# Dependabot for the workflow actions only: weekly, one PR per action that
+# has a newer tag. test.yml gates whatever it opens.
+#
+# Cargo is left out on purpose. Dependabot resolves without regard to
+# `rust-version`, so it would keep proposing kdl/sysinfo/time releases the
+# MSRV-aware `cargo update` refuses, and it cannot follow the git pin on
+# pingora. Crate updates stay a deliberate, locally verified step.
+#
+# Actions referenced by branch (`jlumbroso/free-disk-space@main`) are
+# invisible to this: Dependabot only follows tags and commit SHAs.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday

@@ -1276,8 +1276,9 @@ impl ProxyHttp for Server {
         );
         debug!(
             target: LOG_TARGET,
-            namespace = key.namespace_str(),
             primary = key.primary_key_str(),
+            // The namespace: it rides in user_tag now that CacheKey has no
+            // namespace field of its own.
             user_tag = key.user_tag(),
             "cache key callback"
         );
@@ -1665,6 +1666,7 @@ mod tests {
                 established_ts: SystemTime::UNIX_EPOCH
                     .checked_add(Duration::from_secs(10))
                     .unwrap(),
+                ..Default::default()
             })],
             ssl_digest: Some(Arc::new(SslDigest {
                 cipher: "123".into(),
@@ -2089,15 +2091,18 @@ value = 'proxy_set_headers = ["name:value"]'
                 },
             )
             .unwrap();
+        // The namespace is folded into the primary (unframed, exactly as
+        // pingora 0.8.1 hashed it) and repeated in user_tag for the storage
+        // layer. The hex is what 0.8.1 produced for namespace "pingap" and
+        // primary "ss:GET:/vicanso/pingap?size=1"; an on-disk cache written
+        // by an older pingap must still be found under it.
         assert_eq!(
             key.primary_key_str(),
-            Some("ss:GET:/vicanso/pingap?size=1")
+            Some("pingapss:GET:/vicanso/pingap?size=1")
         );
-        assert_eq!(key.namespace_str(), Some("pingap"));
-        assert_eq!(
-            r#"CacheKey { namespace: [112, 105, 110, 103, 97, 112], primary: [115, 115, 58, 71, 69, 84, 58, 47, 118, 105, 99, 97, 110, 115, 111, 47, 112, 105, 110, 103, 97, 112, 63, 115, 105, 122, 101, 61, 49], primary_bin_override: None, variance: None, user_tag: "", extensions: {} }"#,
-            format!("{key:?}")
-        );
+        assert_eq!(key.user_tag(), "pingap");
+        assert_eq!(key.primary(), "3f80aa94eab3b7e5b9a75482867f48cf");
+        assert_eq!(key.variance(), None);
     }
 
     #[tokio::test]

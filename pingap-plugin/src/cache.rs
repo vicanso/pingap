@@ -453,7 +453,7 @@ impl Plugin for Cache {
                 );
                 self.http_cache
                     .cache
-                    .remove(&key.combined(), key.namespace())
+                    .remove(&key.combined(), key.user_tag().as_bytes())
                     .await?;
             }
             return Ok(
