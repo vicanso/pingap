@@ -108,6 +108,12 @@ Notes on a few of these:
   SNI-driven certificate store from
   [pingap-certificate](../pingap-certificate/README.md). Without it the listener
   is plain HTTP, and `enabled_h2` then means h2c.
+- `h2_max_concurrent_streams`, `h2_max_header_list_size`,
+  `h2_initial_window_size`, `h2_initial_connection_window_size` and
+  `h2_idle_timeout` tune the downstream HTTP/2 SETTINGS of a listener. Unset
+  keeps pingora's bounded defaults (100 streams, 64 KiB header list), which cap
+  the memory one client connection can pin; raise them deliberately for gRPC
+  fan-in or large-header clients rather than removing the bound.
 - `prometheus_metrics` exposes the pull endpoint on this server; a URL value
   instead configures push mode.
 - `enable_server_timing` adds a `Server-Timing` response header built from the

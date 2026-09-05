@@ -856,6 +856,31 @@ pub struct ServerConf {
     /// Whether to enable HTTP/2 protocol support
     pub enabled_h2: Option<bool>,
 
+    /// Cap on concurrent HTTP/2 streams per downstream connection. Unset
+    /// keeps pingora's bounded default of 100.
+    pub h2_max_concurrent_streams: Option<u32>,
+
+    /// Largest decoded HTTP/2 request header list a client may send. Unset
+    /// keeps pingora's bounded default of 64 KiB. A client whose cookies or
+    /// tokens exceed it is refused at the h2 layer, so raise this
+    /// deliberately rather than removing the bound.
+    pub h2_max_header_list_size: Option<ByteSize>,
+
+    /// Initial HTTP/2 flow-control window per stream (RFC 9113 §6.9.2),
+    /// between 1 and 2 GiB - 1. Larger windows help big uploads on
+    /// high-latency links.
+    pub h2_initial_window_size: Option<ByteSize>,
+
+    /// Initial HTTP/2 flow-control window for the whole connection, between
+    /// 1 and 2 GiB - 1.
+    pub h2_initial_connection_window_size: Option<ByteSize>,
+
+    /// Close a downstream HTTP/2 connection that has been idle this long.
+    /// Unset leaves it open, which is pingora's default.
+    #[serde(default)]
+    #[serde(with = "humantime_serde")]
+    pub h2_idle_timeout: Option<Duration>,
+
     /// TCP keepalive idle timeout
     #[serde(default)]
     #[serde(with = "humantime_serde")]
@@ -952,9 +977,52 @@ impl ServerConf {
             // }
         }
 
+        self.validate_h2()?;
+
+        Ok(())
+    }
+
+    /// The HTTP/2 knobs are forwarded to the h2 crate as SETTINGS, which
+    /// does not check them itself: a zero or an oversized value would only
+    /// surface as a protocol error on the first client connection.
+    fn validate_h2(&self) -> Result<()> {
+        if self.h2_max_concurrent_streams == Some(0) {
+            return Err(Error::Invalid {
+                message: "h2 max concurrent streams should be greater than 0"
+                    .to_string(),
+            });
+        }
+        if let Some(size) = self.h2_max_header_list_size
+            && !(1..=u64::from(u32::MAX)).contains(&size.as_u64())
+        {
+            return Err(Error::Invalid {
+                message:
+                    "h2 max header list size should be between 1 and 4GiB - 1"
+                        .to_string(),
+            });
+        }
+        // RFC 9113 §6.9.2: a flow-control window cannot exceed 2^31 - 1.
+        for (name, value) in [
+            ("h2 initial window size", self.h2_initial_window_size),
+            (
+                "h2 initial connection window size",
+                self.h2_initial_connection_window_size,
+            ),
+        ] {
+            if let Some(size) = value
+                && !(1..=H2_MAX_WINDOW_SIZE).contains(&size.as_u64())
+            {
+                return Err(Error::Invalid {
+                    message: format!("{name} should be between 1 and 2GiB - 1"),
+                });
+            }
+        }
         Ok(())
     }
 }
+
+/// Largest HTTP/2 flow-control window the protocol allows (RFC 9113 §6.9.2).
+const H2_MAX_WINDOW_SIZE: u64 = (1 << 31) - 1;
 
 /// Basic configuration options for the application
 #[derive(Debug, Default, Deserialize, Clone, Serialize)]
@@ -1623,11 +1691,13 @@ mod tests {
     use super::{CATEGORY_BASIC, CATEGORY_UPSTREAM, convert_pingap_config};
     use super::{CertificateConf, Hashable, Validate, validate_cert};
     use super::{LocationConf, PluginCategory, ServerConf, UpstreamConf};
+    use bytesize::ByteSize;
     use pingap_core::PluginStep;
     use pingap_util::base64_encode;
     use pretty_assertions::assert_eq;
     use serde::{Deserialize, Serialize};
     use std::str::FromStr;
+    use std::time::Duration;
 
     #[test]
     fn test_plugin_step() {
@@ -2028,6 +2098,73 @@ h1_upgrade = "preserve"
         conf.locations = Some(vec!["lo".to_string()]);
         let result = conf.validate_with_locations(&location_names);
         assert_eq!(true, result.is_ok());
+    }
+
+    #[test]
+    fn test_server_h2_conf() {
+        // All five knobs parse and round-trip.
+        let conf: ServerConf = toml::from_str(
+            r#"
+addr = "127.0.0.1:3001"
+h2_max_concurrent_streams = 256
+h2_max_header_list_size = "128kb"
+h2_initial_window_size = "1mb"
+h2_initial_connection_window_size = "4mb"
+h2_idle_timeout = "2m"
+"#,
+        )
+        .unwrap();
+        assert_eq!(Some(256), conf.h2_max_concurrent_streams);
+        assert_eq!(Some(ByteSize::kb(128)), conf.h2_max_header_list_size);
+        assert_eq!(Some(ByteSize::mb(1)), conf.h2_initial_window_size);
+        assert_eq!(
+            Some(ByteSize::mb(4)),
+            conf.h2_initial_connection_window_size
+        );
+        assert_eq!(Some(Duration::from_secs(120)), conf.h2_idle_timeout);
+        assert_eq!(true, conf.validate().is_ok());
+        let restored: ServerConf =
+            toml::from_str(&toml::to_string(&conf).unwrap()).unwrap();
+        assert_eq!(Some(256), restored.h2_max_concurrent_streams);
+        assert_eq!(Some(ByteSize::kb(128)), restored.h2_max_header_list_size);
+
+        // Unset is the default and validates.
+        let base = ServerConf {
+            addr: "127.0.0.1:3001".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(None, base.h2_max_concurrent_streams);
+        assert_eq!(true, base.validate().is_ok());
+
+        // Out-of-range values are refused up front.
+        let cases: [(ServerConf, &str); 3] = [
+            (
+                ServerConf {
+                    h2_max_concurrent_streams: Some(0),
+                    ..base.clone()
+                },
+                "Invalid error h2 max concurrent streams should be greater than 0",
+            ),
+            (
+                ServerConf {
+                    h2_max_header_list_size: Some(ByteSize::b(0)),
+                    ..base.clone()
+                },
+                "Invalid error h2 max header list size should be between 1 and 4GiB - 1",
+            ),
+            (
+                ServerConf {
+                    h2_initial_window_size: Some(ByteSize::gib(2)),
+                    ..base.clone()
+                },
+                "Invalid error h2 initial window size should be between 1 and 2GiB - 1",
+            ),
+        ];
+        for (conf, message) in cases {
+            let result = conf.validate();
+            assert_eq!(true, result.is_err());
+            assert_eq!(message, result.expect_err("").to_string());
+        }
     }
 
     #[test]

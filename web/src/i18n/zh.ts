@@ -253,6 +253,20 @@ export default {
     accessLog: "访问日志格式化",
     accessLogPlaceholder: "输入日志格式化模板",
     enabledH2: "启用http2(h2c)",
+    h2MaxConcurrentStreams: "H2最大并发流",
+    h2MaxConcurrentStreamsPlaceholder:
+      "每个客户端连接的HTTP/2最大并发流数(默认100)",
+    h2MaxHeaderListSize: "H2请求头列表上限",
+    h2MaxHeaderListSizePlaceholder:
+      "接受的HTTP/2请求头列表最大字节数(默认64kib)",
+    h2IdleTimeout: "H2空闲超时",
+    h2IdleTimeoutPlaceholder: "HTTP/2客户端连接空闲多久后关闭(如2m)",
+    h2InitialWindowSize: "H2初始流窗口",
+    h2InitialWindowSizePlaceholder:
+      "每个流的HTTP/2流控窗口(如1mib，最大2gib - 1)",
+    h2InitialConnectionWindowSize: "H2初始连接窗口",
+    h2InitialConnectionWindowSizePlaceholder:
+      "每个连接的HTTP/2流控窗口(如4mib，最大2gib - 1)",
     enabledServerTiming: "启用Server Timing",
     downstreamReadTimeout: "客户端读超时",
     downstreamReadTimeoutPlaceholder: "输入客户端读超时(如30s)",

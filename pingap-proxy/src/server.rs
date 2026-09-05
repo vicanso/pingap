@@ -65,6 +65,7 @@ use pingora::modules::http::compression::{
 use pingora::modules::http::grpc_web::{GrpcWeb, GrpcWebBridge};
 use pingora::protocols::Digest;
 use pingora::protocols::http::error_resp;
+use pingora::protocols::http::v2::server::{H2Options, default_h2_options};
 use pingora::proxy::{FailToProxy, HttpProxy, http_proxy_service};
 use pingora::proxy::{ProxyHttp, Session};
 use pingora::server::configuration;
@@ -153,6 +154,13 @@ pub struct Server {
 
     /// Whether HTTP/2 protocol is enabled
     enabled_h2: bool,
+    /// Downstream HTTP/2 SETTINGS overrides, None = pingora's bounded defaults
+    h2_max_concurrent_streams: Option<u32>,
+    h2_max_header_list_size: Option<u32>,
+    h2_initial_window_size: Option<u32>,
+    h2_initial_connection_window_size: Option<u32>,
+    /// Idle timeout for downstream HTTP/2 connections
+    h2_idle_timeout: Option<Duration>,
 
     /// Whether Let's Encrypt certificate automation is enabled
     lets_encrypt_enabled: bool,
@@ -286,6 +294,12 @@ impl Server {
             lets_encrypt_enabled: false,
             global_certificates: conf.global_certificates,
             enabled_h2: conf.enabled_h2,
+            h2_max_concurrent_streams: conf.h2_max_concurrent_streams,
+            h2_max_header_list_size: conf.h2_max_header_list_size,
+            h2_initial_window_size: conf.h2_initial_window_size,
+            h2_initial_connection_window_size: conf
+                .h2_initial_connection_window_size,
+            h2_idle_timeout: conf.h2_idle_timeout,
             tcp_socket_options,
             prometheus_push_mode: prometheus_metrics.contains("://"),
             #[cfg(feature = "tracing")]
@@ -307,6 +321,34 @@ impl Server {
             config_manager: ctx.config_manager,
         };
         Ok(s)
+    }
+    /// Downstream HTTP/2 SETTINGS for this listener. `None` when nothing is
+    /// configured, so pingora's bounded defaults apply untouched. Otherwise
+    /// start from those same defaults - `H2Options::default()` is the bare h2
+    /// builder, with no stream cap and a 16 MiB header list, which would undo
+    /// the memory-exhaustion mitigation - and override only what is set.
+    fn new_h2_options(&self) -> Option<H2Options> {
+        if self.h2_max_concurrent_streams.is_none()
+            && self.h2_max_header_list_size.is_none()
+            && self.h2_initial_window_size.is_none()
+            && self.h2_initial_connection_window_size.is_none()
+        {
+            return None;
+        }
+        let mut options = default_h2_options();
+        if let Some(value) = self.h2_max_concurrent_streams {
+            options.max_concurrent_streams(value);
+        }
+        if let Some(value) = self.h2_max_header_list_size {
+            options.max_header_list_size(value);
+        }
+        if let Some(value) = self.h2_initial_window_size {
+            options.initial_window_size(value);
+        }
+        if let Some(value) = self.h2_initial_connection_window_size {
+            options.initial_connection_window_size(value);
+        }
+        Some(options)
     }
     /// Enable lets encrypt proxy plugin for handling ACME challenges at
     /// `/.well-known/acme-challenge` path
@@ -397,15 +439,18 @@ impl Server {
         let cipher_suites = self.tls_ciphersuites.clone();
         let tls_min_version = self.tls_min_version.clone();
         let tls_max_version = self.tls_max_version.clone();
+        let h2_options = self.new_h2_options();
+        let h2_idle_timeout = self.h2_idle_timeout;
         let mut lb = http_proxy_service(&conf, self);
-        // use h2c if not tls and enable http2
-        if !is_tls
-            && enabled_h2
-            && let Some(http_logic) = lb.app_logic_mut()
-        {
+        if let Some(http_logic) = lb.app_logic_mut() {
             let mut http_server_options = HttpServerOptions::default();
-            http_server_options.h2c = true;
+            // use h2c if not tls and enable http2
+            http_server_options.h2c = !is_tls && enabled_h2;
+            http_server_options.h2_idle_timeout = h2_idle_timeout;
             http_logic.server_options = Some(http_server_options);
+            // Applies to every h2 handshake this listener performs, TLS/ALPN
+            // and h2c alike. None keeps pingora's bounded defaults.
+            http_logic.h2_options = h2_options;
         }
         lb.threads = threads;
         // support listen multi address
@@ -1855,6 +1900,26 @@ value = 'proxy_set_headers = ["name:value"]'
 
     fn new_server() -> Server {
         new_server_with(None)
+    }
+
+    #[test]
+    fn test_new_h2_options() {
+        // Nothing configured: hand pingora `None` so its bounded defaults
+        // apply exactly as shipped, rather than a copy we might drift from.
+        let mut server = new_server();
+        assert_eq!(true, server.new_h2_options().is_none());
+
+        // Any single knob is enough to build an explicit options set.
+        server.h2_max_concurrent_streams = Some(256);
+        assert_eq!(true, server.new_h2_options().is_some());
+        server.h2_max_concurrent_streams = None;
+        server.h2_initial_connection_window_size = Some(4 * 1024 * 1024);
+        assert_eq!(true, server.new_h2_options().is_some());
+
+        // The idle timeout lives on HttpServerOptions, not on H2Options.
+        server.h2_initial_connection_window_size = None;
+        server.h2_idle_timeout = Some(Duration::from_secs(120));
+        assert_eq!(true, server.new_h2_options().is_none());
     }
 
     #[test]

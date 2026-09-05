@@ -110,6 +110,11 @@ export interface Server {
   lets_encrypt?: string;
   certificate_file?: string;
   enabled_h2?: boolean;
+  h2_max_concurrent_streams?: number;
+  h2_max_header_list_size?: string;
+  h2_initial_window_size?: string;
+  h2_initial_connection_window_size?: string;
+  h2_idle_timeout?: string;
   enable_server_timing?: boolean;
   global_certificates?: boolean;
   downstream_read_timeout?: string;

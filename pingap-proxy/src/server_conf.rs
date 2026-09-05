@@ -83,6 +83,15 @@ pub struct ServerConf {
     // Whether HTTP/2 protocol support is enabled for this server
     // The http protocol is using h2c
     pub enabled_h2: bool,
+    // Downstream HTTP/2 SETTINGS overrides. None keeps pingora's bounded
+    // defaults (100 concurrent streams, 64 KiB header list, h2's own
+    // 64 KiB windows) - see `Server::new_h2_options`.
+    pub h2_max_concurrent_streams: Option<u32>,
+    pub h2_max_header_list_size: Option<u32>,
+    pub h2_initial_window_size: Option<u32>,
+    pub h2_initial_connection_window_size: Option<u32>,
+    // Idle timeout for downstream HTTP/2 connections; None never closes
+    pub h2_idle_timeout: Option<Duration>,
 
     // Endpoint path for exposing Prometheus metrics
     // None means metrics collection is disabled
@@ -136,6 +145,18 @@ impl fmt::Display for ServerConf {
         // --- Protocols & Timeouts ---
         writeln!(f, "  - Protocols & Timeouts:")?;
         writeln!(f, "    HTTP/2 Enabled: {}", self.enabled_h2)?;
+        let format_opt_u32 = |opt: &Option<u32>| {
+            opt.map_or("default".to_string(), |v| v.to_string())
+        };
+        writeln!(
+            f,
+            "    HTTP/2 Limits: streams={}, header_list={}, window={}, conn_window={}, idle={}",
+            format_opt_u32(&self.h2_max_concurrent_streams),
+            format_opt_u32(&self.h2_max_header_list_size),
+            format_opt_u32(&self.h2_initial_window_size),
+            format_opt_u32(&self.h2_initial_connection_window_size),
+            format_opt_duration(&self.h2_idle_timeout)
+        )?;
         writeln!(
             f,
             "    Downstream Read Timeout: {}",
@@ -263,6 +284,19 @@ pub fn parse_from_conf(conf: PingapConfig) -> Vec<ServerConf> {
             threads: item.threads,
             global_certificates: item.global_certificates.unwrap_or_default(),
             enabled_h2: item.enabled_h2.unwrap_or_default(),
+            h2_max_concurrent_streams: item.h2_max_concurrent_streams,
+            // Validated to fit u32 by pingap-config; the fallback only
+            // guards the cast.
+            h2_max_header_list_size: item
+                .h2_max_header_list_size
+                .map(|v| u32::try_from(v.as_u64()).unwrap_or(u32::MAX)),
+            h2_initial_window_size: item
+                .h2_initial_window_size
+                .map(|v| u32::try_from(v.as_u64()).unwrap_or(u32::MAX)),
+            h2_initial_connection_window_size: item
+                .h2_initial_connection_window_size
+                .map(|v| u32::try_from(v.as_u64()).unwrap_or(u32::MAX)),
+            h2_idle_timeout: item.h2_idle_timeout,
             tcp_keepalive,
             tcp_fastopen: item.tcp_fastopen,
             reuse_port: item.reuse_port,
@@ -319,6 +353,7 @@ mod tests {
     Worker Threads: 4
   - Protocols & Timeouts:
     HTTP/2 Enabled: true
+    HTTP/2 Limits: streams=default, header_list=default, window=default, conn_window=default, idle=default
     Downstream Read Timeout: default
     Downstream Write Timeout: default
   - TLS Settings:
@@ -349,6 +384,7 @@ mod tests {
     Worker Threads: 4
   - Protocols & Timeouts:
     HTTP/2 Enabled: true
+    HTTP/2 Limits: streams=default, header_list=default, window=default, conn_window=default, idle=default
     Downstream Read Timeout: default
     Downstream Write Timeout: default
   - TLS Settings:

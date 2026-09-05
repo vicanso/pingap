@@ -272,6 +272,21 @@ export default {
     accessLog: "Access Log Format",
     accessLogPlaceholder: "Input the format layout for access",
     enabledH2: "Enable Http2(h2c)",
+    h2MaxConcurrentStreams: "H2 Max Concurrent Streams",
+    h2MaxConcurrentStreamsPlaceholder:
+      "Max concurrent HTTP/2 streams per client connection(default 100)",
+    h2MaxHeaderListSize: "H2 Max Header List Size",
+    h2MaxHeaderListSizePlaceholder:
+      "Largest HTTP/2 request header list accepted(default 64kib)",
+    h2IdleTimeout: "H2 Idle Timeout",
+    h2IdleTimeoutPlaceholder:
+      "Close an idle HTTP/2 client connection after(e.g. 2m)",
+    h2InitialWindowSize: "H2 Initial Window Size",
+    h2InitialWindowSizePlaceholder:
+      "HTTP/2 flow-control window per stream(e.g. 1mib, max 2gib - 1)",
+    h2InitialConnectionWindowSize: "H2 Initial Connection Window Size",
+    h2InitialConnectionWindowSizePlaceholder:
+      "HTTP/2 flow-control window per connection(e.g. 4mib, max 2gib - 1)",
     enabledServerTiming: "Enable Server Timing",
     downstreamReadTimeout: "Downstream Read Timeout",
     downstreamReadTimeoutPlaceholder:

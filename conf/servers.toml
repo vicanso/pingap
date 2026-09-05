@@ -63,6 +63,31 @@ locations = ["lo"]
 # Default `false`
 # enabled_h2 = false
 
+# Downstream HTTP/2 SETTINGS. Leave them unset to keep pingora's bounded
+# defaults, which exist to cap the memory one client connection can pin.
+# Raise a value deliberately for a workload that needs it; every value below
+# is validated at load time.
+#
+# Concurrent streams per client connection. gRPC or heavily multiplexed
+# clients block on this once they exceed it.
+# Default `100`
+# h2_max_concurrent_streams = 256
+#
+# Largest decoded request header list a client may send. Clients whose
+# cookies or tokens exceed it are refused at the h2 layer.
+# Default `64kib`
+# h2_max_header_list_size = "128kib"
+#
+# Flow-control window per stream / per connection (RFC 9113 §6.9.2), at most
+# 2gib - 1. Larger windows help big uploads over high-latency links.
+# Default: h2's own 64kib for both
+# h2_initial_window_size = "1mib"
+# h2_initial_connection_window_size = "4mib"
+#
+# Close an HTTP/2 client connection that has been idle this long.
+# Default `none` (never)
+# h2_idle_timeout = "2m"
+
 # TCP Keep-alive idle time:
 # Controls how long a connection must be idle before TCP starts sending keep-alive probes
 # Default `none`

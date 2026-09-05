@@ -10,7 +10,11 @@ import {
   newStringOptions,
   newBooleanOptions,
 } from "@/constants";
-import { newZodDuration, omitEmptyArrayString } from "@/helpers/util";
+import {
+  newZodBytes,
+  newZodDuration,
+  omitEmptyArrayString,
+} from "@/helpers/util";
 import { useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import History from "@/pages/History";
@@ -181,6 +185,53 @@ export default function Servers() {
       span: 3,
       category: ExFormItemCategory.RADIOS,
       options: newBooleanOptions(),
+    },
+    // Downstream HTTP/2 SETTINGS. Empty keeps pingora's bounded defaults
+    // (100 streams, 64 KiB header list).
+    {
+      name: "h2_max_concurrent_streams",
+      section: sec.connection,
+      label: serverI18n("h2MaxConcurrentStreams"),
+      placeholder: serverI18n("h2MaxConcurrentStreamsPlaceholder"),
+      defaultValue: serverConfig.h2_max_concurrent_streams,
+      span: 3,
+      category: ExFormItemCategory.NUMBER,
+    },
+    {
+      name: "h2_max_header_list_size",
+      section: sec.connection,
+      label: serverI18n("h2MaxHeaderListSize"),
+      placeholder: serverI18n("h2MaxHeaderListSizePlaceholder"),
+      defaultValue: serverConfig.h2_max_header_list_size,
+      span: 3,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
+      name: "h2_idle_timeout",
+      section: sec.connection,
+      label: serverI18n("h2IdleTimeout"),
+      placeholder: serverI18n("h2IdleTimeoutPlaceholder"),
+      defaultValue: serverConfig.h2_idle_timeout,
+      span: 3,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
+      name: "h2_initial_window_size",
+      section: sec.connection,
+      label: serverI18n("h2InitialWindowSize"),
+      placeholder: serverI18n("h2InitialWindowSizePlaceholder"),
+      defaultValue: serverConfig.h2_initial_window_size,
+      span: 3,
+      category: ExFormItemCategory.TEXT,
+    },
+    {
+      name: "h2_initial_connection_window_size",
+      section: sec.connection,
+      label: serverI18n("h2InitialConnectionWindowSize"),
+      placeholder: serverI18n("h2InitialConnectionWindowSizePlaceholder"),
+      defaultValue: serverConfig.h2_initial_connection_window_size,
+      span: 3,
+      category: ExFormItemCategory.TEXT,
     },
     {
       name: "enable_server_timing",
@@ -378,6 +429,10 @@ export default function Servers() {
     addr: z.string().min(1),
     tcp_idle: newZodDuration().optional(),
     tcp_interval: newZodDuration().optional(),
+    h2_idle_timeout: newZodDuration().optional(),
+    h2_max_header_list_size: newZodBytes().optional(),
+    h2_initial_window_size: newZodBytes().optional(),
+    h2_initial_connection_window_size: newZodBytes().optional(),
   });
 
   const onRemove = async () => {
