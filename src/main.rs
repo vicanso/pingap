@@ -103,15 +103,26 @@ locations = ["httpLocation"]
 addrs = ["127.0.0.1:5000"]
 "###;
 
+use std::sync::LazyLock;
+
 static LOG_TARGET: &str = "main";
 
-const LONG_VERSION: &str =
-    concat!(env!("CARGO_PKG_VERSION"), " (", env!("VERGEN_GIT_SHA"), ")");
+/// The commit this binary was built from, or "unknown" when the tree had no
+/// git metadata (a source export or a crates.io tarball; see build.rs).
+pub(crate) fn git_hash() -> &'static str {
+    match env!("VERGEN_GIT_SHA") {
+        "VERGEN_IDEMPOTENT_OUTPUT" => "unknown",
+        sha => sha,
+    }
+}
+
+static LONG_VERSION: LazyLock<String> =
+    LazyLock::new(|| format!("{} ({})", env!("CARGO_PKG_VERSION"), git_hash()));
 
 /// Command line arguments structure for the pingap.
 /// A reverse proxy like nginx.
 #[derive(Parser, Debug, Default)]
-#[command(author, version, about, long_version = LONG_VERSION, long_about = None)]
+#[command(author, version, about, long_version = LONG_VERSION.as_str(), long_about = None)]
 struct Args {
     /// The config file or directory path
     #[arg(short, long, required_unless_present = "upstream")]

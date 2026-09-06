@@ -141,8 +141,6 @@ struct ErrorResponse {
     message: String,
 }
 
-const GIT_HASH: &str = env!("VERGEN_GIT_SHA");
-
 #[derive(Serialize, Deserialize)]
 struct BasicInfo {
     start_time: u64,
@@ -705,7 +703,7 @@ async fn handle_request_admin(
             supported_plugins: get_plugin_factory().supported_plugins(),
             upstream_healthy_status: new_upstream_provider().healthy_status(),
             support_history: plugin.manager.support_history(),
-            git_hash: GIT_HASH.to_string(),
+            git_hash: crate::git_hash().to_string(),
             now: pingap_core::now_sec(),
         };
         basic_info.features.push("default".to_string());

@@ -90,6 +90,12 @@ jobs:
           run: |
             apt-get update
             apt-get install protobuf-compiler -y
+            # The checkout is bind-mounted from the runner and owned by its
+            # user, while this container builds as root. libgit2 refuses a
+            # repository owned by someone else (the same check as git's
+            # safe.directory), which left vergen without a commit sha:
+            # every musl release so far carried VERGEN_IDEMPOTENT_OUTPUT.
+            printf '[safe]\n\tdirectory = *\n' >> ~/.gitconfig
             make release-full
             mv target/x86_64-unknown-linux-musl/release/pingap ./pingap-linux-musl-x86-full
             make release-rustls-full
@@ -152,6 +158,12 @@ jobs:
           run: |
             apt-get update
             apt-get install protobuf-compiler -y
+            # The checkout is bind-mounted from the runner and owned by its
+            # user, while this container builds as root. libgit2 refuses a
+            # repository owned by someone else (the same check as git's
+            # safe.directory), which left vergen without a commit sha:
+            # every musl release so far carried VERGEN_IDEMPOTENT_OUTPUT.
+            printf '[safe]\n\tdirectory = *\n' >> ~/.gitconfig
             make release-full
             mv target/aarch64-unknown-linux-musl/release/pingap ./pingap-linux-musl-aarch64-full
             make release-rustls-full
